@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schedule from "effect/Schedule";
 import * as pathe from "pathe";
+import { assertDead, lifecycleFixture } from "./fixture/lifecycle-support.ts";
 
 const { test } = Test.make({
   // DevServer is provider-agnostic — register it directly without dragging
@@ -103,7 +104,7 @@ test.provider(
       const all = yield* provider.list();
       expect(all).toEqual([]);
     }),
-  { timeout: 30_000 },
+  { tags: ["local"], timeout: 30_000 },
 );
 
 test.provider(
@@ -127,7 +128,7 @@ test.provider(
       yield* stack.destroy();
       yield* waitForDeath(pid);
     }),
-  { timeout: 30_000 },
+  { tags: ["local"], timeout: 30_000 },
 );
 
 test.provider(
@@ -163,7 +164,7 @@ test.provider(
       yield* waitForDeath(alpha.pid);
       yield* waitForDeath(beta.pid);
     }),
-  { timeout: 30_000 },
+  { tags: ["local"], timeout: 30_000 },
 );
 
 test.provider(
@@ -195,7 +196,7 @@ test.provider(
       yield* stack.destroy();
       yield* waitForDeath(first.pid);
     }),
-  { timeout: 30_000 },
+  { tags: ["local"], timeout: 30_000 },
 );
 
 test.provider(
@@ -232,7 +233,7 @@ test.provider(
       yield* stack.destroy();
       yield* waitForDeath(second.pid);
     }),
-  { timeout: 30_000 },
+  { tags: ["local"], timeout: 30_000 },
 );
 
 test.provider(
@@ -260,7 +261,7 @@ test.provider(
       yield* stack.destroy();
       yield* waitForDeath(pid);
     }),
-  { timeout: 30_000 },
+  { tags: ["local"], timeout: 30_000 },
 );
 
 test.provider(
@@ -289,7 +290,7 @@ test.provider(
       yield* stack.destroy();
       yield* waitForDeath(pid);
     }),
-  { timeout: 30_000 },
+  { tags: ["local"], timeout: 30_000 },
 );
 
 test.provider(
@@ -323,7 +324,7 @@ test.provider(
       yield* stack.destroy();
       yield* waitForDeath(pid);
     }),
-  { timeout: 30_000 },
+  { tags: ["local"], timeout: 30_000 },
 );
 
 test.provider(
@@ -355,7 +356,7 @@ test.provider(
       yield* stack.destroy();
       yield* waitForDeath(pid);
     }),
-  { timeout: 30_000 },
+  { tags: ["local"], timeout: 30_000 },
 );
 
 test.provider(
@@ -386,7 +387,7 @@ test.provider(
       yield* stack.destroy();
       yield* waitForDeath(pid);
     }),
-  { timeout: 30_000 },
+  { tags: ["local"], timeout: 30_000 },
 );
 
 test.provider(
@@ -417,7 +418,7 @@ test.provider(
       yield* stack.destroy();
       yield* waitForDeath(pid);
     }),
-  { timeout: 30_000 },
+  { tags: ["local"], timeout: 30_000 },
 );
 
 test.provider(
@@ -441,7 +442,7 @@ test.provider(
       yield* waitForDeath(pid);
       expect(yield* isAlive(pid)).toBe(false);
     }),
-  { timeout: 30_000 },
+  { tags: ["local"], timeout: 30_000 },
 );
 
 inProcessTest.provider(
@@ -460,9 +461,10 @@ inProcessTest.provider(
       expect(error.reason.exitCode).toBe(1);
       expect(error.reason.stderr).toContain("I'm not feeling it...");
     }),
+  { tags: ["local"] },
 );
 
-describe("extractUrl", () => {
+describe("extractUrl", { tags: ["unit", "local"] }, () => {
   it("returns a plain URL when it is the only match", () => {
     expect(Command.extractUrl("Local: http://localhost:5173/")).toBe(
       "http://localhost:5173/",
@@ -512,3 +514,25 @@ describe("extractUrl", () => {
     expect(Command.extractUrl("no url here")).toBeUndefined();
   });
 });
+
+test.provider.skipIf(process.platform === "win32")(
+  "restart and destroy let wrappers clean their detached children",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+      const first = yield* lifecycleFixture();
+      const second = yield* lifecycleFixture();
+      yield* stack.deploy(Command.Dev("Graceful", first.props));
+      const old = yield* first.ready;
+      yield* stack.deploy(Command.Dev("Graceful", second.props));
+      const current = yield* second.ready;
+      expect(yield* first.has("wrapper.clean")).toBe(true);
+      yield* assertDead(old.wrapper);
+      yield* assertDead(old.leaf);
+      yield* stack.destroy();
+      expect(yield* second.has("wrapper.clean")).toBe(true);
+      yield* assertDead(current.wrapper);
+      yield* assertDead(current.leaf);
+    }),
+  { tags: ["local"], timeout: 30_000 },
+);

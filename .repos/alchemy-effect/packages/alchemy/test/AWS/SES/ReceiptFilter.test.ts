@@ -57,7 +57,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertFilterDeleted(filter.filterName);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -93,5 +93,5 @@ test.provider(
       yield* stack.destroy();
       yield* assertFilterDeleted(second.filterName);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:ses", "live"], timeout: 120_000 },
 );

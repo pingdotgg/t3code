@@ -28,10 +28,10 @@ import {
   type ProviderAdapterV2Event,
   type ProviderAdapterV2Shape,
   type ProviderAdapterV2TurnInput,
-} from "./ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const driver = ProviderDriverKind.make("codex");
 const instanceId = ProviderInstanceId.make("codex");
@@ -399,9 +399,9 @@ it.effect.each(
         assert.equal(started.length, 2);
       }).pipe(
         Effect.provide(
-          makeOrchestratorV2ReplayLayerWithRegistry(
+          ProviderReplayHarness.layerWithRegistry(
             { name: `steering-completion-${timing}` },
-            ProviderAdapterRegistry.makeSingleLayer(adapter),
+            ProviderAdapterRegistry.layerSingle(adapter),
             { runEffectWorker: false },
           ),
         ),
@@ -514,9 +514,9 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
         };
       }),
   };
-  const layer = makeOrchestratorV2ReplayLayerWithRegistry(
+  const layer = ProviderReplayHarness.layerWithRegistry(
     { name },
-    ProviderAdapterRegistry.makeSingleLayer(adapter),
+    ProviderAdapterRegistry.layerSingle(adapter),
     { runEffectWorker: false },
   );
   // Creates the thread and starts its first turn on `runSelection`.

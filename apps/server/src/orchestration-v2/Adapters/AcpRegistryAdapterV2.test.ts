@@ -4,49 +4,48 @@ import { ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contra
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient, HttpClientResponse } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 import * as EffectAcpErrors from "effect-acp/errors";
 
-import * as ServerConfig from "../../config.ts";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as ServerSettings from "../../serverSettings.ts";
 import type {
   AcpRegistryAvailableCommands,
   AcpRegistryLiveConfiguration,
-} from "../../provider/acp/AcpRegistryProbe.ts";
-import * as AcpRegistrySupport from "../../provider/acp/AcpRegistrySupport.ts";
-import { ACP_SESSION_MODE_OPTION_ID } from "../../provider/acp/AcpSessionConfig.ts";
-import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+} from "@t3tools/provider-acp-registry/testing";
+import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
+import { ACP_SESSION_MODE_OPTION_ID } from "@t3tools/provider-acp/server/sessionConfig";
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   decodeAcpReplayTranscript,
   makeAcpReplayCompletenessAssertion,
   makeAcpReplayRuntime,
 } from "./AcpAdapterV2.testkit.ts";
-import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
+import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 import { BUILT_IN_PROVIDER_ADAPTER_DRIVER_KINDS_V2 } from "../builtInProviderAdapterDrivers.ts";
+import { AcpRegistryAdapterV2Driver } from "@t3tools/provider-acp-registry/server";
 import {
   ACP_REGISTRY_PROVIDER,
-  AcpRegistryAdapterV2Driver,
   makeAcpRegistryAdapterV2,
   acpRegistryPromptFailure,
-} from "./AcpRegistryAdapterV2.ts";
+} from "@t3tools/provider-acp-registry/testing";
 
 const registryUrl = "https://registry.test/registry.json";
 const decodeAcpRegistryAdapterSettings = Schema.decodeUnknownEffect(
   AcpRegistryAdapterV2Driver.configSchema,
 );
 
-const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
-  prefix: "t3-acp-registry-v2-adapter-",
-}).pipe(Layer.provide(NodeServices.layer));
+const layerHost = layerTestProviderHost().pipe(Layer.provide(NodeServices.layer));
 
-const registryLayer = Layer.succeed(
+const layerRegistry = Layer.succeed(
   HttpClient.HttpClient,
   HttpClient.make((request) =>
     Effect.succeed(
@@ -82,11 +81,12 @@ const registryLayer = Layer.succeed(
   ),
 );
 
-const testLayer = Layer.mergeAll(
+const layerTest = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
-  serverConfigLayer,
-  registryLayer,
+  layerHost,
+  layerRegistry,
+  ServerSettings.layerTest(),
 );
 
 describe("AcpRegistryAdapterV2", () => {
@@ -121,6 +121,8 @@ describe("AcpRegistryAdapterV2", () => {
     assert.isTrue(BUILT_IN_PROVIDER_ADAPTER_DRIVER_KINDS_V2.has(ACP_REGISTRY_PROVIDER));
     assert.equal(AcpRegistryAdapterV2Driver.driverKind, ACP_REGISTRY_PROVIDER);
     assert.deepEqual(AcpRegistryAdapterV2Driver.defaultConfig(), {
+      source: "registry",
+      commandArgs: [],
       enabled: true,
       agentId: "",
       commandPath: "",
@@ -185,8 +187,7 @@ describe("AcpRegistryAdapterV2", () => {
         ACP_REGISTRY_PROVIDER,
       );
       const instanceId = ProviderInstanceId.make("acp-registry-mode-pick");
-      const adapter = makeAcpRegistryAdapterV2({
-        crypto: yield* Crypto.Crypto,
+      const adapter = yield* makeAcpRegistryAdapterV2({
         selfInvocation: yield* resolveSelfInvocation(),
         instanceId,
         settings: yield* decodeAcpRegistryAdapterSettings({
@@ -195,10 +196,7 @@ describe("AcpRegistryAdapterV2", () => {
         }),
         environment: {},
         childProcessSpawner,
-        fileSystem,
-        idAllocator: yield* IdAllocator.IdAllocatorV2,
         resolver: { resolve: () => Effect.die("the runtime is injected") },
-        serverConfig: yield* ServerConfig.ServerConfig,
         makeRuntime: makeAcpReplayRuntime({
           transcript,
           statusPath,
@@ -243,7 +241,7 @@ describe("AcpRegistryAdapterV2", () => {
           answer("session/set_mode", {}),
         ],
         storedModePick: "autoEdit",
-      }).pipe(Effect.provide(testLayer), Effect.scoped),
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
 
     it.effect("switches a mode config option under its own id", () =>
@@ -258,17 +256,14 @@ describe("AcpRegistryAdapterV2", () => {
           answer("session/set_config_option", { configOptions: [permissionModeOption("auto")] }),
         ],
         storedModePick: "auto",
-      }).pipe(Effect.provide(testLayer), Effect.scoped),
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
   });
 
   it.effect("offers client terminals to Devin only and client fs to no registry agent", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const serverConfig = yield* ServerConfig.ServerConfig;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
@@ -277,17 +272,13 @@ describe("AcpRegistryAdapterV2", () => {
       ) {
         let clientCapabilities: unknown;
         const instanceId = ProviderInstanceId.make(`acp-registry-capabilities-${agentId}`);
-        const adapter = makeAcpRegistryAdapterV2({
-          crypto: yield* Crypto.Crypto,
+        const adapter = yield* makeAcpRegistryAdapterV2({
           selfInvocation: yield* resolveSelfInvocation(),
           instanceId,
           settings: yield* decodeAcpRegistryAdapterSettings({ agentId, authMethodId: "test" }),
           environment: {},
           childProcessSpawner,
-          fileSystem,
-          idAllocator,
           resolver: { resolve: () => Effect.die("the runtime is injected") },
-          serverConfig,
           makeRuntime: (input) =>
             Effect.gen(function* () {
               clientCapabilities = input.clientCapabilities;
@@ -335,22 +326,20 @@ describe("AcpRegistryAdapterV2", () => {
         fs: { readTextFile: false, writeTextFile: false },
         terminal: false,
       });
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("opens a real ACP child process resolved from registry configuration", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const serverConfig = yield* ServerConfig.ServerConfig;
+      const host = yield* ProviderHost.ProviderHost;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
       const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
-        cacheDir: serverConfig.providerStatusCacheDir,
-        toolsDir: serverConfig.baseDir + "/tools",
+        cacheDir: host.paths.providerStatusCacheDir,
+        toolsDir: host.paths.baseDir + "/tools",
         registryUrl,
       });
       const settings = yield* decodeAcpRegistryAdapterSettings({
@@ -366,8 +355,7 @@ describe("AcpRegistryAdapterV2", () => {
         readonly commands: AcpRegistryAvailableCommands;
       }>();
       const configurationPublished = yield* Deferred.make<AcpRegistryLiveConfiguration>();
-      const adapter = makeAcpRegistryAdapterV2({
-        crypto: yield* Crypto.Crypto,
+      const adapter = yield* makeAcpRegistryAdapterV2({
         selfInvocation: yield* resolveSelfInvocation(),
         instanceId,
         settings,
@@ -376,8 +364,6 @@ describe("AcpRegistryAdapterV2", () => {
           T3_ACP_COMMAND_ADVERTISEMENT_DELAY_MS: "750",
         },
         childProcessSpawner,
-        fileSystem,
-        idAllocator,
         runtimeCoordinator: {
           withForegroundStartup: (agentId, effect) =>
             Effect.acquireUseRelease(
@@ -425,7 +411,6 @@ describe("AcpRegistryAdapterV2", () => {
               })),
             ),
         },
-        serverConfig,
       });
       const threadId = ThreadId.make("thread-acp-registry-fixture");
       const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
@@ -481,6 +466,6 @@ describe("AcpRegistryAdapterV2", () => {
         name: "Auto",
         description: null,
       });
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 });

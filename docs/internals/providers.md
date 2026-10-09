@@ -2,12 +2,12 @@
 
 Orchestration records intent and state without knowing which provider runs a thread. Provider
 protocols, account ownership, permissions, and capabilities belong at the
-[adapter boundary](../../apps/server/src/orchestration-v2/ProviderAdapter.ts). Normalize there
+[adapter boundary](../../packages/provider-core/src/server/ProviderAdapter.ts). Normalize there
 instead of spreading provider checks through orchestration and clients.
 
 A driver kind identifies an integration; an instance identifies one configuration and account
 lifecycle. Route work by instance, so two accounts using the same driver do not share mutable
-session or catalog state.
+session or catalog state. For a new driver, start with [adding a provider](./adding-a-provider.md).
 
 ## Process and account isolation
 
@@ -17,12 +17,12 @@ directory must not share one T3 MCP entry.
 
 - **1.x** uses one T3-managed chat server per thread, so threads cannot replace each other's
   connection. Catalog and text-generation work can share the
-  [instance-owned helper](../../apps/server/src/provider/OpenCodeServerOwner.ts), which closes
-  after an idle period. See the [1.x adapter](../../apps/server/src/orchestration-v2/Adapters/OpenCodeAdapterV2.ts).
+  [instance-owned helper](../../packages/provider-opencode/src/server/OpenCodeServerOwner.ts), which closes
+  after an idle period. See the [1.x adapter](../../packages/provider-opencode/src/server/adapter.ts).
 - **2.x** serves every directory from one
-  [server per instance](../../apps/server/src/provider/opencode2/OpenCode2Server.ts). Each thread
+  [server per instance](../../packages/provider-opencode/src/server/v2/OpenCode2Server.ts). Each thread
   registers its own `t3-code-<thread>` MCP entry, and session permission rules deny every other
-  thread's entry. See the [2.x adapter](../../apps/server/src/orchestration-v2/Adapters/OpenCode2AdapterV2.ts).
+  thread's entry. See the [2.x adapter](../../packages/provider-opencode/src/server/v2/adapter.ts).
 
 External OpenCode servers remain externally owned and can require an external restart to pick up
 configuration changes. OpenCode stores "always" approval grants for the whole project. Automatic
@@ -34,7 +34,7 @@ trust discovery. T3 injects only its namespaced MCP bridge, so a Pi session beha
 the Pi TUI. Pi session files back native resume, rollback, and same-instance thread forks.
 Forks use Pi's CLI in the destination directory because RPC session switching retains the source
 session's cwd. Provider switches still use portable handoff summaries.
-See the [adapter](../../apps/server/src/orchestration-v2/Adapters/PiAdapterV2.ts).
+See the [adapter](../../packages/provider-pi/src/server/adapter.ts).
 
 Antigravity separates account profiles per instance while sharing installed executables across the
 environment. It forces file-based credential storage because the native macOS keychain entry would
@@ -52,7 +52,7 @@ and removal must respect those leases instead of replacing executables under a r
 ## Setup must not happen as a health-check side effect
 
 Opening a provider session can start MCP servers, run hooks, or launch a login browser.
-[Grok probes](../../apps/server/src/provider/Layers/GrokProvider.ts) avoid authentication and
+[Grok probes](../../packages/provider-grok/src/server/status.ts) avoid authentication and
 session creation for this reason. Antigravity likewise reserves authenticated catalog sessions for
 explicit setup or model refresh; background checks use initialization only.
 
@@ -115,6 +115,14 @@ command returns its receipt without posting the answer twice. The normal message
 resumes a run, queues behind active work, or steers when the adapter supports it. Blocking questions
 retain the provider's live response path. Do not infer that a request has disappeared merely because
 it is outside the recent history window.
+
+Native `/goal` state belongs to the provider and is mirrored on the provider thread. Codex starts
+the next goal turn on its own milliseconds after the last one completes, so the
+[adapter](../../apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts) keeps the run open
+and adds that turn to it. One run can therefore own several native turns. `/goal` commands that
+start no Codex turn settle on a provider turn without a native ref, which native rollback must
+not count. Claude's SDK mode emits no goal events; its adapter reads goal state from the
+synthetic command output and Stop hook feedback in the transcript.
 
 Capabilities must describe what the provider can actually do. Antigravity can capture workspace
 checkpoints but cannot roll back its conversation. The [checkpoint boundary](./overview.md#turn-completion-and-checkpoints)

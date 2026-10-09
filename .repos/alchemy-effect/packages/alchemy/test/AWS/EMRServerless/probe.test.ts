@@ -30,4 +30,5 @@ test.provider(
       );
       expect(error._tag).toBe("AccessDeniedException");
     }),
+  { tags: ["provider:aws", "provider:aws:emrserverless", "live"] },
 );

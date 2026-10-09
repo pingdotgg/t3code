@@ -19,7 +19,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as AcpErrors from "effect-acp/errors";
 
-import type { AcpSessionRuntime, AcpSessionRuntimeStartResult } from "./acp/AcpSessionRuntime.ts";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   parseAntigravityAuthorizationUrl,
   type AntigravityAuthorizationUrl,
@@ -28,7 +28,7 @@ import {
   forwardAntigravityCallback,
   validateAntigravityCallbackUrl,
 } from "./antigravityCallback.ts";
-import type { ProviderAuthController } from "./Services/ProviderAuthService.ts";
+import type { ProviderAuthController } from "./ProviderAuthService.ts";
 
 const AUTH_TIMEOUT_MS = 300_000;
 const FORWARDING_FAILED_MESSAGE = "Could not deliver the sign-in response. Start sign-in again.";
@@ -66,19 +66,19 @@ export interface AntigravityAuth {
 }
 
 export type AntigravityAuthRuntime = Pick<
-  AcpSessionRuntime["Service"],
+  AcpSessionRuntime.AcpSessionRuntime["Service"],
   "initialize" | "start" | "request"
 >;
 
 export interface AntigravityAuthOptions<
-  Runtime extends AntigravityAuthRuntime = AcpSessionRuntime["Service"],
+  Runtime extends AntigravityAuthRuntime = AcpSessionRuntime.AcpSessionRuntime["Service"],
 > {
   readonly instanceId: ProviderInstanceId;
   readonly makeRuntime: (input: {
     readonly onAuthorizationUrl?: (url: string) => Effect.Effect<void, AcpErrors.AcpError>;
   }) => Effect.Effect<Runtime, AcpErrors.AcpError | ProviderSetupError, Scope.Scope>;
   readonly onAuthenticated: (
-    result: AcpSessionRuntimeStartResult,
+    result: AcpSessionRuntime.AcpSessionRuntimeStartResult,
     runtime: Runtime,
   ) => Effect.Effect<void>;
   readonly onSignedOut: Effect.Effect<void>;

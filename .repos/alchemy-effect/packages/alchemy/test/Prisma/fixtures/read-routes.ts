@@ -1,6 +1,6 @@
 import type { ReadBucketClient } from "@/Prisma/ReadBucket.ts";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * Shared read-side routes so every method of {@link ReadBucketClient}

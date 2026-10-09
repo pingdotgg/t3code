@@ -19,8 +19,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
@@ -190,7 +190,7 @@ const storageCases = (["sqlite", "memory"] as const).map((storage) => ({
   storage,
   storeLayer:
     storage === "sqlite"
-      ? ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory))
+      ? ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))
       : ProjectionStore.layerMemory,
 }));
 
@@ -274,7 +274,7 @@ it.effect.each(storageCases)(
       assert.instanceOf(missingThread, ProjectionStore.ProjectionStoreThreadNotFoundError);
 
       const calls: string[] = [];
-      const sessions = Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+      const layerSessions = Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
         get: () =>
           Effect.succeed(
             Option.some({
@@ -346,9 +346,9 @@ it.effect.each(storageCases)(
       }).pipe(
         Effect.provide(
           Layer.merge(ProviderTurnControlService.layer, RuntimeRequestService.layer).pipe(
-            Layer.provide(sessions),
+            Layer.provide(layerSessions),
           ),
         ),
       );
-    }).pipe(Effect.provide(Layer.merge(storeLayer, SqlitePersistenceMemory))),
+    }).pipe(Effect.provide(Layer.merge(storeLayer, SqlitePersistence.layerMemory))),
 );

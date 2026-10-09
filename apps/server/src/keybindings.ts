@@ -41,7 +41,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 import * as ServerConfig from "./config.ts";
-import { writeFileStringAtomically } from "./atomicWrite.ts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
 import {
   DEFAULT_KEYBINDINGS,
@@ -480,13 +480,14 @@ const make = Effect.gen(function* () {
     })),
   );
 
-  const resolvedConfigCache = yield* Cache.make<
+  // A failed read is not kept: the next read retries instead of replaying the failure.
+  const resolvedConfigCache = yield* Cache.makeWith<
     typeof resolvedConfigCacheKey,
     KeybindingsConfigState,
     KeybindingsConfigError
-  >({
+  >(() => loadConfigStateFromDisk, {
     capacity: 1,
-    lookup: () => loadConfigStateFromDisk,
+    timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
   });
 
   const loadConfigStateFromCacheOrDisk = Cache.get(resolvedConfigCache, resolvedConfigCacheKey);

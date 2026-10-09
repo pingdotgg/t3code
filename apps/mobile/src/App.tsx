@@ -1,3 +1,4 @@
+import { PermissionUpdateNotice } from "./components/PermissionUpdateNotice";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
@@ -8,7 +9,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { createStaticNavigation } from "@react-navigation/native";
 
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { resolveLanguage } from "@t3tools/client-runtime/i18n";
 import { changeLanguage, i18n } from "./i18n";
 import { mobilePreferencesAtom } from "./state/preferences";
@@ -26,6 +27,7 @@ import { appAtomRegistry } from "./state/atom-registry";
 import { OverlayPortalHost } from "./components/OverlayPortal";
 import { shouldHandleAppLink } from "./lib/appLinking";
 import { useMobileNavigationTheme } from "./lib/useMobileNavigationTheme";
+import { useUiRuntimeMemoryWarningGc } from "./lib/useUiRuntimeMemoryWarningGc";
 import { SubscriptionUsageCoordinator } from "./widgets/SubscriptionUsageCoordinator";
 import { VoiceInputProvider } from "./features/voice-input/VoiceInputProvider";
 import { GlobalVoiceInputControl } from "./features/voice-input/GlobalVoiceInputControl";
@@ -93,6 +95,8 @@ function SplashScreenCoordinator() {
 }
 
 export default function App() {
+  useUiRuntimeMemoryWarningGc();
+
   return (
     <RegistryContext.Provider value={appAtomRegistry}>
       <CloudAuthProvider>
@@ -113,6 +117,7 @@ function AppContent() {
       <SplashScreenCoordinator />
       <LanguageSync />
       <SubscriptionUsageCoordinator />
+      <PermissionUpdateNotice />
       <GestureHandlerRootView className="flex-1">
         <KeyboardProvider statusBarTranslucent>
           <SafeAreaProvider>

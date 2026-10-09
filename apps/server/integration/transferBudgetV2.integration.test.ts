@@ -31,12 +31,12 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
-import { Rpc, RpcGroup, RpcServer, RpcSerialization } from "effect/unstable/rpc";
-import { SqlitePersistenceMemory } from "../src/persistence/Layers/Sqlite.ts";
-import { OrchestrationEventStoreLive } from "../src/persistence/Layers/OrchestrationEventStore.ts";
+import * as HttpApi from "effect/http-api/HttpApi";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import { HttpRouter, HttpServer } from "effect/http";
+import { Rpc, RpcGroup, RpcServer, RpcSerialization } from "effect/rpc";
+import * as SqlitePersistence from "../src/persistence/Sqlite.ts";
+import * as OrchestrationEventStore from "../src/persistence/OrchestrationEventStore.ts";
 import * as EventStore from "../src/orchestration-v2/EventStore.ts";
 import * as EventSink from "../src/orchestration-v2/EventSink.ts";
 import * as ProjectionStore from "../src/orchestration-v2/ProjectionStore.ts";
@@ -44,8 +44,8 @@ import * as ThreadManagementService from "../src/orchestration-v2/ThreadManageme
 import * as ProjectStore from "../src/orchestration-v2/ProjectStore.ts";
 import * as ProjectService from "../src/project/ProjectService.ts";
 import * as ProjectEnrichmentService from "../src/project/ProjectEnrichmentService.ts";
-import { orchestrationHttpApiLayer } from "../src/orchestration-v2/http.ts";
-import { httpCompressionLayer } from "../src/http.ts";
+import * as OrchestrationHttp from "../src/orchestration-v2/http.ts";
+import * as ServerHttp from "../src/http.ts";
 import { subscribeOrchestrationV2Thread, subscribeOrchestrationV2Shell } from "../src/ws.ts";
 import {
   measureHttpGet,
@@ -69,15 +69,15 @@ const decodeShellSnapshot = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ShellSnapshot)),
 );
 
-const persistence = EventSink.layer.pipe(
+const layerPersistence = EventSink.layer.pipe(
   Layer.provideMerge(EventStore.layerFromOrchestrationEventStore),
   Layer.provideMerge(ProjectionStore.layer),
-  Layer.provideMerge(OrchestrationEventStoreLive),
-  Layer.provideMerge(SqlitePersistenceMemory),
+  Layer.provideMerge(OrchestrationEventStore.layer),
+  Layer.provideMerge(SqlitePersistence.layerMemory),
 );
 // The facade's import/command paths are outside this measurement. Its reads and
 // stream delegate to the real SQL projection and event sink, as the runtime does.
-const management = Layer.unwrap(
+const layerManagement = Layer.unwrap(
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const sink = yield* EventSink.EventSinkV2;
@@ -88,12 +88,14 @@ const management = Layer.unwrap(
         projections.getThreadSnapshotWindow(id, options).pipe(Effect.orDie),
       getThreadShell: (id) => projections.getThreadShell(id).pipe(Effect.orDie),
       getShellSnapshot: (options) => projections.getShellSnapshot(options).pipe(Effect.orDie),
+      readShellSnapshot: (options) =>
+        projections.readShellSnapshot(options).pipe(Effect.map(Effect.orDie), Effect.orDie),
       streamStoredEventsFrom: (input) =>
         sink.stream({ ...input, bounded: true }).pipe(Stream.orDie),
     });
   }),
 );
-const enrichment = Layer.unwrap(
+const layerEnrichment = Layer.unwrap(
   Effect.gen(function* () {
     const changes = yield* PubSub.unbounded<never>();
     return Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({
@@ -108,16 +110,16 @@ const enrichment = Layer.unwrap(
   }),
 );
 // The transfer history has no project events, so shell streams never read a project shell.
-const services = management.pipe(
+const layerServices = layerManagement.pipe(
   Layer.provideMerge(ProjectStore.layer),
   Layer.provideMerge(Layer.mock(ProjectService.ProjectService)({})),
-  Layer.provideMerge(enrichment),
-  Layer.provideMerge(persistence),
+  Layer.provideMerge(layerEnrichment),
+  Layer.provideMerge(layerPersistence),
 );
 class TransferApi extends HttpApi.make("environment").add(
   EnvironmentHttpApi.groups.orchestration,
 ) {}
-const auth = Layer.succeed(EnvironmentAuthenticatedAuth, (effect) =>
+const layerAuth = Layer.succeed(EnvironmentAuthenticatedAuth, (effect) =>
   effect.pipe(
     Effect.provideService(EnvironmentAuthenticatedPrincipal, {
       sessionId: AuthSessionId.make("transfer-session"),
@@ -141,22 +143,22 @@ const group = RpcGroup.make(
     stream: true,
   }),
 );
-const handlers = group.toLayer({
+const layerHandlers = group.toLayer({
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input) =>
     Stream.unwrap(subscribeOrchestrationV2Thread(input)),
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input) =>
     Stream.unwrap(subscribeOrchestrationV2Shell(input)),
 });
-const routes = Layer.mergeAll(
+const layerRoutes = Layer.mergeAll(
   HttpApiBuilder.layer(TransferApi).pipe(
-    Layer.provide(orchestrationHttpApiLayer),
-    Layer.provide(auth),
+    Layer.provide(OrchestrationHttp.layer),
+    Layer.provide(layerAuth),
   ),
   RpcServer.layerHttp({ group, path: "/ws", protocol: "websocket" }).pipe(
-    Layer.provide(handlers),
+    Layer.provide(layerHandlers),
     Layer.provide(RpcSerialization.layerJson),
   ),
-).pipe(Layer.provide(httpCompressionLayer), Layer.provide(NodeHttpPlatform.layer));
+).pipe(Layer.provide(ServerHttp.layerHttpCompression), Layer.provide(NodeHttpPlatform.layer));
 
 function difference(
   after: { wireBytes: number; decodedBytes: number; messages: number },
@@ -229,9 +231,9 @@ it.live(
             yield* sink.write({ events: [threadCreated(provider)] });
             for (let index = 0; index < TRANSFER_HISTORY_TURN_COUNT; index++)
               yield* sink.write({ events: turnEvents(provider, index, false) });
-            const context = yield* Effect.context<Layer.Success<typeof services>>();
+            const context = yield* Effect.context<Layer.Success<typeof layerServices>>();
             const server = yield* Layer.build(
-              HttpRouter.serve(routes, { disableListenLog: true }).pipe(
+              HttpRouter.serve(layerRoutes, { disableListenLog: true }).pipe(
                 Layer.provide(Layer.succeedContext(context)),
                 Layer.provideMerge(
                   NodeHttpServer.layer(NodeHttp.createServer, {
@@ -334,7 +336,7 @@ it.live(
               reconnectSqlStatements: counter.count() - reconnectSqlStart,
             } satisfies TransferBudgetRun;
           }).pipe(
-            Effect.provide(Layer.fresh(services).pipe(Layer.provideMerge(NodeServices.layer))),
+            Effect.provide(Layer.fresh(layerServices).pipe(Layer.provideMerge(NodeServices.layer))),
             Effect.withTracer(counter.tracer),
           ),
         );

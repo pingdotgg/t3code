@@ -24,7 +24,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";

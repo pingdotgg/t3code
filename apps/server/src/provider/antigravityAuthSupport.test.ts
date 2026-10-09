@@ -18,9 +18,9 @@ import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as Ndjson from "effect/unstable/encoding/Ndjson";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as Ndjson from "effect/encoding/Ndjson";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as AcpErrors from "effect-acp/errors";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 

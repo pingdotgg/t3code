@@ -6,7 +6,7 @@ import type { EnvironmentCatalogState } from "@t3tools/client-runtime/state/conn
 import type { EnvironmentShellState } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import { createAllEnvironmentProjectSnapshotsReadyAtom } from "./shell";

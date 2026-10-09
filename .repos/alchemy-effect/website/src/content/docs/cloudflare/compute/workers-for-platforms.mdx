@@ -85,8 +85,8 @@ looks up a user Worker by script name and returns a `Fetcher`:
 // src/platform.ts
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Customers } from "./namespace.ts";
 
 export default class PlatformWorker extends Cloudflare.Worker<PlatformWorker>()(

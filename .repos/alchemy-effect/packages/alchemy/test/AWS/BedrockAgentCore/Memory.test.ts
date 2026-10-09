@@ -22,6 +22,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:bedrockagentcore", "live"] },
 );
 
 const assertMemoryGone = (memoryId: string) =>
@@ -95,5 +96,8 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       yield* stack.destroy();
       yield* assertMemoryGone(memory.memoryId);
     }),
-  { timeout: 600_000 },
+  {
+    tags: ["provider:aws", "provider:aws:bedrockagentcore", "live"],
+    timeout: 600_000,
+  },
 );

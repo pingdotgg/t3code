@@ -6,8 +6,8 @@ import { expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClient from "effect/http/HttpClient";
 import { BusSinkFunction, BusSinkFunctionLive } from "./sink-handler.ts";
 
 const { test } = Test.make({ providers: AWS.providers() });
@@ -220,5 +220,14 @@ test.provider(
         );
       expect(gone).toBe(true);
     }),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:eventbridge",
+      "provider:aws:lambda",
+      "provider:aws:sqs",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );

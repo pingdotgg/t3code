@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import * as RpcClient from "effect/unstable/rpc/RpcClient";
+import * as RpcClient from "effect/rpc/RpcClient";
 import ChatPersistenceRpcWorker from "./fixtures/ChatPersistenceRpcWorker.ts";
 import { ChatRpcs } from "./fixtures/ChatRpcs.ts";
 import { Gateway } from "./fixtures/Gateway.ts";
@@ -83,7 +83,10 @@ test(
       expect(result.turns).toBe(2);
     }).pipe(Effect.scoped, Effect.provide(clientLayer(url)));
   }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:ai", "live"],
+    timeout: 180_000,
+  },
 );
 
 test(
@@ -116,7 +119,10 @@ test(
       expect(finish).toBeDefined();
     }).pipe(Effect.scoped, Effect.provide(clientLayer(url)));
   }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:ai", "live"],
+    timeout: 180_000,
+  },
 );
 
 test(
@@ -145,5 +151,8 @@ test(
       expect(result.turns).toBe(4);
     }).pipe(Effect.scoped, Effect.provide(clientLayer(url)));
   }).pipe(logLevel),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:ai", "live"],
+    timeout: 240_000,
+  },
 );

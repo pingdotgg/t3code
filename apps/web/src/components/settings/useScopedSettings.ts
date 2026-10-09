@@ -1,3 +1,12 @@
+import { AuthSettingsWriteScope } from "@t3tools/contracts";
+import { useEnvironmentsWithScope } from "../../state/session";
+import {
+  requiredScopesForServerSettingsPatch,
+  EnvironmentAuthorizationError,
+} from "@t3tools/contracts";
+import { readEnvironmentScope } from "../../state/session";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/reactivity";
 import {
   DEFAULT_SERVER_SETTINGS,
   type ProjectScopedServerSettingKey,
@@ -63,19 +72,40 @@ function useRunScopedPlan() {
         });
         return;
       }
-      void persistScopedSettingsPatch(plan, persistServer, persistClientSettingsPatch).then(
-        ({ failedEnvironments, savedEnvironmentCount }) => {
-          if (failedEnvironments.length === 0) return;
-          toastManager.add({
-            type: "error",
-            title:
-              savedEnvironmentCount > 0
-                ? "Setting saved on some environments"
-                : "Setting not saved",
-            description: `Could not update ${failedEnvironments.map((environment) => environment.label).join(", ")}.${savedEnvironmentCount > 0 ? " The other selected environments saved the change." : ""}`,
-          });
+      void persistScopedSettingsPatch(
+        plan,
+        async (request) => {
+          const missing = requiredScopesForServerSettingsPatch(request.input.patch).find(
+            (scope) => !readEnvironmentScope(request.environmentId, scope),
+          );
+          if (missing)
+            return AsyncResult.failure(
+              Cause.fail(
+                new EnvironmentAuthorizationError({
+                  requiredScope: missing,
+                  message: "This connection lacks permission to change these settings.",
+                }),
+              ),
+            );
+          return persistServer(request);
         },
-      );
+        persistClientSettingsPatch,
+      ).then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
+        if (failedEnvironments.length === 0) return;
+        toastManager.add({
+          type: "error",
+          title:
+            savedEnvironmentCount > 0 ? "Setting saved on some environments" : "Setting not saved",
+          description: [
+            ...failedEnvironments.map(
+              ({ label, message }) => `Could not save on ${label}: ${message}`,
+            ),
+            ...(savedEnvironmentCount > 0
+              ? [`Saved on ${savedEnvironments.map(({ label }) => label).join(", ")}.`]
+              : []),
+          ].join("\n"),
+        });
+      });
     },
     [persistServer],
   );
@@ -117,5 +147,14 @@ export function useClearProjectOverrides() {
       run(planProjectOverridesClear(context.environments, entries, keys));
     },
     [context, run],
+  );
+}
+
+export function useScopedSettingsWriteAllowed() {
+  const { connectedEnvironments } = useSettingsScope();
+  const writable = useEnvironmentsWithScope(connectedEnvironments, AuthSettingsWriteScope);
+  return (
+    connectedEnvironments.length > 0 &&
+    connectedEnvironments.every((target) => writable.has(target.environmentId))
   );
 }

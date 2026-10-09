@@ -18,7 +18,7 @@ import * as Schema from "effect/Schema";
 
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
@@ -148,6 +148,15 @@ function resolveStaleBackgroundItemProviderInstanceId(
   }
   return projection.providerThreads[0]?.providerInstanceId ?? projection.thread.providerInstanceId;
 }
+
+/** An open item closed by recovery. A secret card also closes its form, so it takes no answer. */
+const cancelledItem = (
+  item: OrchestrationV2ThreadProjection["turnItems"][number],
+  now: DateTime.Utc,
+): OrchestrationV2ThreadProjection["turnItems"][number] =>
+  item.type === "secret_request" && item.secretStatus === "pending"
+    ? { ...item, status: "cancelled", secretStatus: "cancelled", completedAt: now, updatedAt: now }
+    : { ...item, status: "cancelled", completedAt: now, updatedAt: now };
 
 /**
  * A provider thread's latest started run: the last turn that provider saw.
@@ -426,7 +435,7 @@ export const make = Effect.gen(function* () {
             ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
             providerInstanceId: run.providerInstanceId,
             occurredAt: now,
-            payload: { ...item, status: "cancelled", completedAt: now, updatedAt: now },
+            payload: cancelledItem(item, now),
           });
         }
       }
@@ -456,7 +465,7 @@ export const make = Effect.gen(function* () {
           ...(item.nodeId === null || item.nodeId === undefined ? {} : { nodeId: item.nodeId }),
           providerInstanceId,
           occurredAt: now,
-          payload: { ...item, status: "cancelled", completedAt: now, updatedAt: now },
+          payload: cancelledItem(item, now),
         });
         if (item.nodeId !== null && item.nodeId !== undefined) {
           const staleItemNode = projection.nodes.find(

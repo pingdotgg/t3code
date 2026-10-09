@@ -23,6 +23,8 @@ import {
   type ProviderInstanceEnvironmentVariable,
   type UsageLimitSourceConfig,
   type ProviderInstanceMutation,
+  defaultInstanceIdForDriver,
+  isProviderDriverKind,
   ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
@@ -50,8 +52,8 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { writeFileStringAtomically } from "./atomicWrite.ts";
+import * as SqlClient from "effect/sql/SqlClient";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import * as ServerConfig from "./config.ts";
 import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
@@ -161,6 +163,11 @@ const BITBUCKET_SECRET_NAMES = {
 } as const;
 const BITBUCKET_SECRET_FIELDS = ["accessToken", "apiToken"] as const;
 
+/** Hosts are case-insensitive; a patch can arrive before decoding lowercased its keys. */
+function gitHubTokenSecretName(host: string): string {
+  return `github-token-${Buffer.from(host.trim().toLowerCase(), "utf8").toString("base64url")}`;
+}
+
 const redactSecret = (value: string) => (value.length > 0 ? SECRET_REDACTED : "");
 
 function redactProviderEnvironmentVariable(
@@ -204,7 +211,13 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
     accessToken: redactSecret(settings.bitbucket.accessToken),
     apiToken: redactSecret(settings.bitbucket.apiToken),
   };
-  return { ...settings, providerInstances, usageLimitSources, bitbucket };
+  const github = {
+    ...settings.github,
+    tokens: Object.fromEntries(
+      Object.entries(settings.github.tokens).map(([host, token]) => [host, redactSecret(token)]),
+    ),
+  };
+  return { ...settings, providerInstances, usageLimitSources, bitbucket, github };
 }
 
 export function applyProviderInstanceMutation(
@@ -373,68 +386,109 @@ const ServerSettingsJson = fromLenientJson(
   }),
 );
 const decodeServerSettingsJsonExit = Schema.decodeUnknownExit(ServerSettingsJson);
-const PersistedOptionalProviderSettings = Schema.Struct({
-  providers: Schema.optionalKey(
-    Schema.Struct({
-      cursor: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
-      grok: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
-      opencode: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
-    }),
-  ),
-});
-const decodePersistedOptionalProviderSettingsJsonExit = Schema.decodeUnknownExit(
-  fromLenientJson(PersistedOptionalProviderSettings),
+/**
+ * The retired `providers.<kind>` map, read without its old schemas. Before
+ * `providerInstances` existed each built-in driver had one blob there; it
+ * now only feeds `migrateLegacyProviderSettings`.
+ */
+const LegacyProviderSettingsJson = fromLenientJson(
+  Schema.Struct({
+    providers: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
+  }),
+);
+const decodeLegacyProviderSettingsJsonExit = Schema.decodeUnknownExit(LegacyProviderSettingsJson);
+
+// Drivers that start disabled, so a session in the history means the user
+// turned them on before the instance kept an explicit flag.
+const HISTORY_RESTORED_DRIVERS: ReadonlySet<ProviderDriverKind> = new Set(
+  ["cursor", "grok", "opencode"].map((driver) => ProviderDriverKind.make(driver)),
 );
 
-function restoreUsedProviders(
+/**
+ * Move each customized legacy `providers.<kind>` blob into the driver's
+ * default `providerInstances` slot. An explicit instance already in that slot
+ * wins. Blobs that match a fresh install (empty, or only an `enabled` flag
+ * equal to the driver default) carry nothing and are dropped.
+ *
+ * A cursor/grok/opencode slot without an `enabled` flag is enabled when
+ * provider history shows the driver was used, which is how those drivers
+ * were opted into before they had an explicit flag. Callers run this only
+ * while the settings file still has the retired map, so it happens once.
+ */
+function migrateLegacyProviderSettings(
   settings: ServerSettings,
-  persisted: typeof PersistedOptionalProviderSettings.Type,
+  legacyProviders: Readonly<Record<string, unknown>>,
   providerHistory: ReadonlyArray<{
     readonly providerName: string;
     readonly providerInstanceId: string | null;
   }>,
 ): ServerSettings {
-  const usedProviders = new Set(providerHistory.map(({ providerName }) => providerName));
-  const usedProviderInstances = new Set(
+  // History rows are raw SQL text; compare them as strings.
+  const usedProviders = new Set<string>(providerHistory.map(({ providerName }) => providerName));
+  const usedProviderInstances = new Set<string>(
     providerHistory.map(
       ({ providerName, providerInstanceId }) => providerInstanceId ?? providerName,
     ),
   );
-  const providerInstances = Object.fromEntries(
-    Object.entries(settings.providerInstances).map(([instanceId, instance]) => [
-      instanceId,
+
+  const providerInstances: Record<ProviderInstanceId, ProviderInstanceConfig> = {};
+  for (const [instanceId, instance] of Object.entries(settings.providerInstances) as Array<
+    [ProviderInstanceId, ProviderInstanceConfig]
+  >) {
+    providerInstances[instanceId] =
       instance.enabled === undefined &&
-      (instance.driver === "cursor" ||
-        instance.driver === "grok" ||
-        instance.driver === "opencode") &&
+      HISTORY_RESTORED_DRIVERS.has(instance.driver) &&
       usedProviderInstances.has(instanceId)
         ? { ...instance, enabled: true }
-        : instance,
-    ]),
-  );
+        : instance;
+  }
+
+  // History restores a never-configured cursor/grok/opencode slot too.
+  const legacyEntries = new Map(Object.entries(legacyProviders));
+  for (const driver of HISTORY_RESTORED_DRIVERS) {
+    if (!legacyEntries.has(driver)) legacyEntries.set(driver, {});
+  }
+  for (const [kind, blob] of legacyEntries) {
+    if (!isProviderDriverKind(kind) || blob === null || typeof blob !== "object") continue;
+    if (Array.isArray(blob)) continue;
+    const driver = kind;
+    const instanceId = defaultInstanceIdForDriver(driver);
+    if (Object.hasOwn(providerInstances, instanceId)) continue;
+
+    const { enabled: rawEnabled, ...config } = blob as Record<string, unknown>;
+    const explicitEnabled = typeof rawEnabled === "boolean" ? rawEnabled : undefined;
+    const enabled =
+      explicitEnabled ??
+      (HISTORY_RESTORED_DRIVERS.has(driver) && usedProviders.has(driver) ? true : undefined);
+    const driverDefault = resolveProviderInstanceEnabled({ driver, config: {} });
+    if (Object.keys(config).length === 0 && (enabled === undefined || enabled === driverDefault)) {
+      continue;
+    }
+    providerInstances[instanceId] = {
+      driver,
+      ...(enabled === undefined ? {} : { enabled }),
+      config,
+    } satisfies ProviderInstanceConfig;
+  }
 
   return {
     ...settings,
-    providers: {
-      ...settings.providers,
-      cursor: {
-        ...settings.providers.cursor,
-        enabled: persisted.providers?.cursor?.enabled ?? usedProviders.has("cursor"),
-      },
-      grok: {
-        ...settings.providers.grok,
-        enabled: persisted.providers?.grok?.enabled ?? usedProviders.has("grok"),
-      },
-      opencode: {
-        ...settings.providers.opencode,
-        enabled: persisted.providers?.opencode?.enabled ?? usedProviders.has("opencode"),
-      },
-    },
     providerInstances,
   };
 }
 
 const ACP_REGISTRY_DRIVER = ProviderDriverKind.make("acpRegistry");
+
+const TEXT_GENERATION_FALLBACK_DRIVERS = [
+  "codex",
+  "claudeAgent",
+  "cursor",
+  "grok",
+  "muse",
+  "pi",
+  "opencode",
+  "antigravity",
+].map((driver) => ProviderDriverKind.make(driver));
 
 /** ACP Registry instances reject every application text-generation operation. */
 function selectionSupportsTextGeneration(
@@ -452,14 +506,13 @@ function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings
 }
 
 function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  // Same precedence as isModelSelectionProviderEnabled: an explicit provider
-  // instance wins over the legacy providers map, which decodes to defaults
-  // (codex enabled) when the Providers UI has only written providerInstances.
-  const fallbackEntry = Object.entries(settings.providers).find(([driver, provider]) => {
-    const instance = settings.providerInstances[ProviderInstanceId.make(driver)];
-    return instance === undefined ? provider.enabled : resolveProviderInstanceEnabled(instance);
-  });
-  const fallback = fallbackEntry ? ProviderDriverKind.make(fallbackEntry[0]) : undefined;
+  // The built-in default instances in preference order. A slot without an
+  // explicit instance uses its driver's default enabled state.
+  const fallback = TEXT_GENERATION_FALLBACK_DRIVERS.find((driver) =>
+    resolveProviderInstanceEnabled(
+      settings.providerInstances[defaultInstanceIdForDriver(driver)] ?? { driver, config: {} },
+    ),
+  );
   if (!fallback) {
     return settings;
   }
@@ -485,17 +538,6 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "textGenerationModelSelection",
   "pullRequestMergeMethod",
 ]);
-
-// Preserve both enabled states because provider history cannot recover a new opt-in.
-const PERSISTED_SERVER_SETTINGS_DEFAULTS = {
-  ...DEFAULT_SERVER_SETTINGS,
-  providers: {
-    ...DEFAULT_SERVER_SETTINGS.providers,
-    cursor: { ...DEFAULT_SERVER_SETTINGS.providers.cursor, enabled: undefined },
-    grok: { ...DEFAULT_SERVER_SETTINGS.providers.grok, enabled: undefined },
-    opencode: { ...DEFAULT_SERVER_SETTINGS.providers.opencode, enabled: undefined },
-  },
-};
 
 function stripDefaultServerSettings(current: unknown, defaults: unknown): unknown | undefined {
   if (Array.isArray(current) || Array.isArray(defaults)) {
@@ -660,7 +702,7 @@ const make = Effect.gen(function* () {
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
       const sparseSettingsJson = yield* encodeServerSettingsJson(
-        stripDefaultServerSettings(settings, PERSISTED_SERVER_SETTINGS_DEFAULTS) ?? {},
+        stripDefaultServerSettings(settings, DEFAULT_SERVER_SETTINGS) ?? {},
       );
 
       return yield* writeFileStringAtomically({
@@ -707,12 +749,29 @@ const make = Effect.gen(function* () {
         bitbucket[field] = SECRET_REDACTED;
         moved = true;
       }
-      return moved ? { ...settings, bitbucket } : settings;
+      const tokens = { ...settings.github.tokens };
+      for (const [host, value] of Object.entries(tokens)) {
+        if (value.length === 0 || value === SECRET_REDACTED) continue;
+        const stored = yield* secretStore
+          .set(gitHubTokenSecretName(host), textEncoder.encode(value))
+          .pipe(
+            Effect.as(true),
+            Effect.catch(() =>
+              Effect.logWarning("failed to move a GitHub token into the secret store", {
+                host,
+              }).pipe(Effect.as(false)),
+            ),
+          );
+        if (!stored) continue;
+        tokens[host] = SECRET_REDACTED;
+        moved = true;
+      }
+      return moved ? { ...settings, bitbucket, github: { ...settings.github, tokens } } : settings;
     });
 
   const loadSettingsFromDisk = Effect.gen(function* () {
     let settings = DEFAULT_SERVER_SETTINGS;
-    let persisted: typeof PersistedOptionalProviderSettings.Type = {};
+    let legacyProviders: Readonly<Record<string, unknown>> | undefined;
     // A file that failed to decode must stay on disk for the user to repair;
     // the fold below only writes when it started from the file's real contents.
     let settingsFileTrusted = true;
@@ -720,12 +779,12 @@ const make = Effect.gen(function* () {
     if (yield* readConfigExists) {
       const raw = yield* readRawConfig;
       const decoded = decodeServerSettingsJsonExit(raw);
-      const persistedSettings = decodePersistedOptionalProviderSettingsJsonExit(raw);
-      if (persistedSettings._tag === "Success") {
-        persisted = persistedSettings.value;
+      const legacySettings = decodeLegacyProviderSettingsJsonExit(raw);
+      if (legacySettings._tag === "Success") {
+        legacyProviders = legacySettings.value.providers;
       }
-      if (decoded._tag === "Failure" || persistedSettings._tag === "Failure") {
-        const failure = decoded._tag === "Failure" ? decoded : persistedSettings;
+      if (decoded._tag === "Failure" || legacySettings._tag === "Failure") {
+        const failure = decoded._tag === "Failure" ? decoded : legacySettings;
         settingsFileTrusted = false;
         if (failure._tag === "Failure") {
           yield* Effect.logWarning("failed to parse settings.json, using defaults", {
@@ -789,23 +848,31 @@ const make = Effect.gen(function* () {
           );
 
     const loaded = foldProviderInstanceEnabledFlags(
-      restoreUsedProviders(settings, persisted, providerHistory),
+      legacyProviders === undefined
+        ? settings
+        : migrateLegacyProviderSettings(settings, legacyProviders, providerHistory),
     );
     const folded = settingsFileTrusted
       ? foldLegacyProjectSettings(loaded, legacyProjectRows)
       : loaded;
     // Only rewrite a file that decoded cleanly; an untrusted one stays for the user to repair.
     const migrated = settingsFileTrusted ? yield* moveInlineBitbucketTokens(folded) : folded;
-    if (migrated !== loaded) {
+    // A file still carrying the retired `providers` map is rewritten once so
+    // the migrated instances persist and the old key disappears.
+    if (migrated !== loaded || (settingsFileTrusted && legacyProviders !== undefined)) {
       yield* writeSettingsAtomically(migrated);
     }
     return migrated;
   });
 
-  const settingsCache = yield* Cache.make<typeof cacheKey, ServerSettings, ServerSettingsError>({
-    capacity: 1,
-    lookup: () => loadSettingsFromDisk,
-  });
+  // A failed read is not kept: the next read retries instead of replaying the failure.
+  const settingsCache = yield* Cache.makeWith<typeof cacheKey, ServerSettings, ServerSettingsError>(
+    () => loadSettingsFromDisk,
+    {
+      capacity: 1,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
+    },
+  );
 
   const getSettingsFromCache = Cache.get(settingsCache, cacheKey);
 
@@ -878,11 +945,27 @@ const make = Effect.gen(function* () {
           );
         bitbucket[field] = Option.isSome(secret) ? textDecoder.decode(secret.value) : "";
       }
+      const tokens: Record<string, string> = {};
+      for (const [host, value] of Object.entries(settings.github.tokens)) {
+        if (value !== SECRET_REDACTED) {
+          tokens[host] = value;
+          continue;
+        }
+        const secret = yield* secretStore
+          .get(gitHubTokenSecretName(host))
+          .pipe(
+            Effect.mapError(
+              (cause) => new ServerSettingsError({ settingsPath, operation: "read-secret", cause }),
+            ),
+          );
+        tokens[host] = Option.isSome(secret) ? textDecoder.decode(secret.value) : "";
+      }
       return {
         ...settings,
         providerInstances: providerInstances as ServerSettings["providerInstances"],
         usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
         bitbucket,
+        github: { ...settings.github, tokens },
       };
     });
 
@@ -1043,12 +1126,46 @@ const make = Effect.gen(function* () {
         bitbucket[field] = SECRET_REDACTED;
       }
 
+      const tokens: Record<string, string> = {};
+      for (const [rawHost, raw] of Object.entries(next.github.tokens)) {
+        const host = rawHost.trim().toLowerCase();
+        let value = raw;
+        if (value === SECRET_REDACTED) {
+          // The marker keeps what is saved; a hand-edited plaintext token moves into the store.
+          const inline = current.github.tokens[host];
+          if (inline === undefined || inline === SECRET_REDACTED || inline.length === 0) {
+            tokens[host] = SECRET_REDACTED;
+            continue;
+          }
+          value = inline;
+        }
+        const secretName = gitHubTokenSecretName(host);
+        if (value.length === 0) {
+          changes.push({ kind: "remove", secretName, operation: "remove-secret" });
+          continue;
+        }
+        changes.push({ kind: "write", secretName, value: textEncoder.encode(value) });
+        tokens[host] = SECRET_REDACTED;
+      }
+      const nextHosts = new Set(
+        Object.keys(next.github.tokens).map((host) => host.trim().toLowerCase()),
+      );
+      for (const host of Object.keys(current.github.tokens)) {
+        if (nextHosts.has(host.trim().toLowerCase())) continue;
+        changes.push({
+          kind: "remove",
+          secretName: gitHubTokenSecretName(host),
+          operation: "remove-stale-secret",
+        });
+      }
+
       return {
         settings: {
           ...next,
           providerInstances: providerInstances as ServerSettings["providerInstances"],
           usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
           bitbucket,
+          github: { ...next.github, tokens },
         },
         changes,
       };

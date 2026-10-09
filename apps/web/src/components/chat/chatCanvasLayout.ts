@@ -27,7 +27,7 @@ export const DETAILS_CARD_CLEARANCE = 32;
 export function resolveChatCanvasLayout({
   container,
   preview,
-  padding = 20,
+  padding = 48,
   maxChatWidth = 768,
   minChatWidth = 640,
   composerHeight = 0,

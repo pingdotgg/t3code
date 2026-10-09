@@ -2,7 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as OtlpResource from "effect/unstable/observability/OtlpResource";
+import * as OtlpResource from "effect/observability/OtlpResource";
 
 import * as OtelEnvironment from "./otelEnvironment.ts";
 
@@ -488,13 +488,16 @@ describe("OtelEnvironment", () => {
       { name: "encoded separators", raw: "a%2Cb=x%3Dy", attributes: ["a,b"] },
     ])("lets the exporters' own read succeed with $name", ({ raw, attributes }) =>
       Effect.gen(function* () {
-        const env = ConfigProvider.layer(
+        const layerEnv = ConfigProvider.layer(
           ConfigProvider.fromEnv({ env: { OTEL_RESOURCE_ATTRIBUTES: raw } }),
         );
-        const otel = yield* OtelEnvironment.load.pipe(Effect.provide(env));
+        const otel = yield* OtelEnvironment.load.pipe(Effect.provide(layerEnv));
         const resource = yield* OtlpResource.fromConfig({ serviceName: "t3" }).pipe(
           Effect.provide(
-            Layer.provide(OtelEnvironment.layerResourceAttributes(otel.resourceAttributes), env),
+            Layer.provide(
+              OtelEnvironment.layerResourceAttributes(otel.resourceAttributes),
+              layerEnv,
+            ),
           ),
         );
         assert.deepStrictEqual(

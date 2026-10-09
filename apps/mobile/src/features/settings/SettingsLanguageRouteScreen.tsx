@@ -1,5 +1,5 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {

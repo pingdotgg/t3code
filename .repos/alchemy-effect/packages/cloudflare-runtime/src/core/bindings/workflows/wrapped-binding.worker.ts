@@ -128,6 +128,13 @@ class InstanceImpl implements WorkflowInstance {
     return structuredClone(res);
   }
 
+  public async subscribe(
+    options?: WorkflowInstanceSubscribeOptions,
+  ): Promise<WorkflowInstanceSubscription> {
+    using instance = await this.getInstance();
+    return await instance.subscribe(options);
+  }
+
   public async sendEvent(args: {
     payload: unknown;
     type: string;

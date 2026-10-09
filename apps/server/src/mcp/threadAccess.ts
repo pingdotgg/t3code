@@ -11,6 +11,7 @@ import {
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 
+import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as OrchestrationMcp from "./OrchestratorMcpService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -20,6 +21,18 @@ export const unavailable = () =>
     code: "orchestration_error",
     message: "The operation could not be completed.",
   });
+
+/** Decider string rejections are public; wrapped storage and hydration causes are not. */
+export const dispatchFailure = (error: OrchestratorV2Error) =>
+  (error._tag === "OrchestratorDispatchError" ||
+    error._tag === "OrchestratorCommandRejectedError") &&
+  typeof error.cause === "string" &&
+  error.cause.length > 0
+    ? new OrchestratorMcpFailure({
+        code: "orchestration_error",
+        message: Array.from(error.cause).slice(0, 1000).join(""),
+      })
+    : unavailable();
 
 /**
  * The most a caller may hand to the threads it targets. A thread caller is
@@ -47,6 +60,15 @@ export const readCaller = Effect.fn("mcp.readCaller")(function* () {
       message: "This credential cannot control threads.",
     });
   }
+  return yield* loadCaller();
+});
+
+/**
+ * The caller and its limits, whichever tools its credential grants. Tools
+ * check their own capability; `McpToolAccess` uses this for every tool.
+ */
+export const loadCaller = Effect.fn("mcp.loadCaller")(function* () {
+  const scope = yield* McpInvocationContext.McpInvocationContext;
   const threads = yield* ThreadManagement.ThreadManagementService;
   if (scope.thread === undefined) {
     return {
@@ -54,7 +76,7 @@ export const readCaller = Effect.fn("mcp.readCaller")(function* () {
       threads,
       caller: undefined,
       limits: {
-        runtimeMode: scope.client?.runtimeModeCeiling ?? "approval-required",
+        runtimeMode: McpInvocationContext.clientRuntimeModeCeiling(scope.client),
         interactionMode: "default",
       },
     } satisfies Caller;
@@ -91,7 +113,12 @@ export const assertTargetWithinLimits = (
     Effect.asVoid,
   );
 
-function assertLiveCaller({ caller, scope }: Caller) {
+/**
+ * A thread caller acts only while it owns a live run of a thread that is not
+ * archived, so a provider token that outlived its session cannot act. An
+ * OAuth client has no run; its session and ceiling are its authority.
+ */
+export function assertLiveCaller({ caller, scope }: Caller) {
   if (caller === undefined) return Effect.void;
   return caller.archivedAt !== null ||
     caller.activeRunId === null ||
@@ -106,34 +133,14 @@ function assertLiveCaller({ caller, scope }: Caller) {
 }
 
 /**
- * Mutations from a thread need that thread's live run, so an agent whose turn
- * ended cannot keep acting. An OAuth client has no run; its session and
- * ceiling are its authority.
+ * Actions that change the environment itself (projects, preferences) need full
+ * access: a thread caller in full-access/default mode, or a client approved
+ * with a full-access ceiling.
  */
-export const readMutationCaller = Effect.fn("mcp.readMutationCaller")(function* () {
-  const context = yield* readCaller();
-  yield* assertLiveCaller(context);
-  return context;
-});
-
-/**
- * Actions that change the environment itself (projects, preferences, launching
- * outside a project) need full access: a thread caller in full-access/default
- * mode, or a client approved with a full-access ceiling.
- */
-export const readFullAccessCaller = Effect.fn("mcp.readFullAccessCaller")(function* (
-  message: string,
-) {
-  const context = yield* readMutationCaller();
-  if (
-    (context.caller !== undefined && context.caller.archivedAt !== null) ||
-    context.limits.runtimeMode !== "full-access" ||
-    context.limits.interactionMode !== "default"
-  ) {
-    return yield* new OrchestratorMcpFailure({ code: "capability_denied", message });
-  }
-  return context;
-});
+export const assertFullAccess = (context: Caller, message: string) =>
+  context.limits.runtimeMode === "full-access" && context.limits.interactionMode === "default"
+    ? Effect.void
+    : Effect.fail(new OrchestratorMcpFailure({ code: "capability_denied", message }));
 
 /** A target project: the one passed, else the calling thread's. */
 export const resolveProjectId = (context: Caller, projectId: ProjectId | undefined) =>
@@ -189,15 +196,6 @@ export const readThread = Effect.fn("mcp.readThread")(function* <
       ),
     );
   return { ...context, projection };
-});
-
-export const readWritableThread = Effect.fn("mcp.readWritableThread")(function* <
-  K extends ProjectionRecordField = never,
->(threadId?: ThreadId, fields: ReadonlyArray<K> = []) {
-  const context = yield* readThread(threadId, fields);
-  yield* assertLiveCaller(context);
-  yield* assertTargetWithinLimits(context.limits, context.projection.thread);
-  return context;
 });
 
 export const newCommandId = Effect.fn("mcp.newCommandId")(function* () {

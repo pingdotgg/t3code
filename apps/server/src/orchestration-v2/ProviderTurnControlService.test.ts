@@ -24,7 +24,7 @@ import * as Stream from "effect/Stream";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import type { ProviderAdapterV2SessionRuntime } from "./ProviderAdapter.ts";
+import type { ProviderAdapterV2SessionRuntime } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 
@@ -207,12 +207,13 @@ it.effect(
         rollbackThread: () => Effect.die("unused rollbackThread"),
         forkThread: () => Effect.die("unused forkThread"),
       };
-      const projectionLayer = Layer.succeed(
+      const layerProjection = Layer.succeed(
         ProjectionStore.ProjectionStoreV2,
         ProjectionStore.ProjectionStoreV2.of({
           apply: () => Effect.void,
           getLimitRecoveryCandidates: () => Effect.die("unused getLimitRecoveryCandidates"),
           getShellSnapshot: () => Effect.die("unused getShellSnapshot"),
+          readShellSnapshot: () => Effect.die("unused readShellSnapshot"),
           getThreadShell: () => Effect.die("unused getThreadShell"),
           getThread: () => Ref.get(projection).pipe(Effect.map((state) => state.thread)),
           getSettlementCandidates: () => Effect.die("unused getSettlementCandidates"),
@@ -224,6 +225,9 @@ it.effect(
           getPlan: () => Effect.die("unused"),
           hasUnpairedRunInterruptRequest: () => Effect.die("unused interrupt read"),
           getThreadAttachmentIds: () => Effect.die("Unused attachment lookup"),
+          searchThread: () => Effect.die("unused"),
+          searchThreadStream: () => Stream.empty,
+          getThreadHistoryPage: () => Effect.die("unused"),
           getTimelinePage: () => Effect.die("Unused timeline read"),
           getMessageCount: () => Effect.die("unused message count"),
           getNextTurnItemOrdinal: () => Effect.die("unused ordinal read"),
@@ -258,7 +262,7 @@ it.effect(
           getThreadSnapshotWindow: () => Effect.die("unused getThreadSnapshotWindow"),
         }),
       );
-      const sessionManagerLayer = Layer.succeed(
+      const layerSessionManager = Layer.succeed(
         ProviderSessionManager.ProviderSessionManagerV2,
         ProviderSessionManager.ProviderSessionManagerV2.of({
           shutdown: Effect.void,
@@ -273,8 +277,8 @@ it.effect(
           detach: () => Effect.void,
         }),
       );
-      const controlLayer = ProviderTurnControlService.layer.pipe(
-        Layer.provide(Layer.merge(projectionLayer, sessionManagerLayer)),
+      const layerControl = ProviderTurnControlService.layer.pipe(
+        Layer.provide(Layer.merge(layerProjection, layerSessionManager)),
       );
 
       const [ordinaryInterrupt, unrelatedRestart] = yield* Effect.gen(function* () {
@@ -298,7 +302,7 @@ it.effect(
           }),
         );
         return [ordinary, unrelated] as const;
-      }).pipe(Effect.provide(controlLayer));
+      }).pipe(Effect.provide(layerControl));
 
       assert.isTrue(Exit.isFailure(ordinaryInterrupt));
       assert.isTrue(Exit.isFailure(unrelatedRestart));
@@ -314,7 +318,7 @@ it.effect(
           providerTurnId,
           interruptedAttemptId: attemptId,
         });
-      }).pipe(Effect.provide(controlLayer));
+      }).pipe(Effect.provide(layerControl));
 
       const interrupted = yield* Ref.get(interruptedThread);
       assert.isNotNull(interrupted);

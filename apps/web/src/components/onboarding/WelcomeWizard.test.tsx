@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
@@ -10,7 +11,14 @@ const mocks = vi.hoisted(() => ({
   complete: vi.fn(),
   refresh: vi.fn(),
   toast: vi.fn(),
+  connectionPhase: "connected" as EnvironmentConnectionPresentation["phase"],
   projects: [] as Array<{ id: string; environmentId: string; workspaceRoot: string }>,
+}));
+vi.mock("../../state/session", () => ({
+  useEnvironmentScope: () => true,
+  useEnvironmentsWithScope: (environments: Array<{ environmentId: string }>) =>
+    new Set(environments.map((entry) => entry.environmentId)),
+  readEnvironmentScope: () => true,
 }));
 vi.mock("../../state/agentSessions", () => ({ agentSessionImport: "import" }));
 vi.mock("../../state/projects", () => ({ projectEnvironment: { create: "create" } }));
@@ -31,7 +39,12 @@ vi.mock("../../state/environments", () => {
   const environment = {
     environmentId: "test-env",
     label: "Computer",
-    connection: { phase: "connected" },
+    connection: {
+      get phase() {
+        return mocks.connectionPhase;
+      },
+    },
+    entry: { enabled: true },
   };
   return {
     useEnvironments: () => ({ environments: [environment] }),
@@ -93,6 +106,7 @@ let container: HTMLDivElement;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.connectionPhase = "connected";
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -129,6 +143,24 @@ async function click(label: string) {
   expect(button, `button ${label}`).toBeDefined();
   await act(async () => button!.click());
 }
+
+it.each([
+  ["connected", "Connected"],
+  ["connecting", "Connecting…"],
+  ["reconnecting", "Reconnecting…"],
+  ["unsupported", "Client not supported"],
+  ["error", "Connection failed"],
+  ["offline", "Offline"],
+  ["available", "Not connected"],
+] as const)("shows the actual %s connection state", async (phase, label) => {
+  mocks.connectionPhase = phase;
+  await act(async () => root.render(<WelcomeWizard localAvailable onDone={vi.fn()} />));
+  const computer = document.querySelector("fieldset label");
+  expect(computer?.textContent).toContain(label);
+  if (phase !== "connecting") {
+    expect(computer?.textContent).not.toContain("Connecting…");
+  }
+});
 
 it("enters the workspace after a partial import and warns after navigation finishes", async () => {
   let finishNavigation = () => {};

@@ -1,0 +1,180 @@
+---
+title: TanStack Start
+description: Deploy TanStack Start to Prisma Compute with Prisma.Website.TanStackStart — React or Solid SSR on Bun, with native Vite dev locally.
+sidebar:
+  order: 8
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks @vercel/nft";
+
+`Prisma.Website.TanStackStart` builds [TanStack Start](https://tanstack.com/start)
+for React or Solid through your project's Vite pipeline. The shared
+Node target wraps its fetch handler as an HTTP server; SSR and client
+assets run on **Bun in Prisma Compute** from a `tar.gz` upload. There
+is no Docker image or registry.
+
+## Install
+
+Install the build-time integration; the resource loads `/tanstack-start`
+and `/tanstack-start/node` from your project:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun"><Code code={`bun add -d ${devDeps}`} lang="sh" /></TabItem>
+  <TabItem label="npm" icon="npm"><Code code={`npm install -D ${devDeps}`} lang="sh" /></TabItem>
+  <TabItem label="pnpm" icon="pnpm"><Code code={`pnpm add -D ${devDeps}`} lang="sh" /></TabItem>
+  <TabItem label="yarn" icon="seti:yarn"><Code code={`yarn add -D ${devDeps}`} lang="sh" /></TabItem>
+</Tabs>
+
+## Configure Vite
+
+Keep the framework plugin and normal Vite plugins. For React:
+
+```typescript
+// vite.config.ts
+import tailwindcss from "@tailwindcss/vite";
+import { tanstackStart } from "@tanstack/react-start/plugin/vite";
+import viteReact from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [tailwindcss(), tanstackStart(), viteReact()],
+});
+```
+
+The integration drives `builder.buildApp()` and makes the SSR bundle
+self-contained. No deployment adapter is required.
+
+:::caution[Remove the Cloudflare Vite plugin]
+If the scaffold includes `@cloudflare/vite-plugin`, remove it. It
+builds for workerd, not the Node-compatible target hosted on Prisma:
+
+```diff lang="typescript"
+-import { cloudflare } from "@cloudflare/vite-plugin";
+import { tanstackStart } from "@tanstack/react-start/plugin/vite";
+import viteReact from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+-  plugins: [cloudflare({ viteEnvironment: { name: "ssr" } }), tanstackStart(), viteReact()],
++  plugins: [tanstackStart(), viteReact()],
+});
+```
+
+:::
+
+## Declare the Website
+
+```typescript
+// alchemy.run.ts
+import * as Prisma from "alchemy/Prisma";
+
+export const Website = Prisma.Website.TanStackStart("Website", {
+  rootDir: "./app",
+});
+```
+
+Omit `rootDir` for an app at `.`. Live deploy creates a database-less
+Prisma project if `project` is omitted; pass an existing project to
+share it with other apps.
+
+## Add it to the Stack
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyTanStackSite",
+  { providers: Prisma.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+Client assets are served first; misses go to SSR, server routes, or
+server functions. `site.url` is the Compute endpoint on deploy.
+
+## Add environment variables
+
+```diff lang="typescript"
+export const Website = Prisma.Website.TanStackStart("Website", {
+  rootDir: "./app",
++  env: { API_BASE: "https://api.example.com" },
+});
+```
+
+`env` is applied before build and dev and passed to Compute. Vite
+inlines `VITE_*` values into the browser bundle; keep secrets out of
+those keys. Sibling outputs can feed `env` inside the Stack generator.
+
+## Read the environment in a server function
+
+```typescript
+// src/routes/index.tsx
+import { createServerFn } from "@tanstack/react-start";
+
+const getApiBase = createServerFn({ method: "GET" }).handler(() => ({
+  apiBase: process.env.API_BASE ?? "unset",
+}));
+```
+
+Server functions run on Bun and read `process.env`.
+
+## Read the environment in a server route
+
+```typescript
+// src/routes/api.hello.ts
+import { createFileRoute } from "@tanstack/react-router";
+
+export const Route = createFileRoute("/api/hello")({
+  server: {
+    handlers: {
+      GET: () => new Response(process.env.API_BASE ?? "unset"),
+    },
+  },
+});
+```
+
+Server routes use the same process environment.
+
+## Build configuration
+
+Your `vite.config.ts` is the build configuration. Keep Vite's default
+output directory, `dist`; the integration reads `dist/server` and
+`dist/client`. Static files are served by Compute, not deployed as an
+independent CDN site.
+
+## Local dev
+
+`bun alchemy dev` starts TanStack Start's native Vite server with HMR
+and creates no Prisma resources for the Website. Opt into live deployment
+during dev explicitly:
+
+```typescript
+export const Website = Prisma.Website.TanStackStart("Website").pipe(
+  Alchemy.remote(),
+);
+```
+
+## Custom domain
+
+```typescript
+const site = yield* Prisma.Website.TanStackStart("Web", {
+  domain: "app.example.com",
+});
+```
+
+`Prisma.CustomDomain` requires the app to be on the current default
+branch. Configure returned DNS records yourself and verify status before
+cutover; see [Custom domains](/prisma/frontend/websites#custom-domains).
+
+## Where next
+
+- [TanStack Start API](/providers/prisma/website/tanstackstart).
+- [TanStack Start example](https://github.com/alchemy-run/alchemy/tree/main/examples/prisma-website-tanstack-start).
+- [Websites](/prisma/frontend/websites) and [Compute apps](/prisma/compute/apps).

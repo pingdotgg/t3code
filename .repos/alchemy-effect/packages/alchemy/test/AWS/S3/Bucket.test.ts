@@ -11,6 +11,7 @@ import { Stack, type StackSpec } from "@/Stack.ts";
 import { Stage } from "@/Stage.ts";
 import { State } from "@/State";
 import * as Test from "@/Test/Alchemy";
+import { inMemoryState } from "@/State";
 import { Credentials, fromCredentials } from "@distilled.cloud/aws/Credentials";
 import { Region } from "@distilled.cloud/aws/Region";
 import * as KMS from "@distilled.cloud/aws/kms";
@@ -23,8 +24,8 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 
 const { test } = Test.make({ providers: AWS.providers() });
 
@@ -158,7 +159,7 @@ test.provider(
       );
       expect(absent).toBe(true);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:s3", "live"], timeout: 120_000 },
 );
 
 for (const aspect of ["tagging", "encryption"] as const) {
@@ -240,13 +241,8 @@ for (const aspect of ["tagging", "encryption"] as const) {
                 encryption.ServerSideEncryptionConfiguration!,
             });
           }
-          if (aspect === "tagging") {
-            const plan = yield* stack.plan(desired);
-            expect(plan.resources.ReadFailureBucket?.action).toBe("update");
-          } else {
-            const failure = yield* stack.plan(desired).pipe(Effect.flip);
-            expect(failure._tag).toBe("AccessDeniedException");
-          }
+          const planningFailure = yield* stack.plan(desired).pipe(Effect.flip);
+          expect(planningFailure._tag).toBe("AccessDeniedException");
           const failure = yield* stack.deploy(desired).pipe(Effect.flip);
           expect(failure._tag).toBe("AccessDeniedException");
         }).pipe(Effect.ensuring(restorePolicy.pipe(Effect.orDie)));
@@ -283,7 +279,7 @@ for (const aspect of ["tagging", "encryption"] as const) {
         yield* stack.destroy();
         yield* assertBucketDeleted(bucket.bucketName);
       }),
-    { timeout: 120_000 },
+    { tags: ["provider:aws", "provider:aws:s3", "live"], timeout: 120_000 },
   );
 }
 
@@ -306,7 +302,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertBucketDeleted(bucket.bucketName);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:s3", "live"], timeout: 120_000 },
 );
 
 test.provider(
@@ -453,7 +449,10 @@ test.provider(
         ).toBe("PendingDeletion");
       }
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:kms", "provider:aws:s3", "live"],
+    timeout: 120_000,
+  },
 );
 
 for (const blocked of ["SSE-C", "NONE"] as const) {
@@ -509,7 +508,7 @@ for (const blocked of ["SSE-C", "NONE"] as const) {
         yield* stack.destroy();
         yield* assertBucketDeleted(bucket.bucketName);
       }),
-    { timeout: 120_000 },
+    { tags: ["provider:aws", "provider:aws:s3", "live"], timeout: 120_000 },
   );
 }
 
@@ -659,327 +658,356 @@ test.provider(
       );
       expect(absent).toBe(true);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:s3", "live"], timeout: 120_000 },
 );
 
-test.provider("create and delete bucket with default props", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "create and delete bucket with default props",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const bucket = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Bucket("DefaultBucket");
-      }),
-    );
+      const bucket = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Bucket("DefaultBucket");
+        }),
+      );
 
-    expect(bucket.bucketName).toBeDefined();
-    expect(bucket.bucketArn).toBeDefined();
-    expect(bucket.region).toBeDefined();
+      expect(bucket.bucketName).toBeDefined();
+      expect(bucket.bucketArn).toBeDefined();
+      expect(bucket.region).toBeDefined();
 
-    yield* S3.headBucket({ Bucket: bucket.bucketName });
+      yield* S3.headBucket({ Bucket: bucket.bucketName });
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* assertBucketDeleted(bucket.bucketName);
-  }),
+      yield* assertBucketDeleted(bucket.bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
-test.provider("create, update, delete bucket", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "create, update, delete bucket",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const bucket = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Bucket("TestBucket", {
-          bucketName: "alchemy-test-bucket-crud",
-          tags: { Environment: "test" },
-          forceDestroy: true,
-        });
-      }),
-    );
+      const bucket = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Bucket("TestBucket", {
+            bucketName: "alchemy-test-bucket-crud",
+            tags: { Environment: "test" },
+            forceDestroy: true,
+          });
+        }),
+      );
 
-    yield* S3.headBucket({ Bucket: bucket.bucketName });
+      yield* S3.headBucket({ Bucket: bucket.bucketName });
 
-    const tagging = yield* S3.getBucketTagging({
-      Bucket: bucket.bucketName,
-    });
-    expect(tagging.TagSet).toContainEqual({
-      Key: "Environment",
-      Value: "test",
-    });
+      const tagging = yield* S3.getBucketTagging({
+        Bucket: bucket.bucketName,
+      });
+      expect(tagging.TagSet).toContainEqual({
+        Key: "Environment",
+        Value: "test",
+      });
 
-    yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Bucket("TestBucket", {
-          bucketName: "alchemy-test-bucket-crud",
-          tags: { Environment: "production", Team: "platform" },
-          forceDestroy: true,
-        });
-      }),
-    );
+      yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Bucket("TestBucket", {
+            bucketName: "alchemy-test-bucket-crud",
+            tags: { Environment: "production", Team: "platform" },
+            forceDestroy: true,
+          });
+        }),
+      );
 
-    const updatedTagging = yield* S3.getBucketTagging({
-      Bucket: bucket.bucketName,
-    });
-    expect(updatedTagging.TagSet).toContainEqual({
-      Key: "Environment",
-      Value: "production",
-    });
-    expect(updatedTagging.TagSet).toContainEqual({
-      Key: "Team",
-      Value: "platform",
-    });
+      const updatedTagging = yield* S3.getBucketTagging({
+        Bucket: bucket.bucketName,
+      });
+      expect(updatedTagging.TagSet).toContainEqual({
+        Key: "Environment",
+        Value: "production",
+      });
+      expect(updatedTagging.TagSet).toContainEqual({
+        Key: "Team",
+        Value: "platform",
+      });
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* assertBucketDeleted(bucket.bucketName);
-  }),
+      yield* assertBucketDeleted(bucket.bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
-test.provider("create bucket with custom name", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "create bucket with custom name",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const bucket = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Bucket("CustomNameBucket", {
-          bucketName: "alchemy-test-bucket-custom-name",
-          forceDestroy: true,
-        });
-      }),
-    );
+      const bucket = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Bucket("CustomNameBucket", {
+            bucketName: "alchemy-test-bucket-custom-name",
+            forceDestroy: true,
+          });
+        }),
+      );
 
-    expect(bucket.bucketName).toEqual("alchemy-test-bucket-custom-name");
-    expect(bucket.bucketArn).toEqual(
-      "arn:aws:s3:::alchemy-test-bucket-custom-name",
-    );
+      expect(bucket.bucketName).toEqual("alchemy-test-bucket-custom-name");
+      expect(bucket.bucketArn).toEqual(
+        "arn:aws:s3:::alchemy-test-bucket-custom-name",
+      );
 
-    yield* S3.headBucket({ Bucket: bucket.bucketName });
+      yield* S3.headBucket({ Bucket: bucket.bucketName });
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* assertBucketDeleted(bucket.bucketName);
-  }),
+      yield* assertBucketDeleted(bucket.bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
-test.provider("create bucket with forceDestroy", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "create bucket with forceDestroy",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const bucket = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Bucket("ForceDestroyBucket", {
-          bucketName: "alchemy-test-bucket-force-destroy",
-          forceDestroy: true,
-        });
-      }),
-    );
+      const bucket = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Bucket("ForceDestroyBucket", {
+            bucketName: "alchemy-test-bucket-force-destroy",
+            forceDestroy: true,
+          });
+        }),
+      );
 
-    yield* S3.putObject({
-      Bucket: bucket.bucketName,
-      Key: "test-object.txt",
-      Body: "Hello, World!",
-    });
+      yield* S3.putObject({
+        Bucket: bucket.bucketName,
+        Key: "test-object.txt",
+        Body: "Hello, World!",
+      });
 
-    // A heavily parallel account sweep can briefly observe the successful
-    // PutObject before the object is readable through a different S3
-    // endpoint. Retry only the typed visibility miss, with a hard bound;
-    // authorization and request-shape errors still fail immediately.
-    yield* S3.headObject({
-      Bucket: bucket.bucketName,
-      Key: "test-object.txt",
-    }).pipe(
-      Effect.retry({
-        while: (error) => error._tag === "NotFound",
-        schedule: Schedule.max([Schedule.exponential(100), Schedule.recurs(6)]),
-      }),
-    );
+      // A heavily parallel account sweep can briefly observe the successful
+      // PutObject before the object is readable through a different S3
+      // endpoint. Retry only the typed visibility miss, with a hard bound;
+      // authorization and request-shape errors still fail immediately.
+      yield* S3.headObject({
+        Bucket: bucket.bucketName,
+        Key: "test-object.txt",
+      }).pipe(
+        Effect.retry({
+          while: (error) => error._tag === "NotFound",
+          schedule: Schedule.max([
+            Schedule.exponential(100),
+            Schedule.recurs(6),
+          ]),
+        }),
+      );
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* assertBucketDeleted(bucket.bucketName);
-  }),
+      yield* assertBucketDeleted(bucket.bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
-test.provider("idempotent create - bucket already exists", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "idempotent create - bucket already exists",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const bucket1 = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Bucket("IdempotentBucket", {
-          bucketName: "alchemy-test-bucket-idempotent",
-          forceDestroy: true,
-        });
-      }),
-    );
-    const bucketName = bucket1.bucketName;
+      const bucket1 = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Bucket("IdempotentBucket", {
+            bucketName: "alchemy-test-bucket-idempotent",
+            forceDestroy: true,
+          });
+        }),
+      );
+      const bucketName = bucket1.bucketName;
 
-    const bucket2 = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Bucket("IdempotentBucket", {
-          bucketName: "alchemy-test-bucket-idempotent",
-          forceDestroy: true,
-        });
-      }),
-    );
-    expect(bucket2.bucketName).toEqual(bucketName);
+      const bucket2 = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Bucket("IdempotentBucket", {
+            bucketName: "alchemy-test-bucket-idempotent",
+            forceDestroy: true,
+          });
+        }),
+      );
+      expect(bucket2.bucketName).toEqual(bucketName);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* assertBucketDeleted(bucketName);
-  }),
+      yield* assertBucketDeleted(bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
-test.provider("create bucket with objectLockEnabled", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "create bucket with objectLockEnabled",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const bucket = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Bucket("ObjectLockBucket", {
-          bucketName: "alchemy-test-bucket-object-lock",
-          objectLockEnabled: true,
-          forceDestroy: true,
-        });
-      }),
-    );
+      const bucket = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Bucket("ObjectLockBucket", {
+            bucketName: "alchemy-test-bucket-object-lock",
+            objectLockEnabled: true,
+            forceDestroy: true,
+          });
+        }),
+      );
 
-    const objectLockConfig = yield* S3.getObjectLockConfiguration({
-      Bucket: bucket.bucketName,
-    });
-    expect(objectLockConfig.ObjectLockConfiguration?.ObjectLockEnabled).toEqual(
-      "Enabled",
-    );
+      const objectLockConfig = yield* S3.getObjectLockConfiguration({
+        Bucket: bucket.bucketName,
+      });
+      expect(
+        objectLockConfig.ObjectLockConfiguration?.ObjectLockEnabled,
+      ).toEqual("Enabled");
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* assertBucketDeleted(bucket.bucketName);
-  }),
+      yield* assertBucketDeleted(bucket.bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
-test.provider("remove all tags from bucket", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "remove all tags from bucket",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const bucket = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Bucket("TagRemovalBucket", {
-          bucketName: "alchemy-test-bucket-tag-removal",
-          tags: { Environment: "test", Team: "platform" },
-          forceDestroy: true,
-        });
-      }),
-    );
-    const bucketName = bucket.bucketName;
+      const bucket = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Bucket("TagRemovalBucket", {
+            bucketName: "alchemy-test-bucket-tag-removal",
+            tags: { Environment: "test", Team: "platform" },
+            forceDestroy: true,
+          });
+        }),
+      );
+      const bucketName = bucket.bucketName;
 
-    const tagging = yield* S3.getBucketTagging({
-      Bucket: bucketName,
-    });
-    expect(tagging.TagSet).toHaveLength(2);
+      const tagging = yield* S3.getBucketTagging({
+        Bucket: bucketName,
+      });
+      expect(tagging.TagSet).toHaveLength(2);
 
-    yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Bucket("TagRemovalBucket", {
-          bucketName: "alchemy-test-bucket-tag-removal",
-          forceDestroy: true,
-        });
-      }),
-    );
+      yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Bucket("TagRemovalBucket", {
+            bucketName: "alchemy-test-bucket-tag-removal",
+            forceDestroy: true,
+          });
+        }),
+      );
 
-    const result = yield* S3.getBucketTagging({
-      Bucket: bucketName,
-    }).pipe(
-      Effect.map(() => "has-tags" as const),
-      Effect.catchTag("NoSuchTagSet", () => Effect.succeed("no-tags" as const)),
-    );
-    expect(result).toEqual("no-tags");
+      const result = yield* S3.getBucketTagging({
+        Bucket: bucketName,
+      }).pipe(
+        Effect.map(() => "has-tags" as const),
+        Effect.catchTag("NoSuchTagSet", () =>
+          Effect.succeed("no-tags" as const),
+        ),
+      );
+      expect(result).toEqual("no-tags");
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* assertBucketDeleted(bucketName);
-  }),
+      yield* assertBucketDeleted(bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
-test.provider("create and remove bucket policy from bindings", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "create and remove bucket policy from bindings",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const distributionArn =
-      "arn:aws:cloudfront::123456789012:distribution/TESTDIST";
-    const bucketArn = "arn:aws:s3:::alchemy-test-bucket-policy-bindings";
+      const distributionArn =
+        "arn:aws:cloudfront::123456789012:distribution/TESTDIST";
+      const bucketArn = "arn:aws:s3:::alchemy-test-bucket-policy-bindings";
 
-    const bucket = yield* stack.deploy(
-      Effect.gen(function* () {
-        const bucket = yield* Bucket("PolicyBucket", {
-          bucketName: "alchemy-test-bucket-policy-bindings",
-          forceDestroy: true,
-        });
+      const bucket = yield* stack.deploy(
+        Effect.gen(function* () {
+          const bucket = yield* Bucket("PolicyBucket", {
+            bucketName: "alchemy-test-bucket-policy-bindings",
+            forceDestroy: true,
+          });
 
-        yield* bucket.bind("AWS.S3.Policy(TestDistribution, PolicyBucket)", {
-          policyStatements: [
-            {
-              Effect: "Allow",
-              Principal: {
-                Service: "cloudfront.amazonaws.com",
-              },
-              Action: ["s3:GetObject"],
-              Resource: [`${bucketArn}/*`],
-              Condition: {
-                StringEquals: {
-                  "AWS:SourceArn": distributionArn,
+          yield* bucket.bind("AWS.S3.Policy(TestDistribution, PolicyBucket)", {
+            policyStatements: [
+              {
+                Effect: "Allow",
+                Principal: {
+                  Service: "cloudfront.amazonaws.com",
+                },
+                Action: ["s3:GetObject"],
+                Resource: [`${bucketArn}/*`],
+                Condition: {
+                  StringEquals: {
+                    "AWS:SourceArn": distributionArn,
+                  },
                 },
               },
-            },
-          ],
-        });
+            ],
+          });
 
-        return bucket;
-      }),
-    );
+          return bucket;
+        }),
+      );
 
-    const bucketPolicy = yield* S3.getBucketPolicy({
-      Bucket: bucket.bucketName,
-    }).pipe(Effect.map((response) => JSON.parse(response.Policy!)));
-    const statement = bucketPolicy.Statement[0];
+      const bucketPolicy = yield* S3.getBucketPolicy({
+        Bucket: bucket.bucketName,
+      }).pipe(Effect.map((response) => JSON.parse(response.Policy!)));
+      const statement = bucketPolicy.Statement[0];
 
-    expect(bucketPolicy.Version).toEqual("2012-10-17");
-    expect(statement.Effect).toEqual("Allow");
-    expect(statement.Principal).toEqual({
-      Service: "cloudfront.amazonaws.com",
-    });
-    expect(statement.Action).toEqual("s3:GetObject");
-    expect(statement.Resource).toEqual(`${bucketArn}/*`);
-    expect(statement.Condition).toEqual({
-      StringEquals: {
-        "AWS:SourceArn": distributionArn,
-      },
-    });
+      expect(bucketPolicy.Version).toEqual("2012-10-17");
+      expect(statement.Effect).toEqual("Allow");
+      expect(statement.Principal).toEqual({
+        Service: "cloudfront.amazonaws.com",
+      });
+      expect(statement.Action).toEqual("s3:GetObject");
+      expect(statement.Resource).toEqual(`${bucketArn}/*`);
+      expect(statement.Condition).toEqual({
+        StringEquals: {
+          "AWS:SourceArn": distributionArn,
+        },
+      });
 
-    yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Bucket("PolicyBucket", {
-          bucketName: "alchemy-test-bucket-policy-bindings",
-          forceDestroy: true,
-        });
-      }),
-    );
+      yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Bucket("PolicyBucket", {
+            bucketName: "alchemy-test-bucket-policy-bindings",
+            forceDestroy: true,
+          });
+        }),
+      );
 
-    const policyAfterRemoval = yield* S3.getBucketPolicy({
-      Bucket: bucket.bucketName,
-    }).pipe(
-      Effect.map(() => "has-policy" as const),
-      Effect.catchTag("NoSuchBucketPolicy", () =>
-        Effect.succeed("no-policy" as const),
-      ),
-    );
+      const policyAfterRemoval = yield* S3.getBucketPolicy({
+        Bucket: bucket.bucketName,
+      }).pipe(
+        Effect.map(() => "has-policy" as const),
+        Effect.catchTag("NoSuchBucketPolicy", () =>
+          Effect.succeed("no-policy" as const),
+        ),
+      );
 
-    expect(policyAfterRemoval).toEqual("no-policy");
+      expect(policyAfterRemoval).toEqual("no-policy");
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* assertBucketDeleted(bucket.bucketName);
-  }),
+      yield* assertBucketDeleted(bucket.bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
 // Engine-level adoption: S3 has no per-stack ownership signal (we don't
@@ -1068,277 +1096,298 @@ test.provider(
         Effect.ensuring(deleteBucketIfExists(bucketName).pipe(Effect.ignore)),
       );
     }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
 // Canonical `list()` test (AWS account/region-scoped collection): deploy a
 // real bucket, resolve the provider from context via `findProviderByType`,
 // call `list()`, and assert the deployed bucket appears in the
 // exhaustively-paginated result.
-test.provider("list enumerates the deployed bucket", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list enumerates the deployed bucket",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const bucket = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Bucket("ListBucket", {
-          bucketName: "alchemy-test-bucket-list",
+      const bucket = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Bucket("ListBucket", {
+            bucketName: "alchemy-test-bucket-list",
+            forceDestroy: true,
+          });
+        }),
+      );
+
+      const provider = yield* Provider.findProvider(Bucket);
+      const all = yield* provider.list();
+
+      expect(all.some((b) => b.bucketName === bucket.bucketName)).toBe(true);
+
+      yield* stack.destroy();
+
+      yield* assertBucketDeleted(bucket.bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
+);
+
+test.provider(
+  "versioning enable then suspend",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const name = "alchemy-test-bucket-versioning";
+      const bucket = yield* stack.deploy(
+        Bucket("VersioningBucket", {
+          bucketName: name,
+          versioning: "Enabled",
           forceDestroy: true,
-        });
-      }),
-    );
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(Bucket);
-    const all = yield* provider.list();
+      const v1 = yield* S3.getBucketVersioning({ Bucket: bucket.bucketName });
+      expect(v1.Status).toEqual("Enabled");
 
-    expect(all.some((b) => b.bucketName === bucket.bucketName)).toBe(true);
+      yield* stack.deploy(
+        Bucket("VersioningBucket", {
+          bucketName: name,
+          versioning: "Suspended",
+          forceDestroy: true,
+        }),
+      );
 
-    yield* stack.destroy();
+      const v2 = yield* S3.getBucketVersioning({ Bucket: bucket.bucketName });
+      expect(v2.Status).toEqual("Suspended");
 
-    yield* assertBucketDeleted(bucket.bucketName);
-  }),
+      yield* stack.destroy();
+      yield* assertBucketDeleted(bucket.bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
-test.provider("versioning enable then suspend", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "encryption SSE-S3 set and update bucketKey",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const name = "alchemy-test-bucket-versioning";
-    const bucket = yield* stack.deploy(
-      Bucket("VersioningBucket", {
-        bucketName: name,
-        versioning: "Enabled",
-        forceDestroy: true,
-      }),
-    );
+      const name = "alchemy-test-bucket-encryption";
+      const bucket = yield* stack.deploy(
+        Bucket("EncryptionBucket", {
+          bucketName: name,
+          encryption: { sseAlgorithm: "AES256" },
+          forceDestroy: true,
+        }),
+      );
 
-    const v1 = yield* S3.getBucketVersioning({ Bucket: bucket.bucketName });
-    expect(v1.Status).toEqual("Enabled");
+      const e1 = yield* S3.getBucketEncryption({ Bucket: bucket.bucketName });
+      expect(
+        e1.ServerSideEncryptionConfiguration?.Rules?.[0]
+          ?.ApplyServerSideEncryptionByDefault?.SSEAlgorithm,
+      ).toEqual("AES256");
 
-    yield* stack.deploy(
-      Bucket("VersioningBucket", {
-        bucketName: name,
-        versioning: "Suspended",
-        forceDestroy: true,
-      }),
-    );
+      yield* stack.deploy(
+        Bucket("EncryptionBucket", {
+          bucketName: name,
+          encryption: { sseAlgorithm: "AES256", bucketKeyEnabled: true },
+          forceDestroy: true,
+        }),
+      );
 
-    const v2 = yield* S3.getBucketVersioning({ Bucket: bucket.bucketName });
-    expect(v2.Status).toEqual("Suspended");
+      const e2 = yield* S3.getBucketEncryption({ Bucket: bucket.bucketName });
+      expect(
+        e2.ServerSideEncryptionConfiguration?.Rules?.[0]?.BucketKeyEnabled,
+      ).toEqual(true);
 
-    yield* stack.destroy();
-    yield* assertBucketDeleted(bucket.bucketName);
-  }),
+      yield* stack.destroy();
+      yield* assertBucketDeleted(bucket.bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
-test.provider("encryption SSE-S3 set and update bucketKey", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "public access block set, update, remove",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const name = "alchemy-test-bucket-encryption";
-    const bucket = yield* stack.deploy(
-      Bucket("EncryptionBucket", {
-        bucketName: name,
-        encryption: { sseAlgorithm: "AES256" },
-        forceDestroy: true,
-      }),
-    );
-
-    const e1 = yield* S3.getBucketEncryption({ Bucket: bucket.bucketName });
-    expect(
-      e1.ServerSideEncryptionConfiguration?.Rules?.[0]
-        ?.ApplyServerSideEncryptionByDefault?.SSEAlgorithm,
-    ).toEqual("AES256");
-
-    yield* stack.deploy(
-      Bucket("EncryptionBucket", {
-        bucketName: name,
-        encryption: { sseAlgorithm: "AES256", bucketKeyEnabled: true },
-        forceDestroy: true,
-      }),
-    );
-
-    const e2 = yield* S3.getBucketEncryption({ Bucket: bucket.bucketName });
-    expect(
-      e2.ServerSideEncryptionConfiguration?.Rules?.[0]?.BucketKeyEnabled,
-    ).toEqual(true);
-
-    yield* stack.destroy();
-    yield* assertBucketDeleted(bucket.bucketName);
-  }),
-);
-
-test.provider("public access block set, update, remove", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
-
-    const name = "alchemy-test-bucket-pab";
-    const bucket = yield* stack.deploy(
-      Bucket("PabBucket", {
-        bucketName: name,
-        publicAccessBlock: {
-          blockPublicAcls: true,
-          ignorePublicAcls: true,
-          blockPublicPolicy: true,
-          restrictPublicBuckets: true,
-        },
-        forceDestroy: true,
-      }),
-    );
-
-    const p1 = yield* S3.getPublicAccessBlock({ Bucket: bucket.bucketName });
-    expect(p1.PublicAccessBlockConfiguration?.BlockPublicAcls).toEqual(true);
-    expect(p1.PublicAccessBlockConfiguration?.RestrictPublicBuckets).toEqual(
-      true,
-    );
-
-    yield* stack.deploy(
-      Bucket("PabBucket", {
-        bucketName: name,
-        publicAccessBlock: {
-          blockPublicAcls: true,
-          ignorePublicAcls: false,
-          blockPublicPolicy: true,
-          restrictPublicBuckets: false,
-        },
-        forceDestroy: true,
-      }),
-    );
-
-    const p2 = yield* S3.getPublicAccessBlock({ Bucket: bucket.bucketName });
-    expect(p2.PublicAccessBlockConfiguration?.RestrictPublicBuckets).toEqual(
-      false,
-    );
-
-    yield* stack.destroy();
-    yield* assertBucketDeleted(bucket.bucketName);
-  }),
-);
-
-test.provider("cors add rule then remove all", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
-
-    const name = "alchemy-test-bucket-cors";
-    const bucket = yield* stack.deploy(
-      Bucket("CorsBucket", {
-        bucketName: name,
-        cors: [
-          {
-            AllowedMethods: ["GET"],
-            AllowedOrigins: ["https://example.com"],
-            AllowedHeaders: ["*"],
-            MaxAgeSeconds: 3000,
+      const name = "alchemy-test-bucket-pab";
+      const bucket = yield* stack.deploy(
+        Bucket("PabBucket", {
+          bucketName: name,
+          publicAccessBlock: {
+            blockPublicAcls: true,
+            ignorePublicAcls: true,
+            blockPublicPolicy: true,
+            restrictPublicBuckets: true,
           },
-        ],
-        forceDestroy: true,
-      }),
-    );
+          forceDestroy: true,
+        }),
+      );
 
-    const c1 = yield* S3.getBucketCors({ Bucket: bucket.bucketName });
-    expect(c1.CORSRules).toHaveLength(1);
+      const p1 = yield* S3.getPublicAccessBlock({ Bucket: bucket.bucketName });
+      expect(p1.PublicAccessBlockConfiguration?.BlockPublicAcls).toEqual(true);
+      expect(p1.PublicAccessBlockConfiguration?.RestrictPublicBuckets).toEqual(
+        true,
+      );
 
-    yield* stack.deploy(
-      Bucket("CorsBucket", {
-        bucketName: name,
-        cors: [
-          {
-            AllowedMethods: ["GET"],
-            AllowedOrigins: ["https://example.com"],
-            AllowedHeaders: ["*"],
-            MaxAgeSeconds: 3000,
+      yield* stack.deploy(
+        Bucket("PabBucket", {
+          bucketName: name,
+          publicAccessBlock: {
+            blockPublicAcls: true,
+            ignorePublicAcls: false,
+            blockPublicPolicy: true,
+            restrictPublicBuckets: false,
           },
-          {
-            AllowedMethods: ["PUT", "POST"],
-            AllowedOrigins: ["https://app.example.com"],
-          },
-        ],
-        forceDestroy: true,
-      }),
-    );
+          forceDestroy: true,
+        }),
+      );
 
-    const c2 = yield* S3.getBucketCors({ Bucket: bucket.bucketName });
-    expect(c2.CORSRules).toHaveLength(2);
+      const p2 = yield* S3.getPublicAccessBlock({ Bucket: bucket.bucketName });
+      expect(p2.PublicAccessBlockConfiguration?.RestrictPublicBuckets).toEqual(
+        false,
+      );
 
-    yield* stack.deploy(
-      Bucket("CorsBucket", {
-        bucketName: name,
-        cors: [],
-        forceDestroy: true,
-      }),
-    );
-
-    const removed = yield* S3.getBucketCors({ Bucket: bucket.bucketName }).pipe(
-      Effect.map(() => "has-cors" as const),
-      Effect.catchTag("NoSuchCORSConfiguration", () =>
-        Effect.succeed("no-cors" as const),
-      ),
-    );
-    expect(removed).toEqual("no-cors");
-
-    yield* stack.destroy();
-    yield* assertBucketDeleted(bucket.bucketName);
-  }),
+      yield* stack.destroy();
+      yield* assertBucketDeleted(bucket.bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
-test.provider("lifecycle add rule then remove", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "cors add rule then remove all",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const name = "alchemy-test-bucket-lifecycle";
-    const bucket = yield* stack.deploy(
-      Bucket("LifecycleBucket", {
-        bucketName: name,
-        lifecycleRules: [
-          {
-            ID: "expire-logs",
-            Status: "Enabled",
-            Filter: { Prefix: "logs/" },
-            Expiration: { Days: 30 },
-            AbortIncompleteMultipartUpload: { DaysAfterInitiation: 7 },
-          },
-        ],
-        forceDestroy: true,
-      }),
-    );
+      const name = "alchemy-test-bucket-cors";
+      const bucket = yield* stack.deploy(
+        Bucket("CorsBucket", {
+          bucketName: name,
+          cors: [
+            {
+              AllowedMethods: ["GET"],
+              AllowedOrigins: ["https://example.com"],
+              AllowedHeaders: ["*"],
+              MaxAgeSeconds: 3000,
+            },
+          ],
+          forceDestroy: true,
+        }),
+      );
 
-    const l1 = yield* S3.getBucketLifecycleConfiguration({
-      Bucket: bucket.bucketName,
-    });
-    expect(l1.Rules).toHaveLength(1);
-    expect(l1.Rules?.[0]?.Expiration?.Days).toEqual(30);
+      const c1 = yield* S3.getBucketCors({ Bucket: bucket.bucketName });
+      expect(c1.CORSRules).toHaveLength(1);
 
-    yield* stack.deploy(
-      Bucket("LifecycleBucket", {
-        bucketName: name,
-        lifecycleRules: [],
-        forceDestroy: true,
-      }),
-    );
+      yield* stack.deploy(
+        Bucket("CorsBucket", {
+          bucketName: name,
+          cors: [
+            {
+              AllowedMethods: ["GET"],
+              AllowedOrigins: ["https://example.com"],
+              AllowedHeaders: ["*"],
+              MaxAgeSeconds: 3000,
+            },
+            {
+              AllowedMethods: ["PUT", "POST"],
+              AllowedOrigins: ["https://app.example.com"],
+            },
+          ],
+          forceDestroy: true,
+        }),
+      );
 
-    // Lifecycle config is eventually consistent — the rule can linger on reads
-    // for a few seconds after deleteBucketLifecycle. Retry until it clears.
-    const removed = yield* S3.getBucketLifecycleConfiguration({
-      Bucket: bucket.bucketName,
-    }).pipe(
-      Effect.map(() => "has-lifecycle" as const),
-      Effect.catchTag("NoSuchLifecycleConfiguration", () =>
-        Effect.succeed("no-lifecycle" as const),
-      ),
-      Effect.repeat({
-        schedule: Schedule.spaced("3 seconds"),
-        until: (r) => r === "no-lifecycle",
-        // S3 lifecycle deletion can take well over 30s to become visible on
-        // reads. Give it ~90s (30 × 3s) before failing — the loop short-circuits
-        // via `until` the moment the config clears, so this only costs wall-clock
-        // time on the (rare) slow-propagation runs that were flaking at times: 10.
-        times: 30,
-      }),
-    );
-    expect(removed).toEqual("no-lifecycle");
+      const c2 = yield* S3.getBucketCors({ Bucket: bucket.bucketName });
+      expect(c2.CORSRules).toHaveLength(2);
 
-    yield* stack.destroy();
-    yield* assertBucketDeleted(bucket.bucketName);
-  }),
+      yield* stack.deploy(
+        Bucket("CorsBucket", {
+          bucketName: name,
+          cors: [],
+          forceDestroy: true,
+        }),
+      );
+
+      const removed = yield* S3.getBucketCors({
+        Bucket: bucket.bucketName,
+      }).pipe(
+        Effect.map(() => "has-cors" as const),
+        Effect.catchTag("NoSuchCORSConfiguration", () =>
+          Effect.succeed("no-cors" as const),
+        ),
+      );
+      expect(removed).toEqual("no-cors");
+
+      yield* stack.destroy();
+      yield* assertBucketDeleted(bucket.bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
+);
+
+test.provider(
+  "lifecycle add rule then remove",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const name = "alchemy-test-bucket-lifecycle";
+      const bucket = yield* stack.deploy(
+        Bucket("LifecycleBucket", {
+          bucketName: name,
+          lifecycleRules: [
+            {
+              ID: "expire-logs",
+              Status: "Enabled",
+              Filter: { Prefix: "logs/" },
+              Expiration: { Days: 30 },
+              AbortIncompleteMultipartUpload: { DaysAfterInitiation: 7 },
+            },
+          ],
+          forceDestroy: true,
+        }),
+      );
+
+      const l1 = yield* S3.getBucketLifecycleConfiguration({
+        Bucket: bucket.bucketName,
+      });
+      expect(l1.Rules).toHaveLength(1);
+      expect(l1.Rules?.[0]?.Expiration?.Days).toEqual(30);
+
+      yield* stack.deploy(
+        Bucket("LifecycleBucket", {
+          bucketName: name,
+          lifecycleRules: [],
+          forceDestroy: true,
+        }),
+      );
+
+      // Lifecycle config is eventually consistent — the rule can linger on reads
+      // for a few seconds after deleteBucketLifecycle. Retry until it clears.
+      const removed = yield* S3.getBucketLifecycleConfiguration({
+        Bucket: bucket.bucketName,
+      }).pipe(
+        Effect.map(() => "has-lifecycle" as const),
+        Effect.catchTag("NoSuchLifecycleConfiguration", () =>
+          Effect.succeed("no-lifecycle" as const),
+        ),
+        Effect.repeat({
+          schedule: Schedule.spaced("3 seconds"),
+          until: (r) => r === "no-lifecycle",
+          // S3 lifecycle deletion can take well over 30s to become visible on
+          // reads. Give it ~90s (30 × 3s) before failing — the loop short-circuits
+          // via `until` the moment the config clears, so this only costs wall-clock
+          // time on the (rare) slow-propagation runs that were flaking at times: 10.
+          times: 30,
+        }),
+      );
+      expect(removed).toEqual("no-lifecycle");
+
+      yield* stack.destroy();
+      yield* assertBucketDeleted(bucket.bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
 test.provider(
@@ -1454,226 +1503,245 @@ test.provider(
       yield* stack.destroy();
       yield* assertBucketDeleted(bucket.bucketName);
     }),
-  { timeout: 120_000 },
+  { tags: ["provider:aws", "provider:aws:s3", "live"], timeout: 120_000 },
 );
 
 // Server-access logging needs a same-stack target bucket that grants the S3
 // logging service principal permission to deliver logs (the modern, ACL-free
 // grant — works with the BucketOwnerEnforced default).
-test.provider("server access logging set and update prefix", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "server access logging set and update prefix",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const target = "alchemy-test-bucket-logging-target";
-    const source = "alchemy-test-bucket-logging-src";
+      const target = "alchemy-test-bucket-logging-target";
+      const source = "alchemy-test-bucket-logging-src";
 
-    const deployWith = (targetPrefix: string) =>
-      stack.deploy(
-        Effect.gen(function* () {
-          const targetBucket = yield* Bucket("LogTargetBucket", {
-            bucketName: target,
-            policy: [
-              {
-                Sid: "S3ServerAccessLogsPolicy",
-                Effect: "Allow",
-                Principal: { Service: "logging.s3.amazonaws.com" },
-                Action: ["s3:PutObject"],
-                Resource: [`arn:aws:s3:::${target}/*`],
-                Condition: {
-                  ArnLike: { "aws:SourceArn": `arn:aws:s3:::${source}` },
+      const deployWith = (targetPrefix: string) =>
+        stack.deploy(
+          Effect.gen(function* () {
+            const targetBucket = yield* Bucket("LogTargetBucket", {
+              bucketName: target,
+              policy: [
+                {
+                  Sid: "S3ServerAccessLogsPolicy",
+                  Effect: "Allow",
+                  Principal: { Service: "logging.s3.amazonaws.com" },
+                  Action: ["s3:PutObject"],
+                  Resource: [`arn:aws:s3:::${target}/*`],
+                  Condition: {
+                    ArnLike: { "aws:SourceArn": `arn:aws:s3:::${source}` },
+                  },
                 },
+              ],
+              forceDestroy: true,
+            });
+            const sourceBucket = yield* Bucket("LogSourceBucket", {
+              bucketName: source,
+              logging: {
+                // Output reference so the target (and its delivery policy)
+                // reconciles before the source's putBucketLogging.
+                targetBucket: targetBucket.bucketName,
+                targetPrefix,
               },
-            ],
-            forceDestroy: true,
-          });
-          const sourceBucket = yield* Bucket("LogSourceBucket", {
-            bucketName: source,
-            logging: {
-              // Output reference so the target (and its delivery policy)
-              // reconciles before the source's putBucketLogging.
-              targetBucket: targetBucket.bucketName,
-              targetPrefix,
-            },
-            forceDestroy: true,
-          });
-          return { sourceBucket, targetBucket };
+              forceDestroy: true,
+            });
+            return { sourceBucket, targetBucket };
+          }),
+        );
+
+      const buckets = yield* deployWith("logs/");
+
+      const l1 = yield* S3.getBucketLogging({
+        Bucket: buckets.sourceBucket.bucketName,
+      });
+      expect(l1.LoggingEnabled?.TargetBucket).toEqual(target);
+      expect(l1.LoggingEnabled?.TargetPrefix).toEqual("logs/");
+
+      // In-place update of the log prefix.
+      yield* deployWith("access/");
+
+      const l2 = yield* S3.getBucketLogging({
+        Bucket: buckets.sourceBucket.bucketName,
+      });
+      expect(l2.LoggingEnabled?.TargetPrefix).toEqual("access/");
+
+      yield* stack.destroy();
+      yield* assertBucketDeleted(buckets.sourceBucket.bucketName);
+      yield* assertBucketDeleted(buckets.targetBucket.bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
+);
+
+test.provider(
+  "transfer acceleration and request payment",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const name = "alchemy-test-bucket-accel-pay";
+      const bucket = yield* stack.deploy(
+        Bucket("AccelPayBucket", {
+          bucketName: name,
+          transferAcceleration: "Enabled",
+          requestPayer: "Requester",
+          forceDestroy: true,
         }),
       );
 
-    const buckets = yield* deployWith("logs/");
+      const a1 = yield* S3.getBucketAccelerateConfiguration({
+        Bucket: bucket.bucketName,
+      });
+      expect(a1.Status).toEqual("Enabled");
 
-    const l1 = yield* S3.getBucketLogging({
-      Bucket: buckets.sourceBucket.bucketName,
-    });
-    expect(l1.LoggingEnabled?.TargetBucket).toEqual(target);
-    expect(l1.LoggingEnabled?.TargetPrefix).toEqual("logs/");
+      const r1 = yield* S3.getBucketRequestPayment({
+        Bucket: bucket.bucketName,
+      });
+      expect(r1.Payer).toEqual("Requester");
 
-    // In-place update of the log prefix.
-    yield* deployWith("access/");
+      yield* stack.deploy(
+        Bucket("AccelPayBucket", {
+          bucketName: name,
+          transferAcceleration: "Suspended",
+          requestPayer: "BucketOwner",
+          forceDestroy: true,
+        }),
+      );
 
-    const l2 = yield* S3.getBucketLogging({
-      Bucket: buckets.sourceBucket.bucketName,
-    });
-    expect(l2.LoggingEnabled?.TargetPrefix).toEqual("access/");
+      const a2 = yield* S3.getBucketAccelerateConfiguration({
+        Bucket: bucket.bucketName,
+      });
+      expect(a2.Status).toEqual("Suspended");
 
-    yield* stack.destroy();
-    yield* assertBucketDeleted(buckets.sourceBucket.bucketName);
-    yield* assertBucketDeleted(buckets.targetBucket.bucketName);
-  }),
+      const r2 = yield* S3.getBucketRequestPayment({
+        Bucket: bucket.bucketName,
+      });
+      expect(r2.Payer).toEqual("BucketOwner");
+
+      yield* stack.destroy();
+      yield* assertBucketDeleted(bucket.bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
-test.provider("transfer acceleration and request payment", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "object lock default retention",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const name = "alchemy-test-bucket-accel-pay";
-    const bucket = yield* stack.deploy(
-      Bucket("AccelPayBucket", {
-        bucketName: name,
-        transferAcceleration: "Enabled",
-        requestPayer: "Requester",
-        forceDestroy: true,
-      }),
-    );
+      const name = "alchemy-test-bucket-objlock-retention";
+      const bucket = yield* stack.deploy(
+        Bucket("ObjLockRetentionBucket", {
+          bucketName: name,
+          objectLockEnabled: true,
+          objectLockConfiguration: { mode: "GOVERNANCE", days: "1 day" },
+          forceDestroy: true,
+        }),
+      );
 
-    const a1 = yield* S3.getBucketAccelerateConfiguration({
-      Bucket: bucket.bucketName,
-    });
-    expect(a1.Status).toEqual("Enabled");
+      const cfg = yield* S3.getObjectLockConfiguration({
+        Bucket: bucket.bucketName,
+      });
+      expect(cfg.ObjectLockConfiguration?.Rule?.DefaultRetention?.Mode).toEqual(
+        "GOVERNANCE",
+      );
+      expect(cfg.ObjectLockConfiguration?.Rule?.DefaultRetention?.Days).toEqual(
+        1,
+      );
 
-    const r1 = yield* S3.getBucketRequestPayment({ Bucket: bucket.bucketName });
-    expect(r1.Payer).toEqual("Requester");
-
-    yield* stack.deploy(
-      Bucket("AccelPayBucket", {
-        bucketName: name,
-        transferAcceleration: "Suspended",
-        requestPayer: "BucketOwner",
-        forceDestroy: true,
-      }),
-    );
-
-    const a2 = yield* S3.getBucketAccelerateConfiguration({
-      Bucket: bucket.bucketName,
-    });
-    expect(a2.Status).toEqual("Suspended");
-
-    const r2 = yield* S3.getBucketRequestPayment({ Bucket: bucket.bucketName });
-    expect(r2.Payer).toEqual("BucketOwner");
-
-    yield* stack.destroy();
-    yield* assertBucketDeleted(bucket.bucketName);
-  }),
+      yield* stack.destroy();
+      yield* assertBucketDeleted(bucket.bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
-test.provider("object lock default retention", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "intelligent tiering add and remove id",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const name = "alchemy-test-bucket-objlock-retention";
-    const bucket = yield* stack.deploy(
-      Bucket("ObjLockRetentionBucket", {
-        bucketName: name,
-        objectLockEnabled: true,
-        objectLockConfiguration: { mode: "GOVERNANCE", days: "1 day" },
-        forceDestroy: true,
-      }),
-    );
+      const name = "alchemy-test-bucket-int-tiering";
+      const bucket = yield* stack.deploy(
+        Bucket("IntTieringBucket", {
+          bucketName: name,
+          intelligentTiering: [
+            {
+              Id: "archive",
+              Status: "Enabled",
+              Tierings: [{ Days: 90, AccessTier: "ARCHIVE_ACCESS" }],
+            },
+          ],
+          forceDestroy: true,
+        }),
+      );
 
-    const cfg = yield* S3.getObjectLockConfiguration({
-      Bucket: bucket.bucketName,
-    });
-    expect(cfg.ObjectLockConfiguration?.Rule?.DefaultRetention?.Mode).toEqual(
-      "GOVERNANCE",
-    );
-    expect(cfg.ObjectLockConfiguration?.Rule?.DefaultRetention?.Days).toEqual(
-      1,
-    );
+      const t1 = yield* S3.getBucketIntelligentTieringConfiguration({
+        Bucket: bucket.bucketName,
+        Id: "archive",
+      });
+      expect(t1.IntelligentTieringConfiguration?.Status).toEqual("Enabled");
 
-    yield* stack.destroy();
-    yield* assertBucketDeleted(bucket.bucketName);
-  }),
+      yield* stack.deploy(
+        Bucket("IntTieringBucket", {
+          bucketName: name,
+          intelligentTiering: [],
+          forceDestroy: true,
+        }),
+      );
+
+      const removed = yield* S3.getBucketIntelligentTieringConfiguration({
+        Bucket: bucket.bucketName,
+        Id: "archive",
+      }).pipe(
+        Effect.map(() => "has-config" as const),
+        Effect.catchTag("NoSuchConfiguration", () =>
+          Effect.succeed("no-config" as const),
+        ),
+      );
+      expect(removed).toEqual("no-config");
+
+      yield* stack.destroy();
+      yield* assertBucketDeleted(bucket.bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
-test.provider("intelligent tiering add and remove id", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "explicit bucket policy prop",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const name = "alchemy-test-bucket-int-tiering";
-    const bucket = yield* stack.deploy(
-      Bucket("IntTieringBucket", {
-        bucketName: name,
-        intelligentTiering: [
-          {
-            Id: "archive",
-            Status: "Enabled",
-            Tierings: [{ Days: 90, AccessTier: "ARCHIVE_ACCESS" }],
-          },
-        ],
-        forceDestroy: true,
-      }),
-    );
+      const name = "alchemy-test-bucket-policy-prop";
+      const bucketArn = `arn:aws:s3:::${name}`;
+      const bucket = yield* stack.deploy(
+        Bucket("PolicyPropBucket", {
+          bucketName: name,
+          policy: [
+            {
+              Sid: "AllowCloudFront",
+              Effect: "Allow",
+              Principal: { Service: "cloudfront.amazonaws.com" },
+              Action: ["s3:GetObject"],
+              Resource: [`${bucketArn}/*`],
+            },
+          ],
+          forceDestroy: true,
+        }),
+      );
 
-    const t1 = yield* S3.getBucketIntelligentTieringConfiguration({
-      Bucket: bucket.bucketName,
-      Id: "archive",
-    });
-    expect(t1.IntelligentTieringConfiguration?.Status).toEqual("Enabled");
+      const policy = yield* S3.getBucketPolicy({
+        Bucket: bucket.bucketName,
+      }).pipe(Effect.map((r) => JSON.parse(r.Policy!)));
+      expect(policy.Statement[0].Sid).toEqual("AllowCloudFront");
 
-    yield* stack.deploy(
-      Bucket("IntTieringBucket", {
-        bucketName: name,
-        intelligentTiering: [],
-        forceDestroy: true,
-      }),
-    );
-
-    const removed = yield* S3.getBucketIntelligentTieringConfiguration({
-      Bucket: bucket.bucketName,
-      Id: "archive",
-    }).pipe(
-      Effect.map(() => "has-config" as const),
-      Effect.catchTag("NoSuchConfiguration", () =>
-        Effect.succeed("no-config" as const),
-      ),
-    );
-    expect(removed).toEqual("no-config");
-
-    yield* stack.destroy();
-    yield* assertBucketDeleted(bucket.bucketName);
-  }),
-);
-
-test.provider("explicit bucket policy prop", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
-
-    const name = "alchemy-test-bucket-policy-prop";
-    const bucketArn = `arn:aws:s3:::${name}`;
-    const bucket = yield* stack.deploy(
-      Bucket("PolicyPropBucket", {
-        bucketName: name,
-        policy: [
-          {
-            Sid: "AllowCloudFront",
-            Effect: "Allow",
-            Principal: { Service: "cloudfront.amazonaws.com" },
-            Action: ["s3:GetObject"],
-            Resource: [`${bucketArn}/*`],
-          },
-        ],
-        forceDestroy: true,
-      }),
-    );
-
-    const policy = yield* S3.getBucketPolicy({
-      Bucket: bucket.bucketName,
-    }).pipe(Effect.map((r) => JSON.parse(r.Policy!)));
-    expect(policy.Statement[0].Sid).toEqual("AllowCloudFront");
-
-    yield* stack.destroy();
-    yield* assertBucketDeleted(bucket.bucketName);
-  }),
+      yield* stack.destroy();
+      yield* assertBucketDeleted(bucket.bucketName);
+    }),
+  { tags: ["provider:aws", "provider:aws:s3", "live"] },
 );
 
 // Replication needs an IAM role S3 can assume + a versioned destination bucket.
@@ -1769,7 +1837,10 @@ test.provider(
       yield* assertBucketDeleted(buckets.srcBucket.bucketName);
       yield* assertBucketDeleted(buckets.destBucket.bucketName);
     }),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:aws", "provider:aws:iam", "provider:aws:s3", "live"],
+    timeout: 180_000,
+  },
 );
 
 // Idempotent out-of-band delete for the adoption test's deterministically
@@ -1883,6 +1954,7 @@ const stubbedEnv = (transport: Layer.Layer<HttpClient.HttpClient>) =>
       adopt: false,
     }),
     Layer.sync(ArtifactStore, createArtifactStore),
+    inMemoryState(),
     NodeServices.layer,
   ).pipe(Layer.provideMerge(transport));
 
@@ -1957,35 +2029,39 @@ const recordDelete = (
     return transport.calls;
   });
 
-describe("destructive delete requires explicit opt-in", () => {
-  it.effect("no forceDestroy never empties the bucket", () =>
-    Effect.gen(function* () {
-      const calls = yield* recordDelete({});
+describe(
+  "destructive delete requires explicit opt-in",
+  { tags: ["unit", "provider:aws", "provider:aws:s3", "local"] },
+  () => {
+    it.effect("no forceDestroy never empties the bucket", () =>
+      Effect.gen(function* () {
+        const calls = yield* recordDelete({});
 
-      expect(objectDeletes(calls)).toEqual([]);
-      expect(versionListings(calls)).toEqual([]);
-      // The bucket delete itself is still attempted — S3 answers
-      // `BucketNotEmpty`, which is the protection.
-      expect(bucketDeletes(calls).length).toBeGreaterThan(0);
-    }),
-  );
+        expect(objectDeletes(calls)).toEqual([]);
+        expect(versionListings(calls)).toEqual([]);
+        // The bucket delete itself is still attempted — S3 answers
+        // `BucketNotEmpty`, which is the protection.
+        expect(bucketDeletes(calls).length).toBeGreaterThan(0);
+      }),
+    );
 
-  it.effect("forceDestroy empties the bucket first", () =>
-    Effect.gen(function* () {
-      const calls = yield* recordDelete({ forceDestroy: true });
+    it.effect("forceDestroy empties the bucket first", () =>
+      Effect.gen(function* () {
+        const calls = yield* recordDelete({ forceDestroy: true });
 
-      expect(objectDeletes(calls).length).toBeGreaterThan(0);
-      expect(bucketDeletes(calls).length).toBeGreaterThan(0);
-    }),
-  );
+        expect(objectDeletes(calls).length).toBeGreaterThan(0);
+        expect(bucketDeletes(calls).length).toBeGreaterThan(0);
+      }),
+    );
 
-  // Nuke enumerates buckets from the cloud, so `olds` carries Attributes and
-  // never has `forceDestroy` — the operator's confirmation IS the flag.
-  it.effect("nuke's force empties without the prop", () =>
-    Effect.gen(function* () {
-      const calls = yield* recordDelete({}, { force: true });
+    // Nuke enumerates buckets from the cloud, so `olds` carries Attributes and
+    // never has `forceDestroy` — the operator's confirmation IS the flag.
+    it.effect("nuke's force empties without the prop", () =>
+      Effect.gen(function* () {
+        const calls = yield* recordDelete({}, { force: true });
 
-      expect(objectDeletes(calls).length).toBeGreaterThan(0);
-    }),
-  );
-});
+        expect(objectDeletes(calls).length).toBeGreaterThan(0);
+      }),
+    );
+  },
+);

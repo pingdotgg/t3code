@@ -2,14 +2,33 @@ import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 import { describe, it } from "node:test"
 import { pathToFileURL } from "node:url"
-import { loadRegistry } from "../utils.mts"
+import { loadRegistry, scenarioBatchSize } from "../utils.mts"
 
 describe("runtimeperf registry", () => {
+  it("uses the Effect calibration for every implementation in a scenario", () => {
+    const zod = { implementation: "zod4-compiled" }
+    const effect = { implementation: "effect" }
+    assert.equal(scenarioBatchSize([zod, effect], new Map([
+      [zod, { batchSize: 4_096 }],
+      [effect, { batchSize: 256 }]
+    ])), 256)
+  })
+
   it("uses unique fixture targets and valid implementations", () => {
     const { fixtures } = loadRegistry()
     assert.equal(new Set(fixtures.map((fixture) => fixture.target)).size, fixtures.length)
     for (const fixture of fixtures) {
-      assert.ok(["effect", "fast-check-v4", "valibot", "zod4"].includes(fixture.implementation))
+      assert.ok([
+        "effect",
+        "effect-aot",
+        "effect-jit",
+        "fast-check-v4",
+        "valibot",
+        "zod4",
+        "zod4-compiled",
+        "zod4-jitless",
+        "zod4-validate"
+      ].includes(fixture.implementation))
     }
   })
 
@@ -19,7 +38,7 @@ describe("runtimeperf registry", () => {
       fixtures.filter((fixture) => fixture.suite === "arbitrary"),
       (fixture) => fixture.scenario
     )
-    assert.equal(scenarios.size, 31)
+    assert.equal(scenarios.size, 33)
     for (const fixtures of scenarios.values()) {
       assert.deepEqual(fixtures.map((fixture) => fixture.implementation).sort(), ["effect", "fast-check-v4"])
       const metadata = (fixture) => ({
@@ -103,7 +122,7 @@ describe("runtimeperf registry", () => {
     const { fixtures } = loadRegistry()
     const zodFiles = new Set(
       fixtures
-        .filter((fixture) => fixture.implementation === "zod4")
+        .filter((fixture) => fixture.suite === "schema-benchmarks" && fixture.implementation === "zod4")
         .map((fixture) => fixture.fixturePath)
     )
     assert.ok(zodFiles.size > 0)
@@ -113,6 +132,34 @@ describe("runtimeperf registry", () => {
       assert.doesNotMatch(source, /from "zod\/v4-mini"/)
       assert.match(source, /jitless:\s*true/)
     }
+  })
+
+  it("uses strict Zod compilation for the compiler comparison fixtures", async () => {
+    const { fixtures } = loadRegistry()
+    const compiled = fixtures.filter((fixture) =>
+      fixture.suite === "compiler-rebuild" && fixture.implementation === "zod4-compiled"
+    )
+    assert.equal(compiled.length, 19)
+    const paths = new Set(compiled.map((fixture) => fixture.fixturePath))
+    assert.equal(paths.size, 1)
+    const source = await readFile([...paths][0], "utf8")
+    assert.match(source, /from "\.\/zod-cases\.ts"/)
+    const shared = await readFile(new URL("../suites/compiler-rebuild/fixtures/zod-cases.ts", import.meta.url), "utf8")
+    assert.match(shared, /from "zod\/v4"/)
+    assert.match(shared, /z\.compile\(value\.schema, \{ strict: true \}\)/)
+  })
+
+  it("uses interpreted Zod for the jitless compiler comparison fixtures", async () => {
+    const { fixtures } = loadRegistry()
+    const jitless = fixtures.filter((fixture) =>
+      fixture.suite === "compiler-rebuild" && fixture.implementation === "zod4-jitless"
+    )
+    assert.equal(jitless.length, 11)
+    const paths = new Set(jitless.map((fixture) => fixture.fixturePath))
+    assert.equal(paths.size, 1)
+    const source = await readFile(new URL("../suites/compiler-rebuild/fixtures/zod-cases.ts", import.meta.url), "utf8")
+    assert.match(source, /z\.validate\(value\.schema, input, \{ jitless: true \}\)/)
+    assert.match(source, /value\.schema\.parse\(input, \{ jitless: true \}\)/)
   })
 
   it("loads, runs and validates every fixture export", async () => {

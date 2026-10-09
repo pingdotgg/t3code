@@ -1,12 +1,28 @@
-import { EnvironmentId, type ThreadPullRequestLink } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type ThreadPullRequestLink } from "@t3tools/contracts";
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
+const watchCommand = vi.hoisted(() => vi.fn());
+
 vi.mock("./ThreadDetailsPrRow", () => ({
-  ThreadDetailsPrRow: ({ number }: { number: number }) => <span data-row={String(number)} />,
+  ThreadDetailsPrRow: ({
+    number,
+    onStopWatching,
+  }: {
+    number: number;
+    onStopWatching?: () => void;
+  }) => (
+    <span
+      data-row={String(number)}
+      data-watched={onStopWatching ? "" : undefined}
+      onClick={onStopWatching}
+    />
+  ),
 }));
 vi.mock("~/state/entities", () => ({ useProjects: () => [] }));
+vi.mock("~/state/threads", () => ({ threadEnvironment: {} }));
+vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => watchCommand }));
 vi.mock("~/lib/openPullRequestLink", () => ({
   parseChangeRequestUrl: () => null,
   findProjectOnChangeRequestHost: () => undefined,
@@ -55,6 +71,10 @@ function render(links: ReadonlyArray<ThreadPullRequestLink>, current: ThreadPull
   act(() => {
     renderer = create(
       <ThreadDetailsPrRows
+        threadRef={{
+          environmentId: EnvironmentId.make("environment"),
+          threadId: ThreadId.make("thread"),
+        }}
         links={links}
         currentLink={current}
         onOpenLink={vi.fn()}
@@ -104,4 +124,41 @@ it("keeps the single row untouched when the thread links one pull request", () =
   render([bottom], bottom);
   expect(rows()).toEqual(["1"]);
   expect(toggleLabel()).toBeUndefined();
+});
+
+it("lets only watched pull requests stop their watch", () => {
+  const watched: ThreadPullRequestLink = {
+    ...bottom,
+    watch: {
+      startedAt: "2026-01-01T00:00:30.000Z",
+      headSha: null,
+      failedChecks: [],
+      passed: false,
+      passedChecks: [],
+      remarksThrough: "2026-01-01T00:00:30.000Z",
+      remarkIds: [],
+      conflicting: false,
+      wakes: 0,
+    },
+  };
+  render([other, watched, top], top);
+  toggle();
+  const spans = renderer.root.findAllByType("span");
+  expect(
+    spans
+      .filter((node) => node.props["data-watched"] !== undefined)
+      .map((node) => node.props["data-row"]),
+  ).toEqual(["1"]);
+
+  act(() => spans.find((node) => node.props["data-row"] === "1")!.props.onClick());
+  expect(watchCommand).toHaveBeenCalledWith({
+    environmentId: EnvironmentId.make("environment"),
+    input: {
+      threadId: ThreadId.make("thread"),
+      host: "github.com",
+      repository: "pingdotgg/t3code",
+      number: 1,
+      watching: false,
+    },
+  });
 });

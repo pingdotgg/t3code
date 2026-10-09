@@ -1,3 +1,4 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync.
 import * as NodeCrypto from "node:crypto";
 
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -11,9 +12,9 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import type { ApnsCredentials } from "../Config.ts";
 import * as ApnsClient from "./ApnsClient.ts";
@@ -22,7 +23,7 @@ import * as ApnsProviderTokens from "./ApnsProviderTokens.ts";
 const isApnsJwtSigningError = Schema.is(ApnsClient.ApnsJwtSigningError);
 const isApnsHttpRequestError = Schema.is(ApnsClient.ApnsHttpRequestError);
 
-const TestLayer = ApnsClient.layer.pipe(
+const layerTest = ApnsClient.layer.pipe(
   Layer.provide(ApnsProviderTokens.layer),
   Layer.provide(
     Layer.succeed(
@@ -76,7 +77,7 @@ describe("ApnsClient", () => {
           },
         },
       });
-    }).pipe(Effect.provide(TestLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("builds a low-priority update payload", () =>
@@ -99,7 +100,7 @@ describe("ApnsClient", () => {
           },
         },
       });
-    }).pipe(Effect.provide(TestLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("builds a high-priority alerting update payload when an alert is attached", () =>
@@ -125,7 +126,7 @@ describe("ApnsClient", () => {
           },
         },
       });
-    }).pipe(Effect.provide(TestLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("builds an end payload with a dismissal date", () =>
@@ -162,7 +163,7 @@ describe("ApnsClient", () => {
           "dismissal-date": 15,
         },
       });
-    }).pipe(Effect.provide(TestLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("builds a standard APNs alert payload with routing metadata", () =>
@@ -193,7 +194,7 @@ describe("ApnsClient", () => {
         threadId: "thread",
         deepLink: "/threads/env/thread",
       });
-    }).pipe(Effect.provide(TestLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("preserves JWT signing context and the crypto cause", () =>
@@ -237,7 +238,7 @@ describe("ApnsClient", () => {
         cause: expect.any(Error),
         message: "Failed to sign APNs JWT for key key-1.",
       });
-    }).pipe(Effect.provide(TestLayer)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("preserves APNs request context and the HTTP cause", () => {

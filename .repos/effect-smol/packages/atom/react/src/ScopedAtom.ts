@@ -8,7 +8,7 @@
  */
 "use client"
 
-import type * as Atom from "effect/unstable/reactivity/Atom"
+import type * as Atom from "effect/reactivity/Atom"
 import * as React from "react"
 
 /**
@@ -44,7 +44,7 @@ export const TypeId: TypeId = "~@effect/atom-react/ScopedAtom"
  *
  * ```ts import.meta.vitest
  * import { make, useAtomValue } from "@effect/atom-react"
- * import { Atom } from "effect/unstable/reactivity"
+ * import { Atom } from "effect/reactivity"
  * import * as React from "react"
  * import { renderToStaticMarkup } from "react-dom/server"
  *
@@ -97,7 +97,7 @@ export interface ScopedAtom<A extends Atom.Atom<any>, Input = never> {
  *
  * ```ts import.meta.vitest
  * import { make, useAtomValue } from "@effect/atom-react"
- * import { Atom } from "effect/unstable/reactivity"
+ * import { Atom } from "effect/reactivity"
  * import * as React from "react"
  * import { renderToStaticMarkup } from "react-dom/server"
  *

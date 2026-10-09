@@ -1,7 +1,7 @@
 import { bindFunction } from "@/Railway/Bind.ts";
 import { Function } from "@/Railway/Function.ts";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import Greeter from "./rpc-greeter.ts";
 import { Partition, Site } from "./rpc-shared.ts";
 

@@ -56,7 +56,10 @@ test.provider.skipIf(entitled)(
         );
       expect(direct).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:access", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!entitled)(
@@ -127,7 +130,10 @@ test.provider.skipIf(!entitled)(
         );
       expect(afterDestroy?.id ?? undefined).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:access", "live"],
+    timeout: 120_000,
+  },
 );
 
 // Canonical `list()` test (account-scoped collection). Enumeration via
@@ -168,5 +174,8 @@ test.provider(
         expect(Array.isArray(all)).toBe(true);
       }
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:access", "live"],
+    timeout: 120_000,
+  },
 );

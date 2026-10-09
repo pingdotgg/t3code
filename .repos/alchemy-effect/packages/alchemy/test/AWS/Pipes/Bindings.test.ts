@@ -5,8 +5,8 @@ import { describe, expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import PipesBindingsFunctionLive, {
   PipesBindingsFunction,
 } from "./bindings-handler.ts";
@@ -93,101 +93,122 @@ const awaitState = (expected: string) =>
     }),
   );
 
-describe.sequential("AWS.Pipes bindings", () => {
-  beforeAll(
-    Effect.gen(function* () {
-      yield* Effect.logInfo("Pipes test setup: destroying previous resources");
-      yield* sharedStack.destroy();
+describe.sequential(
+  "AWS.Pipes bindings",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:iam",
+      "provider:aws:lambda",
+      "provider:aws:pipes",
+      "provider:aws:sqs",
+      "live",
+    ],
+  },
+  () => {
+    beforeAll(
+      Effect.gen(function* () {
+        yield* Effect.logInfo(
+          "Pipes test setup: destroying previous resources",
+        );
+        yield* sharedStack.destroy();
 
-      yield* Effect.logInfo("Pipes test setup: deploying fixture");
-      const attrs = yield* sharedStack.deploy(
-        Effect.gen(function* () {
-          return yield* PipesBindingsFunction;
-        }).pipe(Effect.provide(PipesBindingsFunctionLive)),
-      );
+        yield* Effect.logInfo("Pipes test setup: deploying fixture");
+        const attrs = yield* sharedStack.deploy(
+          Effect.gen(function* () {
+            return yield* PipesBindingsFunction;
+          }).pipe(Effect.provide(PipesBindingsFunctionLive)),
+        );
 
-      expect(attrs.functionUrl).toBeTruthy();
-      baseUrl = attrs.functionUrl!.replace(/\/+$/, "");
+        expect(attrs.functionUrl).toBeTruthy();
+        baseUrl = attrs.functionUrl!.replace(/\/+$/, "");
 
-      const readinessUrl = `${baseUrl}/bindings`;
-      yield* Effect.logInfo(
-        `Pipes test setup: probing readiness at ${readinessUrl}`,
-      );
-      yield* HttpClient.get(readinessUrl).pipe(
-        Effect.flatMap((response) =>
-          response.status === 200
-            ? Effect.succeed(response)
-            : Effect.fail(new Error(`Function not ready: ${response.status}`)),
-        ),
-        Effect.tapError((error) =>
-          Effect.logWarning(
-            `Pipes test setup: fixture not ready yet (${String(error)})`,
+        const readinessUrl = `${baseUrl}/bindings`;
+        yield* Effect.logInfo(
+          `Pipes test setup: probing readiness at ${readinessUrl}`,
+        );
+        yield* HttpClient.get(readinessUrl).pipe(
+          Effect.flatMap((response) =>
+            response.status === 200
+              ? Effect.succeed(response)
+              : Effect.fail(
+                  new Error(`Function not ready: ${response.status}`),
+                ),
           ),
-        ),
-        Effect.retry({ schedule: readinessPolicy }),
-      );
-    }),
-    { timeout: 240_000 },
-  );
-
-  afterAll(sharedStack.destroy(), { timeout: 180_000 });
-
-  describe("binding registration", () => {
-    test.provider("all four capabilities initialize in the runtime", (_stack) =>
-      Effect.gen(function* () {
-        const response = (yield* getJson("/bindings")) as { bound: string[] };
-        expect(response.bound).toHaveLength(4);
+          Effect.tapError((error) =>
+            Effect.logWarning(
+              `Pipes test setup: fixture not ready yet (${String(error)})`,
+            ),
+          ),
+          Effect.retry({ schedule: readinessPolicy }),
+        );
       }),
-    );
-  });
-
-  describe("DescribePipe", () => {
-    test.provider("reads the pipe's live state", (_stack) =>
-      Effect.gen(function* () {
-        const described = (yield* getJson("/describe")) as DescribeResponse;
-        expect(described.name).toBeTruthy();
-        // The provider waits for the pipe to settle out of CREATING before
-        // returning, so the fixture pipe is already RUNNING.
-        expect(described.currentState).toBe("RUNNING");
-        expect(described.desiredState).toBe("RUNNING");
-      }),
-    );
-  });
-
-  describe("ListPipes", () => {
-    test.provider("finds the pipe by name prefix", (_stack) =>
-      Effect.gen(function* () {
-        const described = (yield* getJson("/describe")) as DescribeResponse;
-        const { names } = (yield* getJson("/list")) as { names: string[] };
-        expect(names).toContain(described.name);
-      }),
-    );
-  });
-
-  describe("StopPipe + StartPipe", () => {
-    test.provider(
-      "stops the running pipe, then starts it again",
-      (_stack) =>
-        Effect.gen(function* () {
-          const stopped = (yield* getJson("/stop")) as {
-            desiredState: string;
-            currentState: string;
-          };
-          expect(stopped.desiredState).toBe("STOPPED");
-
-          // Wait (bounded) for the pipe to settle — StartPipe during
-          // STOPPING would be a ConflictException.
-          yield* awaitState("STOPPED");
-
-          const started = (yield* getJson("/start")) as {
-            desiredState: string;
-            currentState: string;
-          };
-          expect(started.desiredState).toBe("RUNNING");
-
-          yield* awaitState("RUNNING");
-        }),
       { timeout: 240_000 },
     );
-  });
-});
+
+    afterAll(sharedStack.destroy(), { timeout: 180_000 });
+
+    describe("binding registration", () => {
+      test.provider(
+        "all four capabilities initialize in the runtime",
+        (_stack) =>
+          Effect.gen(function* () {
+            const response = (yield* getJson("/bindings")) as {
+              bound: string[];
+            };
+            expect(response.bound).toHaveLength(4);
+          }),
+      );
+    });
+
+    describe("DescribePipe", () => {
+      test.provider("reads the pipe's live state", (_stack) =>
+        Effect.gen(function* () {
+          const described = (yield* getJson("/describe")) as DescribeResponse;
+          expect(described.name).toBeTruthy();
+          // The provider waits for the pipe to settle out of CREATING before
+          // returning, so the fixture pipe is already RUNNING.
+          expect(described.currentState).toBe("RUNNING");
+          expect(described.desiredState).toBe("RUNNING");
+        }),
+      );
+    });
+
+    describe("ListPipes", () => {
+      test.provider("finds the pipe by name prefix", (_stack) =>
+        Effect.gen(function* () {
+          const described = (yield* getJson("/describe")) as DescribeResponse;
+          const { names } = (yield* getJson("/list")) as { names: string[] };
+          expect(names).toContain(described.name);
+        }),
+      );
+    });
+
+    describe("StopPipe + StartPipe", () => {
+      test.provider(
+        "stops the running pipe, then starts it again",
+        (_stack) =>
+          Effect.gen(function* () {
+            const stopped = (yield* getJson("/stop")) as {
+              desiredState: string;
+              currentState: string;
+            };
+            expect(stopped.desiredState).toBe("STOPPED");
+
+            // Wait (bounded) for the pipe to settle — StartPipe during
+            // STOPPING would be a ConflictException.
+            yield* awaitState("STOPPED");
+
+            const started = (yield* getJson("/start")) as {
+              desiredState: string;
+              currentState: string;
+            };
+            expect(started.desiredState).toBe("RUNNING");
+
+            yield* awaitState("RUNNING");
+          }),
+        { timeout: 240_000 },
+      );
+    });
+  },
+);

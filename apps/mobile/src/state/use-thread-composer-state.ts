@@ -1,3 +1,5 @@
+import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import { readEnvironmentScope } from "./session";
 import type { ComposerTextPaste } from "../native/T3ComposerEditor.types";
 import { useAtomValue } from "@effect/atom-react";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
@@ -81,8 +83,8 @@ import {
   resolveComposerDispatchMode,
   type ActiveTurnComposerAction,
 } from "@t3tools/client-runtime/state/composer-dispatch";
-import { Atom } from "effect/unstable/reactivity";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { prepareTurnAttachments } from "../lib/attachmentUpload";
 import { DEFAULT_FOLLOW_UP_BEHAVIOR } from "../lib/followUpBehavior";
 import { mobilePreferencesAtom } from "./preferences";
@@ -548,6 +550,12 @@ export function useThreadComposerState() {
 
   const onSendMessage = useCallback(
     async (followUpOverride?: ActiveTurnComposerAction) => {
+      if (
+        selectedThreadShell &&
+        selectedEnvironmentRuntime?.connectionState === "connected" &&
+        !readEnvironmentScope(selectedThreadShell.environmentId, AuthOrchestrationOperateScope)
+      )
+        return null;
       if (!selectedThreadShell) {
         return null;
       }
@@ -624,6 +632,8 @@ export function useThreadComposerState() {
           ? parseCodexFeedbackCommand(text)
           : null;
       if (feedbackCommand) {
+        if (!readEnvironmentScope(selectedThreadShell.environmentId, AuthOrchestrationOperateScope))
+          return null;
         if (thread.activeProviderThreadId === null) {
           Alert.alert("Start a Codex thread first", "Send a message before you submit feedback.");
           return null;

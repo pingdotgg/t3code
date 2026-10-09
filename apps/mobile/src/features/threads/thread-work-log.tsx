@@ -64,7 +64,11 @@ import {
   type ThreadFeedActivity,
   workEntryRowLabel,
 } from "../../lib/threadActivity";
-import { toolCallLines, turnItemOutputText } from "@t3tools/client-runtime/work-log/item-detail";
+import {
+  toolCallLines,
+  turnItemOutputImages,
+  turnItemOutputText,
+} from "@t3tools/client-runtime/work-log/item-detail";
 import { useTurnItemDetail } from "../../state/queries";
 import {
   resolveThreadWorkGroupInitialScroll,
@@ -80,6 +84,8 @@ import {
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
 import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
+import type { FilePreviewSource } from "../../components/FilePreviewModal";
+import { ThreadMarkdownImage } from "./ThreadMarkdownImage";
 import Animated, {
   cancelAnimation,
   Easing,
@@ -462,6 +468,7 @@ interface ThreadWorkLogProps {
   readonly onToggleRow: (rowId: string, anchorKey: string) => void;
   readonly renderImage: MarkdownImageRenderer;
   readonly renderReasoning: (text: string) => ReactNode;
+  readonly onPressPreview: (source: FilePreviewSource) => void;
 }
 
 export function ThreadWorkLog(props: ThreadWorkLogProps) {
@@ -479,6 +486,7 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
         onToggleRow={props.onToggleRow}
         renderImage={props.renderImage}
         renderReasoning={props.renderReasoning}
+        onPressPreview={props.onPressPreview}
         themeAppearance={props.themeAppearance}
       />
     ),
@@ -492,6 +500,7 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
       props.onToggleRow,
       props.renderImage,
       props.renderReasoning,
+      props.onPressPreview,
       props.themeAppearance,
     ],
   );
@@ -951,12 +960,13 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
         ? formatItemFullDetail(row.projectedItem, fetchedItem)
         : row.getFullDetail()
       : null;
+  const outputImages = expanded && fetchedItem ? turnItemOutputImages(fetchedItem) : [];
   const fetchedOutput = !expanded
     ? null
     : shownItem.type === "file_search" || shownItem.type === "web_search"
       ? turnItemOutputText(shownItem)
       : fetchedItem
-        ? (turnItemOutputText(fetchedItem) ?? "No output.")
+        ? (turnItemOutputText(fetchedItem) ?? (outputImages.length > 0 ? null : "No output."))
         : fetchedDetail.error
           ? `Couldn't load output: ${fetchedDetail.error}`
           : row.fetchesDetail
@@ -1116,6 +1126,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
         call ||
         fetchedOutput ||
         viewedImagePath ||
+        outputImages.length > 0 ||
         row.workEntry.questionAnswer) ? (
         <Animated.View
           entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
@@ -1134,6 +1145,16 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
               {props.renderImage({ href: viewedImagePath, alt: null, title: null })}
             </View>
           ) : null}
+          {outputImages.map((resource) => (
+            <View key={resource.index} className="pb-1.5">
+              <ThreadMarkdownImage
+                environmentId={props.environmentId}
+                resource={resource}
+                alt={null}
+                onPressPreview={props.onPressPreview}
+              />
+            </View>
+          ))}
           <ScrollView
             nestedScrollEnabled
             directionalLockEnabled
@@ -1201,11 +1222,11 @@ export function ThreadWorkGroupToggle(props: {
   readonly toolIcon?: ToolActivityIcon;
   readonly hasFailure: boolean;
   readonly shimmer: boolean;
+  readonly thought?: string | undefined;
   readonly onToggle: () => void;
 }) {
-  const accessibilityLabel = props.hasFailure
-    ? `${props.summary}, tool call failed`
-    : props.summary;
+  const statusLabel = props.hasFailure ? `${props.summary}, tool call failed` : props.summary;
+  const accessibilityLabel = props.thought ? `${props.thought} ${statusLabel}` : statusLabel;
   const icon =
     props.summaryToolIcon ??
     (props.toolSurface
@@ -1214,6 +1235,28 @@ export function ThreadWorkGroupToggle(props: {
 
   return (
     <WorkLogBlock layout="group-header">
+      {props.thought ? (
+        // The latest thought sits above the status line as an ordinary work-log
+        // row, wrapped up to four lines.
+        <Pressable
+          accessible={false}
+          onPress={props.onToggle}
+          className="flex-row items-start gap-1.5 rounded-md px-0.5 active:bg-subtle"
+        >
+          <WorkLogIconSlot>
+            <WorkLogIcon icon="brain" color={props.iconSubtleColor} />
+          </WorkLogIconSlot>
+          <Text
+            key={props.rowSizing.textSizeKey}
+            selectable={false}
+            numberOfLines={4}
+            ellipsizeMode="tail"
+            className="min-w-0 flex-1 py-0.5 text-sm text-foreground-muted"
+          >
+            {props.thought}
+          </Text>
+        </Pressable>
+      ) : null}
       <WorkLogPressable
         accessibilityRole="button"
         accessibilityState={{ expanded: props.expanded }}

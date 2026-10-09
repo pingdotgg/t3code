@@ -19,8 +19,11 @@ export {
   registerTest,
   retryOf,
   test,
+  tagsOf,
+  optInTagsOf,
   timeoutOf,
   type DescribeFn,
+  type DescribeOptions,
   type HookKind,
   type LayerMethods,
   type RegisterTestOptions,
@@ -40,6 +43,7 @@ export {
   type Matchers,
 } from "./Expect.ts";
 export { currentFile } from "./Registry.ts";
+export type { Tags, TestTag, TestTags } from "./Tags.ts";
 export type {
   FileSuite,
   Hook,

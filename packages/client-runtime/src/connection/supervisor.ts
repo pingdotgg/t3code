@@ -30,7 +30,12 @@ import * as RpcSession from "../rpc/session.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
-import { connectionRouteId, connectionRoutes, entryWithRoutes } from "./routes.ts";
+import {
+  connectionRouteId,
+  connectionRoutes,
+  entryWithRoutes,
+  type ReportedEndpoint,
+} from "./routes.ts";
 
 const RETRY_BASE_DELAY_MS = 1_000;
 const RETRY_MAX_DELAY_MS = 300_000;
@@ -120,7 +125,7 @@ export interface EnvironmentSupervisorOptions {
    */
   readonly learnRoutes?: (input: {
     readonly activeRoute: ConnectionRoute;
-    readonly reported: ReadonlyArray<{ readonly httpBaseUrl: string }>;
+    readonly reported: ReadonlyArray<ReportedEndpoint>;
   }) => Effect.Effect<Option.Option<ConnectionCatalogEntry>>;
 }
 
@@ -802,7 +807,30 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         resetRetry: connectedExit.value,
       } satisfies AttemptOutcome;
     }
-    return failureFromExit(target, connectedExit, true, connectedForMs >= BACKOFF_RESET_AFTER_MS);
+    const outcome = failureFromExit(
+      target,
+      connectedExit,
+      true,
+      connectedForMs >= BACKOFF_RESET_AFTER_MS,
+    );
+    if (outcome._tag === "Failure") {
+      // A live session ending is otherwise invisible in the client trace, so
+      // record why, and how long it lasted, as its own root span.
+      yield* Effect.void.pipe(
+        Effect.withSpan("EnvironmentSupervisor.connectionLost", {
+          root: true,
+          attributes: {
+            "environment.id": target.environmentId,
+            "environment.label": target.label,
+            "environment.target.kind": target._tag,
+            "connection.connected_ms": connectedForMs,
+            "connection.failure.reason": outcome.failure.error.reason,
+            "connection.failure.detail": outcome.failure.error.detail,
+          },
+        }),
+      );
+    }
+    return outcome;
   }, Effect.ensuring(clearLease));
 
   const waitForRetrySignal = Effect.fnUntraced(function* (delayMs: number) {

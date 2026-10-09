@@ -81,6 +81,11 @@ jobs:
           bun scripts/release/prepare.ts '${{ inputs.version }}' | tee -a "$GITHUB_OUTPUT"
 
       - name: Build release packages
+        # Match preview CI: the cold tsgo build can starve the runner
+        # without Go heap limits on this 32 GB machine.
+        env:
+          GOMEMLIMIT: 6GiB
+          GOGC: "40"
         run: >-
           pnpm turbo run build
           $(jq -r '.[] | "--filter=\(.name)"' release-packages.json)

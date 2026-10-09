@@ -1,14 +1,21 @@
-import * as railway from "@distilled.cloud/railway";
+import { Query, type UnwrapPlan } from "@distilled.cloud/core/query";
+import { Railway, type Region } from "@distilled.cloud/railway";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { resolveWorkspace } from "./Environment.ts";
 
-const regionSelection = {
-  id: true,
-  name: true,
-  region: true,
-} as const satisfies railway.Selection<"Region">;
-type RegionsResultItem = railway.Result<"Region!", typeof regionSelection>;
+const regionFields = <E>(region: Query<Region, E>) => ({
+  id: region.id,
+  name: region.name,
+  region: region.region,
+});
+type RegionsResultItem = UnwrapPlan<ReturnType<typeof regionFields>>;
+
+const readRegions = Query.fn((projectId?: string) =>
+  Railway.regions(projectId === undefined ? {} : { projectId }).pipe(
+    Query.map(regionFields),
+  ),
+);
 
 export type CatalogKind = "region" | "workspace";
 
@@ -33,10 +40,7 @@ export const currentWorkspace = resolveWorkspace;
  * catalog to a project; omit it for the workspace default set.
  */
 export const listRegions = Effect.fn(function* (projectId?: string) {
-  const regions = yield* railway.regions(
-    projectId === undefined ? {} : { projectId },
-    regionSelection,
-  );
+  const regions = yield* readRegions(projectId);
   return regions ?? [];
 });
 

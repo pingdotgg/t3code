@@ -55,9 +55,12 @@ function renderedToggleLabel(mode: "markdown" | "html" | "table", rendered: bool
 export function AttachmentFilePreview(props: {
   name: string;
   mimeType: string;
+  /** Zero when unknown. */
   sizeBytes: number;
   file?: Blob | null;
   asset?: { environmentId: EnvironmentId; attachmentId: string };
+  /** An agent's HTML render, shown in the app theme. */
+  htmlRender?: boolean;
   /** First crumb: where the file comes from. */
   origin?: string;
   onRemove?: () => void;
@@ -242,7 +245,12 @@ export function AttachmentFilePreview(props: {
       <ReadOnlySourcePreview name={props.name} text={content.text} />
     )
   ) : kind === "pdf" || kind === "html" ? (
-    <BrowserDocumentFrame src={url} title={props.name} pdf={kind === "pdf"} />
+    <BrowserDocumentFrame
+      src={url}
+      title={props.name}
+      pdf={kind === "pdf"}
+      htmlRender={props.htmlRender === true}
+    />
   ) : kind === "audio" ? (
     <AudioPreview src={url} name={props.name} onError={() => setError("Unable to load audio.")} />
   ) : kind === "video" ? (
@@ -257,6 +265,7 @@ export function AttachmentFilePreview(props: {
       />
     </div>
   ) : kind === "image" ? (
+    // oxlint-disable-next-line t3code/require-centered-scroll-gutter -- The image is capped at max-h-full max-w-full, so this never scrolls.
     <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
       <img
         src={url}
@@ -286,9 +295,11 @@ export function AttachmentFilePreview(props: {
           <span aria-current="page" className="min-w-0 truncate px-0.5 font-medium text-foreground">
             {props.name}
           </span>
-          <span className="ml-2 shrink-0 text-muted-foreground">
-            {formatAttachmentSize(props.sizeBytes)}
-          </span>
+          {props.sizeBytes > 0 ? (
+            <span className="ml-2 shrink-0 text-muted-foreground">
+              {formatAttachmentSize(props.sizeBytes)}
+            </span>
+          ) : null}
         </div>
         {renderedMode ? (
           <FileSurfaceAction
@@ -341,7 +352,8 @@ export function AttachmentFilePreview(props: {
       </div>
       {content?.truncated ? (
         <FileSurfaceNotice>
-          Preview limited to the first 1 MB of a {props.sizeBytes.toLocaleString()} byte file. Save
+          Preview limited to the first 1 MB
+          {props.sizeBytes > 0 ? ` of a ${props.sizeBytes.toLocaleString()} byte file` : ""}. Save
           the file to read it in full.
         </FileSurfaceNotice>
       ) : null}

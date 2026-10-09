@@ -16,7 +16,7 @@ import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as TokenStore from "../authorization/tokenStore.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
-import { remoteHttpClientLayer } from "../rpc/http.ts";
+import * as RpcHttp from "../rpc/http.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { fetchEnvironmentSessionState } from "../state/session.ts";
 import type { ConnectionCatalogEntry, ConnectionRoute } from "./catalog.ts";
@@ -233,7 +233,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
     );
   });
 
-  const dependencies = Layer.mergeAll(
+  const layerDependencies = Layer.mergeAll(
     // Jitter at its maximum, so each retry waits exactly its ceiling: 2s, 4s, 8s...
     Layer.succeed(Random.Random, {
       nextDoubleUnsafe: () => 1 - Number.EPSILON,
@@ -261,7 +261,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
   );
 
   return {
-    dependencies,
+    dependencies: layerDependencies,
     prepareCount,
     sessionCount,
     releaseCount,
@@ -1551,11 +1551,11 @@ describe("EnvironmentSupervisor", () => {
         getAgentActivitySnapshot: unused,
         resetTokenCache: Effect.void,
       });
-      const httpLayer = remoteHttpClientLayer(fetchFn);
+      const layerHttp = RpcHttp.layerRemoteHttpClient(fetchFn);
       const remoteAuthorization = yield* RemoteEnvironmentAuthorization.make.pipe(
         Effect.provide(
           Layer.mergeAll(
-            httpLayer,
+            layerHttp,
             Layer.succeed(ManagedRelay.ManagedRelayDpopSigner, signer),
             Layer.succeed(ManagedRelay.ManagedRelayClient, relay),
             Layer.succeed(ClientCapabilities.CloudSession, {
@@ -1572,7 +1572,6 @@ describe("EnvironmentSupervisor", () => {
             }),
             Layer.succeed(ClientCapabilities.ClientPresentation, {
               metadata: { label: "Test client", deviceType: "desktop" },
-              scopes: AuthStandardClientScopes,
             }),
           ),
         ),
@@ -1593,7 +1592,7 @@ describe("EnvironmentSupervisor", () => {
         prepared,
         signer: Option.some(signer),
         remoteAuthorization: Option.some(remoteAuthorization),
-      }).pipe(Effect.provide(httpLayer));
+      }).pipe(Effect.provide(layerHttp));
 
       yield* TestClock.adjust("2 hours");
       expect((yield* readSession).authenticated).toBe(true);

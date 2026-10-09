@@ -41,6 +41,17 @@ describe("serverSettings helpers", () => {
       logsAfterDays: 30,
     });
   });
+  it("replaces GitHub host choices so a cleared account pin does not survive", () => {
+    const pinned = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      github: { hosts: { "github.com": { account: "work", enabled: true } } },
+    });
+    expect(pinned.github.hosts).toEqual({ "github.com": { account: "work", enabled: true } });
+    expect(
+      applyServerSettingsPatch(pinned, {
+        github: { hosts: { "github.com": { enabled: false } } },
+      }).github.hosts,
+    ).toEqual({ "github.com": { enabled: false } });
+  });
   it("replaces SSH host lists when saving, editing, and removing hosts", () => {
     const host = { id: "mini", label: "Mac mini", target: "mini" };
     const saved = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, { deviceHosts: [host] });
@@ -793,5 +804,18 @@ describe("serverSettings helpers", () => {
     });
 
     expect(resolved.pauseWhenOnBattery).toBe(false);
+  });
+});
+
+describe("worktreesDirectory", () => {
+  it("remembers previous custom locations so their worktrees stay managed", () => {
+    const first = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, { worktreesDirectory: "/a" });
+    expect(first.previousWorktreesDirectories).toEqual([]);
+    const second = applyServerSettingsPatch(first, { worktreesDirectory: "/b" });
+    expect(second.previousWorktreesDirectories).toEqual(["/a"]);
+    const reset = applyServerSettingsPatch(second, { worktreesDirectory: "" });
+    expect(reset.previousWorktreesDirectories).toEqual(["/a", "/b"]);
+    const back = applyServerSettingsPatch(reset, { worktreesDirectory: "/a" });
+    expect(back.previousWorktreesDirectories).toEqual(["/b"]);
   });
 });

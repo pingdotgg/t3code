@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -106,6 +107,13 @@ export const ThreadPullRequestWatch = Schema.Struct({
   failedChecks: Schema.Array(TrimmedNonEmptyString),
   /** The agent was told the required checks on that commit passed. */
   passed: Schema.Boolean,
+  /**
+   * Names in the passing gate on that commit, so a required check that first shows up already
+   * passed is news. Empty on watches saved before this field existed.
+   */
+  passedChecks: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   /** Remarks from others created up to this host time were reported. */
   remarksThrough: IsoDateTime,
   /** Remarks created exactly at `remarksThrough` that were reported, so a late one still counts. */

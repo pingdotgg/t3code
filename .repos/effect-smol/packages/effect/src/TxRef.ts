@@ -135,6 +135,15 @@ export const makeUnsafe = <A>(initial: A): TxRef<A> => ({
   value: initial
 })
 
+const journalEntry = <A>(state: Effect.Transaction["Service"], self: TxRef<A>) => {
+  let entry = state.journal.get(self)
+  if (entry === undefined) {
+    entry = { version: self.version, value: self.value, written: false }
+    state.journal.set(self, entry)
+  }
+  return entry
+}
+
 /**
  * Modifies the value of the `TxRef` using the provided function.
  *
@@ -173,12 +182,10 @@ export const modify: {
   Effect.Transaction.pipe(
     Effect.flatMap((state) =>
       Effect.sync(() => {
-        if (!state.journal.has(self)) {
-          state.journal.set(self, { version: self.version, value: self.value })
-        }
-        const current = state.journal.get(self)!
+        const current = journalEntry(state, self)
         const [returnValue, next] = f(current.value)
         current.value = next
+        current.written = true
         return returnValue
       })
     ),
@@ -251,7 +258,11 @@ export const update: {
  * @category combinators
  * @since 2.0.0
  */
-export const get = <A>(self: TxRef<A>): Effect.Effect<A> => modify(self, (current) => [current, current])
+export const get = <A>(self: TxRef<A>): Effect.Effect<A> =>
+  Effect.Transaction.pipe(
+    Effect.map((state) => journalEntry(state, self).value),
+    Effect.tx
+  )
 
 /**
  * Sets the value of the `TxRef`.
