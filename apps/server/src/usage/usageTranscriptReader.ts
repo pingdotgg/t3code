@@ -203,6 +203,26 @@ async function guardMatches(
 }
 
 /**
+ * Builds the byte-level test for a format's `usageMarkers`: whether a line
+ * contains any of them.
+ *
+ * One marker is a single `Buffer` search. Several would be one pass over the
+ * line each, so they are matched together as one alternation over the line's
+ * latin1 view instead: latin1 maps every byte to one character without
+ * validating it, so an ASCII marker matches exactly where its bytes do.
+ */
+export function transcriptLineGate(markers: readonly [string, ...string[]]) {
+  if (markers.length === 1) {
+    const marker = Buffer.from(markers[0]);
+    return (line: Buffer) => line.includes(marker);
+  }
+  const pattern = new RegExp(
+    markers.map((marker) => marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
+  );
+  return (line: Buffer) => pattern.test(line.toString("latin1"));
+}
+
+/**
  * Streams one transcript and returns the usage records it contains, or `null`
  * when the file could not be read.
  *
@@ -255,17 +275,20 @@ export async function readTranscriptRecords<State>(
       resumed = true;
     }
 
-    const parseLine = (line: string, lineState: State, out: UsageRecord[]): void => {
-      if (!format.mightCarryUsage(line)) return;
-      for (const record of format.parseLine(line, lineState)) out.push(record);
-    };
-
     const toLineString = (lineBuffer: Buffer): string => {
       const content =
         lineBuffer.length > 0 && lineBuffer[lineBuffer.length - 1] === CARRIAGE_RETURN
           ? lineBuffer.subarray(0, -1)
           : lineBuffer;
       return content.toString("utf8");
+    };
+
+    // Gate on the raw bytes so the lines that fail it, which is most of them,
+    // are never decoded.
+    const mightCarryUsage = transcriptLineGate(format.usageMarkers);
+    const parseLine = (lineBuffer: Buffer, lineState: State, out: UsageRecord[]): void => {
+      if (!mightCarryUsage(lineBuffer)) return;
+      for (const record of format.parseLine(toLineString(lineBuffer), lineState)) out.push(record);
     };
 
     const records: UsageRecord[] = [];
@@ -306,7 +329,7 @@ export async function readTranscriptRecords<State>(
           pendingChunks.length === 1
             ? pendingChunks[0]!
             : Buffer.concat(pendingChunks, pendingBytes);
-        parseLine(toLineString(line), lineState, out);
+        parseLine(line, lineState, out);
       }
       pendingChunks = [];
       pendingBytes = 0;
@@ -329,7 +352,7 @@ export async function readTranscriptRecords<State>(
         // Most lines fit in the current chunk. Avoid buffering/streaming
         // machinery on this hot path.
         if (!streaming && pendingBytes === 0) {
-          parseLine(toLineString(chunk.subarray(lineStart, newlineIndex)), state, records);
+          parseLine(chunk.subarray(lineStart, newlineIndex), state, records);
         } else {
           append(chunk.subarray(lineStart, newlineIndex));
           finish(state, records);

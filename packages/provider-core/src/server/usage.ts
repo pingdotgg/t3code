@@ -90,11 +90,12 @@ export type SelectedFields = { readonly [key: string]: true | SelectedFields };
 export interface TranscriptUsageFormat<State> {
   readonly selectFields: SelectedFields;
   /**
-   * Cheap substring gate applied before `JSON.parse`. Transcripts are mostly
-   * tool output; skipping lines that cannot matter is worth an order of
-   * magnitude. Lines that only update `State` must pass too.
+   * ASCII substrings, at least one of which every line that matters contains.
+   * Transcripts are mostly tool output, so the engine matches these against a
+   * line's raw bytes and neither decodes nor parses the rest, which is worth an
+   * order of magnitude. Lines that only update `State` must match too.
    */
-  mightCarryUsage(line: string): boolean;
+  readonly usageMarkers: readonly [string, ...string[]];
   parseLine(line: string, state: State): readonly UsageRecord[];
   parseProjected(projected: unknown, state: State): readonly UsageRecord[];
   /**
