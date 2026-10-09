@@ -13,6 +13,7 @@ import type {
   ProviderInstanceId,
   ServerSettings,
   UsageProviderKind,
+  UsageReadError,
   UsageSource,
   UsageTokenTotals,
 } from "@t3tools/contracts";
@@ -177,7 +178,8 @@ export type ProviderUsageReader<Config, R> =
   | {
       readonly kind: "scan";
       readonly provider: UsageProviderKind;
+      /** Fails only when the whole usage read cannot go on; an unreadable source is a status. */
       readonly scan: (
         input: ProviderUsageScanInput<Config>,
-      ) => Effect.Effect<ReadonlyArray<ProviderUsageScan>, never, R>;
+      ) => Effect.Effect<ReadonlyArray<ProviderUsageScan>, UsageReadError, R>;
     };

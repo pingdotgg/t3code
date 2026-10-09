@@ -1,16 +1,15 @@
 /**
- * UsageService - scans provider transcripts and returns priced usage buckets.
+ * UsageService - reads every driver's usage history and returns priced usage
+ * buckets.
  *
- * The scan reads native session files and databases, including work driven
- * outside T3 Code. Cursor's local records provide only partial coverage.
+ * Each built-in driver with a `usage` reader contributes its sources, including
+ * work driven outside T3 Code. A `transcripts` reader names JSONL directories
+ * that this service streams itself; a `scan` reader reads its own sources.
  *
  * JSONL transcripts are append-only, so parsed records are memoised per file by
  * `(size, mtime)`. A cold 30-day scan of ~1.4 GB lands around 2-3 seconds; warm
  * scans only reparse files that changed, and a file that merely grew resumes
  * from its cached parse position so only the appended bytes are read.
- * OpenCode's SQLite reader queries the live database each scan so WAL writes
- * remain visible. Antigravity databases are memoised in memory while the
- * database and its WAL keep the same `(size, mtime, ctime)`.
  *
  * A scan reader with a slow source (an account API) may answer from its own
  * cache and mark itself `refreshing` while a background refresh runs;
@@ -36,7 +35,6 @@ import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -52,9 +50,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerConfig from "../config.ts";
-import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ServerSettings from "../serverSettings.ts";
-import { resolveAntigravityInstanceDirectories } from "../provider/antigravityAuthSupport.ts";
 import { BUILT_IN_USAGE_DRIVERS, type BuiltInUsageReadersEnv } from "../provider/builtInDrivers.ts";
 import type { ProviderDriver } from "@t3tools/provider-core/server/driver";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
@@ -63,7 +59,6 @@ import type {
   TranscriptUsageFormat,
   UsageRecord,
 } from "@t3tools/provider-core/server/usage";
-import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUsageReader.ts";
 import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
@@ -227,7 +222,6 @@ const layerTest = Layer.succeed(
 );
 
 export const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const config = yield* ServerConfig.ServerConfig;
@@ -238,7 +232,6 @@ export const make = Effect.gen(function* () {
   const readerContext = yield* Effect.context<BuiltInUsageReadersEnv>();
 
   const fileCache: ScanCache = new Map();
-  const antigravityCache = makeAntigravityUsageCache();
   const sourceCache = new Map<string, typeof CachedSource.Type>();
   let cacheDirty = false;
   const isWithinDirectory = (filePath: string, dir: string) => {
@@ -639,22 +632,6 @@ export const make = Effect.gen(function* () {
       Effect.provideContext(readerContext),
     );
 
-    const home = NodeOS.homedir();
-    const envRoots = Effect.fnUntraced(function* (key: string, defaults: readonly string[]) {
-      const roots = hostEnvironment[key]
-        ?.split(",")
-        .map((value) => value.trim())
-        .filter(Boolean);
-      const canonical = new Set<string>();
-      for (const root of roots?.length ? roots : defaults) {
-        const resolved = path.resolve(expandHomePath(root));
-        canonical.add(
-          yield* fileSystem.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved)),
-        );
-      }
-      return [...canonical];
-    });
-
     const scans = Effect.forEach(
       scanReaders,
       ({ driver, reader }) =>
@@ -686,83 +663,14 @@ export const make = Effect.gen(function* () {
       { concurrency: "unbounded" },
     );
 
-    const antigravity = Effect.gen(function* () {
-      const antigravityRoots = yield* envRoots("ANTIGRAVITY_DATA_DIR", [
-        ...["antigravity", "antigravity-cli", "antigravity-ide", "antigravity-backup"].map((name) =>
-          path.join(home, ".gemini", name),
-        ),
-        path.join(home, ".config", "antigravity"),
-      ]);
-      for (const [instanceId, instance] of Object.entries(settings.providerInstances)) {
-        if (instance.driver === "antigravity") {
-          const directories = yield* resolveAntigravityInstanceDirectories(
-            config.stateDir,
-            ProviderInstanceId.make(instanceId),
-          ).pipe(
-            Effect.provideService(Crypto.Crypto, crypto),
-            Effect.provideService(Path.Path, path),
-            Effect.mapError(
-              (cause) =>
-                new UsageReadError({
-                  reason: "scanFailed",
-                  detail: "Antigravity profile directory could not be resolved.",
-                  cause,
-                }),
-            ),
-          );
-          antigravityRoots.push(path.join(directories.profile, "antigravity-acp"));
-        }
-      }
-      const antigravityDirs = new Set<string>();
-      for (const root of antigravityRoots) {
-        const resolvedRoot = yield* fileSystem
-          .realPath(root)
-          .pipe(Effect.orElseSucceed(() => root));
-        const nested = path.join(resolvedRoot, "conversations");
-        const dir = (yield* fileSystem
-          .exists(nested)
-          .pipe(Effect.catchCause(() => Effect.succeed(false))))
-          ? nested
-          : resolvedRoot;
-        antigravityDirs.add(yield* fileSystem.realPath(dir).pipe(Effect.orElseSucceed(() => dir)));
-      }
-      const result = yield* Effect.promise(() =>
-        readAntigravityUsage([...antigravityDirs], windowStartMs, antigravityCache),
-      );
-      const scanned: ScannedDir[] = [];
-      for (const dir of antigravityDirs) {
-        const exists = yield* fileSystem
-          .exists(dir)
-          .pipe(Effect.catchCause(() => Effect.succeed(false)));
-        const failed = result.errors.some(
-          (error) => error === dir || error.startsWith(`${dir}${path.sep}`),
-        );
-        scanned.push({
-          provider: "antigravity",
-          dir,
-          volumeId: yield* Effect.promise(() => readDirectoryVolumeId(dir)),
-          files: !exists && !failed ? null : result.files.filter((file) => file.root === dir),
-          status: failed ? "partial" : "ok",
-          ...(failed ? { message: "Some Antigravity history could not be read." } : {}),
-        });
-      }
-      return scanned;
-    });
-
     // Independent sources scan together. Transcript directories go one at a
     // time, so open files stay at `TRANSCRIPT_READ_CONCURRENCY`. The result
     // keeps this order, since aggregation keeps the first copy of a duplicate.
-    const [transcripts, scanDirs, antigravityDirs] = yield* Effect.all(
-      [Effect.forEach(dirs, (dir) => scanTranscriptDir(dir, windowStartMs)), scans, antigravity],
+    const [transcripts, scanDirs] = yield* Effect.all(
+      [Effect.forEach(dirs, (dir) => scanTranscriptDir(dir, windowStartMs)), scans],
       { concurrency: "unbounded" },
     );
-    // Antigravity reads between the other scan readers until it has a reader of its own.
-    const scanned: readonly ScannedDir[] = [
-      ...transcripts,
-      ...scanDirs.slice(0, -1).flat(),
-      ...antigravityDirs,
-      ...(scanDirs.at(-1) ?? []),
-    ];
+    const scanned: readonly ScannedDir[] = [...transcripts, ...scanDirs.flat()];
     return scanned;
   });
 
@@ -944,9 +852,10 @@ export const make = Effect.gen(function* () {
   });
 
   /**
-   * In-flight scans by window and usage settings, so concurrent identical requests (the usage
+   * In-flight scans by window and settings, so concurrent identical requests (the usage
    * page open on two clients at once) share one scan instead of racing over
-   * the same corpus twice.
+   * the same corpus twice. Readers read settings of their own, so a scan is
+   * shared only under the same settings snapshot.
    */
   const inflightScans = new Map<string, Deferred.Deferred<UsageSummary, UsageReadError>>();
 
@@ -958,9 +867,7 @@ export const make = Effect.gen(function* () {
       input.resolution ?? "day",
       input.sinceTime ?? null,
       input.untilTime ?? null,
-      settings.usagePriceOverrides,
-      settings.usageModelAliases,
-      settings.cursorKeychainUsageEnabled,
+      settings,
       // A waiting read must never share a scan that answers with `refreshing`.
       input.awaitRefresh === true,
     ]);

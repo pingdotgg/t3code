@@ -38,6 +38,7 @@ import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain"
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as AntigravityUsage from "../provider/Drivers/AntigravityUsage.ts";
 import * as ProviderHostLive from "../provider/ProviderHostLive.ts";
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 import * as UsageService from "./UsageService.ts";
@@ -127,6 +128,7 @@ const layerService = (input: {
   layerCursorUsageAccounts(
     CursorAccountReader.layer.pipe(Layer.provide(CursorKeychain.layer)),
   ).pipe(
+    Layer.provideMerge(AntigravityUsage.layer),
     Layer.provideMerge(ProviderHostLive.layer),
     Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
     Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)({})),

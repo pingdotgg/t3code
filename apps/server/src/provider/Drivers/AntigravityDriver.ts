@@ -26,6 +26,7 @@ import {
 } from "../../textGeneration/AntigravityTextGeneration.ts";
 import { makeAntigravityAuth, type AntigravityAuth } from "../AntigravityAuth.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
+import * as AntigravityUsage from "./AntigravityUsage.ts";
 import {
   antigravityAuthConfigIssue,
   antigravityAuthLabel,
@@ -80,11 +81,16 @@ export type AntigravityDriverEnv =
   | ProviderEventLoggers.ProviderEventLoggers;
 
 /** Each instance owns its Google profile. Executable releases are shared by the environment. */
-export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityDriverEnv> = {
+export const AntigravityDriver: ProviderDriver<
+  AntigravitySettings,
+  AntigravityDriverEnv,
+  AntigravityUsage.AntigravityUsage
+> = {
   driverKind: DRIVER,
   metadata: { displayName: "Antigravity", supportsMultipleInstances: true },
   configSchema: AntigravitySettings,
   defaultConfig: () => decodeSettings({}),
+  usage: AntigravityUsage.antigravityUsageReader,
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const crypto = yield* Crypto.Crypto;
