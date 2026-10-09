@@ -1,5 +1,6 @@
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
@@ -16,6 +17,14 @@ const isJsonRpcId = Schema.is(JsonRpcId);
 const isJsonRpcResponseEnvelope = Schema.is(JsonRpcResponseEnvelope);
 const isCodexAppServerError = Schema.is(CodexError.CodexAppServerError);
 const MAX_BUFFERED_RAW_MESSAGES = 32;
+
+/**
+ * How long the reader may keep handling input after the process exits. The
+ * pipe can still hold output written before the exit. Past this, the exit ends
+ * the connection and any input not yet handled is dropped, so a reader that is
+ * stuck in a handler cannot hold the connection open forever.
+ */
+const PROCESS_EXIT_INPUT_GRACE = Duration.seconds(5);
 
 export interface CodexAppServerProtocolLogEvent {
   readonly direction: "incoming" | "outgoing";
@@ -37,6 +46,11 @@ export interface CodexAppServerIncomingRequest {
 export interface CodexAppServerPatchedProtocolOptions {
   readonly stdio: Stdio.Stdio;
   readonly terminationError?: Effect.Effect<CodexError.CodexAppServerError>;
+  /**
+   * Completes when the peer process exits. The protocol then terminates even
+   * if a message handler never returns and the input never reaches its end.
+   */
+  readonly processExit?: Effect.Effect<CodexError.CodexAppServerError>;
   readonly logIncoming?: boolean;
   readonly logOutgoing?: boolean;
   readonly logger?: (event: CodexAppServerProtocolLogEvent) => Effect.Effect<void, never>;
@@ -52,6 +66,8 @@ export interface CodexAppServerPatchedProtocolOptions {
 export interface CodexAppServerPatchedProtocol {
   readonly incomingNotifications: Stream.Stream<CodexAppServerIncomingNotification>;
   readonly incomingRequests: Stream.Stream<CodexAppServerIncomingRequest>;
+  /** Completes with the error that ended the connection. */
+  readonly terminated: Effect.Effect<CodexError.CodexAppServerError>;
   readonly request: (
     method: string,
     payload?: unknown,
@@ -167,7 +183,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
     const remainder: Array<string> = [];
     const terminationHandled = yield* Ref.make(false);
     const terminationFailure = yield* Ref.make(Option.none<CodexError.CodexAppServerError>());
-    const terminationSignal = yield* Deferred.make<void>();
+    const terminationSignal = yield* Deferred.make<CodexError.CodexAppServerError>();
     const activeRequestHandlers = yield* Ref.make(0);
 
     const logProtocol = (event: CodexAppServerProtocolLogEvent) => {
@@ -204,7 +220,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
             yield* Ref.set(terminationFailure, Option.some(error));
             yield* failAllPending(error);
             yield* Queue.end(outgoing);
-            yield* Deferred.succeed(terminationSignal, undefined);
+            yield* Deferred.succeed(terminationSignal, error);
             yield* Scope.close(requestHandlerScope, Exit.void).pipe(
               Effect.forkIn(protocolScope, { startImmediately: true }),
               Effect.asVoid,
@@ -445,6 +461,14 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
       Effect.forkScoped,
     );
 
+    if (options.processExit !== undefined) {
+      yield* options.processExit.pipe(
+        Effect.tap(() => Effect.sleep(PROCESS_EXIT_INPUT_GRACE)),
+        Effect.flatMap((error) => handleTermination(() => Effect.succeed(error))),
+        Effect.forkScoped,
+      );
+    }
+
     yield* Stream.fromQueue(outgoing).pipe(Stream.run(options.stdio.stdout()), Effect.forkScoped);
 
     const request = (method: string, payload?: unknown) =>
@@ -476,6 +500,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
     return {
       incomingNotifications: Stream.fromQueue(incomingNotifications),
       incomingRequests: Stream.fromQueue(incomingRequests),
+      terminated: Deferred.await(terminationSignal),
       request,
       notify,
       respond,

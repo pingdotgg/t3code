@@ -40,6 +40,8 @@ export class CodexAppServerClient extends Context.Service<
   CodexAppServerClient,
   {
     readonly raw: CodexAppServerClientRaw;
+    /** Completes with the error that ended the connection to the app-server. */
+    readonly terminated: Effect.Effect<CodexError.CodexAppServerError>;
     readonly request: <M extends CodexRpc.ClientRequestMethod>(
       method: M,
       payload: CodexRpc.ClientRequestParamsByMethod[M],
@@ -94,10 +96,17 @@ const V2TurnStartParamsWithCollaborationMode = CodexSchema.V2TurnStartParams.pip
   }),
 );
 
+export interface CodexAppServerTermination {
+  /** Classifies the end of input. */
+  readonly terminationError?: Effect.Effect<CodexError.CodexAppServerError>;
+  /** Completes when the app-server process exits. */
+  readonly processExit?: Effect.Effect<CodexError.CodexAppServerError>;
+}
+
 export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make")(function* (
   stdio: Stdio.Stdio,
   options: CodexAppServerClientOptions = {},
-  terminationError?: Effect.Effect<CodexError.CodexAppServerError>,
+  termination: CodexAppServerTermination = {},
 ): Effect.fn.Return<CodexAppServerClient["Service"], never, Scope.Scope> {
   const requestHandlers = new Map<string, ServerRequestHandler>();
   const notificationHandlers = new Map<string, Array<ServerNotificationHandler>>();
@@ -197,7 +206,7 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
 
   const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
     stdio,
-    ...(terminationError ? { terminationError } : {}),
+    ...termination,
     ...(options.logIncoming !== undefined ? { logIncoming: options.logIncoming } : {}),
     ...(options.logOutgoing !== undefined ? { logOutgoing: options.logOutgoing } : {}),
     ...(options.logger ? { logger: options.logger } : {}),
@@ -238,6 +247,7 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
       respond: transport.respond,
       respondError: transport.respondError,
     },
+    terminated: transport.terminated,
     request,
     notify,
     handleServerRequest: (method, handler) =>
@@ -271,5 +281,10 @@ const makeChildProcessClient = Effect.fn(
   "effect-codex-app-server/CodexAppServerClient.makeChildProcessClient",
 )(function* (handle: ChildProcessSpawner.ChildProcessHandle, options: CodexAppServerClientOptions) {
   yield* Stream.runDrain(handle.stderr).pipe(Effect.ignore, Effect.forkScoped);
-  return yield* make(makeChildStdio(handle), options, makeTerminationError(handle));
+  // Reaching the end of input and the process exiting both report the exit.
+  const exited = makeTerminationError(handle);
+  return yield* make(makeChildStdio(handle), options, {
+    terminationError: exited,
+    processExit: exited,
+  });
 });

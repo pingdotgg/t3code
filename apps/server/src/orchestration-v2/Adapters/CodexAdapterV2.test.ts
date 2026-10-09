@@ -63,6 +63,7 @@ import * as EffectWorker from "../EffectWorker.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
 import {
+  ProviderAdapterEventStreamError,
   ProviderAdapterForkThreadError,
   ProviderAdapterOpenSessionError,
   ProviderAdapterRollbackThreadError,
@@ -1774,11 +1775,28 @@ describe("CodexAdapterV2 session initialize", () => {
             runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
           }),
         initializeRequests: () => initializeRequests,
+        events: runtime.events,
       };
     });
 
   const replayPreamble = (nativeThreadId: string) =>
     codexReplayPreamble({ nativeThreadId, nativeTurnId: "unused", prompt: "unused" });
+
+  it.effect("fails the event stream when the app-server exits", () =>
+    Effect.gen(function* () {
+      const session = yield* openReplaySession(
+        makeCodexReplayTranscript({
+          scenario: "app-server-exit",
+          entries: [{ type: "runtime_exit", status: "success" }],
+        }),
+      );
+
+      const error = yield* session.events.pipe(Stream.runDrain, Effect.flip);
+
+      assert.instanceOf(error, ProviderAdapterEventStreamError);
+      assert.instanceOf(error.cause, CodexError.CodexAppServerProcessExitedError);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
 
   it.effect("sends one initialize when two threads start on a fresh session at once", () =>
     Effect.gen(function* () {

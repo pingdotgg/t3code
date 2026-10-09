@@ -5,6 +5,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
+import { TestClock } from "effect/testing";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -784,6 +785,63 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       assert.notProperty(error, "detail");
       assert.notProperty(error, "cause");
       assert.notInclude(error.message, secret);
+    }),
+  );
+
+  it.effect("terminates on process exit while a notification handler holds the reader", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const exited = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const handlerStarted = yield* Deferred.make<void>();
+      const termination = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const protocol = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        processExit: Deferred.await(exited),
+        onNotification: () =>
+          Deferred.succeed(handlerStarted, undefined).pipe(Effect.andThen(Effect.never)),
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+
+      const pending = yield* protocol
+        .request("thread/read", {})
+        .pipe(Effect.flip, Effect.orDie, Effect.forkChild);
+      yield* Queue.offer(input, encodeJsonl({ method: "item/agentMessage/delta", params: {} }));
+      yield* Deferred.await(handlerStarted);
+      const exitError = new CodexError.CodexAppServerProcessExitedError({ code: 137 });
+      yield* Deferred.succeed(exited, exitError);
+      yield* TestClock.adjust("5 seconds");
+
+      assert.strictEqual(yield* Deferred.await(termination), exitError);
+      assert.strictEqual(yield* Fiber.join(pending), exitError);
+      assert.strictEqual(yield* protocol.terminated, exitError);
+    }),
+  );
+
+  it.effect("handles output the process wrote before it exited", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const exited = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const notifications: Array<string> = [];
+      const termination = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const inputEnded = new CodexError.CodexAppServerProcessExitedError({ code: 0 });
+      yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        processExit: Deferred.await(exited),
+        terminationError: Effect.succeed(inputEnded),
+        onNotification: (notification) =>
+          Effect.sync(() => {
+            notifications.push(notification.method);
+          }),
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+
+      // Node can report the exit before the pipe delivers the last output.
+      yield* Deferred.succeed(exited, new CodexError.CodexAppServerProcessExitedError({ code: 1 }));
+      yield* Queue.offer(input, encodeJsonl({ method: "turn/completed", params: {} }));
+      yield* Queue.end(input);
+
+      assert.strictEqual(yield* Deferred.await(termination), inputEnded);
+      assert.deepEqual(notifications, ["turn/completed"]);
     }),
   );
 

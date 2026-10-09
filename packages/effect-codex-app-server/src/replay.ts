@@ -559,5 +559,5 @@ const makeReplayClientWithState = Effect.fn(
 
   yield* drainInbound();
 
-  return yield* CodexClient.make(stdio, options, terminationError);
+  return yield* CodexClient.make(stdio, options, { terminationError });
 });
