@@ -82,6 +82,7 @@ const layerDesktopWindow = (selectedAction: Deferred.Deferred<string>) =>
     handleBackendReady: () => Effect.void,
     handleBackendNotReady: Effect.void,
     flushMainWindowBounds: Effect.void,
+    setLocalActivityProbe: () => Effect.void,
     prepareCaptureReveal: Effect.void,
     dispatchMenuAction: (action) => Deferred.succeed(selectedAction, action).pipe(Effect.asVoid),
     dispatchSnapShotEvent: () => Effect.void,
