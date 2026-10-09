@@ -13,8 +13,13 @@ cost, split by token type and by speed. These estimates are not your subscriptio
 split, such as a provider-reported cost for a model without public rates, shows as **Other**.
 Select a model under **Breakdown** to see its trend, cache hit rate, and cost per million tokens.
 
-Totals depend on the history available on each server. Grok turns without a saved completed-turn
-record are missing from the totals.
+**Tokens** shows recorded **Thinking** separately, in a lighter shade of each provider's color.
+Thinking is part of output, so this does not change totals or cost. Thinking a provider does not
+report separately stays in **Output**.
+
+Totals depend on the history available on each server. Claude Code history is re-read once to pick
+up its thinking counts and output it previously missed, which can raise past totals and estimated
+costs. Grok turns without a saved completed-turn record are missing from the totals.
 
 OpenCode reads its SQLite database and older JSON history. Antigravity reads local conversation
 databases, including T3-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on the

@@ -114,6 +114,33 @@ describe("mergeUsage", () => {
     expect(merged.duplicateSources).toHaveLength(1);
   });
 
+  it("rolls up reasoning tokens, clamped to each bucket's output", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [
+              bucket({
+                hourStart: "2026-08-07T09:00:00.000Z",
+                totals: { ...bucket().totals, reasoningTokens: 100 },
+              }),
+              bucket({ hourStart: "2026-08-07T09:00:00.000Z" }),
+            ],
+            [{ provider: "claude", hostId: "mac", homePath: "/a", distinctSessions: 0 }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+    const totals = { costUsd: 20, totalTokens: 2320, reasoningTokens: 50 };
+    expect(merged).toMatchObject({ ...totals, outputTokens: 100 });
+    expect(merged.providers[0]).toMatchObject(totals);
+    expect(merged.daily[0]?.byProvider.get("claude")).toEqual(totals);
+    expect(merged.hourly[0]?.byProvider.get("claude")).toEqual(totals);
+    expect(merged.models[0]?.tokens).toMatchObject({ outputTokens: 100, reasoningTokens: 50 });
+  });
+
   it("sums environments that read different transcript directories", () => {
     const merged = mergeUsage(
       [

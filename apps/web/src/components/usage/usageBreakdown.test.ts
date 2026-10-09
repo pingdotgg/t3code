@@ -6,6 +6,7 @@ import {
   costPerMillionTokens,
   modelShare,
   sortModelsByTokens,
+  tokenTypeSegments,
 } from "./usageBreakdown";
 
 const model = (
@@ -48,6 +49,27 @@ describe("sortModelsByTokens", () => {
     ]);
     expect(models.map((item) => item.model)).toEqual(["lower-cost", "more-tokens", "higher-cost"]);
   });
+});
+
+describe("token types", () => {
+  it.each([0, 40, 100])(
+    "splits %i thinking tokens out of output without changing the total",
+    (reasoningTokens) => {
+      const segments = tokenTypeSegments({
+        uncachedInputTokens: 200,
+        cachedInputTokens: 300,
+        cacheCreationTokens: 50,
+        outputTokens: 100,
+        reasoningTokens,
+      });
+
+      expect(segments.find((segment) => segment.label === "Output")?.value).toBe(
+        100 - reasoningTokens,
+      );
+      expect(segments.find((segment) => segment.label === "Thinking")?.value).toBe(reasoningTokens);
+      expect(segments.reduce((sum, segment) => sum + segment.value, 0)).toBe(650);
+    },
+  );
 });
 
 describe("modelShare", () => {

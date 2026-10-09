@@ -1,6 +1,6 @@
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import type { UsageProviderKind } from "@t3tools/contracts";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
 import {
@@ -11,7 +11,7 @@ import {
   formatUsd,
 } from "@t3tools/shared/usageFormat";
 import { cn } from "~/lib/utils";
-import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
+import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providerThinkingColor } from "./usageProviders";
 
 const VIEW_WIDTH = 960;
 const VIEW_HEIGHT = 260;
@@ -40,6 +40,8 @@ export interface DayColumn {
   readonly bands: readonly {
     readonly provider: UsageProviderKind;
     readonly value: number;
+    /** Recorded thinking, a subset of `value`; always 0 for cost. */
+    readonly thinking: number;
   }[];
   readonly total: number;
 }
@@ -69,6 +71,7 @@ export function buildPeriodColumns(
     const bands = PROVIDER_ORDER.map((provider) => ({
       provider,
       value: valueFor(entry, provider, metric),
+      thinking: metric === "tokens" ? (entry?.byProvider.get(provider)?.reasoningTokens ?? 0) : 0,
     }));
     return { bands, total: bands.reduce((sum, band) => sum + band.value, 0) };
   });
@@ -217,23 +220,36 @@ function buildChart(
   const columns = buildPeriodColumns(periods, byPeriod, metric);
   const scale = chartScale(columns, loadingProviders);
   const stepX = periods.length < 2 ? 0 : VIEW_WIDTH / (periods.length - 1);
-  const paths = providers.map((provider) => {
+  // Each provider's total, plus a dashed series for its recorded thinking.
+  const paths = providers.flatMap((provider) => {
     const slot = PROVIDER_ORDER.indexOf(provider);
-    const line = curvePath(
-      smoothCurve(
-        columns.map((column, periodIndex) => ({
-          x: periodIndex * stepX,
-          y: valueToY(column.bands[slot]?.value ?? 0, scale.max),
-        })),
-      ),
-    );
-    return {
-      provider,
-      loading: loadingProviders.has(provider),
-      total: columns.reduce((sum, column) => sum + (column.bands[slot]?.value ?? 0), 0),
-      line,
-      area: areaPath(line),
-    };
+    return (["value", "thinking"] as const).flatMap((series) => {
+      const values = columns.map((column) => column.bands[slot]?.[series] ?? 0);
+      const total = values.reduce((sum, value) => sum + value, 0);
+      if (series === "thinking" && total === 0) return [];
+      const line = curvePath(
+        smoothCurve(
+          values.map((value, periodIndex) => ({
+            x: periodIndex * stepX,
+            y: valueToY(value, scale.max),
+          })),
+        ),
+      );
+      return [
+        {
+          key: `${provider}:${series}`,
+          color:
+            series === "thinking"
+              ? providerThinkingColor(provider)
+              : PROVIDER_PRESENTATION[provider].color,
+          thinking: series === "thinking",
+          loading: loadingProviders.has(provider),
+          total,
+          line,
+          area: areaPath(line),
+        },
+      ];
+    });
   });
 
   // Paint the heavier series first so the lighter one is not buried.
@@ -394,22 +410,23 @@ export function UsageProviderChart({
             })}
 
             {/* Fills first, then every stroke, so no series covers another's line. */}
-            {paths.map(({ provider, loading, area }) => (
+            {paths.map(({ key, color, loading, area }) => (
               <path
-                key={provider}
+                key={key}
                 d={area}
                 className={seriesClassName(loading)}
-                fill={PROVIDER_PRESENTATION[provider].color}
+                fill={color}
                 fillOpacity={0.12}
               />
             ))}
-            {paths.map(({ provider, loading, line }) => (
+            {paths.map(({ key, color, thinking, loading, line }) => (
               <path
-                key={provider}
+                key={key}
                 d={line}
                 className={seriesClassName(loading)}
                 fill="none"
-                stroke={PROVIDER_PRESENTATION[provider].color}
+                stroke={color}
+                strokeDasharray={thinking ? "4 3" : undefined}
                 strokeWidth={2}
                 vectorEffect="non-scaling-stroke"
               />
@@ -441,29 +458,36 @@ export function UsageProviderChart({
               <div className="mb-1 text-muted-foreground">{formatTooltipPeriod(hoveredPeriod)}</div>
               {providers.map((provider) => {
                 const { label, driverKind } = PROVIDER_PRESENTATION[provider];
+                const band = hoveredColumn?.bands.find((band) => band.provider === provider);
                 return (
-                  <div key={provider} className="flex items-center justify-between gap-3">
-                    <span className="flex items-center gap-1.5 text-muted-foreground">
-                      <ProviderInstanceIcon
-                        driverKind={driverKind}
-                        displayName={label}
-                        iconClassName="size-3"
-                      />
-                      {label}
-                    </span>
-                    <span
-                      className={cn(
-                        "tabular-nums",
-                        loadingProviders.has(provider)
-                          ? "text-muted-foreground"
-                          : "text-foreground",
-                      )}
-                    >
-                      {format(
-                        hoveredColumn?.bands.find((band) => band.provider === provider)?.value ?? 0,
-                      )}
-                    </span>
-                  </div>
+                  <Fragment key={provider}>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="flex items-center gap-1.5 text-muted-foreground">
+                        <ProviderInstanceIcon
+                          driverKind={driverKind}
+                          displayName={label}
+                          iconClassName="size-3"
+                        />
+                        {label}
+                      </span>
+                      <span
+                        className={cn(
+                          "tabular-nums",
+                          loadingProviders.has(provider)
+                            ? "text-muted-foreground"
+                            : "text-foreground",
+                        )}
+                      >
+                        {format(band?.value ?? 0)}
+                      </span>
+                    </div>
+                    {(band?.thinking ?? 0) > 0 ? (
+                      <div className="flex items-center justify-between gap-3 pl-4.5 text-muted-foreground">
+                        <span>Thinking</span>
+                        <span className="tabular-nums">{formatTokens(band?.thinking ?? 0)}</span>
+                      </div>
+                    ) : null}
+                  </Fragment>
                 );
               })}
               <div className="mt-1 flex items-center justify-between gap-3 border-t border-border pt-1">

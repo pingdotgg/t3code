@@ -263,15 +263,20 @@ describe("pruneScanCache", () => {
 });
 
 describe("dedupeWithinFile", () => {
-  it("keeps the first record per dedupe key", () => {
+  it("keeps the first Claude record's attribution with its fullest usage snapshot", () => {
     const kept = dedupeWithinFile([
       record({ totals: { ...record().totals, outputTokens: 1 } }),
-      record({ totals: { ...record().totals, outputTokens: 999 } }),
+      record({
+        timestampMs: 1_786_000_000_500,
+        totals: { ...record().totals, outputTokens: 999, reasoningTokens: 400 },
+      }),
+      record({ totals: { ...record().totals, outputTokens: 3 } }),
       record({ dedupeKey: "msg_2:" }),
     ]);
 
     expect(kept).toHaveLength(2);
-    expect(kept[0]?.totals.outputTokens).toBe(1);
+    expect(kept[0]?.timestampMs).toBe(1_786_000_000_000);
+    expect(kept[0]?.totals).toMatchObject({ outputTokens: 999, reasoningTokens: 400 });
   });
 
   it("keeps every record that has no dedupe key", () => {

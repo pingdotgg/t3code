@@ -31,17 +31,21 @@ import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptRea
 // v4: records carry Claude fast mode, which v3 rows never captured.
 // v5: Codex records carry their service tier. v4 rows store speed the same
 // way, so v4 entries still load; see `decodeScanCache` for v4 stateful entries.
-const USAGE_SCAN_CACHE_VERSION = 5 as const;
+// v6: Claude records keep their fullest usage snapshot and recorded thinking.
+const USAGE_SCAN_CACHE_VERSION = 6 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
  * Each cache version writes its own file in the state directory. An older
  * server sharing that directory cannot read a newer cache and would replace
  * it, dropping saved usage for deleted transcripts. Separate files keep both.
- * A v5 server reads the legacy (v4) file once, when its own file is missing.
+ * When its own file is missing, a server reads the newest older file once.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v5.json";
-export const LEGACY_SCAN_CACHE_FILE_NAME = "usage-scan-cache.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v6.json";
+export const LEGACY_SCAN_CACHE_FILE_NAMES = [
+  "usage-scan-cache-v5.json",
+  "usage-scan-cache.json",
+] as const;
 
 /** Serialised as the index into this list. */
 const SPEEDS: readonly UsageSpeed[] = ["standard", "fast", "ultrafast"];
@@ -328,11 +332,12 @@ export function decodeScanCache(
     ) {
       continue;
     }
-    // v4 records of stateful formats (Codex) predate service tiers, so they
-    // all priced as standard. Keep them, because the rollout may be gone, but
-    // make a live rollout re-parse whole: no file has size -1, and a zero
-    // position cannot resume.
-    const legacy = format.state !== undefined && version < USAGE_SCAN_CACHE_VERSION;
+    // v4 records of stateful formats (Codex) predate service tiers, and
+    // pre-v6 Claude records miss later usage snapshots. Keep them, because the
+    // transcript may be gone, but make a live one re-parse whole: no file has
+    // size -1, and a zero position cannot resume.
+    const legacy =
+      (format.state !== undefined && version < 5) || (entry.p === "claude" && version < 6);
     // A corrupt state disqualifies the entry: resuming with it would attach
     // appended usage to the wrong model or replay fork-copied history.
     if (!legacy && !isValidState.get(entry.p)?.(entry.cs)) continue;
@@ -404,12 +409,30 @@ export function dedupeWithinFile(
   seen: Set<string> = new Set(),
 ): readonly UsageRecord[] {
   const kept: UsageRecord[] = [];
+  const indexes = new Map<string, number>();
   for (const record of records) {
     if (record.dedupeKey !== null) {
+      const index = indexes.get(record.dedupeKey);
+      if (index !== undefined) {
+        kept[index] = fullerClaudeSnapshot(kept[index]!, record);
+        continue;
+      }
       if (seen.has(record.dedupeKey)) continue;
       seen.add(record.dedupeKey);
+      indexes.set(record.dedupeKey, kept.length);
     }
     kept.push(record);
   }
   return kept;
+}
+
+/**
+ * Claude Code repeats a message's usage on every content block, and later
+ * blocks can carry fuller output and thinking counts. Keep the first block's
+ * attribution with the fullest snapshot; never sum the repeats.
+ */
+function fullerClaudeSnapshot(kept: UsageRecord, next: UsageRecord): UsageRecord {
+  return next.provider === "claude" && next.totals.outputTokens > kept.totals.outputTokens
+    ? { ...kept, totals: next.totals, reportedCostUsd: next.reportedCostUsd }
+    : kept;
 }

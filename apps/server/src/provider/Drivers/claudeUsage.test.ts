@@ -8,6 +8,7 @@ function claudeLine(overrides: {
   contentType: string;
   model?: string;
   outputTokens?: number;
+  thinkingTokens?: number;
   speed?: string;
 }): string {
   return JSON.stringify({
@@ -25,6 +26,9 @@ function claudeLine(overrides: {
         cache_creation_input_tokens: 66818,
         cache_read_input_tokens: 1000,
         output_tokens: overrides.outputTokens ?? 286,
+        ...(overrides.thinkingTokens === undefined
+          ? {}
+          : { output_tokens_details: { thinking_tokens: overrides.thinkingTokens } }),
         ...(overrides.speed === undefined ? {} : { speed: overrides.speed }),
       },
     },
@@ -47,6 +51,14 @@ describe("parseClaudeLine", () => {
     });
     expect(record?.dedupeKey).toBe("msg_1:");
     expect(record?.speed).toBe("standard");
+  });
+
+  it("records thinking as part of output", () => {
+    const line = (thinkingTokens: number) =>
+      parseClaudeLine(claudeLine({ messageId: "msg_1", contentType: "text", thinkingTokens }));
+
+    expect(line(100)?.totals).toMatchObject({ outputTokens: 286, reasoningTokens: 100 });
+    expect(line(1000)?.totals.reasoningTokens).toBe(286);
   });
 
   it("marks fast-mode requests", () => {

@@ -27,6 +27,8 @@ export interface ProviderTotals {
   readonly provider: UsageProviderKind;
   readonly costUsd: number;
   readonly totalTokens: number;
+  /** A subset of output tokens, already included in totalTokens. */
+  readonly reasoningTokens?: number;
   readonly records: number;
   readonly sessions: number;
   readonly costShare: number;
@@ -66,7 +68,10 @@ export interface DailyTotals {
   readonly day: string;
   readonly costUsd: number;
   readonly totalTokens: number;
-  readonly byProvider: ReadonlyMap<UsageProviderKind, { costUsd: number; totalTokens: number }>;
+  readonly byProvider: ReadonlyMap<
+    UsageProviderKind,
+    { costUsd: number; totalTokens: number; readonly reasoningTokens?: number }
+  >;
 }
 
 export interface HourlyTotals {
@@ -74,7 +79,10 @@ export interface HourlyTotals {
   readonly hourStart: string;
   readonly costUsd: number;
   readonly totalTokens: number;
-  readonly byProvider: ReadonlyMap<UsageProviderKind, { costUsd: number; totalTokens: number }>;
+  readonly byProvider: ReadonlyMap<
+    UsageProviderKind,
+    { costUsd: number; totalTokens: number; readonly reasoningTokens?: number }
+  >;
 }
 
 export interface CostQuality {
@@ -402,7 +410,13 @@ export function mergeUsage(
 
   const providerAccumulator = new Map<
     UsageProviderKind,
-    { costUsd: number; totalTokens: number; records: number; sessions: number }
+    {
+      costUsd: number;
+      totalTokens: number;
+      reasoningTokens: number;
+      records: number;
+      sessions: number;
+    }
   >();
   const modelAccumulator = new Map<
     string,
@@ -416,12 +430,13 @@ export function mergeUsage(
       unpricedTokens: number;
     }
   >();
+  type ProviderTokenTotals = { costUsd: number; totalTokens: number; reasoningTokens: number };
   const dailyAccumulator = new Map<
     string,
     {
       costUsd: number;
       totalTokens: number;
-      byProvider: Map<UsageProviderKind, { costUsd: number; totalTokens: number }>;
+      byProvider: Map<UsageProviderKind, ProviderTokenTotals>;
     }
   >();
   const hourlyAccumulator = new Map<
@@ -431,7 +446,7 @@ export function mergeUsage(
       hourStart: string;
       costUsd: number;
       totalTokens: number;
-      byProvider: Map<UsageProviderKind, { costUsd: number; totalTokens: number }>;
+      byProvider: Map<UsageProviderKind, ProviderTokenTotals>;
     }
   >();
   const contributingEnvironments: EnvironmentId[] = [];
@@ -451,6 +466,7 @@ export function mergeUsage(
       const provider = providerAccumulator.get(providerKind) ?? {
         costUsd: 0,
         totalTokens: 0,
+        reasoningTokens: 0,
         records: 0,
         sessions: 0,
       };
@@ -460,6 +476,10 @@ export function mergeUsage(
 
     for (const bucket of buckets) {
       const tokens = bucketTokens(bucket);
+      const bucketReasoningTokens = Math.min(
+        bucket.totals.reasoningTokens,
+        bucket.totals.outputTokens,
+      );
 
       costUsd += bucket.costUsd;
       cacheSavingsUsd += bucket.cacheSavingsUsd;
@@ -467,7 +487,7 @@ export function mergeUsage(
       cachedInputTokens += bucket.totals.cachedInputTokens;
       cacheCreationTokens += bucket.totals.cacheCreationTokens;
       outputTokens += bucket.totals.outputTokens;
-      reasoningTokens += bucket.totals.reasoningTokens;
+      reasoningTokens += bucketReasoningTokens;
       records += bucket.records;
       unpricedRecords += bucket.unpricedRecords;
       if (bucket.costSource === "providerReported") providerReportedRecords += bucket.records;
@@ -484,11 +504,13 @@ export function mergeUsage(
       const provider = providerAccumulator.get(bucket.provider) ?? {
         costUsd: 0,
         totalTokens: 0,
+        reasoningTokens: 0,
         records: 0,
         sessions: 0,
       };
       provider.costUsd += bucket.costUsd;
       provider.totalTokens += tokens;
+      provider.reasoningTokens += bucketReasoningTokens;
       provider.records += bucket.records;
       providerAccumulator.set(bucket.provider, provider);
 
@@ -515,7 +537,7 @@ export function mergeUsage(
         cachedInputTokens: model.tokens.cachedInputTokens + bucket.totals.cachedInputTokens,
         cacheCreationTokens: model.tokens.cacheCreationTokens + bucket.totals.cacheCreationTokens,
         outputTokens: model.tokens.outputTokens + bucket.totals.outputTokens,
-        reasoningTokens: model.tokens.reasoningTokens + bucket.totals.reasoningTokens,
+        reasoningTokens: model.tokens.reasoningTokens + bucketReasoningTokens,
       };
       model.records += bucket.records;
       model.unpricedRecords += bucket.unpricedRecords;
@@ -527,13 +549,18 @@ export function mergeUsage(
       const day = dailyAccumulator.get(bucket.day) ?? {
         costUsd: 0,
         totalTokens: 0,
-        byProvider: new Map<UsageProviderKind, { costUsd: number; totalTokens: number }>(),
+        byProvider: new Map<UsageProviderKind, ProviderTokenTotals>(),
       };
       day.costUsd += bucket.costUsd;
       day.totalTokens += tokens;
-      const dayProvider = day.byProvider.get(bucket.provider) ?? { costUsd: 0, totalTokens: 0 };
+      const dayProvider = day.byProvider.get(bucket.provider) ?? {
+        costUsd: 0,
+        totalTokens: 0,
+        reasoningTokens: 0,
+      };
       dayProvider.costUsd += bucket.costUsd;
       dayProvider.totalTokens += tokens;
+      dayProvider.reasoningTokens += bucketReasoningTokens;
       day.byProvider.set(bucket.provider, dayProvider);
       dailyAccumulator.set(bucket.day, day);
 
@@ -543,16 +570,18 @@ export function mergeUsage(
           hourStart: bucket.hourStart,
           costUsd: 0,
           totalTokens: 0,
-          byProvider: new Map<UsageProviderKind, { costUsd: number; totalTokens: number }>(),
+          byProvider: new Map<UsageProviderKind, ProviderTokenTotals>(),
         };
         hour.costUsd += bucket.costUsd;
         hour.totalTokens += tokens;
         const hourProvider = hour.byProvider.get(bucket.provider) ?? {
           costUsd: 0,
           totalTokens: 0,
+          reasoningTokens: 0,
         };
         hourProvider.costUsd += bucket.costUsd;
         hourProvider.totalTokens += tokens;
+        hourProvider.reasoningTokens += bucketReasoningTokens;
         hour.byProvider.set(bucket.provider, hourProvider);
         hourlyAccumulator.set(bucket.hourStart, hour);
       }
@@ -566,6 +595,7 @@ export function mergeUsage(
       provider,
       costUsd: totals.costUsd,
       totalTokens: totals.totalTokens,
+      reasoningTokens: totals.reasoningTokens,
       records: totals.records,
       sessions: totals.sessions,
       costShare: costUsd === 0 ? 0 : totals.costUsd / costUsd,
