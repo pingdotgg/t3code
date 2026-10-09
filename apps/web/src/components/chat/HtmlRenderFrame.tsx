@@ -5,7 +5,7 @@ import {
   htmlRenderFrameHeight,
   type HtmlRenderReference,
 } from "@t3tools/shared/htmlRender";
-import { Maximize2Icon } from "lucide-react";
+import { Maximize2Icon, PanelRightIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
@@ -13,7 +13,9 @@ import type { ChatFileAttachment } from "~/types";
 
 import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
 import { Button } from "../ui/button";
+import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { HtmlRenderDialog } from "./HtmlRenderDialog";
 
 // A frame may load its URL a little after mounting.
 const MIN_URL_LIFE_MS = 5 * 60_000;
@@ -28,6 +30,7 @@ export function HtmlRenderFrame(props: {
   readonly environmentId: EnvironmentId;
   readonly htmlRender: HtmlRenderReference;
   readonly onOpen: (attachment: ChatFileAttachment) => void;
+  readonly onFullscreenChange?: (fullscreen: boolean) => void;
 }) {
   const { attachmentId, title } = props.htmlRender;
   // The frame takes the page's measured height at its own width, read before
@@ -63,6 +66,13 @@ export function HtmlRenderFrame(props: {
   // page again; one near expiry is minted afresh, since a frame cannot report a
   // failed load. The page keeps its first URL for its lifetime.
   const [src, setSrc] = useState<string | null>(null);
+  const [expandedSrc, setExpandedSrc] = useState<string | null>(null);
+  const { onFullscreenChange } = props;
+  useEffect(() => {
+    if (expandedSrc === null) return;
+    onFullscreenChange?.(true);
+    return () => onFullscreenChange?.(false);
+  }, [expandedSrc, onFullscreenChange]);
   const [failed, setFailed] = useState(false);
   const assetUrl = useAssetUrlState(src === null ? props.environmentId : null, resource);
   const cachedUrl = assetUrl._tag === "Success" ? assetUrl.url : null;
@@ -101,7 +111,31 @@ export function HtmlRenderFrame(props: {
             className="block size-full"
             onContentHeight={setContentHeight}
           />
-          <div className="absolute end-2 top-2 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/html-render:opacity-100 pointer-coarse:opacity-100">
+          <div className="absolute end-2 top-2 flex gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/html-render:opacity-100 pointer-coarse:opacity-100">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    aria-label="Open full screen"
+                    size="icon-xs"
+                    variant="glass"
+                    onClick={async () => {
+                      const url = await refresh().catch(() => null);
+                      if (url !== null) setExpandedSrc(url);
+                      else
+                        toastManager.add({
+                          type: "error",
+                          title: "Page unavailable",
+                          description: "Reconnect to the environment and try again.",
+                        });
+                    }}
+                  />
+                }
+              >
+                <Maximize2Icon className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipPopup side="left">Open full screen</TooltipPopup>
+            </Tooltip>
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -123,11 +157,18 @@ export function HtmlRenderFrame(props: {
                   />
                 }
               >
-                <Maximize2Icon className="size-3.5" />
+                <PanelRightIcon className="size-3.5" />
               </TooltipTrigger>
               <TooltipPopup side="left">Open in panel</TooltipPopup>
             </Tooltip>
           </div>
+          {expandedSrc !== null ? (
+            <HtmlRenderDialog
+              src={expandedSrc}
+              title={title}
+              onClose={() => setExpandedSrc(null)}
+            />
+          ) : null}
         </>
       ) : failed ? (
         <p className="flex size-full items-center justify-center text-muted-foreground text-xs">
