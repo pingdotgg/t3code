@@ -669,7 +669,8 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     });
     // The secret reaches the child's environment, never `--mcp-config`.
     assert.deepEqual(overrides, {
-      allowedTools: [ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD, "mcp__supabase__*"],
+      // Its tools go through the session's approval like any other tool.
+      allowedTools: [ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD],
       mcpServers: {
         supabase: {
           type: "stdio",
@@ -682,11 +683,6 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       sdkSettings: { skillOverrides: { "grill-me": "off" } },
       mcpEnvironment: { T3_MCP_SECRET_0: "token", ...T3_MCP_ENVIRONMENT },
     });
-    // Read-only sandboxes keep the user's servers behind the permission prompt.
-    assert.deepEqual(
-      ClaudeAdapterV2.claudeMcpQueryOverrides({ mcpSession, readOnlySandbox: true }).allowedTools,
-      ClaudeAdapterV2.CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS,
-    );
     // A repeated name maps to one reference holding its last value.
     const repeated = ClaudeAdapterV2.claudeMcpQueryOverrides({
       mcpSession: {
