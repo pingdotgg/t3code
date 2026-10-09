@@ -3224,7 +3224,17 @@ export const layer = Layer.unwrap(
         );
         return yield* Effect.acquireUseRelease(
           sessions.markConnected(session.sessionId),
-          () => rpcWebSocketHttpEffect,
+          () =>
+            Effect.raceFirst(
+              rpcWebSocketHttpEffect,
+              sessions.awaitInvalidation(session.sessionId).pipe(
+                Effect.as(HttpServerResponse.empty()),
+                Effect.catchTags({
+                  SessionCredentialVerificationError: (error) =>
+                    failEnvironmentInternal("internal_error", error),
+                }),
+              ),
+            ),
           () => sessions.markDisconnected(session.sessionId),
         );
       }).pipe(

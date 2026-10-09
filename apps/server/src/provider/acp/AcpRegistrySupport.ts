@@ -43,7 +43,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import * as ServerSettings from "../../serverSettings.ts";
-import type { AcpSpawnInput } from "./AcpSessionRuntime.ts";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 const ACP_REGISTRY_URL = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 
@@ -444,7 +444,7 @@ export function resolveAcpRegistryDistribution(input: {
 export interface ResolvedAcpRegistryAgent {
   readonly agent?: AcpRegistryAgent;
   readonly distribution: AcpRegistryDistributionKind | "local";
-  readonly spawn: AcpSpawnInput;
+  readonly spawn: AcpSessionRuntime.AcpSpawnInput;
 }
 
 export type AcpRegistryInspection =

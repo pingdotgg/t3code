@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./authScopeOptions": {
+      "types": "./src/authScopeOptions.ts",
+      "import": "./src/authScopeOptions.ts"
+    },
     "./orchestrationV2ThreadError": {
       "types": "./src/orchestrationV2ThreadError.ts",
       "import": "./src/orchestrationV2ThreadError.ts"
@@ -458,6 +462,14 @@
     "./mcpApp": {
       "types": "./src/mcpApp.ts",
       "import": "./src/mcpApp.ts"
+    },
+    "./atomicWrite": {
+      "types": "./src/atomicWrite.ts",
+      "import": "./src/atomicWrite.ts"
+    },
+    "./mcpResponsePayloads": {
+      "types": "./src/mcpResponsePayloads.ts",
+      "import": "./src/mcpResponsePayloads.ts"
     }
   },
   "scripts": {

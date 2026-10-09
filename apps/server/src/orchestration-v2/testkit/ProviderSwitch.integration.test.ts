@@ -42,8 +42,8 @@ import {
   CodexProviderCapabilitiesV2,
   canReuseCodexContextUsage,
 } from "../Adapters/CodexAdapterV2.ts";
-import { AcpProviderCapabilitiesV2 } from "../Adapters/AcpAdapterV2.ts";
-import { CursorProviderCapabilitiesV2 } from "../Adapters/CursorAdapterV2.ts";
+import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
+import { CursorProviderCapabilitiesV2 } from "@t3tools/provider-cursor/testing";
 import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
 import * as LegacyV1ThreadImporter from "../legacy/LegacyV1ThreadImporter.ts";
