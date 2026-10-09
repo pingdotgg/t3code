@@ -37,14 +37,14 @@ import {
   resolveGitHubRepository,
   type GitHubRepositoryLocator,
 } from "./gitHubRepositoryResolution.ts";
-import * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
   effectiveGitHubAccount,
   findAuthenticatedGitHubAccount,
   parseGitHubAuthStatus,
   type GitHubAuthStatusAccount,
 } from "./gitHubAuthStatus.ts";
-import * as SourceControlProvider from "./SourceControlProvider.ts";
+import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import {
   combinedAuthOutput,
   firstSafeAuthLine,
@@ -53,7 +53,7 @@ import {
   type SourceControlAuthProbeInput,
   type SourceControlCliDiscoverySpec,
   type SourceControlManagedCliDiscoverySpec,
-} from "./SourceControlProviderDiscovery.ts";
+} from "@t3tools/source-control-core/server/discovery";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 
 const decodeLinkSubject = Schema.decodeUnknownEffect(

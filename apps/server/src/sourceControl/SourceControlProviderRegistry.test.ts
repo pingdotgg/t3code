@@ -21,6 +21,7 @@ import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitLabCli from "./GitLabCli.ts";
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
+import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
@@ -96,6 +97,11 @@ function makeRegistry(input: {
         NodeServices.layer,
         layerRegistry,
         layerProcess,
+        ServerSourceControlHost.layer.pipe(
+          Layer.provide(
+            Layer.merge(layerProcess, ServerSettings.ServerSettingsService.layerTest()),
+          ),
+        ),
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
         Layer.mock(BitbucketApi.BitbucketApi)({}),
         ServerSettings.ServerSettingsService.layerTest(),

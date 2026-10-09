@@ -13,7 +13,7 @@ import { HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/h
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./githubQuota.ts";
-import * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
 const DEFAULT_TIMEOUT = Duration.seconds(30);
 const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;

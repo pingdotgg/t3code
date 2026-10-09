@@ -5,13 +5,13 @@ import * as Result from "effect/Result";
 import { SourceControlProviderError } from "@t3tools/contracts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as ForgejoCli from "./ForgejoCli.ts";
-import * as SourceControlProvider from "./SourceControlProvider.ts";
+import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import {
   providerAuth,
   probeSourceControlProvider,
   type SourceControlCliDiscoverySpec,
   type SourceControlManagedCliDiscoverySpec,
-} from "./SourceControlProviderDiscovery.ts";
+} from "@t3tools/source-control-core/server/discovery";
 import { ForgejoPullRequestSchema, toForgejoChangeRequest } from "./forgejoPullRequests.ts";
 
 const isForgejoCliError = Schema.is(ForgejoCli.ForgejoCliError);

@@ -13,7 +13,7 @@ import { HttpClient, HttpClientResponse, type HttpClientRequest } from "effect/h
 import * as GitHubApi from "./GitHubApi.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./githubQuota.ts";
-import * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as ServerSettings from "../serverSettings.ts";
 

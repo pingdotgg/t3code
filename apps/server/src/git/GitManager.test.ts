@@ -58,7 +58,7 @@ import {
   ForgejoPullRequestSchema,
   toForgejoChangeRequest,
 } from "../sourceControl/forgejoPullRequests.ts";
-import type { SourceControlProvider } from "../sourceControl/SourceControlProvider.ts";
+import type { SourceControlProvider } from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";

@@ -1,4 +1,4 @@
-import { removeAgentCredits } from "./mergeMessage.ts";
+import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
 import { KnownWorkflowRuns, makeChecksRevalidator } from "./gitHubConditionalChecks.ts";
 import { runGitHubStackAction, type GitHubStackActionError } from "./githubStackActions.ts";
 import * as Cause from "effect/Cause";
@@ -45,7 +45,7 @@ import {
 import * as GitHubApi from "../sourceControl/GitHubApi.ts";
 import { readGraphQlPages } from "../sourceControl/githubGraphQl.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
   ACTOR_AVATARS_GRAPHQL_QUERY,
   ADD_REACTION_GRAPHQL_MUTATION,
@@ -128,7 +128,10 @@ import {
   type GitHubReviewThreadPage,
   type GitHubViewerAccess,
 } from "./gitHubPullRequestJson.ts";
-import type { ProviderChangeRequestSummary, ProviderListCursor } from "./PullRequestProvider.ts";
+import type {
+  ProviderChangeRequestSummary,
+  ProviderListCursor,
+} from "@t3tools/source-control-core/server/PullRequestProvider";
 
 /**
  * Names the read that produced unusable output, so a failure reports the call it came from

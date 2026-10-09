@@ -29,11 +29,11 @@ import {
   type NormalizedBitbucketPullRequestRecord,
 } from "./bitbucketPullRequests.ts";
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
-import * as SourceControlProvider from "./SourceControlProvider.ts";
+import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
-import { retryAtFromHeader } from "./SourceControlRateLimit.ts";
+import { retryAtFromHeader } from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
 const DEFAULT_API_BASE_URL = "https://api.bitbucket.org/2.0";
 /** A response body past this is cut short, so one huge diff cannot exhaust the server. */

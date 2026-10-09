@@ -15,7 +15,7 @@ import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
-import type { SourceControlProviderContext } from "./SourceControlProvider.ts";
+import type { SourceControlProviderContext } from "@t3tools/source-control-core/server/SourceControlProvider";
 
 const encodeApiBody = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 

@@ -104,8 +104,9 @@ import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
+import * as ServerSourceControlHost from "./sourceControl/ServerSourceControlHost.ts";
 import * as PullRequestReadCache from "./pullRequest/PullRequestReadCache.ts";
-import * as SourceControlRateLimit from "./sourceControl/SourceControlRateLimit.ts";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as Observability from "./observability/Observability.ts";
@@ -305,6 +306,7 @@ const layerSourceControlProviderRegistry = SourceControlProviderRegistry.layer.p
       GitHubApi.layerWithDependencies,
       GitLabCli.layer,
       ForgejoCli.layer,
+      ServerSourceControlHost.layer,
     ),
   ),
   Layer.provideMerge(GitVcsDriver.layer),

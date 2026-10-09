@@ -16,7 +16,7 @@ import { AllowGitHubReserve } from "../sourceControl/GitHubApi.ts";
 import * as GitHubApi from "../sourceControl/GitHubApi.ts";
 import * as GitHubCredentials from "../sourceControl/GitHubCredentials.ts";
 import * as GitHubQuota from "../sourceControl/githubQuota.ts";
-import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
 import { KnownWorkflowRuns } from "./gitHubConditionalChecks.ts";

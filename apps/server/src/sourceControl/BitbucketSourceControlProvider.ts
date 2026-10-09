@@ -4,8 +4,8 @@ import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contrac
 
 import * as BitbucketApi from "./BitbucketApi.ts";
 import type { NormalizedBitbucketPullRequestRecord } from "./bitbucketPullRequests.ts";
-import * as SourceControlProvider from "./SourceControlProvider.ts";
-import type { SourceControlApiDiscoverySpec } from "./SourceControlProviderDiscovery.ts";
+import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import type { SourceControlApiDiscoverySpec } from "@t3tools/source-control-core/server/discovery";
 
 function toChangeRequest(summary: NormalizedBitbucketPullRequestRecord): ChangeRequest {
   return {

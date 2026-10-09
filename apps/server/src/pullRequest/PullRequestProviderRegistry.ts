@@ -17,7 +17,7 @@ import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
 import * as GitHubPullRequestProvider from "./GitHubPullRequestProvider.ts";
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
 import * as GitLabPullRequestProvider from "./GitLabPullRequestProvider.ts";
-import type { PullRequestProviderApi } from "./PullRequestProvider.ts";
+import type { PullRequestProviderApi } from "@t3tools/source-control-core/server/PullRequestProvider";
 
 export class PullRequestProviderRegistry extends Context.Service<
   PullRequestProviderRegistry,

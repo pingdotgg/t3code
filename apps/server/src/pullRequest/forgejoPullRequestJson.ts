@@ -10,8 +10,8 @@ import type {
   PullRequestReactionContent,
   PullRequestReviewThread,
 } from "@t3tools/contracts";
-import type { ProviderChangeRequest } from "./PullRequestProvider.ts";
-import { dedupeChecks } from "./pullRequestChecks.ts";
+import type { ProviderChangeRequest } from "@t3tools/source-control-core/server/PullRequestProvider";
+import { dedupeChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
 
 export const ForgejoUser = Schema.Struct({
   login: Schema.String,
