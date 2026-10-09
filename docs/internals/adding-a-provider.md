@@ -110,8 +110,9 @@ A provider lives in its own `packages/provider-<name>` package, with
 - **Package exports.** `./settings` holds the instance settings schema, built with
   `makeProviderSettingsSchema` from contracts. `./client` exports a `ProviderClientDefinition`
   (label, settings schema, plain-data icon, badge) and must stay browser- and React Native-safe.
-  `./server` exports the `ProviderDriver` and its adapter driver. Settings live in
-  `providerInstances`; new providers are off by default.
+  `./server` exports the `ProviderDriver` and its adapter driver. `./testing` exposes internals
+  the server's replay testkits drive; testkits that need the orchestrator stay in the server.
+  Settings live in `providerInstances`; new providers are off by default.
 - **Package boundaries.** Server code imports only `@t3tools/provider-core/server/*`, contracts,
   and shared. It reaches the server through `ProviderHost` (paths, settings, background demand,
   attachments), never through `apps/server`. Tests use `@t3tools/provider-testing`.

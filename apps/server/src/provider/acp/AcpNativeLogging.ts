@@ -10,7 +10,7 @@ import type { EventNdjsonLogger } from "../EventNdjsonLogger.ts";
 import {
   structuralProtocolMethod,
   summarizeNativeProtocolPayload,
-} from "../NativeProtocolLogging.ts";
+} from "@t3tools/provider-core/server/nativeProtocolLogging";
 import type * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
 const transientProtocolUpdates = new Set(["agent_message_chunk", "agent_thought_chunk"]);

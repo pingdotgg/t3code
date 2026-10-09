@@ -1,4 +1,5 @@
-import { OpenCodeSettings, ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
+import { ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
+import { OpenCodeSettings } from "../settings.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
@@ -9,11 +10,11 @@ import * as TestClock from "effect/testing/TestClock";
 import * as NetService from "@t3tools/shared/Net";
 import { beforeEach, expect } from "vite-plus/test";
 
-import * as ServerConfig from "../config.ts";
-import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
-import * as OpenCodeServerOwner from "../provider/OpenCodeServerOwner.ts";
-import * as OpenCodeTextGeneration from "./OpenCodeTextGeneration.ts";
-import * as TextGeneration from "./TextGeneration.ts";
+import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
+import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
+import * as OpenCodeTextGeneration from "./textGeneration.ts";
+import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 
 const runtimeMock = {
   state: {
@@ -166,11 +167,7 @@ const layerOpenCodeTextGenerationTest = Layer.succeed(
   OpenCodeRuntime.OpenCodeRuntime,
   OpenCodeRuntimeTestDouble,
 ).pipe(
-  Layer.provideMerge(
-    ServerConfig.ServerConfig.layerTest(process.cwd(), {
-      prefix: "t3code-opencode-text-generation-test-",
-    }),
-  ),
+  Layer.provideMerge(layerTestProviderHost()),
   Layer.provideMerge(NetService.layer),
   Layer.provideMerge(NodeServices.layer),
 );
@@ -179,11 +176,7 @@ const layerOpenCodeTextGenerationExistingServerTest = Layer.succeed(
   OpenCodeRuntime.OpenCodeRuntime,
   OpenCodeRuntimeTestDouble,
 ).pipe(
-  Layer.provideMerge(
-    ServerConfig.ServerConfig.layerTest(process.cwd(), {
-      prefix: "t3code-opencode-text-generation-existing-server-test-",
-    }),
-  ),
+  Layer.provideMerge(layerTestProviderHost()),
   Layer.provideMerge(NetService.layer),
   Layer.provideMerge(NodeServices.layer),
 );
@@ -207,7 +200,7 @@ const EXTERNAL_SERVER_WITHOUT_AUTH_OPENCODE_SETTINGS = Schema.decodeSync(OpenCod
 
 function withOpenCodeTextGeneration<A, E, R>(
   settings: OpenCodeSettings,
-  effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
+  effectFn: (textGeneration: ProviderTextGeneration) => Effect.Effect<A, E, R>,
   environment?: NodeJS.ProcessEnv,
 ) {
   return Effect.gen(function* () {

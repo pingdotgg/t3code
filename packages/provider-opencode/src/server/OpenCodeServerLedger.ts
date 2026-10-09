@@ -8,8 +8,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import { writeFileStringAtomically } from "../atomicWrite.ts";
-import * as ServerConfig from "../config.ts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 
 const ProcessIdentity = Schema.Struct({ pid: Schema.Int, startTime: Schema.String });
@@ -57,7 +56,7 @@ export class OpenCodeServerLedger extends Context.Service<
       readonly args: ReadonlyArray<string>;
     }) => Effect.Effect<Effect.Effect<void>>;
   }
->()("t3/provider/OpenCodeServerLedger") {}
+>()("@t3tools/provider-opencode/server/OpenCodeServerLedger") {}
 
 const ENTRY_DIRECTORY = "opencode-servers";
 const ENTRY_FILE = /^\d+\.json$/;
@@ -321,16 +320,17 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
   return { track, reapOrphans };
 });
 
-export const layer = Layer.effect(
-  OpenCodeServerLedger,
-  Effect.gen(function* () {
-    const config = yield* ServerConfig.ServerConfig;
-    const ledger = yield* make({ stateDir: config.stateDir });
-    // Reaping waits for orphans to exit, so it must not hold up startup.
-    yield* ledger.reapOrphans.pipe(Effect.forkScoped);
-    return OpenCodeServerLedger.of({ track: ledger.track });
-  }),
-);
+/** Tracks servers under `stateDir`, the server's own state directory. */
+export const layer = (input: { readonly stateDir: string }) =>
+  Layer.effect(
+    OpenCodeServerLedger,
+    Effect.gen(function* () {
+      const ledger = yield* make(input);
+      // Reaping waits for orphans to exit, so it must not hold up startup.
+      yield* ledger.reapOrphans.pipe(Effect.forkScoped);
+      return OpenCodeServerLedger.of({ track: ledger.track });
+    }),
+  );
 
 /** Records nothing. For tests that start OpenCode servers without a state directory. */
 export const layerTest = Layer.succeed(

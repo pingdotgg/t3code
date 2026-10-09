@@ -3,15 +3,15 @@ import * as NodeAssert from "node:assert/strict";
 import * as RegExpUtils from "effect/RegExp";
 import { describe, it } from "vite-plus/test";
 
-import { buildOpenCodePermissionRules, toOpenCodePermissionReply } from "./opencodeRuntime.ts";
+import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 
 function actionFor(
-  runtimeMode: Parameters<typeof buildOpenCodePermissionRules>[0],
+  runtimeMode: Parameters<typeof OpenCodeRuntime.buildOpenCodePermissionRules>[0],
   permission: string,
   target = "*",
 ) {
   // OpenCode uses the last matching rule. Its wildcards match directory separators.
-  return buildOpenCodePermissionRules(runtimeMode).findLast(
+  return OpenCodeRuntime.buildOpenCodePermissionRules(runtimeMode).findLast(
     (rule) =>
       (rule.permission === "*" || rule.permission === permission) &&
       new RegExp(`^${RegExpUtils.escape(rule.pattern).replaceAll("\\*", ".*")}$`, "s").test(target),
@@ -69,7 +69,7 @@ describe("buildOpenCodePermissionRules", () => {
   });
 
   it("allows everything only under full access", () => {
-    NodeAssert.deepEqual(buildOpenCodePermissionRules("full-access"), [
+    NodeAssert.deepEqual(OpenCodeRuntime.buildOpenCodePermissionRules("full-access"), [
       { permission: "*", pattern: "*", action: "allow" },
       { permission: "external_directory", pattern: "*", action: "allow" },
     ]);
@@ -84,6 +84,6 @@ describe("toOpenCodePermissionReply", () => {
     ["decline", "reject"],
     ["cancel", "reject"],
   ] as const)("maps %s to %s", (decision, reply) => {
-    NodeAssert.equal(toOpenCodePermissionReply(decision), reply);
+    NodeAssert.equal(OpenCodeRuntime.toOpenCodePermissionReply(decision), reply);
   });
 });

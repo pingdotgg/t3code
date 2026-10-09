@@ -8,7 +8,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/http";
 
-import * as OpenCodeRuntime from "./opencodeRuntime.ts";
+import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import { parseGenericCliVersion } from "@t3tools/provider-core/server/snapshotProbe";
 
 export interface ProbedOpenCode {

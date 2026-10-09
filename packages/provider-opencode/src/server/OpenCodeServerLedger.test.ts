@@ -14,7 +14,7 @@ import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/process";
 
-import * as OpenCodeRuntime from "./opencodeRuntime.ts";
+import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 
 const SERVE_ARGS = ["serve", "--hostname=127.0.0.1", "--port=4096"];

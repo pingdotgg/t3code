@@ -2,12 +2,7 @@ import * as NodeAssert from "node:assert/strict";
 
 import { describe, it } from "vite-plus/test";
 
-import {
-  parseAgentListCliOutput,
-  parseModelsCliOutput,
-  parseSkillsCliOutput,
-  toOpenCodeFileParts,
-} from "./opencodeRuntime.ts";
+import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 
 describe("parseModelsCliOutput", () => {
   it("parses a single model from a single provider", () => {
@@ -27,7 +22,7 @@ describe("parseModelsCliOutput", () => {
       }),
     ].join("\n");
 
-    const result = parseModelsCliOutput(stdout);
+    const result = OpenCodeRuntime.parseModelsCliOutput(stdout);
     NodeAssert.equal(result.providers.size, 1);
     NodeAssert.equal(result.connected.length, 1);
     NodeAssert.equal(result.connected[0], "anthropic");
@@ -55,7 +50,7 @@ describe("parseModelsCliOutput", () => {
       JSON.stringify({ id: "gpt-4o", providerID: "openai", name: "GPT-4o" }),
     ].join("\n");
 
-    const result = parseModelsCliOutput(stdout);
+    const result = OpenCodeRuntime.parseModelsCliOutput(stdout);
     NodeAssert.equal(result.providers.size, 2);
     NodeAssert.equal(result.connected.length, 2);
     NodeAssert.equal([...result.connected].sort().join(","), "anthropic,openai");
@@ -64,7 +59,7 @@ describe("parseModelsCliOutput", () => {
   });
 
   it("handles empty input", () => {
-    const result = parseModelsCliOutput("");
+    const result = OpenCodeRuntime.parseModelsCliOutput("");
     NodeAssert.equal(result.providers.size, 0);
     NodeAssert.equal(result.connected.length, 0);
   });
@@ -77,7 +72,7 @@ describe("parseModelsCliOutput", () => {
       JSON.stringify({ id: "claude-haiku-4-5", providerID: "anthropic", name: "Haiku 4.5" }),
     ].join("\n");
 
-    const result = parseModelsCliOutput(stdout);
+    const result = OpenCodeRuntime.parseModelsCliOutput(stdout);
     NodeAssert.equal(result.providers.size, 1);
     const provider = result.providers.get("anthropic")!;
     NodeAssert.equal(Object.keys(provider.models).length, 1);
@@ -90,7 +85,7 @@ describe("parseModelsCliOutput", () => {
       JSON.stringify({ id: "claude-sonnet-4-5", providerID: "anthropic", name: "Sonnet" }) +
       "\r\n";
 
-    const result = parseModelsCliOutput(stdout);
+    const result = OpenCodeRuntime.parseModelsCliOutput(stdout);
     NodeAssert.equal(result.providers.size, 1);
     NodeAssert.ok(result.providers.get("anthropic")!.models["claude-sonnet-4-5"]);
   });
@@ -122,7 +117,7 @@ describe("parseModelsCliOutput", () => {
       }),
     ].join("\n");
 
-    const result = parseModelsCliOutput(stdout);
+    const result = OpenCodeRuntime.parseModelsCliOutput(stdout);
     const model = result.providers.get("opencode")!.models["gpt-5.4"]!;
     NodeAssert.ok(model);
     NodeAssert.ok(model.capabilities);
@@ -145,7 +140,7 @@ describe("parseModelsCliOutput", () => {
       }),
     ].join("\n");
 
-    const result = parseModelsCliOutput(stdout);
+    const result = OpenCodeRuntime.parseModelsCliOutput(stdout);
     NodeAssert.equal(result.providers.size, 1);
     NodeAssert.deepEqual([...result.connected], ["openrouter"]);
     const provider = result.providers.get("openrouter")!;
@@ -164,7 +159,7 @@ describe("parseAgentListCliOutput", () => {
       "  " + JSON.stringify([{ permission: "*", action: "allow", pattern: "*" }]),
     ].join("\n");
 
-    const result = parseAgentListCliOutput(stdout);
+    const result = OpenCodeRuntime.parseAgentListCliOutput(stdout);
     NodeAssert.equal(result.length, 1);
     NodeAssert.equal(result[0]!.name, "build");
     NodeAssert.equal(result[0]!.mode, "primary");
@@ -181,7 +176,7 @@ describe("parseAgentListCliOutput", () => {
       "  " + JSON.stringify([{ permission: "edit", action: "ask", pattern: "*.md" }]),
     ].join("\n");
 
-    const result = parseAgentListCliOutput(stdout);
+    const result = OpenCodeRuntime.parseAgentListCliOutput(stdout);
     NodeAssert.equal(result.length, 3);
     NodeAssert.equal(result[0]!.name, "build");
     NodeAssert.equal(result[0]!.mode, "primary");
@@ -192,7 +187,7 @@ describe("parseAgentListCliOutput", () => {
   });
 
   it("handles empty input", () => {
-    const result = parseAgentListCliOutput("");
+    const result = OpenCodeRuntime.parseAgentListCliOutput("");
     NodeAssert.equal(result.length, 0);
   });
 
@@ -204,7 +199,7 @@ describe("parseAgentListCliOutput", () => {
       "  " + JSON.stringify([{ permission: "read", action: "allow", pattern: "*" }]),
     ].join("\n");
 
-    const result = parseAgentListCliOutput(stdout);
+    const result = OpenCodeRuntime.parseAgentListCliOutput(stdout);
     NodeAssert.equal(result.length, 1);
     NodeAssert.equal(result[0]!.name, "explore");
   });
@@ -221,7 +216,7 @@ describe("parseAgentListCliOutput", () => {
     ];
     const stdout = ["build (primary)", "  " + JSON.stringify(permissions)].join("\n");
 
-    const result = parseAgentListCliOutput(stdout);
+    const result = OpenCodeRuntime.parseAgentListCliOutput(stdout);
     NodeAssert.equal(result.length, 1);
     NodeAssert.equal(result[0]!.permission.length, 3);
     NodeAssert.equal(result[0]!.permission[0]!.action, "allow");
@@ -236,7 +231,7 @@ describe("parseAgentListCliOutput", () => {
       "  " + JSON.stringify([{ permission: "edit", action: "ask", pattern: "*.ts" }]),
     ].join("\n");
 
-    const result = parseAgentListCliOutput(stdout);
+    const result = OpenCodeRuntime.parseAgentListCliOutput(stdout);
     NodeAssert.equal(result.length, 2);
     NodeAssert.equal(result[0]!.name, "code reviewer");
     NodeAssert.equal(result[0]!.mode, "subagent");
@@ -252,7 +247,7 @@ describe("parseAgentListCliOutput", () => {
       "  " + JSON.stringify([{ permission: "*", action: "allow", pattern: "*" }]),
     ].join("\n");
 
-    const result = parseAgentListCliOutput(stdout);
+    const result = OpenCodeRuntime.parseAgentListCliOutput(stdout);
     NodeAssert.equal(result[0]!.hidden, true);
     NodeAssert.equal(result[1]!.hidden, false);
   });
@@ -260,7 +255,7 @@ describe("parseAgentListCliOutput", () => {
 
 describe("parseSkillsCliOutput", () => {
   it("parses only skill metadata from the CLI JSON output", () => {
-    const result = parseSkillsCliOutput(
+    const result = OpenCodeRuntime.parseSkillsCliOutput(
       JSON.stringify([
         {
           name: "review-pr",
@@ -281,7 +276,7 @@ describe("parseSkillsCliOutput", () => {
   });
 
   it("degrades malformed output to an empty skill list", () => {
-    NodeAssert.deepEqual(parseSkillsCliOutput("not json"), []);
+    NodeAssert.deepEqual(OpenCodeRuntime.parseSkillsCliOutput("not json"), []);
   });
 });
 
@@ -295,7 +290,7 @@ describe("toOpenCodeFileParts", () => {
   });
 
   it("sends supported images, text, and PDFs natively and skips what models reject", () => {
-    const parts = toOpenCodeFileParts({
+    const parts = OpenCodeRuntime.toOpenCodeFileParts({
       attachments: [
         attachment("application/pdf"),
         attachment("text/markdown"),
@@ -320,7 +315,7 @@ describe("toOpenCodeFileParts", () => {
   });
 
   it("keeps folded clipboard text on the lazy path fallback", () => {
-    const parts = toOpenCodeFileParts({
+    const parts = OpenCodeRuntime.toOpenCodeFileParts({
       attachments: [
         {
           ...attachment("text/plain"),

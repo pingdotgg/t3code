@@ -31,6 +31,8 @@ export function ProviderPackageIcon({
           key={path.d}
           d={path.d}
           fillRule={path.fillRule}
+          // Monochrome renderings (the collapsed composer) clear these detail paths.
+          data-icon-detail={path.fill ? true : undefined}
           className={path.fill ? "fill-(--path-light) dark:fill-(--path-dark)" : undefined}
           style={
             path.fill

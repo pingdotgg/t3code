@@ -12,9 +12,8 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { beforeEach } from "vite-plus/test";
 
-import { OpenCodeSettings } from "@t3tools/contracts";
-import * as ServerConfig from "../config.ts";
-import * as OpenCodeRuntime from "./opencodeRuntime.ts";
+import { OpenCodeSettings } from "../settings.ts";
+import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 import {
   checkOpenCodeProviderStatus,
@@ -25,14 +24,14 @@ import {
   openCode2CommandsToServerProviderSlashCommands,
   openCode2SkillsToServerProviderSkills,
   openCodeCommandsToServerProviderSlashCommands,
-} from "./OpenCodeProvider.ts";
-import { readOpenCodeGoUsageLimits } from "./openCodeUsageLimits.ts";
-import { probeOpenCodeRuntime } from "./opencodeVersionProbe.ts";
+} from "./status.ts";
+import { readOpenCodeGoUsageLimits } from "./usageLimits.ts";
+import { probeOpenCodeRuntime } from "./versionProbe.ts";
 import {
   OPENCODE_1_RESPONSES,
   OPENCODE_2_RESPONSES,
   replayOpenCodeServer,
-} from "./testFixtures/opencodeProbeResponses.ts";
+} from "./probeResponses.fixture.ts";
 const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
 
 const DEFAULT_VERSION_STDOUT = "opencode 1.14.19\n";
@@ -315,7 +314,6 @@ it("keeps native and MCP commands while preserving compaction and separate skill
 });
 
 const layerTest = Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble).pipe(
-  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
   Layer.provideMerge(NodeServices.layer),
 );
 

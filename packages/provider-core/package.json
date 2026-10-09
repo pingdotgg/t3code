@@ -75,6 +75,10 @@
       "types": "./src/server/mcpToolPresentation.ts",
       "import": "./src/server/mcpToolPresentation.ts"
     },
+    "./server/nativeProtocolLogging": {
+      "types": "./src/server/nativeProtocolLogging.ts",
+      "import": "./src/server/nativeProtocolLogging.ts"
+    },
     "./server/notification": {
       "types": "./src/server/notification.ts",
       "import": "./src/server/notification.ts"
@@ -126,6 +130,10 @@
     "./server/snapshotSettings": {
       "types": "./src/server/snapshotSettings.ts",
       "import": "./src/server/snapshotSettings.ts"
+    },
+    "./server/subagentProjection": {
+      "types": "./src/server/subagentProjection.ts",
+      "import": "./src/server/subagentProjection.ts"
     },
     "./server/textGeneration": {
       "types": "./src/server/textGeneration.ts",
