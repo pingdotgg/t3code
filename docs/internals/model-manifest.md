@@ -11,7 +11,10 @@ correct model data before the next successful fetch. Bump `updatedAt` whenever t
 file changes. Fetch time cannot establish which copy contains the newer edit.
 
 Generic catalog data describes presentation and capabilities. Each provider owns
-its adapter schema and dispatch mappings. Claude uses the manifest for its entire
+its adapter schema and dispatch mappings. Providers never read the manifest
+itself: the server exposes each driver's entry through the
+[`ModelCatalog`](../../packages/provider-core/src/server/ModelCatalog.ts) port,
+and compatibility policies stay with the server. Claude uses the manifest for its entire
 built-in catalog. Adding a model with an existing capability profile is a JSON
 edit; a new profile is needed only for a new capability combination. Codex still
 gets its model list from its app server.
