@@ -205,7 +205,7 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("checks for newer releases after an update has been downloaded", () => {
+  it.effect("downloads newer releases found after an update has been downloaded", () => {
     const harness = makeHarness();
 
     return Effect.scoped(
@@ -241,8 +241,9 @@ describe("DesktopUpdates", () => {
         harness.emit("update-available", { version: "1.2.5" });
         yield* flushCallbacks;
 
+        // A release the background poller finds starts downloading on its own.
         const state = yield* updates.getState;
-        assert.equal(state.status, "available");
+        assert.equal(state.status, "downloading");
         assert.equal(state.availableVersion, "1.2.5");
         assert.isNull(state.downloadedVersion);
       }),

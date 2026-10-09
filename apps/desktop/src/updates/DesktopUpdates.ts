@@ -50,6 +50,7 @@ import {
 const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
 const AUTO_UPDATE_POLL_INTERVAL = "4 minutes";
 const PREPARED_INSTALL_CHECK_WAIT = Duration.seconds(90);
+const BACKGROUND_DOWNLOAD_START_WAIT = Duration.minutes(2);
 
 type UpdateAction = "check" | "download" | "install" | "install-recovery" | "channel";
 
@@ -289,6 +290,7 @@ export const make = Effect.gen(function* () {
   const finishedUpdateActions = yield* PubSub.unbounded<UpdateAction>();
   const updaterConfiguredRef = yield* Ref.make(false);
   const lastLoggedDownloadMilestoneRef = yield* Ref.make(-1);
+  const lastCheckReasonRef = yield* Ref.make<string | null>(null);
   const updateStateRef = yield* Ref.make<DesktopUpdateState>(
     createInitialDesktopUpdateState(
       environment.appVersion,
@@ -425,6 +427,7 @@ export const make = Effect.gen(function* () {
 
     if (actionReservation === "acquire" && !(yield* tryStartUpdateAction("check"))) return false;
 
+    yield* Ref.set(lastCheckReasonRef, reason);
     const check = Effect.gen(function* () {
       const checkedAt = yield* currentIsoTimestamp;
       yield* setState(reduceDesktopUpdateStateOnCheckStart(state, checkedAt));
@@ -515,6 +518,28 @@ export const make = Effect.gen(function* () {
       Effect.ensuring(finishUpdateAction("download")),
     );
   }).pipe(Effect.withSpan("desktop.updates.downloadAvailableUpdate"));
+
+  // update-available fires inside the check that found it, so the download
+  // waits for that check to release the updater. Installing stays gated: the
+  // app's server relaunches into it when idle, and quitting installs it.
+  const downloadInBackground = Effect.scoped(
+    Effect.gen(function* () {
+      const completions = yield* PubSub.subscribe(finishedUpdateActions);
+      while (Option.isSome(yield* activeUpdateAction)) {
+        yield* PubSub.take(completions);
+      }
+      if (yield* Ref.get(desktopState.quitting)) return;
+      yield* downloadAvailableUpdate;
+    }),
+  ).pipe(
+    Effect.timeout(BACKGROUND_DOWNLOAD_START_WAIT),
+    Effect.catchCause((cause) =>
+      Cause.hasInterruptsOnly(cause)
+        ? Effect.void
+        : logUpdaterWarning("background update download did not start"),
+    ),
+    Effect.withSpan("desktop.updates.downloadInBackground"),
+  );
 
   // Tells the primary backend that the coming stop is an update restart, so it
   // keeps its managed tunnel for the backend the updated app starts. Best
@@ -773,6 +798,12 @@ export const make = Effect.gen(function* () {
             releaseNoteGroups: releaseNotes.length,
             omittedReleaseCount,
           });
+          // Updates found by the background pollers download on their own; a
+          // check someone started keeps its Download button.
+          const reason = yield* Ref.get(lastCheckReasonRef);
+          if (reason === "startup" || reason === "poll") {
+            yield* Effect.forkDetach(downloadInBackground);
+          }
         }),
       ),
       Effect.catchCause((cause) => {
@@ -931,7 +962,8 @@ export const make = Effect.gen(function* () {
       yield* Ref.set(updaterConfiguredRef, true);
 
       yield* electronUpdater.setAutoDownload(false);
-      yield* electronUpdater.setAutoInstallOnAppQuit(false);
+      // A download that is never relaunched into installs when the user quits.
+      yield* electronUpdater.setAutoInstallOnAppQuit(true);
       yield* applyAutoUpdaterChannel(settings.updateChannel);
       yield* electronUpdater.setDisableDifferentialDownload(
         isArm64HostRunningIntelBuild(environment.runtimeInfo),
