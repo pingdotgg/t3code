@@ -3,6 +3,8 @@ import { AuthStandardClientScopes, EnvironmentId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Deferred from "effect/Deferred";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -113,6 +115,57 @@ const layerFailingSessionLookupCredential = Layer.effect(
 );
 
 it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
+  it.effect.each(["revoke", "revokeAllExcept", "replace"] as const)(
+    "invalidates every connection for a session on %s and leaves other sessions active",
+    (operation) =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const owner = yield* sessions.issue({ subject: "owner" });
+        const client = yield* sessions.issue(relaySessionInput);
+        const ownerInvalidated = yield* Deferred.make<void>();
+        yield* sessions
+          .awaitInvalidation(owner.sessionId)
+          .pipe(
+            Effect.andThen(Deferred.succeed(ownerInvalidated, undefined)),
+            Effect.forkScoped({ startImmediately: true }),
+          );
+        const first = yield* sessions
+          .awaitInvalidation(client.sessionId)
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        const second = yield* sessions
+          .awaitInvalidation(client.sessionId)
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        if (operation === "revoke") yield* sessions.revoke(client.sessionId);
+        else if (operation === "revokeAllExcept") yield* sessions.revokeAllExcept(owner.sessionId);
+        else yield* sessions.issue({ ...relaySessionInput, replaceSessionId: client.sessionId });
+        yield* Fiber.join(first);
+        yield* Fiber.join(second);
+        expect(yield* Deferred.isDone(ownerInvalidated)).toBe(false);
+        // A connection whose upgrade authenticated just before revocation must also stop.
+        yield* sessions.awaitInvalidation(client.sessionId);
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("expires a connected session at its credential deadline", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const client = yield* sessions.issue(relaySessionInput);
+      yield* sessions.markConnected(client.sessionId);
+      const invalidated = yield* Deferred.make<void>();
+      const watcher = yield* sessions
+        .awaitInvalidation(client.sessionId)
+        .pipe(
+          Effect.andThen(Deferred.succeed(invalidated, undefined)),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+      yield* TestClock.adjust(Duration.minutes(59));
+      expect(yield* Deferred.isDone(invalidated)).toBe(false);
+      yield* TestClock.adjust(Duration.minutes(1));
+      yield* Fiber.join(watcher);
+      yield* sessions.awaitInvalidation(client.sessionId);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
   it.effect("keys remote cookies by environment identity instead of state directory", () =>
     Effect.gen(function* () {
       const cookieName = (stateDir: string, environmentId: EnvironmentId) =>

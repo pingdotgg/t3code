@@ -15,9 +15,9 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
-import { ProviderHost } from "./ProviderHost.ts";
+import * as ProviderHost from "./ProviderHost.ts";
 import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./usageLimits.ts";
-import type { ServerProviderShape } from "./snapshot.ts";
+import type { ManagedServerProvider } from "./snapshot.ts";
 
 interface ProviderSnapshotState {
   readonly snapshot: ServerProvider;
@@ -38,7 +38,7 @@ function withUsageLimits(
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
   Settings,
 >(input: {
-  readonly resolveMaintenance: ServerProviderShape["resolveMaintenance"];
+  readonly resolveMaintenance: ManagedServerProvider["resolveMaintenance"];
   readonly getSettings: Effect.Effect<Settings, ServerSettingsError>;
   readonly streamSettings: Stream.Stream<Settings>;
   readonly haveSettingsChanged: (previous: Settings, next: Settings) => boolean;
@@ -53,8 +53,12 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly refreshInterval?: Duration.Input;
   readonly refreshOnInterval?: boolean;
   readonly checkProviderOnSettingsChange?: (previous: Settings, next: Settings) => boolean;
-}): Effect.fn.Return<ServerProviderShape, ServerSettingsError, Scope.Scope | ProviderHost> {
-  const host = yield* ProviderHost;
+}): Effect.fn.Return<
+  ManagedServerProvider,
+  ServerSettingsError,
+  Scope.Scope | ProviderHost.ProviderHost
+> {
+  const host = yield* ProviderHost.ProviderHost;
   const refreshSemaphore = yield* Semaphore.make(1);
   const changesPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<ServerProvider>(),
@@ -177,7 +181,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
    * `usageLimits` on whatever snapshot is published and leave the enrichment
    * generation alone, so an in-flight enrichment still lands.
    */
-  const applyUsageLimits: ServerProviderShape["applyUsageLimits"] = (update) =>
+  const applyUsageLimits: ManagedServerProvider["applyUsageLimits"] = (update) =>
     Effect.gen(function* () {
       const snapshotToPublish = yield* Ref.modify(snapshotStateRef, (state) => {
         const usageLimits = applyUsageLimitsUpdate({
@@ -285,5 +289,5 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },
-  } satisfies ServerProviderShape;
+  } satisfies ManagedServerProvider;
 });

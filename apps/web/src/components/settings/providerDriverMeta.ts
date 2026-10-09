@@ -1,15 +1,15 @@
 import {
-  AcpRegistrySettings,
   AntigravitySettings,
   ClaudeSettings,
   CodexSettings,
-  CursorSettings,
-  GrokSettings,
-  OpenCodeSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
+import { acpRegistryClient } from "@t3tools/provider-acp-registry/client";
 import { makeProviderClientRegistry } from "@t3tools/provider-core/client";
+import { cursorClient } from "@t3tools/provider-cursor/client";
+import { grokClient } from "@t3tools/provider-grok/client";
 import { museClient } from "@t3tools/provider-muse/client";
+import { openCodeClient } from "@t3tools/provider-opencode/client";
 import { piClient } from "@t3tools/provider-pi/client";
 
 /** The provider client definitions this web build ships, in presentation order. */
@@ -24,30 +24,9 @@ export const providerClients = makeProviderClientRegistry([
     label: "Claude",
     settingsSchema: ClaudeSettings,
   },
-  {
-    driverKind: ProviderDriverKind.make("cursor"),
-    label: "Cursor",
-    settingsSchema: CursorSettings,
-    environmentFields: [
-      {
-        name: "CURSOR_API_KEY",
-        label: "Cursor API key",
-        description: "Optional. Overrides browser sign-in for this provider.",
-        placeholder: "Paste API key",
-        sensitive: true,
-      },
-    ],
-  },
-  {
-    driverKind: ProviderDriverKind.make("grok"),
-    label: "Grok",
-    settingsSchema: GrokSettings,
-  },
-  {
-    driverKind: ProviderDriverKind.make("opencode"),
-    label: "OpenCode",
-    settingsSchema: OpenCodeSettings,
-  },
+  cursorClient,
+  grokClient,
+  openCodeClient,
   {
     driverKind: ProviderDriverKind.make("antigravity"),
     label: "Antigravity",
@@ -55,10 +34,5 @@ export const providerClients = makeProviderClientRegistry([
   },
   museClient,
   piClient,
-  {
-    driverKind: ProviderDriverKind.make("acpRegistry"),
-    label: "ACP Registry",
-    settingsSchema: AcpRegistrySettings,
-    hasDefaultInstance: false,
-  },
+  acpRegistryClient,
 ]);
