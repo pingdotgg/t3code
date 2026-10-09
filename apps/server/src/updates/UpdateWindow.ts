@@ -6,10 +6,10 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Semaphore from "effect/Semaphore";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ProviderMaintenanceCoordinator from "../provider/providerMaintenanceCommandCoordinator.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -95,6 +95,7 @@ const make = Effect.fn("updates.UpdateWindow.make")(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const providers = yield* ProviderRegistry.ProviderRegistry;
   const timings = yield* updateTimings;
+  const admission = yield* ProviderMaintenanceCoordinator.ProviderMaintenanceAdmission;
 
   const check: UpdateWindow["Service"]["check"] = Effect.fn("updates.UpdateWindow.check")(
     function* (options) {
@@ -213,9 +214,8 @@ const make = Effect.fn("updates.UpdateWindow.make")(function* () {
     },
   );
 
-  const installLock = yield* Semaphore.make(1);
   const runIfOpen: UpdateWindow["Service"]["runIfOpen"] = (options, install) =>
-    installLock.withPermits(1)(
+    admission.withPermit(
       check(options).pipe(
         Effect.flatMap((status) => (status.open ? Effect.asSome(install) : Effect.succeedNone)),
       ),
@@ -232,4 +232,6 @@ const make = Effect.fn("updates.UpdateWindow.make")(function* () {
   return UpdateWindow.of({ check, runIfOpen, runWhenOpen });
 });
 
-export const layer = Layer.effect(UpdateWindow, make());
+export const layer = Layer.effect(UpdateWindow, make()).pipe(
+  Layer.provide(ProviderMaintenanceCoordinator.admissionLayer),
+);
