@@ -333,8 +333,9 @@ function emptyOpenRunToolCalls(): OpenRunToolCalls {
 }
 
 /**
- * Ends the tool calls a run left open when its provider event stream was lost,
- * such as when a provider switch released the session mid-turn. No process is
+ * Ends the tool calls a run left open when the run fails without its provider
+ * ending the turn: the event stream was lost, such as when a provider switch
+ * released the session mid-turn, or the turn failed to start. No process is
  * left to report how they ended, so they would otherwise stay running. They
  * were cut short, not failed: a call such as t3_thread_configure may have done
  * its work before the session went away.
@@ -632,7 +633,7 @@ export const layer: Layer.Layer<
       readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
       readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
       readonly openRunOwnedSubagents?: OpenRunOwnedSubagentProjection;
-      /** Set only when the provider stream was lost before the turn ended. */
+      /** Set only when the run fails without its provider ending the turn. */
       readonly abandonedToolCalls?: OpenRunToolCalls;
       readonly terminal: ProviderTerminalEvent;
       readonly failureItemPersisted: boolean;
@@ -1539,8 +1540,8 @@ export const layer: Layer.Layer<
                 Effect.flatMap((providerThread) =>
                   Ref.get(latestTurnItemOrdinal).pipe(
                     Effect.flatMap((latestItemOrdinal) =>
-                      Ref.get(openRunOwnedSubagents).pipe(
-                        Effect.flatMap((openSubagents) =>
+                      Effect.all([Ref.get(openRunOwnedSubagents), Ref.get(openToolCalls)]).pipe(
+                        Effect.flatMap(([openSubagents, abandonedToolCalls]) =>
                           writeFinalRunEvents({
                             run: input.run,
                             rootNode: input.rootNode,
@@ -1554,6 +1555,7 @@ export const layer: Layer.Layer<
                               expectedStatus: "running",
                             },
                             openRunOwnedSubagents: openSubagents,
+                            abandonedToolCalls,
                             terminal: makeFailedTerminalEvent(
                               makeProviderFailure({
                                 cause: Cause.squash(cause),

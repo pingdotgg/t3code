@@ -3535,6 +3535,43 @@ it.effect("refreshes pull requests only once when startup failure closes its eve
   }),
 );
 
+it.effect("interrupts a tool call reported before the turn fails to start", () =>
+  Effect.gen(function* () {
+    const key = "start-failure-open-tool";
+    const toolReported = yield* Deferred.make<void>();
+    const { written } = yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.concat(
+          Stream.fromIterable([backgroundTurnItemEvent(ids, "dynamic_tool", "running", 1)]),
+          Stream.unwrap(Deferred.succeed(toolReported, undefined).pipe(Effect.as(Stream.never))),
+        ),
+      startTurn: (input) =>
+        Deferred.await(toolReported).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new ProviderAdapter.ProviderAdapterTurnStartError({
+                driver,
+                threadId: input.threadId,
+                providerThreadId: input.providerThread.id,
+                runId: input.runId,
+                cause: "provider failed after reporting a tool call",
+              }),
+            ),
+          ),
+        ),
+    });
+    assert.deepEqual(
+      written.map((item) => [item.type, item.status]),
+      [
+        ["dynamic_tool", "interrupted"],
+        ["error", "failed"],
+      ],
+    );
+  }),
+);
+
 it.effect("keeps completed runs completed when pull request refresh fails", () =>
   Effect.gen(function* () {
     const { observed } = yield* captureRootRunTermination({
