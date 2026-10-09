@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-08T21:30:00Z",
+  "updatedAt": "2026-10-09T12:10:00Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -85,6 +85,21 @@
       "ranges": [
         { "range": ">=0.80.5", "status": "supported" },
         { "range": "<0.80.5", "status": "unsupported" }
+      ]
+    },
+    {
+      "driver": "zcode",
+      "t3CodeRange": ">=0.0.46",
+      "recommendedRange": ">=0.65.1",
+      "ranges": [
+        {
+          "range": ">=0.65.1",
+          "status": "supported"
+        },
+        {
+          "range": "<0.65.1",
+          "status": "unknown"
+        }
       ]
     },
     {

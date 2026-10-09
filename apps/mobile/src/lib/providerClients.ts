@@ -6,6 +6,7 @@ import { grokClient } from "@t3tools/provider-grok/client";
 import { museClient } from "@t3tools/provider-muse/client";
 import { openCodeClient } from "@t3tools/provider-opencode/client";
 import { piClient } from "@t3tools/provider-pi/client";
+import { zcodeClient } from "@t3tools/provider-zcode/client";
 
 /** The provider client definitions this mobile build ships. */
 const providerClients = makeProviderClientRegistry([
@@ -14,6 +15,7 @@ const providerClients = makeProviderClientRegistry([
   museClient,
   openCodeClient,
   piClient,
+  zcodeClient,
   acpRegistryClient,
 ]);
 

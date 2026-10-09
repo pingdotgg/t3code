@@ -37,6 +37,7 @@ const workspaceFiles = [
   "packages/provider-grok/package.json",
   "packages/provider-muse/package.json",
   "packages/provider-opencode/package.json",
+  "packages/provider-zcode/package.json",
   "packages/effect-acp/package.json",
   "packages/effect-codex-app-server/package.json",
   "scripts/package.json",

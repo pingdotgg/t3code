@@ -32,6 +32,9 @@ Grok offers no **Auto-accept edits**. A Grok thread already set to it runs in **
 file-change approvals offer **Allow all edits this session**. Its command approvals have no
 session-wide choice, because Grok would remember that command for the whole project.
 
+ZCode offers no **Auto**. A ZCode thread already set to it runs in **Supervised**. ZCode enforces
+each mode itself: **Supervised** lets read-only tools continue and asks before everything else.
+
 ACP Registry agents run their own tools in their own mode; T3 Code answers their approval requests
 by the permission mode. See [ACP Registry permissions](./providers-acp.md#permissions-and-terminals).
 

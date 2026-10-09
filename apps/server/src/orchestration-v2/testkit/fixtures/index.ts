@@ -161,6 +161,9 @@ import {
 } from "./tool_call_denied_write/input.ts";
 import { assertToolCallReadOnlyClaudeOutput } from "./tool_call_read_only/claude_output.ts";
 import { assertToolCallReadOnlyCursorOutput } from "./tool_call_read_only/cursor_output.ts";
+import { assertToolCallReadOnlyZCodeOutput } from "./tool_call_read_only/zcode_output.ts";
+import { zcodePermissionInput, ZCODE_PERMISSION_DECLINED_FILE } from "./zcode_permission/input.ts";
+import { assertZCodePermissionOutput } from "./zcode_permission/output.ts";
 import { toolCallReadOnlyInput } from "./tool_call_read_only/input.ts";
 import {
   assertToolCallReadOnlyOnRequestGrokOutput,
@@ -203,6 +206,7 @@ import {
   PI_MODEL_SELECTION,
   READ_ONLY_NEVER_POLICY,
   READ_ONLY_ON_REQUEST_POLICY,
+  ZCODE_MODEL_SELECTION,
   RESTRICTED_GRANULAR_POLICY,
   type OrchestratorReplayFixture,
   WORKSPACE_NEVER_POLICY,
@@ -618,6 +622,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         assertOutput: assertSimpleOutput,
       },
       {
+        driver: ProviderDriverKind.make("zcode"),
+        transcriptFile: new URL("./simple/zcode_transcript.ndjson", import.meta.url),
+        modelSelection: ZCODE_MODEL_SELECTION,
+        assertOutput: assertSimpleOutput,
+      },
+      {
         driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./simple/registry_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
@@ -696,6 +706,13 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: GROK_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
         assertOutput: assertToolCallReadOnlyCursorOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("zcode"),
+        transcriptFile: new URL("./tool_call_read_only/zcode_transcript.ndjson", import.meta.url),
+        modelSelection: ZCODE_MODEL_SELECTION,
+        runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
+        assertOutput: assertToolCallReadOnlyZCodeOutput,
       },
       {
         driver: ProviderDriverKind.make("acpRegistry"),
@@ -1195,6 +1212,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         assertOutput: assertMultiTurnOutput,
       },
       {
+        driver: ProviderDriverKind.make("zcode"),
+        transcriptFile: new URL("./multi_turn/zcode_transcript.ndjson", import.meta.url),
+        modelSelection: ZCODE_MODEL_SELECTION,
+        assertOutput: assertMultiTurnOutput,
+      },
+      {
         driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./multi_turn/registry_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
@@ -1224,6 +1247,19 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: MUSE_MODEL_SELECTION,
         expectedAbsentWorkspacePaths: [MUSE_PERMISSION_DECLINED_FILE],
         assertOutput: assertMusePermissionOutput,
+      },
+    ],
+  },
+  {
+    name: "zcode_permission",
+    buildInput: zcodePermissionInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("zcode"),
+        transcriptFile: new URL("./zcode_permission/zcode_transcript.ndjson", import.meta.url),
+        modelSelection: ZCODE_MODEL_SELECTION,
+        expectedAbsentWorkspacePaths: [ZCODE_PERMISSION_DECLINED_FILE],
+        assertOutput: assertZCodePermissionOutput,
       },
     ],
   },
@@ -1316,6 +1352,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         driver: ProviderDriverKind.make("grok"),
         transcriptFile: new URL("./queued_turn/grok_transcript.ndjson", import.meta.url),
         modelSelection: GROK_MODEL_SELECTION,
+        assertOutput: assertQueuedTurnOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("zcode"),
+        transcriptFile: new URL("./queued_turn/zcode_transcript.ndjson", import.meta.url),
+        modelSelection: ZCODE_MODEL_SELECTION,
         assertOutput: assertQueuedTurnOutput,
       },
       {
@@ -1452,6 +1494,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         assertOutput: assertGrokMessageSteeringOutput,
       },
       {
+        driver: ProviderDriverKind.make("zcode"),
+        transcriptFile: new URL("./message_steering/zcode_transcript.ndjson", import.meta.url),
+        modelSelection: ZCODE_MODEL_SELECTION,
+        assertOutput: assertGrokMessageSteeringOutput,
+      },
+      {
         driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./message_steering/registry_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
@@ -1487,6 +1535,13 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         driver: ProviderDriverKind.make("grok"),
         transcriptFile: new URL("./turn_interrupt/grok_transcript.ndjson", import.meta.url),
         modelSelection: GROK_MODEL_SELECTION,
+        runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+        assertOutput: assertTurnInterruptOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("zcode"),
+        transcriptFile: new URL("./turn_interrupt/zcode_transcript.ndjson", import.meta.url),
+        modelSelection: ZCODE_MODEL_SELECTION,
         runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
         assertOutput: assertTurnInterruptOutput,
       },

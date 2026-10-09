@@ -19,6 +19,7 @@ import {
   type OpenCodeAdapterV2DriverEnv,
 } from "@t3tools/provider-opencode/server";
 import { PiAdapterV2Driver, type PiAdapterV2DriverEnv } from "@t3tools/provider-pi/server";
+import { ZCodeAdapterV2Driver, type ZCodeAdapterV2DriverEnv } from "@t3tools/provider-zcode/server";
 import type { AnyProviderAdapterDriver } from "@t3tools/provider-core/server/adapterDriver";
 
 export type BuiltInProviderAdapterDriversV2Env =
@@ -28,7 +29,8 @@ export type BuiltInProviderAdapterDriversV2Env =
   | CursorAdapterV2DriverEnv
   | GrokAdapterV2DriverEnv
   | OpenCodeAdapterV2DriverEnv
-  | PiAdapterV2DriverEnv;
+  | PiAdapterV2DriverEnv
+  | ZCodeAdapterV2DriverEnv;
 
 const BUILT_IN_PROVIDER_ADAPTER_DRIVERS_V2: ReadonlyArray<
   AnyProviderAdapterDriver<BuiltInProviderAdapterDriversV2Env>
@@ -38,6 +40,7 @@ const BUILT_IN_PROVIDER_ADAPTER_DRIVERS_V2: ReadonlyArray<
   CursorAdapterV2Driver,
   OpenCodeAdapterV2Driver,
   GrokAdapterV2Driver,
+  ZCodeAdapterV2Driver,
   PiAdapterV2Driver,
   AcpRegistryAdapterV2Driver,
 ];
