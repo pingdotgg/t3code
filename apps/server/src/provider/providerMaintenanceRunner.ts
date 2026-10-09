@@ -585,13 +585,18 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
           const current = (yield* providerRegistry.getProviders).find(
             (candidate) => candidate.instanceId === instanceId,
           );
-          if (current?.updateState?.status !== "queued") return;
+          // A state left queued or running would block background updates until restart.
+          const status = current?.updateState?.status;
+          if (status !== "queued" && status !== "running") return;
           yield* setUpdateState(
             makeUpdateState({
               status: "failed",
-              startedAt: null,
+              startedAt: current?.updateState?.startedAt ?? null,
               finishedAt: yield* nowIso,
-              message: "Update canceled before installation started.",
+              message:
+                status === "queued"
+                  ? "Update canceled before installation started."
+                  : "Update canceled.",
             }),
           );
         }),
