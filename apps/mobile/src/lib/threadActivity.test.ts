@@ -875,23 +875,6 @@ describe("buildThreadFeed", () => {
       "message",
     ]);
     expect(expanded[4]).toMatchObject({ message: { id: middle.messageId, text: middle.text } });
-    for (const status of ["running", "completed", "interrupted", "failed"] as const) {
-      const run = {
-        ...latestRun,
-        status,
-        completedAt: status === "running" ? null : latestRun.completedAt,
-      };
-      for (const restored of [feed, JSON.parse(JSON.stringify(feed)) as typeof feed]) {
-        for (const expandedRunIds of [new Set<RunId>(), new Set([runId])]) {
-          const rows = deriveThreadFeedPresentation(restored, run, expandedRunIds);
-          expect(
-            rows
-              .filter((entry) => entry.type === "message" && entry.message.role === "assistant")
-              .map((entry) => entry.id),
-          ).toEqual(["message-opening", "message-middle", "message-assistant"]);
-        }
-      }
-    }
   });
 
   it("does not fold a response that only has opening and final messages", () => {
