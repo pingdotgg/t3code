@@ -33,16 +33,12 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import {
-  ProviderAdapterV2RuntimePolicy,
-  type ProviderAdapterV2Event,
-  type ProviderAdapterV2SessionRuntime,
-} from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
 import {
   makePiAdapterV2,
@@ -68,7 +64,7 @@ const FAKE_SESSION_FILE = "/fake/.pi/agent/sessions/--workspace--/0001_abc.jsonl
 /** Deliberately outside the valid pid range so a group-kill can never land. */
 const FAKE_PID = 999_999_999;
 
-const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
   runtimeMode: "full-access",
   interactionMode: "default",
   cwd: null,
@@ -331,7 +327,7 @@ const makeAdapter = Effect.fnUntraced(function* (
   continuationRequests?: PiAdapterV2Options["continuationRequests"],
 ) {
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
-  const host = yield* ProviderHost;
+  const host = yield* ProviderHost.ProviderHost;
   const fileSystem = yield* FileSystem.FileSystem;
   const spawner =
     forkFake === undefined
@@ -383,12 +379,12 @@ const openRuntime = Effect.fnUntraced(function* (
     modelSelection: modelSelection(model),
     runtimePolicy,
   });
-  const emitted = yield* Queue.unbounded<ProviderAdapterV2Event>();
+  const emitted = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
   yield* runtime.events.pipe(
     Stream.runForEach((event) => Queue.offer(emitted, event)),
     Effect.forkScoped,
   );
-  const takeEvent = (predicate: (event: ProviderAdapterV2Event) => boolean) =>
+  const takeEvent = (predicate: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean) =>
     Effect.gen(function* () {
       while (true) {
         const event = yield* Queue.take(emitted);
@@ -426,7 +422,7 @@ const makeAppThread = Effect.fnUntraced(function* (model: string, threadId = THR
 });
 
 const startTurn = Effect.fnUntraced(function* (
-  runtime: ProviderAdapterV2SessionRuntime,
+  runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
   providerThread: OrchestrationV2ProviderThread,
   model = "default",
   attachments: ReadonlyArray<ChatAttachment> = [],
@@ -832,8 +828,9 @@ describe("PiAdapterV2", () => {
       });
       yield* fake.emit({ type: "agent_start" });
       yield* Queue.take(offers);
-      const requests: Array<Extract<ProviderAdapterV2Event, { type: "runtime_request.updated" }>> =
-        [];
+      const requests: Array<
+        Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "runtime_request.updated" }>
+      > = [];
       fake.deferNextModelSelection();
       const starting = yield* startTurn(
         runtime,

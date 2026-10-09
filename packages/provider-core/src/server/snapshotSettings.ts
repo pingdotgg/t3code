@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Stream from "effect/Stream";
 
-import type { ProviderHostShape } from "./ProviderHost.ts";
+import type * as ProviderHost from "./ProviderHost.ts";
 
 export interface ProviderSnapshotSettings<Settings> {
   readonly provider: Settings;
@@ -29,7 +29,7 @@ export function haveProviderSnapshotSettingsChanged<Settings>(
 
 export function makeProviderSnapshotSettingsSource<Settings>(
   provider: Settings,
-  settings: ProviderHostShape["settings"],
+  settings: ProviderHost.ProviderHostShape["settings"],
 ): {
   readonly getSettings: Effect.Effect<ProviderSnapshotSettings<Settings>, ServerSettingsError>;
   readonly streamSettings: Stream.Stream<ProviderSnapshotSettings<Settings>>;

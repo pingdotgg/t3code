@@ -1,12 +1,12 @@
 /**
- * A `ProviderHost` for driver and adapter tests. Its directories live in a
+ * A `ProviderHost.ProviderHost` for driver and adapter tests. Its directories live in a
  * scoped temp directory, settings are fixed, and background work always runs
  * unless the test says otherwise.
  *
  * @module provider-testing/host
  */
 import { DEFAULT_SERVER_SETTINGS, type ServerSettings } from "@t3tools/contracts";
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -23,9 +23,9 @@ export interface TestProviderHostOptions {
 
 export const layerTestProviderHost = (
   options: TestProviderHostOptions = {},
-): Layer.Layer<ProviderHost, never, FileSystem.FileSystem | Path.Path> =>
+): Layer.Layer<ProviderHost.ProviderHost, never, FileSystem.FileSystem | Path.Path> =>
   Layer.effect(
-    ProviderHost,
+    ProviderHost.ProviderHost,
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -39,7 +39,7 @@ export const layerTestProviderHost = (
         yield* fileSystem.makeDirectory(directory, { recursive: true }).pipe(Effect.orDie);
       }
       const settings = options.settings ?? DEFAULT_SERVER_SETTINGS;
-      return ProviderHost.of({
+      return ProviderHost.ProviderHost.of({
         paths: { cwd: options.cwd ?? process.cwd(), baseDir, stateDir, providerStatusCacheDir },
         settings: {
           get: Effect.succeed(settings),

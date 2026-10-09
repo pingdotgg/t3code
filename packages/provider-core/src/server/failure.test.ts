@@ -19,7 +19,7 @@ import {
   ContextHandoffBudgetError,
 } from "./failure.ts";
 import * as IdAllocator from "./IdAllocator.ts";
-import { ProviderAdapterTurnStartError } from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 it("redacts credentials and URL secrets from provider failures", () => {
   const failure = makeProviderFailure({
@@ -88,7 +88,7 @@ it("does not expose arbitrary cause messages and preserves explicit messages", (
 });
 
 it("preserves actionable handoff errors wrapped by turn startup", () => {
-  const cause = new ProviderAdapterTurnStartError({
+  const cause = new ProviderAdapter.ProviderAdapterTurnStartError({
     driver: ProviderDriverKind.make("codex"),
     threadId: ThreadId.make("thread:handoff-error"),
     providerThreadId: ProviderThreadId.make("provider-thread:handoff-error"),

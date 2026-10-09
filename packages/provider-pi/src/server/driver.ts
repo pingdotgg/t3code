@@ -15,7 +15,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { makePiTextGeneration } from "./textGeneration.ts";
 import { PiAdapterV2Driver, type PiAdapterV2DriverEnv } from "./adapter.ts";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
@@ -56,7 +56,7 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
 
 export type PiDriverEnv =
   | PiAdapterV2DriverEnv
-  | ProviderHost
+  | ProviderHost.ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
   | HttpClient.HttpClient
@@ -92,7 +92,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
       const fileSystem = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const { cwd } = host.paths;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({

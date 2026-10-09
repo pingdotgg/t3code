@@ -8,7 +8,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { makeMuseTextGeneration } from "./textGeneration.ts";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
@@ -42,7 +42,7 @@ const decodeMuseSettings = Schema.decodeSync(MuseSettings);
 
 export type MuseDriverEnv =
   | IdAllocator.IdAllocatorV2
-  | ProviderHost
+  | ProviderHost.ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
   | HttpClient.HttpClient
@@ -60,7 +60,7 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
       const { cwd } = host.paths;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
