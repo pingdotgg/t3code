@@ -4,7 +4,7 @@ import type { ExpandedImageItem, ExpandedImagePreview } from "./ExpandedImagePre
 import { resolveExternalWebLinkHost } from "./externalLinkContextMenu";
 import { resolveProtocolRelativeMediaUrl } from "../media/mediaContent";
 
-// Weak keys retain resolved media actions only while the rendered image is reachable.
+// Weak keys retain resolved media actions only while the rendered image or video is reachable.
 export const markdownImageItems = new WeakMap<Element, ExpandedImageItem>();
 
 /** Collect in document order only when opened, including PR sections separated by videos. */
@@ -15,9 +15,14 @@ export function markdownImageGallery(
   const scope = element.closest("[data-image-gallery]") ?? element.closest(".chat-markdown");
   const images: ExpandedImageItem[] = [];
   let index = -1;
-  for (const image of scope?.querySelectorAll("img") ?? []) {
+  for (const image of scope?.querySelectorAll("img, video") ?? []) {
     const registered = markdownImageItems.get(image);
     if (!registered) continue;
+    if (image instanceof HTMLVideoElement) {
+      if (image === element) index = images.length;
+      images.push(image === element ? selected : registered);
+      continue;
+    }
     const link = image.closest("a");
     const href = link?.getAttribute("href") ?? "";
     if (link && mediaKindFromPath(href) !== "image") continue;

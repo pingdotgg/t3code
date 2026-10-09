@@ -1,4 +1,10 @@
-import { PlayIcon, RotateCwIcon, TriangleAlertIcon } from "lucide-react";
+import {
+  Maximize2Icon,
+  PictureInPicture2Icon,
+  PlayIcon,
+  RotateCwIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
 import { cn } from "../../lib/utils";
@@ -19,6 +25,10 @@ interface MediaVideoPlayerProps {
   readonly startAt?: number | undefined;
   /** Presents a still thumbnail whose full surface opens the video in a viewer. */
   readonly onOpen?: (() => void) | undefined;
+  /** Offers moving an inline video into the viewer or the mini player; the inline copy pauses. */
+  readonly onPopOut?: ((video: HTMLVideoElement, mode: "viewer" | "mini") => void) | undefined;
+  /** Receives the playing element, e.g. so a gallery can find this video among a message's media. */
+  readonly onVideoElement?: ((video: HTMLVideoElement | null) => void) | undefined;
   readonly className?: string | undefined;
   readonly videoClassName?: string | undefined;
   /** Styles the loading and failure panels, which otherwise assume an inline light surface. */
@@ -40,6 +50,8 @@ export function MediaVideoPlayer({
   autoPlay = false,
   startAt = 0,
   onOpen,
+  onPopOut,
+  onVideoElement,
   className,
   videoClassName,
   stateClassName,
@@ -133,7 +145,7 @@ export function MediaVideoPlayer({
 
   const player = (
     <span
-      className={cn("relative inline-block align-middle", className)}
+      className={cn("group/video relative inline-block align-middle", className)}
       style={style}
       data-markdown-copy={copyMarkdown}
     >
@@ -169,7 +181,10 @@ export function MediaVideoPlayer({
       ) : src !== null && !failed ? (
         <video
           key={loadAttempt}
-          ref={videoRef}
+          ref={(video) => {
+            videoRef.current = video;
+            onVideoElement?.(video);
+          }}
           src={src}
           aria-label={label || "Video preview"}
           aria-hidden={onOpen ? true : undefined}
@@ -221,6 +236,31 @@ export function MediaVideoPlayer({
             <PlayIcon aria-hidden className="size-4 fill-current" />
           </span>
         </button>
+      ) : null}
+      {onPopOut && !onOpen && src !== null && !failed ? (
+        <span className="absolute top-2 right-2 flex gap-1 opacity-0 transition-opacity group-hover/video:opacity-100 group-focus-within/video:opacity-100 pointer-coarse:opacity-100">
+          {(
+            [
+              ["viewer", "Open in viewer", Maximize2Icon],
+              ["mini", "Open in mini player", PictureInPicture2Icon],
+            ] as const
+          ).map(([mode, label, Icon]) => (
+            <Button
+              key={mode}
+              size="icon-xs"
+              variant="media-close"
+              aria-label={label}
+              onClick={() => {
+                const video = videoRef.current;
+                if (!video) return;
+                onPopOut(video, mode);
+                video.pause();
+              }}
+            >
+              <Icon />
+            </Button>
+          ))}
+        </span>
       ) : null}
     </span>
   );

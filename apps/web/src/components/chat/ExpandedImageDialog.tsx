@@ -18,7 +18,13 @@ import { Image as ImageGlyph, Text as TextGlyph } from "lucide";
 import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
-import type { ExpandedImageItem, ExpandedImagePreview } from "./ExpandedImagePreview";
+import { createPortal } from "react-dom";
+import {
+  readVideoHandoff,
+  type ExpandedImageItem,
+  type ExpandedImagePreview,
+  type VideoHandoff,
+} from "./ExpandedImagePreview";
 import { resolveExternalWebLinkHost } from "./externalLinkContextMenu";
 import { useAssetUrlRefresh, useAssetUrlState } from "../../assets/assetUrls";
 import { OpenMediaLink } from "../media/OpenMediaLink";
@@ -48,17 +54,6 @@ function ExpandedMediaFailure({ children }: { children: ReactNode }) {
       {children}
     </div>
   );
-}
-
-/** Where playback stood when the video moved between the viewer and the mini player. */
-interface VideoHandoff {
-  readonly startAt: number;
-  readonly playing: boolean;
-}
-
-function readVideoHandoff(container: HTMLElement | null): VideoHandoff | null {
-  const video = container?.querySelector("video");
-  return video ? { startAt: video.currentTime, playing: !video.paused && !video.ended } : null;
 }
 
 function ExpandedVideo({
@@ -107,8 +102,8 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   const zoomableImageRef = useRef<ZoomableImageHandle>(null);
   const mediaRef = useRef<HTMLDivElement>(null);
   // A minimized video keeps playing in a corner while the thread stays usable.
-  const [minimized, setMinimized] = useState(false);
-  const [videoHandoff, setVideoHandoff] = useState<VideoHandoff | null>(null);
+  const [minimized, setMinimized] = useState(preview.minimized ?? false);
+  const [videoHandoff, setVideoHandoff] = useState<VideoHandoff | null>(preview.handoff ?? null);
   const [returnFocusTarget] = useState(() =>
     document.activeElement instanceof HTMLElement ? document.activeElement : null,
   );
@@ -140,7 +135,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     setImageOffset((current) => current + direction);
   }, []);
   const toggleMinimized = () => {
-    setVideoHandoff(readVideoHandoff(mediaRef.current));
+    setVideoHandoff(readVideoHandoff(mediaRef.current?.querySelector("video")));
     setMinimized((current) => !current);
   };
 
@@ -194,7 +189,8 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
 
   if (!item) return null;
   if (minimized && item.type === "video") {
-    return (
+    // Portaled so a transformed or virtualized ancestor can neither offset nor unmount it.
+    return createPortal(
       <div
         ref={mediaRef}
         role="region"
@@ -228,7 +224,8 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             <XIcon />
           </Button>
         </div>
-      </div>
+      </div>,
+      document.body,
     );
   }
   const mediaLabel = item.type === "video" ? "video" : "image";
