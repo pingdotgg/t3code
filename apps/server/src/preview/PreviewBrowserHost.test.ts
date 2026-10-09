@@ -20,7 +20,11 @@ const LDD_IN_BARE_DEBIAN = `\tlinux-vdso.so.1 (0x00007ffd2d1f8000)
 const SANDBOX_ABORT =
   "[1005/163106.285700:FATAL:content/browser/zygote_host/zygote_host_impl_linux.cc:129] No usable sandbox! If you are running on Ubuntu 23.10+ or another Linux distro that has disabled unprivileged user namespaces with AppArmor, see https://chromium.googlesource.com/";
 
-const lddReporting = (stdout: string) => {
+// What the real loader prints when the browser's `--version` cannot start it.
+const LOADER_ERROR =
+  "chrome-headless-shell: error while loading shared libraries: libglib-2.0.so.0: cannot open shared object file: No such file or directory";
+
+const hostReporting = (output: { readonly version: string; readonly ldd: string }) => {
   const commands: Array<string> = [];
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.sync(() => {
@@ -36,9 +40,9 @@ const lddReporting = (stdout: string) => {
         kill: () => Effect.void,
         unref: Effect.succeed(Effect.void),
         stdin: Sink.drain,
-        stdout: Stream.make(new TextEncoder().encode(stdout)),
+        stdout: Stream.empty,
         stderr: Stream.empty,
-        all: Stream.empty,
+        all: Stream.make(new TextEncoder().encode(name === "ldd" ? output.ldd : output.version)),
         getInputFd: () => Sink.drain,
         getOutputFd: () => Stream.empty,
       });
@@ -47,8 +51,16 @@ const lddReporting = (stdout: string) => {
   return { spawner, commands };
 };
 
-const diagnose = (input: { platform: NodeJS.Platform; output: string; ldd: string }) => {
-  const { spawner, commands } = lddReporting(input.ldd);
+const diagnose = (input: {
+  platform: NodeJS.Platform;
+  output: string;
+  ldd: string;
+  version?: string;
+}) => {
+  const { spawner, commands } = hostReporting({
+    ldd: input.ldd,
+    version: input.version ?? LOADER_ERROR,
+  });
   return PreviewBrowserHost.diagnoseLaunchFailure({
     executable: "/home/me/.t3/tools/chrome-headless-shell/linux64/154/chrome-headless-shell",
     output: input.output,
@@ -89,12 +101,26 @@ describe("diagnoseLaunchFailure", () => {
     }),
   );
 
+  it.effect("trusts the browser's own start over ldd", () =>
+    Effect.gen(function* () {
+      // NixOS: ldd lists libraries that nix-ld still provides to the real loader.
+      const { error } = yield* diagnose({
+        platform: "linux",
+        output: "crashed",
+        ldd: LDD_IN_BARE_DEBIAN,
+        version: "Google Chrome for Testing 154.0.8037.92\n",
+      });
+      expect(error).toBeUndefined();
+    }),
+  );
+
   it.effect("leaves other failures alone", () =>
     Effect.gen(function* () {
       const linux = yield* diagnose({
         platform: "linux",
         output: "crashed",
         ldd: "\tlibc.so.6 => /lib/libc.so.6\n",
+        version: "Google Chrome for Testing 154.0.8037.92\n",
       });
       expect(linux.error).toBeUndefined();
       const mac = yield* diagnose({ platform: "darwin", output: "crashed", ldd: "" });

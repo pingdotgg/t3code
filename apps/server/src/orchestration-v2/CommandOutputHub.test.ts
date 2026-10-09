@@ -28,7 +28,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
 const layerTestDatabase = SqlitePersistence.layerMemory;

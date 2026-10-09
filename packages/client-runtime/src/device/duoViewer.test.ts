@@ -331,6 +331,108 @@ it("faces a display handed off by native rotation without requesting another sen
   viewer.dispose();
 });
 
+// Recorded from the iPhone Duo simulator: a fold button across the closed
+// position lets the cover report the inner display's orientation before handing
+// off. A button's pending angle reaches the viewer as a hinge preview first.
+it("presents fold buttons centered on the hinge: book, tablet, and an upright closed phone", async () => {
+  // Configurations arrive while the view is still easing; time only advances to settle.
+  let now = 0;
+  vi.stubGlobal("performance", { now: () => now });
+  const { viewer, draw, state, onOrientationRequested } = fixture(false);
+  const loaded = asset();
+  models.resolve({ asset: loaded, dispose: vi.fn() });
+  await Promise.resolve();
+  viewer.resize(500, 700, 2);
+  const cover = { width: 1398, height: 2034, screenId: 1, hingePose: null } as const;
+  const inner = { width: 2007, height: 2853, screenId: 3, hingePose: null } as const;
+  const press = (
+    angle: number,
+    configs: ReadonlyArray<{ orientation: "portrait" | "landscape_left"; screenId: 1 | 3 }>,
+  ) => {
+    viewer.setHingePreview(angle);
+    configs.forEach((config, index) => {
+      viewer.setScreen({
+        ...(config.screenId === 1 ? cover : inner),
+        ...config,
+        hingeAngle: angle,
+      });
+      // The command reply follows the first configuration.
+      if (index === 0) viewer.setHingePreview(null);
+      draw();
+    });
+    now += 5_000;
+    draw();
+    draw();
+  };
+  const expectInnerFacing = (minimum: number) => {
+    for (const name of ["inner-display-left", "inner-display-right"]) {
+      const mesh = loaded.getObjectByName(name) as Mesh;
+      const normal = new Vector3()
+        .fromBufferAttribute(mesh.geometry.getAttribute("normal"), 0)
+        .transformDirection(mesh.matrixWorld);
+      expect(normal.z).toBeGreaterThan(minimum);
+    }
+  };
+  const upright = new Rotation().setFromEuler(new Euler(0, Math.PI / 2, 0, "YXZ"));
+  const closeAndExpectUpright = () => {
+    press(0, [
+      { screenId: 3, orientation: "landscape_left" },
+      { screenId: 1, orientation: "portrait" },
+    ]);
+    expect(state.views.at(-1)!.quaternion.angleTo(upright)).toBeLessThan(0.00001);
+  };
+  viewer.setScreen({ ...inner, orientation: "landscape_left", hingeAngle: 180 });
+  draw();
+  closeAndExpectUpright();
+  press(90, [
+    { screenId: 1, orientation: "portrait" },
+    { screenId: 1, orientation: "landscape_left" },
+    { screenId: 3, orientation: "landscape_left" },
+    // Election can flap back to the cover once before settling.
+    { screenId: 1, orientation: "landscape_left" },
+    { screenId: 3, orientation: "landscape_left" },
+  ]);
+  expectInnerFacing(0.45);
+  // Opening the book flat faces the whole tablet; folding back centers the book again.
+  press(180, [{ screenId: 3, orientation: "landscape_left" }]);
+  expectInnerFacing(0.99);
+  press(90, [{ screenId: 3, orientation: "landscape_left" }]);
+  expectInnerFacing(0.45);
+  closeAndExpectUpright();
+  expect(onOrientationRequested).not.toHaveBeenCalled();
+  viewer.dispose();
+});
+
+it("eases a fold button's hinge while a pinch follows the fingers", async () => {
+  let now = 0;
+  vi.stubGlobal("performance", { now: () => now });
+  const { viewer, draw } = fixture(false);
+  const loaded = asset();
+  models.resolve({ asset: loaded, dispose: vi.fn() });
+  await Promise.resolve();
+  viewer.resize(500, 700, 2);
+  viewer.setScreen({
+    width: 2007,
+    height: 2853,
+    orientation: "landscape_left",
+    screenId: 3,
+    hingeAngle: 180,
+  });
+  draw();
+  const leaf = loaded.getObjectByName("left-half")!;
+  const open = ((180 - 90) * Math.PI) / 360;
+  viewer.setHingePreview(90);
+  draw();
+  expect(leaf.rotation.y).toBeGreaterThan(0);
+  expect(leaf.rotation.y).toBeLessThan(open * 0.9);
+  now += 1_000;
+  draw();
+  expect(leaf.rotation.y).toBeCloseTo(open);
+  viewer.setHingePreview(30, true);
+  expect(leaf.rotation.y).toBeCloseTo(((180 - 30) * Math.PI) / 360);
+  viewer.dispose();
+});
+
 it.each(["book", "laptop", "open"] as const)(
   "faces native cover readback for %s even when configuration arrives before the model",
   async (hingePose) => {
@@ -402,7 +504,7 @@ it("keeps default-zoom orbits framed across folds and fits the current assembly"
   viewer.dispose();
 });
 
-it("previews hinge articulation while preserving the laptop lid orientation and blocking unconfirmed input", async () => {
+it("pinches the hinge while preserving the laptop lid orientation and blocking unconfirmed input", async () => {
   const { viewer, draw, pending } = fixture();
   const loaded = asset();
   models.resolve({ asset: loaded, dispose: vi.fn() });
@@ -420,7 +522,7 @@ it("previews hinge articulation while preserving the laptop lid orientation and 
   const lid = loaded.getObjectByName("right-half")!;
   const presentation = lid.getWorldQuaternion(new Rotation());
   for (const value of [127, 50, 170]) {
-    viewer.setHingePreview(value);
+    viewer.setHingePreview(value, true);
     draw();
     expect(loaded.getObjectByName("left-half")!.rotation.y).toBeCloseTo(
       ((180 - value) * Math.PI) / 360,
@@ -438,7 +540,7 @@ it("previews hinge articulation while preserving the laptop lid orientation and 
     draw();
     expect(lid.getWorldQuaternion(new Rotation()).angleTo(presentation)).toBeLessThan(0.00001);
   }
-  viewer.setHingePreview(null);
+  viewer.setHingePreview(null, true);
   draw();
   expect(pending.size).toBe(0);
   expect(lid.getWorldQuaternion(new Rotation()).angleTo(presentation)).toBeLessThan(0.00001);
@@ -479,6 +581,42 @@ it("does not restart an animated preset on duplicate native configurations", asy
   expect(pending.size).toBe(0);
   viewer.dispose();
 });
+
+it.each([true, false])(
+  "stands Tent on both edges when the cover reads it back (configuration before model: %s)",
+  async (configurationFirst) => {
+    // Recorded from the iPhone Duo simulator: Tent can rest with the cover active.
+    const { viewer, draw } = fixture();
+    viewer.resize(500, 700, 2);
+    const tent = {
+      width: 1398,
+      height: 2034,
+      orientation: "portrait",
+      screenId: 1,
+      hingeAngle: 80,
+      hingePose: "tent",
+    } as const;
+    if (configurationFirst) viewer.setScreen(tent);
+    const loaded = asset();
+    models.resolve({ asset: loaded, dispose: vi.fn() });
+    await Promise.resolve();
+    if (!configurationFirst) viewer.setScreen(tent);
+    draw();
+    draw();
+    // Each leaf runs from the hinge down to the surface it rests on.
+    for (const [name, outward] of [
+      ["left-half", -1],
+      ["right-half", 1],
+    ] as const) {
+      const leaf = loaded.getObjectByName(name)!;
+      const down = new Vector3(outward, 0, 0).applyQuaternion(
+        leaf.getWorldQuaternion(new Rotation()),
+      );
+      expect(down.y).toBeLessThan(-0.4);
+    }
+    viewer.dispose();
+  },
+);
 
 it("lets standalone rotation leave Laptop and Tent and stand a closed device upright after hinge edits", async () => {
   const { viewer, draw, state } = fixture();
@@ -672,7 +810,7 @@ it.each(["left", "right"] as const)(
     const partner = loaded.getObjectByName("left-half")!;
     const partnerStart = partner.getWorldQuaternion(new Rotation());
     for (const value of [150, 90, 30, 0, 30, 90, 180]) {
-      viewer.setHingePreview(value);
+      viewer.setHingePreview(value, true);
       draw();
       expect(leaf.getWorldQuaternion(new Rotation()).angleTo(orientation)).toBeLessThan(1e-6);
       if (value === 90)
@@ -682,7 +820,7 @@ it.each(["left", "right"] as const)(
           ? { ...inner, width: 1398, height: 2034, screenId: 1, hingeAngle: value, hingePose: null }
           : { ...inner, hingeAngle: value, hingePose: null };
       viewer.setScreen(next);
-      viewer.setHingePreview(null);
+      viewer.setHingePreview(null, true);
       draw();
       viewer.setScreen({ ...next }); // Late native readback cannot change the view.
       draw();

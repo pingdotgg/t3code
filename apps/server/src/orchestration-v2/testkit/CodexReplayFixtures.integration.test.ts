@@ -18,7 +18,7 @@ import {
   THREAD_MERGE_BACK_SIBLINGS_SOURCE_MARKER,
   THREAD_MERGE_BACK_SOURCE_MARKER,
 } from "./fixtures/shared.ts";
-import { readProviderReplayTranscript } from "./ReplayTranscriptNdjson.ts";
+import { readProviderReplayTranscript } from "@t3tools/provider-testing/replayTranscript";
 
 const PROVIDER_THREAD_RESUME_FIRST_FINAL = "provider thread resume fixture first turn complete";
 const PROVIDER_THREAD_RESUME_SECOND_FINAL = "provider thread resume fixture second turn complete";

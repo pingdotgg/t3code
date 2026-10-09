@@ -119,7 +119,7 @@ vi.mock("../settings/CodexSetupSection", () => ({
   AddManagedCodexAccountDialog: () => null,
 }));
 vi.mock("../settings/providerDriverMeta", () => ({
-  getDriverOption: (driver: string) => ({ label: driver }),
+  providerClients: { get: (driver: string) => ({ label: driver }) },
 }));
 vi.mock("../settings/providerStatus", () => ({
   getProviderSummary: () => ({ headline: "Setup required" }),
@@ -151,6 +151,7 @@ const primaryEnvironment = {
   label: "This computer",
   connection: { phase: "connected" },
   entry: {
+    enabled: true,
     target: new PrimaryConnectionTarget({
       environmentId: primaryId,
       label: "This computer",
@@ -164,6 +165,7 @@ const remoteEnvironment = {
   label: "Paired computer",
   connection: { phase: "connected" },
   entry: {
+    enabled: true,
     target: new BearerConnectionTarget({
       environmentId: remoteId,
       label: "Paired computer",

@@ -39,6 +39,7 @@ vi.mock("./usageProviders", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./usageProviders")>();
   return {
     ...actual,
+    PROVIDER_ORDER: ["codex", "claude"],
     PROVIDER_PRESENTATION: {
       codex: { color: "white", label: "Codex", mark: "span" },
       claude: { color: "orange", label: "Claude Code", mark: "span" },
@@ -74,6 +75,7 @@ beforeEach(() => {
     environments,
     selectedEnvironments: environments,
     isPending: false,
+    shown: null,
     isPartial: false,
     refresh: vi.fn(),
   });

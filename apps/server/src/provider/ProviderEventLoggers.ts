@@ -24,39 +24,18 @@
  *
  * @module provider/ProviderEventLoggers
  */
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
 import * as ResourceAttribution from "../resourceTelemetry/ResourceAttribution.ts";
+import {
+  NoOpProviderEventLoggers,
+  ProviderEventLoggers,
+} from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as EventNdjsonLogger from "./EventNdjsonLogger.ts";
 
-/**
- * Shared logger pair for native + canonical provider event streams.
- *
- * Service value is intentionally a struct of two optional loggers rather
- * than two parallel tags. Construction site is one place
- * (`layer`); consumers (drivers, `ProviderService`) read one tag and pluck the
- * field they need.
- */
-export class ProviderEventLoggers extends Context.Service<
-  ProviderEventLoggers,
-  {
-    readonly native: EventNdjsonLogger.EventNdjsonLogger | undefined;
-    readonly canonical: EventNdjsonLogger.EventNdjsonLogger | undefined;
-  }
->()("t3/provider/ProviderEventLoggers") {}
-
-/**
- * Constant value used by tests / boot layers that want to opt out of native
- * + canonical logging entirely. Keeps the tag non-optional in the type
- * system while letting the runtime treat absence as a no-op.
- */
-export const NoOpProviderEventLoggers: ProviderEventLoggers["Service"] = {
-  native: undefined,
-  canonical: undefined,
-};
+export { NoOpProviderEventLoggers, ProviderEventLoggers };
 
 /**
  * Builds both stream views over one shared store. Setup failures are logged

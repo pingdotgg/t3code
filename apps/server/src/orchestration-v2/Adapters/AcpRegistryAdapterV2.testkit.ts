@@ -9,12 +9,12 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 
-import * as ServerConfig from "../../config.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
-import type { ProviderReplayGate } from "../testkit/ProviderReplayGate.testkit.ts";
+import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
-import { makeReplayServerConfig } from "../testkit/ProviderReplayHarness.ts";
 import {
   type AcpReplayTranscript,
   AcpReplayTranscriptDecodeError,
@@ -37,10 +37,7 @@ function layerAcpRegistryProviderAdapterRegistryReplay(
   transcript: AcpReplayTranscript,
   options: { readonly replayGate?: ProviderReplayGate } = {},
 ) {
-  const layerServerConfig = Layer.effect(
-    ServerConfig.ServerConfig,
-    makeReplayServerConfig(`acp-registry-${transcript.scenario}`).pipe(Effect.orDie),
-  ).pipe(Layer.provide(NodeServices.layer));
+  const layerHost = layerTestProviderHost().pipe(Layer.provide(NodeServices.layer));
 
   return ProviderAdapterRegistry.layerFromAdaptersEffect(
     Effect.gen(function* () {
@@ -49,7 +46,7 @@ function layerAcpRegistryProviderAdapterRegistryReplay(
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const crypto = yield* Crypto.Crypto;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const serverConfig = yield* ServerConfig.ServerConfig;
+      const host = yield* ProviderHost.ProviderHost;
       const replayGate = options.replayGate;
       const replayDir = yield* fileSystem
         .makeTempDirectory({
@@ -71,7 +68,7 @@ function layerAcpRegistryProviderAdapterRegistryReplay(
         resolver: {
           resolve: () => Effect.die("ACP registry resolver must not run during replay"),
         },
-        serverConfig,
+        host,
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: makeAcpReplayRuntime({
           transcript,
@@ -86,7 +83,7 @@ function layerAcpRegistryProviderAdapterRegistryReplay(
       return [adapter];
     }),
   ).pipe(
-    Layer.provide(Layer.mergeAll(layerServerConfig, NodeServices.layer, IdAllocator.layer)),
+    Layer.provide(Layer.mergeAll(layerHost, NodeServices.layer, IdAllocator.layer)),
     // Held inbound lines must not outlive the scenario and wedge teardown.
     Layer.merge(
       Layer.effectDiscard(
