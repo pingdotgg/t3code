@@ -586,6 +586,20 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
         targetKey,
         lockKey: update.lockKey,
         onQueued: setQueuedState,
+        onInterrupted: Effect.gen(function* () {
+          const current = (yield* providerRegistry.getProviders).find(
+            (candidate) => candidate.instanceId === instanceId,
+          );
+          if (current?.updateState?.status !== "queued") return;
+          yield* setUpdateState(
+            makeUpdateState({
+              status: "failed",
+              startedAt: null,
+              finishedAt: yield* nowIso,
+              message: "Update canceled before installation started.",
+            }),
+          );
+        }),
         // Admit before the installer lock: a manual update must not hold that
         // lock while a background pass holding admission waits for it.
         ...(alreadyAdmitted ? {} : { admit: admission.withPermit }),
