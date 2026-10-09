@@ -37,6 +37,7 @@ import * as Stream from "effect/Stream";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { museModelCapabilities, resolveMuseReasoningEffort } from "./modelCatalog.ts";
 import {
@@ -248,6 +249,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const providerHost = yield* ProviderHost.ProviderHost;
   const fileSystem = yield* FileSystem.FileSystem;
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
 
   const protocolError = (detail: string, payload?: unknown) =>
     new ProviderAdapter.ProviderAdapterProtocolError({
@@ -1364,7 +1366,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       );
       const launchHost = Effect.fnUntraced(function* () {
         const epoch = ++hostEpoch;
-        const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+        const mcpSession = yield* mcpSessions.read(input.threadId);
         const created = yield* Effect.acquireRelease(
           createMuseSdkHostEffect(
             {
@@ -1478,7 +1480,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         let missingNativeSession = false;
         return yield* Effect.gen(function* () {
           nativeSessionId = requestedId ?? host.connection.mintCommandId();
-          const mcpSession = McpProviderSession.readMcpProviderSession(args.threadId);
+          const mcpSession = yield* mcpSessions.read(args.threadId);
           if (mcpSession && !host.initializeResult.grantedCapabilities.includes("sessionMcp"))
             return yield* protocolError(
               "Update Muse Code to a version that supports session MCP servers",

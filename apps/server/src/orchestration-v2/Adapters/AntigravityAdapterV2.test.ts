@@ -23,6 +23,7 @@ import { ChildProcessSpawner } from "effect/process";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
@@ -129,6 +130,7 @@ describe("AntigravityAdapterV2 flavor", () => {
 const layerSession = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
+  McpProviderSessions.layer,
   layerTestProviderHost().pipe(Layer.provide(NodeServices.layer)),
 );
 

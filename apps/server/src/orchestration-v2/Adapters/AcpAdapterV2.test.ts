@@ -54,7 +54,7 @@ import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
-import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   extractXAiAcpSubagentEndNotice,
@@ -96,7 +96,12 @@ const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 
 const layerHost = layerTestProviderHost().pipe(Layer.provide(NodeServices.layer));
 
-const layerTest = Layer.mergeAll(NodeServices.layer, IdAllocator.layer, layerHost);
+const layerTest = Layer.mergeAll(
+  NodeServices.layer,
+  IdAllocator.layer,
+  McpProviderSessions.layer,
+  layerHost,
+);
 const ACP_TEST_DRIVER = ProviderDriverKind.make("acp-test");
 const decodeUnknownJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
@@ -708,7 +713,7 @@ describe("AcpAdapterV2", () => {
 
       const instanceId = ProviderInstanceId.make("acp-test-self-contained-mcp-bridge");
       const threadId = ThreadId.make("thread-acp-self-contained-mcp-bridge");
-      McpProviderSession.setMcpProviderSession({
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
         environmentId: EnvironmentId.make("environment-acp-self-contained-mcp-bridge"),
         threadId,
         providerSessionId: "mcp-session-acp-self-contained-mcp-bridge",
@@ -717,11 +722,6 @@ describe("AcpAdapterV2", () => {
         authorizationHeader: "Bearer self-contained-mcp-bridge-token",
         browserToolsAvailable: false,
       });
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          McpProviderSession.clearMcpProviderSession(threadId);
-        }),
-      );
 
       let runtimeInput: AcpAdapterV2RuntimeInput | undefined;
       const makeRuntime = makeMockRuntime({ childProcessSpawner, mockAgentPath });
@@ -772,7 +772,7 @@ describe("AcpAdapterV2", () => {
       const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
       const instanceId = ProviderInstanceId.make("acp-test-instruction-transitions");
       const threadId = ThreadId.make("thread-acp-instruction-transitions");
-      McpProviderSession.setMcpProviderSession({
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
         environmentId: EnvironmentId.make("environment-acp-instruction-transitions"),
         threadId,
         providerSessionId: "mcp-session-acp-instruction-transitions",
@@ -781,9 +781,6 @@ describe("AcpAdapterV2", () => {
         authorizationHeader: "Bearer instruction-transition-token",
         browserToolsAvailable: false,
       });
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
-      );
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
         flavor: {
@@ -2197,7 +2194,7 @@ describe("AcpAdapterV2", () => {
       });
       const sourceThreadId = ThreadId.make("thread-acp-native-fork-source");
       const targetThreadId = ThreadId.make("thread-acp-native-fork-target");
-      McpProviderSession.setMcpProviderSession({
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
         environmentId: EnvironmentId.make("environment-acp-native-fork-source"),
         threadId: sourceThreadId,
         providerSessionId: "mcp-session-acp-native-fork-source",
@@ -2206,7 +2203,7 @@ describe("AcpAdapterV2", () => {
         authorizationHeader: "Bearer source-thread-token",
         browserToolsAvailable: true,
       });
-      McpProviderSession.setMcpProviderSession({
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
         environmentId: EnvironmentId.make("environment-acp-native-fork"),
         threadId: targetThreadId,
         providerSessionId: "mcp-session-acp-native-fork",
@@ -2215,12 +2212,6 @@ describe("AcpAdapterV2", () => {
         authorizationHeader: "Bearer target-thread-token",
         browserToolsAvailable: true,
       });
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          McpProviderSession.clearMcpProviderSession(sourceThreadId);
-          McpProviderSession.clearMcpProviderSession(targetThreadId);
-        }),
-      );
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
         interactionMode: "default",
@@ -2640,7 +2631,7 @@ describe("AcpAdapterV2", () => {
       );
       const instanceId = ProviderInstanceId.make("acp-test-rollback-session");
       const rollbackThreadId = ThreadId.make("thread-acp-rollback-session-target");
-      McpProviderSession.setMcpProviderSession({
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
         environmentId: EnvironmentId.make("environment-acp-rollback-session-target"),
         threadId: rollbackThreadId,
         providerSessionId: "mcp-session-acp-rollback-session-target",
@@ -2649,9 +2640,6 @@ describe("AcpAdapterV2", () => {
         authorizationHeader: "Bearer rollback-target-token",
         browserToolsAvailable: false,
       });
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => McpProviderSession.clearMcpProviderSession(rollbackThreadId)),
-      );
       const runtimeInputs: Array<AcpAdapterV2RuntimeInput> = [];
       const makeRuntime = makeMockRuntime({
         childProcessSpawner,
