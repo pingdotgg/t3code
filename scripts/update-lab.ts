@@ -1007,6 +1007,14 @@ async function up(args: string[]): Promise<void> {
     envs: [],
   };
   let state = updateState((next) => {
+    if (
+      next.host !== host &&
+      next.envs.some((env) => isLabProcess(env.pid, serverMarker(env), projectDir(env.id)))
+    ) {
+      fail(
+        "Cannot change --host while lab servers are running. Run `node scripts/update-lab.ts down` first.",
+      );
+    }
     next.host = host;
     next.busySeconds = Number(option(args, "busy-seconds") ?? next.busySeconds);
     next.fromVersion = option(args, "from-version") ?? next.fromVersion;
