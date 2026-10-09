@@ -87,6 +87,9 @@ export function restartContinuationRun(
   return run;
 }
 
+/** Consecutive automatic continuations allowed before a person has to step in. */
+const MAX_CONTINUATION_CHAIN = 3;
+
 export const continueRestartedRun = Effect.fn("RestartContinuation.continueRestartedRun")(
   function* (input: { readonly threadId: ThreadId; readonly sourceRunId: RunId }) {
     const settings = yield* ServerSettings.ServerSettingsService;
@@ -125,6 +128,22 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     )
       return;
     if (projection.thread.providerInstanceId !== source.providerInstanceId) return;
+    // A turn that keeps crashing the server would otherwise restart it forever.
+    let chainLength = 0;
+    for (
+      let run: (typeof projection.runs)[number] | undefined = source;
+      run?.restartContinuationOfRunId !== undefined && chainLength < MAX_CONTINUATION_CHAIN;
+      run = projection.runs.find((candidate) => candidate.id === run?.restartContinuationOfRunId)
+    ) {
+      chainLength += 1;
+    }
+    if (chainLength >= MAX_CONTINUATION_CHAIN) {
+      yield* Effect.logWarning("Not continuing a run restarted too many times in a row", {
+        threadId: input.threadId,
+        sourceRunId: input.sourceRunId,
+      });
+      return;
+    }
     const sourceRecords = yield* threads.getThreadRecords(
       input.threadId,
       ["messages", "turnItems"],
