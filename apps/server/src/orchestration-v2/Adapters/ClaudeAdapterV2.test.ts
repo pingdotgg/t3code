@@ -3402,6 +3402,69 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("adopts the permission mode the CLI opened in when settings refuse the request", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-permission-downgrade-1"),
+            text: "Start work.",
+            attachments: [],
+          }),
+        );
+        // Managed settings refused the requested bypassPermissions, so the
+        // process opened in default and reported that on its init frame.
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            permissionMode: "default",
+            uuid: "00000000-0000-4000-8000-000000000901",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000902",
+            result: "Done.",
+          }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-permission-downgrade-2"),
+            providerTurnOrdinal: 2,
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000903",
+            result: "Done again.",
+          }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+
+        // The reused process already runs in the mode its init reported; a
+        // set_permission_mode to the refused bypassPermissions fails the turn.
+        assert.deepEqual(harness.permissionModeChanges, []);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
   it.effect("resolves API retries on resumed assistant activity", () =>
     Effect.scoped(
       Effect.gen(function* () {

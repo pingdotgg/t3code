@@ -2795,10 +2795,11 @@ interface ClaudeLiveQueryContext {
   // uuid before any echo, so it echoes, but a resume's own turns can still
   // run ahead of that prompt.
   promptEchoMode: "unknown" | "acknowledged" | "early" | "result_only";
-  // The mode this process was opened in, and the mode the CLI last reported
-  // (init and status frames). Claude changes the latter itself through
-  // EnterPlanMode.
-  readonly openedPermissionMode: PermissionMode;
+  // The mode this process actually opened in — its first init frame's
+  // report, which managed settings can hold below the requested mode — and
+  // the mode the CLI last reported (init and status frames). Claude changes
+  // the latter itself through EnterPlanMode.
+  openedPermissionMode: PermissionMode;
   permissionMode: PermissionMode;
   // Stop, rollback or fork is closing this process; its work is ending.
   stopping: boolean;
@@ -7202,17 +7203,43 @@ export function makeClaudeAdapterV2(
             ),
           };
           yield* Ref.set(queryContext, context);
+          // Claude sends an init frame for every turn it runs; only this
+          // process's first names the mode it actually opened in.
+          let openInitSeen = false;
           yield* querySession.messages.pipe(
-            Stream.runForEach((message) => {
-              if (
-                message.type === "system" &&
-                (message.subtype === "init" || message.subtype === "status") &&
-                message.permissionMode !== undefined
-              ) {
-                context.permissionMode = message.permissionMode;
-              }
-              return handleSdkMessage({ query: querySession, message });
-            }),
+            Stream.runForEach(
+              Effect.fnUntraced(function* (message: SDKMessage) {
+                if (
+                  message.type === "system" &&
+                  (message.subtype === "init" || message.subtype === "status") &&
+                  message.permissionMode !== undefined
+                ) {
+                  context.permissionMode = message.permissionMode;
+                }
+                if (message.type === "system" && message.subtype === "init" && !openInitSeen) {
+                  openInitSeen = true;
+                  if (message.permissionMode !== undefined) {
+                    // Managed settings can refuse the requested open mode
+                    // (disableBypassPermissionsMode downgrades it silently);
+                    // a set_permission_mode back to a refused mode fails
+                    // outright, so the init report — not the request — is
+                    // the baseline later prompts are restored to.
+                    context.openedPermissionMode = message.permissionMode;
+                    if (message.permissionMode !== queryOptions.permissionMode) {
+                      yield* Effect.logWarning(
+                        "orchestration-v2.claude-permission-mode-refused-at-open",
+                        {
+                          nativeThreadId,
+                          requestedPermissionMode: queryOptions.permissionMode,
+                          openedPermissionMode: message.permissionMode,
+                        },
+                      );
+                    }
+                  }
+                }
+                yield* handleSdkMessage({ query: querySession, message });
+              }),
+            ),
             Effect.exit,
             Effect.flatMap(
               Effect.fnUntraced(function* (exit: ClaudeQueryStreamExit) {
