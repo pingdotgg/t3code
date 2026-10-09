@@ -127,7 +127,12 @@ const make = Effect.fn("updates.UpdateWindow.make")(function* () {
     for (const thread of limited.value) {
       if (thread.usageLimitResetAt === null || thread.usageLimitResetAt === undefined) continue;
       const resumesAt = DateTime.make(thread.usageLimitResetAt);
-      if (Option.isSome(resumesAt) && !DateTime.isGreaterThan(resumesAt.value, horizon)) {
+      // A reset already past (say, a resume that keeps failing) must not block forever.
+      if (
+        Option.isSome(resumesAt) &&
+        DateTime.isGreaterThan(resumesAt.value, now) &&
+        !DateTime.isGreaterThan(resumesAt.value, horizon)
+      ) {
         found.push("usage-limit-resume");
       }
     }
