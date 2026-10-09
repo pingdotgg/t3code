@@ -3,9 +3,17 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./server/diffFileRevisions": {
+      "types": "./src/server/diffFileRevisions.ts",
+      "import": "./src/server/diffFileRevisions.ts"
+    },
     "./server/discovery": {
       "types": "./src/server/discovery.ts",
       "import": "./src/server/discovery.ts"
+    },
+    "./server/driver": {
+      "types": "./src/server/driver.ts",
+      "import": "./src/server/driver.ts"
     },
     "./server/mergeMessage": {
       "types": "./src/server/mergeMessage.ts",
@@ -38,6 +46,7 @@
   },
   "dependencies": {
     "@t3tools/contracts": "workspace:*",
+    "@t3tools/shared": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

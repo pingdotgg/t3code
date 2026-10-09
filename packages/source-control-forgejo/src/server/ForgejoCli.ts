@@ -13,7 +13,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import type { SourceControlProviderContext } from "@t3tools/source-control-core/server/SourceControlProvider";
 
@@ -133,7 +133,7 @@ export class ForgejoCli extends Context.Service<
       readonly stdin?: string;
       readonly timeoutMs?: number;
       readonly maxOutputBytes?: number;
-    }) => Effect.Effect<VcsProcess.VcsProcessOutput, ForgejoCliError>;
+    }) => Effect.Effect<SourceControlHost.SourceControlProcessOutput, ForgejoCliError>;
     readonly listLogins?: (input: {
       readonly cwd: string;
       readonly command: "fj" | "tea";
@@ -148,9 +148,9 @@ export class ForgejoCli extends Context.Service<
     ) => Effect.Effect<ForgejoRepository, ForgejoCliError>;
     readonly api: (
       input: ForgejoApiInput,
-    ) => Effect.Effect<VcsProcess.VcsProcessOutput, ForgejoCliError>;
+    ) => Effect.Effect<SourceControlHost.SourceControlProcessOutput, ForgejoCliError>;
   }
->()("t3/sourceControl/ForgejoCli") {}
+>()("@t3tools/source-control-forgejo/server/ForgejoCli") {}
 
 export function parseForgejoRemote(value: string) {
   if (/^(?:https?|ssh):\/\//i.test(value)) {
@@ -212,7 +212,7 @@ export function matchForgejoLogin(
 }
 
 export const make = Effect.gen(function* () {
-  const process = yield* VcsProcess.VcsProcess;
+  const { process } = yield* SourceControlHost.SourceControlHost;
   const fileSystem = yield* FileSystem.FileSystem;
   const httpClient = yield* HttpClient.HttpClient;
   const authLock = yield* Semaphore.make(1);

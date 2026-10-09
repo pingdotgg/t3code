@@ -46,6 +46,7 @@
     "@t3tools/provider-opencode": "workspace:*",
     "@t3tools/provider-pi": "workspace:*",
     "@t3tools/source-control-core": "workspace:*",
+    "@t3tools/source-control-forgejo": "workspace:*",
     "diff": "8.0.3",
     "effect": "catalog:",
     "jose": "catalog:",

@@ -15,7 +15,7 @@ import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlPro
 import * as BitbucketSourceControlProvider from "./BitbucketSourceControlProvider.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
-import * as ForgejoSourceControlProvider from "./ForgejoSourceControlProvider.ts";
+import * as BuiltInDrivers from "./builtInDrivers.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import {
   probeSourceControlProvider,
@@ -308,11 +308,18 @@ export const make = Effect.gen(function* () {
   const github = yield* GitHubSourceControlProvider.make;
   const githubDiscovery = yield* GitHubSourceControlProvider.makeDiscovery;
   const gitlab = yield* GitLabSourceControlProvider.make;
-  const forgejo = yield* ForgejoSourceControlProvider.make;
-  const forgejoDiscovery = yield* ForgejoSourceControlProvider.makeDiscovery;
   const bitbucket = yield* BitbucketSourceControlProvider.make;
   const bitbucketDiscovery = yield* BitbucketSourceControlProvider.makeDiscovery;
   const azureDevOps = yield* AzureDevOpsSourceControlProvider.make;
+  const drivers = yield* Effect.forEach(BuiltInDrivers.BUILT_IN_SOURCE_CONTROL_DRIVERS, (driver) =>
+    driver.make.pipe(
+      Effect.map((instance): SourceControlProviderRegistration => ({
+        kind: driver.kind,
+        provider: instance.sourceControl,
+        discovery: instance.discovery,
+      })),
+    ),
+  );
   return yield* makeWithProviders([
     {
       kind: "github",
@@ -334,7 +341,7 @@ export const make = Effect.gen(function* () {
       provider: bitbucket,
       discovery: bitbucketDiscovery,
     },
-    { kind: "forgejo", provider: forgejo, discovery: forgejoDiscovery },
+    ...drivers,
   ]);
 });
 

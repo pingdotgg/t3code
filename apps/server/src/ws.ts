@@ -233,9 +233,8 @@ import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubApi from "./sourceControl/GitHubApi.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
-import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
+import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
-import * as ServerSourceControlHost from "./sourceControl/ServerSourceControlHost.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
@@ -3209,8 +3208,7 @@ export const layer = Layer.unwrap(
                           BitbucketApi.layer,
                           GitHubApi.layerWithDependencies,
                           GitLabCli.layer,
-                          ForgejoCli.layer,
-                          ServerSourceControlHost.layer,
+                          SourceControlBuiltInDrivers.layer,
                         ),
                       ),
                       Layer.provideMerge(GitVcsDriver.layer),

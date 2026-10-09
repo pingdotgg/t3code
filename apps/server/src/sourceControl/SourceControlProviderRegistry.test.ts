@@ -19,7 +19,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as GitHubApi from "./GitHubApi.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitLabCli from "./GitLabCli.ts";
-import * as ForgejoCli from "./ForgejoCli.ts";
+import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
 

@@ -30,8 +30,8 @@ import * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.t
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
-import * as ForgejoCli from "../sourceControl/ForgejoCli.ts";
-import * as ForgejoPullRequestProvider from "./ForgejoPullRequestProvider.ts";
+import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
+import * as ForgejoPullRequestProvider from "@t3tools/source-control-forgejo/server/ForgejoPullRequestProvider";
 import {
   PullRequestProviderError,
   type ProviderChangeRequest,

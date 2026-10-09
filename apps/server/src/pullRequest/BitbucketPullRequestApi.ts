@@ -22,7 +22,7 @@ import type {
 } from "@t3tools/contracts";
 
 import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
-import { parseDiffFileRevisions } from "./bitbucketDiffRevisions.ts";
+import { parseDiffFileRevisions } from "@t3tools/source-control-core/server/diffFileRevisions";
 import {
   buildReviewThreads,
   decodeCommentsJson,
