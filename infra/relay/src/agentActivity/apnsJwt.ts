@@ -1,9 +1,10 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no createPrivateKey.
 import * as NodeCrypto from "node:crypto";
 
 import { p256 } from "@noble/curves/nist";
 import { sha256 } from "@noble/hashes/sha2";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -95,8 +96,8 @@ export const makeApnsJwt = Effect.fn("relay.apns.make_jwt")(function* (input: Ap
   );
 
   const privateKey = Redacted.value(input.privateKey);
-  const header = Encoding.encodeBase64Url(headerJson);
-  const payload = Encoding.encodeBase64Url(payloadJson);
+  const header = Base64Url.encode(headerJson);
+  const payload = Base64Url.encode(payloadJson);
   const signingInput = `${header}.${payload}`;
 
   return yield* Effect.try({
@@ -110,7 +111,7 @@ export const makeApnsJwt = Effect.fn("relay.apns.make_jwt")(function* (input: Ap
       const signature = p256
         .sign(sha256(new TextEncoder().encode(signingInput)), scalar, { prehash: false })
         .toCompactRawBytes();
-      return `${signingInput}.${Encoding.encodeBase64Url(signature)}`;
+      return `${signingInput}.${Base64Url.encode(signature)}`;
     },
     catch: (cause) =>
       new ApnsJwtSigningError({
@@ -138,7 +139,7 @@ function apnsSigningScalar(privateKeyPem: string): Uint8Array {
     throw new Error("APNs signing key is not a P-256 private key.");
   }
   const scalar = Result.getOrThrowWith(
-    Encoding.decodeBase64Url(jwk.d),
+    Base64Url.decode(jwk.d),
     () => new Error("APNs signing key scalar is not valid base64url."),
   );
   signingScalarCache.set(privateKeyPem, scalar);

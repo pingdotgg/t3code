@@ -6,8 +6,9 @@ import {
   LargeFloatingActionButton,
   Text,
 } from "@expo/ui/jetpack-compose";
-import { size } from "@expo/ui/jetpack-compose/modifiers";
+import { defaultMinSize, height, size, width } from "@expo/ui/jetpack-compose/modifiers";
 import { View, type StyleProp, type ViewStyle } from "react-native";
+import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
 import { SymbolView, type AppSymbolName } from "./AppSymbol";
@@ -24,17 +25,19 @@ export function MaterialFloatingActionButton(props: {
 }) {
   const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
   const typography = useScaledTextRole("footnote");
+  const { scale, iconSize: standardIconSize, fabSize, largeFabSize } = useAndroidControlSizing();
+  const buttonSize = props.variant === "large" ? largeFabSize : fabSize;
   const primary = props.tone === "primary";
-  const containerColor = colors[primary ? "--color-primary" : "--color-thread-selected"];
+  const containerColor = colors[primary ? "--color-primary" : "--color-secondary"];
   const contentColor =
-    colors[primary ? "--color-primary-foreground" : "--color-thread-selected-foreground"];
+    colors[primary ? "--color-primary-foreground" : "--color-secondary-foreground"];
   const Component =
     props.variant === "extended"
       ? ExtendedFloatingActionButton
       : props.variant === "large"
         ? LargeFloatingActionButton
         : FloatingActionButton;
-  const iconSize = props.variant === "large" ? 36 : 24;
+  const iconSize = props.variant === "large" ? Math.round(36 * scale) : standardIconSize;
   return (
     <View
       accessible
@@ -48,6 +51,11 @@ export function MaterialFloatingActionButton(props: {
       <View importantForAccessibility="no-hide-descendants">
         <Host matchContents colorScheme={themeAppearance} ignoreSafeAreaKeyboardInsets>
           <Component
+            modifiers={[
+              defaultMinSize({ minWidth: buttonSize }),
+              height(buttonSize),
+              ...(props.variant === "extended" ? [] : [width(buttonSize)]),
+            ]}
             containerColor={containerColor}
             onClick={props.onPress}
             expanded={props.expanded}
@@ -76,9 +84,7 @@ export function MaterialFloatingActionButton(props: {
         <SymbolView
           name={props.icon}
           size={iconSize}
-          tintColorClassName={
-            primary ? "accent-primary-foreground" : "accent-thread-selected-foreground"
-          }
+          tintColorClassName={primary ? "accent-primary-foreground" : "accent-secondary-foreground"}
         />
       </View>
     </View>

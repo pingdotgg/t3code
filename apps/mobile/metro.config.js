@@ -17,6 +17,8 @@ const licenseGeneratorSource = path.join(
 );
 const escapedWorkspaceRoot = workspaceRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const mobileShikiRoot = path.dirname(require.resolve("shiki/package.json", { paths: [__dirname] }));
+const generatedDeviceStreamRoot = path.join(__dirname, ".generated", "device-stream");
+const generatedPreviewStreamRoot = path.join(__dirname, ".generated", "preview-stream");
 const resolveShikiDependencyRoot = (packageName) => {
   const entryPath = require.resolve(packageName, { paths: [mobileShikiRoot] });
   let currentDir = path.dirname(entryPath);
@@ -46,6 +48,8 @@ config.resolver = {
   extraNodeModules: {
     ...config.resolver?.extraNodeModules,
     "@t3tools/mobile-third-party-licenses": generatedLicenseModuleRoot,
+    "@t3tools/mobile-device-stream": generatedDeviceStreamRoot,
+    "@t3tools/mobile-preview-stream": generatedPreviewStreamRoot,
     shiki: mobileShikiRoot,
     "@shikijs/core": resolveShikiDependencyRoot("@shikijs/core"),
     "@shikijs/engine-javascript": resolveShikiDependencyRoot("@shikijs/engine-javascript"),
@@ -93,10 +97,53 @@ async function generateMobileThirdPartyLicenses() {
   ]);
 }
 
-module.exports = generateMobileThirdPartyLicenses().then(() =>
-  withUniwindConfig(config, {
-    cssEntryFile: "./global.css",
-    extraThemes,
-    polyfills: { rem: 14 },
-  }),
+async function prepareStreamScripts() {
+  const { generateDeviceStreamScript, generatePreviewStreamScript } = await import(
+    pathToFileURL(path.join(__dirname, "scripts", "generate-device-stream.mts")).href
+  );
+  const generateAll = () =>
+    Promise.all([generateDeviceStreamScript(), generatePreviewStreamScript()]);
+  await generateAll();
+  if (process.env.NODE_ENV !== "production") {
+    let rebuild = Promise.resolve();
+    for (const [directory, files, generate] of [
+      [
+        "apps/mobile/src/features/devices",
+        ["device-stream.browser.ts"],
+        generateDeviceStreamScript,
+      ],
+      [
+        "apps/mobile/src/features/browser",
+        ["preview-stream.browser.ts"],
+        generatePreviewStreamScript,
+      ],
+      // The preview transport also imports `hubAccess.ts`.
+      ["packages/client-runtime/src/device", ["stream.ts", "hubAccess.ts"], generateAll],
+      [
+        "packages/client-runtime/src/preview",
+        ["serverBrowserStream.ts"],
+        generatePreviewStreamScript,
+      ],
+    ]) {
+      // The generated modules participate in Metro's normal Fast Refresh.
+      fs.watch(path.join(workspaceRoot, directory), { persistent: false }, (_event, filename) => {
+        if (filename && !files.includes(String(filename))) return;
+        rebuild = rebuild
+          .then(generate)
+          .then(() => undefined)
+          .catch((error) => {
+            console.error("Could not rebuild a WebView stream script:", error);
+          });
+      });
+    }
+  }
+}
+
+module.exports = Promise.all([generateMobileThirdPartyLicenses(), prepareStreamScripts()]).then(
+  () =>
+    withUniwindConfig(config, {
+      cssEntryFile: "./global.css",
+      extraThemes,
+      polyfills: { rem: 14 },
+    }),
 );

@@ -93,13 +93,17 @@ on:
         type: string
 
 permissions:
+  # Windows builds read this run's artifact list to wait for the Linux CLI archive.
+  actions: read
   contents: read
 
 jobs:
   build:
     name: Build ${{ inputs.label }}
     runs-on: ${{ inputs.runner }}
-    timeout-minutes: 30
+    # Windows waits for the Linux CLI archive inside its own budget (see
+    # "Wait for Linux CLI archive"), so it gets that wait on top of the usual 30.
+    timeout-minutes: ${{ inputs.platform == 'win' && 70 || 30 }}
     env:
       T3CODE_CLERK_PUBLISHABLE_KEY: ${{ inputs.clerk_publishable_key }}
       T3CODE_CLERK_JWT_TEMPLATE: ${{ inputs.clerk_jwt_template }}
@@ -109,6 +113,9 @@ jobs:
       # This repository is public, so Git needs no credentials. checkout's
       # credential cleanup runs submodule foreach even with submodules disabled,
       # which fails on the orphaned gitlinks in our vendored .repos tree.
+      # checkout.workers=0 writes the files on every core. Alternating both ways
+      # in one job on the Windows runners, it wrote the files about 10s faster
+      # (about 40% on arm64).
       - name: Checkout
         shell: bash
         env:
@@ -120,27 +127,20 @@ jobs:
           git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
           git fetch --no-tags --depth=1 origin "$CHECKOUT_REF"
           git sparse-checkout set --no-cone '/*' '!/.repos/'
-          git checkout --detach FETCH_HEAD
+          git -c checkout.workers=0 checkout --detach FETCH_HEAD
 
+      # Windows installs straight from the registry. There, linking the packages
+      # takes the time, not downloading them, so a ~700 MB package cache did not
+      # pay for its own restore. Across recent nightlies, restore plus install
+      # took 183-233s on arm64 and 116-172s on x64, while a plain install took
+      # 142-210s and 84-160s. The arm64 entries also filled 4 GB of the
+      # repository's 10 GB Actions cache.
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
           cache: ${{ inputs.platform != 'win' }}
           run-install: false
-
-      - name: Resolve Windows package cache path
-        if: inputs.platform == 'win'
-        id: package_cache_path
-        shell: pwsh
-        run: '"path=$(vp pm cache dir)" >> $env:GITHUB_OUTPUT'
-
-      - name: Cache Windows packages
-        if: inputs.platform == 'win'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: ${{ steps.package_cache_path.outputs.path }}
-          key: windows-release-packages-v1-${{ inputs.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
 
       # pnpm checks the lockfile and policy before reusing this result. A missing
       # artifact leaves the cache empty, so installation runs the checks again.
@@ -208,17 +208,11 @@ jobs:
           name: js-bundle
           path: apps
 
-      # The WSL backend runs the Linux CLI archive inside the distro, so the
-      # Windows desktop embeds the same-arch archive the release attaches.
-      - name: Download Linux CLI archive for WSL
-        if: inputs.platform == 'win'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: cli-linux-${{ inputs.arch }}
-          path: wsl-runtime
-
+      # Only the resource monitor build needs these libraries. With a cached
+      # monitor, the desktop build's preflight skips its MSVC check, and node-pty
+      # ships prebuilt Windows binaries, so the 30-60s install is skipped too.
       - name: Install Spectre-mitigated MSVC libs
-        if: inputs.platform == 'win'
+        if: inputs.platform == 'win' && steps.resource_monitor_cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -314,6 +308,67 @@ jobs:
             Where-Object { $_ -and (Test-Path $_) } |
             Select-Object -Unique
           "PSModulePath=$($modulePathEntries -join ';')" >> $env:GITHUB_ENV
+
+      # The WSL backend runs the Linux CLI archive inside the distro, so the
+      # Windows desktop embeds the same-arch archive the release attaches.
+      # This job starts alongside that Linux job instead of after it, and the
+      # Linux job uploads the archive partway through, so the wait is placed
+      # after all other setup. It stops early if the Linux job ended without
+      # uploading the archive.
+      - name: Wait for Linux CLI archive
+        if: inputs.platform == 'win'
+        shell: pwsh
+        timeout-minutes: 40
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ARTIFACT: cli-linux-${{ inputs.arch }}
+          LINUX_JOB: Build Linux ${{ inputs.arch }}
+        run: |
+          $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = "application/vnd.github+json" }
+          $run = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          function Test-Archive {
+            (Invoke-RestMethod -Headers $headers -Uri "$run/artifacts?name=$env:ARTIFACT").total_count -gt 0
+          }
+          $missingSince = $null
+          while ($true) {
+            try {
+              if (Test-Archive) {
+                Write-Host "$env:ARTIFACT is ready."
+                exit 0
+              }
+              $jobs = Invoke-RestMethod -Headers $headers -Uri "$run/attempts/$env:GITHUB_RUN_ATTEMPT/jobs?per_page=100"
+              $linux = $jobs.jobs | Where-Object { $_.name.EndsWith($env:LINUX_JOB) } | Select-Object -First 1
+              if (-not $linux) {
+                # Both jobs start together, so a Linux job still missing after a
+                # few minutes means a renamed or skipped job, not a slow one.
+                if (-not $missingSince) {
+                  $missingSince = Get-Date
+                } elseif (((Get-Date) - $missingSince).TotalMinutes -ge 5) {
+                  Write-Host "::error::No job named '$env:LINUX_JOB' in this run, so $env:ARTIFACT will not arrive."
+                  exit 1
+                }
+              } elseif ($linux.conclusion) {
+                # The upload may have landed between the two requests above.
+                if (Test-Archive) {
+                  Write-Host "$env:ARTIFACT is ready."
+                  exit 0
+                }
+                Write-Host "::error::$env:LINUX_JOB ended ($($linux.conclusion)) without uploading $env:ARTIFACT."
+                exit 1
+              }
+            } catch {
+              Write-Warning "Could not read this run's artifacts or jobs: $($_.Exception.Message)"
+            }
+            Write-Host "Waiting for $env:ARTIFACT..."
+            Start-Sleep -Seconds 10
+          }
+
+      - name: Download Linux CLI archive for WSL
+        if: inputs.platform == 'win'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: cli-linux-${{ inputs.arch }}
+          path: wsl-runtime
 
       - name: Build desktop artifact
         shell: bash
@@ -510,6 +565,7 @@ jobs:
             "release/*.dmg"
             "release/*.zip"
             "release/*.AppImage"
+            "release/*.deb"
             "release/*.exe"
           )
           # Preview builds have no publish config, so electron-builder writes

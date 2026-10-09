@@ -1,8 +1,8 @@
 import * as Cloudflare from "@/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
 
 /**
  * A sibling resource whose output is threaded into the container's `env`,
@@ -24,6 +24,8 @@ export class RemoteContainer extends Cloudflare.Container<RemoteContainer>()(
     const bucket = yield* EnvBucket;
     return {
       image: "mendhak/http-https-echo:latest",
+      vcpu: 1,
+      memoryMib: 4096,
       observability: { logs: { enabled: true } },
       env: {
         // Tells the echo image to include `process.env` in its JSON response.

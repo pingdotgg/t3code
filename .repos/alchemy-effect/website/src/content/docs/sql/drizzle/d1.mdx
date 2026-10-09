@@ -1,16 +1,14 @@
 ---
 title: D1
-description: Drizzle on Cloudflare D1 — declare the schema, generate and apply migrations on deploy, and query from a Worker with Drizzle.D1.
+description: SQLite schemas and Effect-native Drizzle queries over a Cloudflare D1 binding.
 ---
 
 import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
 
-export const deps = `drizzle-orm @effect/sql-d1`;
-export const devDeps = `drizzle-kit`;
+export const deps = `drizzle-orm@1.0.0-rc.5-ab785fc @effect/sql-d1`;
+export const devDeps = `drizzle-kit@1.0.0-rc.5-ab785fc`;
 
-Drizzle on D1, end to end: a schema module, a `Drizzle.Schema`
-resource that generates migration SQL on deploy, a D1 database that
-applies it, and a Worker that queries through `Drizzle.D1`.
+`Drizzle.D1` provides typed, Effect-native queries over a Cloudflare D1 binding; unlike Postgres and MySQL, this driver is Cloudflare-specific. See [SQL databases](/sql/databases) to compare engines and [Cloudflare setup](/cloudflare/setup) for deployment choices.
 
 Install the toolchain — all optional peers of alchemy:
 
@@ -36,7 +34,7 @@ Drizzle schemas are plain TypeScript modules using the
 
 ```typescript
 // src/schema.ts
-import { defineRelations, sql } from "drizzle-orm";
+import { defineRelations } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const Users = sqliteTable("users", {
@@ -61,35 +59,40 @@ export const relations = defineRelations({ Users, Posts }, (t) => ({
 }));
 ```
 
-## Declare the schema resource and database
+## Generate and review migrations
 
-`Drizzle.Schema` diffs the schema module on each deploy and writes
-pending migration SQL to `out`. Passing `schema.out` as the
-database's `migrations` prop creates the dependency edge: generate
-first, apply second, in one `alchemy deploy`:
+```typescript
+// drizzle.config.ts
+import { defineConfig } from "drizzle-kit";
+
+export default defineConfig({
+  schema: "./src/schema.ts",
+  out: "./migrations",
+  dialect: "sqlite",
+});
+```
+
+```sh
+bunx drizzle-kit generate
+git add src/schema.ts drizzle.config.ts migrations
+git diff --cached
+git commit -m "Add database migration"
+```
+
+Generate with each schema change and review the schema, SQL, and snapshots together before committing. [Migrations](/sql/drizzle/migrations) covers application ownership; the optional [`Drizzle.Schema` resource](/providers/drizzle/schema) is not required.
+
+## Declare the database
 
 ```typescript
 // src/db.ts
 import * as Cloudflare from "alchemy/Cloudflare";
-import * as Drizzle from "alchemy/Drizzle";
-import * as Effect from "effect/Effect";
 
-export const Database = Effect.gen(function* () {
-  const schema = yield* Drizzle.Schema("app-schema", {
-    schema: "./src/schema.ts",
-    out: "./migrations",
-    dialect: "sqlite",
-  });
-
-  return yield* Cloudflare.D1.Database("app-db", {
-    migrations: schema,
-  });
+export const Database = Cloudflare.D1.Database("app-db", {
+  migrations: "./migrations",
 });
 ```
 
-Register `Drizzle.providers()` alongside `Cloudflare.providers()` in
-your Stack. [Migrations](/sql/drizzle/migrations) covers what the
-schema resource does — and does not — decide on your behalf.
+With `Cloudflare.providers()` registered, the resource applies committed files during deploy without generating SQL. See the [Cloudflare D1 walkthrough](/cloudflare/data/d1-drizzle) for the full deployment; keep an existing migration runner unless you deliberately choose Alchemy-managed application.
 
 ## Connect in a Worker
 
@@ -101,7 +104,7 @@ client to `Drizzle.D1`:
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Drizzle from "alchemy/Drizzle";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Database } from "./db.ts";
 import { relations, Users } from "./schema.ts";
 
@@ -123,10 +126,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
 ) {}
 ```
 
-Nothing connects at init — the client is built on the first query of
-an event and reused for every query in that event (see
-[Connection lifecycle](/sql/effect-sql/lifecycle)). Plan and deploy
-never touch D1.
+Client construction does not query D1; the first query builds the client and reuses it within the event's [scope](/sql/effect-sql/lifecycle). Resource provisioning and migration application still run during deployment.
 
 ## Queries are Effects
 
@@ -134,6 +134,8 @@ Every builder yields directly, with `SqlError` in the typed error
 channel:
 
 ```typescript
+import { eq } from "drizzle-orm";
+
 const [created] = yield* db
   .insert(Users)
   .values({ name, email })
@@ -167,11 +169,4 @@ whatever `D1Database` binding the runtime provides.
 
 ## Where next
 
-- [Migrations](/sql/drizzle/migrations) — what deploy-time schema
-  generation actually does, and when it asks for a decision.
-- [Drizzle on D1 (Cloudflare tutorial)](/cloudflare/data/d1-drizzle)
-  — the same flow in the Cloudflare hub, with deploy walkthrough.
-- [Example: cloudflare-d1-drizzle](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-d1-drizzle)
-  — the complete runnable project.
-- [Effect SQL: D1](/sql/effect-sql/d1) — tagged-template SQL over
-  the same binding, no ORM.
+The [Cloudflare D1 walkthrough](/cloudflare/data/d1-drizzle) owns deployment, while [Effect SQL: D1](/sql/effect-sql/d1) covers tagged-template queries over the same binding. The [D1 example](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-d1-drizzle) demonstrates schema and query code but uses the optional schema resource rather than this guide's generation workflow.

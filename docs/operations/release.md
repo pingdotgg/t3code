@@ -26,10 +26,10 @@ This document covers the unified release workflow for stable and nightly desktop
 - Runs lint, typecheck, and tests alongside artifact builds. Publishing waits for every check.
 - Reads the shared production T3 Connect relay URL and Clerk client configuration before packaging clients.
 - Builds the platform-independent JS (server bundle, web client, Electron main) once in the `build_bundle` job and hands it to every platform job as the `js-bundle` artifact; the platform jobs only package it, so no runner rebuilds it.
-- Builds six desktop artifacts in parallel for both channels, each as its own job (`desktop_<platform>_<arch>`, one call of `release-desktop.yml`) on hardware of its own architecture, gated only on the bundle (the Windows jobs also wait for the same-arch Linux job, whose CLI archive they embed as the WSL runtime):
+- Builds six desktop artifacts in parallel for both channels, each as its own job (`desktop_<platform>_<arch>`, one call of `release-desktop.yml`) on hardware of its own architecture, gated only on the bundle. The Windows jobs embed the same-arch Linux CLI archive as the WSL runtime and wait for that artifact partway through, not for the whole Linux job:
   - macOS `arm64` DMG
   - macOS `x64` DMG
-  - Linux `x64` and `arm64` AppImage
+  - Linux `x64` and `arm64` AppImage and `.deb`, from one electron-builder run. The `.deb` updates in the app through electron-updater, which installs it with `dpkg`.
   - Windows `x64` and `arm64` NSIS installer
 - Publishes one GitHub Release with all produced files.
   - Stable tags with a suffix after `X.Y.Z` (for example `1.2.3-alpha.1`) are published as GitHub prereleases.
@@ -47,7 +47,7 @@ This document covers the unified release workflow for stable and nightly desktop
   - nightly releases publish npm dist-tag `nightly`
   - preview releases publish npm dist-tag `preview`, which nothing resolves unless asked for by name
   - one-time setup: the `@t3code` npm scope (org) must exist, and `t3` and each `@t3code/t3-<platform>-<arch>` package needs a trusted publisher registered for this workflow file (see below).
-- Deploys the hosted web app to Vercel only after a release is published:
+- Builds the hosted web app on Vercel while the desktop jobs run, and makes it live only after a release is published:
   - stable releases are aliased to the `latest` hosted app channel
   - nightly releases are aliased to the `nightly` hosted app channel
 - Signing is optional and auto-detected per platform from secrets.
@@ -132,11 +132,21 @@ Required `production` environment variables:
 Optional `production` environment variables:
 
 - `RELAY_DOMAIN` when overriding the derived `relay.<RELAY_API_ZONE_NAME>` domain
+- `RELAY_TUNNEL_CLEANUP_MODE` with `off`, `dry-run`, or `enabled`. Missing and blank values use
+  `off`.
+- `RELAY_LEGACY_TUNNEL_CLEANUP_MODE` with the same values, for tunnels whose host never registered
+  recovery. Missing and blank values use `off`.
 
 Required `production` environment secrets:
 
 - `CLERK_SECRET_KEY`
 - `APNS_PRIVATE_KEY`
+
+After changing a variable or secret, run the **Deploy T3 Connect relay** workflow manually from
+`main` with **force** unchecked. Alchemy compares the values the Worker reads and redeploys it when
+one changed. Check **force** only to redeploy resources with no detected change: a forced run also
+replaces the Postgres runtime role and its password
+([alchemy-run/alchemy#1832](https://github.com/alchemy-run/alchemy/issues/1832)).
 
 The account-scoped repository credentials are consumed by Alchemy while provisioning relay stages; they
 are not bound into the relay Worker. The production deployment uses an Axiom personal access token,
@@ -151,11 +161,130 @@ Developers deploy personal stages locally rather than through pull-request autom
 vp run --filter t3code-relay deploy -- --stage "$USER" --env-file .env.local
 ```
 
+### Managed tunnel cleanup rollout
+
+Keep `RELAY_TUNNEL_CLEANUP_MODE=off` for the first production deploy. That deploy applies the
+nullable allocation migration and adds the recovery endpoints. Web and mobile clients need no
+coordinated release. CLI and desktop server builds must reach users before cleanup is enabled,
+because those builds register recovery and replace a deleted tunnel after wake.
+
+1. Deploy the relay and migration with cleanup `off`.
+2. Release the server build and confirm current hosts register recovery. Older hosts stay marked
+   legacy and are only candidates under the legacy switch below.
+3. Set `dry-run`, run a relay deploy, and read the sweep counters (`scanned`, `wouldDelete`,
+   `skippedLegacy`, `skippedOrphan`, `failed`, `truncated`) across several sweeps. Each sweep records
+   them, and the active `mode`, as `relay.managed_endpoint_reaper.*` attributes on its
+   `relay.managed_endpoint_reaper.sweep` span in Axiom.
+4. Run the disposable-host canary below.
+5. Set `enabled` only after the canary recovers without a server restart.
+
+The job runs every five minutes with a five-minute grace period for tunnels that lost their
+connector, so a candidate is usually removed five to ten minutes after it goes down. Tunnels that
+never connected wait an hour. One sweep attempts at most 100 deletions, so a backlog takes longer.
+Changing `RELAY_TUNNEL_CLEANUP_MODE`, including turning cleanup off during an incident, needs a relay
+deploy without force. Confirm the new `mode` on the next sweep span.
+
+To roll back, set cleanup to `off` and run a relay deploy before downgrading any host. Keep the
+recovery endpoints deployed while current server builds are in use. The nullable columns can stay.
+
+### Legacy tunnel cleanup
+
+A legacy tunnel belongs to a host that never registered recovery, usually one that went offline
+before the recovery build shipped. `RELAY_LEGACY_TUNNEL_CLEANUP_MODE` deletes these once Cloudflare
+reports them down, or never connected, for more than 7 days. It is independent of
+`RELAY_TUNNEL_CLEANUP_MODE`, and every other check still applies.
+
+A deleted legacy tunnel keeps its allocation, so its hostname is kept. When the host comes back:
+
+- On a build with recovery, the connector is rejected and the host requests a replacement tunnel at
+  the same hostname.
+- On an older build with a CLI link, startup provisions a new tunnel.
+- On an older build linked from web or mobile, the host stays offline until T3 Code on that computer
+  is updated.
+
+Ship the web and mobile builds that show the offline reason before enabling legacy cleanup, so a
+user whose host is affected sees what to do. The relay adds the `tunnel_released_at` allocation
+column in its first deploy with this change; the legacy switch stays `off` until you set it.
+
+1. Run `vp run --filter t3code-relay tunnels:census` with a read-only Cloudflare token. It counts
+   tunnels in every relay stage. The reaper only sees its own stage's tunnels, so clean up the rest
+   by hand.
+2. Set the legacy mode to `dry-run`, deploy, and read `wouldDeleteLegacy`, `legacyOver30Days`,
+   `totalDown`, and `totalInactive` on the sweep spans for a day. `wouldDeleteLegacy` counts only the
+   tunnels a sweep inspected, at most 500 per status. `totalDown` and `totalInactive` are Cloudflare's
+   counts of this stage's tunnels down for over five minutes and never connected for over an hour.
+   They include ones the reaper skips, so they are an upper bound on the backlog. The share of `wouldDeleteLegacy` in each sweep's `scanned` estimates how
+   much of that total is eligible.
+3. Run the legacy steps of the disposable-host canary below.
+4. Before enabling, confirm the web and mobile builds that show the "update T3 Code on that computer"
+   message are live. Without them, a user whose older host lost its tunnel only sees it as offline.
+5. Set the legacy mode to `enabled`. One sweep deletes at most 100 tunnels, four at a time, and
+   stops starting new deletions after 90 seconds. A backlog of 20,000 takes about 17 hours if each
+   sweep finishes its 100. Watch `deletedLegacy`, `attempted`, `failed`, and `truncated`. An
+   `attempted` well under 100 with `truncated` set means the sweep stopped early: either the time
+   budget ran out or Cloudflare rate-limited a deletion. The counters don't say which; the relay
+   logs a warning with the Cloudflare error for each failed deletion.
+
+In Axiom, filter the relay traces dataset on `name == "relay.managed_endpoint_reaper.sweep"` and
+chart the `attributes.custom.relay.managed_endpoint_reaper.*` fields over time.
+
+Set the legacy mode back to `off` and deploy if any of these happen:
+
+- `failed` stays above a few per sweep. Read the warning log for the Cloudflare error.
+- Users report an environment that is offline with the update message after they have updated T3
+  Code on that computer and restarted it.
+- Relay request errors rise while sweeps run. Deletions share the Postgres connection pool with
+  request handlers.
+
+Turning the legacy mode off stops new legacy deletions; `RELAY_TUNNEL_CLEANUP_MODE` keeps deleting
+tunnels of hosts with recovery while it is `enabled`. Deleted tunnels stay deleted; their hosts
+recover as described above.
+
+### Disposable-host canary
+
+This test has not been run against a real Cloudflare account. Run it against a disposable relay
+stage, test Cloudflare account, disposable host, and disposable T3 home. Keep production cleanup at
+`off` or `dry-run` until it passes. Do not stop a daily-use T3 server.
+
+1. Deploy the disposable stage with cleanup `dry-run`. Link a first disposable environment through
+   web or mobile settings and confirm its tunnel is healthy and recovery is registered.
+2. Stop that host and restart the same T3 home on a different local port. Confirm the public
+   hostname reaches the new port and sends nothing to the old one.
+3. Link a second disposable environment with a server build that predates recovery registration.
+   Capture its managed `cloudflared` child PID, confirm it belongs to that host, and pause only that
+   child with `kill -STOP <legacy-pid>`. Wait until Cloudflare reports it down for over five minutes.
+4. Capture the first environment's `cloudflared` child PID from its server logs, confirm ownership,
+   and pause it with `kill -STOP <first-pid>`. Wait until Cloudflare reports it down for over five
+   minutes.
+5. Confirm dry-run counts the first tunnel in `wouldDelete` and the second in `skippedLegacy`.
+6. Set cleanup `enabled` on the disposable stage and deploy. Confirm in the test Cloudflare account
+   that the first tunnel is deleted and the legacy tunnel still exists.
+7. Resume the first child with `kill -CONT <first-pid>`. Confirm the running server detects the
+   repeated rejection, requests recovery, and becomes reachable at the same hostname without a
+   restart.
+8. Resume the legacy child with `kill -CONT <legacy-pid>` and confirm its tunnel reconnects.
+9. Repeat with a physical sleep and wake cycle on a disposable laptop before broad rollout.
+
+Legacy cleanup, on the same disposable stage:
+
+10. Set `RELAY_LEGACY_TUNNEL_GRACE_MINUTES=10` and the legacy mode to `dry-run`, then deploy. The
+    override shortens the 7-day grace period and is ignored on `prod`. Pause the legacy child again
+    and wait until Cloudflare reports it down for over ten minutes.
+11. Confirm the sweep counts it in `wouldDeleteLegacy`, then set the legacy mode to `enabled` and
+    deploy. Confirm the legacy tunnel is deleted and its allocation row remains.
+12. With the legacy host still on its old build, resume the child. A CLI-linked host provisions a
+    new tunnel on its next restart; a web- or mobile-linked host stays offline.
+13. Update that host to the current build and start it. Confirm it requests recovery and is
+    reachable at the same hostname.
+14. Remove `RELAY_LEGACY_TUNNEL_GRACE_MINUTES` from the disposable stage.
+
 ## Marketing site deployment
 
-After a nightly release is published, the release workflow deploys the same commit
-to the marketing site's Vercel production project. Stable releases do not deploy
-the marketing site because they can promote an older nightly commit.
+On nightly releases, the release workflow builds the same commit as a staged
+production deployment of the marketing site's Vercel project while the desktop
+jobs run, and promotes it with `vercel promote` after the release is published.
+Stable releases do not deploy the marketing site because they can promote an
+older nightly commit.
 
 The job looks up the `t3code-marketing` project using the existing `VERCEL_TOKEN`
 and `VERCEL_ORG_ID` secrets. It also respects the optional `VERCEL_TEAM_SLUG`
@@ -166,8 +295,10 @@ Git deployments remain disabled in `apps/marketing/vercel.ts`.
 
 The hosted app is intentionally not deployed by Vercel's Git integration. The
 web project disables automatic Git deployments in `apps/web/vercel.ts` via
-`git.deploymentEnabled: false`, and `.github/workflows/release.yml` deploys the
-web app with Vercel CLI after the GitHub Release succeeds.
+`git.deploymentEnabled: false`. `.github/workflows/release.yml` builds the web
+app with Vercel CLI as a staged production deployment (`--skip-domain`) while
+the desktop jobs run, and aliases the channel domains to it after the GitHub
+Release succeeds.
 
 Required GitHub Actions secrets:
 
@@ -244,6 +375,10 @@ The workflow enforces this ordering:
 1. `publish_cli` publishes the exact release version to npm, on every channel.
 2. `release` depends on `publish_cli` before exposing desktop artifacts in GitHub Releases.
 3. `deploy_web` depends on `release` before moving the hosted channel to the new client.
+   `build_web` builds that client earlier with `vercel deploy --prod --skip-domain`, which
+   leaves the custom domains alone but moves the project's own `*.vercel.app` production
+   hostname. That hostname is behind Vercel SSO, so users only get the client through the
+   custom domains.
 
 Preserve these dependencies when changing the release graph. Publishing a client first would leave
 the **Update server** action targeting a package version that does not exist yet.
@@ -271,7 +406,7 @@ available.
   - `T3CODE_DESKTOP_UPDATE_REPOSITORY` (format `owner/repo`), if set.
   - otherwise `GITHUB_REPOSITORY` from GitHub Actions.
 - Required release assets for updater:
-  - platform installers (`.exe`, `.dmg`, `.AppImage`, plus macOS `.zip` for Squirrel.Mac update payloads)
+  - platform installers (`.exe`, `.dmg`, `.AppImage`, `.deb`, plus macOS `.zip` for Squirrel.Mac update payloads)
   - channel metadata: `latest*.yml` for stable releases, `nightly*.yml` for nightly releases
   - `*.blockmap` files (used for differential downloads)
 - macOS metadata note:

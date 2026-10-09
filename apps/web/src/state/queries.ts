@@ -11,18 +11,21 @@ import {
 import { type VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
-  OrchestrationThread,
   ProjectContentMatch,
+  ProjectEntry,
   ProjectEntryKind,
+  ThreadId,
+  TurnItemId,
   VcsListRefsResult,
   VcsRef,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { useFilesystemReadAccess } from "./filesystem";
 import { orchestrationEnvironment } from "./orchestration";
 import { isPaginatedBranchesNextPagePending } from "./paginatedBranches";
 import { projectContentSearch, projectEnvironment } from "./projects";
@@ -36,6 +39,7 @@ const PROJECT_CONTENT_SEARCH_LIMIT = 500;
 const THREAD_SEARCH_DEBOUNCE_MS = 200;
 const VCS_REF_LIST_LIMIT = 100;
 const EMPTY_REFS: ReadonlyArray<VcsRef> = [];
+const EMPTY_PROJECT_ENTRIES: ReadonlyArray<ProjectEntry> = [];
 const EMPTY_CONTENT_MATCHES: ReadonlyArray<ProjectContentMatch> = [];
 const INITIAL_BRANCH_CURSORS = [undefined] as const;
 const EMPTY_THREAD_SEARCH_MATCHES: ReadonlyArray<EnvironmentThreadSearchMatch> = Object.freeze([]);
@@ -53,14 +57,6 @@ const threadSearchResultsAtom = createThreadSearchResultsAtomFamily({
   labelPrefix: "web:thread-search",
 });
 
-export interface ThreadDetailView {
-  readonly data: OrchestrationThread | null;
-  readonly error: string | null;
-  readonly isPending: boolean;
-  readonly isDeleted: boolean;
-}
-
-/** Shared with the pull requests page, which debounces its search the same way. */
 export function useDebouncedValue<A>(value: A, delayMs: number): A {
   const [debounced, setDebounced] = useState(value);
 
@@ -81,6 +77,8 @@ export function useThreadSearch(
   query: string,
 ): {
   readonly matches: ReadonlyArray<EnvironmentThreadSearchMatch>;
+  /** The settled query `matches` came from; it only changes when results do. */
+  readonly query: string;
   readonly isPending: boolean;
 } {
   const normalizedQuery = query.trim();
@@ -97,6 +95,7 @@ export function useThreadSearch(
   const isDebouncing = canSearch && normalizedQuery !== debouncedQuery;
   return {
     matches: isDebouncing ? EMPTY_THREAD_SEARCH_MATCHES : result.matches,
+    query: settledQuery ?? "",
     isPending: canSearch && (isDebouncing || result.isLoading),
   };
 }
@@ -239,12 +238,14 @@ export function useProjectPathSearch(
     [target.cwd, target.environmentId, target.imageOnly, target.kind, target.query],
   );
   const debouncedTarget = useDebouncedValue(normalizedTarget, PROJECT_PATH_SEARCH_DEBOUNCE_MS);
-  const result = useEnvironmentQuery(
+  const fileAccess = useFilesystemReadAccess(debouncedTarget.environmentId);
+  const { canReadFiles } = fileAccess;
+  const searchTarget =
     debouncedTarget.environmentId !== null &&
-      debouncedTarget.cwd !== null &&
-      debouncedTarget.query !== null &&
-      (allowEmptyQuery || debouncedTarget.query.length > 0)
-      ? projectEnvironment.searchEntries({
+    debouncedTarget.cwd !== null &&
+    debouncedTarget.query !== null &&
+    (allowEmptyQuery || debouncedTarget.query.length > 0)
+      ? {
           environmentId: debouncedTarget.environmentId,
           input: {
             cwd: debouncedTarget.cwd,
@@ -253,15 +254,24 @@ export function useProjectPathSearch(
             ...(debouncedTarget.kind ? { kind: debouncedTarget.kind } : {}),
             ...(debouncedTarget.imageOnly ? { imageOnly: true } : {}),
           },
-        })
-      : null,
+        }
+      : null;
+  const result = useEnvironmentQuery(
+    canReadFiles && searchTarget !== null ? projectEnvironment.searchEntries(searchTarget) : null,
   );
+  const hasTarget = searchTarget !== null;
 
   return {
-    entries: result.data?.entries ?? [],
-    error: result.error,
+    entries: result.data?.entries ?? EMPTY_PROJECT_ENTRIES,
+    error:
+      !hasTarget || fileAccess.isPending
+        ? null
+        : canReadFiles
+          ? result.error
+          : (fileAccess.error ?? "This connection cannot search host files."),
     isPending:
-      !areProjectPathSearchTargetsEqual(normalizedTarget, debouncedTarget) || result.isPending,
+      !areProjectPathSearchTargetsEqual(normalizedTarget, debouncedTarget) ||
+      (hasTarget && (fileAccess.isPending || result.isPending)),
     searchedQuery: debouncedTarget.query ?? "",
     truncated: result.data?.truncated ?? false,
     refresh: result.refresh,
@@ -282,13 +292,18 @@ interface ProjectContentSearchTarget {
 }
 
 export function useProjectContentSearch(target: ProjectContentSearchTarget) {
+  const hasTarget = target.environmentId !== null && target.cwd !== null;
+  const fileAccess = useFilesystemReadAccess(target.environmentId);
+  const canReadFiles = hasTarget && fileAccess.canReadFiles;
+  const isCheckingAccess = hasTarget && fileAccess.isPending;
   // Whitespace is significant in content queries; trimming is only used to
   // decide whether the input is blank.
   const query = target.query;
   const hasQuery = query.trim().length > 0;
   const debouncedQuery = useDebouncedValue(query, PROJECT_CONTENT_SEARCH_DEBOUNCE_MS);
   const result = useEnvironmentQuery(
-    target.environmentId !== null &&
+    canReadFiles &&
+      target.environmentId !== null &&
       target.cwd !== null &&
       hasQuery &&
       debouncedQuery.trim().length > 0
@@ -307,9 +322,18 @@ export function useProjectContentSearch(target: ProjectContentSearchTarget) {
   );
 
   return {
+    canReadFiles,
+    isCheckingAccess,
     matches: result.data?.matches ?? EMPTY_CONTENT_MATCHES,
-    error: result.error,
-    isPending: hasQuery && (query !== debouncedQuery || result.isPending),
+    error:
+      !hasTarget || isCheckingAccess
+        ? null
+        : canReadFiles
+          ? result.error
+          : (fileAccess.error ?? "This connection cannot search host files."),
+    isPending:
+      isCheckingAccess ||
+      (canReadFiles && hasQuery && (query !== debouncedQuery || result.isPending)),
     hasQuery,
     truncated: result.data?.truncated ?? false,
     invalidRegex: target.useRegex && result.data?.regexFallbackError !== undefined,
@@ -356,4 +380,23 @@ export function useCheckpointDiff(
     turnTarget === null ? null : orchestrationEnvironment.turnDiff(turnTarget),
   );
   return fullThreadTarget === null ? turn : fullThread;
+}
+
+/** Full input and output of one timeline item, fetched only while its row is open. */
+export function useTurnItemDetail(
+  target: {
+    readonly environmentId: EnvironmentId;
+    readonly threadId: ThreadId;
+    readonly itemId: TurnItemId;
+    readonly revision: string;
+  } | null,
+) {
+  return useEnvironmentQuery(
+    target === null
+      ? null
+      : orchestrationEnvironment.turnItem({
+          environmentId: target.environmentId,
+          input: { threadId: target.threadId, itemId: target.itemId, revision: target.revision },
+        }),
+  );
 }

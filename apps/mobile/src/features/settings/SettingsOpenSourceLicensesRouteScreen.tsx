@@ -44,7 +44,7 @@ function LicenseRow(props: {
       accessibilityLabel={`${props.entry.name}, ${props.entry.license}`}
       accessibilityRole="button"
       onPress={props.onPress}
-      className="border-b border-border bg-card px-5 py-4 active:bg-card-alt"
+      className="border-b border-border bg-grouped-card px-5 py-4 active:bg-card-alt"
     >
       <View className="flex-row items-start gap-3">
         <View className="min-w-0 flex-1 gap-1">
@@ -235,11 +235,11 @@ export function SettingsOpenSourceLicenseRouteScreen({ route }: LicenseDetailPro
               onPress={() => void Linking.openURL(sourceUrl)}
               className="min-h-12 flex-row items-center gap-2 self-start py-2 active:opacity-60"
             >
-              <Text className="font-t3-medium text-primary">Project source</Text>
+              <Text className="font-t3-medium text-primary-text">Project source</Text>
               <SymbolView
                 name="arrow.up.right"
                 size={16}
-                tintColorClassName={"accent-primary"}
+                tintColorClassName={"accent-primary-text"}
                 type="monochrome"
                 weight="semibold"
               />
@@ -247,7 +247,7 @@ export function SettingsOpenSourceLicenseRouteScreen({ route }: LicenseDetailPro
           ) : null}
         </View>
 
-        <View className="overflow-hidden rounded-[24px] border-continuous bg-card p-4">
+        <View className="overflow-hidden rounded-[24px] border-continuous bg-grouped-card p-4">
           <Text selectable className="font-mono text-base leading-normal text-foreground">
             {entry.noticeText}
           </Text>

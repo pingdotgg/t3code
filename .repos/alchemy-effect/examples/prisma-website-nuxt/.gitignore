@@ -1,0 +1,13 @@
+node_modules/
+.alchemy/
+dist/
+dist-static/
+build/
+.output/
+.next/
+.nuxt/
+.svelte-kit/
+.astro/
+.vocs/
+.waku/
+*.tsbuildinfo

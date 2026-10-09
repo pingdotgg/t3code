@@ -4,8 +4,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient, HttpClientRequest } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 export const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 export const TAILSCALE_STATUS_TIMEOUT = Duration.millis(1_500);
@@ -111,13 +111,11 @@ export class TailscaleCommandTimeoutError extends Schema.TaggedError<TailscaleCo
   }
 }
 
-export const TailscaleCommandError = Schema.Union([
-  TailscaleCommandSpawnError,
-  TailscaleCommandOutputError,
-  TailscaleCommandExitError,
-  TailscaleCommandTimeoutError,
-]);
-export type TailscaleCommandError = typeof TailscaleCommandError.Type;
+export type TailscaleCommandError =
+  | TailscaleCommandSpawnError
+  | TailscaleCommandOutputError
+  | TailscaleCommandExitError
+  | TailscaleCommandTimeoutError;
 
 export class TailscaleStatusParseError extends Schema.TaggedError<TailscaleStatusParseError>()(
   "TailscaleStatusParseError",

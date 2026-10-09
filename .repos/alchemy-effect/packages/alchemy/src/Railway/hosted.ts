@@ -25,8 +25,8 @@ import {
   createContainerRuntimeContext,
   type HostRuntimeContext,
 } from "../Server/Process.ts";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import {
   copyExtraFiles,
   contextRootOf,
@@ -198,7 +198,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 globalThis.__ALCHEMY_RUNTIME__ = true;
 const { ${handler}: entrypoint } = await import(${JSON.stringify(importPath)});
@@ -208,8 +208,8 @@ const platform = FetchHttpClient.layer;
 const stack = Layer.effect(
   Stack,
   Effect.all([
-    Config.string("ALCHEMY_STACK_NAME"),
-    Config.string("ALCHEMY_STAGE")
+    Config.String("ALCHEMY_STACK_NAME"),
+    Config.String("ALCHEMY_STAGE")
   ]).pipe(
     Effect.map(([name, stage]) => ({
       name,
@@ -571,9 +571,16 @@ const createBundleProgram = (
             );
           },
           resolve: {
+            // Hosted images run on Node but must still match the `bun`
+            // export of workspace packages (`@distilled.cloud/*`, alchemy).
+            // Those maps have no `node` condition — only `bun`/`worker`/
+            // `default` — and `default` is `lib/` which is absent in a
+            // source checkout. Leaving the specifier unresolved makes
+            // rolldown treat it as external, so the container dies with
+            // `ERR_MODULE_NOT_FOUND` (the Volume tutorial's FAILED deploy).
             conditionNames: canvasExternals
               ? ["bun", "import", "module", "default"]
-              : [...Bundle.NODE_CONDITION_NAMES],
+              : [...Bundle.BUN_CONDITION_NAMES],
             ...props.build?.input?.resolve,
           },
           plugins: [

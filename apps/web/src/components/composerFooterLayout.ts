@@ -36,10 +36,8 @@ export function shouldUseRestingComposerLayout(input: {
   // line and overlays its actions; non-image attachment and context
   // rows keep their natural height above it while image previews move inline.
   // Banners and the tasks badge dock above the surface, so they are absent
-  // too. Whether the context strip can host the relocated controls is
-  // deliberately absent here: resting reclaims vertical space at every
-  // desktop width, and where the strip is missing or too narrow the controls
-  // simply return when the composer is focused.
+  // too. The context strip is optional: collapsed controls use it when
+  // present and otherwise occupy a compact row inside the composer.
   //
   // Only a timeline scroll rests the composer: the user asked for it with the
   // gesture, and it lifts on the next composer interaction. Losing focus never
@@ -74,19 +72,38 @@ export const COMPOSER_RESTING_EXPANSION_MIN_PX = 94;
  * an expanded one. Reserving only the resting height lets a scroll to the end
  * land flush against the short composer, and the expansion that follows then
  * covers the last rows because the timeline never moves for footer growth.
- * While resting, the reservation keeps the last expanded height, or at least
- * the resting height plus the empty expansion, so expanding again changes
- * nothing above the composer. An expanded measurement is authoritative and
- * may shrink it.
+ * While resting, keep the measured expanded height. Estimate the empty
+ * expansion only before that measurement exists: strip mounting can otherwise
+ * inflate the estimate mid-transition and move the timeline. An expanded
+ * measurement is authoritative and may shrink the reservation.
  */
 export function resolveComposerTimelineInset(input: {
   currentInset: number;
   overlayHeight: number;
   isResting: boolean;
+  restingOnlyHeight?: number;
 }): number {
   return input.isResting
-    ? Math.max(input.currentInset, input.overlayHeight + COMPOSER_RESTING_EXPANSION_MIN_PX)
+    ? Math.max(
+        input.currentInset,
+        input.overlayHeight +
+          (input.currentInset === 0
+            ? COMPOSER_RESTING_EXPANSION_MIN_PX - (input.restingOnlyHeight ?? 0)
+            : 0),
+      )
     : input.overlayHeight;
+}
+
+/**
+ * Whether the overlay's composer is resting. Only a mounted composer can be:
+ * a status bar in its place (a native subagent thread) never is, even if the
+ * composer it replaced last reported resting.
+ */
+export function overlayComposerIsResting(input: {
+  composerMounted: boolean;
+  composerReportedResting: boolean;
+}): boolean {
+  return input.composerMounted && input.composerReportedResting;
 }
 
 export function shouldAnimateComposerRestingTransition(input: {
@@ -113,18 +130,29 @@ export interface RestingComposerControlsMeasurement {
   minimumFixedWidth: number;
   blockWidths: readonly number[];
   overflowWidth: number;
+  iconOnlyBlockWidths?: readonly number[];
 }
 
 function restingComposerControlsWidth(
   input: RestingComposerControlsMeasurement,
   hiddenCount: number,
   fixedWidth = input.naturalFixedWidth,
+  iconOnlyCount = 0,
 ): number {
   const { blockWidths, gap } = input;
   const visibleCount = blockWidths.length - hiddenCount;
   return (
     fixedWidth +
-    blockWidths.slice(0, visibleCount).reduce((sum, width) => sum + width, 0) +
+    blockWidths
+      .slice(0, visibleCount)
+      .reduce(
+        (sum, width, index) =>
+          sum +
+          (index >= blockWidths.length - iconOnlyCount
+            ? (input.iconOnlyBlockWidths?.[index] ?? width)
+            : width),
+        0,
+      ) +
     (hiddenCount > 0 ? input.overflowWidth : 0) +
     gap * (visibleCount + (hiddenCount > 0 ? 1 : 0))
   );
@@ -145,10 +173,11 @@ export function resolveRestingComposerControlsNaturalWidth(
 }
 
 /**
- * Decide how many trailing resting control blocks move into the overflow
- * menu, and whether the cluster can show at all, from natural widths.
+ * Fit footer controls using natural widths: remove trailing labels first,
+ * then move trailing blocks into overflow. Resting and expanded share this
+ * decision, including the slack needed to safely restore controls.
  *
- * Trailing blocks hide before the model picker shrinks. Once they are all in
+ * Trailing blocks compact before the model picker shrinks. Once they are all in
  * the overflow menu, the picker may contract to its minimum readable width;
  * below that the whole cluster hides rather than clipping.
  */
@@ -157,39 +186,41 @@ const RESTING_CONTROLS_SLACK_PX = 1;
 export function resolveRestingComposerControlsLayout(
   input: RestingComposerControlsMeasurement & {
     hostWidth: number;
-    previous?: { hiddenCount: number; visible: boolean };
+    previous?: { hiddenCount: number; iconOnlyCount?: number; visible: boolean };
   },
-): { hiddenCount: number; visible: boolean } {
+): { hiddenCount: number; iconOnlyCount?: number; visible: boolean } {
   const { blockWidths, hostWidth, previous } = input;
-  let hiddenCount = 0;
+  const iconSteps = input.iconOnlyBlockWidths ? blockWidths.length : 0;
+  const previousStep = previous
+    ? previous.hiddenCount > 0
+      ? iconSteps + Math.min(previous.hiddenCount, blockWidths.length)
+      : Math.min(previous.iconOnlyCount ?? 0, iconSteps)
+    : 0;
+  let step = 0;
+  const widthAtStep = (candidate: number, fixedWidth = input.naturalFixedWidth) =>
+    restingComposerControlsWidth(
+      input,
+      Math.max(0, candidate - iconSteps),
+      fixedWidth,
+      Math.min(candidate, iconSteps),
+    );
+  // Promotions need a pixel of slack: recovering a flexible picker's natural
+  // width can jitter by a fraction of a pixel across renders. Demotions are
+  // immediate so a threshold cannot clip or flip React between layouts.
   while (
-    hiddenCount < blockWidths.length &&
-    restingComposerControlsWidth(input, hiddenCount) > hostWidth
+    step < iconSteps + blockWidths.length &&
+    widthAtStep(step) > hostWidth - (step < previousStep ? RESTING_CONTROLS_SLACK_PX : 0)
   ) {
-    hiddenCount += 1;
+    step += 1;
   }
-  // Growing the overflow menu is unconditional, or the controls would clip.
-  // Shrinking it has to earn a pixel of slack first: the picker is flexible,
-  // so its natural width is recovered from a truncated label whose
-  // scrollWidth is integral while the rendered box is fractional. The
-  // composer re-measures on every render, so without that margin a host
-  // sitting exactly on a threshold flips a block in and out until React
-  // gives up with "Maximum update depth exceeded".
-  if (previous) {
-    const previousHiddenCount = Math.min(previous.hiddenCount, blockWidths.length);
-    while (
-      hiddenCount < previousHiddenCount &&
-      restingComposerControlsWidth(input, hiddenCount) > hostWidth - RESTING_CONTROLS_SLACK_PX
-    ) {
-      hiddenCount += 1;
-    }
-  }
-  const minimumWidth = restingComposerControlsWidth(input, hiddenCount, input.minimumFixedWidth);
+  const hiddenCount = Math.max(0, step - iconSteps);
+  const iconOnlyCount = Math.min(step, iconSteps);
+  const minimumWidth = widthAtStep(step, input.minimumFixedWidth);
   const visible =
     previous && !previous.visible
       ? minimumWidth <= hostWidth - RESTING_CONTROLS_SLACK_PX
       : minimumWidth <= hostWidth;
-  return { hiddenCount, visible };
+  return { hiddenCount, ...(input.iconOnlyBlockWidths ? { iconOnlyCount } : {}), visible };
 }
 
 export function resolveScrollToEndClearance(input: {

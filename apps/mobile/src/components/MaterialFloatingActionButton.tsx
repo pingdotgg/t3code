@@ -15,7 +15,7 @@ export function MaterialFloatingActionButton(
       onPress={props.onPress}
       className={cn(
         "min-h-14 min-w-14 flex-row items-center justify-center gap-2 rounded-2xl px-4",
-        props.tone === "primary" ? "bg-primary" : "bg-thread-selected",
+        props.tone === "primary" ? "bg-primary" : "bg-secondary",
         props.className,
       )}
       style={props.style}
@@ -24,18 +24,14 @@ export function MaterialFloatingActionButton(
         name={props.icon}
         size={24}
         tintColorClassName={
-          props.tone === "primary"
-            ? "accent-primary-foreground"
-            : "accent-thread-selected-foreground"
+          props.tone === "primary" ? "accent-primary-foreground" : "accent-secondary-foreground"
         }
       />
       {props.variant === "extended" && props.expanded !== false ? (
         <AppText
           className={cn(
             "text-sm",
-            props.tone === "primary"
-              ? "text-primary-foreground"
-              : "text-thread-selected-foreground",
+            props.tone === "primary" ? "text-primary-foreground" : "text-secondary-foreground",
           )}
         >
           {props.label}

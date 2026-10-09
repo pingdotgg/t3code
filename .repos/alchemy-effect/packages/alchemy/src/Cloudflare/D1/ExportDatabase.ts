@@ -1,7 +1,7 @@
 import type { Credentials } from "@distilled.cloud/cloudflare/Credentials";
 import * as d1 from "@distilled.cloud/cloudflare/d1";
 import * as Effect from "effect/Effect";
-import type * as HttpClient from "effect/unstable/http/HttpClient";
+import type * as HttpClient from "effect/http/HttpClient";
 
 export interface ExportD1DatabaseOptions {
   accountId: string;

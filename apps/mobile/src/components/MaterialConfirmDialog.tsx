@@ -1,4 +1,4 @@
-import type { ConfirmDialogRequest } from "./ConfirmDialogHost";
+import type { ConfirmDialogRequest } from "./ConfirmDialog.types";
 
 export interface MaterialConfirmDialogProps {
   readonly request: Pick<

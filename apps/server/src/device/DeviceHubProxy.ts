@@ -11,11 +11,7 @@
  * Only the routes the Device panel needs are forwarded. Anything under the
  * hub's dashboard, exec, or WebRTC surface is rejected here.
  */
-import {
-  AuthOrchestrationReadScope,
-  AuthOrchestrationOperateScope,
-  type AuthEnvironmentScope,
-} from "@t3tools/contracts";
+import { AuthOrchestrationReadScope, AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import {
@@ -24,16 +20,11 @@ import {
   HttpRouter,
   HttpServerRequest,
   HttpServerResponse,
-} from "effect/unstable/http";
-import * as Socket from "effect/unstable/socket/Socket";
+} from "effect/http";
+import * as Socket from "effect/socket/Socket";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 
-import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import {
-  failEnvironmentAuthInvalid,
-  failEnvironmentInternal,
-  failEnvironmentScopeRequired,
-} from "../auth/http.ts";
+import { authenticateMediaRequest } from "../auth/http.ts";
 import * as DeviceService from "./DeviceService.ts";
 
 const ALLOWED_PATHS: ReadonlyArray<RegExp> = [
@@ -42,8 +33,9 @@ const ALLOWED_PATHS: ReadonlyArray<RegExp> = [
   /^\/vendor\/serve-sim\/api\/screenshot$/,
   /^\/vendor\/serve-sim\/api\/event-log(\/events)?$/,
   /^\/vendor\/serve-sim\/helper\/[^/]+\/(stream\.mjpeg|stream\.avcc|config|health|ax|foreground)$/,
+  /^\/vendor\/serve-sim\/helper\/[^/]+\/panel\/(1|3)\/stream\.avcc$/,
   /^\/vendor\/serve-sim\/appstate$/,
-  /^\/vendor\/serve-emu\/api\/(devices|screenshot|stream-mode|stream-settings|accessibility)$/,
+  /^\/vendor\/serve-emu\/api\/(devices|screenshot|stream-mode|stream-settings|accessibility|fold)$/,
   /^\/vendor\/serve-emu\/health$/,
 ];
 
@@ -51,6 +43,7 @@ const ALLOWED_PATHS: ReadonlyArray<RegExp> = [
 const MUTABLE_PATHS: ReadonlyArray<RegExp> = [
   /^\/vendor\/serve-sim\/api\/screenshot$/,
   /^\/vendor\/serve-emu\/api\/(screenshot|stream-mode|stream-settings)$/,
+  /^\/vendor\/serve-emu\/api\/fold$/,
 ];
 
 const ALLOWED_WS_PATHS: ReadonlyArray<RegExp> = [
@@ -77,35 +70,6 @@ const DROPPED_REQUEST_HEADERS = new Set([
 
 const isWebSocketUpgrade = (request: HttpServerRequest.HttpServerRequest) =>
   request.headers.upgrade?.toLowerCase() === "websocket";
-
-/**
- * `<img>` and WebSocket cannot set headers, so every proxied request
- * authenticates the way the `/ws` upgrade does: a cookie for browser
- * sessions, or a short-lived `wsTicket` minted over authenticated HTTP for
- * bearer and DPoP clients. The upgrade authenticator already implements that
- * fallback order, so it is used for plain requests as well.
- */
-const authenticate = (requiredScope: AuthEnvironmentScope) =>
-  Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-    const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
-      Effect.catch((error) =>
-        Effect.gen(function* () {
-          if (EnvironmentAuth.isServerAuthCredentialError(error)) {
-            return yield* failEnvironmentAuthInvalid(
-              EnvironmentAuth.serverAuthCredentialReason(error),
-              EnvironmentAuth.serverAuthDpopFailureReason(error),
-            );
-          }
-          return yield* failEnvironmentInternal("internal_error", error);
-        }),
-      ),
-    );
-    if (!session.scopes.includes(requiredScope)) {
-      return yield* failEnvironmentScopeRequired(requiredScope);
-    }
-  });
 
 const forwardHeaders = (request: HttpServerRequest.HttpServerRequest, origin: string) => {
   const headers: Record<string, string> = {};
@@ -134,14 +98,24 @@ const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (
     Effect.gen(function* () {
       const writeToClient = yield* client.writer;
       const writeToUpstream = yield* upstream.writer;
-      const downstream = upstream.runRaw((data) => writeToClient(data));
-      const upstreamPump = client.runRaw((data) => writeToUpstream(data));
-      // Whichever side closes first ends the other via scope teardown.
-      yield* Effect.raceFirst(downstream, upstreamPump);
+      // Whichever side closes first ends the other via scope teardown: a close
+      // fails the pull with a SocketError, which loses the race.
+      return yield* Effect.raceFirst(
+        pumpFrames(upstream, writeToClient),
+        pumpFrames(client, writeToUpstream),
+      );
     }),
-  ).pipe(Effect.catchCause(() => Effect.void));
+  ).pipe(Effect.ignoreCause);
   return HttpServerResponse.empty();
 });
+
+const pumpFrames = (source: Socket.Socket, sink: Socket.Writer) =>
+  Effect.gen(function* () {
+    const { pull } = yield* source.reader;
+    while (true) {
+      yield* sink.writeAll(yield* pull);
+    }
+  });
 
 const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   request: HttpServerRequest.HttpServerRequest,
@@ -193,8 +167,10 @@ const handler = Effect.gen(function* () {
   }
   const controlsDevice =
     (upgrade && hubPath !== "/api/devices/ws") ||
-    (!readOnly && /\/api\/stream-(mode|settings)$/.test(hubPath));
-  yield* authenticate(controlsDevice ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope);
+    (!readOnly && /\/api\/(stream-(mode|settings)|fold)$/.test(hubPath));
+  yield* authenticateMediaRequest(
+    controlsDevice ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope,
+  );
   const devices = yield* DeviceService.DeviceService;
   const ready = yield* devices.currentReadiness(url.value.searchParams.get("hostId") ?? undefined);
   if (!ready) {
@@ -218,8 +194,4 @@ const handler = Effect.gen(function* () {
   return yield* proxyHttp(request, `${ready.hub.origin}${upstreamPath}`, ready.hub.origin);
 });
 
-export const deviceHubProxyRouteLayer = HttpRouter.add(
-  "*",
-  `${DeviceService.DEVICE_HUB_ROUTE_PREFIX}/*`,
-  handler,
-);
+export const layer = HttpRouter.add("*", `${DeviceService.DEVICE_HUB_ROUTE_PREFIX}/*`, handler);

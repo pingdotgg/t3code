@@ -55,6 +55,7 @@ import {
   tryConnectionOf,
   workloadImageHash,
 } from "./internal/workload.ts";
+import { makeConnectionRegistry } from "./internal/registry.ts";
 import type { Providers } from "./Providers.ts";
 
 export const isJob = (value: any): value is Job => {
@@ -68,9 +69,11 @@ export const isJob = (value: any): value is Job => {
 
 export interface JobPropsBase extends PlatformProps {
   /**
-   * Target cluster the job runs on. Pass a managed cluster resource (e.g.
-   * `AWS.EKS.Cluster`), a `Kubernetes.KubeConfig(...)`, or a raw
-   * `Kubernetes.Connection`.
+   * Target cluster the job runs on: a cluster resource
+   * (`Kubernetes.LocalCluster`, `AWS.EKS.Cluster`), a
+   * `Kubernetes.KubeConfig(...)`, or a raw `Kubernetes.Connection`. The
+   * connection supplies authentication and the registry `main` / `context`
+   * images are pushed to.
    */
   cluster: ClusterLike;
   /**
@@ -125,7 +128,7 @@ export interface JobPropsBase extends PlatformProps {
   env?: Record<string, any>;
   /**
    * Container image build architecture.
-   * @default "amd64"
+   * @default the connection's `architecture`, else "amd64"
    */
   architecture?: "amd64" | "arm64";
   /**
@@ -138,7 +141,9 @@ export interface JobPropsBase extends PlatformProps {
   /**
    * Cloud-specific workload-identity options, consumed by the cluster
    * platform's identity adapter (on EKS: `{ managedPolicyArns: [...] }`
-   * attaches extra managed policies to the generated pod-identity role).
+   * attaches extra managed policies to the generated pod-identity role; on
+   * GKE: `{ gcpServiceAccount }` runs the pods as an existing Google
+   * service account instead of the ServiceAccount's own principal).
    */
   identity?: WorkloadIdentityOptions;
   /**
@@ -190,9 +195,8 @@ export interface DockerfileJobProps extends JobPropsBase {
 /** Run a pre-built registry image. */
 export interface ImageJobProps extends JobPropsBase {
   /**
-   * A pre-built image reference, e.g. `ghcr.io/acme/migrator:v3`. On
-   * clusters with a managed registry (EKS) the image is mirrored into it;
-   * elsewhere the reference is used verbatim.
+   * A pre-built image reference, e.g. `ghcr.io/acme/migrator:v3`, pulled
+   * by the nodes as written. EKS clusters mirror it into ECR first.
    */
   image: string;
 }
@@ -219,7 +223,8 @@ export interface Job extends Resource<
     imageUri: string;
     /**
      * Workload-identity state provisioned by the cluster platform's
-     * adapter (on EKS: the pod-identity role + association).
+     * adapter (on EKS: the pod-identity role + association; on GKE: the
+     * Workload Identity principal and the IAM grants applied to it).
      */
     identity: IdentityState | undefined;
     /**
@@ -259,18 +264,22 @@ export interface JobRuntimeContext extends HostRuntimeContext {
 }
 
 /**
- * Run-to-completion Kubernetes compute on any cluster — the Kubernetes
- * analog of `AWS.ECS.Task`.
+ * Run-to-completion work on any Kubernetes cluster, as a container image
+ * or an Effect program.
  *
  * `Job` provisions a Kubernetes `Job` (or `CronJob` when `schedule` is
  * set) via server-side apply and a ServiceAccount, plus — through the
  * target cluster's platform adapter — workload identity and a container
  * image from exactly one of three sources flat on props: `main` (bundle an
  * inline Effect program whose impl returns `{ run }`), `context` (build
- * your own Dockerfile), or `image` (a pre-built registry reference). On
- * `AWS.EKS.Cluster` targets, bindings attach env vars to the pod and IAM
- * policy statements to a generated pod-identity role, exactly like
- * `Kubernetes.Deployment`.
+ * your own Dockerfile), or `image` (a pre-built registry reference).
+ * `main` and `context` images are built on the deploying machine and
+ * pushed to the connection's registry (`Kubernetes.LocalCluster` includes
+ * one; EKS uses ECR; GKE uses Artifact Registry). On `AWS.EKS.Cluster`
+ * targets, bindings attach IAM policy statements to a generated
+ * pod-identity role; on `GCP.Container.Cluster` targets, GCP bindings grant
+ * their IAM roles to the Kubernetes ServiceAccount's Workload Identity
+ * Federation principal — exactly like `Kubernetes.Deployment`.
  * ### Creating a Job
  * **Example:** Remote image (external — no Effect runtime in the container)
  * ```typescript
@@ -279,6 +288,23 @@ export interface JobRuntimeContext extends HostRuntimeContext {
  *   image: "ghcr.io/acme/migrator:v3",
  *   backoffLimit: 2,
  * });
+ * ```
+ *
+ * **Example:** Inline Effect program
+ * ```typescript
+ * const cluster = yield* Kubernetes.LocalCluster("Cluster", {
+ *   name: "alchemy",
+ * });
+ *
+ * const hello = yield* Kubernetes.Job(
+ *   "Hello",
+ *   { cluster, main: import.meta.url, backoffLimit: 2 },
+ *   Effect.gen(function* () {
+ *     return {
+ *       run: Effect.log("hello from a Job"),
+ *     };
+ *   }),
+ * );
  * ```
  *
  * **Example:** Inline Effect program with a DynamoDB binding (EKS)
@@ -315,16 +341,13 @@ export interface JobRuntimeContext extends HostRuntimeContext {
  * ```
  *
  * ### Bundling & Tree-shaking
- * `main` is bundled with rolldown at deploy time. Top-level calls in the
- * `effect`, `@effect/*`, `alchemy`, `@alchemy.run/*`, and
- * `@distilled.cloud/*` packages receive `#__PURE__` annotations by
- * default, so anything the job doesn't use from those packages is
- * tree-shaken out of the bundle. Any other package — including your own
- * app — is left untouched unless you list it explicitly.
+ * `main` is bundled with rolldown at deploy time. Unused code is
+ * tree-shaken. `effect`, alchemy, and `@distilled.cloud` are marked
+ * pure so unused parts prune more aggressively. Your app is not
+ * marked pure.
  *
- * **Example:** Treat additional packages as pure
- * Pass package names (or picomatch globs) via `build.pure.packages` to
- * annotate them in addition to the defaults.
+ * **Example:** Mark additional packages as pure
+ * Only list packages with no top-level side effects.
  * ```typescript
  * {
  *   main: import.meta.url,
@@ -334,18 +357,7 @@ export interface JobRuntimeContext extends HostRuntimeContext {
  * }
  * ```
  *
- * Listing a package annotates calls whose result is bound (variable
- * initializers, exports) — safe anywhere. If a listed package also
- * declares `"sideEffects": false` (or `[]`) in its `package.json`, that
- * combination opts it into full annotation: top-level calls whose result
- * is discarded (e.g. `router.on("/path", handler)` registrations) are
- * also marked pure and deleted under minification when unused. Only list
- * a `sideEffects: false` package if its modules really are free of
- * meaningful top-level side effects. The `effect`, `alchemy`, and
- * `@distilled.cloud` defaults declare exactly that, on purpose — their
- * modules are designed to be fully tree-shakeable.
- *
- * **Example:** Disable pure annotations
+ * **Example:** Turn it off
  * ```typescript
  * {
  *   main: import.meta.url,
@@ -364,6 +376,7 @@ export interface JobRuntimeContext extends HostRuntimeContext {
  * ```
  *
  * @resource
+ * @product Workloads
  */
 export const Job: Platform<Job, JobServices, JobShape, JobRuntimeContext> =
   Platform("Kubernetes.Job", {
@@ -416,6 +429,7 @@ export const JobProvider = () =>
     Job,
     Effect.gen(function* () {
       const stack = yield* Stack;
+      const connectionRegistry = yield* makeConnectionRegistry;
 
       const alchemyEnv = {
         ALCHEMY_STACK_NAME: stack.name,
@@ -423,10 +437,12 @@ export const JobProvider = () =>
         ALCHEMY_PHASE: "runtime",
       };
 
+      // The base name doubles as the `app.kubernetes.io/name` label value
+      // (and the Service name), both capped at 63 characters.
       const toBaseName = (id: string, props: { name?: string } = {}) =>
         props.name
           ? Effect.succeed(props.name)
-          : createPhysicalName({ id, maxLength: 200, lowercase: true }).pipe(
+          : createPhysicalName({ id, maxLength: 63, lowercase: true }).pipe(
               Effect.map((name) => name.replaceAll(/[^a-z0-9-]/g, "-")),
             );
 
@@ -443,8 +459,18 @@ export const JobProvider = () =>
         // reconstructs the composite, so enumeration is empty; `read`
         // refreshes known instances.
         list: () => Effect.succeed([] as Job["Attributes"][]),
-        diff: Effect.fn(function* ({ olds = {} as JobProps, news, output }) {
-          if (!isResolved(news)) return;
+        diff: Effect.fn(function* ({
+          olds = {} as JobProps,
+          news: input,
+          output,
+        }) {
+          // `exports` carries the program's runtime Effects (never plain
+          // data); everything else must be resolved to diff.
+          const { exports: _exports, ...declared } = input as typeof input & {
+            exports?: unknown;
+          };
+          if (!isResolved(declared)) return;
+          const news = input as unknown as JobProps;
           const oldCluster = connectionIdentity(tryConnectionOf(olds.cluster));
           const newCluster = connectionIdentity(tryConnectionOf(news.cluster));
           if (
@@ -467,8 +493,10 @@ export const JobProvider = () =>
             const source = news as WorkloadImageSource;
             const hash = yield* workloadImageHash({
               adapter,
+              connection,
+              connectionRegistry,
               source,
-              platform: imagePlatformOf(news.architecture),
+              platform: imagePlatformOf(news.architecture, connection),
               isExternal: news.isExternal,
               bootstrap: (adapter.bootstrap?.job ?? makeJobBootstrap)(
                 source.handler ?? "default",
@@ -556,9 +584,11 @@ export const JobProvider = () =>
           const source = news as WorkloadImageSource;
           const resolved = yield* resolveWorkloadImage({
             adapter,
+            connection,
+            connectionRegistry,
             id,
             source,
-            platform: imagePlatformOf(news.architecture),
+            platform: imagePlatformOf(news.architecture, connection),
             isExternal: news.isExternal,
             bootstrap: (adapter.bootstrap?.job ?? makeJobBootstrap)(
               source.handler ?? "default",

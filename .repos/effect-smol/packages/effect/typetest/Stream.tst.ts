@@ -1,4 +1,15 @@
-import { type Cause, Data, type Effect, type ExecutionPlan, pipe, type Queue, Result, type Scope, Stream } from "effect"
+import {
+  type Cause,
+  Data,
+  type Effect,
+  type ExecutionPlan,
+  pipe,
+  type PubSub,
+  type Queue,
+  Result,
+  type Scope,
+  Stream
+} from "effect"
 import { describe, expect, it } from "tstyche"
 
 class ErrorA extends Data.TaggedError("ErrorA")<{
@@ -17,6 +28,53 @@ class Quota extends Data.TaggedError("Quota")<{ readonly limit: number }> {}
 class AiError extends Data.TaggedError("AiError")<{ readonly reason: RateLimit | Quota }> {}
 
 declare const aiStream: Stream.Stream<string, AiError | ErrorB, "dep-1">
+
+declare const pubsub: PubSub.PubSub<string>
+declare const recordStream: Stream.Stream<{ readonly key: string; readonly keep: boolean }, ErrorA, "dep-1">
+declare const numberStream: Stream.Stream<number, ErrorB, "dep-2">
+
+describe("Stream utility types", () => {
+  it("distributes over unions and ignores non-stream members", () => {
+    type Input = Stream.Stream<string, ErrorA, "dep-1"> | Stream.Stream<number, ErrorB, "dep-2"> | number
+    expect<Stream.Success<Input>>().type.toBe<string | number>()
+    expect<Stream.Error<Input>>().type.toBe<ErrorA | ErrorB>()
+    expect<Stream.Services<Input>>().type.toBe<"dep-1" | "dep-2">()
+  })
+})
+
+describe("Stream.runIntoPubSub", () => {
+  it("preserves errors and services in data-first usage", () => {
+    expect(Stream.runIntoPubSub(stream, pubsub)).type.toBe<Effect.Effect<void, ErrorA | ErrorB, "dep-1">>()
+  })
+})
+
+describe("Stream.let", () => {
+  it("replaces an existing field type in data-first usage", () => {
+    const result = Stream.let(recordStream, "key", (record) => record.key.length)
+    expect(result).type.toBe<Stream.Stream<{ readonly keep: boolean; key: number }, ErrorA, "dep-1">>()
+  })
+})
+
+describe("Stream.bind", () => {
+  it("replaces an existing field and combines channels in data-first usage", () => {
+    const result = Stream.bind(recordStream, "key", () => numberStream)
+    expect(result).type.toBe<
+      Stream.Stream<{ readonly keep: boolean; key: number }, ErrorA | ErrorB, "dep-1" | "dep-2">
+    >()
+  })
+})
+
+describe("Stream.catchDefect", () => {
+  it("supports data-last usage", () => {
+    const result = pipe(stream, Stream.catchDefect(() => Stream.fail("recovery" as const)))
+    expect(result).type.toBe<Stream.Stream<string, ErrorA | ErrorB | "recovery", "dep-1">>()
+  })
+
+  it("supports data-first usage", () => {
+    const result = Stream.catchDefect(stream, () => Stream.succeed(1))
+    expect(result).type.toBe<Stream.Stream<string | number, ErrorA | ErrorB, "dep-1">>()
+  })
+})
 
 describe("Stream.catchIf", () => {
   it("supports refinement in data-last usage", () => {
@@ -122,6 +180,16 @@ describe("Stream.catchTag", () => {
 })
 
 describe("Stream.catchTags", () => {
+  const handlers = {
+    ErrorA: (_error: ErrorA) => Stream.succeed("ok"),
+    UnknownTag: () => Stream.succeed("unexpected")
+  }
+
+  it("rejects extra handler keys in data-first usage", () => {
+    // @ts-expect-error UnknownTag
+    Stream.catchTags(stream, handlers)
+  })
+
   it("removes handled errors when orElse is omitted", () => {
     const result = pipe(stream, Stream.catchTags({ ErrorA: () => Stream.succeed("ok") }))
     expect(result).type.toBe<Stream.Stream<string, ErrorB, "dep-1">>()

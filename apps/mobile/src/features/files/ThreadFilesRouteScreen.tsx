@@ -1,8 +1,9 @@
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
+import { environmentSession } from "../../state/session";
+import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import type { MenuAction } from "@react-native-menu/menu";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Platform, View } from "react-native";
+import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { EnvironmentId, type ProjectReadFileResult, ThreadId } from "@t3tools/contracts";
@@ -14,11 +15,8 @@ import {
 } from "@t3tools/shared/filePreview";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 
-import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { MaterialScreenContent } from "../../components/MaterialScreenContent";
-import { AppText as Text } from "../../components/AppText";
 import { AudioFilePreview } from "../../components/AudioFilePreview";
-import { ControlPillMenu } from "../../components/ControlPill";
 import { EmptyState } from "../../components/EmptyState";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { LoadingScreen } from "../../components/LoadingScreen";
@@ -28,10 +26,12 @@ import { isPdfFile } from "../../lib/filePreview";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import type { MediaVideoPreviewSource } from "../../lib/videoPreviewSource";
-import { useMediaActions, type MediaActionsSource } from "../../lib/mediaActions";
+import { useMediaActions } from "../../state/mediaActions";
+import { type MediaActionsSource } from "../../lib/mediaActionsSource";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useEnvironmentQuery } from "../../state/query";
+import { useEnvironmentPresentation } from "../../state/presentation";
 import { projectEnvironment } from "../../state/projects";
 import type { AssetUrlFailureReason } from "../../state/asset-url-state";
 import {
@@ -39,23 +39,18 @@ import {
   useAdaptiveWorkspacePaneRole,
   useRegisterWorkspaceInspector,
 } from "../layout/AdaptiveWorkspaceLayout";
-import {
-  createNativeMailSearchToolbarItem,
-  NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
-} from "../layout/native-mail-search-toolbar";
-import {
-  AndroidWorkspaceSidebarButton,
-  WorkspaceSidebarToolbar,
-} from "../layout/workspace-sidebar-toolbar";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadRouteScreen } from "../threads/ThreadRouteScreen";
+import { FilePreviewLoading, FilePreviewNotice } from "./FilePreviewFeedback";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
+import { ThreadInspectorContentStack } from "../threads/thread-inspector-content-stack";
 import { FileTreeBrowser } from "./FileTreeBrowser";
 import { useFileTreeEntries } from "./useFileTreeEntries";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
 import { SourceFileSurface } from "./SourceFileSurface";
+import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { ThreadFileNavigatorPane } from "./thread-file-navigator-pane";
-import { MaterialFilesHeader } from "./MaterialFilesHeader";
+import { ScreenHeader } from "../../components/ScreenHeader";
 import { WorkspaceFileImagePreview } from "./WorkspaceFileImagePreview";
 import { WorkspaceFilePreviewError } from "./WorkspaceFilePreviewError";
 import { WorkspaceFileVideoPreview } from "./WorkspaceFileVideoPreview";
@@ -70,14 +65,123 @@ import {
 } from "./filePath";
 import { useWorkspaceFileAssetUrlState } from "./workspaceFileAssetUrl";
 
+function FilesBrowserHeader(props: {
+  readonly projectName: string;
+  readonly searchQuery: string;
+  readonly onSearchQueryChange: (query: string) => void;
+  readonly onRefresh: () => void;
+  readonly onBack: () => void;
+}) {
+  return (
+    <ScreenHeader
+      title="Files"
+      subtitle={props.projectName}
+      onBack={props.onBack}
+      hideBottomBorder
+      matchSearchSurface
+      search={{
+        value: props.searchQuery,
+        onChangeText: props.onSearchQueryChange,
+        placeholder: "Search files",
+        closeAccessibilityLabel: "Close file search",
+        clearAccessibilityLabel: "Clear file search",
+      }}
+      menus={
+        Platform.OS === "android"
+          ? [
+              {
+                title: "File options",
+                icon: "ellipsis",
+                items: [{ id: "refresh", title: "Refresh files", onPress: props.onRefresh }],
+              },
+            ]
+          : undefined
+      }
+    />
+  );
+}
+
+function FileHeader(props: {
+  readonly title: string;
+  readonly subtitle: string;
+  readonly iconColor: string;
+  readonly activeMode: string;
+  readonly fileInspectorSupported: boolean;
+  readonly onBack: () => void;
+  readonly onReturnToThread: () => void;
+  readonly actions: ReadonlyArray<{
+    readonly id: string;
+    readonly title: string;
+    readonly icon: string;
+    readonly inline: boolean;
+    readonly onPress: () => unknown;
+  }>;
+}) {
+  const { panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  const modes = props.actions.filter(({ inline }) => inline);
+  return (
+    <ScreenHeader
+      title={props.title}
+      subtitle={props.subtitle}
+      onBack={props.onBack}
+      hideBottomBorder
+      options={{ headerTintColor: props.iconColor, headerTitle: props.title }}
+      backInSplitView={
+        props.fileInspectorSupported
+          ? {
+              accessibilityLabel: "Return to chat",
+              icon: "chevron.left",
+              onPress: props.onReturnToThread,
+            }
+          : undefined
+      }
+      actions={
+        props.fileInspectorSupported
+          ? [
+              {
+                accessibilityLabel: panes.auxiliaryPaneVisible
+                  ? "Hide file navigator"
+                  : "Show file navigator",
+                icon: "sidebar.right",
+                selected: panes.auxiliaryPaneVisible,
+                onPress: toggleAuxiliaryPane,
+              },
+            ]
+          : undefined
+      }
+      menus={[
+        {
+          title: "File actions",
+          icon: "ellipsis",
+          separateBackground: false,
+          items: [
+            ...(modes.length > 0
+              ? [
+                  {
+                    id: "modes",
+                    inline: true,
+                    items: modes.map((action) => ({
+                      ...action,
+                      selected: action.id === props.activeMode,
+                    })),
+                  },
+                ]
+              : []),
+            ...props.actions.filter(({ inline }) => !inline),
+          ],
+        },
+      ]}
+    />
+  );
+}
+
 type FileViewMode = "preview" | "source";
 
+// A blank param (a hand-typed deep link) is treated as missing, since branded
+// IDs reject whitespace-only values.
 function firstRouteParam(value: string | string[] | undefined): string | null {
-  if (Array.isArray(value)) {
-    return value[0] ?? null;
-  }
-
-  return value ?? null;
+  const first = Array.isArray(value) ? value[0] : value;
+  return first === undefined || first.trim().length === 0 ? null : first;
 }
 
 function normalizeRoutePath(value: string | string[] | undefined): string | null {
@@ -126,6 +230,10 @@ function FileContent(props: {
 }) {
   // Reopening a mutable host file must not reuse a poster from an earlier visit.
   const thumbnailInstanceId = useId();
+  const insets = useSafeAreaInsets();
+  const columnMetrics = useNativeColumnLayoutMetrics();
+  const reservedHeaderInset =
+    Platform.OS === "ios" && props.truncated ? (columnMetrics?.safeArea.top ?? insets.top) : 0;
   const isMarkdown = isMarkdownPreviewFile(props.relativePath);
   const isBrowserFile = isWorkspaceBrowserPreviewPath(props.relativePath);
   const isImageFile = isWorkspaceImagePreviewPath(props.relativePath);
@@ -161,10 +269,7 @@ function FileContent(props: {
 
   if (isAudioFile) {
     return props.previewUri === null ? (
-      <View className="flex-1 items-center justify-center gap-3 bg-sheet px-6">
-        <ActivityIndicator />
-        <Text className="text-center text-sm text-foreground-muted">Loading file...</Text>
-      </View>
+      <FilePreviewLoading message="Loading file..." />
     ) : (
       <AudioFilePreview uri={props.previewUri} onRetry={props.onRetryPreview} />
     );
@@ -196,25 +301,15 @@ function FileContent(props: {
   }
 
   if (props.fileContents === null) {
-    return (
-      <View className="flex-1 items-center justify-center gap-3 bg-sheet px-6">
-        <ActivityIndicator />
-        <Text className="text-center text-sm text-foreground-muted">Loading file...</Text>
-      </View>
-    );
+    return <FilePreviewLoading message="Loading file..." />;
   }
 
   return (
-    <View className="flex-1 bg-sheet">
+    <View className="flex-1 bg-sheet" style={{ paddingTop: reservedHeaderInset }}>
       {props.truncated ? (
-        <View className="border-b border-warning-border bg-warning px-4 py-2">
-          <Text className="text-2xs font-t3-bold uppercase text-warning-foreground">
-            Partial file
-          </Text>
-          <Text className="text-xs leading-snug text-warning-foreground">
-            Preview limited to the first 1 MB of a truncated file.
-          </Text>
-        </View>
+        <FilePreviewNotice title="Partial file">
+          Preview limited to the first 1 MB of a truncated file.
+        </FilePreviewNotice>
       ) : null}
       {props.activeMode === "preview" && isMarkdown ? (
         <FileMarkdownPreview
@@ -230,6 +325,7 @@ function FileContent(props: {
           contents={props.fileContents}
           path={props.relativePath}
           initialLine={props.initialLine}
+          headerInsetTop={props.truncated ? 0 : undefined}
           onRefresh={props.onRefresh}
         />
       )}
@@ -285,14 +381,15 @@ function useThreadFilesWorkspace(params: {
   };
 }
 
-function FilesUnavailable() {
+function FilesUnavailable({
+  detail = "This thread does not have an active workspace path.",
+}: {
+  detail?: string;
+}) {
   return (
     <View className="flex-1 items-center justify-center bg-sheet px-6">
       <NativeStackScreenOptions options={{ title: "Files" }} />
-      <EmptyState
-        title="Files unavailable"
-        detail="This thread does not have an active workspace path."
-      />
+      <EmptyState title="Files unavailable" detail={detail} />
     </View>
   );
 }
@@ -328,21 +425,27 @@ function FilesToolbarBottomFade() {
 export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   useAdaptiveWorkspacePaneRole("inspector");
   const navigation = useNavigation();
-  const { fileInspector, layout, panes, showAuxiliaryPane, togglePrimarySidebar } =
-    useAdaptiveWorkspaceLayout();
+  const { fileInspector, layout, showAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const [searchQuery, setSearchQuery] = useState("");
-  const isAndroid = Platform.OS === "android";
   const { themeAppearance: highlightTheme } = useAppearancePreferences();
-  const theme = useUniwindTheme();
-  const headerColor = theme["--color-header"];
-  const sheetSurfaceColor = theme["--color-sheet-solid"];
   const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
     props.route.params,
   );
   const revealedInspectorRef = useRef(false);
+  const fileAccessSession = useEnvironmentQuery(
+    environmentId !== null ? environmentSession.sessionStateAtom(environmentId) : null,
+  );
+  const fileEnvironment = useEnvironmentPresentation(environmentId);
+  const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
+    connection: fileEnvironment.presentation?.connection ?? null,
+    session: fileAccessSession.data,
+    sessionError: fileAccessSession.error,
+  });
+  const { canReadFiles } = fileAccess;
   const entriesQuery = useFileTreeEntries({
     environmentId,
-    cwd: fileInspector.supported ? null : cwd,
+    cwd: !canReadFiles || fileInspector.supported ? null : cwd,
     searchQuery,
   });
   const handleReturnToThread = useCallback(() => {
@@ -429,6 +532,14 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     return <LoadingScreen message="Opening files..." messagePlacement="above-spinner" />;
   }
 
+  if (!canReadFiles) {
+    if (fileAccess.isPending) {
+      return <LoadingScreen message="Checking file access..." messagePlacement="above-spinner" />;
+    }
+    return (
+      <FilesUnavailable detail={fileAccess.error ?? "This connection cannot read host files."} />
+    );
+  }
   if (cwd === null) {
     return <FilesUnavailable />;
   }
@@ -443,92 +554,24 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     );
   }
 
-  const usesCompactMailToolbar =
-    Platform.OS === "ios" && !layout.usesSplitView && NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED;
-
   const content = (
     <>
-      {/* Static header config (glass preset and title) lives in Stack.tsx. The
-          live sheet color stays dynamic here so the FlatList can remain the
-          direct scene child for native scroll-edge sampling. */}
-      <NativeStackScreenOptions
-        options={{
-          contentStyle: {
-            backgroundColor: Platform.OS === "android" ? headerColor : sheetSurfaceColor,
-          },
-          headerShown: !isAndroid,
-          unstable_headerSubtitle:
-            Platform.OS === "ios" && projectName.length > 0 ? projectName : undefined,
-          // No refresh button: the list already supports pull-to-refresh.
-          unstable_headerToolbarItems: usesCompactMailToolbar
-            ? () => [
-                createNativeMailSearchToolbarItem({
-                  onSearchTextChange: setSearchQuery,
-                  placeholder: "Search files",
-                  searchTextChangeId: "files-search-text",
-                }),
-              ]
-            : undefined,
-          headerSearchBarOptions: usesCompactMailToolbar
-            ? undefined
-            : {
-                allowToolbarIntegration: true,
-                autoCapitalize: "none",
-                hideNavigationBar: false,
-                placeholder: "Search files",
-                onChangeText: (event) => {
-                  setSearchQuery(event.nativeEvent.text);
-                },
-                onCancelButtonPress: () => {
-                  setSearchQuery("");
-                },
-              },
-        }}
+      <FilesBrowserHeader
+        projectName={projectName}
+        searchQuery={searchQuery}
+        onSearchQueryChange={setSearchQuery}
+        onRefresh={entriesQuery.refresh}
+        onBack={handleReturnToThread}
       />
-      {isAndroid ? (
-        <>
-          {
-            <MaterialFilesHeader
-              projectName={projectName}
-              leading={<AndroidWorkspaceSidebarButton />}
-              searchQuery={searchQuery}
-              onSearchQueryChange={setSearchQuery}
-              onRefresh={entriesQuery.refresh}
-              onBack={handleReturnToThread}
-            />
-          }
-        </>
-      ) : (
-        <>
-          {layout.usesSplitView ? (
-            <NativeHeaderToolbar placement="left">
-              <NativeHeaderToolbar.Button
-                accessibilityLabel={panes.primarySidebarVisible ? "Maximize files" : "Show threads"}
-                icon={
-                  panes.primarySidebarVisible
-                    ? "arrow.up.left.and.arrow.down.right"
-                    : "sidebar.left"
-                }
-                onPress={togglePrimarySidebar}
-                separateBackground
-              />
-            </NativeHeaderToolbar>
-          ) : null}
-          {usesCompactMailToolbar ? null : (
-            <NativeHeaderToolbar placement="bottom">
-              <NativeHeaderToolbar.SearchBarSlot />
-            </NativeHeaderToolbar>
-          )}
-        </>
-      )}
       <MaterialScreenContent insetHorizontal={layout.usesSplitView}>
         <FileTreeBrowser
           key={JSON.stringify([environmentId, cwd])}
           entries={entriesQuery.entries}
-          loadedDirectories={entriesQuery.loadedDirectories}
+          loadingDirectories={entriesQuery.loadingDirectories}
           onLoadDirectory={entriesQuery.loadDirectory}
           error={entriesQuery.error}
           isPending={entriesQuery.isPending}
+          isRefreshing={entriesQuery.isRefreshing}
           searchQuery={searchQuery}
           searchTruncated={entriesQuery.searchTruncated}
           selectedPath={null}
@@ -541,22 +584,15 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     </>
   );
 
-  return Platform.OS === "android" ? (
-    <View className="flex-1" style={{ backgroundColor: headerColor }}>
-      {content}
-    </View>
-  ) : (
-    content
-  );
+  return Platform.OS === "android" ? <View className="flex-1 bg-header">{content}</View> : content;
 }
 
 export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   useAdaptiveWorkspacePaneRole("inspector");
   const navigation = useNavigation();
-  const { fileInspector, panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  const { fileInspector } = useAdaptiveWorkspaceLayout();
   const { appearance, setCodeWordBreak } = useAppearancePreferences();
   const iconColor = useUniwindTheme()["--color-icon"];
-  const isAndroid = Platform.OS === "android";
   const params = props.route.params;
   const relativePath = normalizeRoutePath(params.path);
   const targetLine = normalizeRouteLine(firstRouteParam(params.line));
@@ -652,8 +688,23 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     !isVideoFile &&
     !isAudioFile &&
     (resolvedActiveMode === "source" || isMarkdownPreviewFile(relativePath));
+  const fileAccessSession = useEnvironmentQuery(
+    environmentId !== null ? environmentSession.sessionStateAtom(environmentId) : null,
+  );
+  const fileEnvironment = useEnvironmentPresentation(environmentId);
+  const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
+    connection: fileEnvironment.presentation?.connection ?? null,
+    session: fileAccessSession.data,
+    sessionError: fileAccessSession.error,
+  });
+  const { canReadFiles } = fileAccess;
   const fileQuery = useEnvironmentQuery(
-    environmentId !== null && cwd !== null && relativePath !== null && needsFileContents
+    canReadFiles &&
+      environmentId !== null &&
+      cwd !== null &&
+      relativePath !== null &&
+      needsFileContents
       ? projectEnvironment.readFile({
           environmentId,
           input: { cwd, relativePath },
@@ -708,8 +759,14 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   // Hand the file navigator to the workspace so it renders beside the
   // navigator, outside this screen's native header.
   const renderWorkspaceInspector = useCallback(
-    () => renderInspector(inspectorHeaderInset),
-    [inspectorHeaderInset, renderInspector],
+    () => (
+      <ThreadInspectorContentStack
+        mode="files"
+        resetKeys={[threadId, cwd]}
+        renderFiles={() => renderInspector(inspectorHeaderInset)}
+      />
+    ),
+    [cwd, inspectorHeaderInset, renderInspector, threadId],
   );
   useRegisterWorkspaceInspector(fileInspector.supported ? renderWorkspaceInspector : undefined);
 
@@ -832,23 +889,6 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     fileData?.truncated,
   ]);
 
-  const androidFileMenuActions = useMemo<MenuAction[]>(
-    () =>
-      fileMenuActions.map((action) => ({
-        id: action.id,
-        title: action.title,
-        image: action.icon,
-        state: action.id === resolvedActiveMode ? "on" : undefined,
-      })),
-    [fileMenuActions, resolvedActiveMode],
-  );
-  const handleAndroidFileMenuAction = useCallback(
-    (event: { nativeEvent: { event: string } }) => {
-      const action = fileMenuActions.find(({ id }) => id === event.nativeEvent.event);
-      void action?.onPress();
-    },
-    [fileMenuActions],
-  );
   const handleReturnToThread = useCallback(() => {
     if (environmentId !== null && threadId !== null) {
       navigation.dispatch(
@@ -874,6 +914,14 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     return <LoadingScreen message="Opening file..." messagePlacement="above-spinner" />;
   }
 
+  if (!canReadFiles) {
+    if (fileAccess.isPending) {
+      return <LoadingScreen message="Checking file access..." messagePlacement="above-spinner" />;
+    }
+    return (
+      <FilesUnavailable detail={fileAccess.error ?? "This connection cannot read host files."} />
+    );
+  }
   if (cwd === null) {
     return <FilesUnavailable />;
   }
@@ -891,100 +939,16 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
 
   return (
     <View className="flex-1 bg-sheet">
-      <NativeStackScreenOptions
-        options={{
-          // Static header config lives in Stack.tsx (SOLID_HEADER_OPTIONS: solid
-          // sheet-colored header — this route's content scrolls internally, so
-          // there is nothing for glass to sample). Only dynamic values here.
-          headerShown: !isAndroid,
-          headerTintColor: iconColor,
-          headerTitle: basename(relativePath),
-          title: basename(relativePath),
-          unstable_headerSubtitle:
-            Platform.OS === "ios" && headerSubtitle.length > 0 ? headerSubtitle : undefined,
-        }}
+      <FileHeader
+        title={basename(relativePath)}
+        subtitle={headerSubtitle}
+        iconColor={iconColor}
+        activeMode={resolvedActiveMode}
+        fileInspectorSupported={fileInspector.supported}
+        onBack={handleBack}
+        onReturnToThread={handleReturnToThread}
+        actions={fileMenuActions}
       />
-      {isAndroid ? (
-        <AndroidScreenHeader
-          title={basename(relativePath)}
-          subtitle={headerSubtitle}
-          leading={<AndroidWorkspaceSidebarButton />}
-          hideBottomBorder
-          onBack={handleBack}
-          trailing={
-            <>
-              {fileInspector.supported ? (
-                <AndroidHeaderIconButton
-                  accessibilityLabel={
-                    panes.auxiliaryPaneVisible ? "Hide file navigator" : "Show file navigator"
-                  }
-                  icon="sidebar.right"
-                  selected={panes.auxiliaryPaneVisible}
-                  onPress={toggleAuxiliaryPane}
-                />
-              ) : null}
-              <ControlPillMenu
-                actions={androidFileMenuActions}
-                isAnchoredToRight
-                title="File actions"
-                onPressAction={handleAndroidFileMenuAction}
-              >
-                <AndroidHeaderIconButton accessibilityLabel="File actions" icon="ellipsis" />
-              </ControlPillMenu>
-            </>
-          }
-        />
-      ) : null}
-      <WorkspaceSidebarToolbar>
-        {fileInspector.supported ? (
-          <NativeHeaderToolbar.Button
-            accessibilityLabel="Return to chat"
-            icon="chevron.left"
-            onPress={handleReturnToThread}
-          />
-        ) : null}
-      </WorkspaceSidebarToolbar>
-      <NativeHeaderToolbar placement="right">
-        {fileInspector.supported ? (
-          <NativeHeaderToolbar.Button
-            accessibilityLabel={
-              panes.auxiliaryPaneVisible ? "Hide file navigator" : "Show file navigator"
-            }
-            icon="sidebar.right"
-            onPress={toggleAuxiliaryPane}
-            separateBackground
-          />
-        ) : null}
-        <NativeHeaderToolbar.Menu accessibilityLabel="File actions" icon="ellipsis">
-          {fileMenuActions.some(({ inline }) => inline) ? (
-            <NativeHeaderToolbar.Menu inline>
-              {fileMenuActions
-                .filter(({ inline }) => inline)
-                .map((action) => (
-                  <NativeHeaderToolbar.MenuAction
-                    key={action.id}
-                    icon={action.icon}
-                    isOn={action.id === resolvedActiveMode}
-                    onPress={action.onPress}
-                  >
-                    {action.title}
-                  </NativeHeaderToolbar.MenuAction>
-                ))}
-            </NativeHeaderToolbar.Menu>
-          ) : null}
-          {fileMenuActions
-            .filter(({ inline }) => !inline)
-            .map((action) => (
-              <NativeHeaderToolbar.MenuAction
-                key={action.id}
-                icon={action.icon}
-                onPress={action.onPress}
-              >
-                {action.title}
-              </NativeHeaderToolbar.MenuAction>
-            ))}
-        </NativeHeaderToolbar.Menu>
-      </NativeHeaderToolbar>
       <MaterialScreenContent>
         <FileContent
           key={previewKey}

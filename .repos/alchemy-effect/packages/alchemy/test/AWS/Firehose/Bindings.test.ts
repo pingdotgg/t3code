@@ -9,8 +9,8 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import FirehoseApiFunctionLive, {
   BucketAndDeliveryStream,
   FirehoseApiFunction,
@@ -88,195 +88,210 @@ const postJson = (baseUrl: string, path: string, body: unknown) =>
     Effect.retry({ schedule: readinessSchedule }),
   );
 
-describe("Firehose Bindings", () => {
-  describe("PutRecord", () => {
-    // `test.provider` supplies the AWS environment for the out-of-band
-    // describeDeliveryStream verification via distilled.
-    test.provider("writes a single record and the stream stays ACTIVE", () =>
-      Effect.gen(function* () {
-        const { url, deliveryStreamName } = yield* stack;
-        const response = yield* postJson(url, "/put-record", {
-          data: `put-record-${crypto.randomUUID()}`,
-        });
-        expect((response as any).RecordId).toBeTruthy();
-
-        // Ingest success is the assertion — S3 delivery is asynchronous
-        // (buffering ≥ 60s), so verify the stream is ACTIVE out-of-band
-        // instead of waiting for objects to land.
-        const described = yield* Firehose.describeDeliveryStream({
-          DeliveryStreamName: deliveryStreamName,
-        });
-        expect(
-          described.DeliveryStreamDescription.DeliveryStreamStatus,
-        ).toEqual("ACTIVE");
-      }),
-    );
-  });
-
-  describe("PutRecordBatch", () => {
-    test(
-      "writes a batch of records with zero failures",
-      Effect.gen(function* () {
-        const { url } = yield* stack;
-        const response = yield* postJson(url, "/put-record-batch", {
-          records: [
-            `batch-1-${crypto.randomUUID()}`,
-            `batch-2-${crypto.randomUUID()}`,
-            `batch-3-${crypto.randomUUID()}`,
-          ],
-        });
-        expect((response as any).FailedPutCount).toBe(0);
-        const entries = (response as any).RequestResponses ?? [];
-        expect(entries.length).toBe(3);
-        for (const entry of entries) {
-          expect(entry.RecordId).toBeTruthy();
-          expect(entry.ErrorCode).toBeUndefined();
-        }
-      }),
-    );
-  });
-
-  describe("ListDeliveryStreams", () => {
-    test(
-      "lists delivery streams and includes the fixture stream",
-      Effect.gen(function* () {
-        const { url, deliveryStreamName } = yield* stack;
-        const response = (yield* getJson(url, "/list-streams")) as {
-          DeliveryStreamNames: string[];
-          HasMoreDeliveryStreams: boolean;
-        };
-        expect(Array.isArray(response.DeliveryStreamNames)).toBe(true);
-        expect(response.DeliveryStreamNames).toContain(deliveryStreamName);
-      }),
-    );
-  });
-
-  describe("DeliveryStreamSink", () => {
-    // `test.provider` supplies the AWS environment for the out-of-band
-    // describeDeliveryStream verification via distilled.
-    test.provider("streams records through the sink helper", () =>
-      Effect.gen(function* () {
-        const { url, deliveryStreamName } = yield* stack;
-        const response = yield* postJson(url, "/sink", {
-          records: [
-            `sink-1-${crypto.randomUUID()}`,
-            `sink-2-${crypto.randomUUID()}`,
-            `sink-3-${crypto.randomUUID()}`,
-          ],
-        });
-        expect((response as any).ok).toBe(true);
-        expect((response as any).count).toBe(3);
-
-        // Ingest success is the assertion — S3 delivery is asynchronous
-        // (buffering ≥ 60s; see the gated slow test below for arrival proof).
-        const described = yield* Firehose.describeDeliveryStream({
-          DeliveryStreamName: deliveryStreamName,
-        });
-        expect(
-          described.DeliveryStreamDescription.DeliveryStreamStatus,
-        ).toEqual("ACTIVE");
-      }),
-    );
-
-    test(
-      "splits more than 500 records into multiple PutRecordBatch calls",
-      Effect.gen(function* () {
-        const { url } = yield* stack;
-        // 501 records > the PutRecordBatch limit of 500, so the batched sink
-        // must split the chunk into 2 sequential API calls (500 + 1). Any
-        // per-record ServiceUnavailable failures are retried by the sink
-        // engine before the handler responds.
-        const marker = crypto.randomUUID();
-        const response = yield* postJson(url, "/sink", {
-          records: Array.from({ length: 501 }, (_, i) => `sink-${marker}-${i}`),
-        });
-        expect((response as any).ok).toBe(true);
-        expect((response as any).count).toBe(501);
-      }),
-      { timeout: 120_000 },
-    );
-  });
-
-  // Even with zero buffering, Firehose treats the interval and size as hints
-  // and has exceeded the default suite's 90-second platform budget in live
-  // runs. Keep the end-to-end proof opt-in, but run its independent checks
-  // concurrently so they share one bounded delivery window.
-  describe.concurrent.skipIf(!process.env.AWS_TEST_SLOW)(
-    "S3 delivery (slow)",
-    () => {
-      class MarkerNotDeliveredYet extends Data.TaggedError(
-        "MarkerNotDeliveredYet",
-      ) {}
-
-      const waitForMarker = (bucketName: string, marker: string) => {
-        const findMarker = Effect.gen(function* () {
-          const listing = yield* S3.listObjectsV2({
-            Bucket: bucketName,
-            Prefix: "records/",
+describe(
+  "Firehose Bindings",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:firehose",
+      "provider:aws:lambda",
+      "provider:aws:s3",
+      "live",
+    ],
+  },
+  () => {
+    describe("PutRecord", () => {
+      // `test.provider` supplies the AWS environment for the out-of-band
+      // describeDeliveryStream verification via distilled.
+      test.provider("writes a single record and the stream stays ACTIVE", () =>
+        Effect.gen(function* () {
+          const { url, deliveryStreamName } = yield* stack;
+          const response = yield* postJson(url, "/put-record", {
+            data: `put-record-${crypto.randomUUID()}`,
           });
-          for (const object of listing.Contents ?? []) {
-            if (object.Key === undefined) {
-              continue;
-            }
-            const got = yield* S3.getObject({
-              Bucket: bucketName,
-              Key: object.Key,
-            });
-            // The body read surfaces plain `Error` (streaming transport) — a
-            // mid-delivery read hiccup is just "not delivered yet".
-            const text = yield* Stream.mkString(
-              Stream.decodeText(got.Body!),
-            ).pipe(
-              Effect.catch(() => Effect.fail(new MarkerNotDeliveredYet())),
-            );
-            if (text.includes(marker)) {
-              return object.Key;
-            }
+          expect((response as any).RecordId).toBeTruthy();
+
+          // Ingest success is the assertion — S3 delivery is asynchronous
+          // (buffering ≥ 60s), so verify the stream is ACTIVE out-of-band
+          // instead of waiting for objects to land.
+          const described = yield* Firehose.describeDeliveryStream({
+            DeliveryStreamName: deliveryStreamName,
+          });
+          expect(
+            described.DeliveryStreamDescription.DeliveryStreamStatus,
+          ).toEqual("ACTIVE");
+        }),
+      );
+    });
+
+    describe("PutRecordBatch", () => {
+      test(
+        "writes a batch of records with zero failures",
+        Effect.gen(function* () {
+          const { url } = yield* stack;
+          const response = yield* postJson(url, "/put-record-batch", {
+            records: [
+              `batch-1-${crypto.randomUUID()}`,
+              `batch-2-${crypto.randomUUID()}`,
+              `batch-3-${crypto.randomUUID()}`,
+            ],
+          });
+          expect((response as any).FailedPutCount).toBe(0);
+          const entries = (response as any).RequestResponses ?? [];
+          expect(entries.length).toBe(3);
+          for (const entry of entries) {
+            expect(entry.RecordId).toBeTruthy();
+            expect(entry.ErrorCode).toBeUndefined();
           }
-          return yield* new MarkerNotDeliveredYet();
-        });
+        }),
+      );
+    });
 
-        return findMarker.pipe(
-          Effect.retry({
-            while: (e) => e._tag === "MarkerNotDeliveredYet",
-            schedule: Schedule.max([
-              Schedule.fixed("10 seconds"),
-              Schedule.recurs(12),
-            ]),
-          }),
+    describe("ListDeliveryStreams", () => {
+      test(
+        "lists delivery streams and includes the fixture stream",
+        Effect.gen(function* () {
+          const { url, deliveryStreamName } = yield* stack;
+          const response = (yield* getJson(url, "/list-streams")) as {
+            DeliveryStreamNames: string[];
+            HasMoreDeliveryStreams: boolean;
+          };
+          expect(Array.isArray(response.DeliveryStreamNames)).toBe(true);
+          expect(response.DeliveryStreamNames).toContain(deliveryStreamName);
+        }),
+      );
+    });
+
+    describe("DeliveryStreamSink", () => {
+      // `test.provider` supplies the AWS environment for the out-of-band
+      // describeDeliveryStream verification via distilled.
+      test.provider("streams records through the sink helper", () =>
+        Effect.gen(function* () {
+          const { url, deliveryStreamName } = yield* stack;
+          const response = yield* postJson(url, "/sink", {
+            records: [
+              `sink-1-${crypto.randomUUID()}`,
+              `sink-2-${crypto.randomUUID()}`,
+              `sink-3-${crypto.randomUUID()}`,
+            ],
+          });
+          expect((response as any).ok).toBe(true);
+          expect((response as any).count).toBe(3);
+
+          // Ingest success is the assertion — S3 delivery is asynchronous
+          // (buffering ≥ 60s; see the gated slow test below for arrival proof).
+          const described = yield* Firehose.describeDeliveryStream({
+            DeliveryStreamName: deliveryStreamName,
+          });
+          expect(
+            described.DeliveryStreamDescription.DeliveryStreamStatus,
+          ).toEqual("ACTIVE");
+        }),
+      );
+
+      test(
+        "splits more than 500 records into multiple PutRecordBatch calls",
+        Effect.gen(function* () {
+          const { url } = yield* stack;
+          // 501 records > the PutRecordBatch limit of 500, so the batched sink
+          // must split the chunk into 2 sequential API calls (500 + 1). Any
+          // per-record ServiceUnavailable failures are retried by the sink
+          // engine before the handler responds.
+          const marker = crypto.randomUUID();
+          const response = yield* postJson(url, "/sink", {
+            records: Array.from(
+              { length: 501 },
+              (_, i) => `sink-${marker}-${i}`,
+            ),
+          });
+          expect((response as any).ok).toBe(true);
+          expect((response as any).count).toBe(501);
+        }),
+        { timeout: 120_000 },
+      );
+    });
+
+    // Even with zero buffering, Firehose treats the interval and size as hints
+    // and has exceeded the default suite's 90-second platform budget in live
+    // runs. Keep the end-to-end proof opt-in, but run its independent checks
+    // concurrently so they share one bounded delivery window.
+    describe.concurrent.skipIf(!process.env.AWS_TEST_SLOW)(
+      "S3 delivery (slow)",
+      () => {
+        class MarkerNotDeliveredYet extends Data.TaggedError(
+          "MarkerNotDeliveredYet",
+        ) {}
+
+        const waitForMarker = (bucketName: string, marker: string) => {
+          const findMarker = Effect.gen(function* () {
+            const listing = yield* S3.listObjectsV2({
+              Bucket: bucketName,
+              Prefix: "records/",
+            });
+            for (const object of listing.Contents ?? []) {
+              if (object.Key === undefined) {
+                continue;
+              }
+              const got = yield* S3.getObject({
+                Bucket: bucketName,
+                Key: object.Key,
+              });
+              // The body read surfaces plain `Error` (streaming transport) — a
+              // mid-delivery read hiccup is just "not delivered yet".
+              const text = yield* Stream.mkString(
+                Stream.decodeText(got.Body!),
+              ).pipe(
+                Effect.catch(() => Effect.fail(new MarkerNotDeliveredYet())),
+              );
+              if (text.includes(marker)) {
+                return object.Key;
+              }
+            }
+            return yield* new MarkerNotDeliveredYet();
+          });
+
+          return findMarker.pipe(
+            Effect.retry({
+              while: (e) => e._tag === "MarkerNotDeliveredYet",
+              schedule: Schedule.max([
+                Schedule.fixed("10 seconds"),
+                Schedule.recurs(12),
+              ]),
+            }),
+          );
+        };
+
+        test.provider(
+          "delivers buffered records to the destination bucket",
+          () =>
+            Effect.gen(function* () {
+              const { url, bucketName } = yield* stack;
+              // Randomness is only a payload correlation marker, never a
+              // physical resource name. It prevents a prior run's object from
+              // satisfying this delivery proof.
+              const marker = `put-record-delivery-${crypto.randomUUID()}`;
+              yield* postJson(url, "/put-record", {
+                data: marker,
+              });
+              expect(yield* waitForMarker(bucketName, marker)).toBeTruthy();
+            }),
+          { timeout: 180_000 },
         );
-      };
 
-      test.provider(
-        "delivers buffered records to the destination bucket",
-        () =>
-          Effect.gen(function* () {
-            const { url, bucketName } = yield* stack;
-            // Randomness is only a payload correlation marker, never a
-            // physical resource name. It prevents a prior run's object from
-            // satisfying this delivery proof.
-            const marker = `put-record-delivery-${crypto.randomUUID()}`;
-            yield* postJson(url, "/put-record", {
-              data: marker,
-            });
-            expect(yield* waitForMarker(bucketName, marker)).toBeTruthy();
-          }),
-        { timeout: 180_000 },
-      );
-
-      test.provider(
-        "sink records land in the destination bucket (marker-anchored)",
-        () =>
-          Effect.gen(function* () {
-            const { url, bucketName } = yield* stack;
-            const marker = `sink-delivery-${crypto.randomUUID()}`;
-            yield* postJson(url, "/sink", {
-              records: [`${marker}-1`, `${marker}-2`],
-            });
-            expect(yield* waitForMarker(bucketName, marker)).toBeTruthy();
-          }),
-        { timeout: 180_000 },
-      );
-    },
-  );
-});
+        test.provider(
+          "sink records land in the destination bucket (marker-anchored)",
+          () =>
+            Effect.gen(function* () {
+              const { url, bucketName } = yield* stack;
+              const marker = `sink-delivery-${crypto.randomUUID()}`;
+              yield* postJson(url, "/sink", {
+                records: [`${marker}-1`, `${marker}-2`],
+              });
+              expect(yield* waitForMarker(bucketName, marker)).toBeTruthy();
+            }),
+          { timeout: 180_000 },
+        );
+      },
+    );
+  },
+);

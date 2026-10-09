@@ -2,6 +2,7 @@ import {
   Platform,
   Text as RNText,
   TextInput as RNTextInput,
+  type TextInputInstance,
   type TextInputProps as RNTextInputProps,
   type TextProps as RNTextProps,
 } from "react-native";
@@ -18,7 +19,7 @@ export function AppText({ className, ...props }: AppTextProps) {
   return (
     <RNText
       className={cn("font-sans text-foreground", className)}
-      selectionColorClassName={Platform.OS === "android" ? "accent-primary/32" : undefined}
+      selectionColorClassName={Platform.OS === "android" ? "accent-focus/32" : undefined}
       {...props}
     />
   );
@@ -26,7 +27,7 @@ export function AppText({ className, ...props }: AppTextProps) {
 
 export type AppTextInputProps = Omit<RNTextInputProps, "placeholderTextColor"> & {
   readonly className?: string;
-  readonly ref?: React.Ref<RNTextInput>;
+  readonly ref?: React.Ref<TextInputInstance>;
 };
 
 /**
@@ -42,13 +43,9 @@ export function AppTextInput({ className, ref, ...props }: AppTextInputProps) {
         className,
       )}
       placeholderTextColorClassName="accent-placeholder"
-      selectionColorClassName={
-        Platform.OS === "android" ? "accent-primary/32" : "accent-foreground-secondary"
-      }
-      cursorColorClassName={
-        Platform.OS === "android" ? "accent-primary" : "accent-foreground-secondary"
-      }
-      selectionHandleColorClassName={Platform.OS === "android" ? "accent-primary" : undefined}
+      selectionColorClassName={"accent-focus/32"}
+      cursorColorClassName={"accent-focus"}
+      selectionHandleColorClassName={Platform.OS === "android" ? "accent-focus" : undefined}
       {...props}
     />
   );

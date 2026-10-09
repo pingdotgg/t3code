@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { getMobileThemeRuntimeVariables } from "./mobileThemeVariables";
 import type { MaterialYouPalette } from "./materialYouPalette";
-import { materialYouPaletteToMobileThemeVariables } from "./materialYouTheme";
+import { materialYouPaletteToMobileThemeVariables } from "./materialYouTheme.android";
 
 const palette: MaterialYouPalette = {
   primary: "#6750A4FF",
@@ -54,6 +54,7 @@ describe("Material You system colors", () => {
     expect(variables["--color-thread-canvas"]).toBe(palette.surfaceContainerLow);
     expect(variables["--color-thread-selected"]).toBe(palette.surfaceContainer);
     expect(variables["--color-header"]).toBe(palette.surfaceContainerHigh);
+    expect(variables["--color-grouped-card"]).toBe(palette.surfaceContainer);
     expect(variables["--color-primary"]).toBe(palette.primary);
     expect(variables["--color-placeholder"]).toBe("#1C1B1F9E");
   });

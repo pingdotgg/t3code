@@ -1,7 +1,7 @@
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { type EnvironmentMachineKind, resolveEnvironmentMachineKind } from "@t3tools/contracts";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useMemo } from "react";
 import { ActivityIndicator, Alert, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -16,6 +16,7 @@ import {
 } from "../../state/client-cache-state";
 import { useServerConfigs } from "../../state/entities";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
+import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
 
@@ -139,24 +140,14 @@ export function SettingsClientStorageRouteScreen() {
 
         <View className="gap-3">
           <SettingsSection title="Actions">
-            <Pressable
-              accessibilityRole="button"
+            <SettingsActionRow
+              icon="trash"
+              label={summary ? `Clear ${formatBytes(summary.payloadBytes)}` : "Clear caches"}
+              tone="danger"
               disabled={isClearing || !summary || summary.recordCount === 0}
+              loading={isClearing}
               onPress={confirmClearAll}
-              className="flex-row items-center gap-4 p-4 disabled:opacity-40"
-            >
-              <SymbolView
-                name="trash"
-                size={22}
-                tintColorClassName="accent-danger-foreground"
-                type="monochrome"
-                weight="regular"
-              />
-              <Text className="flex-1 text-lg tabular-nums text-danger-foreground">
-                {summary ? `Clear ${formatBytes(summary.payloadBytes)}` : "Clear caches"}
-              </Text>
-              {isClearing ? <ActivityIndicator colorClassName="accent-danger-foreground" /> : null}
-            </Pressable>
+            />
           </SettingsSection>
           <Text className="px-2 text-sm leading-normal text-foreground-muted">
             Clearing caches never removes environment connections, credentials, account data, or

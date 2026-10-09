@@ -17,7 +17,6 @@ const workspaceFiles = [
   "apps/desktop/package.json",
   "apps/web/package.json",
   "apps/mobile/package.json",
-  "apps/mobile/deps/react-native-nitro-markdown-0.5.0.tgz",
   "apps/mobile/modules/t3-markdown-text/package.json",
   "apps/mobile/modules/t3-review-diff/package.json",
   "apps/mobile/modules/t3-terminal/package.json",
@@ -29,6 +28,15 @@ const workspaceFiles = [
   "packages/shared/package.json",
   "packages/ssh/package.json",
   "packages/tailscale/package.json",
+  "packages/provider-core/package.json",
+  "packages/provider-testing/package.json",
+  "packages/provider-pi/package.json",
+  "packages/provider-acp/package.json",
+  "packages/provider-acp-registry/package.json",
+  "packages/provider-cursor/package.json",
+  "packages/provider-grok/package.json",
+  "packages/provider-muse/package.json",
+  "packages/provider-opencode/package.json",
   "packages/effect-acp/package.json",
   "packages/effect-codex-app-server/package.json",
   "scripts/package.json",
@@ -40,6 +48,13 @@ function copyWorkspaceManifestFixture(targetRoot: string): void {
     const destinationPath = NodePath.resolve(targetRoot, relativePath);
     NodeFS.mkdirSync(NodePath.dirname(destinationPath), { recursive: true });
     NodeFS.cpSync(sourcePath, destinationPath);
+  }
+
+  const mobileDependencies = NodePath.resolve(repoRoot, "apps/mobile/deps");
+  if (NodeFS.existsSync(mobileDependencies)) {
+    NodeFS.cpSync(mobileDependencies, NodePath.resolve(targetRoot, "apps/mobile/deps"), {
+      recursive: true,
+    });
   }
 
   const patchesDirectory = NodePath.resolve(repoRoot, "patches");
@@ -188,6 +203,12 @@ function assertMissing(path: string, message: string): void {
 const tempRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-release-smoke-"));
 
 try {
+  NodeChildProcess.execFileSync(
+    process.execPath,
+    ["--test", NodePath.resolve(repoRoot, ".github/scripts/relay-state-output.test.cjs")],
+    { stdio: "inherit" },
+  );
+
   copyWorkspaceManifestFixture(tempRoot);
 
   NodeChildProcess.execFileSync(

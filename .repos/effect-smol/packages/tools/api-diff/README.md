@@ -20,6 +20,11 @@ discovers every public package entrypoint independently, extracts both snapshots
 with one pinned TypeScript compiler API, and caches successful snapshots by
 commit and compiler.
 
+After updating the extractor, regenerate both snapshots with the same extractor
+before comparing them. Old snapshots may have lost information that the current
+extractor preserves; comparing snapshots from different extractor generations is
+not supported.
+
 The command writes:
 
 - `base.snapshot.json`
@@ -38,6 +43,9 @@ The document command defaults to refs `v3` and `main`, records their resolved
 SHAs, preserves the existing import map sections, and replaces the API
 reference in place. It does not write `diff.json` unless `--output` is also
 provided.
+
+An API annotation can set `include: true` to retain migration guidance even
+when the declaration comparison does not classify that API as changed.
 
 List missing annotations, grouped by v3 module, and exit non-zero when any are
 missing:

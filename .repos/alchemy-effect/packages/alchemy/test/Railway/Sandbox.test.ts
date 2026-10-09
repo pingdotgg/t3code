@@ -1,4 +1,5 @@
-import * as railway from "@distilled.cloud/railway";
+import { Query } from "@distilled.cloud/core/query";
+import { Railway as RailwayApi } from "@distilled.cloud/railway";
 import * as Provider from "@/Provider";
 import * as Railway from "@/Railway";
 import { suitePartition } from "./suiteProject.ts";
@@ -8,6 +9,7 @@ import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
+import * as HttpClient from "effect/http/HttpClient";
 
 const { test } = Test.make({ providers: Railway.providers() });
 
@@ -16,16 +18,60 @@ const logLevel = Effect.provideService(
   process.env.DEBUG ? "Debug" : "Info",
 );
 
-const isGoneStatus = (status: string | undefined) =>
-  status === "DESTROYED" || status === "DESTROYING";
+const isGoneStatus = (status: string | undefined) => status === "DESTROYED";
+
+// Railway answers a missing sandbox with `null`, not an error.
+const readSandboxStatus = Query.fn((environmentId: string, id: string) =>
+  RailwayApi.sandbox({ environmentId, id }).pipe(
+    Query.map((sandbox) => ({ status: sandbox.status })),
+  ),
+);
+
+const readSandbox = Query.fn((environmentId: string, id: string) =>
+  RailwayApi.sandbox({ environmentId, id }).pipe(
+    Query.map((sandbox) => ({
+      id: sandbox.id,
+      environmentId: sandbox.environmentId,
+      status: sandbox.status,
+      idleTimeoutMinutes: sandbox.idleTimeoutMinutes,
+    })),
+  ),
+);
+
+const readSandboxDomains = Query.fn((environmentId: string, id: string) =>
+  RailwayApi.sandbox({ environmentId, id }).pipe(
+    Query.map((sandbox) => ({
+      domains: sandbox.domains.pipe(
+        Query.map((domain) => ({
+          domain: domain.domain,
+          port: domain.port,
+          prefix: domain.prefix,
+        })),
+      ),
+      networkIsolation: sandbox.networkIsolation,
+    })),
+  ),
+);
+
+const createSandbox = Query.fn(
+  (input: { environmentId: string; idleTimeoutMinutes: number }) => {
+    const sandbox = RailwayApi.sandboxCreate({ input });
+    return { environmentId: sandbox.environmentId, id: sandbox.id };
+  },
+);
+
+const destroySandbox = Query.fn((environmentId: string, id: string) =>
+  RailwayApi.sandboxDestroy({ environmentId, id }).pipe(
+    Query.map((sandbox) => ({ id: sandbox.id })),
+  ),
+);
 
 const waitUntilGone = (environmentId: string, sandboxId: string) =>
-  railway.sandbox({ environmentId, id: sandboxId }).pipe(
+  readSandboxStatus(environmentId, sandboxId).pipe(
     Effect.map((sandbox) =>
-      isGoneStatus(sandbox.status) ? ("gone" as const) : ("found" as const),
-    ),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
-      Effect.succeed("gone" as const),
+      sandbox === null || isGoneStatus(sandbox.status)
+        ? ("gone" as const)
+        : ("found" as const),
     ),
     Effect.repeat({
       schedule: Schedule.spaced("1 second"),
@@ -35,13 +81,12 @@ const waitUntilGone = (environmentId: string, sandboxId: string) =>
   );
 
 const destroyLive = (environmentId: string, sandboxId: string) =>
-  railway.sandboxDestroy({ environmentId, id: sandboxId }).pipe(
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.void),
+  destroySandbox(environmentId, sandboxId).pipe(
     Effect.flatMap(() => waitUntilGone(environmentId, sandboxId)),
   );
 
 test.provider(
-  "sandbox create surfaces a typed entitlement error",
+  "sandbox create succeeds or surfaces a typed authorization error",
   (stack) =>
     Effect.gen(function* () {
       yield* stack.destroy();
@@ -54,11 +99,9 @@ test.provider(
       );
 
       const result = yield* Effect.result(
-        railway.sandboxCreate({
-          input: {
-            environmentId: created.environment.environmentId,
-            idleTimeoutMinutes: 5,
-          },
+        createSandbox({
+          environmentId: created.environment.environmentId,
+          idleTimeoutMinutes: 5,
         }),
       );
 
@@ -71,11 +114,20 @@ test.provider(
         return;
       }
 
-      expect(result.failure._tag).toEqual("RailwayForbidden");
+      expect(result.failure._tag === "RailwayForbidden").toBe(true);
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  {
+    tags: [
+      "provider:railway",
+      "provider:railway:project",
+      "provider:railway:projectenvironment",
+      "provider:railway:sandbox",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -106,11 +158,17 @@ test.provider(
       expect(created.box.region.length).toBeGreaterThan(0);
       expect(created.box.createdAt).toEqual(expect.any(String));
       expect(created.box.idleTimeoutMinutes).toEqual(5);
+      expect(created.box.domains).toEqual([]);
 
-      const fetched = yield* railway.sandbox({
-        environmentId: created.box.environmentId,
-        id: created.box.sandboxId,
-      });
+      const fetched = yield* readSandbox(
+        created.box.environmentId,
+        created.box.sandboxId,
+      );
+      if (fetched === null) {
+        return yield* Effect.fail(
+          new Error("Deployed Railway sandbox was not found"),
+        );
+      }
       expect(fetched.id).toEqual(created.box.sandboxId);
       expect(fetched.environmentId).toEqual(created.box.environmentId);
       expect(fetched.status).toEqual("RUNNING");
@@ -143,5 +201,174 @@ test.provider(
       );
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  {
+    tags: [
+      "provider:railway",
+      "provider:railway:project",
+      "provider:railway:projectenvironment",
+      "provider:railway:sandbox",
+      "live",
+    ],
+    timeout: 120_000,
+  },
+);
+
+test.provider(
+  "publishes a domain with custom resources and replaces removed options",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+      const deploy = (configured: boolean) =>
+        stack.deploy(
+          Effect.gen(function* () {
+            const { environment } = yield* suitePartition;
+            const box = yield* Railway.Sandbox("Preview", {
+              environment,
+              idleTimeoutMinutes: 5,
+              ...(configured
+                ? {
+                    networkIsolation: "PRIVATE" as const,
+                    publicDomains: [{ port: 8080 }],
+                    resources: { cpu: 0.5, memoryGB: 1 },
+                    variables: { ALCHEMY_SANDBOX_TEST: "configured" },
+                  }
+                : {}),
+            });
+            return { box };
+          }),
+        );
+      const { box } = yield* deploy(true);
+      expect(box.status).toBe("RUNNING");
+      expect(box.networkIsolation).toBe("PRIVATE");
+      expect(box.domains).toHaveLength(1);
+      expect(box.domains[0]?.port).toBe(8080);
+      const observed = yield* readSandboxDomains(
+        box.environmentId,
+        box.sandboxId,
+      );
+      expect(observed?.domains).toEqual(box.domains);
+      const started = yield* Railway.execSandbox({
+        ...box,
+        command: `python3 -c 'import os, pathlib, subprocess; root = pathlib.Path("/tmp/alchemy-http"); root.mkdir(exist_ok=True); (root / "index.html").write_text(os.environ["ALCHEMY_SANDBOX_TEST"]); subprocess.Popen(["python3", "-m", "http.server", "8080", "--bind", "0.0.0.0", "--directory", str(root)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)'`,
+        timeoutSec: 10,
+      });
+      expect(started.exitCode).toBe(0);
+      const client = yield* HttpClient.HttpClient;
+      const body = yield* client.get(`https://${box.domains[0]!.domain}`).pipe(
+        Effect.flatMap((response) =>
+          response.status === 200
+            ? response.text
+            : Effect.fail(new Error(`HTTP ${response.status}`)),
+        ),
+        Effect.retry({ schedule: Schedule.spaced("2 seconds"), times: 8 }),
+      );
+      expect(body).toBe("configured");
+      const unchanged = yield* deploy(true);
+      expect(unchanged.box.sandboxId).toBe(box.sandboxId);
+      const cleared = yield* deploy(false);
+      expect(cleared.box.sandboxId).not.toBe(box.sandboxId);
+      expect(cleared.box.domains).toEqual([]);
+      expect(cleared.box.networkIsolation).toBe("ISOLATED");
+      const env = yield* Railway.execSandbox({
+        ...cleared.box,
+        command: "printf '%s' \"${ALCHEMY_SANDBOX_TEST-unset}\"",
+        timeoutSec: 10,
+      });
+      expect(env.stdout).toBe("unset");
+      expect(yield* waitUntilGone(box.environmentId, box.sandboxId)).toBe(
+        "gone",
+      );
+      yield* stack.destroy();
+      expect(
+        yield* waitUntilGone(cleared.box.environmentId, cleared.box.sandboxId),
+      ).toBe("gone");
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:railway",
+      "provider:railway:project",
+      "provider:railway:projectenvironment",
+      "provider:railway:sandbox",
+      "live",
+    ],
+    timeout: 120_000,
+  },
+);
+
+test.provider(
+  "forks a running sandbox disk without inheriting variables",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+      const program = (fork: boolean) =>
+        Effect.gen(function* () {
+          const { environment } = yield* suitePartition;
+          const source = yield* Railway.Sandbox("Source", {
+            environment,
+            idleTimeoutMinutes: 5,
+            variables: { SOURCE_ONLY: "source" },
+          });
+          const copy = fork
+            ? yield* Railway.Sandbox("Fork", {
+                environment,
+                sourceSandboxId: source.sandboxId,
+                idleTimeoutMinutes: 5,
+                resources: { cpu: 1 },
+                variables: { FORK_ONLY: "fork" },
+              })
+            : undefined;
+          return { source, copy };
+        });
+      const { source } = yield* stack.deploy(program(false));
+      expect(
+        (yield* Railway.execSandbox({
+          ...source,
+          command: "printf disk-content > /tmp/alchemy-fork",
+          timeoutSec: 10,
+        })).exitCode,
+      ).toBe(0);
+      const { copy } = yield* stack.deploy(program(true));
+      expect(copy).toBeDefined();
+      expect(copy!.sandboxId).not.toBe(source.sandboxId);
+      const read = yield* Railway.execSandbox({
+        ...copy!,
+        command:
+          'cat /tmp/alchemy-fork; printf \'\\n%s:%s\' "${SOURCE_ONLY-unset}" "$FORK_ONLY"',
+        timeoutSec: 10,
+      });
+      expect(read.exitCode).toBe(0);
+      expect(read.stdout).toContain("disk-content");
+      expect(read.stdout).toContain("unset:fork");
+      expect(
+        (yield* Railway.execSandbox({
+          ...copy!,
+          command: "printf fork-content > /tmp/alchemy-fork",
+          timeoutSec: 10,
+        })).exitCode,
+      ).toBe(0);
+      expect(
+        (yield* Railway.execSandbox({
+          ...source,
+          command: "cat /tmp/alchemy-fork",
+          timeoutSec: 10,
+        })).stdout,
+      ).toBe("disk-content");
+      yield* stack.destroy();
+      expect(yield* waitUntilGone(source.environmentId, source.sandboxId)).toBe(
+        "gone",
+      );
+      expect(yield* waitUntilGone(copy!.environmentId, copy!.sandboxId)).toBe(
+        "gone",
+      );
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:railway",
+      "provider:railway:project",
+      "provider:railway:projectenvironment",
+      "provider:railway:sandbox",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

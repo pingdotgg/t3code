@@ -3,7 +3,8 @@ import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
-import { ForgejoCli, type ForgejoApiInput } from "../sourceControl/ForgejoCli.ts";
+import * as ForgejoCli from "../sourceControl/ForgejoCli.ts";
+import { parseDiffFileRevisions } from "./bitbucketDiffRevisions.ts";
 import {
   PullRequestProviderError,
   type ProviderChangeRequestDetail,
@@ -34,6 +35,7 @@ import {
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
+  viewedFiles: "environment",
   comment: true,
   actions: ["merge", "close", "reopen", "update-branch"],
   mergeMethods: ["merge", "squash", "rebase"],
@@ -62,7 +64,7 @@ const reviewCommentId = (review: typeof ForgejoReview.Type) =>
   /#issuecomment-([1-9]\d*)$/.exec(review.html_url ?? "")?.[1];
 
 export const make = Effect.gen(function* () {
-  const cli = yield* ForgejoCli;
+  const cli = yield* ForgejoCli.ForgejoCli;
   const failure = (operation: string, detail: string, cause?: unknown) =>
     new PullRequestProviderError({
       provider: "forgejo",
@@ -71,7 +73,7 @@ export const make = Effect.gen(function* () {
       detail,
       ...(cause === undefined ? {} : { cause }),
     });
-  const request = (input: ForgejoApiInput) =>
+  const request = (input: ForgejoCli.ForgejoApiInput) =>
     cli.api(input).pipe(
       Effect.mapError(
         (error) =>
@@ -87,12 +89,14 @@ export const make = Effect.gen(function* () {
                   ? "unauthenticated"
                   : error.reason === "rate-limit"
                     ? "rate-limited"
-                    : "failed",
+                    : error.reason === "not-found"
+                      ? "not-found"
+                      : "failed",
           }),
       ),
     );
   const read = Effect.fn("ForgejoPullRequestProvider.read")(function* <A>(
-    input: ForgejoApiInput,
+    input: ForgejoCli.ForgejoApiInput,
     schema: Schema.Codec<A, unknown, never, never>,
   ) {
     const result = yield* request(input);
@@ -103,10 +107,12 @@ export const make = Effect.gen(function* () {
       ? decoded.success
       : yield* failure(input.path, "Forgejo returned an invalid response.", decoded.failure);
   });
-  const readArray = <A>(input: ForgejoApiInput, schema: Schema.Codec<A, unknown, never, never>) =>
-    read(input, Schema.NullOr(Schema.Array(schema))).pipe(Effect.map((rows) => rows ?? []));
+  const readArray = <A>(
+    input: ForgejoCli.ForgejoApiInput,
+    schema: Schema.Codec<A, unknown, never, never>,
+  ) => read(input, Schema.NullOr(Schema.Array(schema))).pipe(Effect.map((rows) => rows ?? []));
   const readPage = Effect.fn("ForgejoPullRequestProvider.readPage")(function* <A>(
-    input: ForgejoApiInput,
+    input: ForgejoCli.ForgejoApiInput,
     schema: Schema.Codec<A, unknown, never, never>,
     index: number,
   ) {
@@ -128,7 +134,7 @@ export const make = Effect.gen(function* () {
   });
   // Use a stable, small page size that also works with Forgejo's default maximum of 50.
   const page = Effect.fn("ForgejoPullRequestProvider.page")(function* <A>(
-    input: ForgejoApiInput,
+    input: ForgejoCli.ForgejoApiInput,
     schema: Schema.Codec<A, unknown, never, never>,
     limit = 500,
   ) {
@@ -140,7 +146,7 @@ export const make = Effect.gen(function* () {
     }
     return { items, truncated: true };
   });
-  const write = (input: ForgejoApiInput) => request(input).pipe(Effect.asVoid);
+  const write = (input: ForgejoCli.ForgejoApiInput) => request(input).pipe(Effect.asVoid);
   const getPull = (input: ProviderRepositoryRef & { readonly number: number }) =>
     read(
       {
@@ -233,6 +239,19 @@ export const make = Effect.gen(function* () {
       },
     ),
     getChangeRequestSummary: (input) => getPull(input).pipe(Effect.map(forgejoChangeRequest)),
+    getChangeRequestChecks: Effect.fn("ForgejoPullRequestProvider.getChangeRequestChecks")(
+      function* (input) {
+        const pr = yield* getPull(input);
+        const statuses = yield* page(
+          {
+            ...input,
+            path: `${repoPath(input)}/statuses/${encodeURIComponent(pr.head.sha)}?sort=recentupdate`,
+          },
+          ForgejoStatus,
+        );
+        return { state: forgejoChangeRequest(pr).state, checks: forgejoChecks(statuses.items) };
+      },
+    ),
     getChangeRequest: Effect.fn("ForgejoPullRequestProvider.getChangeRequest")(function* (input) {
       const [pr, repo, viewer] = yield* Effect.all(
         [getPull(input), getRepo(input), getViewer(input)],
@@ -347,6 +366,17 @@ export const make = Effect.gen(function* () {
         };
       },
     ),
+    getFileRevisions: Effect.fn("ForgejoPullRequestProvider.getFileRevisions")(function* (input) {
+      const result = yield* request({ ...input, path: `${pullPath(input)}.diff` });
+      if (result.stdoutTruncated) {
+        return yield* failure("getFileRevisions", "Forgejo diff exceeded the output limit.");
+      }
+      const revisions = new Map(parseDiffFileRevisions(result.stdout));
+      for (const path of input.paths) {
+        if (!revisions.has(path)) revisions.set(path, "");
+      }
+      return { revisions, complete: true };
+    }),
     getDiff: (input) =>
       request({
         ...input,

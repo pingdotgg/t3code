@@ -64,6 +64,16 @@ export function BrowserSurfaceSlot(props: {
     update();
     const observer = new ResizeObserver(update);
     observer.observe(element);
+    // Inline panels animate their outer width while keeping the content at
+    // full width. The slot moves without resizing, so measure on shell resizes too.
+    const panel = element.closest('[data-preview-panel-mode="inline"]');
+    if (panel) observer.observe(panel);
+    // A sidebar opening or closing shifts the whole column, so a slot that keeps
+    // its size and its offset inside the column (the mini player on the left)
+    // still moves on screen. The gap element carries the sidebar's width.
+    for (const gap of document.querySelectorAll('[data-slot="sidebar-gap"]')) {
+      observer.observe(gap);
+    }
     window.addEventListener("resize", update);
     window.addEventListener("scroll", update, true);
     return () => {

@@ -71,7 +71,15 @@ test.provider(
         expect(["NotFound", "Forbidden"]).toContain(result.failure._tag);
       }
     }).pipe(logLevel),
-  { timeout: 90_000 },
+  {
+    tags: [
+      "provider:fly",
+      "provider:fly:machine",
+      "provider:fly:secretkey",
+      "live",
+    ],
+    timeout: 90_000,
+  },
 );
 
 test.provider(
@@ -136,7 +144,16 @@ test.provider(
       const appGone = yield* waitAppGone(created.app.appName);
       expect(appGone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:fly",
+      "provider:fly:app",
+      "provider:fly:machine",
+      "provider:fly:secretkey",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -171,7 +188,16 @@ test.provider(
       const gone = yield* waitUntilGone(created.key.appName, created.key.name);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:fly",
+      "provider:fly:app",
+      "provider:fly:machine",
+      "provider:fly:secretkey",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -231,7 +257,16 @@ test.provider(
       );
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:fly",
+      "provider:fly:app",
+      "provider:fly:machine",
+      "provider:fly:secretkey",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -269,5 +304,14 @@ test.provider(
       );
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:fly",
+      "provider:fly:app",
+      "provider:fly:machine",
+      "provider:fly:secretkey",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

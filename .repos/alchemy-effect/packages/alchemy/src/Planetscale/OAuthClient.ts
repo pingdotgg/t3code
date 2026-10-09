@@ -1,26 +1,11 @@
-import * as Data from "effect/Data";
-import * as Effect from "effect/Effect";
-import crypto from "node:crypto";
-import http from "node:http";
-import { AUTH_ERROR_URL, AUTH_SUCCESS_URL } from "../Auth/AuthProvider.ts";
+import { makeOAuthClient } from "../Auth/OAuthFlow.ts";
+import * as Redacted from "effect/Redacted";
 
-export class OAuthError extends Data.TaggedError("OAuthError")<{
-  error: string;
-  errorDescription: string;
-}> {}
-
-export interface OAuthCredentials {
-  type: "oauth";
-  access: string;
-  refresh: string;
-  expires: number;
-  scopes: string[];
-}
-
-export interface Authorization {
-  url: string;
-  state: string;
-}
+export {
+  OAuthCredentials,
+  OAuthError,
+  type Authorization,
+} from "../Auth/OAuthFlow.ts";
 
 /**
  * Registered PlanetScale OAuth application credentials.
@@ -39,12 +24,13 @@ export interface Authorization {
  *
  * Registered at https://app.planetscale.com with redirect URI
  * {@link OAUTH_REDIRECT_URI}. Scopes are configured on the application
- * itself, not requested per-authorization. Rotate by registering a new
- * secret and cutting a release.
+ * itself, not requested per-authorization (so `authorize()` is called with
+ * no scopes). Rotate by registering a new secret and cutting a release.
  */
 export const OAUTH_CLIENT_ID = "pscale_app_aa12e3938baebb788aac443f66e422da";
-export const OAUTH_CLIENT_SECRET =
-  "pscale_app_secret_yyZ3Q8oe99GP9_yA5wrA5er6RuN6Lz9dC66Bj1OJzpg";
+export const OAUTH_CLIENT_SECRET = Redacted.make(
+  "pscale_app_secret_yyZ3Q8oe99GP9_yA5wrA5er6RuN6Lz9dC66Bj1OJzpg",
+);
 
 export const OAUTH_REDIRECT_URI = "https://alchemy.run/auth/callback";
 export const OAUTH_LOCAL_CALLBACK_URI = "http://localhost:9976/auth/callback";
@@ -59,305 +45,25 @@ export const OAUTH_ENDPOINTS = {
   token: "https://auth.planetscale.com/oauth/token",
 };
 
-function generateState(length = 32): string {
-  return Buffer.from(crypto.randomBytes(length)).toString("base64url");
-}
+const client = makeOAuthClient({
+  clientId: OAUTH_CLIENT_ID,
+  endpoints: OAUTH_ENDPOINTS,
+  redirectUri: OAUTH_REDIRECT_URI,
+  localCallbackUri: OAUTH_LOCAL_CALLBACK_URI,
+  auth: { kind: "clientSecret", clientSecret: OAUTH_CLIENT_SECRET },
+  // PlanetScale's docs show the token endpoint with all parameters in the
+  // query string (https://planetscale.com/docs/api/reference/oauth). Their
+  // .well-known discovery doc advertises client_secret_basic /
+  // client_secret_post instead, but both behave identically to the
+  // query-string form in practice, so we follow the public docs literally.
+  tokenTransport: "query",
+});
 
-function extractCredentials(json: {
-  access_token: string;
-  refresh_token: string;
-  expires_in: number;
-  scope: string;
-}): OAuthCredentials {
-  return {
-    type: "oauth",
-    access: json.access_token,
-    refresh: json.refresh_token,
-    expires: Date.now() + json.expires_in * 1000,
-    scopes: json.scope ? json.scope.split(" ") : [],
-  };
-}
-
-const tokenRequest = (
-  params: Record<string, string>,
-): Effect.Effect<OAuthCredentials, OAuthError> =>
-  Effect.gen(function* () {
-    // PlanetScale's docs show the token endpoint with all parameters in
-    // the query string (https://planetscale.com/docs/api/reference/oauth).
-    // Their .well-known discovery doc advertises client_secret_basic /
-    // client_secret_post instead, but both behave identically to the
-    // query-string form in practice, so we follow the public docs
-    // literally.
-    const url = new URL(OAUTH_ENDPOINTS.token);
-    for (const [k, v] of Object.entries(params)) {
-      url.searchParams.set(k, v);
-    }
-
-    const res = yield* Effect.tryPromise({
-      try: () =>
-        fetch(url.toString(), {
-          method: "POST",
-          headers: { Accept: "application/json" },
-        }),
-      catch: (err) =>
-        new OAuthError({
-          error: "network_error",
-          errorDescription: `Token request failed: ${err}`,
-        }),
-    });
-
-    if (!res.ok) {
-      const json = yield* Effect.tryPromise({
-        try: () =>
-          res.json() as Promise<{ error: string; error_description: string }>,
-        catch: () =>
-          new OAuthError({
-            error: "parse_error",
-            errorDescription: `Token endpoint returned ${res.status}`,
-          }),
-      });
-      return yield* new OAuthError({
-        error: json.error,
-        errorDescription: json.error_description,
-      });
-    }
-
-    const json = yield* Effect.tryPromise({
-      try: () =>
-        res.json() as Promise<{
-          access_token: string;
-          refresh_token: string;
-          expires_in: number;
-          scope: string;
-        }>,
-      catch: () =>
-        new OAuthError({
-          error: "parse_error",
-          errorDescription: "Failed to parse token response",
-        }),
-    });
-    return extractCredentials(json);
-  });
-
-/**
- * Generate a PlanetScale authorization URL.
- *
- * No `scope` parameter is sent: PlanetScale scopes are configured on the
- * OAuth application itself, not requested per-authorization, so the
- * consent screen shows whatever the app is registered with.
- */
-export function authorize(): Authorization {
-  const state = generateState();
-  const url = new URL(OAUTH_ENDPOINTS.authorize);
-  url.searchParams.set("client_id", OAUTH_CLIENT_ID);
-  url.searchParams.set("redirect_uri", OAUTH_REDIRECT_URI);
-  url.searchParams.set("response_type", "code");
-  url.searchParams.set("state", state);
-  return { url: url.toString(), state };
-}
-
-/**
- * Exchange an authorization code for OAuth credentials.
- */
-export const exchange = (
-  code: string,
-): Effect.Effect<OAuthCredentials, OAuthError> =>
-  tokenRequest({
-    grant_type: "authorization_code",
-    code,
-    client_id: OAUTH_CLIENT_ID,
-    client_secret: OAUTH_CLIENT_SECRET,
-    redirect_uri: OAUTH_REDIRECT_URI,
-  });
-
-/**
- * Refresh expired OAuth credentials.
- */
-export const refresh = (
-  credentials: OAuthCredentials,
-): Effect.Effect<OAuthCredentials, OAuthError> =>
-  tokenRequest({
-    grant_type: "refresh_token",
-    refresh_token: credentials.refresh,
-    client_id: OAUTH_CLIENT_ID,
-    client_secret: OAUTH_CLIENT_SECRET,
-  });
-
-/**
- * Exchange a code copied from the hosted relay page, or extract the code from
- * either the hosted or loopback callback URL.
- */
-export const exchangeCallbackInput = (
-  input: string,
-  authorization: Authorization,
-): Effect.Effect<OAuthCredentials, OAuthError> =>
-  Effect.gen(function* () {
-    const value = input.trim();
-    let code = value;
-    let state: string | null = null;
-
-    try {
-      const url = new URL(value);
-      code = url.searchParams.get("code") ?? "";
-      state = url.searchParams.get("state");
-    } catch {
-      const separator = value.lastIndexOf("#");
-      if (separator >= 0) {
-        code = value.slice(0, separator);
-        state = value.slice(separator + 1);
-      }
-    }
-
-    if (!code) {
-      return yield* new OAuthError({
-        error: "invalid_request",
-        errorDescription: "The authorization code is missing.",
-      });
-    }
-    if (state !== null && state !== authorization.state) {
-      return yield* new OAuthError({
-        error: "invalid_request",
-        errorDescription: "The authorization state does not match.",
-      });
-    }
-    return yield* exchange(code);
-  });
-
-/**
- * Start a local HTTP server to listen for the OAuth callback, exchange
- * the authorization code, and return the credentials.
- *
- * Times out after 5 minutes.
- */
-export const callback = (
-  authorization: Authorization,
-): Effect.Effect<OAuthCredentials, OAuthError> =>
-  Effect.tryPromise({
-    try: (signal) => callbackPromise(authorization, signal),
-    catch: (err) => {
-      if (err instanceof OAuthError) return err;
-      return new OAuthError({
-        error: "callback_error",
-        errorDescription: `OAuth callback failed: ${err}`,
-      });
-    },
-  });
-
-function callbackPromise(
-  authorization: Authorization,
-  signal: AbortSignal,
-): Promise<OAuthCredentials> {
-  const { pathname, port } = new URL(OAUTH_LOCAL_CALLBACK_URI);
-
-  return new Promise<OAuthCredentials>((resolve, reject) => {
-    const server = http.createServer(async (req, res) => {
-      const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
-
-      if (url.pathname === "/auth/ping") {
-        res.writeHead(req.method === "OPTIONS" ? 204 : 200, {
-          "Access-Control-Allow-Origin": new URL(OAUTH_REDIRECT_URI).origin,
-          "Access-Control-Allow-Methods": "GET, OPTIONS",
-          "Access-Control-Allow-Private-Network": "true",
-          "Cache-Control": "no-store",
-        });
-        res.end();
-        return;
-      }
-
-      if (url.pathname !== pathname) {
-        res.statusCode = 404;
-        res.end("Not Found");
-        return;
-      }
-
-      const error = url.searchParams.get("error");
-      const errorDescription = url.searchParams.get("error_description");
-      if (error) {
-        res.writeHead(302, { Location: AUTH_ERROR_URL });
-        res.end();
-        cleanup();
-        reject(
-          new OAuthError({
-            error,
-            errorDescription: errorDescription ?? "An unknown error occurred.",
-          }),
-        );
-        return;
-      }
-
-      const code = url.searchParams.get("code");
-      const state = url.searchParams.get("state");
-      if (!code || !state) {
-        res.writeHead(302, { Location: AUTH_ERROR_URL });
-        res.end();
-        cleanup();
-        reject(
-          new OAuthError({
-            error: "invalid_request",
-            errorDescription: "Missing code or state",
-          }),
-        );
-        return;
-      }
-
-      if (state !== authorization.state) {
-        res.writeHead(302, { Location: AUTH_ERROR_URL });
-        res.end();
-        cleanup();
-        reject(
-          new OAuthError({
-            error: "invalid_request",
-            errorDescription: "Invalid state",
-          }),
-        );
-        return;
-      }
-
-      try {
-        const credentials = await Effect.runPromise(exchange(code));
-        res.writeHead(302, { Location: AUTH_SUCCESS_URL });
-        res.end();
-        cleanup();
-        resolve(credentials);
-      } catch (err) {
-        res.writeHead(302, { Location: AUTH_ERROR_URL });
-        res.end();
-        cleanup();
-        reject(err);
-      }
-    });
-
-    const timeout = setTimeout(
-      () => {
-        cleanup();
-        reject(
-          new OAuthError({
-            error: "timeout",
-            errorDescription: "The authorization process timed out.",
-          }),
-        );
-      },
-      5 * 60 * 1000,
-    );
-
-    function cleanup() {
-      clearTimeout(timeout);
-      signal.removeEventListener("abort", cleanup);
-      server.close();
-    }
-
-    signal.addEventListener("abort", cleanup, { once: true });
-
-    server.on("error", (err) => {
-      cleanup();
-      reject(
-        new OAuthError({
-          error: "server_error",
-          errorDescription: `Failed to start callback server: ${err.message}`,
-        }),
-      );
-    });
-
-    server.listen(Number(port));
-  });
-}
+export const {
+  authorize,
+  callback,
+  exchange,
+  exchangeCallbackInput,
+  refresh,
+  usesCurrentClient,
+} = client;

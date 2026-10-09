@@ -13,10 +13,10 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { TestClock } from "effect/testing";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { productionManagementApiRoutes } from "./fixtures/ManagementApiContract.ts";
 
 interface Captured {
@@ -184,7 +184,7 @@ const layerForHttp = (
         Layer.succeed(PrismaEnvironment, {
           type: "serviceToken" as const,
           serviceToken: Redacted.make("test-token"),
-          source: { type: "env" as const },
+          source: { type: "stored" as const },
           baseUrl,
         }),
       ),
@@ -291,7 +291,7 @@ const routeCoverageHarness = () => {
         Layer.succeed(PrismaEnvironment, {
           type: "serviceToken" as const,
           serviceToken: Redacted.make("test-token"),
-          source: { type: "env" as const },
+          source: { type: "stored" as const },
           baseUrl: "https://api.prisma.test",
         }),
       ),
@@ -300,7 +300,7 @@ const routeCoverageHarness = () => {
   return { layer, captured };
 };
 
-describe("PrismaClient", () => {
+describe("PrismaClient", { tags: ["unit", "provider:prisma", "local"] }, () => {
   it("extracts canonical endpoint secrets and parses direct credentials", () => {
     const secrets = extractConnectionSecrets({
       id: "connection-1",
@@ -589,7 +589,7 @@ describe("PrismaClient", () => {
           Layer.succeed(PrismaEnvironment, {
             type: "serviceToken" as const,
             serviceToken: Redacted.make("test-token"),
-            source: { type: "env" as const },
+            source: { type: "stored" as const },
             baseUrl: "https://api.prisma.test",
           }),
         ),
@@ -923,7 +923,7 @@ describe("PrismaClient", () => {
           Layer.succeed(PrismaEnvironment, {
             type: "serviceToken" as const,
             serviceToken: Redacted.make("test-token"),
-            source: { type: "env" as const },
+            source: { type: "stored" as const },
             baseUrl: "https://api.prisma.test",
           }),
         ),
@@ -998,7 +998,7 @@ describe("PrismaClient", () => {
           Layer.succeed(PrismaEnvironment, {
             type: "serviceToken" as const,
             serviceToken: Redacted.make("test-token"),
-            source: { type: "env" as const },
+            source: { type: "stored" as const },
             baseUrl: "https://api.prisma.test",
           }),
         ),
@@ -1065,7 +1065,7 @@ describe("PrismaClient", () => {
           Layer.succeed(PrismaEnvironment, {
             type: "serviceToken" as const,
             serviceToken: Redacted.make("test-token"),
-            source: { type: "env" as const },
+            source: { type: "stored" as const },
             baseUrl: "https://api.prisma.test",
           }),
         ),
@@ -1125,7 +1125,7 @@ describe("PrismaClient", () => {
             Layer.succeed(PrismaEnvironment, {
               type: "serviceToken" as const,
               serviceToken: Redacted.make("test-token"),
-              source: { type: "env" as const },
+              source: { type: "stored" as const },
               baseUrl: "https://api.prisma.test",
             }),
           ),
@@ -1183,7 +1183,7 @@ describe("PrismaClient", () => {
           Layer.succeed(PrismaEnvironment, {
             type: "serviceToken" as const,
             serviceToken: Redacted.make("test-token"),
-            source: { type: "env" as const },
+            source: { type: "stored" as const },
             baseUrl: "https://api.prisma.test",
           }),
         ),

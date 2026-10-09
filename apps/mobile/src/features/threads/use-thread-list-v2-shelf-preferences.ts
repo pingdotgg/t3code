@@ -1,5 +1,5 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useCallback, useRef } from "react";
 
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
@@ -17,10 +17,16 @@ export function useThreadListV2ShelfPreferences() {
     loaded && preferencesResult.value.threadListSnoozedShelfExpanded === true;
   const settledShelfExpanded =
     loaded && preferencesResult.value.threadListSettledShelfExpanded === true;
+  // Working section beta: off until the preference loads and is enabled.
+  const workingShelfEnabled = loaded && preferencesResult.value.workingShelfEnabled === true;
+  const workingShelfExpanded =
+    loaded && preferencesResult.value.threadListWorkingShelfExpanded === true;
   const snoozedShelfExpandedRef = useRef(snoozedShelfExpanded);
   const settledShelfExpandedRef = useRef(settledShelfExpanded);
+  const workingShelfExpandedRef = useRef(workingShelfExpanded);
   snoozedShelfExpandedRef.current = snoozedShelfExpanded;
   settledShelfExpandedRef.current = settledShelfExpanded;
+  workingShelfExpandedRef.current = workingShelfExpanded;
 
   const toggleSnoozedShelf = useCallback(() => {
     if (!loaded) return;
@@ -34,12 +40,21 @@ export function useThreadListV2ShelfPreferences() {
     settledShelfExpandedRef.current = expanded;
     savePreferences({ threadListSettledShelfExpanded: expanded });
   }, [loaded, savePreferences]);
+  const toggleWorkingShelf = useCallback(() => {
+    if (!loaded) return;
+    const expanded = !workingShelfExpandedRef.current;
+    workingShelfExpandedRef.current = expanded;
+    savePreferences({ threadListWorkingShelfExpanded: expanded });
+  }, [loaded, savePreferences]);
 
   return {
     loaded,
     settledShelfExpanded,
     snoozedShelfExpanded,
+    workingShelfEnabled,
+    workingShelfExpanded,
     toggleSettledShelf,
     toggleSnoozedShelf,
+    toggleWorkingShelf,
   } as const;
 }

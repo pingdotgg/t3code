@@ -1,5 +1,7 @@
-import { useEffect, useState, type ComponentType, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { View } from "react-native";
+
+import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
 
 export type ThreadInspectorMode = "route" | "git" | "files";
 
@@ -8,6 +10,7 @@ const INSPECTOR_PREWARM_DELAY_MS = 350;
 function InspectorContentPane(props: {
   readonly children: ReactNode;
   readonly mounted: boolean;
+  readonly resetKeys: readonly [string | null, string | null];
   readonly visible: boolean;
 }) {
   if (!props.mounted) {
@@ -27,16 +30,24 @@ function InspectorContentPane(props: {
         zIndex: props.visible ? 1 : 0,
       }}
     >
-      {props.children}
+      <RenderErrorBoundary
+        resetKeys={props.resetKeys}
+        renderFallback={(fallback) => (
+          <RenderFailureView {...fallback} title="The inspector couldn't be displayed" />
+        )}
+      >
+        {props.children}
+      </RenderErrorBoundary>
     </View>
   );
 }
 
 export function ThreadInspectorContentStack(props: {
-  readonly Files: ComponentType;
-  readonly Git: ComponentType;
+  readonly renderFiles: () => ReactNode;
+  readonly renderGit?: () => ReactNode;
   readonly mode: ThreadInspectorMode;
-  readonly Route?: ComponentType;
+  readonly resetKeys: readonly [string | null, string | null];
+  readonly renderRoute?: () => ReactNode;
 }) {
   const [mountedModes, setMountedModes] = useState<ReadonlySet<ThreadInspectorMode>>(
     () => new Set([props.mode]),
@@ -70,32 +81,38 @@ export function ThreadInspectorContentStack(props: {
     return () => clearTimeout(timeout);
   }, [props.mode]);
 
-  const Files = props.Files;
-  const Git = props.Git;
-  const Route = props.Route;
-
   return (
     <View className="flex-1">
       <InspectorContentPane
         mounted={mountedModes.has("files") || props.mode === "files"}
+        resetKeys={props.resetKeys}
         visible={props.mode === "files"}
       >
-        <Files />
+        <InspectorRenderer render={props.renderFiles} />
       </InspectorContentPane>
-      <InspectorContentPane
-        mounted={mountedModes.has("git") || props.mode === "git"}
-        visible={props.mode === "git"}
-      >
-        <Git />
-      </InspectorContentPane>
-      {Route ? (
+      {props.renderGit ? (
+        <InspectorContentPane
+          mounted={mountedModes.has("git") || props.mode === "git"}
+          resetKeys={props.resetKeys}
+          visible={props.mode === "git"}
+        >
+          <InspectorRenderer render={props.renderGit} />
+        </InspectorContentPane>
+      ) : null}
+      {props.renderRoute ? (
         <InspectorContentPane
           mounted={mountedModes.has("route") || props.mode === "route"}
+          resetKeys={props.resetKeys}
           visible={props.mode === "route"}
         >
-          <Route />
+          <InspectorRenderer render={props.renderRoute} />
         </InspectorContentPane>
       ) : null}
     </View>
   );
+}
+
+// Render callbacks carry changing route data; they are not component types.
+function InspectorRenderer(props: { readonly render: () => ReactNode }) {
+  return <>{props.render()}</>;
 }

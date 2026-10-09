@@ -1,15 +1,15 @@
 "@effect/platform/HttpLayerRouter#addHttpApi":
   replacement: "HttpApiBuilder.layer"
-  note: "HTTP API registration moved to effect/unstable/httpapi."
+  note: "HTTP API registration moved to effect/http-api."
 "@effect/platform/HttpLayerRouter#cors":
   replacement: "HttpRouter.cors"
   note: "HttpLayerRouter was consolidated into v4 HttpRouter."
 "@effect/platform/HttpLayerRouter#FindMyWay.make":
   replacement: "FindMyWay.make"
-  note: "Import FindMyWay from effect/unstable/http."
+  note: "Import FindMyWay from effect/http."
 "@effect/platform/HttpLayerRouter#FindMyWay.PathInput":
   replacement: "FindMyWay.PathInput"
-  note: "Import FindMyWay from effect/unstable/http."
+  note: "Import FindMyWay from effect/http."
 "@effect/platform/HttpLayerRouter#make":
   replacement: "HttpRouter.make"
   note: "The layer-oriented router became the sole v4 HttpRouter implementation."

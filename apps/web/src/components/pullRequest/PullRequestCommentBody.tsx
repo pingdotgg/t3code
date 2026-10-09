@@ -44,8 +44,8 @@ export function PullRequestCommentBody({
       {overflowing ? (
         <Button
           size="xs"
-          variant="ghost"
-          className="mt-2 text-muted-foreground"
+          variant="ghost-muted"
+          className="mt-2"
           aria-expanded={expanded}
           aria-controls={id}
           onClick={() => {

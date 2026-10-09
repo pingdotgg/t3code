@@ -480,6 +480,7 @@ export function findAccessibleWindow<
     readonly clientBounds?: WindowBounds | undefined;
   },
   matchMode: "screen-bounds" | "wayland" = "screen-bounds",
+  options: { readonly allowUntitledUniqueBounds?: boolean } = {},
 ): T | undefined {
   const normalizeTitle = (value: string) => {
     const title = value.trim();
@@ -489,7 +490,6 @@ export function findAccessibleWindow<
   const titles = new Set(
     [captured.title, captured.sourceTitle ?? ""].map(normalizeTitle).filter(Boolean),
   );
-  if (titles.size === 0) return undefined;
   // Wayland accessibility providers can expose window size without a screen position.
   const boundsKeys =
     matchMode === "wayland"
@@ -499,19 +499,31 @@ export function findAccessibleWindow<
     matchMode === "wayland" && captured.clientBounds
       ? [captured.bounds, captured.clientBounds]
       : [captured.bounds];
-  const matches = windows.filter((window) => {
+  const matchesBounds = (window: T) => {
     const bounds = window.bounds;
     return (
-      titles.has(normalizeTitle(window.name ?? "")) &&
       bounds !== null &&
       candidateBounds.some((candidate) =>
         boundsKeys.every((key) => Math.abs(bounds[key] - candidate[key]) <= 2),
       )
     );
-  });
-  if (matches.length === 1) return matches[0];
-  const activeMatches = matches.filter((window) => safeProperty(() => window.active) === true);
-  return activeMatches.length === 1 ? activeMatches[0] : undefined;
+  };
+  if (titles.size > 0) {
+    const matches = windows.filter(
+      (window) => titles.has(normalizeTitle(window.name ?? "")) && matchesBounds(window),
+    );
+    if (matches.length === 1) return matches[0];
+    const activeMatches = matches.filter((window) => safeProperty(() => window.active) === true);
+    if (activeMatches.length === 1) return activeMatches[0];
+    if (matches.length > 1) return undefined;
+  }
+  // GTK4/libadwaita often exposes the frame as an unnamed group. A PID-scoped
+  // lookup can accept the one window whose bounds match; size-only guesses cannot.
+  if (!options.allowUntitledUniqueBounds) return undefined;
+  const boundsMatches = windows.filter(
+    (window) => normalizeTitle(window.name ?? "") === "" && matchesBounds(window),
+  );
+  return boundsMatches.length === 1 ? boundsMatches[0] : undefined;
 }
 
 const ELECTRON_KEY_NAMES: Readonly<Record<string, string>> = {

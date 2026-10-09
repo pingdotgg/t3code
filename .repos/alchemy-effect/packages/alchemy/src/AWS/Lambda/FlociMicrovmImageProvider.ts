@@ -47,7 +47,7 @@ import { isInlineDockerfile } from "../../Docker/Dockerfile.ts";
 import { hashDirectory } from "../../Command/Memo.ts";
 import { sha256 } from "../../Util/sha256.ts";
 import {
-  flociSidecarEntry,
+  flociProvidersUrl,
   makeDevWatchProvider,
 } from "../Local/DevWatchProvider.ts";
 import { imageSourceTrigger } from "../Local/ImageSourceTrigger.ts";
@@ -168,7 +168,7 @@ export const FlociMicrovmImageProvider = () =>
     MicrovmImage,
     MicrovmImageProps,
     MicrovmImage["Attributes"]
-  >(MicrovmImage, flociSidecarEntry(), {
+  >(MicrovmImage, flociProvidersUrl(), {
     liveProvider: () => MicrovmImageProvider(),
     services: DockerLive,
     // The restart surface of the watch loop: everything that changes WHAT

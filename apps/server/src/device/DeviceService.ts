@@ -38,7 +38,7 @@ import {
 import * as FileSystem from "effect/FileSystem";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as Path from "effect/Path";
-import { ensureAgentDevice } from "./DeviceToolchain.ts";
+import { ensureAgentDevice, ensureDeviceHub } from "./DeviceToolchain.ts";
 import * as ServerConfig from "../config.ts";
 import {
   agentDeviceConfigPath,
@@ -46,6 +46,7 @@ import {
   writeAgentDeviceConfig,
 } from "./AgentDeviceTarget.ts";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -56,7 +57,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as ServerSettings from "../serverSettings.ts";
 import { isLocalSshDeviceHost, remoteSshDeviceHosts } from "./localSshDeviceHost.ts";
@@ -126,6 +127,9 @@ export class DeviceService extends Context.Service<
     ) => Effect.Effect<DeviceServiceState, DeviceError>;
     /** Refreshes devices only after device support has been enabled. */
     readonly list: Effect.Effect<DeviceServiceState, DeviceError>;
+    readonly updateTool: (tool: "hub" | "agent") => Effect.Effect<DeviceServiceState, DeviceError>;
+    readonly inspect: Effect.Effect<DeviceServiceState>;
+    readonly retryHost: (hostId: DeviceHostId) => Effect.Effect<DeviceServiceState, DeviceError>;
     readonly open: (input: DeviceOpenInput) => Effect.Effect<DeviceSession, DeviceError>;
     readonly close: (input: DeviceCloseInput) => Effect.Effect<void, DeviceError>;
     readonly shutdown: (input: DeviceShutdownInput) => Effect.Effect<void, DeviceError>;
@@ -180,8 +184,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         reason: "Agent configuration is unavailable in this device service.",
       }),
     ),
+  installTool?: (tool: "hub" | "agent") => Effect.Effect<unknown, DeviceError>,
 ) {
   const settings = yield* ServerSettings.ServerSettingsService;
+  const crypto = yield* Crypto.Crypto;
   const lifecycleLock = yield* Semaphore.make(1);
   const readDeviceSettings = settings.getSettings.pipe(
     Effect.map((value) => ({
@@ -202,6 +208,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   let publishedHosts = new Map(hosts);
   const stateRef = yield* SynchronizedRef.make<ServiceState>({
     state: {
+      supportsHostRetry: true,
+      supportsToolUpdate: installTool !== undefined,
+      supportsToolInspection: true,
       hosts: initialHosts,
       hostStatus: initialSettings.enabled ? "idle" : "disabled",
       hostStatuses: {},
@@ -257,7 +266,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         });
       }
       const ready = yield* host
-        .ensureReady((status) => setHostStatus(host.id, { status }).pipe(Effect.asVoid))
+        .ensureReady((status, detail) =>
+          setHostStatus(host.id, { status, detail }).pipe(Effect.asVoid),
+        )
         .pipe(
           Effect.tapError((error) =>
             setHostStatus(host.id, { status: "failed", detail: error.message }),
@@ -269,7 +280,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                 reason:
                   error._tag === "NodeRuntimeUnavailableError"
                     ? nodeRuntimeUnavailableMessage("Local device support")
-                    : `Device host ${error.hostId} failed while ${error.step}.`,
+                    : error.step === "probe"
+                      ? "Could not connect to this host over SSH."
+                      : `Device support failed during ${error.step}.`,
                 cause: error,
               }),
           ),
@@ -308,7 +321,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       if (summary.kind === "local" && !summary.platforms.some((platform) => platform.available))
         return null;
       const ready = yield* host
-        .ensureAgentReady((phase) => setHostStatus(host.id, { status: phase }).pipe(Effect.asVoid))
+        .ensureAgentReady((phase, detail) =>
+          setHostStatus(host.id, { status: phase, detail }).pipe(Effect.asVoid),
+        )
         .pipe(
           Effect.tapError((error) =>
             setHostStatus(host.id, { status: "failed", detail: error.message }),
@@ -321,8 +336,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                   error._tag === "NodeRuntimeUnavailableError"
                     ? nodeRuntimeUnavailableMessage("Local device support")
                     : error._tag === "DeviceHostTimeoutError"
-                      ? `Device host ${error.hostId} did not start agent tools within ${error.timeoutMs} ms.`
-                      : `Device host ${error.hostId} failed while ${error.step}.`,
+                      ? `Agent tools did not start within ${error.timeoutMs} ms.`
+                      : error.step === "probe"
+                        ? "Could not connect to this host over SSH."
+                        : `Device support failed during ${error.step}.`,
                 cause: error,
               }),
           ),
@@ -444,13 +461,68 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           if (ready) yield* refresh(ready);
         }).pipe(
           Effect.catch((error) =>
-            setHostStatus(host.id, { status: "failed", detail: error.message }),
+            setHostStatus(host.id, {
+              status: "failed",
+              detail: error._tag === "DeviceHostUnavailableError" ? error.reason : error.message,
+            }),
           ),
         ),
       { concurrency: 4 },
     );
     return (yield* SynchronizedRef.get(stateRef)).state;
   }).pipe(Effect.withSpan("DeviceService.list"));
+
+  const inspect = Effect.gen(function* () {
+    yield* Effect.forEach(
+      hosts.values(),
+      (host) =>
+        Effect.gen(function* () {
+          const result = yield* (host.inspect ?? host.summary).pipe(Effect.result);
+          if (hosts.get(host.id) !== host) return;
+          if (result._tag === "Failure") {
+            yield* publish((state) => ({
+              ...state,
+              hosts: state.hosts.map((value) =>
+                value.id === host.id
+                  ? {
+                      ...value,
+                      toolInspectionError:
+                        "Cannot check versions. Reconnect the host and check again. Installed tools have not been changed.",
+                    }
+                  : value,
+              ),
+            }));
+            return;
+          }
+          yield* publish((state) => ({
+            ...state,
+            hosts: state.hosts.map((value) => (value.id === host.id ? result.success : value)),
+          }));
+        }),
+      { concurrency: 4 },
+    );
+    return (yield* SynchronizedRef.get(stateRef)).state;
+  });
+
+  const retryHost: DeviceService["Service"]["retryHost"] = Effect.fn("DeviceService.retryHost")(
+    function* (hostId) {
+      yield* resolveHost(hostId);
+      if (!(yield* readDeviceSettings).enabled) return (yield* SynchronizedRef.get(stateRef)).state;
+      yield* Effect.gen(function* () {
+        const ready =
+          (yield* agentReadinessIfSupported(hostId)) ?? (yield* readinessIfSupported(hostId));
+        if (ready) yield* refresh(ready);
+      }).pipe(
+        Effect.catch((error) =>
+          setHostStatus(hostId, {
+            status: "failed",
+            detail: error._tag === "DeviceHostUnavailableError" ? error.reason : error.message,
+          }),
+        ),
+      );
+      return (yield* SynchronizedRef.get(stateRef)).state;
+    },
+  );
 
   const configure: DeviceService["Service"]["configure"] = Effect.fn("DeviceService.configure")(
     function* (input) {
@@ -670,25 +742,44 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     platform: DevicePlatform,
   ) {
     const ready = yield* readiness(hostId);
-    yield* HttpClientRequest.post(`${ready.hub.origin}/api/devices/shutdown`).pipe(
-      HttpClientRequest.bodyJson({ platform, id: deviceId }),
-      Effect.mapError(
-        (cause) =>
-          new DeviceOperationError({ operation: "shutdown", reason: "invalid_payload", cause }),
-      ),
-      Effect.flatMap((request) => hubJson(request, HubActionResult, "shutdown")),
-      Effect.flatMap((result) =>
-        result.ok
-          ? Effect.void
-          : Effect.fail(
-              new DeviceOperationError({
-                operation: "shutdown",
-                reason: "hub_rejected",
-                cause: result,
-              }),
+    const postShutdown = (path: string, body: Record<string, string>) =>
+      HttpClientRequest.post(`${ready.hub.origin}${path}`).pipe(
+        HttpClientRequest.bodyJson(body),
+        Effect.mapError(
+          (cause) =>
+            new DeviceOperationError({ operation: "shutdown", reason: "invalid_payload", cause }),
+        ),
+        Effect.flatMap((request) => hubJson(request, HubActionResult, "shutdown")),
+        Effect.flatMap((result) =>
+          result.ok
+            ? Effect.void
+            : Effect.fail(
+                new DeviceOperationError({
+                  operation: "shutdown",
+                  reason: "hub_rejected",
+                  cause: result,
+                }),
+              ),
+        ),
+      );
+    // serve-sim's shutdown closes its in-process capture session before it runs
+    // `simctl shutdown`; the hub's generic shutdown can leave that session cached
+    // across a reboot. serve-sim runs simctl bare, though, so a simulator that is
+    // already off fails there. Accept that failure only when the hub confirms
+    // the simulator is off; a failure on a running one still surfaces.
+    yield* platform === "ios"
+      ? postShutdown(`${vendorPrefix("ios")}/grid/api/shutdown`, { udid: deviceId }).pipe(
+          Effect.catch((cause) =>
+            fetchDevices(ready).pipe(
+              Effect.flatMap(({ devices }) =>
+                devices.find((device) => device.id === deviceId)?.booted === false
+                  ? Effect.logInfo("iOS simulator was already shut down", { deviceId })
+                  : Effect.fail(cause),
+              ),
             ),
-      ),
-    );
+          ),
+        )
+      : postShutdown("/api/devices/shutdown", { platform, id: deviceId });
     yield* publish((state) => ({
       ...state,
       devices: state.devices.map((device) =>
@@ -813,6 +904,21 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   return {
     ...DeviceService.of({
       testHost,
+      updateTool: (tool) =>
+        lifecycleLock.withPermit(
+          Effect.gen(function* () {
+            if (!installTool)
+              return yield* new DeviceOperationError({
+                operation: "update device tool",
+                reason: "request_failed",
+                cause: new Error("Tool installation is unavailable in this device service."),
+              });
+            yield* installTool(tool);
+            return yield* inspect;
+          }),
+        ),
+      retryHost,
+      inspect,
       agentCli: Effect.fail(
         new DeviceHostUnavailableError({
           hostId: LOCAL_DEVICE_HOST_ID,
@@ -839,12 +945,12 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               return yield* configureAgent(input.hostId, ready);
             }),
           );
-          return [
-            "--config",
-            configPath,
-            "--session",
-            agentDeviceSession(input.threadId, input.hostId, input.deviceId),
-          ];
+          const session = yield* agentDeviceSession(
+            input.threadId,
+            input.hostId,
+            input.deviceId,
+          ).pipe(Effect.provideService(Crypto.Crypto, crypto));
+          return ["--config", configPath, "--session", session];
         }),
       state: SynchronizedRef.get(stateRef).pipe(Effect.map(({ state }) => state)),
       subscribe: PubSub.subscribe(statePubSub),
@@ -894,9 +1000,17 @@ export const make = Effect.gen(function* () {
   const hosts = new Map<DeviceHostId, DeviceHost.DeviceHost["Service"]>([
     [localHost.id, localHost],
   ]);
-  const configureAgent = (hostId: DeviceHostId, ready: DeviceHost.DeviceHostAgentReady) => {
-    const file = agentDeviceConfigPath(config.stateDir, hostId, path);
-    return writeAgentDeviceConfig(file, ready.agentDevice).pipe(
+  const crypto = yield* Crypto.Crypto;
+  const configPath = (hostId: DeviceHostId) =>
+    agentDeviceConfigPath(config.stateDir, hostId, path).pipe(
+      Effect.provideService(Crypto.Crypto, crypto),
+    );
+  const configureAgent = (hostId: DeviceHostId, ready: DeviceHost.DeviceHostAgentReady) =>
+    Effect.gen(function* () {
+      const file = yield* configPath(hostId);
+      yield* writeAgentDeviceConfig(file, ready.agentDevice);
+      return file;
+    }).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
       Effect.mapError(
@@ -907,9 +1021,7 @@ export const make = Effect.gen(function* () {
             cause,
           }),
       ),
-      Effect.as(file),
     );
-  };
   const probeContext =
     yield* Effect.context<Effect.Services<ReturnType<typeof SshDeviceHost.probe>>>();
   const localTargetContext =
@@ -933,6 +1045,20 @@ export const make = Effect.gen(function* () {
         ),
       ),
     configureAgent,
+    (tool) =>
+      (tool === "hub" ? ensureDeviceHub(config.baseDir) : ensureAgentDevice(config.baseDir)).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(ProcessRunner.ProcessRunner, runner),
+        Effect.mapError(
+          (cause) =>
+            new DeviceOperationError({
+              operation: "update device tool",
+              reason: "command_failed",
+              cause,
+            }),
+        ),
+      ),
   );
   const hostContext =
     yield* Effect.context<Effect.Services<ReturnType<typeof SshDeviceHost.make>>>();
@@ -971,9 +1097,7 @@ export const make = Effect.gen(function* () {
         ({ id, scope }) =>
           Effect.gen(function* () {
             yield* Scope.close(scope, Exit.void);
-            yield* fs
-              .remove(agentDeviceConfigPath(config.stateDir, id, path), { force: true })
-              .pipe(Effect.ignore);
+            yield* fs.remove(yield* configPath(id), { force: true }).pipe(Effect.ignore);
           }),
         { concurrency: 4, discard: true },
       );
@@ -1023,7 +1147,7 @@ export const make = Effect.gen(function* () {
   return {
     ...service,
     agentCli: resolveNodeExecutable("Device automation").pipe(
-      Effect.flatMap(() => ensureAgentDevice(config.baseDir)),
+      Effect.andThen(ensureAgentDevice(config.baseDir)),
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
       Effect.provideService(ProcessRunner.ProcessRunner, runner),

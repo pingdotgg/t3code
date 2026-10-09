@@ -18,20 +18,41 @@ const { test } = Test.make({ providers: AWS.providers() });
 // standalone account too. When run against a management account
 // (`AWS_TEST_ORG_MANAGEMENT=1`) it additionally asserts at least one account
 // (the management account itself) appears.
-test.provider("list enumerates organization accounts", () =>
-  Effect.gen(function* () {
-    const provider = yield* Provider.findProvider(Account);
-    const all = yield* provider.list();
+test.provider(
+  "list enumerates organization accounts",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(Account);
+      const all = yield* provider.list();
 
-    expect(Array.isArray(all)).toBe(true);
-    for (const account of all) {
-      expect(typeof account.accountId).toBe("string");
-      expect(typeof account.accountArn).toBe("string");
-      expect(account.tags).toBeDefined();
-    }
+      expect(Array.isArray(all)).toBe(true);
+      for (const account of all) {
+        expect(typeof account.accountId).toBe("string");
+        expect(typeof account.accountArn).toBe("string");
+        expect(account.tags).toBeDefined();
+        if (account.name != null) {
+          expect(typeof account.name).toBe("string");
+        }
+        if (account.email != null) {
+          expect(typeof account.email).toBe("string");
+        }
+      }
 
-    if (process.env.AWS_TEST_ORG_MANAGEMENT) {
-      expect(all.length).toBeGreaterThan(0);
-    }
-  }),
+      if (process.env.AWS_TEST_ORG_MANAGEMENT) {
+        expect(all.length).toBeGreaterThan(0);
+        const management = all.find(
+          (account) =>
+            typeof account.name === "string" &&
+            account.name.length > 0 &&
+            typeof account.email === "string" &&
+            account.email.length > 0,
+        );
+        expect(management).toBeDefined();
+        expect(typeof management?.name).toBe("string");
+        expect(management!.name!.length).toBeGreaterThan(0);
+        expect(typeof management?.email).toBe("string");
+        expect(management!.email!.length).toBeGreaterThan(0);
+      }
+    }),
+  { tags: ["provider:aws", "provider:aws:organizations", "live"] },
 );

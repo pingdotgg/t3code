@@ -6,14 +6,14 @@ import {
   Linking,
   Platform,
   StyleSheet,
-  Text as RNText,
+  type TextInstance,
   type TextStyle,
   useColorScheme,
   View,
 } from "react-native";
 
 import { MarkdownTextPrimitive } from "./MarkdownTextPrimitive";
-import { markdownFileIconSource } from "./markdownFileIcons";
+import { markdownFileIconSource, markdownIconAssetUri } from "./markdownFileIcons";
 import { markdownLinkIconSource } from "./markdownLinkIcons";
 import { resolveMarkdownFileIcon, resolveMarkdownLinkIcon } from "./markdownLinks";
 import type { NativeMarkdownTextRun } from "./nativeMarkdownText";
@@ -236,11 +236,11 @@ export function NativeMarkdownSelectableText(props: {
               interactive: Boolean(run.href),
               iconUri:
                 !contextReference && run.fileIcon
-                  ? Image.resolveAssetSource(markdownFileIconSource(run.fileIcon)).uri
+                  ? markdownIconAssetUri(markdownFileIconSource(run.fileIcon))
                   : contextRecord?.kind === "mention" && "path" in contextRecord
-                    ? Image.resolveAssetSource(
+                    ? markdownIconAssetUri(
                         markdownFileIconSource(resolveMarkdownFileIcon(contextRecord.path)),
-                      ).uri
+                      )
                     : undefined,
               fontSize: props.textStyle.fontSize * 0.8,
               foreground: props.textStyle.color,
@@ -297,10 +297,12 @@ export function NativeMarkdownSelectableText(props: {
     ? JSON.stringify({ fragment: contextClipboardFragment, ranges })
     : "";
   const attachAndroidText = useCallback(
-    (textView: RNText | null) => {
+    (textView: TextInstance | null) => {
       if (Platform.OS !== "android" || !containsInlineIcon || !textView) return;
       const reactTag = findNodeHandle(textView);
-      if (reactTag !== null) installMarkdownCopySanitizer(reactTag, contextClipboardConfig);
+      if (typeof reactTag === "number") {
+        installMarkdownCopySanitizer(reactTag, contextClipboardConfig);
+      }
     },
     [containsInlineIcon, contextClipboardConfig],
   );
@@ -358,6 +360,12 @@ export function NativeMarkdownSelectableText(props: {
               else void Linking.openURL(href);
             }
           : undefined;
+        const fileIconUri = run.fileIcon
+          ? markdownIconAssetUri(markdownFileIconSource(run.fileIcon))
+          : undefined;
+        const linkIconUri = linkIcon
+          ? markdownIconAssetUri(markdownLinkIconSource(linkIcon))
+          : undefined;
         return (
           <MarkdownTextPrimitive
             key={key}
@@ -366,12 +374,12 @@ export function NativeMarkdownSelectableText(props: {
               Platform.OS === "ios"
                 ? chip
                   ? `t3-chip:${JSON.stringify(chip)}`
-                  : run.fileIcon
-                    ? `t3-file:${Image.resolveAssetSource(markdownFileIconSource(run.fileIcon)).uri}`
+                  : fileIconUri
+                    ? `t3-file:${fileIconUri}`
                     : run.skillName
                       ? "t3-skill:sf:cube"
-                      : linkIcon
-                        ? `t3-link:${Image.resolveAssetSource(markdownLinkIconSource(linkIcon)).uri}`
+                      : linkIconUri
+                        ? `t3-link:${linkIconUri}`
                         : undefined
                 : undefined
             }

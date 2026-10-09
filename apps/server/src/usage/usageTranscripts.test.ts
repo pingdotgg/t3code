@@ -15,6 +15,7 @@ function claudeLine(overrides: {
   contentType: string;
   model?: string;
   outputTokens?: number;
+  speed?: string;
 }): string {
   return JSON.stringify({
     type: "assistant",
@@ -31,6 +32,7 @@ function claudeLine(overrides: {
         cache_creation_input_tokens: 66818,
         cache_read_input_tokens: 1000,
         output_tokens: overrides.outputTokens ?? 286,
+        ...(overrides.speed === undefined ? {} : { speed: overrides.speed }),
       },
     },
   });
@@ -51,6 +53,15 @@ describe("parseClaudeLine", () => {
       reasoningTokens: 0,
     });
     expect(record?.dedupeKey).toBe("msg_1:");
+    expect(record?.speed).toBe("standard");
+  });
+
+  it("marks fast-mode requests", () => {
+    const line = (speed: string) =>
+      parseClaudeLine(claudeLine({ messageId: "msg_1", contentType: "text", speed }));
+
+    expect(line("fast")?.speed).toBe("fast");
+    expect(line("standard")?.speed).toBe("standard");
   });
 
   it("gives every content block of one message the same dedupe key", () => {
@@ -135,6 +146,27 @@ describe("parseCodexLine", () => {
     expect(parseCodexLine(tokenCount(100, 0, 10, 0), state)).toBeNull();
     parseCodexLine(turnContext, state);
     expect(parseCodexLine(tokenCount(100, 0, 10, 0), state)).not.toBeNull();
+  });
+
+  it("carries the service tier from the latest thread settings", () => {
+    const settings = (thread_settings: Record<string, unknown>) =>
+      JSON.stringify({
+        type: "event_msg",
+        timestamp: "2026-08-01T05:17:42.000Z",
+        payload: { type: "thread_settings_applied", thread_settings },
+      });
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const speedAfter = (line: string, output: number) => {
+      parseCodexLine(line, state);
+      return parseCodexLine(tokenCount(100, 0, output, 0), state)?.speed;
+    };
+
+    expect(parseCodexLine(tokenCount(100, 0, 1, 0), state)?.speed).toBe("standard");
+    expect(speedAfter(settings({ service_tier: "ultrafast" }), 2)).toBe("ultrafast");
+    expect(speedAfter(settings({ service_tier: "priority" }), 3)).toBe("fast");
+    // Codex omits the field when no tier was requested.
+    expect(speedAfter(settings({ model: "gpt-6-astra" }), 4)).toBe("standard");
   });
 
   // A forked/subagent rollout opens with the parent's history copied in and

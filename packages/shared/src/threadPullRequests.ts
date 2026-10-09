@@ -157,7 +157,9 @@ export function legacyLinkedPullRequestOf(
   identity: RepositoryIdentity | null | undefined,
 ): ThreadLinkedPullRequest | null {
   if (!identity) return null;
+  // A local-path remote has no host segment and no provider, so there is no host to match.
   const host = pullRequestHostOf(identity, identity.provider as SourceControlProviderKind);
+  if (typeof host !== "string") return null;
   const repository = sourceControlRepositorySelector(identity);
   if (repository === null) return null;
   const azureKey =
@@ -321,4 +323,25 @@ export function threadPullRequestSearchTerms(thread: {
   }
   const legacy = thread.linkedPullRequest;
   return legacy ? [`#${legacy.number}`, `${legacy.repository}#${legacy.number}`, legacy.url] : [];
+}
+
+/** Older V2 event payloads stored one link; an explicit empty array means it was unlinked. */
+export function threadPullRequestsOf(thread: {
+  readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
+  readonly linkedPullRequest?: ThreadLinkedPullRequest | null | undefined;
+}): ReadonlyArray<ThreadPullRequestLink> {
+  if (thread.pullRequests !== undefined) return thread.pullRequests;
+  const linked = thread.linkedPullRequest;
+  return linked == null
+    ? []
+    : [
+        {
+          ...legacyThreadPullRequestKey(linked),
+          url: linked.url,
+          source: "manual",
+          linkedAt: "1970-01-01T00:00:00.000Z",
+          snapshot: null,
+          stack: null,
+        },
+      ];
 }

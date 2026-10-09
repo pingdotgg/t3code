@@ -175,11 +175,11 @@ import {
   getComposerDraftSnapshot,
   mergeComposerDraftContentState,
   migrateLegacyNewTaskDraft,
+  modelOptionMemoryAtom,
   releaseUnusedComposerAttachmentFiles,
   removeComposerDraftsForEnvironment,
   replaceComposerDraftAttachments,
   resetComposerDraftsLoadState,
-  retainComposerAttachmentFileForPreview,
   restoreComposerDraftSnapshotState,
   restoreCloudComposerDrafts,
   retargetNewTaskDraft,
@@ -194,6 +194,7 @@ import {
   undoComposerDraftMerge,
   undoComposerDraftMergeState,
 } from "./use-composer-drafts";
+import { retainComposerAttachmentFileForPreview } from "../lib/composerAttachmentPreviewRetention";
 
 const DRAFT: ComposerDraft = {
   text: "hello",
@@ -214,6 +215,7 @@ afterEach(() => {
   appAtomRegistry.set(composerDraftsAtom, {});
   appAtomRegistry.set(composerCloudDraftsAtom, { accountId: null, signedOut: {} });
   appAtomRegistry.set(stickyComposerModelSelectionAtom, null);
+  appAtomRegistry.set(modelOptionMemoryAtom, {});
   appAtomRegistry.set(threadOutboxManager.queuedMessagesByThreadKeyAtom, {});
   composerAttachmentCleanupMocks.remove.mockClear();
   composerAttachmentCleanupMocks.releaseUploads.mockReset();
@@ -676,7 +678,7 @@ describe("mobile composer drafts", () => {
         return undefined;
       });
       const key = "environment-1:replace-file";
-      const files = Array.from({ length: 8 }, (_, index) => ({
+      const files = Array.from({ length: 100 }, (_, index) => ({
         id: `file-${index}`,
         type: "file" as const,
         name: `notes-${index}.txt`,
@@ -687,8 +689,8 @@ describe("mobile composer drafts", () => {
       appendComposerDraftAttachments(key, files, { appendReference: true });
       const firstLink = "[notes-0.txt](t3-context://v1/file/file-0)";
       const insertion = captureComposerDraftInsertion(key, { start: 0, end: firstLink.length });
-      expect(countComposerDraftAttachmentsAfterSelection(key, insertion)).toBe(7);
-      expect(getComposerDraftAfterSelection(key, insertion).context?.records).toHaveLength(7);
+      expect(countComposerDraftAttachmentsAfterSelection(key, insertion)).toBe(99);
+      expect(getComposerDraftAfterSelection(key, insertion).context?.records).toHaveLength(99);
       const replacement = { ...files[0]!, id: "replacement", fileUri: "file:///replacement.txt" };
       if (kind === "attachment") {
         expect(
@@ -716,7 +718,7 @@ describe("mobile composer drafts", () => {
             insertion,
           ),
         ).toBe(true);
-        expect(getComposerDraftSnapshot(key).attachments).toHaveLength(8);
+        expect(getComposerDraftSnapshot(key).attachments).toHaveLength(100);
         expect(getComposerDraftSnapshot(key).context?.records).toContainEqual(record);
         expect(getComposerDraftSnapshot(key).text).toBe(
           `${formatComposerContextReference(record)}${insertion.text.slice(firstLink.length)}`,
@@ -730,7 +732,7 @@ describe("mobile composer drafts", () => {
       }
       const draft = getComposerDraftSnapshot(key);
       expect(draft.attachments.map((file) => file.id)).not.toContain("file-0");
-      expect(draft.attachments.slice(0, 7)).toEqual(files.slice(1));
+      expect(draft.attachments.slice(0, 99)).toEqual(files.slice(1));
       expect(draft.context?.records.some((record) => record.contextId === "file-0")).toBe(false);
       await cleanup.promise;
       expect(composerAttachmentCleanupMocks.remove).toHaveBeenCalledWith(files[0]!.fileUri);
@@ -746,7 +748,7 @@ describe("mobile composer drafts", () => {
       return undefined;
     });
     const key = "environment-1:concurrent-import";
-    const files = Array.from({ length: 8 }, (_, index) => ({
+    const files = Array.from({ length: 100 }, (_, index) => ({
       id: `existing-${index}`,
       type: "file" as const,
       name: `notes-${index}.txt`,
@@ -906,7 +908,7 @@ describe("mobile composer drafts", () => {
       fileUri: `file:///documents/t3-composer-attachments/${id}.mov`,
     });
     const draftKey = "new-task:environment-1:project-cap";
-    const existing = Array.from({ length: 7 }, (_, index) => makeAttachment(`held-${index}`));
+    const existing = Array.from({ length: 99 }, (_, index) => makeAttachment(`held-${index}`));
     appAtomRegistry.set(composerDraftsAtom, {
       [draftKey]: { text: "send this", attachments: existing },
     });
@@ -918,7 +920,7 @@ describe("mobile composer drafts", () => {
 
     expect(rejected).toBe(1);
     const draft = appAtomRegistry.get(composerDraftsAtom)[draftKey];
-    expect(draft?.attachments).toHaveLength(8);
+    expect(draft?.attachments).toHaveLength(100);
     expect(draft?.attachments.at(-1)?.id).toBe("incoming-1");
     await cleanup.promise;
     expect(composerAttachmentCleanupMocks.remove).toHaveBeenCalledExactlyOnceWith(
@@ -932,7 +934,7 @@ describe("mobile composer drafts", () => {
       { allowOverflow: true },
     );
     expect(overflowRejected).toBe(0);
-    expect(appAtomRegistry.get(composerDraftsAtom)[draftKey]?.attachments).toHaveLength(9);
+    expect(appAtomRegistry.get(composerDraftsAtom)[draftKey]?.attachments).toHaveLength(101);
   });
 
   it("keeps shared attachment files until every draft releases them", async () => {
@@ -1916,6 +1918,44 @@ describe("mobile composer drafts", () => {
     });
   });
 
+  it("decodes model option memory from the composer document", () => {
+    expect(
+      decodePersistedComposerState({
+        schemaVersion: 1,
+        drafts: {},
+        modelOptionMemory: {
+          pi: { "xai/grok-4.6": [{ id: "thinking", value: "xhigh" }] },
+        },
+      }).modelOptionMemory,
+    ).toEqual({ pi: { "xai/grok-4.6": [{ id: "thinking", value: "xhigh" }] } });
+  });
+
+  it("merges persisted option memory without replacing newer choices", async () => {
+    composerDraftFileMocks.setDocument({
+      schemaVersion: 1,
+      drafts: {},
+      modelOptionMemory: {
+        pi: {
+          "xai/grok-4.6": [{ id: "thinking", value: "high" }],
+          "openai/gpt-5.4": [{ id: "thinking", value: "medium" }],
+        },
+      },
+    });
+    appAtomRegistry.set(modelOptionMemoryAtom, {
+      pi: { "xai/grok-4.6": [{ id: "thinking", value: "xhigh" }] },
+    });
+
+    ensureComposerDraftsLoaded();
+    await waitForComposerDraftsLoaded();
+
+    expect(appAtomRegistry.get(modelOptionMemoryAtom)).toEqual({
+      pi: {
+        "xai/grok-4.6": [{ id: "thinking", value: "xhigh" }],
+        "openai/gpt-5.4": [{ id: "thinking", value: "medium" }],
+      },
+    });
+  });
+
   it("waits for hydration before persisting the latest composer state", async () => {
     vi.useFakeTimers();
     composerDraftFileMocks.setDocument({
@@ -2270,7 +2310,7 @@ describe("mobile composer drafts", () => {
       previewUri: "data:image/png;base64,YWJj",
     });
     const existingImage = image("existing");
-    const sharedImages = Array.from({ length: 8 }, (_, index) => image(`shared-${index}`));
+    const sharedImages = Array.from({ length: 100 }, (_, index) => image(`shared-${index}`));
 
     const merged = mergeComposerDraftContentState(
       { [draftKey]: { text: "", attachments: [existingImage] } },
@@ -2278,9 +2318,9 @@ describe("mobile composer drafts", () => {
       { text: "", attachments: sharedImages },
     );
 
-    expect(merged[draftKey]?.attachments).toHaveLength(8);
+    expect(merged[draftKey]?.attachments).toHaveLength(100);
     expect(merged[draftKey]?.attachments[0]).toEqual(existingImage);
-    expect(merged[draftKey]?.attachments.at(-1)?.id).toBe("shared-6");
+    expect(merged[draftKey]?.attachments.at(-1)?.id).toBe("shared-98");
   });
 
   it("restores the exact draft captured before an interrupted share import", () => {

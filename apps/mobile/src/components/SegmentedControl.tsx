@@ -3,21 +3,9 @@ import Animated, { Easing, LinearTransition, ReduceMotion } from "react-native-r
 import { AppText as Text } from "./AppText";
 import { cn } from "../lib/cn";
 import { MaterialSegmentedControl } from "./MaterialSegmentedControl";
+import type { SegmentedControlProps } from "./SegmentedControl.types";
 
-export interface SegmentedControlProps<Value extends number | string> {
-  readonly options: readonly {
-    readonly value: Value;
-    readonly label: string;
-    readonly accessibilityLabel?: string;
-  }[];
-  readonly selected: Value;
-  readonly onSelect: (value: Value) => void;
-  /** Compact sizing applies to the non-Material control. */
-  readonly size?: "default" | "compact";
-  /** "tab" for the view switcher; filters stay plain buttons. */
-  readonly role?: "tab" | "button";
-  readonly className?: string;
-}
+export type { SegmentedControlProps } from "./SegmentedControl.types";
 
 export function SegmentedControl<Value extends number | string>(
   props: SegmentedControlProps<Value>,
@@ -40,7 +28,7 @@ export function SegmentedControl<Value extends number | string>(
         layout={LinearTransition.duration(200)
           .easing(Easing.out(Easing.cubic))
           .reduceMotion(ReduceMotion.System)}
-        className="absolute inset-y-0 rounded-full bg-subtle-strong"
+        className="absolute inset-y-0 rounded-full bg-secondary"
         style={{
           width: `${100 / props.options.length}%`,
           start: `${
@@ -70,7 +58,7 @@ export function SegmentedControl<Value extends number | string>(
             <Text
               className={cn(
                 compact ? "text-xs" : "text-sm",
-                active ? "font-t3-medium text-foreground" : "text-foreground-muted",
+                active ? "font-t3-medium text-secondary-foreground" : "text-foreground-muted",
               )}
             >
               {option.label}

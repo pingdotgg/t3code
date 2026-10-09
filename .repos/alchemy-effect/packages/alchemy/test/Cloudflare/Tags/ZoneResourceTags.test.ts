@@ -72,151 +72,192 @@ const expectTagsCleared = (
     Effect.map((tags) => expect(tags).toEqual({})),
   );
 
-test.provider("create, update, and clear tags on a DNS record", (stack) =>
-  Effect.gen(function* () {
-    const zoneId = yield* resolveZoneId;
+test.provider(
+  "create, update, and clear tags on a DNS record",
+  (stack) =>
+    Effect.gen(function* () {
+      const zoneId = yield* resolveZoneId;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const v1 = yield* stack.deploy(
-      Effect.gen(function* () {
-        const record = yield* Cloudflare.DNS.Record("CrudTaggedRecord", {
-          zoneId,
-          name: CRUD_RECORD_NAME,
-          type: "A",
-          content: "203.0.113.50",
-        }).pipe(adopt(true));
-        const tags = yield* Cloudflare.Tags.ZoneResourceTags("CrudRecordTags", {
-          zoneId,
-          resourceType: "dns_record",
-          resourceId: record.recordId,
-          tags: { env: "test", team: "alchemy" },
-        }).pipe(adopt(true));
-        return { record, tags };
-      }),
-    );
+      const v1 = yield* stack.deploy(
+        Effect.gen(function* () {
+          const record = yield* Cloudflare.DNS.Record("CrudTaggedRecord", {
+            zoneId,
+            name: CRUD_RECORD_NAME,
+            type: "A",
+            content: "203.0.113.50",
+          }).pipe(adopt(true));
+          const tags = yield* Cloudflare.Tags.ZoneResourceTags(
+            "CrudRecordTags",
+            {
+              zoneId,
+              resourceType: "dns_record",
+              resourceId: record.recordId,
+              tags: { env: "test", team: "alchemy" },
+            },
+          ).pipe(adopt(true));
+          return { record, tags };
+        }),
+      );
 
-    expect(v1.tags.zoneId).toEqual(zoneId);
-    expect(v1.tags.resourceType).toEqual("dns_record");
-    expect(v1.tags.resourceId).toEqual(v1.record.recordId);
-    expect(v1.tags.tags).toEqual({ env: "test", team: "alchemy" });
-    expect(v1.tags.etag).toBeTruthy();
+      expect(v1.tags.zoneId).toEqual(zoneId);
+      expect(v1.tags.resourceType).toEqual("dns_record");
+      expect(v1.tags.resourceId).toEqual(v1.record.recordId);
+      expect(v1.tags.tags).toEqual({ env: "test", team: "alchemy" });
+      expect(v1.tags.etag).toBeTruthy();
 
-    const live = yield* getTags(zoneId, v1.record.recordId, "dns_record");
-    expect(live).toEqual({ env: "test", team: "alchemy" });
+      const live = yield* getTags(zoneId, v1.record.recordId, "dns_record");
+      expect(live).toEqual({ env: "test", team: "alchemy" });
 
-    // In-place update — PUT replaces the full set: change `env`, drop
-    // `team`, add `owner`.
-    const v2 = yield* stack.deploy(
-      Effect.gen(function* () {
-        const record = yield* Cloudflare.DNS.Record("CrudTaggedRecord", {
-          zoneId,
-          name: CRUD_RECORD_NAME,
-          type: "A",
-          content: "203.0.113.50",
-        }).pipe(adopt(true));
-        const tags = yield* Cloudflare.Tags.ZoneResourceTags("CrudRecordTags", {
-          zoneId,
-          resourceType: "dns_record",
-          resourceId: record.recordId,
-          tags: { env: "prod", owner: "qa" },
-        }).pipe(adopt(true));
-        return { record, tags };
-      }),
-    );
+      // In-place update — PUT replaces the full set: change `env`, drop
+      // `team`, add `owner`.
+      const v2 = yield* stack.deploy(
+        Effect.gen(function* () {
+          const record = yield* Cloudflare.DNS.Record("CrudTaggedRecord", {
+            zoneId,
+            name: CRUD_RECORD_NAME,
+            type: "A",
+            content: "203.0.113.50",
+          }).pipe(adopt(true));
+          const tags = yield* Cloudflare.Tags.ZoneResourceTags(
+            "CrudRecordTags",
+            {
+              zoneId,
+              resourceType: "dns_record",
+              resourceId: record.recordId,
+              tags: { env: "prod", owner: "qa" },
+            },
+          ).pipe(adopt(true));
+          return { record, tags };
+        }),
+      );
 
-    // Same target record — the tag set updated in place.
-    expect(v2.record.recordId).toEqual(v1.record.recordId);
-    expect(v2.tags.tags).toEqual({ env: "prod", owner: "qa" });
+      // Same target record — the tag set updated in place.
+      expect(v2.record.recordId).toEqual(v1.record.recordId);
+      expect(v2.tags.tags).toEqual({ env: "prod", owner: "qa" });
 
-    const updated = yield* getTags(zoneId, v2.record.recordId, "dns_record");
-    expect(updated).toEqual({ env: "prod", owner: "qa" });
+      const updated = yield* getTags(zoneId, v2.record.recordId, "dns_record");
+      expect(updated).toEqual({ env: "prod", owner: "qa" });
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* expectTagsCleared(zoneId, v1.record.recordId, "dns_record");
-  }).pipe(logLevel),
+      yield* expectTagsCleared(zoneId, v1.record.recordId, "dns_record");
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:dns",
+      "provider:cloudflare:tags",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
 );
 
-test.provider("tag the zone itself and clear on destroy", (stack) =>
-  Effect.gen(function* () {
-    const zoneId = yield* resolveZoneId;
+test.provider(
+  "tag the zone itself and clear on destroy",
+  (stack) =>
+    Effect.gen(function* () {
+      const zoneId = yield* resolveZoneId;
 
-    yield* stack.destroy();
-    // Normalize the baseline — clear any leftover zone tags from
-    // interrupted runs (only this suite tags the shared test zone).
-    yield* resourceTagging
-      .deleteZoneTag({ zoneId, resourceId: zoneId, resourceType: "zone" })
-      .pipe(Effect.retry(forbiddenRetry));
+      yield* stack.destroy();
+      // Normalize the baseline — clear any leftover zone tags from
+      // interrupted runs (only this suite tags the shared test zone).
+      yield* resourceTagging
+        .deleteZoneTag({ zoneId, resourceId: zoneId, resourceType: "zone" })
+        .pipe(Effect.retry(forbiddenRetry));
 
-    const deployed = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Tags.ZoneResourceTags("ZoneTags", {
-          zoneId,
-          resourceType: "zone",
-          resourceId: zoneId,
-          tags: { "alchemy-zone-probe": "v1" },
-        }).pipe(adopt(true));
-      }),
-    );
+      const deployed = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Tags.ZoneResourceTags("ZoneTags", {
+            zoneId,
+            resourceType: "zone",
+            resourceId: zoneId,
+            tags: { "alchemy-zone-probe": "v1" },
+          }).pipe(adopt(true));
+        }),
+      );
 
-    expect(deployed.tags).toEqual({ "alchemy-zone-probe": "v1" });
+      expect(deployed.tags).toEqual({ "alchemy-zone-probe": "v1" });
 
-    const live = yield* getTags(zoneId, zoneId, "zone");
-    expect(live).toEqual({ "alchemy-zone-probe": "v1" });
+      const live = yield* getTags(zoneId, zoneId, "zone");
+      expect(live).toEqual({ "alchemy-zone-probe": "v1" });
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    yield* expectTagsCleared(zoneId, zoneId, "zone");
-  }).pipe(logLevel),
+      yield* expectTagsCleared(zoneId, zoneId, "zone");
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:tags",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
 );
 
-test.provider("list enumerates tagged zone-scoped resources", (stack) =>
-  Effect.gen(function* () {
-    const zoneId = yield* resolveZoneId;
+test.provider(
+  "list enumerates tagged zone-scoped resources",
+  (stack) =>
+    Effect.gen(function* () {
+      const zoneId = yield* resolveZoneId;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const deployed = yield* stack.deploy(
-      Effect.gen(function* () {
-        const record = yield* Cloudflare.DNS.Record("ListTaggedRecord", {
-          zoneId,
-          name: LIST_RECORD_NAME,
-          type: "A",
-          content: "203.0.113.50",
-        }).pipe(adopt(true));
-        const tags = yield* Cloudflare.Tags.ZoneResourceTags("ListRecordTags", {
-          zoneId,
-          resourceType: "dns_record",
-          resourceId: record.recordId,
-          tags: { env: "test", team: "alchemy" },
-        }).pipe(adopt(true));
-        return { record, tags };
-      }),
-    );
+      const deployed = yield* stack.deploy(
+        Effect.gen(function* () {
+          const record = yield* Cloudflare.DNS.Record("ListTaggedRecord", {
+            zoneId,
+            name: LIST_RECORD_NAME,
+            type: "A",
+            content: "203.0.113.50",
+          }).pipe(adopt(true));
+          const tags = yield* Cloudflare.Tags.ZoneResourceTags(
+            "ListRecordTags",
+            {
+              zoneId,
+              resourceType: "dns_record",
+              resourceId: record.recordId,
+              tags: { env: "test", team: "alchemy" },
+            },
+          ).pipe(adopt(true));
+          return { record, tags };
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(
-      Cloudflare.Tags.ZoneResourceTags,
-    );
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Tags.ZoneResourceTags,
+      );
 
-    // The account-wide tag index is eventually consistent — poll until the
-    // freshly-tagged record shows up (bounded so it fails fast).
-    const all = yield* provider.list().pipe(
-      Effect.repeat({
-        schedule: Schedule.exponential("1 second"),
-        until: (rows) =>
-          rows.some((r) => r.resourceId === deployed.record.recordId),
-        times: 8,
-      }),
-    );
+      // The account-wide tag index is eventually consistent — poll until the
+      // freshly-tagged record shows up (bounded so it fails fast).
+      const all = yield* provider.list().pipe(
+        Effect.repeat({
+          schedule: Schedule.exponential("1 second"),
+          until: (rows) =>
+            rows.some((r) => r.resourceId === deployed.record.recordId),
+          times: 8,
+        }),
+      );
 
-    const found = all.find((r) => r.resourceId === deployed.record.recordId);
-    expect(found).toBeDefined();
-    expect(found?.zoneId).toEqual(zoneId);
-    expect(found?.resourceType).toEqual("dns_record");
-    expect(found?.tags).toEqual({ env: "test", team: "alchemy" });
-    expect(found?.etag).toBeTruthy();
+      const found = all.find((r) => r.resourceId === deployed.record.recordId);
+      expect(found).toBeDefined();
+      expect(found?.zoneId).toEqual(zoneId);
+      expect(found?.resourceType).toEqual("dns_record");
+      expect(found?.tags).toEqual({ env: "test", team: "alchemy" });
+      expect(found?.etag).toBeTruthy();
 
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:dns",
+      "provider:cloudflare:tags",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
 );

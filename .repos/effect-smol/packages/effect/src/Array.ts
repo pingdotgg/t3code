@@ -16,6 +16,7 @@ import { dual, identity } from "./Function.ts"
 import * as Hash from "./Hash.ts"
 import type { TypeLambda } from "./HKT.ts"
 import * as internalArray from "./internal/array.ts"
+import * as Count from "./internal/count.ts"
 import * as internalDoNotation from "./internal/doNotation.ts"
 import * as InternalRecord from "./internal/record.ts"
 import * as moduleIterable from "./Iterable.ts"
@@ -158,6 +159,7 @@ export const make = <Elements extends NonEmptyArray<unknown>>(
  *
  * **Details**
  *
+ * `n` is rounded down. `NaN` and non-positive values are treated as `0`.
  * Elements are typed as `A | undefined` because the slots are empty.
  *
  * **Example** (Allocating a fixed-size array)
@@ -173,7 +175,7 @@ export const make = <Elements extends NonEmptyArray<unknown>>(
  * @category constructors
  * @since 2.0.0
  */
-export const allocate = <A = never>(n: number): Array<A | undefined> => new Array(n)
+export const allocate = <A = never>(n: number): Array<A | undefined> => new Array(Count.normalize(n))
 
 /**
  * Creates a `NonEmptyArray` of length `n` where element `i` is computed by `f(i)`.
@@ -184,9 +186,9 @@ export const allocate = <A = never>(n: number): Array<A | undefined> => new Arra
  *
  * **Details**
  *
- * `n` is normalized to an integer greater than or equal to 1, so this function
- * always returns at least one element. Supports both data-first and data-last
- * usage.
+ * `n` is rounded down and normalized to an integer greater than or equal to 1.
+ * `NaN` is treated as `1`, so this function always returns at least one
+ * element. Supports both data-first and data-last usage.
  *
  * **Example** (Generating values from indices)
  *
@@ -206,7 +208,7 @@ export const makeBy: {
   <A>(f: (i: number) => A): (n: number) => NonEmptyArray<A>
   <A>(n: number, f: (i: number) => A): NonEmptyArray<A>
 } = dual(2, <A>(n: number, f: (i: number) => A) => {
-  const max = Math.max(1, Math.floor(n))
+  const max = Count.normalizeNonEmpty(n)
   const out = new Array(max)
   for (let i = 0; i < max; i++) {
     out[i] = f(i)
@@ -907,12 +909,22 @@ export const isReadonlyArrayNonEmpty: <A>(self: ReadonlyArray<A>) => self is Non
  */
 export const length = <A>(self: ReadonlyArray<A>): number => self.length
 
+/**
+ * Checks whether a string represents a JavaScript array index: a non-negative
+ * integer below `2 ** 32 - 1`, written without leading zeroes, a sign, or
+ * exponent notation.
+ *
+ * @internal
+ */
+export function isCanonicalArrayIndex(key: string): boolean {
+  const index = Number(key)
+  return String(index) === key && Number.isInteger(index) && index >= 0 && index < 2 ** 32 - 1
+}
+
 /** @internal */
 export function isOutOfBounds<A>(i: number, as: ReadonlyArray<A>): boolean {
   return !Number.isFinite(i) || i < 0 || i >= as.length
 }
-
-const clamp = <A>(i: number, as: ReadonlyArray<A>): number => Math.floor(Math.min(Math.max(0, i), as.length))
 
 /**
  * Reads an element at the given index safely, returning `Option.some` or
@@ -1260,6 +1272,8 @@ export function init<A>(self: Iterable<A>): Option.Option<Array<A>> {
  */
 export const initNonEmpty = <A>(self: NonEmptyReadonlyArray<A>): Array<A> => self.slice(0, -1)
 
+const clampCount = (n: number, length: number): number => Math.min(Count.normalize(n), length)
+
 /**
  * Keeps the first `n` elements, creating a new array.
  *
@@ -1269,7 +1283,8 @@ export const initNonEmpty = <A>(self: NonEmptyReadonlyArray<A>): Array<A> => sel
  *
  * **Details**
  *
- * `n` is clamped to `[0, length]`. Returns an empty array when `n <= 0`.
+ * `n` is rounded down and clamped to `[0, length]`. `NaN` is treated as `0`.
+ * Returns an empty array when `n <= 0`.
  *
  * **Example** (Taking from the start)
  *
@@ -1291,7 +1306,7 @@ export const take: {
   <A>(self: Iterable<A>, n: number): Array<A>
 } = dual(2, <A>(self: Iterable<A>, n: number): Array<A> => {
   const input = fromIterable(self)
-  return input.slice(0, clamp(n, input))
+  return input.slice(0, clampCount(n, input.length))
 })
 
 /**
@@ -1303,7 +1318,8 @@ export const take: {
  *
  * **Details**
  *
- * `n` is clamped to `[0, length]`. Returns an empty array when `n <= 0`.
+ * `n` is rounded down and clamped to `[0, length]`. `NaN` is treated as `0`.
+ * Returns an empty array when `n <= 0`.
  *
  * **Example** (Taking from the end)
  *
@@ -1324,7 +1340,7 @@ export const takeRight: {
   <A>(self: Iterable<A>, n: number): Array<A>
 } = dual(2, <A>(self: Iterable<A>, n: number): Array<A> => {
   const input = fromIterable(self)
-  const i = clamp(n, input)
+  const i = clampCount(n, input.length)
   return i === 0 ? [] : input.slice(-i)
 })
 
@@ -1480,8 +1496,8 @@ export const span: {
  *
  * **Details**
  *
- * `n` is clamped to `[0, length]`. When `n <= 0`, this returns a copy of the
- * full array.
+ * `n` is rounded down and clamped to `[0, length]`. `NaN` is treated as `0`.
+ * When `n <= 0`, this returns a copy of the full array.
  *
  * **Example** (Dropping from the start)
  *
@@ -1503,7 +1519,7 @@ export const drop: {
   <A>(self: Iterable<A>, n: number): Array<A>
 } = dual(2, <A>(self: Iterable<A>, n: number): Array<A> => {
   const input = fromIterable(self)
-  return input.slice(clamp(n, input), input.length)
+  return input.slice(clampCount(n, input.length), input.length)
 })
 
 /**
@@ -1515,7 +1531,7 @@ export const drop: {
  *
  * **Details**
  *
- * `n` is clamped to `[0, length]`.
+ * `n` is rounded down and clamped to `[0, length]`. `NaN` is treated as `0`.
  *
  * **Example** (Dropping from the end)
  *
@@ -1536,7 +1552,7 @@ export const dropRight: {
   <A>(self: Iterable<A>, n: number): Array<A>
 } = dual(2, <A>(self: Iterable<A>, n: number): Array<A> => {
   const input = fromIterable(self)
-  return input.slice(0, input.length - clamp(n, input))
+  return input.slice(0, input.length - clampCount(n, input.length))
 })
 
 /**
@@ -2642,8 +2658,8 @@ export const chop: {
  *
  * **Details**
  *
- * `n` can be `0`, in which case all elements are placed in the second array.
- * The index is floored to an integer.
+ * `n` is rounded down and clamped to `[0, length]`. `NaN` is treated as `0`,
+ * which places all elements in the second array.
  *
  * **Example** (Splitting at an index)
  *
@@ -2664,7 +2680,7 @@ export const splitAt: {
   <A>(self: Iterable<A>, n: number): [beforeIndex: Array<A>, fromIndex: Array<A>]
 } = dual(2, <A>(self: Iterable<A>, n: number): [Array<A>, Array<A>] => {
   const input = Array.from(self)
-  const _n = Math.floor(n)
+  const _n = Count.normalize(n)
   if (isReadonlyArrayNonEmpty(input)) {
     if (_n >= 1) {
       return splitAtNonEmpty(input, _n)
@@ -2683,6 +2699,10 @@ export const splitAt: {
  * Use when downstream code requires the left side of the split to contain at
  * least one element.
  *
+ * **Details**
+ *
+ * `n` is rounded down and clamped to `[1, length]`. `NaN` is treated as `1`.
+ *
  * **Example** (Splitting a non-empty array)
  *
  * ```ts import.meta.vitest
@@ -2700,7 +2720,7 @@ export const splitAtNonEmpty: {
   (n: number): <A>(self: NonEmptyReadonlyArray<A>) => [beforeIndex: NonEmptyArray<A>, fromIndex: Array<A>]
   <A>(self: NonEmptyReadonlyArray<A>, n: number): [beforeIndex: NonEmptyArray<A>, fromIndex: Array<A>]
 } = dual(2, <A>(self: NonEmptyReadonlyArray<A>, n: number): [NonEmptyArray<A>, Array<A>] => {
-  const _n = Math.max(1, Math.floor(n))
+  const _n = Count.normalizeNonEmpty(n)
   return _n >= self.length ?
     [copy(self), []] :
     [prepend(self.slice(1, _n), headNonEmpty(self)), self.slice(_n)]
@@ -2715,7 +2735,8 @@ export const splitAtNonEmpty: {
  *
  * **Details**
  *
- * Uses `chunksOf(ceil(length / n))` internally. The last chunk may be shorter.
+ * `n` is rounded down and normalized to at least `1`, with `NaN` treated as
+ * `1`. The last chunk may be shorter.
  *
  * **Example** (Splitting into groups)
  *
@@ -2735,7 +2756,7 @@ export const split: {
   <A>(self: Iterable<A>, n: number): Array<Array<A>>
 } = dual(2, <A>(self: Iterable<A>, n: number) => {
   const input = fromIterable(self)
-  return chunksOf(input, Math.ceil(input.length / Math.floor(n)))
+  return chunksOf(input, Math.ceil(input.length / Count.normalizeNonEmpty(n)))
 })
 
 /**
@@ -2817,7 +2838,8 @@ export const copy: {
  *
  * **Details**
  *
- * Returns an empty array when `n <= 0`.
+ * `n` is rounded down. `NaN` and non-positive values are treated as `0`, which
+ * returns an empty array.
  *
  * **Example** (Padding an array)
  *
@@ -2842,12 +2864,13 @@ export const pad: {
   ) => Array<A | T>
   <A, T>(self: Array<A>, n: number, fill: T): Array<A | T>
 } = dual(3, <A, T>(self: Array<A>, n: number, fill: T): Array<A | T> => {
-  if (self.length >= n) {
-    return take(self, n)
+  const length = Count.normalize(n)
+  if (self.length >= length) {
+    return take(self, length)
   }
   return appendAll(
     self,
-    makeBy(n - self.length, () => fill)
+    makeBy(length - self.length, () => fill)
   )
 })
 
@@ -2862,8 +2885,10 @@ export const pad: {
  *
  * **Details**
  *
- * `chunksOf(n)([])` is `[]`, not `[[]]`. Each chunk is a `NonEmptyArray`, and
- * the outer return type preserves `NonEmptyArray`.
+ * `n` is rounded down and normalized to at least `1`; `NaN` and non-positive
+ * values therefore produce singleton chunks. `chunksOf(n)([])` is `[]`, not
+ * `[[]]`. Each chunk is a `NonEmptyArray`, and the outer return type preserves
+ * `NonEmptyArray`.
  *
  * **Example** (Chunking an array)
  *
@@ -2904,8 +2929,9 @@ export const chunksOf: {
  *
  * **Details**
  *
- * Returns an empty array if `n <= 0` or the array has fewer than `n` elements.
- * Each window is a tuple of exactly `n` elements.
+ * `n` is rounded down, with `NaN` and non-positive values treated as `0`.
+ * Returns an empty array if the normalized size is `0` or exceeds the array
+ * length. Each window is a tuple of exactly the normalized size.
  *
  * **Example** (Creating sliding windows)
  *
@@ -2928,10 +2954,11 @@ export const window: {
   <A, N extends number>(self: Iterable<A>, n: N): Array<TupleOf<N, A>>
 } = dual(2, <A>(self: Iterable<A>, n: number): Array<Array<A>> => {
   const input = fromIterable(self)
-  if (n > 0 && isReadonlyArrayNonEmpty(input)) {
+  const size = Count.normalize(n)
+  if (size > 0 && size <= input.length && isReadonlyArrayNonEmpty(input)) {
     return Array.from(
-      { length: input.length - (n - 1) },
-      (_, index) => input.slice(index, index + n)
+      { length: input.length - (size - 1) },
+      (_, index) => input.slice(index, index + size)
     )
   }
   return []
@@ -3693,7 +3720,7 @@ export const getSomes: <T extends Iterable<Option.Option<X>>, X = any>(
  * ```
  *
  * @see {@link getSuccesses} — extract success values
- * @see {@link separate} — split into failures and successes
+ * @see {@link separate} — split into successes and failures
  *
  * @category filtering
  * @since 4.0.0
@@ -3729,7 +3756,7 @@ export const getFailures = <T extends Iterable<Result.Result<any, any>>>(
  * ```
  *
  * @see {@link getFailures} — extract failure values
- * @see {@link separate} — split into failures and successes
+ * @see {@link separate} — split into successes and failures
  *
  * @category filtering
  * @since 4.0.0
@@ -3768,7 +3795,7 @@ export const getSuccesses = <T extends Iterable<Result.Result<any, any>>>(
  * ```
  *
  * @see {@link filter} — keep original elements matching a predicate
- * @see {@link partition} for keeping both failures and successes
+ * @see {@link partition} for keeping both successes and failures
  *
  * @category filtering
  * @since 2.0.0
@@ -3835,16 +3862,16 @@ export const filter: {
 )
 
 /**
- * Splits an iterable using a `Filter` into failures and successes.
+ * Splits an iterable using a `Filter` into successes and failures.
  *
  * **When to use**
  *
  * Use to partition an iterable by evaluating each element with a
- * `Result`-returning filter and keeping both failure and success values.
+ * `Result`-returning filter and keeping both success and failure values.
  *
  * **Details**
  *
- * Returns `[excluded, satisfying]`. The filter receives `(element, index)`.
+ * Returns `[passes, fails]`. The filter receives `(element, index)`.
  *
  * **Example** (Partitioning with a filter)
  *
@@ -3853,7 +3880,7 @@ export const filter: {
  *
  * Array.partition([1, -2, 3], (n, i) =>
  *   n > 0 ? Result.succeed(n + i) : Result.fail(`negative:${n}`)
- * ) // => [["negative:-2"], [1, 5]]
+ * ) // => [[1, 5], ["negative:-2"]]
  * ```
  *
  * @see {@link filter} — keep only matching elements
@@ -3866,42 +3893,42 @@ export const filter: {
 export const partition: {
   <A, Pass, Fail>(
     f: (input: NoInfer<A>, i: number) => Result.Result<Pass, Fail>
-  ): (self: Iterable<A>) => [excluded: Array<Fail>, satisfying: Array<Pass>]
+  ): (self: Iterable<A>) => [passes: Array<Pass>, fails: Array<Fail>]
   <A, Pass, Fail>(
     self: Iterable<A>,
     f: (input: A, i: number) => Result.Result<Pass, Fail>
-  ): [excluded: Array<Fail>, satisfying: Array<Pass>]
+  ): [passes: Array<Pass>, fails: Array<Fail>]
 } = dual(
   2,
   <A, Pass, Fail>(
     self: Iterable<A>,
     f: (input: A, i: number) => Result.Result<Pass, Fail>
-  ): [excluded: Array<Fail>, satisfying: Array<Pass>] => {
-    const excluded: Array<Fail> = []
-    const satisfying: Array<Pass> = []
+  ): [passes: Array<Pass>, fails: Array<Fail>] => {
+    const passes: Array<Pass> = []
+    const fails: Array<Fail> = []
     let i = 0
     for (const a of self) {
       const result = f(a, i++)
       if (Result.isSuccess(result)) {
-        satisfying.push(result.success)
+        passes.push(result.success)
       } else {
-        excluded.push(result.failure)
+        fails.push(result.failure)
       }
     }
-    return [excluded, satisfying]
+    return [passes, fails]
   }
 )
 
 /**
- * Separates an iterable of `Result`s into failure values and success values.
+ * Separates an iterable of `Result`s into success values and failure values.
  *
  * **When to use**
  *
- * Use to split an iterable of `Result` values into failure and success arrays.
+ * Use to split an iterable of `Result` values into success and failure arrays.
  *
  * **Details**
  *
- * Returns `[failures, successes]`. This is equivalent to
+ * Returns `[successes, failures]`. This is equivalent to
  * `partition(identity)`.
  *
  * **Example** (Separating Results)
@@ -3909,7 +3936,7 @@ export const partition: {
  * ```ts import.meta.vitest
  * import { Array, Result } from "effect"
  *
- * Array.separate([Result.succeed(1), Result.fail("error"), Result.succeed(2)]) // => [["error"], [1, 2]]
+ * Array.separate([Result.succeed(1), Result.fail("error"), Result.succeed(2)]) // => [[1, 2], ["error"]]
  * ```
  *
  * @see {@link getFailures} — extract only failures
@@ -3922,8 +3949,8 @@ export const partition: {
 export const separate: <T extends Iterable<Result.Result<any, any>>>(
   self: T
 ) => [
-  failures: Array<Result.Result.Failure<ReadonlyArray.Infer<T>>>,
-  successes: Array<Result.Result.Success<ReadonlyArray.Infer<T>>>
+  successes: Array<Result.Result.Success<ReadonlyArray.Infer<T>>>,
+  failures: Array<Result.Result.Failure<ReadonlyArray.Infer<T>>>
 ] = partition(identity)
 
 /**
@@ -4465,18 +4492,14 @@ export const dedupeWith: {
 } = dual(
   2,
   <A>(self: Iterable<A>, isEquivalent: (self: A, that: A) => boolean): Array<A> => {
-    const input = fromIterable(self)
-    if (isReadonlyArrayNonEmpty(input)) {
-      const out: NonEmptyArray<A> = [headNonEmpty(input)]
-      const rest = tailNonEmpty(input)
-      for (const r of rest) {
-        if (out.every((a) => !isEquivalent(r, a))) {
-          out.push(r)
-        }
+    const out: Array<A> = []
+    next: for (const r of fromIterable(self)) {
+      for (let i = 0; i < out.length; i++) {
+        if (isEquivalent(r, out[i])) continue next
       }
-      return out
+      out.push(r)
     }
-    return []
+    return out
   }
 )
 
