@@ -58,6 +58,10 @@ import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
 import {
+  acpProviderOptionDescriptors,
+  encodeAcpOptionValue,
+} from "../../provider/acp/AcpSessionConfig.ts";
+import {
   extractXAiAcpSubagentEndNotice,
   extractXAiAcpSubagentUpdate,
   makeXAiPromptCompletionRuntime,
@@ -3421,6 +3425,111 @@ describe("AcpAdapterV2", () => {
       });
 
       assert.equal(runtime.providerSession.status, "ready");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("decodes ACP sentinels without changing persisted legacy values", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const instanceId = ProviderInstanceId.make("acp-empty-option-test");
+      let currentLabel: string | undefined;
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+            ),
+            environment: { T3_ACP_EMPTY_SELECT_OPTION: "1" },
+            protocolEvents,
+          }),
+          onSessionConfigurationUpdate: (configOptions, modeState) =>
+            Effect.sync(() => {
+              const descriptor = acpProviderOptionDescriptors({
+                configOptions,
+                modeState,
+              }).find((option) => option.id === "profile");
+              if (descriptor?.type === "select") {
+                currentLabel = descriptor.options.find(
+                  (choice) => choice.id === descriptor.currentValue,
+                )?.label;
+              }
+            }),
+        },
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig: yield* ServerConfig.ServerConfig,
+        selfInvocation: yield* resolveSelfInvocation(),
+      });
+      const threadId = ThreadId.make("thread-acp-empty-option");
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = {
+        instanceId,
+        model: "default",
+        options: [{ id: "profile", value: "__acp_default__" }],
+      } satisfies ModelSelection;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-empty-option"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      assert.equal(currentLabel, "Literal value");
+
+      const requestedValues = [
+        { value: "", label: "Provider default" },
+        { value: "custom", label: "Custom" },
+        { value: "__acp_default__", label: "Literal value" },
+        { value: "__acp_default____acp_default__", label: "Repeated prefix" },
+        { value: "__acp_default__".padEnd(256, "_"), label: "Longest legacy value" },
+        { value: "", label: "Provider default" },
+      ];
+      for (const [index, { value, label }] of requestedValues.entries()) {
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+            ordinal: index + 1,
+            modelSelection: {
+              instanceId,
+              model: "default",
+              options: [{ id: "profile", value: encodeAcpOptionValue(value) }],
+            },
+          }),
+        );
+        yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.runHead,
+        );
+        assert.equal(currentLabel, label);
+      }
+      const requests = (yield* Queue.takeAll(protocolEvents)).filter(
+        (event) =>
+          event.direction === "outgoing" &&
+          rawProtocolMethod(event) === "session/set_config_option" &&
+          rawProtocolRequestParam(event, "configId") === "profile",
+      );
+      assert.deepEqual(
+        requests.map((event) => rawProtocolRequestParam(event, "value")),
+        ["__acp_default__", ...requestedValues.map(({ value }) => value)],
+      );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

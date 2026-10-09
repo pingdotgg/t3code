@@ -1,8 +1,49 @@
 import { describe, expect, it } from "@effect/vitest";
+import { ModelCapabilities } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 import { ACP_SESSION_MODE_OPTION_ID, acpProviderOptionDescriptors } from "./AcpSessionConfig.ts";
 
+const decodeCapabilities = Schema.decodeUnknownSync(ModelCapabilities);
+const emptyValue = "__acp_default__".padEnd(257, "_");
+
 describe("acpProviderOptionDescriptors", () => {
+  it("represents empty agent choices with a nonempty sentinel through the contract", () => {
+    const descriptors = acpProviderOptionDescriptors({
+      configOptions: [
+        {
+          id: "agent",
+          name: "Selection",
+          type: "select",
+          currentValue: "",
+          options: [
+            { value: "", name: "Provider default" },
+            { value: "custom", name: "Custom" },
+          ],
+        },
+      ],
+      modeState: undefined,
+    });
+    expect(
+      decodeCapabilities({
+        optionDescriptors: descriptors,
+      }),
+    ).toEqual({
+      optionDescriptors: [
+        {
+          id: "agent",
+          label: "Selection",
+          type: "select",
+          currentValue: emptyValue,
+          options: [
+            { id: emptyValue, label: "Provider default" },
+            { id: "custom", label: "Custom" },
+          ],
+        },
+      ],
+    });
+  });
+
   it("maps non-model select options and excludes model and collaboration categories", () => {
     const descriptors = acpProviderOptionDescriptors({
       configOptions: [
@@ -79,7 +120,7 @@ describe("acpProviderOptionDescriptors", () => {
     ]);
   });
 
-  it("flattens grouped select choices and drops empty or duplicate values", () => {
+  it("flattens grouped select choices and drops duplicate and blank values", () => {
     const descriptors = acpProviderOptionDescriptors({
       configOptions: [
         {
@@ -151,6 +192,43 @@ describe("acpProviderOptionDescriptors", () => {
     ]);
   });
 
+  it.each([
+    { currentModeId: "", currentValue: emptyValue },
+    { currentModeId: "__acp_default__", currentValue: "__acp_default__" },
+    {
+      currentModeId: "__acp_default__".padEnd(256, "_"),
+      currentValue: "__acp_default__".padEnd(256, "_"),
+    },
+  ])("keeps empty and legacy session modes distinct for $currentModeId", (selection) => {
+    const descriptors = acpProviderOptionDescriptors({
+      configOptions: [],
+      modeState: {
+        currentModeId: selection.currentModeId,
+        availableModes: [
+          { id: "", name: "Provider default" },
+          { id: "__acp_default__", name: "Literal value" },
+          { id: "__acp_default__".padEnd(256, "_"), name: "Longest legacy value" },
+          { id: emptyValue, name: "Too long" },
+        ],
+      },
+    });
+
+    expect(decodeCapabilities({ optionDescriptors: descriptors }).optionDescriptors).toEqual([
+      {
+        id: ACP_SESSION_MODE_OPTION_ID,
+        label: "Mode",
+        description: "Session mode advertised by the ACP agent.",
+        type: "select",
+        currentValue: selection.currentValue,
+        options: [
+          { id: emptyValue, label: "Provider default" },
+          { id: "__acp_default__", label: "Literal value" },
+          { id: "__acp_default__".padEnd(256, "_"), label: "Longest legacy value" },
+        ],
+      },
+    ]);
+  });
+
   it("suppresses the synthetic mode descriptor when modes duplicate a config option", () => {
     const descriptors = acpProviderOptionDescriptors({
       configOptions: [
@@ -207,8 +285,9 @@ describe("acpProviderOptionDescriptors", () => {
     ]);
   });
 
-  it("preserves canonical opaque option values and omits values the wire would mutate", () => {
-    const exactValue = "value:with:opaque-markers";
+  it("preserves legacy sentinel-like values and rejects invalid choices", () => {
+    const exactValue = "__acp_default__";
+    const longestLegacyValue = exactValue.padEnd(256, "_");
     const descriptors = acpProviderOptionDescriptors({
       configOptions: [
         {
@@ -218,8 +297,11 @@ describe("acpProviderOptionDescriptors", () => {
           currentValue: exactValue,
           options: [
             { value: exactValue, name: "Exact" },
-            { value: " value with spaces ", name: "Would be trimmed" },
-            { value: "x".repeat(257), name: "Too long" },
+            { value: `${exactValue}${exactValue}`, name: "Repeated prefix" },
+            { value: longestLegacyValue, name: "Longest legacy value" },
+            { value: " value with spaces ", name: "Padded" },
+            { value: "", name: " " },
+            { value: emptyValue, name: "Too long" },
           ],
         },
       ],
@@ -229,7 +311,12 @@ describe("acpProviderOptionDescriptors", () => {
     expect(descriptors[0]).toMatchObject({
       id: "opaque",
       currentValue: exactValue,
-      options: [{ id: exactValue, label: "Exact" }],
+      options: [
+        { id: exactValue, label: "Exact" },
+        { id: `${exactValue}${exactValue}`, label: "Repeated prefix" },
+        { id: longestLegacyValue, label: "Longest legacy value" },
+        { id: emptyValue, label: "Default" },
+      ],
     });
   });
 

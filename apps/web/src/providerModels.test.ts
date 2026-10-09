@@ -31,6 +31,41 @@ function model(input: {
 }
 
 describe("getProviderModelCapabilities", () => {
+  const acpDefaultValue = "__acp_default__".padEnd(257, "_");
+  it.each([acpDefaultValue, "plan", undefined])(
+    "preserves ACP agent choices and current value %j when plan mode is disabled",
+    (currentValue) => {
+      const models = [
+        model({
+          slug: "default",
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "agent",
+                label: "Agent",
+                type: "select",
+                ...(currentValue !== undefined ? { currentValue } : {}),
+                options: [
+                  { id: "custom", label: "Custom" },
+                  { id: acpDefaultValue, label: "Provider default" },
+                  { id: "plan", label: "Plan" },
+                ],
+              },
+            ],
+          },
+        }),
+      ];
+      expect(
+        getProviderModelCapabilities(
+          models,
+          "default",
+          ProviderDriverKind.make("acpRegistry"),
+          false,
+        ),
+      ).toBe(models[0]?.capabilities);
+    },
+  );
+
   it("resolves model-declared aliases", () => {
     const aliasCapabilities = capabilities("aliased-option");
     const models = [

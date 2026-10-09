@@ -92,7 +92,10 @@ import {
   resolveEmbeddedTerminalContent,
   type AcpClientTerminals,
 } from "../../provider/acp/AcpClientTerminals.ts";
-import { ACP_SESSION_MODE_OPTION_ID } from "../../provider/acp/AcpSessionConfig.ts";
+import {
+  ACP_SESSION_MODE_OPTION_ID,
+  encodeAcpOptionValue,
+} from "../../provider/acp/AcpSessionConfig.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
 import {
   t3AcpPromptWithInstructions,
@@ -6358,6 +6361,7 @@ export function makeAcpAdapterV2(
             // agent-side set rejection to a warning; the agent's default
             // applies for that option.
             const option = configOptions.find((candidate) => candidate.id === selection.id);
+            let value = selection.value;
             if (
               option !== undefined &&
               option.type === "select" &&
@@ -6366,14 +6370,18 @@ export function makeAcpAdapterV2(
               const advertisedValues = option.options.flatMap((entry) =>
                 "value" in entry ? [entry.value] : entry.options.map((choice) => choice.value),
               );
-              if (!advertisedValues.includes(selection.value)) continue;
+              const advertisedValue = advertisedValues.find(
+                (candidate) => encodeAcpOptionValue(candidate) === selection.value,
+              );
+              if (advertisedValue === undefined) continue;
+              value = advertisedValue;
             }
-            yield* runtime.setConfigOption(selection.id, selection.value).pipe(
+            yield* runtime.setConfigOption(selection.id, value).pipe(
               Effect.catchTags({
                 AcpRequestError: (error) =>
                   Effect.logWarning("ACP session rejected a configuration option value", {
                     optionId: selection.id,
-                    value: selection.value,
+                    value,
                     detail: error.message,
                   }),
               }),
@@ -6387,13 +6395,14 @@ export function makeAcpAdapterV2(
           // The synthetic mode selection is skipped rather than failed when the
           // agent no longer advertises it: mode sets are volatile across agent
           // versions and a stale persisted mode should not block the turn.
-          if (
-            modeSelection !== undefined &&
-            typeof modeSelection.value === "string" &&
-            modeState?.availableModes.some((mode) => mode.id === modeSelection.value) === true &&
-            modeState.currentModeId !== modeSelection.value
-          ) {
-            yield* runtime.setMode(modeSelection.value);
+          const selectedMode =
+            typeof modeSelection?.value === "string"
+              ? modeState?.availableModes.find(
+                  (mode) => encodeAcpOptionValue(mode.id) === modeSelection.value,
+                )
+              : undefined;
+          if (selectedMode !== undefined && modeState?.currentModeId !== selectedMode.id) {
+            yield* runtime.setMode(selectedMode.id);
           }
           const effectiveModeState = yield* runtime.getModeState;
           const effectiveConfigOptions = yield* runtime.getConfigOptions;

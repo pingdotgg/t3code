@@ -61,7 +61,7 @@ export function getProviderModelCapabilities(
   const slug = resolveSelectableModel(provider, model, models);
   const selectedModel = models.find((candidate) => candidate.slug === slug);
   const caps = selectedModel?.capabilities ?? EMPTY_CAPABILITIES;
-  if (planModeEnabled) {
+  if (planModeEnabled || provider !== "opencode") {
     return caps;
   }
   return withoutPlanAgentOption(caps);
