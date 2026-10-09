@@ -52,9 +52,13 @@ extension runs outside a tool call remains governed by Pi's own extension trust 
 T3 Code's `delegate_task` tool creates durable child threads in the shared subagent UI. If the user
 installs Pi's example `subagent` extension, T3 Code also shows its task progress and results in that
 UI. Pi runs those children without a session, so they cannot be opened or resumed as T3 Code
-threads. A single-agent async run from the pi-subagents extension stays running in that UI after
-the turn ends, and settles when the extension reports that the run finished. Stop marks it
-interrupted in T3 Code, but the extension's detached run keeps going.
+threads.
+
+With the pi-subagents extension installed, ask the agent to run one of its agents in the
+background. The agent calls the extension's `subagent` tool for that agent with `async: true`. The
+run stays running in the subagent UI after the turn ends, and settles when the extension reports
+that it finished. Stop marks it interrupted in T3 Code, but the extension's detached run keeps
+going.
 
 ## Troubleshooting
 

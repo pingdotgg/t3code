@@ -516,7 +516,7 @@ export function makePiAdapterV2(
       // turn attaches. The guard remains for sessions with no routable owner.
       let unsolicitedActivityDetected = false;
       let pendingWake: PiWake | null = null;
-      /** Running pi-subagents async children, keyed by their run directory. */
+      /** Unfinished pi-subagents async children, keyed by their run directory. */
       const asyncSubagents = new Map<string, PiAsyncSubagent>();
       let rollbackBarrier: Deferred.Deferred<
         void,
@@ -1223,28 +1223,34 @@ export function makePiAdapterV2(
       ) {
         const tracked = asyncSubagents.get(asyncDir);
         if (tracked === undefined) return;
-        asyncSubagents.delete(asyncDir);
         const settledAt = yield* DateTime.now;
         const completedAt = status === "idle" ? null : settledAt;
         const settled = { status, result, completedAt, updatedAt: settledAt };
-        yield* emitSubagentRow({
+        const row: PiSubagentRow = {
           node: { ...tracked.node, status, completedAt },
           subagent: { ...tracked.subagent, ...settled },
           turnItem: { ...tracked.turnItem, ...settled },
-        });
+        };
+        if (status === "idle") asyncSubagents.set(asyncDir, { ...row, agent: tracked.agent });
+        else asyncSubagents.delete(asyncDir);
+        yield* emitSubagentRow(row);
       });
 
       /**
        * T3 can no longer see these children finish: Stop, a native session
        * change, an unfinished launching turn, or Pi exiting. pi-subagents runs
-       * them detached, so they may still finish unseen.
+       * them detached, so they may still finish unseen. A paused child keeps
+       * its paused row.
        */
       const interruptAsyncSubagents = (runId?: ActivePiTurn["turnInput"]["runId"]) =>
         Effect.forEach(
-          [...asyncSubagents].flatMap(([asyncDir, tracked]) =>
-            runId === undefined || tracked.subagent.runId === runId ? [asyncDir] : [],
+          [...asyncSubagents].filter(
+            ([, tracked]) => runId === undefined || tracked.subagent.runId === runId,
           ),
-          (asyncDir) => settleAsyncSubagent(asyncDir, "interrupted", null),
+          ([asyncDir, tracked]) =>
+            tracked.subagent.status === "idle"
+              ? Effect.sync(() => asyncSubagents.delete(asyncDir))
+              : settleAsyncSubagent(asyncDir, "interrupted", null),
           { discard: true },
         );
 
@@ -2573,14 +2579,18 @@ export function makePiAdapterV2(
         },
         events: Stream.fromQueue(events),
         hasPendingBackgroundWork: Effect.sync(
-          () => pendingWake !== null || asyncSubagents.size > 0,
+          () =>
+            pendingWake !== null ||
+            [...asyncSubagents.values()].some((tracked) => tracked.subagent.status !== "idle"),
         ),
         hasPendingBackgroundWorkForThread: (providerThread) =>
           Effect.sync(
             () =>
               (pendingWake !== null && pendingWake.state.providerThread.id === providerThread.id) ||
               [...asyncSubagents.values()].some(
-                (tracked) => tracked.subagent.providerThreadId === providerThread.id,
+                (tracked) =>
+                  tracked.subagent.status !== "idle" &&
+                  tracked.subagent.providerThreadId === providerThread.id,
               ),
           ),
         getModelContextWindow: (selection) => {

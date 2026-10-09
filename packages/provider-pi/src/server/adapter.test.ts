@@ -2309,6 +2309,55 @@ describe("PiAdapterV2", () => {
           (settled.subagent.completedAt === null) === (shown === "idle"),
       );
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(providerThread));
+      if (shown === "idle") {
+        // A paused run is unfinished, so a later notice for its directory still settles it.
+        yield* fake.emit({
+          type: "message_end",
+          message: asyncNotice([{ run: "only", status: "completed" }]),
+        });
+        const finished = yield* takeEvent(
+          (event) => event.type === "subagent.updated" && event.subagent.status === "completed",
+        );
+        assert.isTrue(
+          settled.type === "subagent.updated" &&
+            finished.type === "subagent.updated" &&
+            finished.subagent.id === settled.subagent.id,
+        );
+      }
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps a paused pi-subagents async run paused when Pi exits", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* launchAsyncEcho(fake, "only");
+      yield* fake.emit({ type: "agent_settled" });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+      yield* fake.emit({
+        type: "message_end",
+        message: asyncNotice([{ run: "only", status: "paused" }]),
+      });
+      yield* takeEvent(
+        (event) => event.type === "subagent.updated" && event.subagent.status === "idle",
+      );
+
+      yield* fake.closeStdout;
+      const next = yield* takeEvent(
+        (event) =>
+          event.type === "subagent.updated" ||
+          (event.type === "provider_session.updated" && event.providerSession.status === "error"),
+      );
+      assert.equal(next.type, "provider_session.updated", "the paused row is not rewritten");
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
