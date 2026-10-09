@@ -1,25 +1,15 @@
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 
-/** Shares background install admission with provider startup, before either touches a CLI. */
-export class ProviderMaintenanceAdmission extends Context.Service<
-  ProviderMaintenanceAdmission,
-  {
-    readonly withPermit: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
-  }
->()("t3/provider/providerMaintenanceCommandCoordinator/ProviderMaintenanceAdmission") {}
-
-// Keep one layer reference so the update window and turn startup share its permit.
-export const admissionLayer = Layer.effect(
-  ProviderMaintenanceAdmission,
-  Effect.map(Semaphore.make(1), (permit) =>
-    ProviderMaintenanceAdmission.of({ withPermit: permit.withPermits(1) }),
-  ),
-);
+/** One permit per process: background installs hold it, provider turn starts wait for it. */
+export class ProviderMaintenanceAdmission extends Context.Reference<{
+  readonly withPermit: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+}>("t3/provider/providerMaintenanceCommandCoordinator/ProviderMaintenanceAdmission", {
+  defaultValue: () => ({ withPermit: Semaphore.makeUnsafe(1).withPermits(1) }),
+}) {}
 
 export interface ProviderMaintenanceCommandCoordinatorShape<E> {
   readonly withCommandLock: <A, R>(input: {
@@ -27,7 +17,6 @@ export interface ProviderMaintenanceCommandCoordinatorShape<E> {
     readonly lockKey: string;
     readonly onQueued?: Effect.Effect<void, E, R>;
     readonly onInterrupted?: Effect.Effect<void, E, R>;
-    readonly admit?: ProviderMaintenanceAdmission["Service"]["withPermit"];
     readonly run: Effect.Effect<A, E, R>;
   }) => Effect.Effect<A, E, R>;
 }
@@ -61,7 +50,6 @@ export const makeProviderMaintenanceCommandCoordinator = Effect.fn(
     lockKey,
     onQueued,
     onInterrupted,
-    admit,
     run,
   }) =>
     Effect.gen(function* () {
@@ -71,7 +59,7 @@ export const makeProviderMaintenanceCommandCoordinator = Effect.fn(
       }
 
       return yield* (onQueued ?? Effect.void).pipe(
-        Effect.andThen(admit ? admit(locks.withLock(lockKey, run)) : locks.withLock(lockKey, run)),
+        Effect.andThen(locks.withLock(lockKey, run)),
         Effect.onInterrupt(() => onInterrupted ?? Effect.void),
         Effect.ensuring(releaseTarget(targetKey)),
       );
