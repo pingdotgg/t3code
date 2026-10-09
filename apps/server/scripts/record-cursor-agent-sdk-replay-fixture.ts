@@ -10,6 +10,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 import { Command, Flag } from "effect/cli";
+import * as CursorSdk from "@t3tools/provider-cursor/server/CursorSdk";
 
 import {
   recordCursorAgentSdkReplayTranscript,
@@ -219,6 +220,7 @@ const recordCursorReplayCommand = Command.make(
 );
 
 Command.run(recordCursorReplayCommand, { version: "0.0.0" }).pipe(
+  Effect.provide(CursorSdk.layer),
   Effect.provide(NodeServices.layer),
   NodeRuntime.runMain,
 );
