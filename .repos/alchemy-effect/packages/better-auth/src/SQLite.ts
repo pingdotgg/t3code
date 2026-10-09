@@ -1,3 +1,5 @@
+import { dotAlchemyDirectory } from "alchemy/AlchemyContext";
+import path from "pathe";
 import type { Database as BunDatabase } from "bun:sqlite";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -35,32 +37,38 @@ const open = (path: string): Effect.Effect<BunDatabase, never, Scope.Scope> =>
  * }).pipe(Effect.provide(SQLite(".alchemy/auth.sqlite")))
  * ```
  *
- * @param path SQLite file path (parent directory must exist).
+ * @param filename SQLite file path (parent directory must exist). Defaults to
+ * `better-auth.sqlite` under the resolved `AlchemyContext.dotAlchemy` directory.
  * @default ".alchemy/better-auth.sqlite"
  *
  * @layer
  * @provides BetterAuth.Database
  * @product SQLite
  */
-export const SQLite = (
-  path = ".alchemy/better-auth.sqlite",
-): Layer.Layer<Database> =>
-  Layer.succeed(Database, {
-    provider: "sqlite",
-    runtime: open(path),
-    migrate: {
-      identity: { path },
-      connect: Effect.succeed(
-        open(path).pipe(
-          Effect.catchDefect((cause: unknown) =>
-            Effect.fail(
-              new BetterAuthMigrationError({
-                message: `Failed to open SQLite database at ${path}`,
-                cause,
-              }),
+export const SQLite = (filename?: string): Layer.Layer<Database> =>
+  Layer.effect(
+    Database,
+    Effect.gen(function* () {
+      const resolved =
+        filename ?? path.join(yield* dotAlchemyDirectory, "better-auth.sqlite");
+      return {
+        provider: "sqlite",
+        runtime: open(resolved),
+        migrate: {
+          identity: { path: resolved },
+          connect: Effect.succeed(
+            open(resolved).pipe(
+              Effect.catchDefect((cause: unknown) =>
+                Effect.fail(
+                  new BetterAuthMigrationError({
+                    message: `Failed to open SQLite database at ${resolved}`,
+                    cause,
+                  }),
+                ),
+              ),
             ),
           ),
-        ),
-      ),
-    },
-  });
+        },
+      };
+    }),
+  );

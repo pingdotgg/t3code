@@ -22,11 +22,11 @@ import * as NodeCrypto from "node:crypto";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64 from "effect/encoding/Base64";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { LinuxBrowserSecretPath } from "./LinuxBrowserSecret.ts";
 
 const KEY_SALT = "saltysalt";
@@ -205,9 +205,9 @@ export const decodeWindowsWrappedKey = Effect.fn("ChromiumKeys.decodeWindowsWrap
   if (state.os_crypt.app_bound_encrypted_key !== undefined) {
     return yield* new ChromiumKeyError({ reason: "unsupportedPlatform" });
   }
-  const wrapped = yield* Effect.fromResult(
-    Encoding.decodeBase64(state.os_crypt.encrypted_key),
-  ).pipe(Effect.mapError((cause) => new ChromiumKeyError({ reason: "readFailed", cause })));
+  const wrapped = yield* Effect.fromResult(Base64.decode(state.os_crypt.encrypted_key)).pipe(
+    Effect.mapError((cause) => new ChromiumKeyError({ reason: "readFailed", cause })),
+  );
   const wrappedBuffer = Buffer.from(wrapped);
   if (!wrappedBuffer.subarray(0, DPAPI_PREFIX.length).equals(DPAPI_PREFIX)) {
     return yield* new ChromiumKeyError({ reason: "readFailed" });
@@ -262,7 +262,7 @@ export const unwrapWindowsDpapiKey = Effect.fn("ChromiumKeys.unwrapWindowsDpapiK
       if (Number(exitCode) !== 0) {
         return yield* new ChromiumKeyError({ reason: "readFailed" });
       }
-      const plain = yield* Effect.fromResult(Encoding.decodeBase64(plainEncoded)).pipe(
+      const plain = yield* Effect.fromResult(Base64.decode(plainEncoded)).pipe(
         Effect.mapError((cause) => new ChromiumKeyError({ reason: "readFailed", cause })),
       );
       if (plain.length !== WINDOWS_KEY_LENGTH) {
@@ -315,8 +315,9 @@ export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")
           // v10 remains importable when Secret Service is absent or does not
           // contain a key. An explicit denial/lock/cancel remains a consent
           // failure rather than being silently downgraded.
-          Effect.catch((error) =>
-            error.reason === "needsKeychainApproval" ? Effect.fail(error) : Effect.succeed(error),
+          Effect.catchIf(
+            (error) => error.reason !== "needsKeychainApproval",
+            (error) => Effect.succeed(error),
           ),
         )
       : undefined;

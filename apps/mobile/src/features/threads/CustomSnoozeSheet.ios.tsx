@@ -29,7 +29,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-settled";
 import { useState, type ReactNode } from "react";
 import { NavigationContainer, NavigationIndependentTree } from "@react-navigation/native";
-import { createNativeStackNavigator } from "@react-navigation/native-stack";
+import { createV5StackNavigator as createNativeStackNavigator } from "../../native/createV5StackNavigator";
 import { ScrollView, useWindowDimensions, View } from "react-native";
 import { useMobileNavigationTheme } from "../../lib/useMobileNavigationTheme";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
@@ -139,7 +139,7 @@ export function CustomSnoozeSheet(props: {
                     modifiers={[
                       datePickerStyle("wheel"),
                       labelsHidden(),
-                      frame({ maxWidth: Infinity, height: 180 }),
+                      frame({ maxWidth: Infinity, minHeight: 180, maxHeight: 180 }),
                     ]}
                   />
                 ) : (
@@ -154,7 +154,7 @@ export function CustomSnoozeSheet(props: {
                       modifiers={[
                         pickerStyle("wheel"),
                         labelsHidden(),
-                        frame({ minWidth: 0, maxWidth: Infinity, height: 180 }),
+                        frame({ minWidth: 0, maxWidth: Infinity, minHeight: 180, maxHeight: 180 }),
                         clipped(),
                       ]}
                     >
@@ -177,7 +177,7 @@ export function CustomSnoozeSheet(props: {
                       modifiers={[
                         pickerStyle("wheel"),
                         labelsHidden(),
-                        frame({ minWidth: 0, maxWidth: Infinity, height: 180 }),
+                        frame({ minWidth: 0, maxWidth: Infinity, minHeight: 180, maxHeight: 180 }),
                         clipped(),
                       ]}
                     >

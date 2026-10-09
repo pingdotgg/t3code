@@ -1,6 +1,6 @@
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import Agent from "./Agent.ts";
 
 // A second Worker that binds the same `Agent` Durable Object as `Api`. Each

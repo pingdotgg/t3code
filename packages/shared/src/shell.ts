@@ -3,10 +3,12 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import { HostProcessEnvironment, HostProcessPlatform } from "./hostProcess.ts";
@@ -490,7 +492,7 @@ function resolveCommandCandidates(
 // just written (e.g. managed binary installs). A "not-found" outcome is also
 // cached for the TTL, so a just-installed binary can stay invisible for up to
 // 30s unless resolved by explicit path.
-// TTL expiry uses the monotonic clock (Clock.currentTimeNanos) so backward
+// TTL expiry uses the monotonic clock (Clock.monotonicTimeNanos) so backward
 // wall-clock adjustments cannot keep expired entries alive.
 const COMMAND_RESOLUTION_CACHE_TTL_NANOS = 30_000_000_000n;
 const COMMAND_RESOLUTION_CACHE_MAX_ENTRIES = 512;
@@ -510,6 +512,64 @@ export const CommandResolutionCache = Context.Reference<Map<string, CommandResol
     defaultValue: () => new Map(),
   },
 );
+
+interface PathDirectoryListing {
+  readonly modified: number | null | undefined;
+  readonly names: ReadonlySet<string> | undefined;
+}
+
+// mtime of a PATH directory; null when missing, undefined when unreadable.
+const directoryMtime = (directory: string) =>
+  FileSystem.FileSystem.use((fileSystem) => fileSystem.stat(directory)).pipe(
+    Effect.map((info) =>
+      info.type === "Directory" ? Option.getOrUndefined(info.mtime)?.getTime() : undefined,
+    ),
+    Effect.catch((error) => Effect.succeed(error.reason._tag === "NotFound" ? null : undefined)),
+  );
+
+// Dated before it is read, so an entry added in between changes the mtime seen
+// on the next check. Without names, lookups probe candidates directly.
+const listPathDirectory = Effect.fnUntraced(function* (
+  directory: string,
+): Effect.fn.Return<PathDirectoryListing, never, FileSystem.FileSystem> {
+  const modified = yield* directoryMtime(directory);
+  if (modified == null) return { modified, names: modified === null ? new Set() : undefined };
+  const entries = yield* FileSystem.FileSystem.use((fileSystem) =>
+    fileSystem.readDirectory(directory),
+  ).pipe(Effect.orElseSucceed(() => undefined));
+  return { modified, names: entries && new Set(entries.map((entry) => entry.toLowerCase())) };
+});
+
+const PathDirectoryListings = Context.Reference<
+  Cache.Cache<string, PathDirectoryListing, never, FileSystem.FileSystem> | undefined
+>("@t3tools/shared/shell/PathDirectoryListings", { defaultValue: () => undefined });
+
+/**
+ * Run a batch of command lookups (e.g. editor discovery) that lists each PATH
+ * directory once, relisting it if its mtime changes, and probes only listed
+ * names instead of every PATH x PATHEXT candidate per command.
+ */
+export const withPathDirectoryListings = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const listings = yield* Cache.make({
+      capacity: 1024,
+      lookup: listPathDirectory,
+      requireServicesAt: "lookup",
+    });
+    return yield* effect.pipe(Effect.provideService(PathDirectoryListings, listings));
+  });
+
+// An injected resolver may answer differently for the same search, so its
+// entries are kept apart from every other resolver's.
+let spawnResolverCacheIdCount = 0;
+const spawnResolverCacheIds = new WeakMap<SpawnExecutableResolver, number>();
+function spawnResolverCacheId(resolver: SpawnExecutableResolver): number {
+  const known = spawnResolverCacheIds.get(resolver);
+  if (known !== undefined) return known;
+  const id = spawnResolverCacheIdCount++;
+  spawnResolverCacheIds.set(resolver, id);
+  return id;
+}
 
 function cacheCommandResolution(
   cache: Map<string, CommandResolutionCacheEntry>,
@@ -582,7 +642,7 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR,
   );
   const cache = yield* CommandResolutionCache;
-  const nowNanos = yield* Clock.currentTimeNanos;
+  const nowNanos = yield* Clock.monotonicTimeNanos;
   const cached = cache.get(cacheKey);
   if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
     if (cached.resolvedPath === null) {
@@ -602,8 +662,16 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     pathEntries.push(pathEntry);
   }
 
+  const listings = yield* PathDirectoryListings;
   for (const pathEntry of pathEntries) {
+    let listing = listings && (yield* Cache.get(listings, pathEntry));
+    if (listings && listing?.names && listing.modified !== (yield* directoryMtime(pathEntry))) {
+      yield* Cache.invalidate(listings, pathEntry);
+      listing = yield* Cache.get(listings, pathEntry);
+    }
     for (const candidate of commandCandidates) {
+      // The stat below still checks exact case and rejects non-files.
+      if (listing?.names && !listing.names.has(candidate.toLowerCase())) continue;
       const candidatePath = path.join(pathEntry, candidate);
       if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
         cacheCommandResolution(cache, cacheKey, candidatePath, nowNanos);
@@ -625,7 +693,8 @@ export const resolveCommandPath = Effect.fn("shell.resolveCommandPath")(function
   });
 });
 
-export const resolveSpawnCommand = Effect.fn("shell.resolveSpawnCommand")(function* (
+// Untraced because it runs before most spawns and returns at once off Windows.
+export const resolveSpawnCommand = Effect.fnUntraced(function* (
   command: string,
   args: ReadonlyArray<string>,
   options: CommandAvailabilityOptions = {},
@@ -643,7 +712,32 @@ export const resolveSpawnCommand = Effect.fn("shell.resolveSpawnCommand")(functi
         ? { ...hostEnvironment, ...options.env }
         : options.env;
   const resolveExecutable = yield* SpawnExecutableResolution;
-  const resolvedCommand = resolveExecutable(command, platform, env) ?? command;
+  // The scan is synchronous and runs before every child process, so it shares
+  // the PATH scan cache above. Explicit paths stay uncached for the same reason,
+  // and so do misses: a failed spawn is how providers report "not installed",
+  // and that has to clear the moment the binary appears.
+  const explicitPath = command.includes("/") || command.includes("\\");
+  const cache = yield* CommandResolutionCache;
+  const cacheKey = [
+    "spawn",
+    String(spawnResolverCacheId(resolveExecutable)),
+    platform,
+    resolvePathEnvironmentVariable(env),
+    resolveWindowsPathExtensions(env).join(";"),
+    command,
+  ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
+  const nowNanos = yield* Clock.currentTimeNanos;
+  const cached = explicitPath ? undefined : cache.get(cacheKey);
+  let resolvedExecutable: string | null;
+  if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
+    resolvedExecutable = cached.resolvedPath;
+  } else {
+    resolvedExecutable = resolveExecutable(command, platform, env) ?? null;
+    if (!explicitPath && resolvedExecutable !== null) {
+      cacheCommandResolution(cache, cacheKey, resolvedExecutable, nowNanos);
+    }
+  }
+  const resolvedCommand = resolvedExecutable ?? command;
   const extension = NodePath.win32.extname(resolvedCommand).toLowerCase();
   if (extension !== ".cmd" && extension !== ".bat") {
     return { command: resolvedCommand, args: [...args], shell: false };
@@ -662,7 +756,7 @@ export const isCommandAvailable = Effect.fn("shell.isCommandAvailable")(function
 ) {
   return yield* resolveCommandPath(command, options).pipe(
     Effect.as(true),
-    Effect.catchTag("CommandResolutionError", () => Effect.succeed(false)),
+    Effect.catchTags({ CommandResolutionError: () => Effect.succeed(false) }),
   );
 });
 

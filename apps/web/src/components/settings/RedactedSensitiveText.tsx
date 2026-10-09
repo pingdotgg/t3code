@@ -5,7 +5,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const REDACTED_TEXT_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
 
-function redactedPlaceholder(value: string): string {
+export function redactedPlaceholder(value: string): string {
   let state = 0x811c9dc5;
   for (let index = 0; index < value.length; index += 1) {
     state ^= value.charCodeAt(index);
@@ -44,8 +44,8 @@ export function RedactedSensitiveText(props: {
           <button
             type="button"
             className={cn(
-              "min-w-0 cursor-pointer rounded-sm font-mono text-[11px] leading-normal transition hover:text-foreground",
-              revealed ? "text-muted-foreground" : "select-none text-muted-foreground blur-[2px]",
+              "min-w-0 cursor-pointer rounded-sm font-mono text-2xs leading-normal transition hover:text-foreground",
+              revealed ? "text-muted-foreground" : "select-none text-muted-foreground blur-xs",
               props.className,
             )}
             onClick={() => setRevealed((current) => !current)}

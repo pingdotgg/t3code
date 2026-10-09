@@ -105,27 +105,31 @@ test.provider(
       yield* stack.destroy();
       yield* expectGone(accountId, network.networkId);
     }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:devices", "live"] },
 );
 
-test.provider("list enumerates the deployed managed network", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list enumerates the deployed managed network",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const deployed = yield* stack.deploy(
-      Cloudflare.Devices.DeviceManagedNetwork("ListResource", {
-        name: "alchemy-test-managed-network-list",
-        config: { tlsSockaddr: "192.0.2.3:443", sha256: SHA_A },
-      }),
-    );
+      const deployed = yield* stack.deploy(
+        Cloudflare.Devices.DeviceManagedNetwork("ListResource", {
+          name: "alchemy-test-managed-network-list",
+          config: { tlsSockaddr: "192.0.2.3:443", sha256: SHA_A },
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(
-      Cloudflare.Devices.DeviceManagedNetwork,
-    );
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Devices.DeviceManagedNetwork,
+      );
+      const all = yield* provider.list();
 
-    expect(all.some((n) => n.networkId === deployed.networkId)).toBe(true);
+      expect(all.some((n) => n.networkId === deployed.networkId)).toBe(true);
 
-    yield* stack.destroy();
-    yield* expectGone(deployed.accountId, deployed.networkId);
-  }).pipe(logLevel),
+      yield* stack.destroy();
+      yield* expectGone(deployed.accountId, deployed.networkId);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:devices", "live"] },
 );

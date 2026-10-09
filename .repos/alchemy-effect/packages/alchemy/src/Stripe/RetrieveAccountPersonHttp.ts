@@ -17,6 +17,7 @@ import {
  * both `account` and `person`.
  *
  * @layer
+ * @product Account
  * @provides Stripe.RetrieveAccountPerson
  */
 export const RetrieveAccountPersonHttp = Layer.effect(

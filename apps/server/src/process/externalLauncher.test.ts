@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -14,7 +15,7 @@ import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
@@ -57,7 +58,7 @@ function makeMockDetachedHandle(input: MockSpawnResult & { readonly onUnref?: ()
   });
 }
 
-const testLayer = (input: {
+const layerTest = (input: {
   readonly platform: NodeJS.Platform;
   readonly env?: Record<string, string>;
   readonly resolveExecutable?: (command: string) => string | undefined;
@@ -65,7 +66,7 @@ const testLayer = (input: {
   readonly onUnref?: () => void;
   readonly spawnResult?: (command: ChildProcess.StandardCommand) => MockSpawnResult | undefined;
 }) => {
-  const spawnerLayer = Layer.succeed(
+  const layerSpawner = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) =>
       Effect.sync(() => {
@@ -83,7 +84,7 @@ const testLayer = (input: {
   );
 
   return Layer.mergeAll(
-    ExternalLauncher.layer.pipe(Layer.provide(Layer.merge(NodeServices.layer, spawnerLayer))),
+    ExternalLauncher.layer.pipe(Layer.provide(Layer.merge(NodeServices.layer, layerSpawner))),
     Layer.succeed(HostProcessPlatform, input.platform),
     Layer.succeed(
       SpawnExecutableResolution,
@@ -108,7 +109,7 @@ it.effect("launches the default browser through the platform command", () => {
     assert.equal(didUnref, true);
   }).pipe(
     Effect.provide(
-      testLayer({
+      layerTest({
         platform: "linux",
         onSpawn: (command) => {
           spawned = command;
@@ -137,7 +138,7 @@ it.effect("launches an installed editor with platform-safe arguments", () =>
       });
     }).pipe(
       Effect.provide(
-        testLayer({
+        layerTest({
           platform: "win32",
           env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
           resolveExecutable: (command) =>
@@ -182,7 +183,7 @@ for (const platform of ["darwin", "linux"] as const) {
         }
       }).pipe(
         Effect.provide(
-          testLayer({
+          layerTest({
             platform,
             env: { PATH: binDir },
             onSpawn: (command) => spawned.push(command),
@@ -225,7 +226,7 @@ it.effect("launches Cursor in classic IDE mode through the Windows command shim"
       });
     }).pipe(
       Effect.provide(
-        testLayer({
+        layerTest({
           platform: "win32",
           env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
           resolveExecutable: (command) =>
@@ -267,7 +268,7 @@ it.effect.skipIf(windowsHost)("reveals a file in Finder with open -R on macOS", 
       });
     }).pipe(
       Effect.provide(
-        testLayer({
+        layerTest({
           platform: "darwin",
           env: { PATH: binDir },
           onSpawn: (command) => {
@@ -309,7 +310,7 @@ it.effect("reveals a file in File Explorer through PowerShell on Windows", () =>
       return yield* launcher.resolveFileManagerRevealKind();
     }).pipe(
       Effect.provide(
-        testLayer({
+        layerTest({
           platform: "win32",
           env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD", SYSTEMROOT: systemRoot },
           onSpawn: (command) => {
@@ -413,7 +414,7 @@ it.effect("does not advertise reveal on Windows when PowerShell is missing", () 
       };
     }).pipe(
       Effect.provide(
-        testLayer({
+        layerTest({
           platform: "win32",
           env: {
             PATH: binDir,
@@ -457,7 +458,7 @@ it.effect.skipIf(windowsHost)(
         return { kind, editors };
       }).pipe(
         Effect.provide(
-          testLayer({
+          layerTest({
             platform: "linux",
             env: {
               PATH: binDir,
@@ -505,7 +506,7 @@ it.effect.skipIf(windowsHost)(
         };
       }).pipe(
         Effect.provide(
-          testLayer({
+          layerTest({
             platform: "linux",
             env: {
               PATH: binDir,
@@ -549,7 +550,7 @@ it.effect.skipIf(windowsHost)(
         return revealKind;
       }).pipe(
         Effect.provide(
-          testLayer({
+          layerTest({
             platform: "linux",
             env: {
               PATH: binDir,
@@ -605,7 +606,7 @@ it.effect.skipIf(windowsHost)(
         return { editors, kind };
       }).pipe(
         Effect.provide(
-          testLayer({
+          layerTest({
             platform: "linux",
             env: {
               PATH: binDir,
@@ -655,7 +656,7 @@ it.effect.skipIf(windowsHost)(
         });
       }).pipe(
         Effect.provide(
-          testLayer({
+          layerTest({
             platform: "linux",
             env: {
               PATH: binDir,
@@ -698,7 +699,7 @@ it.effect.skipIf(windowsHost)("reveals by opening the containing directory on Li
       });
     }).pipe(
       Effect.provide(
-        testLayer({
+        layerTest({
           platform: "linux",
           env: { PATH: binDir, DISPLAY: ":0" },
           onSpawn: (command) => {
@@ -730,7 +731,7 @@ it.effect.skipIf(windowsHost)(
       const editors = yield* Effect.gen(function* () {
         const launcher = yield* ExternalLauncher.ExternalLauncher;
         return yield* launcher.resolveAvailableEditors();
-      }).pipe(Effect.provide(testLayer({ platform: "linux", env: { PATH: binDir } })));
+      }).pipe(Effect.provide(layerTest({ platform: "linux", env: { PATH: binDir } })));
 
       assert.equal(editors.includes("file-manager"), false);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -755,7 +756,7 @@ it.effect.skipIf(windowsHost)(
         return yield* launcher.resolveAvailableEditors();
       }).pipe(
         Effect.provide(
-          testLayer({
+          layerTest({
             platform: "linux",
             env: { PATH: binDir, DISPLAY: ":0" },
             onSpawn: (command) => {
@@ -797,7 +798,7 @@ it.effect.skipIf(windowsHost)(
         return yield* launcher.resolveAvailableEditors();
       }).pipe(
         Effect.provide(
-          testLayer({
+          layerTest({
             platform: "linux",
             env: { PATH: binDir, DISPLAY: ":0" },
             spawnResult: (command) => (command.command === "xdg-mime" ? { stdout: "" } : undefined),
@@ -827,7 +828,7 @@ it.effect.skipIf(windowsHost)(
         return yield* launcher.resolveAvailableEditors();
       }).pipe(
         Effect.provide(
-          testLayer({
+          layerTest({
             platform: "linux",
             env: { PATH: binDir, DISPLAY: ":0" },
             spawnResult: (command) =>
@@ -862,7 +863,7 @@ it.live.skipIf(windowsHost)("a stalled handler probe drops only the file manager
       return yield* launcher.resolveAvailableEditors();
     }).pipe(
       Effect.provide(
-        testLayer({
+        layerTest({
           platform: "linux",
           env: { PATH: binDir, DISPLAY: ":0" },
           spawnResult: (command) => (command.command === "xdg-mime" ? { stall: true } : undefined),
@@ -890,7 +891,7 @@ it.effect.skipIf(windowsHost)(
         const launcher = yield* ExternalLauncher.ExternalLauncher;
         return yield* launcher.resolveAvailableEditors();
       }).pipe(
-        Effect.provide(testLayer({ platform: "linux", env: { PATH: binDir, DISPLAY: ":0" } })),
+        Effect.provide(layerTest({ platform: "linux", env: { PATH: binDir, DISPLAY: ":0" } })),
       );
 
       assert.equal(editors.includes("file-manager"), false);
@@ -910,7 +911,7 @@ it.effect("discovers editors through the service API", () =>
       return yield* launcher.resolveAvailableEditors();
     }).pipe(
       Effect.provide(
-        testLayer({
+        layerTest({
           platform: "win32",
           env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
         }),
@@ -923,6 +924,18 @@ it.effect("discovers editors through the service API", () =>
 );
 
 for (const { platform, installPath, editor, args } of [
+  {
+    platform: "darwin",
+    installPath: "Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide",
+    editor: "antigravity",
+    args: ["--goto", "/workspace with spaces/file.ts:12:4"],
+  },
+  {
+    platform: "linux",
+    installPath: ".local/bin/antigravity-ide",
+    editor: "antigravity",
+    args: ["--goto", "/workspace with spaces/file.ts:12:4"],
+  },
   {
     platform: "darwin",
     installPath: "Applications/Cursor.app/Contents/Resources/app/bin/code",
@@ -1008,7 +1021,7 @@ for (const { platform, installPath, editor, args } of [
           yield* launcher.launchEditor({ editor, cwd: "/workspace with spaces/file.ts:12:4" });
         }).pipe(
           Effect.provide(
-            testLayer({
+            layerTest({
               platform,
               env: { HOME: home, LOCALAPPDATA: home, PATH: path.join(home, "empty") },
               onSpawn: (command) => {
@@ -1028,6 +1041,175 @@ for (const { platform, installPath, editor, args } of [
   );
 }
 
+// JetBrains Toolbox names its bundles after the app and the installed version
+// (`IntelliJ IDEA 2026.1.4.app`), so the darwin branch has to list the
+// Applications directories the way the win32 branch does instead of probing
+// exact `<name>.app` paths. The fixtures only use the mocked platform and a
+// temp directory, so this runs on a Windows host too.
+it.effect.each([
+  { editor: "webstorm", installPath: "Applications/WebStorm 2026.2.app/Contents/MacOS/webstorm" },
+  { editor: "idea", installPath: "Applications/IntelliJ IDEA 2026.1.4.app/Contents/MacOS/idea" },
+] as const)(
+  "discovers and launches $editor from a versioned macOS bundle",
+  ({ editor, installPath }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-versioned-" });
+      const executable = path.join(home, installPath);
+      yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
+      yield* fs.writeFileString(executable, "#!/bin/sh\n");
+      yield* fs.chmod(executable, 0o755);
+
+      let spawned: ChildProcess.StandardCommand | undefined;
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        assert.include(yield* launcher.resolveAvailableEditors(), editor);
+        yield* launcher.launchEditor({ editor, cwd: "/workspace with spaces/file.ts:12:4" });
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "darwin",
+            env: { HOME: home, PATH: path.join(home, "empty") },
+            onSpawn: (command) => {
+              spawned = command;
+            },
+          }),
+        ),
+      );
+
+      assert.ok(spawned);
+      assert.equal(spawned.command, executable);
+      assert.deepEqual(spawned.args, [
+        "--line",
+        "12",
+        "--column",
+        "4",
+        "/workspace with spaces/file.ts",
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// An app whose name merely starts with the same letters is a different IDE, and
+// an exact `<name>.app` bundle keeps resolving the way it did before.
+it.effect("matches macOS bundles on the name boundary only", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const unrelatedHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-unrelated-" });
+    const unrelated = path.join(
+      unrelatedHome,
+      "Applications/WebStormHelper.app/Contents/MacOS/webstorm",
+    );
+    yield* fs.makeDirectory(path.dirname(unrelated), { recursive: true });
+    yield* fs.writeFileString(unrelated, "#!/bin/sh\n");
+    yield* fs.chmod(unrelated, 0o755);
+
+    const editorsFor = (home: string) =>
+      Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        return yield* launcher.resolveAvailableEditors();
+      }).pipe(
+        Effect.provide(
+          layerTest({ platform: "darwin", env: { HOME: home, PATH: path.join(home, "bin") } }),
+        ),
+      );
+
+    assert.notInclude(yield* editorsFor(unrelatedHome), "webstorm");
+
+    const exactHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-exact-" });
+    const exact = path.join(exactHome, "Applications/WebStorm.app/Contents/MacOS/webstorm");
+    yield* fs.makeDirectory(path.dirname(exact), { recursive: true });
+    yield* fs.writeFileString(exact, "#!/bin/sh\n");
+    yield* fs.chmod(exact, 0o755);
+
+    assert.include(yield* editorsFor(exactHome), "webstorm");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// `Visual Studio Code - Insiders.app` starts with the stable VS Code install
+// name, so a plain prefix match let the stable editor resolve to the Insiders
+// bundle. Insiders has to stay reachable under its own name, stable VS Code has
+// to stay unresolved.
+it.effect("keeps the macOS VS Code Insiders bundle out of stable VS Code", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-insiders-" });
+    // The real Insiders bundle ships both `code-insiders` and `code`.
+    const bin = path.join(
+      home,
+      "Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin",
+    );
+    yield* fs.makeDirectory(bin, { recursive: true });
+    for (const name of ["code", "code-insiders"]) {
+      yield* fs.writeFileString(path.join(bin, name), "#!/bin/sh\n");
+      yield* fs.chmod(path.join(bin, name), 0o755);
+    }
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    const editors = yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      const available = yield* launcher.resolveAvailableEditors();
+      yield* launcher.launchEditor({ editor: "vscode-insiders", cwd: "/workspace/file.ts" });
+      return available;
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "darwin",
+          env: { HOME: home, PATH: path.join(home, "empty") },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+
+    assert.notInclude(editors, "vscode");
+    assert.include(editors, "vscode-insiders");
+    assert.equal(spawned?.command, path.join(bin, "code-insiders"));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// `agy` is the standalone Antigravity CLI, which installs to ~/.local/bin on
+// macOS and Linux and to its own bin folder on Windows. It is not the IDE.
+for (const { platform, installPath, onPath } of [
+  { platform: "darwin", installPath: ".local/bin/agy", onPath: true },
+  { platform: "linux", installPath: ".local/bin/agy", onPath: false },
+  { platform: "win32", installPath: "agy/bin/agy.cmd", onPath: true },
+] as const) {
+  it.effect.skipIf(windowsHost && platform !== "win32")(
+    `does not report the agy CLI as the Antigravity IDE on ${platform}`,
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-cli-" });
+        const executable = path.join(home, installPath);
+        yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
+        yield* fs.writeFileString(executable, "#!/bin/sh\n");
+        yield* fs.chmod(executable, 0o755);
+        const editors = yield* Effect.gen(function* () {
+          const launcher = yield* ExternalLauncher.ExternalLauncher;
+          return yield* launcher.resolveAvailableEditors();
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              platform,
+              env: {
+                HOME: home,
+                LOCALAPPDATA: home,
+                PATH: onPath ? path.dirname(executable) : path.join(home, "empty"),
+                PATHEXT: ".COM;.EXE;.BAT;.CMD",
+              },
+            }),
+          ),
+        );
+        assert.notInclude(editors, "antigravity");
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+}
+
 it.effect.skipIf(windowsHost)("ignores unusable app bundles and keeps PATH launchers first", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -1039,17 +1221,17 @@ it.effect.skipIf(windowsHost)("ignores unusable app bundles and keeps PATH launc
       const launcher = yield* ExternalLauncher.ExternalLauncher;
       return yield* launcher.resolveAvailableEditors();
     });
-    const before = yield* discover.pipe(Effect.provide(testLayer({ platform: "darwin", env })));
+    const before = yield* discover.pipe(Effect.provide(layerTest({ platform: "darwin", env })));
     yield* fs.makeDirectory(executable, { recursive: true });
     assert.deepEqual(
-      yield* discover.pipe(Effect.provide(testLayer({ platform: "darwin", env }))),
+      yield* discover.pipe(Effect.provide(layerTest({ platform: "darwin", env }))),
       before,
     );
     yield* fs.remove(executable, { recursive: true });
     yield* fs.writeFileString(executable, "#!/bin/sh\n");
     yield* fs.chmod(executable, 0o644);
     assert.deepEqual(
-      yield* discover.pipe(Effect.provide(testLayer({ platform: "darwin", env }))),
+      yield* discover.pipe(Effect.provide(layerTest({ platform: "darwin", env }))),
       before,
     );
     yield* fs.chmod(executable, 0o755);
@@ -1062,7 +1244,7 @@ it.effect.skipIf(windowsHost)("ignores unusable app bundles and keeps PATH launc
       yield* launcher.launchEditor({ editor: "cursor", cwd: "/workspace" });
     }).pipe(
       Effect.provide(
-        testLayer({
+        layerTest({
           platform: "darwin",
           env: { ...env, PATH: `${env.PATH}:/usr/bin` },
           onSpawn: (command) => {
@@ -1078,7 +1260,7 @@ it.effect.skipIf(windowsHost)("ignores unusable app bundles and keeps PATH launc
 it.effect("memoizes editor discovery and refreshes after the cache window", () => {
   let statCalls = 0;
   const fileInfo = { type: "File" } as FileSystem.File.Info;
-  const launcherLayer = ExternalLauncher.layer.pipe(
+  const layerLauncher = ExternalLauncher.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         FileSystem.layerNoop({
@@ -1119,7 +1301,7 @@ it.effect("memoizes editor discovery and refreshes after the cache window", () =
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
-        launcherLayer,
+        layerLauncher,
         Layer.succeed(HostProcessPlatform, "win32"),
         ConfigProvider.layer(
           ConfigProvider.fromEnv({
@@ -1135,26 +1317,24 @@ it.effect("memoizes editor discovery and refreshes after the cache window", () =
   );
 });
 
-// A client that disconnects mid-scan interrupts the shared discovery effect on
-// the connection fiber. The cache must not retain that interrupt: doing so
-// replayed it to every later connect for the whole TTL, so `server.getConfig`
-// failed and no client could reconnect until the server restarted.
-it.effect("rescans after an interrupted discovery instead of caching the interrupt", () => {
+// Connects run discovery under a timeout and may disconnect mid-scan. Neither
+// may cancel the scan: on a busy host every connect would time out partway
+// through, cache nothing, and leave every client without editors.
+it.effect("keeps scanning after the caller is interrupted and shares that scan", () => {
   const fileInfo = { type: "File" } as FileSystem.File.Info;
-  let blockFirstScan = true;
-  let scans = 0;
-  const launcherLayer = ExternalLauncher.layer.pipe(
+  const release = Deferred.makeUnsafe<void>();
+  let parkedStats = 0;
+  const layerLauncher = ExternalLauncher.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         FileSystem.layerNoop({
-          // The first scan parks inside `stat` so the interrupt lands while
-          // discovery is in flight, which is what a client disconnecting
-          // mid-connect does to the shared effect.
+          // Scans park inside `stat` until released, so the interrupt lands
+          // while discovery is in flight.
           stat: () =>
             Effect.gen(function* () {
-              scans += 1;
-              if (blockFirstScan) {
-                return yield* Effect.never;
+              if (!Deferred.isDoneUnsafe(release)) {
+                parkedStats += 1;
+                yield* Deferred.await(release);
               }
               return fileInfo;
             }),
@@ -1171,20 +1351,22 @@ it.effect("rescans after an interrupted discovery instead of caching the interru
   return Effect.gen(function* () {
     const launcher = yield* ExternalLauncher.ExternalLauncher;
 
-    const fiber = yield* Effect.forkChild(launcher.resolveAvailableEditors());
+    const interrupted = yield* Effect.forkChild(launcher.resolveAvailableEditors());
     yield* Effect.yieldNow;
-    yield* Fiber.interrupt(fiber);
+    yield* Fiber.interrupt(interrupted);
 
-    // The next connect must still get a real answer well inside the TTL.
-    blockFirstScan = false;
-    scans = 0;
-    const editors = yield* launcher.resolveAvailableEditors();
+    // The next connect joins the running scan instead of starting its own.
+    const next = yield* Effect.forkChild(launcher.resolveAvailableEditors());
+    yield* Effect.yieldNow;
+    assert.equal(parkedStats, 1);
+
+    yield* Deferred.succeed(release, undefined);
+    const editors = yield* Fiber.join(next);
     assert.equal(editors.includes("vscode"), true);
-    assert.isAbove(scans, 0);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
-        launcherLayer,
+        layerLauncher,
         Layer.succeed(HostProcessPlatform, "win32"),
         ConfigProvider.layer(
           ConfigProvider.fromEnv({
@@ -1208,5 +1390,5 @@ it.effect("rejects unknown editors through the service API", () =>
     assert.instanceOf(error, ExternalLauncher.ExternalLauncherUnknownEditorError);
     assert.equal(error.editor, "missing-editor");
     assert.equal(error.message, "Unknown editor: missing-editor");
-  }).pipe(Effect.provide(testLayer({ platform: "linux", env: { PATH: "" } }))),
+  }).pipe(Effect.provide(layerTest({ platform: "linux", env: { PATH: "" } }))),
 );

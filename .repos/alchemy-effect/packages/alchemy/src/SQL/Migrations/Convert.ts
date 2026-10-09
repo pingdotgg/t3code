@@ -6,11 +6,7 @@ import {
   type SqlExecutor,
 } from "./Format.ts";
 import { classifyTable, tableColumns } from "./Introspect.ts";
-import {
-  quoteIdentifier,
-  sqlLiteral,
-  timestampPrefixMillis,
-} from "./Records.ts";
+import { quoteIdentifier, sqlLiteral, timestampPrefixMillis } from "./Utils.ts";
 
 /**
  * A row of applied history harvested from a foreign migration tool's table,

@@ -37,6 +37,9 @@ Re-importing owned resources into a fresh state store needs **no** flag — reco
 # will surface as `OwnedBySomeoneElse` errors.
 alchemy deploy
 
+# Preview the takeover without applying it.
+alchemy plan --adopt
+
 # Force takeover of any conflicting resource regardless of tags.
 alchemy deploy --adopt
 ```

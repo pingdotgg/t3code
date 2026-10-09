@@ -1,7 +1,7 @@
+import * as Command from "effect/cli/Command"
+import * as Flag from "effect/cli/Flag"
 import * as Effect from "effect/Effect"
 import * as Option from "effect/Option"
-import * as Command from "effect/unstable/cli/Command"
-import * as Flag from "effect/unstable/cli/Flag"
 import { ApiDiff, type ApiDiffOptions } from "./ApiDiff.ts"
 
 const baseRef = Flag.String("base-ref").pipe(

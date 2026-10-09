@@ -2,6 +2,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -78,7 +79,12 @@ describe("resolveProjectSettings", () => {
   it("keeps the environment text generation model when the override's provider is disabled", () => {
     const disabledSelection = createModelSelection(ProviderInstanceId.make("claudeAgent"), "opus");
     const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-      providers: { claudeAgent: { enabled: false } },
+      providerInstances: {
+        [ProviderInstanceId.make("claudeAgent")]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          enabled: false,
+        },
+      },
       projectSettingsOverrides: {
         [projectId]: { textGenerationModelSelection: disabledSelection },
       },
@@ -128,7 +134,12 @@ describe("resolveProjectSettings", () => {
   it("keeps the environment default model when the override's provider is disabled", () => {
     const disabledSelection = createModelSelection(ProviderInstanceId.make("claudeAgent"), "opus");
     const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-      providers: { claudeAgent: { enabled: false } },
+      providerInstances: {
+        [ProviderInstanceId.make("claudeAgent")]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          enabled: false,
+        },
+      },
       projectSettingsOverrides: { [projectId]: { defaultModelSelection: disabledSelection } },
     });
     const resolved = resolveProjectSettings(settings, projectId);
@@ -365,4 +376,28 @@ describe("resolveWorktreeCleanup", () => {
         .worktreeAfterDays,
     ).toBe(8);
   });
+});
+
+it("inherits branch naming defaults and applies project overrides independently", () => {
+  const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+    branchNamingMode: "static",
+    branchNamePrefix: "team/",
+    branchNameInstructions: "Use issue IDs.",
+    projectSettingsOverrides: { [projectId]: { branchNamingMode: "custom" } },
+  });
+  expect(resolveProjectSettings(settings, projectId).settings).toMatchObject({
+    branchNamingMode: "custom",
+    branchNamePrefix: "team/",
+    branchNameInstructions: "Use issue IDs.",
+  });
+  expect(resolveProjectSettings(settings, otherProjectId).settings).toMatchObject({
+    branchNamingMode: "static",
+    branchNamePrefix: "team/",
+  });
+  const cleared = applyServerSettingsPatch(settings, {
+    projectSettingsOverrides: {
+      [projectId]: clearProjectSettingsOverrides(settings, projectId, ["branchNamingMode"]),
+    },
+  });
+  expect(resolveProjectSettings(cleared, projectId).settings.branchNamingMode).toBe("static");
 });

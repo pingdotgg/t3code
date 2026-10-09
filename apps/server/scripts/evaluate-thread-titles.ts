@@ -6,7 +6,7 @@
 // Add --initial to evaluate only the opening request.
 import * as NodeUtil from "node:util";
 import * as NodeCrypto from "node:crypto";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CodexSettings, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -20,14 +20,15 @@ import { threadTitleEvaluationCases } from "./threadTitleEvaluationCases.ts";
 import {
   formatThreadTitleContext,
   type ThreadTitleMessage,
-} from "../src/textGeneration/ThreadTitleContext.ts";
+} from "@t3tools/provider-core/server/threadTitleContext";
 import * as ThreadTitleLinks from "../src/textGeneration/ThreadTitleLinks.ts";
 import * as SourceControlProviderRegistry from "../src/sourceControl/SourceControlProviderRegistry.ts";
-import * as GitHubCli from "../src/sourceControl/GitHubCli.ts";
+import * as GitHubApi from "../src/sourceControl/GitHubApi.ts";
 import * as GitLabCli from "../src/sourceControl/GitLabCli.ts";
 import * as ForgejoCli from "../src/sourceControl/ForgejoCli.ts";
 import * as AzureDevOpsCli from "../src/sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "../src/sourceControl/BitbucketApi.ts";
+import * as ServerSettings from "../src/serverSettings.ts";
 import * as VcsProcess from "../src/vcs/VcsProcess.ts";
 import * as VcsDriverRegistry from "../src/vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "../src/vcs/VcsProjectConfig.ts";
@@ -151,13 +152,16 @@ await Effect.runPromise(
         SourceControlProviderRegistry.layer.pipe(
           Layer.provide(
             Layer.mergeAll(
-              GitHubCli.layer,
+              GitHubApi.layerWithDependencies,
               GitLabCli.layer,
               ForgejoCli.layer,
               AzureDevOpsCli.layer,
+              // No saved credentials here; Bitbucket falls back to T3CODE_BITBUCKET_* variables.
               BitbucketApi.layer,
             ),
           ),
+          // Default settings: no saved Bitbucket token, gh's own GitHub account choice.
+          Layer.provide(ServerSettings.layerTest()),
           Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),
           Layer.provide(GitVcsDriver.layer),
           Layer.provide(VcsProcess.layer),

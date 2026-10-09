@@ -33,5 +33,8 @@ test.provider(
         expect(result.failure._tag).toBe("BadRequestException");
       }
     }),
-  { timeout: 60_000 },
+  {
+    tags: ["provider:aws", "provider:aws:transcribe", "live"],
+    timeout: 60_000,
+  },
 );

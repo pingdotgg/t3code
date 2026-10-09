@@ -2,6 +2,7 @@ import type {
   RelayAgentActivityAggregateState,
   RelayAgentActivityState,
   RelayAgentAwarenessPreferences,
+  RelayManagedEndpointOrigin,
 } from "@t3tools/contracts/relay";
 import {
   boolean,
@@ -73,6 +74,8 @@ export const relayEnvironmentLinks = pgTable(
     notificationsEnabled: boolean("notifications_enabled").notNull().default(true),
     liveActivitiesEnabled: boolean("live_activities_enabled").notNull().default(true),
     managedTunnelsEnabled: boolean("managed_tunnels_enabled").notNull().default(false),
+    // Opt-in: hold webhook requests while the environment is offline.
+    holdWebhooksWhileOffline: boolean("hold_webhooks_while_offline").notNull().default(false),
     createdByDeviceId: varchar("created_by_device_id", { length: 191 }),
     revokedAt: varchar("revoked_at", { length: 64 }),
     createdAt: varchar("created_at", { length: 64 }).notNull(),
@@ -94,6 +97,12 @@ export const relayManagedEndpointAllocations = pgTable(
     tunnelName: text("tunnel_name").notNull(),
     dnsRecordId: varchar("dns_record_id", { length: 191 }),
     readyAt: varchar("ready_at", { length: 64 }),
+    recoveryEnabledAt: varchar("recovery_enabled_at", { length: 64 }),
+    recoveryEnvironmentPublicKey: text("recovery_environment_public_key"),
+    // Set when cleanup deletes the recorded tunnel; cleared when a tunnel is recorded again.
+    tunnelReleasedAt: varchar("tunnel_released_at", { length: 64 }),
+    origin: jsonb("origin").$type<RelayManagedEndpointOrigin>(),
+    generation: integer("generation").notNull().default(0),
     createdAt: varchar("created_at", { length: 64 }).notNull(),
     updatedAt: varchar("updated_at", { length: 64 }).notNull(),
   },

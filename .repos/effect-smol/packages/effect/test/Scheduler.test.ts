@@ -104,6 +104,25 @@ describe("Scheduler", () => {
       assert.strictEqual(calls, 0)
     }))
 
+  it.effect("inlined map steps count against MaxOpsBeforeYield", () =>
+    Effect.gen(function*() {
+      const order: Array<string> = []
+      const chain = (label: string) => {
+        let effect = Effect.succeed(0)
+        for (let i = 0; i < 100; i++) {
+          effect = Effect.map(effect, (n) => {
+            order.push(label)
+            return n + 1
+          })
+        }
+        return effect
+      }
+      yield* Effect.all([chain("a"), chain("b")], { concurrency: "unbounded" }).pipe(
+        Effect.provideService(Scheduler.MaxOpsBeforeYield, 16)
+      )
+      assert.notStrictEqual(order.join(""), "a".repeat(100) + "b".repeat(100))
+    }))
+
   it("MixedScheduler falls back to a microtask when timers cannot be set", async () => {
     // Cloudflare Workers throw for timers set in global scope
     const setImmediate = vi.spyOn(globalThis, "setImmediate").mockImplementation(() => {

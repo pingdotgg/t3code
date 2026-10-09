@@ -1,6 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { ActivityIndicator, View } from "react-native";
 
 import type { AppSymbolName } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
@@ -8,13 +7,14 @@ import { cn } from "../lib/cn";
 import { MaterialIconButton } from "./MaterialIconButton";
 import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu";
 import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
-import { useMaterialToolbarHeight } from "./useMaterialToolbarHeight";
+import { useMaterialToolbarLayout } from "./useMaterialToolbarLayout";
 
 export interface AndroidHeaderAction {
   readonly accessibilityLabel: string;
   readonly icon: AppSymbolName;
   readonly onPress: () => void;
   readonly disabled?: boolean;
+  readonly loading?: boolean;
   readonly selected?: boolean;
 }
 
@@ -38,10 +38,11 @@ export function AndroidScreenHeader(props: {
   readonly embedded?: boolean;
   readonly hideBottomBorder?: boolean;
 }) {
-  const insets = useSafeAreaInsets();
   const titleTypography = useScaledTextRole("title");
   const subtitleTypography = useScaledTextRole("label");
-  const materialToolbarHeight = useMaterialToolbarHeight();
+  const { height: materialToolbarHeight, ...headerPadding } = useMaterialToolbarLayout(
+    props.embedded,
+  );
   const [headerWidth, setHeaderWidth] = useState(0);
   const actions = props.actions ?? [];
   const directCount = actions.length > 2 ? (headerWidth >= 600 ? 3 : 1) : actions.length;
@@ -51,16 +52,13 @@ export function AndroidScreenHeader(props: {
   return (
     <View
       onLayout={(event) => setHeaderWidth(event.nativeEvent.layout.width)}
-      className="border-b border-header-border bg-header px-2 pb-2"
+      className="border-b border-header-border bg-header px-2"
       style={{
-        paddingTop: props.embedded ? 8 : Math.max(insets.top, 12),
+        ...headerPadding,
         borderBottomWidth: props.hideBottomBorder ? 0 : undefined,
       }}
     >
-      <View
-        style={{ minHeight: materialToolbarHeight }}
-        className="min-h-14 flex-row items-center gap-1"
-      >
+      <View style={{ minHeight: materialToolbarHeight }} className="flex-row items-center gap-1">
         {props.onBack ? (
           <MaterialIconButton
             accessibilityLabel="Navigate up"
@@ -87,16 +85,26 @@ export function AndroidScreenHeader(props: {
           ) : null}
         </View>
 
-        {visibleActions.map((action) => (
-          <AndroidHeaderIconButton
-            key={action.accessibilityLabel}
-            accessibilityLabel={action.accessibilityLabel}
-            disabled={action.disabled}
-            selected={action.selected}
-            icon={action.icon}
-            onPress={action.onPress}
-          />
-        ))}
+        {visibleActions.map((action) =>
+          action.loading ? (
+            <View
+              key={action.accessibilityLabel}
+              accessibilityLabel={action.accessibilityLabel}
+              className="size-12 items-center justify-center"
+            >
+              <ActivityIndicator colorClassName="accent-header-foreground" />
+            </View>
+          ) : (
+            <AndroidHeaderIconButton
+              key={action.accessibilityLabel}
+              accessibilityLabel={action.accessibilityLabel}
+              disabled={action.disabled}
+              selected={action.selected}
+              icon={action.icon}
+              onPress={action.onPress}
+            />
+          ),
+        )}
         {overflowActions.length > 0 ? (
           <AndroidAnchoredMenu
             actions={overflowActions.map((action, index) => ({

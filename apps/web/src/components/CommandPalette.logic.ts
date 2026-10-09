@@ -172,6 +172,65 @@ export interface CommandPaletteView {
   readonly initialQuery?: string;
 }
 
+export type CommandPaletteRow =
+  | {
+      readonly kind: "label";
+      readonly key: string;
+      readonly label: string;
+      readonly first: boolean;
+    }
+  | {
+      readonly kind: "item";
+      readonly key: string;
+      readonly item: CommandPaletteActionItem | CommandPaletteSubmenuItem;
+      /** Position among enabled items, or null for disabled rows the keyboard skips. */
+      readonly itemIndex: number | null;
+    };
+
+/**
+ * Flattens groups into the rows a virtualized list renders. `itemValues` is the
+ * highlightable item order Base UI navigates; `rowIndexByItemIndex` maps a
+ * highlight back to its row for scrolling.
+ */
+export function buildCommandPaletteRows(groups: ReadonlyArray<CommandPaletteGroup>) {
+  const rows: CommandPaletteRow[] = [];
+  const itemValues: string[] = [];
+  const rowIndexByItemIndex: number[] = [];
+  for (const group of groups) {
+    if (group.label) {
+      rows.push({
+        kind: "label",
+        key: `group:${group.value}`,
+        label: group.label,
+        first: rows.length === 0,
+      });
+    }
+    for (const item of group.items) {
+      const itemIndex = item.disabled ? null : itemValues.length;
+      if (itemIndex !== null) {
+        itemValues.push(item.value);
+        rowIndexByItemIndex.push(rows.length);
+      }
+      rows.push({ kind: "item", key: `${group.value}:${item.value}`, item, itemIndex });
+    }
+  }
+  return { rows, itemValues, rowIndexByItemIndex };
+}
+
+/** The enabled item Enter should run for a highlight, whether or not its row is mounted. */
+export function findHighlightedCommandPaletteItem(
+  groups: ReadonlyArray<CommandPaletteGroup>,
+  highlightedItemValue: string | null,
+): CommandPaletteActionItem | CommandPaletteSubmenuItem | null {
+  if (highlightedItemValue === null) return null;
+  for (const group of groups) {
+    for (const item of group.items) {
+      if (item.value === highlightedItemValue && !item.disabled) return item;
+    }
+  }
+  return null;
+}
+
 export function enumerateCommandPaletteItems(
   items: ReadonlyArray<CommandPaletteActionItem>,
 ): CommandPaletteActionItem[] {
@@ -245,7 +304,7 @@ export type BuildThreadActionItemsThread = Pick<
   | "id"
   | "modelSelection"
   | "projectId"
-  | "session"
+  | "runtime"
   | "title"
   | "worktreePath"
 > & {

@@ -5,7 +5,12 @@ import type {
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildHomeProjectScopes, sortHomeProjectScopes } from "./homeThreadList";
+import {
+  buildHomeProjectScopes,
+  findHomeProjectScope,
+  sortHomeProjectScopes,
+} from "./homeThreadList";
+import { makeThreadShellFixture } from "../../test-fixtures";
 
 function makeProject(
   input: Partial<EnvironmentProject> & Pick<EnvironmentProject, "environmentId" | "id" | "title">,
@@ -25,26 +30,21 @@ function makeThread(
   input: Partial<EnvironmentThreadShell> &
     Pick<EnvironmentThreadShell, "environmentId" | "id" | "projectId" | "title">,
 ): EnvironmentThreadShell {
-  return {
+  return makeThreadShellFixture({
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: null,
     worktreePath: null,
-    pullRequests: [],
-    latestTurn: null,
     createdAt: "2026-06-01T00:00:00.000Z",
     updatedAt: "2026-06-01T00:00:00.000Z",
     archivedAt: null,
-    session: null,
     latestUserMessageAt: null,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
     ...input,
-    settledOverride: input.settledOverride ?? null,
-    settledAt: input.settledAt ?? null,
-  };
+  });
 }
 
 describe("home project scopes", () => {
@@ -285,5 +285,36 @@ describe("home project scopes", () => {
         projectGroupingMode: "repository",
       }),
     ).toHaveLength(2);
+  });
+
+  it("prefers an exact scope key over a project ID that collides with it", () => {
+    const environmentId = EnvironmentId.make("environment-local");
+    // project.create accepts caller-supplied IDs, so one project's scoped ref
+    // key can equal another project's normalized workspace-root scope key.
+    const collidingProject = makeProject({
+      environmentId,
+      id: ProjectId.make("/workspaces/target"),
+      title: "Colliding",
+      workspaceRoot: "/workspaces/colliding",
+    });
+    const targetProject = makeProject({
+      environmentId,
+      id: ProjectId.make("project-target"),
+      title: "Target",
+      workspaceRoot: "/workspaces/target",
+    });
+    const scopes = buildHomeProjectScopes({
+      projects: [collidingProject, targetProject],
+      environmentId: null,
+      projectGroupingMode: "separate",
+    });
+    const targetScope = scopes.find((scope) => scope.title === "Target");
+    expect(scopes.map((scope) => scope.title)).toEqual(["Colliding", "Target"]);
+    expect(targetScope?.key).toBe("environment-local:/workspaces/target");
+
+    expect(findHomeProjectScope(scopes, "environment-local:/workspaces/target")).toBe(targetScope);
+    expect(findHomeProjectScope(scopes, "environment-local:project-target")).toBe(targetScope);
+    expect(findHomeProjectScope(scopes, "environment-local:missing")).toBeNull();
+    expect(findHomeProjectScope(scopes, null)).toBeNull();
   });
 });

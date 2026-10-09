@@ -8,6 +8,7 @@ import { size } from "@expo/ui/jetpack-compose/modifiers";
 import { View } from "react-native";
 
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
+import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { SymbolView, type AppSymbolName } from "./AppSymbol";
 
 export function MaterialIconButton(props: {
@@ -20,6 +21,7 @@ export function MaterialIconButton(props: {
   readonly tintColorClassName?: string;
 }) {
   const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
+  const { iconSize, buttonSize } = useAndroidControlSizing();
   const variant = props.variant ?? "standard";
   const Component =
     variant === "standard"
@@ -52,18 +54,18 @@ export function MaterialIconButton(props: {
       onAccessibilityAction={() => {
         if (!props.disabled) props.onPress?.();
       }}
-      style={{ width: 48, height: 48 }}
+      style={{ width: buttonSize, height: buttonSize }}
     >
       <View importantForAccessibility="no-hide-descendants">
         <Host
           colorScheme={themeAppearance}
           ignoreSafeAreaKeyboardInsets
-          style={{ width: 48, height: 48 }}
+          style={{ width: buttonSize, height: buttonSize }}
         >
           <Component
             onClick={props.onPress}
             enabled={!props.disabled}
-            modifiers={[size(48, 48)]}
+            modifiers={[size(buttonSize, buttonSize)]}
             colors={
               variant === "standard"
                 ? undefined
@@ -78,7 +80,7 @@ export function MaterialIconButton(props: {
       <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
         <SymbolView
           name={props.icon === "ellipsis" ? { ios: "ellipsis", android: "more_vert" } : props.icon}
-          size={24}
+          size={iconSize}
           tintColorClassName={iconTint}
           type="monochrome"
         />

@@ -20,4 +20,5 @@ test(
     ).toBe(false);
     expect(isNukeableHealthCheck({ LinkedService: {} })).toBe(false);
   }),
+  { tags: ["provider:aws", "provider:aws:route53", "live"] },
 );

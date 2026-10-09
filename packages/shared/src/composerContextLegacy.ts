@@ -24,8 +24,10 @@ export interface UpgradedLegacyContext {
 }
 
 const PLACEHOLDER = "￼";
-const TRAILING_TERMINAL = /\n*<terminal_context>\n([\s\S]*?)\n<\/terminal_context>\s*$/;
-const TRAILING_ELEMENT = /\n*<element_context>\n([\s\S]*?)\n<\/element_context>\s*$/;
+const TRAILING_TERMINAL =
+  /\n*<terminal_context>\n((?:(?!\n<\/terminal_context>)[\s\S])*)\n<\/terminal_context>\s*$/;
+const TRAILING_ELEMENT =
+  /\n*<element_context>\n((?:(?!\n<\/element_context>)[\s\S])*)\n<\/element_context>\s*$/;
 const TRAILING_PREVIEW =
   /\n*<preview_annotation>\n((?:(?!\n<\/preview_annotation>)[\s\S])*)\n<\/preview_annotation>\s*$/;
 const REVIEW_OR_CONTEXT_BLOCK =

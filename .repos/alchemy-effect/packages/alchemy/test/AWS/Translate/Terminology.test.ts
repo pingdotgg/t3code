@@ -95,7 +95,10 @@ test.provider(
       const after = yield* getTerminology(terminologyName);
       expect(after).toBeUndefined();
     }),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:aws", "provider:aws:translate", "live"],
+    timeout: 180_000,
+  },
 );
 
 test.provider(
@@ -122,5 +125,8 @@ test.provider(
       const after = yield* getTerminology(deployed.terminologyName);
       expect(after).toBeUndefined();
     }),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:aws", "provider:aws:translate", "live"],
+    timeout: 180_000,
+  },
 );

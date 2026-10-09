@@ -63,6 +63,7 @@ export default defineConfig({
     environment: "node",
     exclude: [
       "**/.repos/**",
+      "**/.t3/**",
       "**/node_modules/**",
       "**/dist/**",
       "**/dist-electron/**",
@@ -166,13 +167,65 @@ export default defineConfig({
       "t3code/no-inline-schema-compile": "warn",
       "t3code/no-manual-effect-runtime-in-tests": "error",
       "t3code/no-native-title-tooltip": "error",
+      "t3code/no-raw-mcp-registration": "error",
+      "t3code/no-test-in-loop": "error",
+      "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: true }],
+      "t3code/no-unscoped-has": "error",
       "t3code/namespace-node-imports": "error",
+      "t3code/prefer-catch-tags": "error",
+      "t3code/require-centered-scroll-gutter": "error",
+      "t3code/require-suppression-reason": "error",
     },
     overrides: [
+      {
+        files: ["packages/client-runtime/src/state/**", "apps/{web,mobile,desktop}/src/**"],
+        rules: { "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: false }] },
+      },
+      {
+        // Only shared command boundaries install the session-backed permission guard.
+        files: [
+          "packages/client-runtime/src/state/runtime.ts",
+          "packages/client-runtime/src/state/vcsAction.ts",
+        ],
+        rules: {
+          "t3code/no-rpc-permission-bypass": [
+            "error",
+            { allowGuardInstallation: true, allowRawClientAccess: false },
+          ],
+        },
+      },
+      {
+        // These clients are session metadata, device streams, and an Expo update adapter.
+        files: [
+          "apps/web/src/components/settings/ConnectionsSettings.tsx",
+          "apps/mobile/src/features/updates/app-updates.ts",
+          "apps/web/src/components/device/DevicePhoneViewport.tsx",
+          "apps/web/src/components/device/DeviceDuoViewport.tsx",
+        ],
+        rules: { "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: true }] },
+      },
+      {
+        // Incompatible hosts cannot open a normal session; their updater uses a dedicated socket.
+        files: ["packages/client-runtime/src/connection/outdatedHostUpdate.ts"],
+        rules: { "t3code/no-rpc-permission-bypass": "off" },
+      },
+      {
+        // RPC implementation and transport test fixtures need the raw client.
+        files: [
+          "packages/client-runtime/src/rpc/**",
+          "**/*.{test,spec}.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+        ],
+        rules: { "t3code/no-rpc-permission-bypass": "off" },
+      },
       {
         // The one place that reads the host platform to seed the injected references.
         files: ["packages/shared/src/hostProcess.ts"],
         rules: { "t3code/no-global-process-runtime": "off" },
+      },
+      {
+        // The registration helpers that only accept handlers built by McpToolAccess.
+        files: ["apps/server/src/mcp/McpHttpServer.ts"],
+        rules: { "t3code/no-raw-mcp-registration": "off" },
       },
       {
         files: ["apps/web/src/**"],
@@ -198,6 +251,24 @@ export default defineConfig({
         rules: { "t3code/no-mobile-uniwind-theme-escape-hatches": "error" },
       },
       {
+        // Every class in web code must be one Tailwind generates: a typo or a class nothing
+        // declares ships silently unstyled. JS hooks use data attributes, not class names.
+        files: ["apps/web/src/**"],
+        rules: { "shadcn/no-unknown-classes": "error" },
+      },
+      {
+        // Colors come from theme tokens so status tones follow custom themes. components/ui
+        // has no findings and stays covered too.
+        files: ["apps/web/src/**"],
+        rules: { "shadcn/no-raw-colors": "error" },
+      },
+      {
+        // Third-party marks (brand logos, the macOS permission panes, Codex's Computer Use
+        // mark) must keep their exact colors, so the files that hold them are exempt.
+        files: ["apps/web/src/components/Icons.tsx", "apps/web/src/components/JetBrainsIcons.tsx"],
+        rules: { "shadcn/no-raw-colors": "off" },
+      },
+      {
         // components/ui exports own their look. App code picks a variant or size instead
         // of restyling with className; layout classes (width, flex, margin, position) stay
         // allowed because placement belongs to the parent. components/ui is for generic
@@ -205,6 +276,43 @@ export default defineConfig({
         files: ["apps/web/src/**"],
         excludeFiles: ["apps/web/src/components/ui/**"],
         rules: {
+          // A className built at runtime on a ui component is one no-restyle cannot read.
+          "shadcn/require-static-classes": "error",
+          // Appearance values come from the theme and Tailwind's scales. Layout stays free
+          // (placement belongs to the parent); the other entries are values no scale can hold.
+          "shadcn/no-arbitrary-values": [
+            "error",
+            {
+              allow: [
+                "layout",
+                // Which properties an element animates is per-element behaviour, like layout,
+                // not a design value; timing curves and durations still come from the theme.
+                "transition",
+                // Overlays that follow their frame's corner, which is set at runtime
+                // (floating preview) or by the element they decorate (composer outline).
+                "rounded-[inherit]",
+                // Inline chips size in em so they scale with the text they sit in
+                // (the composer honours the prompt font-size preference).
+                "gap-[0.33em]",
+                "px-[0.5em]",
+                "rounded-[0.5em]",
+                "text-[0.86em]",
+                // Project icons render from 14px to 48px and keep one proportional corner.
+                "rounded-[25%]",
+                // An emoji project icon fills its container, whatever size the parent gives it.
+                "text-[length:80cqh]",
+                // The platform's own selection colour on a selected composer chip.
+                "bg-[Highlight]",
+                // Brand marks keep their brand colours (Cursor, Grok, Claude).
+                "fill-[#26251E]",
+                "fill-[#EDECEC]",
+                "fill-[#0F0F0F]",
+                "fill-[#F5F5F5]",
+                "fill-[#d97757]",
+                "text-[#d97757]",
+              ],
+            },
+          ],
           "shadcn/no-restyle": [
             "error",
             {
@@ -221,6 +329,11 @@ export default defineConfig({
             },
           ],
         },
+      },
+      {
+        // The sign-in masthead is T3 brand artwork: fixed gradients, not theme surfaces.
+        files: ["apps/web/src/components/auth/AuthSurfaceShell.tsx"],
+        rules: { "shadcn/no-arbitrary-values": "off" },
       },
       {
         // Shared client code must not call APIs missing from Hermes. Our ESNext
@@ -253,6 +366,10 @@ export default defineConfig({
           "apps/mobile/src/features/threads/NewTaskDraftScreen.tsx",
           "apps/mobile/src/features/threads/ThreadComposer.tsx",
           "apps/mobile/src/features/threads/ThreadFeed.tsx",
+          "apps/mobile/src/features/settings/appearance/components/FontSizeSliderRow.tsx",
+          "apps/mobile/src/features/threads/NewTaskContextPickerScreens.tsx",
+          "apps/mobile/src/features/threads/ThreadQueueControl.tsx",
+          "apps/mobile/src/features/threads/ThreadAgentsSheet.tsx",
           "apps/mobile/src/features/review/ReviewCommentCard.tsx",
           "apps/mobile/src/features/threads/ThreadSettingsSheet.tsx",
           "apps/mobile/src/features/threads/git/GitOverviewSheet.tsx",
@@ -267,28 +384,6 @@ export default defineConfig({
           "t3code/no-mobile-uniwind-theme-escape-hatches": ["error", { allowUniwindTheme: true }],
         },
       },
-      // Legacy manual Effect runners tracked as debt: no net-new occurrences.
-      // Lower a ceiling when you migrate a file, and delete its entry at zero.
-      ...Object.entries({
-        "apps/server/src/orchestration/Layers/CheckpointReactor.test.ts": 42,
-        "apps/server/src/orchestration/Layers/OrchestrationEngine.test.ts": 5,
-        "apps/server/src/orchestration/Layers/OrchestrationReactor.test.ts": 4,
-        "apps/server/src/orchestration/Layers/ProviderCommandReactor.test.ts": 66,
-        "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.test.ts": 29,
-        "apps/server/src/orchestration/Layers/ThreadDeletionReactor.test.ts": 2,
-        "apps/server/src/orchestration/commandInvariants.test.ts": 5,
-        "apps/server/src/orchestration/projector.test.ts": 20,
-        "apps/server/src/provider/Layers/CodexAdapter.test.ts": 1,
-        "apps/server/src/provider/Layers/CodexSessionRuntime.test.ts": 5,
-        "apps/server/src/provider/Layers/CursorAdapter.test.ts": 1,
-        "apps/server/src/provider/Layers/CursorProvider.test.ts": 1,
-        "apps/server/src/provider/Layers/ProviderService.test.ts": 2,
-        "apps/server/src/provider/Layers/ProviderSessionReaper.test.ts": 12,
-        "apps/server/src/provider/acp/CursorAcpSupport.test.ts": 1,
-      }).map(([file, maxOccurrences]) => {
-        const rule: ["error", { maxOccurrences: number }] = ["error", { maxOccurrences }];
-        return { files: [file], rules: { "t3code/no-manual-effect-runtime-in-tests": rule } };
-      }),
     ],
     options: {
       reportUnusedDisableDirectives: "error",

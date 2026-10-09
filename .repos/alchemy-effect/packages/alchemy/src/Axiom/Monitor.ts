@@ -80,6 +80,7 @@ export type Monitor = Resource<
  * ```
  *
  * @resource
+ * @product Monitor
  */
 export const Monitor = Resource<Monitor>("Axiom.Monitor");
 

@@ -29,8 +29,11 @@ export const FILE_LINK_REVEAL_UNSAFE_CSS = `
     color: var(--code-foreground, var(--foreground)) !important;
   }
 
+  /* Tint through --diffs-line-bg, not background-color. The editor paints row
+     tints on a layer below its text selection; a background on the row itself
+     covers the selection and makes selected text on this line invisible. */
   [${FILE_LINK_REVEAL_ATTRIBUTE}][data-line] {
-    background-color: light-dark(
+    --diffs-line-bg: light-dark(
       color-mix(
         in lab,
         var(--diffs-computed-diff-line-bg) 82%,
@@ -114,7 +117,7 @@ export function FileSurfaceNotice(props: { readonly children: ReactNode }) {
   return (
     <div
       role="status"
-      className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-[11px] text-warning-foreground"
+      className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-2xs text-warning-foreground"
     >
       {props.children}
     </div>

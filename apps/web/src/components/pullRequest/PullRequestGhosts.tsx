@@ -13,7 +13,6 @@ import {
   ChevronRightIcon,
   EllipsisIcon,
   ExternalLinkIcon,
-  FileDiffIcon,
   PanelRightIcon,
   TagIcon,
   UserPlusIcon,
@@ -26,20 +25,24 @@ import { cn } from "~/lib/utils";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import { Button, InlineButton } from "../ui/button";
-import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { PullRequestCopyableCode } from "./PullRequestCopyableCode";
+import {
+  PullRequestChecksStatusLine,
+  PullRequestDetailHeaderBody,
+  PullRequestDetailTabBar,
+  PullRequestDetailTitleRow,
+} from "./PullRequestDetailLayout";
 import {
   PullRequestActorLabel,
   PullRequestDiffStat,
   PullRequestLabelChip,
-  PullRequestMetaLine,
   pullRequestChecksStatePresentation,
   resolvePullRequestState,
 } from "./pullRequestPresentation";
 
 function GhostBar({ className }: { className?: string | undefined }) {
-  return <div aria-hidden className={cn("h-3 rounded bg-muted-foreground/15", className)} />;
+  return <span aria-hidden className={cn("block h-3 rounded bg-muted-foreground/15", className)} />;
 }
 
 /** Widths cycle rather than randomize, so the ghost renders the same on every pass. */
@@ -169,10 +172,9 @@ export function PullRequestDetailGhost({
                 <span className="min-w-0 truncate font-medium">{seed.repository}</span>
                 <InlineButton
                   onClick={() => void readLocalApi()?.shell.openExternal(seed.url)}
-                  className={statePresentation?.toneClassName}
                   aria-label={`Open pull request #${seed.number} on host`}
                 >
-                  #{seed.number}
+                  <span className={statePresentation?.toneClassName}>#{seed.number}</span>
                   <ExternalLinkIcon aria-hidden className="size-2.5" />
                 </InlineButton>
               </>
@@ -203,32 +205,35 @@ export function PullRequestDetailGhost({
 
         <div className="col-span-2 grid grid-rows-[1fr]">
           <div className="min-h-0 overflow-hidden">
-            <div className="col-span-2 mt-1 min-w-0 px-4 pb-4">
-              {seed ? (
-                <div className="flex min-h-7 min-w-0 items-center sm:min-h-6">
-                  <h1 className="truncate text-base font-semibold leading-snug">{seed.title}</h1>
-                </div>
-              ) : (
-                <div className="flex min-h-7 min-w-0 items-center sm:min-h-6">
-                  <GhostBar className="h-5 w-4/5 max-w-md" />
-                </div>
-              )}
-              <div className="mt-2 flex min-h-5 min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                {seed ? (
-                  <PullRequestMetaLine className="min-w-0 whitespace-nowrap">
-                    <PullRequestActorLabel actor={seed.author ?? null} tooltip={false} />
-                    <span>updated {formatRelativeTimeLabel(seed.updatedAt)}</span>
-                  </PullRequestMetaLine>
+            <PullRequestDetailHeaderBody
+              title={
+                <PullRequestDetailTitleRow>
+                  {seed ? (
+                    <h1 className="truncate text-base font-semibold leading-snug">{seed.title}</h1>
+                  ) : (
+                    <GhostBar className="h-5 w-4/5 max-w-md" />
+                  )}
+                </PullRequestDetailTitleRow>
+              }
+              author={
+                seed ? (
+                  <PullRequestActorLabel actor={seed.author ?? null} tooltip={false} />
                 ) : (
-                  <PullRequestMetaLine className="min-w-0 whitespace-nowrap">
-                    <span className="flex items-center gap-1.5">
-                      <GhostBar className="size-4 rounded-full" />
-                      <GhostBar className="h-3 w-14" />
-                    </span>
-                    <GhostBar className="h-3 w-16" />
-                  </PullRequestMetaLine>
-                )}
-                {checkout ? (
+                  <span className="flex items-center gap-1.5">
+                    <GhostBar className="size-4 rounded-full" />
+                    <GhostBar className="h-3 w-14" />
+                  </span>
+                )
+              }
+              updated={
+                seed ? (
+                  <span>updated {formatRelativeTimeLabel(seed.updatedAt)}</span>
+                ) : (
+                  <GhostBar className="h-3 w-16" />
+                )
+              }
+              checkout={
+                checkout ? (
                   <PullRequestCopyableCode
                     key={checkout}
                     value={checkout}
@@ -239,94 +244,69 @@ export function PullRequestDetailGhost({
                     tooltipSide="bottom"
                     {...(onCheckoutError ? { onError: onCheckoutError } : {})}
                   />
-                ) : null}
-              </div>
-
-              <div className="mt-4 flex min-h-5 min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-xs text-muted-foreground/70">
+                ) : null
+              }
+              base={
+                <span className="inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1">
                   {seed ? (
-                    <span className="inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1">
-                      <code className="flex min-w-0">
-                        <MiddleTruncate value={seed.baseBranch} />
-                      </code>
-                    </span>
+                    <code className="flex min-w-0">
+                      <MiddleTruncate value={seed.baseBranch} />
+                    </code>
                   ) : (
-                    <span className="inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1">
-                      <GhostBar className="h-3 w-12" />
-                    </span>
+                    <GhostBar className="h-3 w-12" />
                   )}
-                  <ArrowLeftIcon
-                    aria-label="receives changes from"
-                    className="size-3.5 shrink-0 opacity-60"
+                </span>
+              }
+              head={
+                seed ? (
+                  <PullRequestCopyableCode
+                    key={seed.headBranch}
+                    value={seed.headBranch}
+                    target="branch name"
+                    copyLabel="Copy pull request branch"
+                    copiedLabel="Branch name copied"
+                    className="min-w-0 font-mono"
                   />
-                  {seed ? (
-                    <PullRequestCopyableCode
-                      key={seed.headBranch}
-                      value={seed.headBranch}
-                      target="branch name"
-                      copyLabel="Copy pull request branch"
-                      copiedLabel="Branch name copied"
-                      className="min-w-0 font-mono"
-                    />
-                  ) : (
-                    <GhostBar className="h-3 w-32 flex-1" />
-                  )}
-                </span>
-                <span className="ml-auto inline-flex shrink-0 items-center justify-end gap-2">
-                  <span className="inline-flex min-w-16 items-center justify-end gap-1.5 tabular-nums">
-                    <FileDiffIcon aria-hidden className="size-3.5" />
-                    {changedFiles === null ? (
-                      <GhostBar className="h-3 w-10" />
-                    ) : (
-                      `${changedFiles.toLocaleString()} ${changedFiles === 1 ? "file" : "files"}`
-                    )}
-                  </span>
-                  {seed ? (
-                    <PullRequestDiffStat
-                      additions={seed.additions ?? 0}
-                      deletions={seed.deletions ?? 0}
-                      className="shrink-0 font-mono text-xs"
-                    />
-                  ) : (
-                    <GhostBar className="h-3 w-20" />
-                  )}
-                </span>
-              </div>
-            </div>
+                ) : (
+                  <GhostBar className="h-3 w-32 flex-1" />
+                )
+              }
+              files={
+                changedFiles === null ? (
+                  <GhostBar className="h-3 w-10" />
+                ) : (
+                  `${changedFiles.toLocaleString()} ${changedFiles === 1 ? "file" : "files"}`
+                )
+              }
+              diffStat={
+                seed ? (
+                  <PullRequestDiffStat
+                    additions={seed.additions ?? 0}
+                    deletions={seed.deletions ?? 0}
+                    className="shrink-0 font-mono text-xs"
+                  />
+                ) : (
+                  <GhostBar className="h-3 w-20" />
+                )
+              }
+            />
           </div>
         </div>
 
-        <nav
-          className="col-span-2 flex min-w-0 flex-wrap items-center gap-2 border-t border-border/60 px-4 py-2"
-          aria-label="Pull request tabs"
-          inert
-        >
-          <ToggleGroup
-            className="shrink-0"
-            size="segmented"
-            variant="segmented"
-            value={[selectedTab]}
-          >
-            {tabs.map((tab) => (
-              <Toggle key={tab.value} value={tab.value} tabIndex={-1}>
-                {tab.label}
-              </Toggle>
-            ))}
-          </ToggleGroup>
+        <PullRequestDetailTabBar tabs={tabs} value={selectedTab} inert>
           {checksPresentation ? (
-            <span
-              className={cn(
-                "ml-auto inline-flex items-center gap-1.5 text-xs",
-                checksPresentation.toneClassName,
-              )}
-            >
-              <checksPresentation.Icon aria-hidden className="size-3.5" />
-              {checksPresentation.label}
-            </span>
+            <PullRequestChecksStatusLine
+              className={checksPresentation.toneClassName}
+              icon={<checksPresentation.Icon aria-hidden className="size-3.5" />}
+              label={checksPresentation.label}
+            />
           ) : (
-            <GhostBar className="ml-auto h-3 w-32" />
+            <PullRequestChecksStatusLine
+              icon={<GhostBar className="my-px size-3.5 rounded-full" />}
+              label={<GhostBar className="w-28" />}
+            />
           )}
-        </nav>
+        </PullRequestDetailTabBar>
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden">

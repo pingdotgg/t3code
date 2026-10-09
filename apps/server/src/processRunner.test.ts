@@ -8,7 +8,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
@@ -411,4 +411,12 @@ describe("isWindowsCommandNotFound", () => {
       expect(isCommandNotFound).toBe(true);
     }),
   );
+});
+
+describe("commandName", () => {
+  it("drops the directory from POSIX and Windows paths", () => {
+    expect(ProcessRunner.commandName("/Users/me/.local/bin/claude")).toBe("claude");
+    expect(ProcessRunner.commandName("C:\\Program Files\\nodejs\\npx.cmd")).toBe("npx.cmd");
+    expect(ProcessRunner.commandName("git")).toBe("git");
+  });
 });

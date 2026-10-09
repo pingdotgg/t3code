@@ -4,26 +4,27 @@
  * authentication headers, API version headers, response decoding, and error
  * mapping, then exposes helpers for regular and streaming message requests.
  *
+ * @stability unstable
  * @since 4.0.0
  */
+import type * as AiError from "effect/ai/AiError"
 import * as Array from "effect/Array"
 import type * as Config from "effect/Config"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
+import * as Sse from "effect/encoding/Sse"
 import { identity } from "effect/Function"
+import * as Headers from "effect/http/Headers"
+import * as HttpBody from "effect/http/HttpBody"
+import * as HttpClient from "effect/http/HttpClient"
+import * as HttpClientError from "effect/http/HttpClientError"
+import * as HttpClientRequest from "effect/http/HttpClientRequest"
+import type * as HttpClientResponse from "effect/http/HttpClientResponse"
 import * as Layer from "effect/Layer"
 import * as Predicate from "effect/Predicate"
 import * as Redacted from "effect/Redacted"
 import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
-import type * as AiError from "effect/unstable/ai/AiError"
-import * as Sse from "effect/unstable/encoding/Sse"
-import * as Headers from "effect/unstable/http/Headers"
-import * as HttpBody from "effect/unstable/http/HttpBody"
-import * as HttpClient from "effect/unstable/http/HttpClient"
-import type * as HttpClientError from "effect/unstable/http/HttpClientError"
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"
-import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse"
 import { AnthropicConfig } from "./AnthropicConfig.ts"
 import * as Generated from "./Generated.ts"
 import * as Errors from "./internal/errors.ts"
@@ -36,6 +37,7 @@ import * as Errors from "./internal/errors.ts"
  * Represents the Anthropic client service with methods for the Messages API, including regular and streaming message
  * creation.
  *
+ * @stability unstable
  * @category services
  * @since 4.0.0
  */
@@ -98,6 +100,7 @@ export interface Service {
  * - `content_block_stop`: End of a content block
  * - `error`: Error events with type and message
  *
+ * @stability unstable
  * @category models
  * @since 4.0.0
  */
@@ -126,6 +129,7 @@ export type MessageStreamEvent =
  * @see {@link layer} for providing a client from explicit options
  * @see {@link layerConfig} for providing a client from `Config`
  *
+ * @stability unstable
  * @category services
  * @since 4.0.0
  */
@@ -155,6 +159,7 @@ export class AnthropicClient extends Context.Service<AnthropicClient, Service>()
  * @see {@link layer} for providing an Anthropic client from explicit options
  * @see {@link layerConfig} for loading Anthropic client settings from `Config`
  *
+ * @stability unstable
  * @category options
  * @since 4.0.0
  */
@@ -216,6 +221,7 @@ const withRedactedHeaders = Effect.updateService(
  * @see {@link layer} for providing the client as a `Layer` from explicit options
  * @see {@link layerConfig} for providing the client as a `Layer` with `Config`-based settings
  *
+ * @stability unstable
  * @category constructors
  * @since 4.0.0
  */
@@ -243,7 +249,41 @@ export const make = Effect.fnUntraced(
         : identity
     )
 
-    const client = Generated.make(httpClient, {
+    // Let status mapping handle gateway errors without an Anthropic envelope.
+    const generatedHttpClient = HttpClient.transformResponse(
+      httpClient,
+      Effect.flatMap((response) => {
+        if (
+          response.status < 400 || response.status >= 500 ||
+          !response.request.url.endsWith("/v1/messages?beta=true")
+        ) {
+          return Effect.succeed(response)
+        }
+        return Effect.flatMap(Effect.option(response.json), (body) => {
+          if (
+            body._tag === "Some" &&
+            Schema.decodeUnknownOption(Generated.BetaMessagesPost4XX)(body.value)._tag === "Some"
+          ) {
+            return Effect.succeed(response)
+          }
+          return Effect.flatMap(
+            Effect.orElseSucceed(response.text, () => "Unexpected status code"),
+            (description) =>
+              Effect.fail(
+                new HttpClientError.HttpClientError({
+                  reason: new HttpClientError.StatusCodeError({
+                    request: response.request,
+                    response,
+                    description
+                  })
+                })
+              )
+          )
+        })
+      })
+    )
+
+    const client = Generated.make(generatedHttpClient, {
       transformClient: Effect.fnUntraced(function*(client) {
         const config = yield* AnthropicConfig.getOrUndefined
         if (Predicate.isNotUndefined(config?.transformClient)) {
@@ -366,6 +406,7 @@ export const make = Effect.fnUntraced(
  * @see {@link make} for constructing the client service effectfully
  * @see {@link layerConfig} for loading client settings from `Config`
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */
@@ -385,6 +426,7 @@ export const layer = (options: Options): Layer.Layer<AnthropicClient, never, Htt
  * @see {@link layer} for providing the client from explicit options instead of `Config`
  * @see {@link make} for constructing the client service effectfully
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */

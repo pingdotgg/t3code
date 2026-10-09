@@ -1,0 +1,128 @@
+---
+title: Postgres
+description: Deploy Better Auth on Lambda with an existing PostgreSQL database and a request-scoped pg pool.
+---
+
+This example serves Better Auth through a Lambda Function URL using an existing PostgreSQL database. Both the Lambda and the deploying machine must be able to reach the server over TCP.
+
+## Install
+
+```sh
+bun add @alchemy.run/better-auth better-auth@^1.7.5 kysely pg
+```
+
+Configure AWS through an [Alchemy profile](/environments/profiles) and set `DATABASE_URL` in the deploying environment. The connection layer does not create the database, credentials, or network access.
+
+## Define the database layer
+
+```typescript title="src/auth-database.ts"
+import { Postgres } from "@alchemy.run/better-auth/Postgres";
+import * as Config from "effect/Config";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+export const AuthDatabase = Layer.unwrap(
+  Effect.gen(function* () {
+    const url = yield* Config.Redacted("DATABASE_URL");
+    return Postgres(url);
+  }),
+);
+```
+
+Configuration resolves during host construction and is bound into the Lambda environment. The pool is not opened until an auth operation runs, and closes at the end of the invocation.
+
+## Define the auth Lambda
+
+```typescript title="src/function.ts"
+import { BetterAuth } from "@alchemy.run/better-auth";
+import * as AWS from "alchemy/AWS";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import { AuthDatabase } from "./auth-database.ts";
+
+export default class AuthApi extends AWS.Lambda.Function<AuthApi>()(
+  "AuthApi",
+  {
+    main: import.meta.url,
+    functionUrl: true,
+    memorySize: 512,
+    timeout: Duration.seconds(30),
+    build: { install: ["pg"] },
+  },
+  Effect.gen(function* () {
+    const auth = yield* BetterAuth({
+      basePath: "/api/auth",
+      emailAndPassword: { enabled: true },
+    });
+    return { fetch: auth.fetch };
+  }).pipe(Effect.provide(AuthDatabase)),
+) {}
+```
+
+`build.install` packages the dynamically imported `pg` driver with a conventional npm layout. `functionUrl: true` creates a public endpoint; Better Auth handles authentication under `/api/auth`.
+
+## Define the stack
+
+```typescript title="alchemy.run.ts"
+import * as Alchemy from "alchemy";
+import * as AWS from "alchemy/AWS";
+import * as Effect from "effect/Effect";
+import AuthApi from "./src/function.ts";
+
+export default Alchemy.Stack(
+  "BetterAuthPostgres",
+  {
+    providers: AWS.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const api = yield* AuthApi;
+    return { url: api.functionUrl };
+  }),
+);
+```
+
+Alchemy generates and binds the signing secret automatically. Preserve and protect `.alchemy` state to retain it across deployments.
+
+## Deploy and migrate
+
+```sh
+bunx alchemy deploy
+```
+
+Automatic migrations use the resolved URL before updating the function, so the deployer needs schema-changing permissions. The runtime pool defaults to one connection per invocation; migrations create auth tables, not the database itself.
+
+Set `AUTH_ORIGIN` to the printed Function URL to verify the endpoint:
+
+```sh
+curl -i "$AUTH_ORIGIN/api/auth/get-session"
+```
+
+## Use separate migration credentials
+
+For a restricted runtime role or a pooled runtime URL, set `DATABASE_MIGRATION_URL` as well and replace `src/auth-database.ts`:
+
+```typescript title="src/auth-database.ts"
+import { Postgres } from "@alchemy.run/better-auth/Postgres";
+import * as Config from "effect/Config";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+export const AuthDatabase = Layer.unwrap(
+  Effect.gen(function* () {
+    const url = yield* Config.Redacted("DATABASE_URL");
+    const migrationUrl = yield* Config.Redacted("DATABASE_MIGRATION_URL");
+    return Postgres(url, { migrate: migrationUrl });
+  }),
+);
+```
+
+Both configuration values are bound to the host because they are read during construction. For migration credentials that must remain deploy-only, supply a resource Output as `migrate` rather than reading privileged credentials through host configuration.
+
+## Network and host requirements
+
+The Lambda above assumes a server reachable without VPC attachment; private RDS requires Lambda VPC connectivity and security-group access. Configure TLS according to your database provider, without disabling certificate verification.
+
+`Postgres` also accepts connection-string resource Outputs, such as PlanetScale's `role.connectionUrl`. For Workers, prefer [Hyperdrive](/better-auth/databases/cloudflare-hyperdrive) or [Neon](/better-auth/databases/neon); direct TCP requires `nodejs_compat` and a reachable origin.
+
+Changing the connection does not transfer auth records, and automatic migrations are additive. See [configuration](/better-auth/guides/configuration), [migrations](/better-auth/guides/migrations), the [upgrade guide](/better-auth/upgrades/from-1-6-to-1-7), and the [`Postgres` reference](/providers/betterauth/postgres).

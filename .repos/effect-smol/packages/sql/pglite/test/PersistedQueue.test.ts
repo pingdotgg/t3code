@@ -1,8 +1,8 @@
 import { PgliteClient } from "@effect/sql-pglite"
 import { assert, describe, layer } from "@effect/vitest"
 import { Effect } from "effect"
-import { PersistedQueue } from "effect/unstable/persistence"
-import { SqlClient } from "effect/unstable/sql"
+import { PersistedQueue } from "effect/persistence"
+import { SqlClient } from "effect/sql"
 
 const ClientLayer = PgliteClient.layer({})
 

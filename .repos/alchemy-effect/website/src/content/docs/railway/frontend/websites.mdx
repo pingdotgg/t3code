@@ -1,6 +1,6 @@
 ---
 title: Websites
-description: Deploy Vite, Astro, Next.js, Nuxt, React Router, SolidStart, SvelteKit, TanStack Start, Waku, Octane, Foldkit, Vocs, or any static build to Railway with first-class Website resources.
+description: Deploy Vite, Astro, Next.js, vinext, Nuxt, React Router, SolidStart, SvelteKit, TanStack Start, Waku, Octane, Foldkit, Vocs, or any static build to Railway with first-class Website resources.
 sidebar:
   label: Overview
   order: 1
@@ -37,6 +37,9 @@ or `https://{domain}` when you pass `domain` (a
 - [`Nextjs`](/railway/frontend/nextjs) — Next.js as a long-running
   Node process (`next build`, then `next({ dev: false })`). Not
   OpenNext.
+- [`Vinext`](/railway/frontend/vinext) — vinext (Next.js API on Vite)
+  as a long-running Node process (`vinext build`, then
+  `startProdServer`). Not the Cloudflare Worker path.
 - [`Nuxt`](/railway/frontend/nuxt) — Nuxt apps through nitro's
   Node server; your `nuxt.config.ts` loads natively. Do not set
   `nitro.preset`.
@@ -51,9 +54,8 @@ or `https://{domain}` when you pass `domain` (a
   Start (React or Solid), built through your own `vite build`.
 - [`Waku`](/railway/frontend/waku) — Waku (React Server
   Components) on Node, with SSG pages baked into the image.
-- [`Octane`](/railway/frontend/octane) — OctaneJS SSR. Select
-  `node()` from `@alchemy.run/frontend-frameworks/octane/node-adapter`
-  in `octane.config.ts`.
+- [`Octane`](/railway/frontend/octane) — OctaneJS SSR. Alchemy wraps
+  native Node output; no hosting adapter is needed in `octane.config.ts`.
 - [`Foldkit`](/railway/frontend/foldkit) — client-only Foldkit
   SPA; deep links fall back to `index.html`.
 - [`Vocs`](/railway/frontend/vocs) — prerendered Vocs docs;
@@ -79,6 +81,7 @@ unchanged project skips the build.
 | SolidStart | `SolidStart` | [SolidStart](/railway/frontend/solidstart) |
 | Astro | `Astro` | [Astro](/railway/frontend/astro) |
 | Next.js | `Nextjs` | [Next.js](/railway/frontend/nextjs) |
+| vinext | `Vinext` | [vinext](/railway/frontend/vinext) |
 | Nuxt | `Nuxt` | [Nuxt](/railway/frontend/nuxt) |
 | SvelteKit | `SvelteKit` | [SvelteKit](/railway/frontend/sveltekit) |
 | Waku | `Waku` | [Waku](/railway/frontend/waku) |

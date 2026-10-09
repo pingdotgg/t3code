@@ -88,6 +88,7 @@ layer(NodeServices.layer)("bundle conditionNames", (it) => {
         expect(code).toContain("DUAL_PKG_CJS_ENTRY");
         expect(code).toContain("DUAL_PKG_ESM_ENTRY");
       }),
+    { tags: ["unit", "local"] },
   );
 
   it.effect(
@@ -98,15 +99,19 @@ layer(NodeServices.layer)("bundle conditionNames", (it) => {
         expect(code).toContain("DUAL_PKG_CJS_ENTRY");
         expect(code).toContain("DUAL_PKG_ESM_ENTRY");
       }),
+    { tags: ["unit", "local"] },
   );
 
   // The control: the former list, with `"import"` baked in, hands the CJS
   // consumer's require() the ESM entry — the `pg` crash.
-  it.effect("a list containing `import` mis-resolves require() to ESM", () =>
-    Effect.gen(function* () {
-      const code = yield* bundleWith(["bun", "import", "module", "default"]);
-      expect(code).not.toContain("DUAL_PKG_CJS_ENTRY");
-      expect(code).toContain("DUAL_PKG_ESM_ENTRY");
-    }),
+  it.effect(
+    "a list containing `import` mis-resolves require() to ESM",
+    () =>
+      Effect.gen(function* () {
+        const code = yield* bundleWith(["bun", "import", "module", "default"]);
+        expect(code).not.toContain("DUAL_PKG_CJS_ENTRY");
+        expect(code).toContain("DUAL_PKG_ESM_ENTRY");
+      }),
+    { tags: ["unit", "local"] },
   );
 });

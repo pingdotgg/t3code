@@ -102,6 +102,7 @@ export function gitLabProviderFailure(
   if (error._tag === "GitLabCliUnavailableError") return { reason: "missing-tool" };
   if (error._tag === "GitLabCliAuthenticationError") return { reason: "unauthenticated" };
   if (error._tag === "GitLabCliRateLimitError") return { reason: "rate-limited" };
+  if (error._tag === "GitLabMergeRequestNotFoundError") return { reason: "not-found" };
   return { reason: "failed" };
 }
 
@@ -142,6 +143,12 @@ export const make = Effect.gen(function* () {
           // being carried on from — so every page it answers is one a cursor can continue.
           Effect.map((batch) => ({ ...batch, continues: true })),
         ),
+
+    getChangeRequestChecks: (input) =>
+      cli.getMergeRequestDetail(input).pipe(
+        Effect.map(({ state, checks }) => ({ state, checks })),
+        Effect.mapError(fail("getChangeRequestChecks")),
+      ),
 
     getChangeRequest: (input) =>
       Effect.all(

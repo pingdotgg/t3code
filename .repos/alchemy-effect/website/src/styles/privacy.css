@@ -35,11 +35,12 @@
 }
 .alc-privacy a {
   color: var(--alc-accent-deep);
-  text-decoration: none;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 3px;
 }
 .alc-privacy a:hover {
-  text-decoration: underline;
-  text-underline-offset: 3px;
+  text-decoration-color: currentColor;
 }
 .alc-privacy ul {
   padding-left: 22px;
@@ -48,28 +49,24 @@
 .alc-privacy li {
   margin: 6px 0;
 }
-.alc-privacy code {
+/* Inline code matches the site's `.alc-code-inline` pill: a sunk surface
+   in the page's theme. Code blocks below keep the dark code surface. */
+.alc-privacy :not(pre) > code {
   font-family: var(--alc-font-mono);
   font-size: 0.88em;
-  background: var(--alc-bg-code);
+  background: var(--alc-bg-sunk);
   border: 1px solid var(--alc-hairline);
   border-radius: 4px;
   padding: 1px 5px;
+  color: var(--alc-fg-1);
 }
-.alc-privacy pre {
-  background: var(--alc-bg-code);
-  border: 1px solid var(--alc-hairline);
-  border-radius: 8px;
-  padding: 14px 16px;
-  overflow-x: auto;
-  font-size: 13px;
-  line-height: 1.55;
+.alc-privacy a > code {
+  color: inherit;
+}
+/* Code blocks are Expressive Code frames (same as the docs); leave their
+   styling alone and only space them like paragraphs. */
+.alc-privacy .expressive-code {
   margin: 0 0 18px;
-}
-.alc-privacy pre code {
-  background: transparent;
-  border: 0;
-  padding: 0;
 }
 .alc-privacy table {
   width: 100%;

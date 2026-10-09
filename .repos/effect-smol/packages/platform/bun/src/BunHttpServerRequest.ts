@@ -7,7 +7,7 @@
  *
  * @since 4.0.0
  */
-import type { HttpServerRequest } from "effect/unstable/http/HttpServerRequest"
+import type { HttpServerRequest } from "effect/http/HttpServerRequest"
 
 /**
  * Returns the underlying `Bun.BunRequest` from an Effect `HttpServerRequest`.

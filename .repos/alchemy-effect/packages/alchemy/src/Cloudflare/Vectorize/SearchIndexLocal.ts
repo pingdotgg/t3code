@@ -1,7 +1,7 @@
 import type { Credentials } from "@distilled.cloud/cloudflare/Credentials";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type * as HttpClient from "effect/unstable/http/HttpClient";
+import type * as HttpClient from "effect/http/HttpClient";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import { SearchIndex } from "./SearchIndex.ts";
 import {

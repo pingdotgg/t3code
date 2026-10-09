@@ -10,12 +10,13 @@ import {
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { ServerConfig } from "../../../config.ts";
+import * as ServerConfig from "../../../config.ts";
 import { ensureAgentDeviceShim } from "../../../device/AgentDeviceShim.ts";
 import { nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 
 import * as DeviceService from "../../../device/DeviceService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
 import { DeviceScreenshotToolkit, DeviceStandardToolkit, DeviceToolkit } from "./tools.ts";
 
 /** The flags that pin every agent-device command to one device. */
@@ -59,14 +60,14 @@ export function agentDeviceQuickStart(
     `  ${executable} screenshot /tmp/shot.png ${target}        # or call device_screenshot`,
     `  ${executable} install <app> <path-to-.app-or-.apk> ${target}`,
     `Prefer snapshot refs over coordinates. Run ${executable} help for workflow guides and ${executable} <command> --help for flags.`,
-    "Do not call simctl, adb, xcrun, or serve-sim directly while these tools are attached; use agent-device.",
+    "Prefer agent-device for driving this device. simctl, adb, and xcrun remain available for anything it does not cover.",
     "For remote hosts, arrange builds, app installation, and any Metro reverse forwarding yourself. T3 provides discovery, streaming, and control only.",
     "Keep the returned --config and --session flags on every command. Other hosts can be used concurrently; opening one does not switch these commands.",
     platformNotes,
   ].join("\n");
 }
 
-const requireDeviceAccess = McpInvocationContext.requireMcpCapability("device").pipe(
+const requireDeviceAccess = McpInvocationContext.requireThreadMcpCapability("device").pipe(
   Effect.mapError(
     () =>
       new DeviceToolUnavailableError({
@@ -119,7 +120,7 @@ const pickDevice = (
 const toolError = (error: DeviceError | DeviceToolUnavailableError) => error;
 
 const handlers = {
-  device_list: (input) =>
+  device_list: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
@@ -132,7 +133,7 @@ const handlers = {
       }
       const hostId = input?.hostId;
       const open = state.sessions
-        .filter((session) => session.threadId === scope.threadId)
+        .filter((session) => session.threadId === scope.thread.threadId)
         .map((session) => ({ hostId: session.hostId, deviceId: session.deviceId }));
       return {
         hostStatuses: Object.fromEntries(
@@ -145,7 +146,8 @@ const handlers = {
         open,
       };
     }).pipe(Effect.mapError(toolError)),
-  device_open: (input) =>
+  ),
+  device_open: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
@@ -159,12 +161,12 @@ const handlers = {
       const target = yield* pickDevice(state.devices, input);
       // Resolve consent and agent connectivity before booting or registering a session.
       const agentArgs = yield* devices.agentTarget({
-        threadId: scope.threadId,
+        threadId: scope.thread.threadId,
         hostId: target.hostId,
         deviceId: target.id,
       });
       const session = yield* devices.open({
-        threadId: scope.threadId,
+        threadId: scope.thread.threadId,
         hostId: target.hostId,
         deviceId: target.id,
         platform: target.platform,
@@ -175,7 +177,7 @@ const handlers = {
           (candidate) => candidate.hostId === session.hostId && candidate.id === session.deviceId,
         ) ?? target;
       const targetArgs = [...agentDeviceTargetArgs(device), ...agentArgs];
-      const config = yield* ServerConfig;
+      const config = yield* ServerConfig.ServerConfig;
       const path = yield* Path.Path;
       const platform = yield* HostProcessPlatform;
       const shimDir = yield* ensureAgentDeviceShim({
@@ -203,20 +205,26 @@ const handlers = {
         quickStart: agentDeviceQuickStart(device, targetArgs, command),
       };
     }).pipe(Effect.mapError(toolError)),
-  device_screenshot: (input) =>
+  ),
+  device_screenshot: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
-      const sessions = yield* devices.sessionsForThread(scope.threadId);
-      const target =
-        input.deviceId !== undefined
-          ? { hostId: input.hostId ?? LOCAL_DEVICE_HOST_ID, deviceId: input.deviceId }
-          : sessions
-              .filter((session) => input.hostId === undefined || session.hostId === input.hostId)
-              .at(-1);
+      const sessions = yield* devices.sessionsForThread(scope.thread.threadId);
+      // Only devices this thread opened: another thread's device is not this agent's to watch.
+      const hostId =
+        input.deviceId === undefined ? input.hostId : (input.hostId ?? LOCAL_DEVICE_HOST_ID);
+      const target = sessions.findLast(
+        (session) =>
+          (hostId === undefined || session.hostId === hostId) &&
+          (input.deviceId === undefined || session.deviceId === input.deviceId),
+      );
       if (!target) {
         return yield* new DeviceToolUnavailableError({
-          reason: "No device is open in this thread. Call device_open first.",
+          reason:
+            input.deviceId === undefined
+              ? "No device is open in this thread. Call device_open first."
+              : `Device ${input.deviceId} on host ${hostId} is not open in this thread. Call device_open first.`,
         });
       }
       const shot = yield* devices.screenshot(target);
@@ -229,19 +237,21 @@ const handlers = {
         },
       };
     }).pipe(Effect.mapError(toolError)),
-  device_close: (input) =>
+  ),
+  device_close: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
       yield* devices.close({
-        threadId: scope.threadId,
+        threadId: scope.thread.threadId,
         ...(input.hostId === undefined ? {} : { hostId: input.hostId }),
         ...(input.deviceId === undefined ? {} : { deviceId: input.deviceId }),
         ...(input.shutdown === undefined ? {} : { shutdown: input.shutdown }),
       });
       return {};
     }).pipe(Effect.mapError(toolError)),
-} satisfies Parameters<typeof DeviceToolkit.toLayer>[0];
+  ),
+} satisfies McpToolAccess.Handlers<typeof DeviceToolkit.tools>;
 
 /** Width and height from the IHDR chunk; a PNG that lacks one reports 0×0. */
 export function pngDimensions(png: Uint8Array): { width: number; height: number } {
@@ -258,8 +268,8 @@ export function pngDimensions(png: Uint8Array): { width: number; height: number 
 
 const { device_screenshot, ...standardHandlers } = handlers;
 
-export const DeviceStandardToolkitHandlersLive = DeviceStandardToolkit.toLayer(standardHandlers);
+export const layerStandard = McpToolAccess.toLayer(DeviceStandardToolkit, standardHandlers);
 
-export const DeviceScreenshotToolkitHandlersLive = DeviceScreenshotToolkit.toLayer({
+export const layerScreenshot = McpToolAccess.toLayer(DeviceScreenshotToolkit, {
   device_screenshot,
 });
