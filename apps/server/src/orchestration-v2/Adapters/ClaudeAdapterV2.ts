@@ -1693,7 +1693,8 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
       permissionMode,
       ...(readOnlyTools === undefined ? {} : { tools: readOnlyTools }),
       ...(allowedTools === undefined ? {} : { allowedTools }),
-      installPermissionCallback,
+      // Claude routes Plan-mode writes to the callback even in Auto or Full access.
+      installPermissionCallback: true,
     };
   }
 
@@ -7377,6 +7378,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               behavior: "deny",
               message:
                 "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn.",
+              toolUseID: callbackOptions.toolUseID,
+            } satisfies PermissionResult;
+          }
+
+          if (
+            context.input.runtimePolicy.interactionMode === "plan" &&
+            context.input.runtimePolicy.approvalPolicy === "never"
+          ) {
+            return {
+              behavior: "deny",
+              message:
+                "This tool requires approval in Plan mode, but approvals are disabled for this thread.",
               toolUseID: callbackOptions.toolUseID,
             } satisfies PermissionResult;
           }
