@@ -12,12 +12,15 @@ import * as AzureDevOpsPullRequestCli from "@t3tools/source-control-azure-devops
 import * as AzureDevOpsDriver from "@t3tools/source-control-azure-devops/server/driver";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import * as ForgejoDriver from "@t3tools/source-control-forgejo/server/driver";
+import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
+import * as GitLabPullRequestCli from "@t3tools/source-control-gitlab/server/GitLabPullRequestCli";
+import * as GitLabDriver from "@t3tools/source-control-gitlab/server/driver";
 import type { SourceControlDriver } from "@t3tools/source-control-core/server/driver";
 import * as Layer from "effect/Layer";
 
 import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
 
-const drivers = [AzureDevOpsDriver.driver, ForgejoDriver.driver];
+const drivers = [GitLabDriver.driver, AzureDevOpsDriver.driver, ForgejoDriver.driver];
 
 /** Every service a built-in driver's `make` needs; the server's layers must provide them all. */
 export type BuiltInSourceControlDriversEnv =
@@ -31,4 +34,5 @@ export const BUILT_IN_SOURCE_CONTROL_DRIVERS: ReadonlyArray<
 export const layer = Layer.mergeAll(
   AzureDevOpsPullRequestCli.layer.pipe(Layer.provideMerge(AzureDevOpsCli.layer)),
   ForgejoCli.layer,
+  GitLabPullRequestCli.layer.pipe(Layer.provideMerge(GitLabCli.layer)),
 ).pipe(Layer.provideMerge(ServerSourceControlHost.layer));

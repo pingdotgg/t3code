@@ -24,7 +24,6 @@ import {
 import * as ThreadTitleLinks from "../src/textGeneration/ThreadTitleLinks.ts";
 import * as SourceControlProviderRegistry from "../src/sourceControl/SourceControlProviderRegistry.ts";
 import * as GitHubApi from "../src/sourceControl/GitHubApi.ts";
-import * as GitLabCli from "../src/sourceControl/GitLabCli.ts";
 import * as SourceControlBuiltInDrivers from "../src/sourceControl/builtInDrivers.ts";
 import * as BitbucketApi from "../src/sourceControl/BitbucketApi.ts";
 import * as ServerSettings from "../src/serverSettings.ts";
@@ -152,7 +151,6 @@ await Effect.runPromise(
           Layer.provide(
             Layer.mergeAll(
               GitHubApi.layerWithDependencies,
-              GitLabCli.layer,
               SourceControlBuiltInDrivers.layer,
               // No saved credentials here; Bitbucket falls back to T3CODE_BITBUCKET_* variables.
               BitbucketApi.layer,

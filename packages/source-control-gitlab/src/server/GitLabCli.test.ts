@@ -5,21 +5,16 @@ import { ChildProcessSpawner } from "effect/process";
 
 import { VcsProcessExitError } from "@t3tools/contracts";
 
-import * as VcsProcess from "../vcs/VcsProcess.ts";
+import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitLabCli from "./GitLabCli.ts";
 
-const mockedRun = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>();
+const mockedRun = vi.fn<SourceControlHost.SourceControlHost["Service"]["process"]["run"]>();
 const layer = it.layer(
-  GitLabCli.layer.pipe(
-    Layer.provide(
-      Layer.mock(VcsProcess.VcsProcess)({
-        run: mockedRun,
-      }),
-    ),
-  ),
+  GitLabCli.layer.pipe(Layer.provide(TestSourceControlHost.layer({ process: { run: mockedRun } }))),
 );
 
-function processOutput(stdout: string): VcsProcess.VcsProcessOutput {
+function processOutput(stdout: string): SourceControlHost.SourceControlProcessOutput {
   return {
     exitCode: ChildProcessSpawner.ExitCode(0),
     stdout,

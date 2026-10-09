@@ -4,11 +4,11 @@ import * as AzureDevOpsCli from "@t3tools/source-control-azure-devops/server/Azu
 import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
 import * as GitHubApi from "../sourceControl/GitHubApi.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
-import * as GitLabCli from "../sourceControl/GitLabCli.ts";
+import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
 import { azureDevOpsProviderFailure } from "@t3tools/source-control-azure-devops/server/AzureDevOpsPullRequestProvider";
 import { bitbucketProviderFailure } from "./BitbucketPullRequestProvider.ts";
 import { gitHubProviderFailure } from "./GitHubPullRequestProvider.ts";
-import { gitLabProviderFailure } from "./GitLabPullRequestProvider.ts";
+import { gitLabProviderFailure } from "@t3tools/source-control-gitlab/server/GitLabPullRequestProvider";
 
 const cause = new Error("redacted provider failure");
 
