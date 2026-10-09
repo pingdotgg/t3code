@@ -58,16 +58,31 @@ export const layer = Layer.effectDiscard(
         return attemptedAt === undefined || nowMs - attemptedAt >= Duration.toMillis(RETRY_AFTER);
       });
       for (const provider of candidates) {
-        const targetVersion = provider.versionAdvisory?.latestVersion;
         const install = Effect.gen(function* () {
-          attempts.set(`${provider.instanceId}@${targetVersion}`, yield* Clock.currentTimeMillis);
+          const currentSettings = yield* serverSettings.getSettings;
+          if (!currentSettings.automaticUpdates || !currentSettings.enableProviderUpdateChecks)
+            return;
+          const current = (yield* providers.getProviders).find(
+            (candidate) => candidate.instanceId === provider.instanceId,
+          );
+          if (!current || !isAutoUpdatable(current)) return;
+          const targetVersion = current.versionAdvisory?.latestVersion;
+          const attemptKey = `${current.instanceId}@${targetVersion}`;
+          const nowMs = yield* Clock.currentTimeMillis;
+          const attemptedAt = attempts.get(attemptKey);
+          if (attemptedAt !== undefined && nowMs - attemptedAt < Duration.toMillis(RETRY_AFTER))
+            return;
+          attempts.set(attemptKey, nowMs);
           yield* Effect.logInfo("Updating provider in the background", {
             instanceId: provider.instanceId,
-            fromVersion: provider.version,
+            fromVersion: current.version,
             targetVersion,
           });
           yield* runner
-            .updateProvider({ provider: provider.driver, instanceId: provider.instanceId })
+            .updateProviderWhileAdmitted({
+              provider: current.driver,
+              instanceId: current.instanceId,
+            })
             .pipe(
               Effect.catchCause((cause) =>
                 Effect.logWarning("Background provider update failed", {

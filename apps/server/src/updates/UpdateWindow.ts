@@ -187,26 +187,28 @@ const make = Effect.fn("updates.UpdateWindow.make")(function* () {
       if (Option.isNone(settings) || !settings.value.automaticUpdates) {
         return { open: false, blockers };
       }
-      if (settings.value.autoResumeLimitedThreads) {
-        const limited = yield* projections
-          .getLimitRecoveryCandidates({ now: horizon, autoResume: true, snooze: false })
-          .pipe(
-            Effect.tapError((cause) =>
-              Effect.logWarning("Update window could not read usage-limit resumes", { cause }),
-            ),
-            Effect.option,
-          );
-        if (Option.isNone(limited)) return { open: false, blockers };
-        for (const thread of limited.value) {
-          if (thread.limitRecovery?.autoResume !== true) continue;
-          const resumesAt = DateTime.make(thread.limitRecovery.resetAt);
-          if (Option.isSome(resumesAt)) {
-            blockers.push({
-              type: "usage-limit-resume",
-              threadId: thread.id,
-              resumesAt: resumesAt.value,
-            });
-          }
+      const limited = yield* projections
+        .getLimitRecoveryCandidates({
+          now: horizon,
+          autoResume: settings.value.autoResumeLimitedThreads,
+          snooze: false,
+        })
+        .pipe(
+          Effect.tapError((cause) =>
+            Effect.logWarning("Update window could not read usage-limit resumes", { cause }),
+          ),
+          Effect.option,
+        );
+      if (Option.isNone(limited)) return { open: false, blockers };
+      for (const thread of limited.value) {
+        if (thread.usageLimitResetAt === null || thread.usageLimitResetAt === undefined) continue;
+        const resumesAt = DateTime.make(thread.usageLimitResetAt);
+        if (Option.isSome(resumesAt) && !DateTime.isGreaterThan(resumesAt.value, horizon)) {
+          blockers.push({
+            type: "usage-limit-resume",
+            threadId: thread.id,
+            resumesAt: resumesAt.value,
+          });
         }
       }
 
