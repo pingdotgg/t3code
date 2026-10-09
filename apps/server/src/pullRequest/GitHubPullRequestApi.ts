@@ -713,6 +713,8 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly removeAgentCreditsOnMerge?: boolean;
       readonly mergeMethod?: PullRequestMergeMethod;
       readonly updateMethod?: PullRequestUpdateMethod;
+      /** Merge now with administrator privileges, as `gh pr merge --admin`. */
+      readonly bypassRequirements?: boolean;
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
 
     readonly commentOnPullRequest: (input: {
@@ -2663,11 +2665,14 @@ export const make = Effect.gen(function* () {
         // A merge queue takes a pull request through auto-merge rather than a direct merge, and
         // `--auto` on a pull request that is mergeable right now simply merges it, as `gh` does.
         // GitHub stores the strategy with a standing instruction rather than choosing one at
-        // merge time, so arming still names it.
+        // merge time, so arming still names it. An administrator's merge is always the direct
+        // one, past the queue and whatever the branch is still waiting on, as `gh pr merge
+        // --admin` is: GitHub decides whether this viewer may, and refuses the mutation if not.
         const auto =
-          state.isMergeQueueEnabled === true ||
-          (action === "enable-auto-merge" &&
-            !IMMEDIATELY_MERGEABLE.has(state.mergeStateStatus?.toUpperCase() ?? ""));
+          input.bypassRequirements !== true &&
+          (state.isMergeQueueEnabled === true ||
+            (action === "enable-auto-merge" &&
+              !IMMEDIATELY_MERGEABLE.has(state.mergeStateStatus?.toUpperCase() ?? "")));
         yield* graphql({
           host: input.host,
           operation: "runPullRequestAction",

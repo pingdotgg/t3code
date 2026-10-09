@@ -2046,6 +2046,21 @@ export const make = Effect.gen(function* () {
                 }),
               );
             }
+            // Merging past the rules is asked for by name and granted by name: it is refused for
+            // anything but a single merge, and for anyone the host did not say may do it.
+            if (
+              input.bypassRequirements === true &&
+              (input.stackNumber !== undefined ||
+                (input.action !== "merge" && input.action !== "enable-auto-merge") ||
+                viewer.mergeAsAdmin !== true)
+            ) {
+              return Effect.fail(
+                new PullRequestOperationError({
+                  operation: "runAction",
+                  detail: "You do not have permission to merge past this branch's protections.",
+                }),
+              );
+            }
             const mergeSettings =
               project.api.kind === "github" &&
               input.stackNumber === undefined &&
@@ -2083,6 +2098,7 @@ export const make = Effect.gen(function* () {
                     ...(input.updateMethod === undefined
                       ? {}
                       : { updateMethod: input.updateMethod }),
+                    ...(input.bypassRequirements === true ? { bypassRequirements: true } : {}),
                   })
                   .pipe(
                     // Once the authorized provider action starts, a failure may leave partial

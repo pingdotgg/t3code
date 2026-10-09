@@ -100,6 +100,7 @@ import {
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import { PullRequestEditButton } from "./PullRequestEditButton";
 import { Input } from "../ui/input";
 import {
@@ -248,6 +249,14 @@ const ACTION_FAILURE_HINTS: Record<PullRequestAction, string> = {
  */
 const UPDATE_BRANCH_REBASE_FAILURE_HINT =
   "The host refused it. A rebase stops at the first commit that does not apply cleanly; updating with a merge commit may still work.";
+
+/**
+ * Said instead of the auto-merge hint to somebody GitHub lets merge past the rules: a required
+ * review they cannot give themselves is the usual reason nothing else works, and the way through
+ * is in the same dialog they just used.
+ */
+const ENABLE_AUTO_MERGE_ADMIN_FAILURE_HINT =
+  "The host refused it. Check that this repository allows auto-merge, or open it again and merge as an administrator, past the branch's protections.";
 
 const TABS: ReadonlyArray<{ value: DetailTab; label: string }> = [
   { value: "summary", label: "Summary" },
@@ -583,6 +592,9 @@ export function PullRequestDetailPanel({
     readonly action: "merge" | "close" | "enable-auto-merge" | "revert" | "approve-workflows";
   }>({ open: false, action: "merge" });
   const confirmAction = confirmation.action;
+  // Ticked in the merge dialog to merge now past the branch's protections, `gh pr merge --admin`.
+  // Cleared whenever the dialog closes, so it is chosen afresh every time and never carried over.
+  const [bypassRequirements, setBypassRequirements] = useState(false);
   // Which handoff is preparing, keyed so a per-finding button can say "Preparing..." on itself
   // alone. One at a time whatever the key: they all check the same pull request out.
   const [handoff, setHandoff] = useState<string | null>(null);
@@ -717,6 +729,7 @@ export function PullRequestDetailPanel({
                   requestReviewers: false,
                   updateMethods: [],
                   labels: false,
+                  mergeAsAdmin: false,
                 },
             author: activity?.author ?? coreDetail.author,
             reviewers: activity?.reviewers ?? coreDetail.reviewers,
@@ -954,6 +967,7 @@ export function PullRequestDetailPanel({
     action: PullRequestAction,
     method?: PullRequestMergeMethod,
     updateMethod?: PullRequestUpdateMethod,
+    asAdmin?: boolean,
   ) => {
     onActed?.(action, "sent");
     const result = await runAction({
@@ -963,6 +977,7 @@ export function PullRequestDetailPanel({
         action,
         ...(method ? { mergeMethod: method } : {}),
         ...(updateMethod ? { updateMethod } : {}),
+        ...(asAdmin ? { bypassRequirements: true } : {}),
       },
     });
     setPendingAction(null);
@@ -977,7 +992,9 @@ export function PullRequestDetailPanel({
       const hint =
         updateMethod === "rebase"
           ? UPDATE_BRANCH_REBASE_FAILURE_HINT
-          : ACTION_FAILURE_HINTS[action];
+          : action === "enable-auto-merge" && detail?.viewerPermissions.mergeAsAdmin === true
+            ? ENABLE_AUTO_MERGE_ADMIN_FAILURE_HINT
+            : ACTION_FAILURE_HINTS[action];
       toastManager.add({
         type: "error",
         title: ACTION_FAILURE_LABELS[action],
@@ -1005,10 +1022,11 @@ export function PullRequestDetailPanel({
     action: PullRequestAction,
     method?: PullRequestMergeMethod,
     updateMethod?: PullRequestUpdateMethod,
+    asAdmin?: boolean,
   ) => {
     if (!canWriteSourceControl || pendingAction !== null) return false;
     setPendingAction(action);
-    return finishAction(action, method, updateMethod);
+    return finishAction(action, method, updateMethod, asAdmin);
   };
 
   const performCommentAction = async (body: string, action: "close" | "reopen") => {
@@ -1464,6 +1482,12 @@ export function PullRequestDetailPanel({
   const can = (action: PullRequestAction) =>
     detail?.capabilities.actions.includes(action) === true &&
     detail.viewerPermissions.actions.includes(action);
+  // GitHub alone says who may merge past the rules, and only the two merge dialogs offer it.
+  const offerAdminMerge =
+    (confirmAction === "merge" || confirmAction === "enable-auto-merge") &&
+    detail?.viewerPermissions.mergeAsAdmin === true &&
+    can("merge");
+  const mergingAsAdmin = offerAdminMerge && bypassRequirements;
   const detailChecksState = detail ? pullRequestChecksState(detail.checks) : null;
   const latestChecksState =
     sharedSummary?.checksState === undefined ? detailChecksState : sharedSummary.checksState;
@@ -2807,36 +2831,58 @@ export function PullRequestDetailPanel({
         open={confirmation.open}
         onOpenChange={(open) => setConfirmation((current) => ({ ...current, open }))}
         onOpenChangeComplete={(open) => {
-          if (!open) setConfirmation({ open: false, action: "merge" });
+          if (!open) {
+            setConfirmation({ open: false, action: "merge" });
+            setBypassRequirements(false);
+          }
         }}
       >
         <AlertDialogPopup>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {confirmAction === "merge"
-                ? "Merge pull request?"
-                : confirmAction === "enable-auto-merge"
-                  ? "Enable auto-merge?"
-                  : confirmAction === "revert"
-                    ? "Revert these changes?"
-                    : confirmAction === "approve-workflows"
-                      ? "Approve workflows to run?"
-                      : "Close pull request?"}
+              {mergingAsAdmin
+                ? "Merge as administrator?"
+                : confirmAction === "merge"
+                  ? "Merge pull request?"
+                  : confirmAction === "enable-auto-merge"
+                    ? "Enable auto-merge?"
+                    : confirmAction === "revert"
+                      ? "Revert these changes?"
+                      : confirmAction === "approve-workflows"
+                        ? "Approve workflows to run?"
+                        : "Close pull request?"}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {confirmAction === "merge"
-                ? `This merges #${reference.number} using ${selectedMergeMethod}.`
-                : confirmAction === "enable-auto-merge"
-                  ? // The host merges this as soon as it considers the pull request ready, which
-                    // may be immediately — there is no telling from here whether anything is
-                    // still outstanding.
-                    `This merges #${reference.number} using ${selectedMergeMethod} as soon as the host considers it ready, which may be immediately.`
-                  : confirmAction === "revert"
-                    ? `This opens a new pull request that reverses the changes merged by #${reference.number}.`
-                    : confirmAction === "approve-workflows"
-                      ? `This allows ${workflowApprovalsRequired} ${workflowApprovalsRequired === 1 ? "workflow" : "workflows"} from #${reference.number} to run. Review the code and workflow changes first.`
-                      : `This closes #${reference.number} without merging it.`}
+              {mergingAsAdmin
+                ? `This merges #${reference.number} now using ${selectedMergeMethod}, without waiting for the reviews, checks or merge queue the branch requires.`
+                : confirmAction === "merge"
+                  ? `This merges #${reference.number} using ${selectedMergeMethod}.`
+                  : confirmAction === "enable-auto-merge"
+                    ? // The host merges this as soon as it considers the pull request ready, which
+                      // may be immediately — there is no telling from here whether anything is
+                      // still outstanding.
+                      `This merges #${reference.number} using ${selectedMergeMethod} as soon as the host considers it ready, which may be immediately.`
+                    : confirmAction === "revert"
+                      ? `This opens a new pull request that reverses the changes merged by #${reference.number}.`
+                      : confirmAction === "approve-workflows"
+                        ? `This allows ${workflowApprovalsRequired} ${workflowApprovalsRequired === 1 ? "workflow" : "workflows"} from #${reference.number} to run. Review the code and workflow changes first.`
+                        : `This closes #${reference.number} without merging it.`}
             </AlertDialogDescription>
+            {offerAdminMerge ? (
+              <label className="mt-2 flex cursor-pointer items-start gap-2 text-left text-sm">
+                <Checkbox
+                  className="mt-0.5"
+                  checked={bypassRequirements}
+                  onCheckedChange={(checked) => setBypassRequirements(checked === true)}
+                />
+                <span className="flex flex-col gap-0.5">
+                  <span className="text-foreground">Merge now as an administrator</span>
+                  <span className="text-muted-foreground text-xs">
+                    Bypasses branch protections, like <code>gh pr merge --admin</code>.
+                  </span>
+                </span>
+              </label>
+            ) : null}
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogClose render={<Button variant="outline" size="sm" />}>
@@ -2844,11 +2890,17 @@ export function PullRequestDetailPanel({
             </AlertDialogClose>
             <Button
               size="sm"
-              variant={confirmAction === "close" ? "destructive" : "default"}
+              variant={confirmAction === "close" || mergingAsAdmin ? "destructive" : "default"}
               disabled={actionPending}
               onClick={() => {
                 const action = confirmAction;
                 setConfirmation((current) => ({ ...current, open: false }));
+                // Either dialog ends in the same direct merge once the box is ticked, so it is
+                // sent as one: there is nothing left for auto-merge to wait on.
+                if (mergingAsAdmin) {
+                  void perform("merge", selectedMergeMethod, undefined, true);
+                  return;
+                }
                 if (action === "merge") void perform("merge", selectedMergeMethod);
                 if (action === "enable-auto-merge")
                   void perform("enable-auto-merge", selectedMergeMethod);
@@ -2857,15 +2909,17 @@ export function PullRequestDetailPanel({
                 if (action === "close") void perform("close");
               }}
             >
-              {confirmAction === "merge"
-                ? selectedMergeMethodLabel
-                : confirmAction === "enable-auto-merge"
-                  ? "Enable auto-merge"
-                  : confirmAction === "revert"
-                    ? "Create revert PR"
-                    : confirmAction === "approve-workflows"
-                      ? "Approve and run"
-                      : "Close"}
+              {mergingAsAdmin
+                ? "Merge as administrator"
+                : confirmAction === "merge"
+                  ? selectedMergeMethodLabel
+                  : confirmAction === "enable-auto-merge"
+                    ? "Enable auto-merge"
+                    : confirmAction === "revert"
+                      ? "Create revert PR"
+                      : confirmAction === "approve-workflows"
+                        ? "Approve and run"
+                        : "Close"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

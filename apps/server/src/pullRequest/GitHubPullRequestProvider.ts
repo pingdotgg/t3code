@@ -97,6 +97,9 @@ export function gitHubViewerPermissions(access: GitHubViewerAccess): PullRequest
     verdicts: access.didAuthor ? (["comment"] as const) : CAPABILITIES.review.verdicts,
     requestReviewers: access.canWrite,
     ...(access.canUpdateBranch === true ? { updateMethods: CAPABILITIES.updateMethods } : {}),
+    // Only where GitHub says so outright: bypassing a required review is not something to offer
+    // on a guess, and whoever may not merge at all may not merge past the rules either.
+    ...(access.canWrite && access.canMergeAsAdmin === true ? { mergeAsAdmin: true } : {}),
     // Triage is the one role that labels without writing, which is what triage is for.
     labels: access.canTriage,
   };
@@ -600,6 +603,7 @@ export const make = Effect.gen(function* () {
             : { expectedStackHeads: input.expectedStackHeads }),
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
           ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
+          ...(input.bypassRequirements === true ? { bypassRequirements: true } : {}),
         })
         .pipe(Effect.mapError(fail("runAction"))),
 
