@@ -1085,7 +1085,7 @@ describe("RpcSessionFactory", () => {
     }),
   );
 
-  it.effect("tolerates two missed pong windows before closing the session", () =>
+  it.effect("closes the session after 15 seconds without a frame from the server", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();
       const session = yield* factory.connect(PREPARED);

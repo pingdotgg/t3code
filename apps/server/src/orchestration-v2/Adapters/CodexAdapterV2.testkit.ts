@@ -15,7 +15,7 @@ import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../../config.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { ProviderAdapterOpenSessionError } from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
@@ -195,7 +195,7 @@ export function layer(input: {
         const context = yield* Layer.build(layerReplay).pipe(
           Effect.mapError(
             (cause) =>
-              new ProviderAdapterOpenSessionError({
+              new ProviderAdapter.ProviderAdapterOpenSessionError({
                 driver: CodexAdapterV2.CODEX_DRIVER_KIND,
                 providerSessionId: openInput.providerSessionId,
                 cause,
