@@ -77,10 +77,8 @@ import { settingsTargetsForProject } from "./settings-environment-filter.logic";
 import { useScheduledTaskEditor } from "./scheduled-task-editor";
 import { scheduledTaskEditorSessionAtom } from "./scheduled-task-editor-state";
 import { appAtomRegistry } from "../../state/atom-registry";
-import {
-  formatNextScheduledTaskRun,
-  formatScheduledTaskInterval,
-} from "./scheduledTaskPresentation";
+import { formatNextScheduledTaskRun } from "./scheduledTaskPresentation";
+import { formatScheduledTaskInterval } from "@t3tools/client-runtime/scheduled-task-interval";
 
 type ScheduledTaskRoutes = {
   SettingsScheduledTaskNew: undefined;
