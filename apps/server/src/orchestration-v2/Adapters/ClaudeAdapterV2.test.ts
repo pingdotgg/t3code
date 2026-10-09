@@ -1831,7 +1831,8 @@ describe("ClaudeAdapterV2 native fork", () => {
 
 describe("ClaudeAdapterV2 rollback", () => {
   // Rolls back to a turn whose cursor is "target-cursor" and starts the next
-  // turn, given the message ids each native session can resume.
+  // turn, given the message ids each native session can resume. A session
+  // without an entry fails the lookup.
   const rollBackAndResume = (sessionMessageIds: Record<string, ReadonlyArray<string>>) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1871,7 +1872,17 @@ describe("ClaudeAdapterV2 rollback", () => {
                 return { sessionId: "forked-native-session" };
               }),
             subagentLaunchToolUseId: () => Effect.succeed(null),
-            sessionMessageIds: (input) => Effect.succeed(sessionMessageIds[input.sessionId] ?? []),
+            sessionMessageIds: (input) => {
+              const ids = sessionMessageIds[input.sessionId];
+              return ids === undefined
+                ? Effect.fail(
+                    new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                      method: "sessionMessageIds",
+                      cause: new Error("transcript missing"),
+                    }),
+                  )
+                : Effect.succeed(ids);
+            },
             assertComplete: Effect.void,
           },
         });
@@ -1931,6 +1942,16 @@ describe("ClaudeAdapterV2 rollback", () => {
       const { forkCalls, options } = yield* rollBackAndResume({
         "source-native-session": ["target-cursor", "compacted-cursor"],
       });
+
+      assert.deepEqual(forkCalls, []);
+      assert.equal(options?.resume, "source-native-session");
+      assert.equal(options?.resumeSessionAt, "target-cursor");
+    }),
+  );
+
+  it.effect("resumes the session at the target when the message lookup fails", () =>
+    Effect.gen(function* () {
+      const { forkCalls, options } = yield* rollBackAndResume({});
 
       assert.deepEqual(forkCalls, []);
       assert.equal(options?.resume, "source-native-session");

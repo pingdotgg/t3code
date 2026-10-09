@@ -8072,12 +8072,22 @@ export function makeClaudeAdapterV2(
               // A compaction in a rolled-back turn hides every earlier message
               // from resume, so resuming at the target would fail every send.
               // Fork the session at the target instead; the fork ends there.
+              // If the lookup fails, keep the plain resume at the target.
+              const resumableIds =
+                resumeSessionAt === null
+                  ? null
+                  : yield* queryRunner.sessionMessageIds({ sessionId: nativeThreadId, dir }).pipe(
+                      Effect.catch((cause) =>
+                        Effect.logWarning("orchestration-v2.claude-rollback-lookup-failed", {
+                          providerThreadId: rollbackInput.providerThread.id,
+                          cause,
+                        }).pipe(Effect.as(null)),
+                      ),
+                    );
               if (
                 resumeSessionAt !== null &&
-                !(yield* queryRunner.sessionMessageIds({
-                  sessionId: nativeThreadId,
-                  dir,
-                })).includes(resumeSessionAt)
+                resumableIds !== null &&
+                !resumableIds.includes(resumeSessionAt)
               ) {
                 const forked = yield* queryRunner.forkSession({
                   sessionId: nativeThreadId,
