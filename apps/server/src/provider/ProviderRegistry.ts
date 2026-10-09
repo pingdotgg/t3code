@@ -9,8 +9,8 @@
  *
  * Historically this Layer composed four per-kind Live Layers
  * (`CodexProviderLive`, `ClaudeProviderLive`, …) that each exposed a
- * `ServerProviderShape`. Those Lives were deleted during the driver /
- * instance refactor — every driver now carries its `snapshot: ServerProviderShape`
+ * `ManagedServerProvider`. Those Lives were deleted during the driver /
+ * instance refactor — every driver now carries its `snapshot: ManagedServerProvider`
  * bundled onto the `ProviderInstance` the registry produces.
  *
  * Each configured instance (including multi-instance setups like

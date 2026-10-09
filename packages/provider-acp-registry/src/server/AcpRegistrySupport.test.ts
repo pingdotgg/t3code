@@ -24,7 +24,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
-import { layerTestProviderHost, TestProviderHostSettings } from "@t3tools/provider-testing/host";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 
 const registryUrl = "https://registry.test/registry.json";
 const archiveUrl = "https://registry.test/example-agent.bin";
@@ -60,7 +60,7 @@ function layerResolver(
 ) {
   return Layer.mergeAll(
     NodeServices.layer,
-    layerTestProviderHost().pipe(Layer.provide(NodeServices.layer)),
+    TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
     Layer.succeed(HostProcessPlatform, "linux"),
     Layer.succeed(HostProcessArchitecture, "x64"),
     Layer.succeed(HostProcessEnvironment, environment),
@@ -776,7 +776,7 @@ describe("AcpRegistrySupport", () => {
       Effect.provide(
         Layer.mergeAll(
           NodeServices.layer,
-          layerTestProviderHost().pipe(Layer.provide(NodeServices.layer)),
+          TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
         ),
       ),
       Effect.provideService(HostProcessPlatform, "linux"),
@@ -1374,7 +1374,7 @@ describe("AcpRegistrySupport", () => {
           toolsDir: `${cacheDir}/tools`,
           registryUrl,
         });
-        const hostSettings = yield* TestProviderHostSettings;
+        const hostSettings = yield* TestProviderHost.TestProviderHostSettings;
         const instanceId = ProviderInstanceId.make("uninstall-reference");
         yield* hostSettings.set({
           ...DEFAULT_SERVER_SETTINGS,
@@ -1492,7 +1492,7 @@ describe("AcpRegistrySupport", () => {
         const agentRoot = `${cacheDir}/tools/${agent.id}`;
         expect(yield* fileSystem.exists(agentRoot)).toBe(true);
 
-        const hostSettings = yield* TestProviderHostSettings;
+        const hostSettings = yield* TestProviderHost.TestProviderHostSettings;
         const instanceId = ProviderInstanceId.make("registry-reference");
         yield* hostSettings.set({
           ...DEFAULT_SERVER_SETTINGS,

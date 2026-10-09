@@ -3,7 +3,8 @@
  * `HttpClient` so the version probe runs against real bytes.
  */
 import * as Effect from "effect/Effect";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 interface RecordedResponse {
   readonly status: number;

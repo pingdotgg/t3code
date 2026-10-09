@@ -1,6 +1,8 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import {
@@ -16,7 +18,7 @@ import {
 
 const noBinary = {
   runOpenCodeCommand: () => Effect.die("A configured server must not run the local binary"),
-} as unknown as OpenCodeRuntime.OpenCodeRuntimeShape;
+} as unknown as OpenCodeRuntime.OpenCodeRuntime["Service"];
 
 const probeServer = (serverUrl: string, serverPassword: string, http: HttpClient.HttpClient) =>
   probeOpenCodeRuntime({ binaryPath: "opencode", serverUrl, serverPassword }).pipe(
@@ -172,7 +174,7 @@ describe("OpenCode version probe", () => {
                 new OpenCodeRuntime.OpenCodeRuntimeError({ operation: "spawn", detail: "ENOENT" }),
               );
         },
-      } as unknown as OpenCodeRuntime.OpenCodeRuntimeShape;
+      } as unknown as OpenCodeRuntime.OpenCodeRuntime["Service"];
       const probe = yield* makeOpenCodeRuntimeProbe(
         probeOpenCodeRuntime({ binaryPath: "opencode", serverUrl: "", serverPassword: "" }).pipe(
           Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime),

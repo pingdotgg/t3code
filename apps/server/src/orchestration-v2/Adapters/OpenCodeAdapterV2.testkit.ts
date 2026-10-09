@@ -8,7 +8,7 @@ import * as Schema from "effect/Schema";
 
 import { OpenCodeAdapterV2Driver } from "@t3tools/provider-opencode/server";
 import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
@@ -448,7 +448,7 @@ function layerOpenCodeReplayRuntime(transcript: OpenCodeSdkReplayTranscript) {
               detail: "OpenCode replay does not load skills.",
             }),
           ),
-      } satisfies OpenCodeRuntime.OpenCodeRuntimeShape);
+      } satisfies OpenCodeRuntime.OpenCodeRuntime["Service"]);
     }),
   );
 }
@@ -466,7 +466,7 @@ function layerOpenCodeProviderAdapterRegistryReplay(transcript: OpenCodeSdkRepla
     Layer.provide(
       Layer.mergeAll(
         layerOpenCodeReplayRuntime(transcript),
-        layerTestProviderHost().pipe(Layer.provide(NodeServices.layer)),
+        TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
         NodeServices.layer,
         IdAllocator.layer,
         Layer.succeed(

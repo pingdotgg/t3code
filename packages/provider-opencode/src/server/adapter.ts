@@ -48,6 +48,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Random from "effect/Random";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
@@ -88,20 +89,15 @@ export const OPENCODE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(OPENCODE_
 export const OPENCODE_SDK_PROTOCOL = "opencode-sdk.sse" as const;
 const DEFAULT_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettings)({});
 
-let openCodeMessageIdEpochMillis = -1;
-let openCodeMessageIdCounter = 0;
-
-const makeOpenCodeMessageId = Effect.fnUntraced(function* () {
+const makeOpenCodeMessageId = Effect.fnUntraced(function* (
+  clock: Ref.Ref<{ readonly epochMillis: number; readonly counter: number }>,
+) {
   const epochMillis = DateTime.toEpochMillis(yield* DateTime.now);
-  if (epochMillis !== openCodeMessageIdEpochMillis) {
-    openCodeMessageIdEpochMillis = epochMillis;
-    openCodeMessageIdCounter = 0;
-  }
-  openCodeMessageIdCounter += 1;
-  const encodedTime = BigInt.asUintN(
-    48,
-    BigInt(epochMillis) * 0x1000n + BigInt(openCodeMessageIdCounter),
-  )
+  const counter = yield* Ref.modify(clock, (previous) => {
+    const next = previous.epochMillis === epochMillis ? previous.counter + 1 : 1;
+    return [next, { epochMillis, counter: next }] as const;
+  });
+  const encodedTime = BigInt.asUintN(48, BigInt(epochMillis) * 0x1000n + BigInt(counter))
     .toString(16)
     .padStart(12, "0");
   const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
@@ -948,6 +944,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const messageIdClock = yield* Ref.make({ epochMillis: -1, counter: 0 });
 
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: options.instanceId,
@@ -3170,7 +3167,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 startedAt,
                 completedAt: null,
               };
-              const admissionMessageId = yield* makeOpenCodeMessageId();
+              const admissionMessageId = yield* makeOpenCodeMessageId(messageIdClock);
               // No Effect may be yielded between this check and installing the
               // turn. If the event stream ended while IDs were being prepared,
               // registering afterward would leave a running turn that the EOF
@@ -3369,7 +3366,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 ...files,
               ];
               turn.admissionGeneration = state.nextAdmissionGeneration++;
-              turn.admissionMessageId = yield* makeOpenCodeMessageId();
+              turn.admissionMessageId = yield* makeOpenCodeMessageId(messageIdClock);
               turn.admissionPending = true;
               turn.admissionAccepted = false;
               turn.admissionMessageObserved = false;

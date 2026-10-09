@@ -24,7 +24,7 @@ const makeRuntime = Effect.gen(function* () {
   const failNextStart = yield* Ref.make(false);
   const started = yield* Deferred.make<void>();
   const closed = yield* Deferred.make<void>();
-  const runtime: OpenCodeRuntime.OpenCodeRuntimeShape = {
+  const runtime: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
     startOpenCodeServerProcess: () =>
       Effect.gen(function* () {
         if (yield* Ref.getAndSet(failNextStart, false)) {
@@ -115,7 +115,7 @@ it.effect("invalidates an exited process so the next borrower starts a new one",
     const starts = yield* Ref.make(0);
     const processExits: Array<Deferred.Deferred<number>> = [];
     const processClosed = yield* Deferred.make<void>();
-    const runtime: OpenCodeRuntime.OpenCodeRuntimeShape = {
+    const runtime: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
       startOpenCodeServerProcess: () =>
         Effect.gen(function* () {
           const index = yield* Ref.updateAndGet(starts, (count) => count + 1);
@@ -165,7 +165,7 @@ it.effect("replaces a dead cached process before its exit watcher runs", () =>
     const starts = yield* Ref.make(0);
     const closes = yield* Ref.make(0);
     const processRunning: Array<Ref.Ref<boolean>> = [];
-    const runtime: OpenCodeRuntime.OpenCodeRuntimeShape = {
+    const runtime: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
       startOpenCodeServerProcess: () =>
         Effect.gen(function* () {
           const index = yield* Ref.updateAndGet(starts, (count) => count + 1);
@@ -214,7 +214,7 @@ it.effect("cleans up an interrupted startup and allows a retry", () =>
     const starts = yield* Ref.make(0);
     const firstStartEntered = yield* Deferred.make<void>();
     const firstStartClosed = yield* Deferred.make<void>();
-    const runtime: OpenCodeRuntime.OpenCodeRuntimeShape = {
+    const runtime: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
       startOpenCodeServerProcess: () =>
         Effect.gen(function* () {
           const index = yield* Ref.updateAndGet(starts, (count) => count + 1);

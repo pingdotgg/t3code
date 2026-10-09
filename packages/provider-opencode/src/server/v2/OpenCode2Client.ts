@@ -139,26 +139,27 @@ const undecodable = (data: string) =>
   });
 
 /** Subscribes to `/api/event`, then streams every frame this build can route. */
-const readEvents = (httpClient: HttpClient.HttpClient) =>
-  httpClient.get("/api/event", { headers: { accept: "text/event-stream" } }).pipe(
-    Effect.flatMap(HttpClientResponse.filterStatusOk),
-    Effect.map((response) =>
-      response.stream.pipe(
-        Stream.timeoutOrElse({
-          duration: SILENT_STREAM_TIMEOUT,
-          orElse: () => Stream.fail(new OpenCode2SilentStreamError()),
-        }),
-        Stream.decodeText,
-        Stream.pipeThroughChannel(Sse.decode()),
-        Stream.filterMapEffect((frame) => {
-          const decoded = decodeEvent(frame.data);
-          return Result.isSuccess(decoded)
-            ? Effect.succeed(Result.succeed<OpenCode2StreamEvent>(decoded.success))
-            : undecodable(frame.data);
-        }),
-      ),
+const readEvents = HttpClient.get("/api/event", {
+  headers: { accept: "text/event-stream" },
+}).pipe(
+  Effect.flatMap(HttpClientResponse.filterStatusOk),
+  Effect.map((response) =>
+    response.stream.pipe(
+      Stream.timeoutOrElse({
+        duration: SILENT_STREAM_TIMEOUT,
+        orElse: () => Stream.fail(new OpenCode2SilentStreamError()),
+      }),
+      Stream.decodeText,
+      Stream.pipeThroughChannel(Sse.decode()),
+      Stream.filterMapEffect((frame) => {
+        const decoded = decodeEvent(frame.data);
+        return Result.isSuccess(decoded)
+          ? Effect.succeed(Result.succeed<OpenCode2StreamEvent>(decoded.success))
+          : undecodable(frame.data);
+      }),
     ),
-  );
+  ),
+);
 
 /**
  * OpenCode decodes Basic credentials as UTF-8. `HttpClientRequest.basicAuth`
@@ -182,8 +183,11 @@ export const make = Effect.gen(function* () {
         Effect.provideService(HttpClient.HttpClient, authenticated),
         Effect.map((client) => ({
           client,
-          events: readEvents(
-            HttpClient.mapRequest(authenticated, HttpClientRequest.prependUrl(baseUrl)),
+          events: readEvents.pipe(
+            Effect.provideService(
+              HttpClient.HttpClient,
+              HttpClient.mapRequest(authenticated, HttpClientRequest.prependUrl(baseUrl)),
+            ),
           ),
         })),
       );
