@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import type { SDKModel } from "@cursor/sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
@@ -145,6 +146,83 @@ it.layer(layerTest)("CursorDriver", (it) => {
         expect(openedKeys).toEqual(["instance-browser-key"]);
         expect(closed).toBe(1);
       }).pipe(Effect.scoped),
+  );
+
+  it.effect("reports the default context window from the last loaded Cursor catalog", () =>
+    Effect.gen(function* () {
+      const catalog = Promise.withResolvers<Array<SDKModel>>();
+      const me = vi.spyOn(Cursor, "me").mockResolvedValue({
+        apiKeyName: "T3 Code",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      const models = vi.spyOn(Cursor.models, "list").mockReturnValue(catalog.promise);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          me.mockRestore();
+          models.mockRestore();
+        }),
+      );
+      const instanceId = ProviderInstanceId.make("cursor-catalog-window");
+      const instance = yield* CursorDriver.create({
+        instanceId,
+        displayName: "Cursor",
+        enabled: true,
+        environment: [{ name: "CURSOR_API_KEY", value: "catalog-window-key", sensitive: true }],
+        config: CursorDriver.defaultConfig(),
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: () => Effect.die("This test opens no Cursor agent"),
+        }),
+      );
+      const selection = (contextWindow?: string) => ({
+        instanceId,
+        model: "claude-opus-5-5",
+        ...(contextWindow === undefined
+          ? {}
+          : { options: [{ id: "contextWindow", value: contextWindow }] }),
+      });
+      const runtime = yield* instance.orchestrationAdapter.openSession({
+        threadId: ThreadId.make("cursor-catalog-window-thread"),
+        providerSessionId: ProviderSessionId.make("cursor-catalog-window-session"),
+        modelSelection: selection(),
+        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        }),
+      });
+
+      // The first catalog read waits on `catalog`, so no default is known yet.
+      expect(runtime.getModelContextWindow?.(selection())).toBeUndefined();
+      catalog.resolve([
+        {
+          id: "claude-opus-5-5",
+          displayName: "Claude Opus 5.5",
+          parameters: [
+            {
+              id: "context",
+              displayName: "Context",
+              values: [{ value: "300k" }, { value: "1m" }],
+            },
+          ],
+          variants: [
+            {
+              displayName: "Claude Opus 5.5",
+              isDefault: true,
+              params: [{ id: "context", value: "1m" }],
+            },
+          ],
+        },
+      ]);
+      yield* instance.snapshot.refresh;
+      expect(runtime.getModelContextWindow?.(selection())).toBe(1_000_000);
+      expect(runtime.getModelContextWindow?.(selection("300k"))).toBe(300_000);
+
+      me.mockRejectedValue(new Error("Cursor is unreachable"));
+      expect((yield* instance.snapshot.refresh).status).toBe("error");
+      expect(runtime.getModelContextWindow?.(selection())).toBe(1_000_000);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("keeps the bundled SDK manual-only without probing or updating cursor-agent", () =>

@@ -23,6 +23,10 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import {
+  DEFAULT_HANDOFF_TOKEN_CAP,
+  handoffBudget,
+} from "@t3tools/provider-core/server/handoffBudget";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -770,6 +774,86 @@ describe("CursorAdapterV2", () => {
       },
     );
   });
+
+  it.effect("reports the selected context window so long threads keep a handoff allowance", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-window-" });
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-window-thread");
+      const selection = (contextWindow?: string) => ({
+        instanceId,
+        model: "claude-opus-5-5",
+        ...(contextWindow === undefined
+          ? {}
+          : { options: [{ id: "contextWindow", value: contextWindow }] }),
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        settings: yield* decodeCursorSettings({}),
+        environment: { HOME: workspace },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: () =>
+            Effect.succeed({
+              agentId: "native-cursor-window",
+              listMessages: Effect.succeed([]),
+              close: Effect.void,
+              send: () => Effect.die("Cursor turns are not started in this test."),
+            }),
+        }),
+        Effect.provide(layerTestProviderHost({ cwd: workspace })),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-window-session"),
+        modelSelection: selection("1m"),
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: selection("1m"),
+        runtimePolicy,
+      });
+
+      assert.equal(runtime.getModelContextWindow?.(selection("1m")), 1_000_000);
+      assert.equal(runtime.getModelContextWindow?.(selection("272k")), 272_000);
+      assert.equal(runtime.getModelContextWindow?.(selection("300K")), 300_000);
+      assert.isUndefined(runtime.getModelContextWindow?.(selection()));
+      assert.isUndefined(runtime.getModelContextWindow?.(selection("max")));
+      assert.isUndefined(runtime.getModelContextWindow?.(selection("0k")));
+      assert.isUndefined(runtime.getModelContextWindow?.(selection(`${"9".repeat(400)}m`)));
+      assert.isUndefined(
+        runtime.getModelContextWindow?.({
+          ...selection("1m"),
+          instanceId: ProviderInstanceId.make("other-cursor"),
+        }),
+      );
+
+      // Cursor reports no context usage, so the budget falls back to a byte
+      // estimate of the native transcript, here a thread with long shell output.
+      const budget = (modelContextWindow: number | undefined) =>
+        handoffBudget({
+          tokenCap: DEFAULT_HANDOFF_TOKEN_CAP,
+          userText: "Continue.",
+          attachments: [],
+          providerThread,
+          nativeContextEstimate: 224_379,
+          modelContextWindow,
+        });
+      assert.equal(budget(undefined), 0);
+      assert.equal(
+        budget(runtime.getModelContextWindow?.(selection("1m"))),
+        DEFAULT_HANDOFF_TOKEN_CAP,
+      );
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
+  );
 
   it("maps runtime modes to the SDK sandbox and auto-review controls", () => {
     const base = {

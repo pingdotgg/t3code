@@ -6,7 +6,11 @@
  *
  * @module provider/Drivers/CursorDriver
  */
-import { ProviderDriverKind, ProviderSetupError } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  ProviderSetupError,
+  type ServerProviderModel,
+} from "@t3tools/contracts";
 import { CursorSettings } from "../settings.ts";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
@@ -18,7 +22,7 @@ import { readCursorUsageLimits } from "./usageLimits.ts";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { makeCursorTextGeneration } from "./textGeneration.ts";
-import { CursorAdapterV2Driver, type CursorAdapterV2DriverEnv } from "./adapter.ts";
+import { createCursorAdapterV2, type CursorAdapterV2DriverEnv } from "./adapter.ts";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { buildInitialCursorProviderSnapshot, checkCursorProviderStatus } from "./status.ts";
 import * as CursorSdkCatalog from "./CursorSdkCatalog.ts";
@@ -136,14 +140,18 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
           },
         });
 
-      const orchestrationAdapter = yield* CursorAdapterV2Driver.create({
-        instanceId,
-        displayName,
-        accentColor,
-        environment,
-        enabled,
-        config,
-      }).pipe(
+      let catalogModels: ReadonlyArray<ServerProviderModel> = [];
+      const orchestrationAdapter = yield* createCursorAdapterV2(
+        {
+          instanceId,
+          displayName,
+          accentColor,
+          environment,
+          enabled,
+          config,
+        },
+        { getModels: () => catalogModels },
+      ).pipe(
         Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
           ...sdkRunner,
           open: (input) =>
@@ -220,6 +228,14 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
         Effect.map(stampSnapshot),
+        Effect.tap((provider) =>
+          Effect.sync(() => {
+            // A failed check lists only custom models, so keep the last loaded catalog.
+            if (provider.models.some((model) => !model.isCustom)) {
+              catalogModels = provider.models;
+            }
+          }),
+        ),
         Effect.provide(CursorSdkCatalog.layer),
       );
 
