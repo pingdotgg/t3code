@@ -112,4 +112,94 @@ describe("readOpenCodeUsage", () => {
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("never follows symlinks in the legacy OpenCode store", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-test-" });
+      const outside = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-test-" });
+      const sinceMs = 1780000000000;
+      const store = path.join(dir, "storage", "message");
+      const session = path.join(store, "session-1");
+      yield* fileSystem.makeDirectory(session, { recursive: true });
+      const write = Effect.fn(function* (directory: string, id: string, mtimeMs: number) {
+        const file = path.join(directory, `${id}.json`);
+        yield* fileSystem.writeFileString(
+          file,
+          JSON.stringify({
+            id,
+            sessionID: "session-1",
+            role: "assistant",
+            modelID: "claude-sonnet-4-5",
+            time: { created: sinceMs + 1000 },
+            tokens: { input: 100, output: 20 },
+          }),
+        );
+        yield* fileSystem.utimes(file, mtimeMs / 1000, mtimeMs / 1000);
+        return file;
+      });
+      const target = yield* write(outside, "msg-linked", sinceMs + 60_000);
+      const stale = yield* write(outside, "msg-stale", sinceMs - 60_000);
+      yield* fileSystem.symlink(target, path.join(session, "msg-linked.json"));
+      yield* fileSystem.symlink(stale, path.join(session, "msg-stale.json"));
+      yield* fileSystem.symlink(outside, path.join(store, "session-linked"));
+      yield* fileSystem.symlink(store, path.join(session, "cycle"));
+      yield* fileSystem.symlink(path.join(outside, "gone.json"), path.join(session, "gone.json"));
+      yield* fileSystem.symlink(path.join(session, "loop.json"), path.join(session, "loop.json"));
+
+      // Links alone are not a store, even when one points at a stale message.
+      const linksOnly = yield* readOpenCodeUsage(dir, sinceMs);
+      assert.deepStrictEqual(linksOnly, { files: [], missing: true, error: false });
+
+      const real = yield* write(session, "msg-real", sinceMs + 60_000);
+      const result = yield* readOpenCodeUsage(dir, sinceMs);
+      assert.isFalse(result.missing);
+      assert.isFalse(result.error);
+      assert.deepStrictEqual(
+        result.files.map((file) => file.path),
+        [real],
+      );
+      assert.deepStrictEqual(
+        result.files.flatMap((file) => file.records).map((record) => record.dedupeKey),
+        ["opencode:msg-real"],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reads a large legacy OpenCode session in directory order", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-test-" });
+      const session = path.join(dir, "storage", "message", "session-1");
+      yield* fileSystem.makeDirectory(session, { recursive: true });
+      // More entries than the walk stats at once.
+      yield* Effect.forEach(
+        Array.from({ length: 600 }, (_, index) => `msg-${index}`),
+        (id) =>
+          fileSystem.writeFileString(
+            path.join(session, `${id}.json`),
+            JSON.stringify({
+              id,
+              sessionID: "session-1",
+              role: "assistant",
+              modelID: "claude-sonnet-4-5",
+              time: { created: 1780000000000 },
+              tokens: { input: 100, output: 20 },
+            }),
+          ),
+        { concurrency: 16, discard: true },
+      );
+      const names = yield* fileSystem.readDirectory(session);
+
+      const result = yield* readOpenCodeUsage(dir, 0);
+      assert.isFalse(result.error);
+      assert.deepStrictEqual(
+        result.files.map((file) => file.path),
+        names.map((name) => path.join(session, name)),
+      );
+      assert.strictEqual(result.files.flatMap((file) => file.records).length, 600);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
