@@ -3,10 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { SourceControlProviderKind } from "@t3tools/contracts";
 
-import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
 import * as GitHubApi from "../sourceControl/GitHubApi.ts";
-import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
-import * as BitbucketPullRequestProvider from "./BitbucketPullRequestProvider.ts";
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
 import * as GitHubPullRequestProvider from "./GitHubPullRequestProvider.ts";
 import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
@@ -39,10 +36,7 @@ export function fromProviders(
  * @public Service construction is part of the canonical Effect module API.
  */
 export const make = Effect.gen(function* () {
-  const providers = yield* Effect.all([
-    GitHubPullRequestProvider.make,
-    BitbucketPullRequestProvider.make,
-  ]);
+  const providers = yield* Effect.all([GitHubPullRequestProvider.make]);
   const drivers = yield* Effect.forEach(BuiltInDrivers.BUILT_IN_SOURCE_CONTROL_DRIVERS, (driver) =>
     driver.make.pipe(Effect.map((instance) => instance.pullRequests)),
   );
@@ -62,5 +56,4 @@ export const layer = Layer.effect(PullRequestProviderRegistry, make).pipe(
     ),
   ),
   Layer.provide(BuiltInDrivers.layer),
-  Layer.provide(BitbucketPullRequestApi.layer.pipe(Layer.provide(BitbucketApi.layer))),
 );

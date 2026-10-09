@@ -21,7 +21,7 @@ import type {
   PullRequestReviewerCandidateList,
 } from "@t3tools/contracts";
 
-import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
+import * as BitbucketApi from "./BitbucketApi.ts";
 import { parseDiffFileRevisions } from "@t3tools/source-control-core/server/diffFileRevisions";
 import {
   buildReviewThreads,
@@ -304,7 +304,7 @@ export class BitbucketPullRequestApi extends Context.Service<
       readonly resolved: boolean;
     }) => Effect.Effect<void, BitbucketPullRequestApiError>;
   }
->()("t3/pullRequest/BitbucketPullRequestApi") {}
+>()("@t3tools/source-control-bitbucket/server/BitbucketPullRequestApi") {}
 
 /** `workspace/slug`; Bitbucket has no deeper nesting to address. */
 function repositorySegments(

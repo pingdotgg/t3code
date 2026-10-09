@@ -229,7 +229,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
-import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubApi from "./sourceControl/GitHubApi.ts";
 import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
@@ -3202,7 +3201,6 @@ export const layer = Layer.unwrap(
                     SourceControlProviderRegistry.layer.pipe(
                       Layer.provide(
                         Layer.mergeAll(
-                          BitbucketApi.layer,
                           GitHubApi.layerWithDependencies,
                           SourceControlBuiltInDrivers.layer,
                         ),

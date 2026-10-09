@@ -30,9 +30,7 @@ import {
 } from "./bitbucketPullRequests.ts";
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
-import * as ServerSettings from "../serverSettings.ts";
-import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import { retryAtFromHeader } from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
 const DEFAULT_API_BASE_URL = "https://api.bitbucket.org/2.0";
@@ -390,7 +388,7 @@ export class BitbucketApi extends Context.Service<
       readonly force?: boolean;
     }) => Effect.Effect<void, BitbucketApiError>;
   }
->()("t3/sourceControl/BitbucketApi") {}
+>()("@t3tools/source-control-bitbucket/server/BitbucketApi") {}
 
 function nonEmpty(value: string | undefined): Option.Option<string> {
   const trimmed = value?.trim();
@@ -657,16 +655,15 @@ function responseError(
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const config = yield* BitbucketApiEnvConfig;
-  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const host = yield* SourceControlHost.SourceControlHost;
+  const git = host.git;
   const httpClient = yield* HttpClient.HttpClient;
   const fileSystem = yield* FileSystem.FileSystem;
-  const git = yield* GitVcsDriver.GitVcsDriver;
-  const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
 
   const apiUrl = (path: string) => `${config.baseUrl.replace(/\/+$/u, "")}${path}`;
 
   // Read on every request so credentials saved in settings apply without a restart.
-  const currentCredential = serverSettings.getSettings.pipe(
+  const currentCredential = host.settings.get.pipe(
     Effect.map((settings) => resolveCredential(settings.bitbucket, config)),
     Effect.catch((error) =>
       // No cause: a settings decode error can quote a hand-edited token.
@@ -739,7 +736,7 @@ export const make = Effect.gen(function* () {
         : null;
     if (fromContext) return fromContext;
 
-    const handle = yield* vcsRegistry.resolve({ cwd: input.cwd }).pipe(
+    const listRemotes = yield* git.remotes(input.cwd).pipe(
       Effect.mapError(
         (cause) =>
           new BitbucketRepositoryVcsResolveError({
@@ -748,7 +745,7 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    const remotes = yield* handle.driver.listRemotes(input.cwd).pipe(
+    const remotes = yield* listRemotes.pipe(
       Effect.mapError(
         (cause) =>
           new BitbucketRepositoryRemotesListError({

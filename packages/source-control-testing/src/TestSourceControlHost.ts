@@ -1,7 +1,7 @@
 /**
  * A `SourceControlHost.SourceControlHost` for provider tests. Settings are fixed unless the test
- * supplies its own, and every process run goes to the test's `run`, which fails by default so an
- * unexpected CLI call is visible.
+ * supplies its own. Process runs and git operations go to what the test supplies; anything else
+ * dies, so an unexpected CLI or git call is visible.
  *
  * @module source-control-testing/TestSourceControlHost
  */
@@ -14,7 +14,25 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 export interface TestSourceControlHostOptions {
   readonly settings?: ServerSettings;
   readonly process?: Partial<SourceControlHost.SourceControlHost["Service"]["process"]>;
+  readonly git?: Partial<SourceControlHost.SourceControlHost["Service"]["git"]>;
 }
+
+type Git = SourceControlHost.SourceControlHost["Service"]["git"];
+
+const unexpectedGit = (operation: string) => () =>
+  Effect.die(`Unexpected git ${operation} in a test that supplied none.`);
+
+const failingGit: Git = {
+  remotes: unexpectedGit("remotes"),
+  readConfigValue: unexpectedGit("readConfigValue"),
+  resolvePrimaryRemoteName: unexpectedGit("resolvePrimaryRemoteName"),
+  ensureRemote: unexpectedGit("ensureRemote"),
+  listLocalBranchNames: unexpectedGit("listLocalBranchNames"),
+  fetchRemoteBranch: unexpectedGit("fetchRemoteBranch"),
+  fetchRemoteTrackingBranch: unexpectedGit("fetchRemoteTrackingBranch"),
+  setBranchUpstream: unexpectedGit("setBranchUpstream"),
+  switchRef: unexpectedGit("switchRef"),
+};
 
 export const layer = (
   options: TestSourceControlHostOptions = {},
@@ -28,6 +46,7 @@ export const layer = (
           options.process?.run ??
           ((input) => Effect.die(`Unexpected ${input.command} run in ${input.operation}.`)),
       },
+      git: { ...failingGit, ...options.git },
     }),
   );
 
