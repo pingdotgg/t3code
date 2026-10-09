@@ -7,6 +7,10 @@ import type {
   OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
 import {
+  isTerminalDelegatedTaskStatus,
+  terminalDelegatedTaskStatuses,
+} from "./DelegatedTaskStatus.ts";
+import {
   latestRootProviderFailure,
   latestUnheldRun,
   threadErrorSummary,
@@ -486,6 +490,9 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
     runId: RunId,
   ) => Effect.Effect<OrchestrationV2ConversationMessage | undefined, ProjectionStoreV2Error>;
+  readonly hasPendingDelegatedCompletion: (
+    threadId: ThreadId,
+  ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly canStartQueuedRun: (
     threadId: ThreadId,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
@@ -546,7 +553,16 @@ function needsRecovery(
         )
       );
     case "delegated-completions":
-      return projection.runs.some((run) => run.delegatedCompletion?.delivery != null);
+      return (
+        projection.runs.some((run) => run.delegatedCompletion?.delivery != null) ||
+        projection.subagents.some(
+          (task) =>
+            task.origin === "app_owned" &&
+            task.runId !== null &&
+            isTerminalDelegatedTaskStatus(task.status) &&
+            task.completionDelivery?.state === "pending",
+        )
+      );
     case "subagent-results": {
       const parentThreadId = projection.thread.lineage.parentThreadId;
       return (
@@ -3565,6 +3581,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE CASE WHEN json_valid(payload_json)
                   THEN json_type(payload_json, '$.delegatedCompletion.delivery') = 'object'
                   ELSE 0 END
+                UNION
+                SELECT thread_id FROM orchestration_v2_projection_subagents
+                WHERE origin = 'app_owned' AND run_id IS NOT NULL
+                  AND status IN ${sql.in(terminalDelegatedTaskStatuses)}
+                  AND CASE WHEN json_valid(payload_json) THEN
+                    json_extract(payload_json, '$.completionDelivery.state') = 'pending'
+                    ELSE 0 END
               `;
             case "subagent-results":
               return sql`
@@ -4632,6 +4655,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           }),
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
+
+    const hasPendingDelegatedCompletion: ProjectionStoreV2Shape["hasPendingDelegatedCompletion"] = (
+      threadId,
+    ) =>
+      sql<{ readonly pending: number }>`
+        SELECT 1 AS pending FROM orchestration_v2_projection_subagents
+        WHERE thread_id = ${threadId} AND origin = 'app_owned' AND run_id IS NOT NULL
+          AND status IN ${sql.in(terminalDelegatedTaskStatuses)}
+          AND CASE WHEN json_valid(payload_json) THEN
+            json_extract(payload_json, '$.completionDelivery.state') = 'pending'
+            ELSE 0 END
+        LIMIT 1
+      `.pipe(
+        Effect.map((rows) => rows.length > 0),
+        Effect.mapError(controlReadError(threadId)),
+      );
 
     const canStartQueuedRun: ProjectionStoreV2Shape["canStartQueuedRun"] = (threadId) =>
       sql
@@ -5914,6 +5953,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getCheckpointCaptureContext,
       getRunMessage,
       canStartQueuedRun,
+      hasPendingDelegatedCompletion,
       getPendingNativeUserInputs,
       hasUnpairedRunInterruptRequest,
       getMessageCount,
@@ -6392,6 +6432,21 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           const run = projection.runs.find((candidate) => candidate.id === runId);
           return projection.messages.find((message) => message.id === run?.userMessageId);
         }),
+      hasPendingDelegatedCompletion: (threadId) =>
+        Ref.get(replayState).pipe(
+          Effect.map(
+            (state) =>
+              state.projections
+                .get(threadId)
+                ?.subagents.some(
+                  (task) =>
+                    task.origin === "app_owned" &&
+                    task.runId !== null &&
+                    isTerminalDelegatedTaskStatus(task.status) &&
+                    task.completionDelivery?.state === "pending",
+                ) ?? false,
+          ),
+        ),
       canStartQueuedRun: (threadId) =>
         Effect.gen(function* () {
           const projection = (yield* Ref.get(replayState)).projections.get(threadId);
