@@ -49,6 +49,10 @@ interface ProviderHostService {
   readonly paths: ProviderHostPaths;
   readonly settings: {
     readonly get: Effect.Effect<ServerSettings, ServerSettingsError>;
+    /** Runs `use` on a settings snapshot that no settings write can change until it finishes. */
+    readonly withSnapshot: <A, E, R>(
+      use: (settings: ServerSettings) => Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E | ServerSettingsError, R>;
     /** Every settings change after subscription, starting with the next one. */
     readonly changes: Stream.Stream<ServerSettings>;
     /** Changes buffered from the moment the scoped subscription is acquired. */

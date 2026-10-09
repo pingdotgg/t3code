@@ -113,6 +113,7 @@ function layerProviderHost(input: {
       },
       settings: input.settings ?? {
         get: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+        withSnapshot: (use) => use(DEFAULT_SERVER_SETTINGS),
         changes: Stream.empty,
         subscribe: Effect.succeed(Stream.empty),
       },
@@ -285,6 +286,7 @@ describe("makeManagedServerProvider", () => {
         const serverSettingsChanges = yield* PubSub.unbounded<typeof initialServerSettings>();
         const hostSettings: ProviderHost.ProviderHost["Service"]["settings"] = {
           get: Ref.get(serverSettingsRef),
+          withSnapshot: (use) => Ref.get(serverSettingsRef).pipe(Effect.flatMap(use)),
           changes: Stream.empty,
           subscribe: PubSub.subscribe(serverSettingsChanges).pipe(
             Effect.map((subscription) => Stream.fromSubscription(subscription)),

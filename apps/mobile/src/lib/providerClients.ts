@@ -1,4 +1,5 @@
 import { isProviderDriverKind } from "@t3tools/contracts";
+import { acpRegistryClient } from "@t3tools/provider-acp-registry/client";
 import { makeProviderClientRegistry } from "@t3tools/provider-core/client";
 import { cursorClient } from "@t3tools/provider-cursor/client";
 import { grokClient } from "@t3tools/provider-grok/client";
@@ -13,6 +14,7 @@ const providerClients = makeProviderClientRegistry([
   museClient,
   openCodeClient,
   piClient,
+  acpRegistryClient,
 ]);
 
 /** The client definition for a driver kind, or `undefined` for drivers drawn by hand. */
