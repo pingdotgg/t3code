@@ -624,3 +624,60 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
     assert.deepEqual(parentAfterChildLink.thread.pullRequests, parent.thread.pullRequests);
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("settling spends a snoozed thread's wake ticket, including after re-snoozing", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:settle-snoozed");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-settle-snoozed"),
+      threadId,
+      projectId: ProjectId.make("project:settle-snoozed"),
+      title: "Snoozed thread",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const now = yield* DateTime.now;
+    const snoozedUntil = DateTime.formatIso(DateTime.add(now, { hours: 1 }));
+    for (const round of [1, 2]) {
+      yield* orchestrator.dispatch({
+        type: "thread.snooze",
+        commandId: CommandId.make(`snooze-before-settle-${round}`),
+        threadId,
+        snoozedUntil,
+      });
+      const snoozed = yield* projections.getThreadShell(threadId);
+      assert.ok(snoozed?.snoozedUntil);
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make(`settle-snoozed-${round}`),
+        threadId,
+      });
+      const settled = yield* projections.getThreadShell(threadId);
+      assert.ok(settled);
+      assert.equal(settled.settledOverride, "settled");
+      assert.equal(settled.snoozedUntil, null);
+      assert.equal(settled.snoozedAt, null);
+      const projection = yield* projections.getThreadProjection(threadId);
+      assert.equal(projection.thread.snoozedUntil, null);
+      assert.equal(projection.thread.snoozedAt, null);
+    }
+    yield* orchestrator.dispatch({
+      type: "thread.unsettle",
+      commandId: CommandId.make("unsettle-after-snooze"),
+      threadId,
+      reason: "user",
+    });
+    const active = yield* projections.getThreadShell(threadId);
+    assert.ok(active);
+    assert.equal(active.settledOverride, "active");
+    assert.equal(active.snoozedUntil, null);
+  }).pipe(Effect.provide(layerTest)),
+);
