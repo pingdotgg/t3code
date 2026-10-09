@@ -217,6 +217,7 @@ import {
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
+import { seedUserInputDraftAnswers } from "@t3tools/client-runtime/state/thread-requests";
 import { useUiStateStore } from "../uiStateStore";
 import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefresh";
 import {
@@ -3312,6 +3313,19 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadId,
     activePendingUserInput?.requestId,
   ]);
+  const activePendingAnswerDrafts =
+    pendingUserInputAnswersByRequestId[activePendingRequestKey] ?? EMPTY_PENDING_USER_INPUT_ANSWERS;
+  if (
+    activePendingUserInput &&
+    seedUserInputDraftAnswers(activePendingUserInput.questions, activePendingAnswerDrafts) !==
+      activePendingAnswerDrafts
+  ) {
+    setPendingUserInputAnswersByRequestId((existing) => {
+      const drafts = existing[activePendingRequestKey] ?? EMPTY_PENDING_USER_INPUT_ANSWERS;
+      const seeded = seedUserInputDraftAnswers(activePendingUserInput.questions, drafts);
+      return seeded === drafts ? existing : { ...existing, [activePendingRequestKey]: seeded };
+    });
+  }
   const pendingQuestionDraftKeys = useMemo(
     () =>
       activeThreadId
@@ -8062,6 +8076,13 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (command === "rightPanel.toggleMaximized") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) toggleRightPanelMaximized();
+        return;
+      }
+
       if (command === "threadPanel.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -8299,6 +8320,7 @@ export default function ChatView(props: ChatViewProps) {
     closeThreadFind,
     isThreadFindActive,
     toggleRightPanel,
+    toggleRightPanelMaximized,
     toggleThreadPanel,
     toggleTerminalVisibility,
     composerRef,
@@ -8309,6 +8331,14 @@ export default function ChatView(props: ChatViewProps) {
     logicalProjectEnvironments,
     onEnvironmentChange,
   ]);
+
+  // A focused desktop browser page forwards these chords as menu actions.
+  useEffect(() => {
+    return window.desktopBridge?.onMenuAction((action) => {
+      if (action === "rightPanel.toggle") toggleRightPanel();
+      else if (action === "rightPanel.toggleMaximized") toggleRightPanelMaximized();
+    });
+  }, [toggleRightPanel, toggleRightPanelMaximized]);
 
   // Paste-to-focus: the resting composer blurs on a click into the timeline,
   // so a paste that follows has no editable target and would be dropped.
@@ -10294,6 +10324,7 @@ export default function ChatView(props: ChatViewProps) {
           [questionId]: setPendingUserInputCustomAnswer(
             existing[activePendingRequestKey]?.[questionId],
             value,
+            question,
           ),
         },
       }));
@@ -11322,7 +11353,7 @@ export default function ChatView(props: ChatViewProps) {
               </div>
             ) : null}
             {/* Banners overlay the timeline without changing its content height. */}
-            <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex flex-col">
+            <div className="chat-banner-lane pointer-events-none absolute top-0 z-20 flex flex-col">
               <ProviderStatusBanner
                 status={visibleProviderStatus}
                 onDismiss={() => setDismissedProviderStatusBannerKey(providerStatusBannerKey)}

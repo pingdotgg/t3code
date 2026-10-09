@@ -1161,6 +1161,8 @@ export const OrchestrationV2UserInputQuestion = Schema.Struct({
   ),
   multiSelect: Schema.optional(Schema.Boolean),
   allowCustomAnswer: Schema.optional(Schema.Boolean),
+  /** Editable initial text. Answers preserve whitespace and allow an empty string when present. */
+  initialAnswer: Schema.optional(Schema.String),
   required: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2UserInputQuestion = typeof OrchestrationV2UserInputQuestion.Type;

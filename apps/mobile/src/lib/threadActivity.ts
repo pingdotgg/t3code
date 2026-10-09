@@ -399,8 +399,12 @@ function resolvePendingUserInputAnswer(
 ): string | ReadonlyArray<string> | null {
   if (draft?.attachmentsBlocked) return null;
   const customAnswer =
-    question.allowCustomAnswer === false ? null : normalizeDraftAnswer(draft?.customAnswer);
-  if (customAnswer) {
+    question.allowCustomAnswer === false
+      ? null
+      : question.initialAnswer !== undefined
+        ? (draft?.customAnswer ?? null)
+        : normalizeDraftAnswer(draft?.customAnswer);
+  if (customAnswer !== null && customAnswer.length > 0) {
     return customAnswer;
   }
 
@@ -408,12 +412,12 @@ function resolvePendingUserInputAnswer(
   if (question.multiSelect) {
     return selectedOptionValues.length > 0
       ? selectedOptionValues
-      : question.allowCustomAnswer !== false && (draft?.attachmentCount ?? 0) > 0
-        ? ""
-        : null;
+      : (customAnswer ??
+          (question.allowCustomAnswer !== false && (draft?.attachmentCount ?? 0) > 0 ? "" : null));
   }
   return (
     selectedOptionValues[0] ??
+    customAnswer ??
     (question.allowCustomAnswer !== false && (draft?.attachmentCount ?? 0) > 0 ? "" : null)
   );
 }
@@ -1633,7 +1637,7 @@ export function setPendingUserInputCustomAnswer(
   }
 
   const selectedOptionValues =
-    customAnswer.trim().length > 0
+    question.initialAnswer !== undefined || customAnswer.trim().length > 0
       ? undefined
       : normalizeSelectedOptionValues(question, draft?.selectedOptionValues);
   return {

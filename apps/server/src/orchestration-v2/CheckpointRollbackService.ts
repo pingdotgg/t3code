@@ -20,10 +20,10 @@ import {
 } from "./CheckpointRestoreSafety.ts";
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
-import { IdAllocatorV2 } from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
-import type { ProviderAdapterV2RollbackTarget } from "./ProviderAdapter.ts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
@@ -85,7 +85,7 @@ export const layer: Layer.Layer<
   never,
   | CheckpointServiceV2
   | EventSinkV2
-  | IdAllocatorV2
+  | IdAllocator.IdAllocatorV2
   | ProjectionStoreV2
   | ProviderSessionManagerV2
   | RuntimePolicyV2
@@ -98,7 +98,7 @@ export const layer: Layer.Layer<
   Effect.gen(function* () {
     const checkpoints = yield* CheckpointServiceV2;
     const eventSink = yield* EventSinkV2;
-    const ids = yield* IdAllocatorV2;
+    const ids = yield* IdAllocator.IdAllocatorV2;
     const projections = yield* ProjectionStoreV2;
     const sessions = yield* ProviderSessionManagerV2;
     const runtimePolicy = yield* RuntimePolicyV2;
@@ -225,7 +225,7 @@ export const layer: Layer.Layer<
           turn.providerThreadId === providerThread.id &&
           (turn.runAttemptId === null || !rolledBackAttemptIds.has(turn.runAttemptId)),
       );
-      const rollbackTarget: ProviderAdapterV2RollbackTarget =
+      const rollbackTarget: ProviderAdapter.ProviderAdapterV2RollbackTarget =
         targetOrdinal === 0
           ? {
               type: "thread_start",

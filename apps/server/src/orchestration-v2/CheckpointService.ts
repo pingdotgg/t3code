@@ -21,7 +21,7 @@ import * as Schema from "effect/Schema";
 
 import { parseTurnDiffFilesFromNumstat } from "../checkpointing/Diffs.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 const CHECKPOINT_REFS_PREFIX = "refs/t3/orchestration-v2/checkpoints";
 const ROOT_CHECKPOINT_SCOPE_NAME = "root";
@@ -172,7 +172,7 @@ export const checkpointRefForScopeOrdinal = Effect.fn("checkpointRefForScopeOrdi
 );
 
 function checkpointIdForScopeOrdinal(
-  idAllocator: IdAllocator.IdAllocatorV2Shape,
+  idAllocator: IdAllocator.IdAllocatorV2["Service"],
   input: {
     readonly scopeId: CheckpointScopeId;
     readonly ordinalWithinScope: number;
@@ -185,7 +185,7 @@ function checkpointIdForScopeOrdinal(
 }
 
 function makeRootRunScope(input: {
-  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly threadId: ThreadId;
   readonly runId: RunId;
   readonly rootNodeId: NodeId;

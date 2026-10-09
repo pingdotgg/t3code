@@ -95,7 +95,7 @@ import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetup
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
 import { CodexSetupSection, CodexManagedRuntimeFields } from "./CodexSetupSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
-import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
+import { providerClients } from "./providerDriverMeta";
 import { searchableSetting } from "./settingsSearch";
 import {
   backgroundActivityOverrideSettings,
@@ -145,8 +145,9 @@ function providerConfigString(config: unknown, key: string): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
-const PROVIDER_SETTINGS = DRIVER_OPTIONS.map((definition) => ({
-  provider: definition.value,
+const PROVIDER_SETTINGS = providerClients.definitions.map((definition) => ({
+  provider: definition.driverKind,
+  hasDefaultInstance: definition.hasDefaultInstance !== false,
 }));
 
 function configuredBinaryPath(config: unknown): string {
@@ -217,7 +218,10 @@ function ProviderSettingsPlaceholder({
       ) : null}
       <SettingsGroup
         divided={false}
-        className={cn(providerCardHeightClassName, "flex overflow-x-hidden overflow-y-auto")}
+        className={cn(
+          providerCardHeightClassName,
+          "scrollbar-gutter-both flex overflow-x-hidden overflow-y-auto",
+        )}
       >
         <Empty>
           <EmptyMedia variant="icon">{icon}</EmptyMedia>
@@ -754,57 +758,29 @@ export function EnvironmentProviderSettings({
   );
 
   for (const providerSettings of visibleProviderSettings) {
-    type LegacyProviderSettings = (typeof settings.providers)[keyof typeof settings.providers];
-    const legacyProviders = settings.providers as Record<string, LegacyProviderSettings>;
-    const defaultLegacyProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<
-      string,
-      LegacyProviderSettings
-    >;
     const driver = providerSettings.provider;
     const defaultInstanceId = defaultInstanceIdForDriver(driver);
     const explicitInstance = settings.providerInstances?.[defaultInstanceId];
-    // A remote device may run a server version whose settings predate this
-    // driver, so the legacy mirror can be absent. Without either an explicit
-    // instance or a legacy blob there is nothing to render for the slot.
-    const legacyConfig = legacyProviders[providerSettings.provider];
-    const defaultLegacyConfig = defaultLegacyProviders[providerSettings.provider];
-    // The envelope is the single enabled flag: keep the legacy in-config
-    // flag out of the synthesized blob, or an explicit `enabled: false`
-    // would keep winning over the envelope and the Switch could never
-    // turn a default-off provider on.
-    const synthesizedInstance = (): ProviderInstanceConfig | undefined => {
-      if (legacyConfig === undefined) {
-        return undefined;
-      }
-      const { enabled: legacyEnabled, ...legacyConfigRest } = legacyConfig;
-      return {
-        driver,
-        enabled: legacyEnabled,
-        config: legacyConfigRest,
-      } satisfies ProviderInstanceConfig;
-    };
-    const effectiveInstance: ProviderInstanceConfig | undefined =
-      explicitInstance ?? synthesizedInstance();
-    // Only the default slot depends on the legacy blob; custom instances for
-    // the driver must still render even when the slot has nothing to show.
-    if (effectiveInstance !== undefined) {
-      const isDirty =
-        explicitInstance !== undefined || !Equal.equals(legacyConfig, defaultLegacyConfig);
-      if (
-        driver === "codex" ||
+    // An unconfigured default slot runs with the driver's default config.
+    const effectiveInstance: ProviderInstanceConfig = explicitInstance ?? { driver };
+    const isDirty = explicitInstance !== undefined;
+    // Drivers without a default instance list only their configured instances.
+    const hasDefaultSlot = providerSettings.hasDefaultInstance || explicitInstance !== undefined;
+    if (
+      hasDefaultSlot &&
+      (driver === "codex" ||
         driver === "claudeAgent" ||
         isDirty ||
         resolveProviderInstanceEnabled(effectiveInstance) ||
-        defaultInstanceId === targetInstanceId
-      ) {
-        rows.push({
-          instanceId: defaultInstanceId,
-          instance: effectiveInstance,
-          driver,
-          isDefault: true,
-          isDirty,
-        });
-      }
+        defaultInstanceId === targetInstanceId)
+    ) {
+      rows.push({
+        instanceId: defaultInstanceId,
+        instance: effectiveInstance,
+        driver,
+        isDefault: true,
+        isDirty,
+      });
     }
     for (const [id, instance] of instancesByDriver.get(providerSettings.provider) ?? []) {
       if (id === defaultInstanceId) continue;
@@ -844,8 +820,6 @@ export function EnvironmentProviderSettings({
       settings,
       instanceId: row.instanceId,
       instance: next,
-      driver: row.driver,
-      isDefault: row.isDefault,
       textGenerationModelSelection: options?.textGenerationModelSelection,
     });
     const result = await persistProviderInstance(
@@ -944,23 +918,10 @@ export function EnvironmentProviderSettings({
   };
 
   const resetDefaultInstance = async (driverKind: ProviderDriverKind) => {
-    type LegacyProviderSettings = (typeof settings.providers)[keyof typeof settings.providers];
-    const defaultLegacyProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<
-      string,
-      LegacyProviderSettings | undefined
-    >;
-    const defaultInstanceId = defaultInstanceIdForDriver(driverKind);
-    const defaultLegacyProvider = defaultLegacyProviders[driverKind];
-    if (defaultLegacyProvider === undefined) return;
-    const result = await persistProviderInstance(
-      { operation: "remove", instanceId: defaultInstanceId },
-      {
-        providers: {
-          ...settings.providers,
-          [driverKind]: defaultLegacyProvider,
-        } as typeof settings.providers,
-      },
-    );
+    const result = await persistProviderInstance({
+      operation: "remove",
+      instanceId: defaultInstanceIdForDriver(driverKind),
+    });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add({
@@ -972,7 +933,7 @@ export function EnvironmentProviderSettings({
   };
 
   const renderProviderInstance = (row: InstanceRow, mode: "list" | "editor") => {
-    const driverOption = getDriverOption(row.driver);
+    const driverOption = providerClients.get(row.driver);
     const liveProvider = serverProviders.find(
       (candidate) => candidate.instanceId === row.instanceId,
     );

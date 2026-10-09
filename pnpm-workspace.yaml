@@ -130,7 +130,7 @@ minimumReleaseAgeExclude:
   - expo-sharing@58.0.13
   - expo-sqlite@58.0.8
   - expo-symbols@58.0.3
-  - electron@44.4.2
+  - electron@44.4.5
   - "@anthropic-ai/claude-agent-sdk@0.3.276"
   - "@alchemy.run/cloudflare-runtime@2.0.0-beta.80"
   - "@alchemy.run/floci@2.0.0-beta.80"
@@ -297,6 +297,8 @@ patchedDependencies:
   react-native-gesture-handler@3.2.1: patches/react-native-gesture-handler@3.2.1.patch
   react-native-keyboard-controller@1.22.6: patches/react-native-keyboard-controller@1.22.6.patch
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch
+  # Android: a nested WebView hands a vertical drag to its scrolling parent at the page's edge.
+  react-native-webview@14.0.1: patches/react-native-webview@14.0.1.patch
 
 peerDependencyRules:
   allowAny:

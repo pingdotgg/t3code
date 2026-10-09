@@ -21,10 +21,7 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
-import type {
-  ProviderAdapterV2McpApps,
-  ProviderAdapterV2McpTool,
-} from "../orchestration-v2/ProviderAdapter.ts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpAppModelContext from "./McpAppModelContext.ts";
@@ -57,10 +54,10 @@ export class McpAppRequests extends Context.Service<
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const utf8 = new TextEncoder();
 
-const readOnlyHint = (tool: ProviderAdapterV2McpTool) =>
+const readOnlyHint = (tool: ProviderAdapter.ProviderAdapterV2McpTool) =>
   Predicate.isObject(tool.annotations) && tool.annotations.readOnlyHint === true;
 
-const toolTitle = (tool: ProviderAdapterV2McpTool) =>
+const toolTitle = (tool: ProviderAdapter.ProviderAdapterV2McpTool) =>
   Predicate.isObject(tool.annotations) && typeof tool.annotations.title === "string"
     ? tool.annotations.title
     : undefined;
@@ -112,7 +109,7 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError((cause) => fail(input.threadId, "request-failed", cause))),
     );
     if (runtime === undefined) return yield* fail(input.threadId, "session-stopped");
-    const mcpApps: ProviderAdapterV2McpApps | undefined = runtime.mcpApps;
+    const mcpApps: ProviderAdapter.ProviderAdapterV2McpApps | undefined = runtime.mcpApps;
     if (mcpApps === undefined) return yield* fail(input.threadId, "provider-unsupported");
     return { app, providerThread, mcpApps };
   });

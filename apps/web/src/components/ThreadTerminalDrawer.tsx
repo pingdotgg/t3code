@@ -265,7 +265,12 @@ export function terminalSelectionLineRange(position: {
   };
 }
 
-export type TerminalContextMenuAction = "add-to-chat" | "copy" | "paste";
+export type TerminalContextMenuAction =
+  | "add-to-chat"
+  | "copy"
+  | "paste"
+  | "select-all"
+  | "scroll-to-bottom";
 
 /** Post-selection popup: available selection actions, always enabled. */
 export function terminalSelectionMenuItems(options?: {
@@ -280,8 +285,8 @@ export function terminalSelectionMenuItems(options?: {
 }
 
 /**
- * Right-click menu for the terminal canvas: the selection actions (disabled
- * until a selection exists) plus Paste. Paste is always offered: the browser
+ * Right-click menu for selection, clipboard, and local scrollback actions.
+ * Paste is always offered: the browser
  * (and Electron's default editing menu) can only paste into an editable
  * element, so a canvas terminal never gets a usable entry from them.
  */
@@ -297,6 +302,8 @@ export function terminalContextMenuItems(options: {
       disabled: !hasSelection,
     })),
     { id: "paste", label: "Paste", ...(options.readOnly ? { disabled: true } : {}) },
+    { id: "select-all", label: "Select all" },
+    { id: "scroll-to-bottom", label: "Jump to latest" },
   ];
 }
 
@@ -749,6 +756,14 @@ export function TerminalViewport({
             return;
           case "paste":
             await pasteFromClipboard(requestId);
+            return;
+          case "select-all":
+            terminalRef.current?.selectAll();
+            focusIfCurrent(requestId);
+            return;
+          case "scroll-to-bottom":
+            terminalRef.current?.scrollToBottom();
+            focusIfCurrent(requestId);
             return;
         }
       };
