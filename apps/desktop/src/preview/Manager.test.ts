@@ -1780,6 +1780,7 @@ describe("PreviewManager", () => {
     );
     const debuggerListeners = new Map<string, Set<() => void>>();
     let chromiumDetaches = 0;
+    let devToolsOpen = false;
     let destroyed = false;
     const wc = {
       id,
@@ -1787,7 +1788,7 @@ describe("PreviewManager", () => {
       isDevToolsOpened: () => {
         // Electron throws from native methods once a WebContents is destroyed.
         if (destroyed) throw new TypeError("Object has been destroyed");
-        return false;
+        return devToolsOpen;
       },
       getType: () => "webview",
       getURL: () => "http://localhost:5173/README.md",
@@ -1822,6 +1823,10 @@ describe("PreviewManager", () => {
         },
       },
     };
+    // Snapshot like an EventEmitter, so a listener added during emit waits for the next one.
+    const emitDebuggerDetach = () => {
+      for (const listener of Array.from(debuggerListeners.get("detach") ?? [])) listener();
+    };
     return {
       wc: wc as unknown as Electron.WebContents,
       attach,
@@ -1830,7 +1835,17 @@ describe("PreviewManager", () => {
       /** Chromium dropping the debugger without a detach() call. */
       chromiumDetach: () => {
         chromiumDetaches += 1;
-        for (const listener of debuggerListeners.get("detach") ?? []) listener();
+        emitDebuggerDetach();
+      },
+      /** DevTools opened outside the manager, e.g. from the app menu. */
+      openDevTools: () => {
+        devToolsOpen = true;
+        chromiumDetaches += 1;
+        emitDebuggerDetach();
+      },
+      closeDevTools: () => {
+        devToolsOpen = false;
+        listeners.get("devtools-closed")?.();
       },
       destroy: () => {
         destroyed = true;
@@ -1887,6 +1902,16 @@ describe("PreviewManager", () => {
         yield* Effect.yieldNow;
         yield* Effect.yieldNow;
         expect(guest.attach).toHaveBeenCalledTimes(2);
+
+        // DevTools hold the debugger until they close.
+        guest.openDevTools();
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        expect(guest.attach).toHaveBeenCalledTimes(2);
+        guest.closeDevTools();
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        expect(guest.attach).toHaveBeenCalledTimes(3);
       }),
     ),
   );

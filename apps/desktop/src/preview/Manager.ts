@@ -1042,14 +1042,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         copy.delete(webContentsId);
       }),
     ]);
-    if (control) {
-      // The server can only drive a tab while the desktop holds its debugger.
-      if (closedServerTab) browserHost.detach(closedServerTab);
-      for (const tab of (yield* SynchronizedRef.get(tabsRef)).values()) {
-        if (tab.webContentsId === webContentsId && tab.serverTab) browserHost.detach(tab.serverTab);
+    if (control) yield* releaseControlSession(control, closedServerTab);
+  });
+
+  /** Closes a session already taken out of `controlSessionsRef`. */
+  const releaseControlSession = Effect.fnUntraced(function* (
+    control: BrowserControlSession,
+    closedServerTab?: PreviewTabState["serverTab"],
+  ) {
+    // The server can only drive a tab while the desktop holds its debugger.
+    if (closedServerTab) browserHost.detach(closedServerTab);
+    for (const tab of (yield* SynchronizedRef.get(tabsRef)).values()) {
+      if (tab.webContentsId === control.webContentsId && tab.serverTab) {
+        browserHost.detach(tab.serverTab);
       }
-      yield* Scope.close(control.scope, Exit.void).pipe(Effect.ignore);
     }
+    yield* Scope.close(control.scope, Exit.void).pipe(Effect.ignore);
   });
 
   const ensureControlSession = Effect.fn("PreviewManager.ensureControlSession")(function* (
@@ -2408,11 +2416,30 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     detached: BrowserControlSession,
   ) =>
     Effect.gen(function* () {
-      if ((yield* SynchronizedRef.get(controlSessionsRef)).get(wc.id) !== detached) return;
-      yield* detachControlSession(wc.id);
+      const removed = yield* SynchronizedRef.modify(controlSessionsRef, (sessions) =>
+        sessions.get(wc.id) === detached
+          ? ([
+              true,
+              replaceMap(sessions, (copy) => {
+                copy.delete(wc.id);
+              }),
+            ] as const)
+          : ([false, sessions] as const),
+      );
+      if (!removed) return;
+      yield* releaseControlSession(detached);
       if (wc.isDestroyed()) return;
       const tabId = yield* tabIdForWebContents(wc.id);
-      if (tabId !== null) yield* restoreControlSession(tabId, wc);
+      if (tabId === null) return;
+      // DevTools opened from the app menu take the debugger; attach again once
+      // they close, as openDevTools does for the ones it opens.
+      if (wc.isDevToolsOpened()) {
+        wc.once("devtools-closed", () => {
+          if (!wc.isDestroyed()) runFork(restoreControlSession(tabId, wc));
+        });
+        return;
+      }
+      yield* restoreControlSession(tabId, wc);
     }).pipe(Effect.ignore);
 
   const setColorScheme = Effect.fn("PreviewManager.setColorScheme")(function* (
