@@ -164,13 +164,16 @@ export const writes = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>
  * does not exist is the handler's to report.
  */
 export const writesThreads = <P, A, E, R>(
-  threads: (params: P) => ReadonlyArray<ThreadId | undefined>,
+  threads: (
+    params: P,
+    scope: McpInvocationContext.McpInvocationScope,
+  ) => ReadonlyArray<ThreadId | undefined>,
   handle: (params: P) => Effect.Effect<A, E, R>,
 ) =>
   declare((params: P) =>
     Effect.gen(function* () {
       const caller = yield* writingCaller;
-      for (const threadId of threads(params)) {
+      for (const threadId of threads(params, caller.scope)) {
         if (threadId === undefined || threadId === caller.scope.thread?.threadId) continue;
         const target = yield* caller.threads
           .getThreadShell(threadId)

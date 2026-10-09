@@ -2,8 +2,10 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
+import { AuthMcpClientAccess } from "./auth.ts";
 import {
   ContextTransferId,
+  EnvironmentId,
   IsoDateTime,
   MessageId,
   NodeId,
@@ -288,7 +290,20 @@ const OrchestratorMcpProjectTarget = Schema.optional(
   }),
 );
 
+/**
+ * A linked environment to act in instead of this one. The tools that take it
+ * forward the call there, where the link's access and the caller's own modes
+ * both apply.
+ */
+export const OrchestratorMcpEnvironmentTarget = Schema.optional(
+  EnvironmentId.annotate({
+    description:
+      "A linked environment to do this in; t3_environment_links lists them. Omit for this environment. Ids (projects, threads, runs) then belong to that environment.",
+  }),
+);
+
 export const OrchestratorMcpThreadListInput = Schema.Struct({
+  environmentId: OrchestratorMcpEnvironmentTarget,
   projectId: OrchestratorMcpProjectTarget,
   statuses: Schema.optional(
     Schema.Array(OrchestratorMcpThreadStatus).check(Schema.isMaxLength(10)),
@@ -338,6 +353,7 @@ export const OrchestratorMcpThreadListResult = Schema.Struct({
 export type OrchestratorMcpThreadListResult = typeof OrchestratorMcpThreadListResult.Type;
 
 export const OrchestratorMcpThreadReadInput = Schema.Struct({
+  environmentId: OrchestratorMcpEnvironmentTarget,
   threadId: ThreadId,
   itemId: Schema.optional(TurnItemId),
   textOffset: Schema.optional(NonNegativeInt),
@@ -423,6 +439,7 @@ export const OrchestratorMcpThreadReadResult = Schema.Struct({
 export type OrchestratorMcpThreadReadResult = typeof OrchestratorMcpThreadReadResult.Type;
 
 export const OrchestratorMcpThreadSendInput = Schema.Struct({
+  environmentId: OrchestratorMcpEnvironmentTarget,
   threadId: ThreadId,
   message: OrchestratorMcpPrompt,
   mode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
@@ -440,6 +457,7 @@ export const OrchestratorMcpThreadSendResult = Schema.Struct({
 export type OrchestratorMcpThreadSendResult = typeof OrchestratorMcpThreadSendResult.Type;
 
 export const OrchestratorMcpThreadWaitInput = Schema.Struct({
+  environmentId: OrchestratorMcpEnvironmentTarget,
   threadId: ThreadId,
   runId: Schema.optional(RunId),
   timeoutMs: Schema.optional(Schema.Number),
@@ -455,9 +473,16 @@ export const OrchestratorMcpThreadWaitResult = Schema.Struct({
 export type OrchestratorMcpThreadWaitResult = typeof OrchestratorMcpThreadWaitResult.Type;
 
 export const OrchestratorMcpThreadInterruptInput = Schema.Struct({
+  environmentId: OrchestratorMcpEnvironmentTarget,
   threadId: ThreadId,
   runId: Schema.optional(RunId),
   reason: Schema.optional(Schema.String.check(Schema.isMaxLength(2_000))),
+  /**
+   * Stop the thread as its Stop button does instead: interrupt its running
+   * turn whichever run that is, hold its queued messages, end its pull request
+   * watches and stop every task it delegated. `runId` is then not used.
+   */
+  stop: Schema.optional(Schema.Boolean),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
 export type OrchestratorMcpThreadInterruptInput = typeof OrchestratorMcpThreadInterruptInput.Type;
@@ -490,6 +515,31 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
   constraints: Schema.Array(Schema.String),
 });
 export type OrchestratorMcpProviderCapability = typeof OrchestratorMcpProviderCapability.Type;
+
+export const OrchestratorMcpCapabilitiesInput = Schema.Struct({
+  environmentId: OrchestratorMcpEnvironmentTarget,
+});
+export type OrchestratorMcpCapabilitiesInput = typeof OrchestratorMcpCapabilitiesInput.Type;
+
+export const OrchestratorMcpEnvironmentLink = Schema.Struct({
+  environmentId: EnvironmentId,
+  label: Schema.String,
+  /** Whether it answered just now. An expired link must be linked again there. */
+  status: Schema.Literals(["reachable", "unreachable", "expired"]),
+  /** The most the linked environment lets this one's agents do there. */
+  access: AuthMcpClientAccess,
+  expiresAt: IsoDateTime,
+  lastError: Schema.NullOr(Schema.String),
+});
+export type OrchestratorMcpEnvironmentLink = typeof OrchestratorMcpEnvironmentLink.Type;
+
+export const OrchestratorMcpEnvironmentLinksResult = Schema.Struct({
+  /** This environment. */
+  environmentId: EnvironmentId,
+  links: Schema.Array(OrchestratorMcpEnvironmentLink),
+});
+export type OrchestratorMcpEnvironmentLinksResult =
+  typeof OrchestratorMcpEnvironmentLinksResult.Type;
 
 export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   /** The calling thread, or null when the caller is not a T3 thread. */
