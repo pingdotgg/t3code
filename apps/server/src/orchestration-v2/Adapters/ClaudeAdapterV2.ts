@@ -1045,14 +1045,16 @@ function claudeUserMcpServers(servers: ReadonlyArray<ResolvedMcpServer>): {
   readonly environment: Readonly<Record<string, string>>;
 } {
   const environment: Record<string, string> = {};
-  const values = (server: string, variables: ReadonlyArray<McpServerVariable>) => {
+  const values = (variables: ReadonlyArray<McpServerVariable>) => {
     const record = mcpServerVariableRecord(variables);
-    for (const variable of variables) {
-      if (!variable.sensitive || !Object.hasOwn(record, variable.name)) continue;
+    // A repeated name keeps its last entry, as the record does.
+    const sensitive = new Map(variables.map((variable) => [variable.name, variable.sensitive]));
+    for (const name of Object.keys(record)) {
+      if (sensitive.get(name) !== true) continue;
       // Indexed, so two names that read the same once uppercased stay apart.
       const reference = `T3_MCP_SECRET_${Object.keys(environment).length}`;
-      environment[reference] = record[variable.name]!;
-      record[variable.name] = `\${${reference}}`;
+      environment[reference] = record[name]!;
+      record[name] = `\${${reference}}`;
     }
     return record;
   };
@@ -1064,12 +1066,12 @@ function claudeUserMcpServers(servers: ReadonlyArray<ResolvedMcpServer>): {
             type: "stdio" as const,
             command: server.transport.command,
             args: [...server.transport.args],
-            env: values(server.name, server.transport.env),
+            env: values(server.transport.env),
           }
         : {
             type: "http" as const,
             url: server.transport.url,
-            headers: values(server.name, server.transport.headers),
+            headers: values(server.transport.headers),
           },
     ]),
   );

@@ -687,6 +687,39 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       ClaudeAdapterV2.claudeMcpQueryOverrides({ mcpSession, readOnlySandbox: true }).allowedTools,
       ClaudeAdapterV2.CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS,
     );
+    // A repeated name maps to one reference holding its last value.
+    const repeated = ClaudeAdapterV2.claudeMcpQueryOverrides({
+      mcpSession: {
+        ...mcpSession,
+        tools: {
+          servers: [
+            {
+              name: "linear",
+              transport: {
+                type: "http",
+                url: "https://mcp.linear.app/mcp",
+                headers: [
+                  { name: "Authorization", value: "first", sensitive: true },
+                  { name: "Authorization", value: "second", sensitive: true },
+                ],
+              },
+            },
+          ],
+          disabledSkills: [],
+          fingerprint: "b",
+        },
+      },
+      readOnlySandbox: false,
+    });
+    assert.deepEqual(repeated.mcpServers?.linear, {
+      type: "http",
+      url: "https://mcp.linear.app/mcp",
+      headers: { Authorization: "${T3_MCP_SECRET_0}" },
+    });
+    assert.deepEqual(repeated.mcpEnvironment, {
+      T3_MCP_SECRET_0: "second",
+      ...T3_MCP_ENVIRONMENT,
+    });
 
     const initialKey = ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(queryPolicy, overrides);
     const clearedKey = ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(
