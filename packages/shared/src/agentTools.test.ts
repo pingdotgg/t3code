@@ -45,8 +45,10 @@ describe("project tools overrides", () => {
             supabase: projectSupabase,
             // Switches an inherited server off without restating it.
             sentry: { enabled: false },
-            // A switch for a server the environment no longer has is ignored.
+            // A switch for a server the environment no longer has is ignored,
+            // including names an object inherits.
             removed: { enabled: true },
+            constructor: { enabled: true },
             playwright: {
               enabled: true,
               transport: { type: "stdio", command: "npx", args: ["@playwright/mcp"], env: [] },

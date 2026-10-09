@@ -55,7 +55,7 @@ export function McpServerDialog({
   const [paste, setPaste] = useState("");
   const [pasteError, setPasteError] = useState(false);
   const [attempted, setAttempted] = useState(false);
-  const result = mcpServerFromDraft(draft, takenNames);
+  const result = mcpServerFromDraft(draft, takenNames, initial?.name ?? null);
   const error = attempted && !result.ok ? result : null;
 
   const update = (patch: Partial<McpServerDraft>) =>
@@ -233,8 +233,16 @@ function VariablesEditor({
           ? {
               ...variable,
               ...patch,
-              // Typing a value replaces a stored secret.
-              ...(patch.value !== undefined ? { stored: false } : {}),
+              // Typing a value replaces a stored secret; clearing it again
+              // while still secret brings the stored one back.
+              ...(patch.value !== undefined
+                ? {
+                    stored:
+                      patch.value.length === 0 &&
+                      (patch.sensitive ?? variable.sensitive) &&
+                      variable.storedName !== undefined,
+                  }
+                : {}),
             }
           : variable,
       ),
@@ -296,8 +304,13 @@ function VariablesEditor({
                       onClick={() =>
                         update(variable.id, {
                           sensitive: !variable.sensitive,
-                          // A stored secret cannot become plain text without a new value.
-                          ...(variable.stored ? { stored: false, value: "" } : {}),
+                          // Plain text needs a real value, so a stored secret is
+                          // set aside while the variable is plain and comes back
+                          // when it is marked secret again with nothing typed.
+                          stored:
+                            !variable.sensitive &&
+                            variable.storedName !== undefined &&
+                            variable.value.length === 0,
                         })
                       }
                     />

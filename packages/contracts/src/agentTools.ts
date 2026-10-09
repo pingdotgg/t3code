@@ -37,12 +37,17 @@ export const isValidMcpServerName: (name: unknown) => name is McpServerName =
  * An environment variable or HTTP header. A `sensitive` value is moved into
  * the environment's secret store on save; settings and clients then see an
  * empty value with `valueRedacted` set, and sending that back keeps it.
+ * A client that renamed the server or the variable sends `storedAs`, the
+ * names the secret was saved under, so the save moves it instead of losing it.
  */
 export const McpServerVariable = Schema.Struct({
   name: TrimmedNonEmptyString,
   value: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   sensitive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   valueRedacted: Schema.optionalKey(Schema.Boolean),
+  storedAs: Schema.optionalKey(
+    Schema.Struct({ server: TrimmedNonEmptyString, variable: TrimmedNonEmptyString }),
+  ),
 });
 export type McpServerVariable = typeof McpServerVariable.Type;
 

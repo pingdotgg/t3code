@@ -1548,9 +1548,15 @@ export const ServerSettingsPatch = Schema.Struct({
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
-/** A mixed settings patch must be authorized for every configuration domain it changes. */
+/**
+ * A mixed settings patch must be authorized for every configuration domain it changes.
+ * A patch replaces a project's whole override entry, so it resends that
+ * project's servers with any change; with `current`, a server sent back
+ * exactly as stored is not counted as a provider change.
+ */
 export function requiredScopesForServerSettingsPatch(
   patch: ServerSettingsPatch,
+  current?: Pick<ServerSettings, "projectSettingsOverrides">,
 ): ReadonlyArray<AuthEnvironmentScope> {
   let changesProviders = false;
   let changesSettings = false;
@@ -1571,8 +1577,13 @@ export function requiredScopesForServerSettingsPatch(
   // So does a project entry that carries its own server. Switching an
   // inherited server off or on for a project is an ordinary setting.
   if (
-    Object.values(patch.projectSettingsOverrides ?? {}).some((entry) =>
-      Object.values(entry?.mcpServers ?? {}).some((server) => server.transport !== undefined),
+    Object.entries(patch.projectSettingsOverrides ?? {}).some(([projectId, entry]) =>
+      Object.entries(entry?.mcpServers ?? {}).some(([name, server]) => {
+        if (server.transport === undefined) return false;
+        const stored =
+          current?.projectSettingsOverrides[projectId as ProjectId]?.mcpServers?.[name]?.transport;
+        return stored === undefined || JSON.stringify(stored) !== JSON.stringify(server.transport);
+      }),
     )
   ) {
     changesProviders = true;

@@ -35,6 +35,7 @@ import {
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -681,18 +682,21 @@ interface AcpMcpContext {
 
 /**
  * The user's servers from Settings → Tools, passed through as plain ACP
- * entries. A bare command name is left to the agent's PATH lookup. Http
- * entries are dropped later for agents that do not advertise http support.
+ * entries. ACP wants an absolute command, so a bare name such as `npx` is
+ * looked up on the PATH the agent inherits; one that cannot be found is sent
+ * as typed. Http entries are dropped later for agents that do not advertise
+ * http support.
  */
 function acpUserMcpServers(
   servers: ReadonlyArray<ResolvedMcpServer>,
+  resolveCommand: (command: string) => string,
 ): ReadonlyArray<EffectAcpSchema.McpServer> {
   return servers.map((server) =>
     server.transport.type === "stdio"
       ? {
           // Untyped like T3's own entry: the shape every ACP version accepts.
           name: server.name,
-          command: server.transport.command,
+          command: resolveCommand(server.transport.command),
           args: [...server.transport.args],
           env: Object.entries(mcpServerVariableRecord(server.transport.env)).map(
             ([name, value]) => ({ name, value }),
@@ -712,13 +716,14 @@ function acpUserMcpServers(
 function acpMcpContext(
   session: McpProviderSession.McpProviderSessionConfig | undefined,
   self: SelfInvocation,
+  resolveCommand: (command: string) => string = (command) => command,
 ): AcpMcpContext {
   if (session === undefined) {
     return { servers: [], acpServers: [] };
   }
   // Both lists carry them: an agent that takes T3's server over ACP gets
   // only `acpServers`, so the user's servers would otherwise be lost.
-  const userServers = acpUserMcpServers(session.tools?.servers ?? []);
+  const userServers = acpUserMcpServers(session.tools?.servers ?? [], resolveCommand);
   // Stdio is ACP's required baseline MCP transport. Agents that advertise
   // optional http support still routinely fail to wire injected http servers
   // through to their backend (codex-acp 1.2.0 and pi-acp both drop them), so
@@ -1526,10 +1531,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const { flavor, selfInvocation: self } = options;
+  const resolveExecutable = yield* SpawnExecutableResolution;
+  const resolveCommand = (command: string) =>
+    resolveExecutable(command, process.platform, process.env) ?? command;
   const readMcpContext = (threadId: ThreadId | null) =>
     threadId === null
       ? Effect.succeed(acpMcpContext(undefined, self))
-      : mcpSessions.read(threadId).pipe(Effect.map((session) => acpMcpContext(session, self)));
+      : mcpSessions
+          .read(threadId)
+          .pipe(Effect.map((session) => acpMcpContext(session, self, resolveCommand)));
   const driver = flavor.driver;
   const continuationRequests = options.continuationRequests;
   const postSettleContinuationEnabled =

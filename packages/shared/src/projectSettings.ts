@@ -226,7 +226,7 @@ function mergeProjectMcpServers(
       merged[name] = { enabled: entry.enabled, transport: entry.transport };
       continue;
     }
-    const inherited = environment[name];
+    const inherited = Object.hasOwn(environment, name) ? environment[name] : undefined;
     if (inherited !== undefined) merged[name] = { ...inherited, enabled: entry.enabled };
   }
   return merged as McpServers;

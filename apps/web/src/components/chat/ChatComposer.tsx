@@ -2222,13 +2222,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? skills
       : skills.filter((skill) => !disabledSkillNames.has(skill.name.toLowerCase()));
   }, [disabledSkillNames, gitCwd, selectedProviderStatus]);
-  const selectedProviderSlashCommands = useMemo(
-    () =>
-      selectedProviderStatus
-        ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, gitCwd)
-        : [],
-    [gitCwd, selectedProviderStatus],
-  );
+  // Claude also lists each skill as a slash command; a disabled one leaves both.
+  const selectedProviderSlashCommands = useMemo(() => {
+    const commands = selectedProviderStatus
+      ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, gitCwd)
+      : [];
+    return disabledSkillNames.size === 0
+      ? commands
+      : commands.filter((command) => !disabledSkillNames.has(command.name.toLowerCase()));
+  }, [disabledSkillNames, gitCwd, selectedProviderStatus]);
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });

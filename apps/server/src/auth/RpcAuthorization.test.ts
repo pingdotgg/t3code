@@ -5,6 +5,7 @@ import {
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
+  ProjectId,
   ProviderInstanceId,
   ThreadId,
   AuthOrchestrationOperateScope,
@@ -293,6 +294,61 @@ describe("settings mutation authorization", () => {
           providerInstanceMutation,
         }).pipe(Effect.flip),
       ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
+      expect(handled).toBe(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("lets a settings grant resend a project's stored MCP server, not change it", () =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project-tools");
+      const linear = {
+        enabled: true,
+        transport: { type: "http" as const, url: "https://mcp.linear.app/mcp", headers: [] },
+      };
+      let handled = 0;
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.serverUpdateSettings, () =>
+              Effect.sync(() => {
+                handled++;
+                return DEFAULT_SERVER_SETTINGS;
+              }),
+            ),
+            RpcAuthorization.layer(
+              [AuthSettingsWriteScope],
+              Effect.succeed({
+                projectSettingsOverrides: { [projectId]: { mcpServers: { linear } } },
+              }),
+            ),
+          ),
+        ),
+      );
+      // Turning a skill off resends the project's server exactly as stored.
+      yield* client[WS_METHODS.serverUpdateSettings]({
+        patch: {
+          projectSettingsOverrides: {
+            [projectId]: { mcpServers: { linear }, disabledSkills: { "grill-me": true } },
+          },
+        },
+      });
+      expect(handled).toBe(1);
+      expect(
+        yield* client[WS_METHODS.serverUpdateSettings]({
+          patch: {
+            projectSettingsOverrides: {
+              [projectId]: {
+                mcpServers: {
+                  linear: {
+                    ...linear,
+                    transport: { ...linear.transport, url: "https://example.com/mcp" },
+                  },
+                },
+              },
+            },
+          },
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
       expect(handled).toBe(1);
     }).pipe(Effect.scoped),
   );

@@ -412,6 +412,8 @@ interface UserMcpRegistration {
   readonly names: ReadonlyArray<string>;
   readonly directory: string;
   readonly fingerprint: string;
+  /** False when a server failed to register, so the next turn tries again. */
+  readonly complete: boolean;
 }
 
 type TurnTerminal =
@@ -504,12 +506,14 @@ const mcpRules = (
         { action: "t3-code-*", resource: "*", effect: "deny" as const },
         { action: `${mcpServerName}_*`, resource: "*", effect: "allow" as const },
       ]),
+  // Registrations are shared per directory, so another thread's user servers
+  // are denied even when this thread has none of its own.
+  ...(mcpServerName === null && userMcpPrefix === null
+    ? []
+    : [{ action: "t3u-*", resource: "*", effect: "deny" as const }]),
   ...(userMcpPrefix === null
     ? []
-    : [
-        { action: "t3u-*", resource: "*", effect: "deny" as const },
-        { action: `${userMcpPrefix}-*`, resource: "*", effect: "allow" as const },
-      ]),
+    : [{ action: `${userMcpPrefix}-*`, resource: "*", effect: "allow" as const }]),
 ];
 
 const sessionRules = (
@@ -3031,8 +3035,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         policy.runtimeMode === "full-access" && !plan
           ? []
           : yield* pathsFor(thread.directory, plan ? [thread.agent, "plan"] : [thread.agent]);
-      // Rules for the user's servers only exist once a thread has some, so a
-      // session without them keeps exactly the rules it always had.
+      // Only a thread with servers of its own gets the allow rule for them.
       const hasUserMcp =
         appThreadId !== null &&
         ((yield* mcpSessions.read(ThreadId.make(appThreadId)))?.tools?.servers.length ?? 0) > 0;
@@ -3312,13 +3315,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       directory: string,
       mcpSession: McpProviderSession.McpProviderSessionConfig | undefined,
     ) {
-      const tools =
-        mcpSession === undefined || connection.external
-          ? McpProviderSession.EMPTY_MCP_PROVIDER_SESSION_TOOLS
-          : (mcpSession.tools ?? McpProviderSession.EMPTY_MCP_PROVIDER_SESSION_TOOLS);
+      // Unlike T3's own endpoint, the user's servers do not depend on reaching
+      // T3, so an external OpenCode server gets them too.
+      const tools = mcpSession?.tools ?? McpProviderSession.EMPTY_MCP_PROVIDER_SESSION_TOOLS;
       const current = state.userMcp;
       if (
         current !== undefined &&
+        current.complete &&
         current.directory === directory &&
         current.fingerprint === tools.fingerprint
       ) {
@@ -3362,7 +3365,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           );
         if (added) names.push(name);
       }
-      state.userMcp = { names, directory, fingerprint: tools.fingerprint };
+      state.userMcp = {
+        names,
+        directory,
+        fingerprint: tools.fingerprint,
+        complete: names.length === tools.servers.length,
+      };
     });
 
     /**
