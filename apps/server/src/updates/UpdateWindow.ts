@@ -1,5 +1,4 @@
 import type { ScheduledTaskId, ThreadId } from "@t3tools/contracts";
-import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -18,26 +17,20 @@ import * as TerminalManager from "../terminal/Manager.ts";
 /** Work due this soon keeps the window closed, so it does not start late. */
 const UPDATE_LOOKAHEAD = Duration.minutes(5);
 
-/**
- * Background update pacing. `T3CODE_UPDATE_LAB=1` (scripts/update-lab.ts)
- * shortens the waits so update flows can be exercised in seconds.
- */
-export const updateTimings = Config.Boolean("T3CODE_UPDATE_LAB").pipe(
-  Config.withDefault(false),
-  Config.map((lab) => ({
-    /**
-     * How long every client must be untouched before an update may interrupt
-     * it. Clients report activity about every 25s, so this must stay well above that.
-     */
-    quietPeriod: lab ? Duration.seconds(60) : Duration.minutes(15),
-    /** How often a waiting update rechecks the window or looks for new versions. */
-    recheck: lab ? Duration.seconds(5) : Duration.seconds(30),
-    firstPassDelay: lab ? Duration.seconds(10) : Duration.minutes(2),
-    passInterval: lab ? Duration.seconds(20) : Duration.minutes(10),
-    /** T3 releases are checked this often; the desktop app polls its own feed. */
-    releaseCheckInterval: lab ? Duration.seconds(20) : Duration.hours(1),
-  })),
-);
+/** Background update pacing. */
+export const updateTimings = Effect.succeed({
+  /**
+   * How long every client must be untouched before an update may interrupt
+   * it. Clients report activity about every 25s, so this must stay well above that.
+   */
+  quietPeriod: Duration.minutes(15),
+  /** How often a waiting update rechecks the window or looks for new versions. */
+  recheck: Duration.seconds(30),
+  firstPassDelay: Duration.minutes(2),
+  passInterval: Duration.minutes(10),
+  /** T3 releases are checked this often; the desktop app polls its own feed. */
+  releaseCheckInterval: Duration.hours(1),
+});
 
 export type UpdateWindowBlocker =
   | { readonly type: "active-threads"; readonly threadIds: ReadonlyArray<ThreadId> }
