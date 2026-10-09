@@ -132,7 +132,9 @@ vi.mock("../settings/CodexSetupSection", () => ({
   CodexSetupSection: () => null,
   AddManagedCodexAccountDialog: () => null,
 }));
-vi.mock("../settings/providerDriverMeta", () => ({ getDriverOption: () => ({ label: "Agent" }) }));
+vi.mock("../settings/providerDriverMeta", () => ({
+  providerClients: { get: () => ({ label: "Agent" }) },
+}));
 vi.mock("../settings/providerStatus", () => ({
   getProviderSummary: () => ({ headline: "Checking", detail: null }),
 }));

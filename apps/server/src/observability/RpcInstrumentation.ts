@@ -183,6 +183,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.previewClose]: "preview",
   [WS_METHODS.previewList]: "preview",
   [WS_METHODS.previewClearProfile]: "preview",
+  [WS_METHODS.previewReportProfiles]: "preview",
   [WS_METHODS.previewReportStatus]: "preview",
   [WS_METHODS.subscribePreviewEvents]: "preview",
   [WS_METHODS.subscribeDiscoveredLocalServers]: "preview",

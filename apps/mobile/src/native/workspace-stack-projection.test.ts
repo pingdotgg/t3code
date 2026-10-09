@@ -3,6 +3,7 @@ import type { ParamListBase, StackNavigationState } from "@react-navigation/nati
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  nativeStackPopAction,
   nativeWorkspacePopAction,
   nativeWorkspacePopCount,
   projectWorkspaceStack,
@@ -125,6 +126,63 @@ describe("native workspace dismissal", () => {
     const state = history([home, thread, files]);
     expect(nativeWorkspacePopCount(state, home.key)).toBe(0);
     expect(nativeWorkspacePopCount({ ...state, index: 1 }, files.key)).toBe(0);
+  });
+});
+
+describe("native card pop handoff", () => {
+  const routerOptions = {
+    routeNames: history([home]).routeNames,
+    routeParamList: {},
+    routeGetIdList: {},
+  };
+  it("keeps a newly opened screen when an earlier swipe dismissal arrives late", () => {
+    const state = history([home, thread, files, settings]);
+    const next = StackRouter({}).getStateForAction(
+      state,
+      nativeStackPopAction(state, files.key)!,
+      routerOptions,
+    );
+    expect(next?.routes).toEqual([home, thread, settings]);
+    expect(next?.index).toBe(2);
+    if (!next || next.stale !== false) throw new Error("Expected a rehydrated router history");
+    expect(nativeStackPopAction(next, files.key)).toBeNull();
+  });
+  it("acknowledges a native pop to an earlier page without consuming a newer push", () => {
+    const state = history([home, thread, files, settings]);
+    const next = StackRouter({}).getStateForAction(
+      state,
+      nativeStackPopAction(state, files.key, home.key)!,
+      routerOptions,
+    );
+    expect(next?.routes).toEqual([home, settings]);
+    expect(next?.index).toBe(1);
+  });
+  it("allows reopening the same page after its destination finishes appearing", () => {
+    const state = history([home, thread, files]);
+    const router = StackRouter({});
+    const popped = router.getStateForAction(
+      state,
+      nativeStackPopAction(state, files.key, thread.key)!,
+      routerOptions,
+    );
+    if (!popped || popped.stale !== false) throw new Error("Expected a rehydrated router history");
+    const reopened = router.getStateForAction(
+      popped,
+      { type: "NAVIGATE", payload: { name: files.name, params: files.params } },
+      routerOptions,
+    );
+    expect(reopened?.routes.map((route) => route.name)).toEqual(["Home", "Thread", "ThreadFiles"]);
+    expect(reopened?.routes.at(-1)?.key).not.toBe(files.key);
+    if (!reopened || reopened.stale !== false)
+      throw new Error("Expected a rehydrated router history");
+    expect(nativeStackPopAction(reopened, files.key)).toBeNull();
+  });
+  it("leaves history intact when a swipe is cancelled or its source is already gone", () => {
+    const state = history([home, thread, files]);
+    expect(nativeStackPopAction(state, files.key, files.key)).toBeNull();
+    expect(nativeStackPopAction(state, files.key, settings.key)).toBeNull();
+    expect(nativeStackPopAction(state, home.key)).toBeNull();
+    expect(nativeStackPopAction({ ...state, index: 1 }, files.key)).toBeNull();
   });
 });
 

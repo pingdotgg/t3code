@@ -10,10 +10,10 @@ whether a turn runs. This page lists the decisions and evidence a new driver nee
 - **ACP agents** start as [ACP Registry](../user/providers-acp.md) entries, which follow the ACP
   spec with no per-agent handling. An agent gets a dedicated driver only when it needs behavior the
   spec does not cover, and then it is a small flavor over the
-  [shared ACP adapter](../../apps/server/src/orchestration-v2/Adapters/AcpAdapterV2.ts), like Grok
+  [shared ACP adapter](../../packages/provider-acp/src/server/adapter.ts), like Grok
   and Antigravity. Never add agent-id checks to the generic registry adapter.
 - **Other protocols** get a native adapter that implements
-  [`ProviderAdapterV2`](../../apps/server/src/orchestration-v2/ProviderAdapter.ts), like Codex,
+  [`ProviderAdapterV2`](../../packages/provider-core/src/server/ProviderAdapter.ts), like Codex,
   Claude, Cursor, OpenCode, Pi, and Muse.
 
 Provider-specific behavior stays in the adapter and driver. Orchestration and clients read
@@ -26,8 +26,8 @@ capabilities, never the driver kind.
   falls back, for example to portable context handoff for forks. A capability left on that fails
   at runtime is a bug.
 - **Permission modes.** Offer only modes the provider enforces natively, through
-  `supportedRuntimeModes` in the provider presentation ([Grok](../../apps/server/src/provider/GrokProvider.ts)
-  and [Pi](../../apps/server/src/provider/PiProvider.ts) are examples). Do not imitate a missing
+  `supportedRuntimeModes` in the provider presentation ([Grok](../../packages/provider-grok/src/server/status.ts)
+  and [Pi](../../packages/provider-pi/src/server/status.ts) are examples). Do not imitate a missing
   mode by answering approvals in T3: T3's check is weaker than the agent's own enforcement. The
   server runs an unoffered stored mode as Supervised
   ([`RuntimePolicy.ts`](../../apps/server/src/orchestration-v2/RuntimePolicy.ts)).
@@ -86,7 +86,7 @@ produce catches them.
   sending.
 - **Work the provider starts on its own.** Background commands, subagents, workflows, and goals can
   finish or start a turn after T3's turn settled. Offer a continuation through
-  [`ProviderContinuationRequests`](../../apps/server/src/orchestration-v2/ProviderContinuationRequests.ts)
+  [`ProviderContinuationRequests`](../../packages/provider-core/src/server/continuationRequests.ts)
   so the parent wakes, and report `hasPendingBackgroundWork` so the session is not released as
   idle. Dropping it, or killing the session, loses the result.
 - **Subagents outlive the run that launched them.** A child can report after its parent's turn
@@ -103,15 +103,27 @@ produce catches them.
 
 ## Where a driver plugs in
 
-- **Contracts:** settings schema and patch, default model, and display name in
-  [`packages/contracts`](../../packages/contracts/src). New providers are off by default.
-- **Server:** the driver in [`provider/Drivers`](../../apps/server/src/provider/Drivers) and its entry
-  in [`builtInDrivers.ts`](../../apps/server/src/provider/builtInDrivers.ts). Also its position in
-  the [status order](../../apps/server/src/provider/providerStatusCache.ts), a compatibility policy
-  in [`model-manifest.json`](../../apps/server/src/provider/model-manifest.json) (bump `updatedAt`;
-  see [model manifest](./model-manifest.md)), and text generation for titles and commit messages.
-- **Clients:** web settings metadata and badge, provider icons on web and mobile, and settings
-  search terms.
+A provider lives in its own `packages/provider-<name>` package, with
+[Pi](../../packages/provider-pi) as the reference. Drivers not moved yet still live in
+[`provider/Drivers`](../../apps/server/src/provider/Drivers).
+
+- **Package exports.** `./settings` holds the instance settings schema, built with
+  `makeProviderSettingsSchema` from contracts. `./client` exports a `ProviderClientDefinition`
+  (label, settings schema, plain-data icon, badge) and must stay browser- and React Native-safe.
+  `./server` exports the `ProviderDriver` and its adapter driver. `./testing` exposes internals
+  the server's replay testkits drive; testkits that need the orchestrator stay in the server.
+  Settings live in `providerInstances`; new providers are off by default.
+- **Package boundaries.** Server code imports only `@t3tools/provider-core/server/*`, contracts,
+  and shared. It reaches the server through `ProviderHost` (paths, settings, background demand,
+  attachments, stored credentials), never through `apps/server`. Tests use `@t3tools/provider-testing`.
+- **Server registration:** the driver's entry in
+  [`builtInDrivers.ts`](../../apps/server/src/provider/builtInDrivers.ts) and the adapter driver's in
+  [`builtInProviderAdapterDrivers.ts`](../../apps/server/src/orchestration-v2/builtInProviderAdapterDrivers.ts).
+  Also its position in the [status order](../../apps/server/src/provider/providerStatusCache.ts), a
+  compatibility policy in [`model-manifest.json`](../../apps/server/src/provider/model-manifest.json)
+  (bump `updatedAt`; see [model manifest](./model-manifest.md)), and its default model in contracts.
+- **Client registration:** the client definition in the web and mobile provider registries, and
+  settings search terms. Clients draw the package icon; do not add a per-driver icon branch.
 - **Docs:** a `docs/user/providers-<name>.md` guide in the product's voice, a row in the
   [install](../user/install.md#providers) table, and any provider difference that changes the
   [permission modes](../user/permission-modes.md) page.
