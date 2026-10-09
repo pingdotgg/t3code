@@ -12,10 +12,8 @@ import {
   latestMuseVersion,
   parseMuseVersion,
 } from "./maintenance.ts";
-import {
-  ProviderVersionCache,
-  makeManualOnlyProviderMaintenanceCapabilities,
-} from "@t3tools/provider-core/server/maintenanceResolver";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 
 const maintenanceCapabilities = {
   ...makeManualOnlyProviderMaintenanceCapabilities({
@@ -50,7 +48,7 @@ it.layer(NodeServices.layer)("Muse maintenance", (it) => {
           expect(yield* latestMuseVersion({}, { fresh: true })).toBe("1.1.1-R10.1");
         });
         yield* check.pipe(
-          Effect.provideService(ProviderVersionCache, new Map()),
+          Effect.provide(ProviderLatestVersions.layer),
           Effect.provideService(
             HttpClient.HttpClient,
             HttpClient.make((request) => {
@@ -101,7 +99,7 @@ it.layer(NodeServices.layer)("Muse maintenance", (it) => {
         });
         const [first, second] = yield* Effect.all([check, check], { concurrency: 1 }).pipe(
           Effect.provideService(HttpClient.HttpClient, httpClient),
-          Effect.provideService(ProviderVersionCache, new Map()),
+          Effect.provide(ProviderLatestVersions.layer),
         );
         expect(first.versionAdvisory).toMatchObject({
           status: "behind_latest",
@@ -134,7 +132,7 @@ it.layer(NodeServices.layer)("Muse maintenance", (it) => {
               ),
             ),
           ),
-          Effect.provideService(ProviderVersionCache, new Map()),
+          Effect.provide(ProviderLatestVersions.layer),
         );
         expect(result.versionAdvisory?.status).toBe(status);
       }
@@ -153,6 +151,7 @@ it.layer(NodeServices.layer)("Muse maintenance", (it) => {
           maintenanceCapabilities,
           environment: {},
         }).pipe(
+          Effect.provide(ProviderLatestVersions.layer),
           Effect.provideService(
             HttpClient.HttpClient,
             HttpClient.make(() => Effect.die("Unexpected release request")),
@@ -182,7 +181,7 @@ it.layer(NodeServices.layer)("Muse maintenance", (it) => {
               Effect.succeed(HttpClientResponse.fromWeb(request, response)),
             ),
           ),
-          Effect.provideService(ProviderVersionCache, new Map()),
+          Effect.provide(ProviderLatestVersions.layer),
         );
         expect(result.status).toBe("ready");
         expect(result.versionAdvisory?.status).toBe("unknown");
