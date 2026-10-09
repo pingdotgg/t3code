@@ -26,6 +26,7 @@ export interface ProviderMaintenanceCommandCoordinatorShape<E> {
     readonly targetKey: string;
     readonly lockKey: string;
     readonly onQueued?: Effect.Effect<void, E, R>;
+    readonly admit?: <A>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
     readonly run: Effect.Effect<A, E, R>;
   }) => Effect.Effect<A, E, R>;
 }
@@ -58,6 +59,7 @@ export const makeProviderMaintenanceCommandCoordinator = Effect.fn(
     targetKey,
     lockKey,
     onQueued,
+    admit,
     run,
   }) =>
     Effect.gen(function* () {
@@ -67,7 +69,7 @@ export const makeProviderMaintenanceCommandCoordinator = Effect.fn(
       }
 
       return yield* (onQueued ?? Effect.void).pipe(
-        Effect.andThen(locks.withLock(lockKey, run)),
+        Effect.andThen(admit ? admit(locks.withLock(lockKey, run)) : locks.withLock(lockKey, run)),
         Effect.ensuring(releaseTarget(targetKey)),
       );
     });
