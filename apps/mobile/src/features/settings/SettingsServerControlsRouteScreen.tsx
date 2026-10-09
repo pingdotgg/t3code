@@ -473,7 +473,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                           projectSelected
                             ? "Environment-wide setting. Select All projects to change it."
                             : supportsAutomaticUpdates
-                              ? "Install provider and T3 Code service updates while nothing is running."
+                              ? "Install provider and service updates while nothing is running."
                               : "Update older servers to control automatic updates."
                         }
                         value={uniform("automaticUpdates")}
