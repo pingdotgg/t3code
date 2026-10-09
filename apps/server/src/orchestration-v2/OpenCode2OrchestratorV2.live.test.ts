@@ -54,6 +54,7 @@ import * as CodexInstallation from "../provider/CodexInstallation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ModelManifest from "../provider/ModelManifest.ts";
 import * as ProviderInstanceRegistryHydration from "../provider/ProviderInstanceRegistryHydration.ts";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as OpenCode2Client from "@t3tools/provider-opencode/server/v2/OpenCode2Client";
 import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
@@ -185,6 +186,7 @@ const layerProviderInstanceRegistry = ProviderInstanceRegistryHydration.layer.pi
         ProviderEventLoggers.ProviderEventLoggers,
         ProviderEventLoggers.NoOpProviderEventLoggers,
       ),
+      ProviderLatestVersions.layer,
       ModelManifest.layerTest,
       AntigravityInstallation.AntigravityInstallation.layer.pipe(
         Layer.provide(layerServerConfig.pipe(Layer.provide(layerPlatformTest))),

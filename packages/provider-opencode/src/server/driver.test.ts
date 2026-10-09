@@ -15,6 +15,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderMaintenance from "@t3tools/provider-core/server/maintenanceResolver";
@@ -48,6 +49,7 @@ const openCode2Runtime = {
 
 const layer = Layer.mergeAll(
   IdAllocator.layer,
+  ProviderLatestVersions.layer,
   layerTestProviderHost(),
   Layer.succeed(
     ProviderEventLoggers.ProviderEventLoggers,
@@ -210,6 +212,7 @@ const changingRuntime = {
 } as unknown as OpenCodeRuntime.OpenCodeRuntimeShape;
 const layerUpdate = Layer.mergeAll(
   IdAllocator.layer,
+  ProviderLatestVersions.layer,
   layerTestProviderHost(),
   Layer.succeed(
     ProviderEventLoggers.ProviderEventLoggers,

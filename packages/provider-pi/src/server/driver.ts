@@ -15,6 +15,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { makePiTextGeneration } from "./textGeneration.ts";
 import { PiAdapterV2Driver, type PiAdapterV2DriverEnv } from "./adapter.ts";
@@ -60,6 +61,7 @@ export type PiDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
   | HttpClient.HttpClient
+  | ProviderLatestVersions.ProviderLatestVersions
   | Path.Path;
 
 const withInstanceIdentity =
@@ -92,6 +94,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
       const fileSystem = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
+      const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
       const host = yield* ProviderHost.ProviderHost;
       const { cwd } = host.paths;
       const processEnv = mergeProviderInstanceEnvironment(environment);
@@ -159,9 +162,10 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
                 maintenanceCapabilities,
                 enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
                 publishSnapshot,
-                httpClient,
               }),
             ),
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
           ),
       }).pipe(
         Effect.mapError(

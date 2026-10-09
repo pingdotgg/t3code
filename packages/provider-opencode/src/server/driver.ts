@@ -27,6 +27,7 @@ import { ChildProcessSpawner } from "effect/process";
 
 import * as OpenCode2TextGeneration from "./v2/textGeneration.ts";
 import { makeOpenCodeTextGeneration } from "./textGeneration.ts";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as OpenCodeAdapterV2 from "./adapter.ts";
 import * as OpenCode2AdapterV2 from "./v2/adapter.ts";
@@ -177,6 +178,7 @@ export type OpenCodeDriverEnv =
   | Crypto.Crypto
   | FileSystem.FileSystem
   | HttpClient.HttpClient
+  | ProviderLatestVersions.ProviderLatestVersions
   | OpenCodeRuntime.OpenCodeRuntime
   | Path.Path;
 
@@ -195,6 +197,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       const pathService = yield* Path.Path;
       const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
       const httpClient = yield* HttpClient.HttpClient;
+      const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
       const crypto = yield* Crypto.Crypto;
       const host = yield* ProviderHost.ProviderHost;
       const processEnv = mergeProviderInstanceEnvironment(environment);
@@ -465,6 +468,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
                 }),
               ),
               Effect.provideService(HttpClient.HttpClient, httpClient),
+              Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
               Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
             ),
         },

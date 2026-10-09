@@ -9,6 +9,7 @@ import * as Path from "effect/Path";
 import { HttpClient } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import { GrokDriver } from "./driver.ts";
@@ -18,6 +19,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 const layerTest = layerTestProviderHost({ runBackgroundWork: false }).pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(IdAllocator.layer),
+  Layer.provideMerge(ProviderLatestVersions.layer),
   Layer.provideMerge(
     Layer.succeed(
       ProviderEventLoggers.ProviderEventLoggers,

@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeGrokTextGeneration } from "./textGeneration.ts";
@@ -77,6 +78,7 @@ export type GrokDriverEnv =
   | Crypto.Crypto
   | FileSystem.FileSystem
   | HttpClient.HttpClient
+  | ProviderLatestVersions.ProviderLatestVersions
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers;
 
@@ -93,6 +95,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
       const crypto = yield* Crypto.Crypto;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const httpClient = yield* HttpClient.HttpClient;
+      const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const host = yield* ProviderHost.ProviderHost;
@@ -177,9 +180,10 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
                 maintenanceCapabilities,
                 enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
                 publishSnapshot,
-                httpClient,
               }),
             ),
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
           ),
       }).pipe(
         Effect.mapError(

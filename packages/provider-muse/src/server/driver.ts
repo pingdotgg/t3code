@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { makeMuseTextGeneration } from "./textGeneration.ts";
@@ -46,6 +47,7 @@ export type MuseDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
   | HttpClient.HttpClient
+  | ProviderLatestVersions.ProviderLatestVersions
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers;
 
@@ -60,6 +62,7 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
+      const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
       const host = yield* ProviderHost.ProviderHost;
       const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
       const { cwd } = host.paths;
@@ -105,6 +108,10 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
           const latestVersion = options?.fresh
             ? yield* latestMuseVersion(processEnvironment, { fresh: true }).pipe(
                 Effect.provideService(HttpClient.HttpClient, httpClient),
+                Effect.provideService(
+                  ProviderLatestVersions.ProviderLatestVersions,
+                  latestVersions,
+                ),
               )
             : undefined;
           return latestVersion !== undefined ? { ...capabilities, latestVersion } : capabilities;
@@ -133,6 +140,7 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
               }),
             ),
             Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
             Effect.flatMap(publishSnapshot),
           ),
       }).pipe(

@@ -35,6 +35,7 @@ import {
   type ProviderInstanceConfigMap,
   ProviderInstanceId,
 } from "@t3tools/contracts";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import type { GrokSettings } from "@t3tools/provider-grok/settings";
 import type { CursorSettings } from "@t3tools/provider-cursor/settings";
 import { HostProcessPlatform, isHostWindows } from "@t3tools/shared/hostProcess";
@@ -228,6 +229,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         ProviderEventLoggers.NoOpProviderEventLoggers,
       ),
     ),
+    Layer.provideMerge(ProviderLatestVersions.layer),
     Layer.provideMerge(ModelManifest.layerTest),
     Layer.provideMerge(ResetCreditCoordinator.layerTest),
   );
@@ -609,6 +611,7 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
         ProviderEventLoggers.NoOpProviderEventLoggers,
       ),
     ),
+    Layer.provideMerge(ProviderLatestVersions.layer),
     Layer.provideMerge(ModelManifest.layerTest),
     Layer.provideMerge(ResetCreditCoordinator.layerTest),
   );
