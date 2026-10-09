@@ -102,6 +102,15 @@ export class DesktopUpdateChannelPersistenceError extends Schema.TaggedError<Des
   }
 }
 
+export class DesktopUpdateChannelStagedError extends Schema.TaggedError<DesktopUpdateChannelStagedError>()(
+  "DesktopUpdateChannelStagedError",
+  { requestedChannel: DesktopUpdateChannelSchema },
+) {
+  override get message(): string {
+    return "Install the downloaded update by quitting and reopening the app before changing channels on macOS.";
+  }
+}
+
 export class DesktopUpdatePollerError extends Schema.TaggedError<DesktopUpdatePollerError>()(
   "DesktopUpdatePollerError",
   {
@@ -155,6 +164,7 @@ export type DesktopUpdateConfigureError = never;
 export const DesktopUpdateSetChannelError = Schema.Union([
   DesktopUpdateActionInProgressError,
   DesktopUpdateChannelPersistenceError,
+  DesktopUpdateChannelStagedError,
 ]);
 export type DesktopUpdateSetChannelError = typeof DesktopUpdateSetChannelError.Type;
 
@@ -291,6 +301,10 @@ export const make = Effect.gen(function* () {
   const updaterConfiguredRef = yield* Ref.make(false);
   const lastLoggedDownloadMilestoneRef = yield* Ref.make(-1);
   const lastCheckReasonRef = yield* Ref.make<string | null>(null);
+  // Feed checks can clear the UI's downloadedVersion without clearing the
+  // updater's payload. Native macOS staging cannot be cancelled afterward.
+  const downloadedPayloadVersionRef = yield* Ref.make<string | null>(null);
+  const nativeUpdateStagedRef = yield* Ref.make(false);
   const updateStateRef = yield* Ref.make<DesktopUpdateState>(
     createInitialDesktopUpdateState(
       environment.appVersion,
@@ -618,6 +632,8 @@ export const make = Effect.gen(function* () {
               const activeAction = yield* Ref.get(activeUpdateActionRef);
               const hasExpectedDownload =
                 state.downloadedVersion !== null &&
+                state.downloadedVersion === (yield* Ref.get(downloadedPayloadVersionRef)) &&
+                resolveDefaultDesktopUpdateChannel(state.downloadedVersion) === state.channel &&
                 (expectedVersion === undefined || state.downloadedVersion === expectedVersion);
               if (
                 (yield* Ref.get(desktopState.quitting)) ||
@@ -904,10 +920,30 @@ export const make = Effect.gen(function* () {
   const handleUpdateDownloaded = Effect.fn("desktop.updates.handleUpdateDownloaded")(function* (
     raw: unknown,
   ) {
+    // Keep this prelude synchronous: MacUpdater checks the flag immediately
+    // after emitting this event, before it hands the download to Squirrel.
+    yield* electronUpdater.setAutoInstallOnAppQuit(false);
+    yield* Ref.set(downloadedPayloadVersionRef, null);
     yield* decodeUpdateInfo(raw).pipe(
       Effect.flatMap(
         Effect.fn("desktop.updates.applyUpdateDownloaded")(function* (info) {
           const state = yield* Ref.get(updateStateRef);
+          yield* Ref.set(downloadedPayloadVersionRef, info.version);
+          const action = yield* activeUpdateAction;
+          if (
+            resolveDefaultDesktopUpdateChannel(info.version) !== state.channel ||
+            (Option.isSome(action) && action.value === "channel")
+          ) {
+            yield* logUpdaterInfo("ignoring download outside the selected update channel", {
+              version: info.version,
+              channel: state.channel,
+            });
+            return;
+          }
+          if (environment.platform === "darwin") {
+            yield* Ref.set(nativeUpdateStagedRef, true);
+          }
+          yield* electronUpdater.setAutoInstallOnAppQuit(true);
           yield* setState(reduceDesktopUpdateStateOnDownloadComplete(state, info.version));
           yield* logUpdaterInfo("update downloaded", { version: info.version });
         }),
@@ -1021,6 +1057,10 @@ export const make = Effect.gen(function* () {
           return state;
         }
 
+        if (environment.platform === "darwin" && (yield* Ref.get(nativeUpdateStagedRef))) {
+          return yield* new DesktopUpdateChannelStagedError({ requestedChannel: nextChannel });
+        }
+
         yield* desktopSettings
           .setUpdateChannel(nextChannel)
           .pipe(
@@ -1029,6 +1069,7 @@ export const make = Effect.gen(function* () {
             ),
           );
 
+        yield* electronUpdater.setAutoInstallOnAppQuit(false);
         const enabled = yield* shouldEnableAutoUpdates;
         yield* setState(createBaseUpdateState(nextChannel, enabled, environment));
 
