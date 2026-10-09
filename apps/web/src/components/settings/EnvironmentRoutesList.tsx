@@ -1,3 +1,4 @@
+import { SessionPermissions } from "./SessionPermissions";
 import {
   DndContext,
   type DragEndEvent,
@@ -104,6 +105,12 @@ export function EnvironmentRoutesList({
 
   return (
     <div className="mt-2 rounded-md border border-border/70">
+      <SessionPermissions
+        environmentId={environment.environmentId}
+        label={environment.label}
+        connected={activeRouteId !== null}
+        routeContext
+      />
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}

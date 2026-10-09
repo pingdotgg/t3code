@@ -122,6 +122,20 @@ afterEach(async () => {
 });
 
 describe("shared settings writes", () => {
+  it("names the failed environment when a server rejects a save after the grant check", async () => {
+    state.persist.mockResolvedValueOnce(AsyncResult.success(DEFAULT_SERVER_SETTINGS));
+    state.persist.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("Permission denied"))),
+    );
+    await mountEditor();
+    await act(async () => saveSharedSettings());
+    expect(state.toast).toHaveBeenCalledExactlyOnceWith({
+      type: "error",
+      title: "Setting not saved",
+      description: "Could not save on remote: Permission denied",
+    });
+  });
+
   it("dispatches to the primary and connected remote before the remote grant finishes loading", async () => {
     await mountEditor();
     saveSharedSettings();
@@ -193,7 +207,7 @@ describe("shared settings writes", () => {
         expect(state.toast).toHaveBeenCalledExactlyOnceWith({
           type: "warning",
           title: "Setting not saved",
-          description: "This connection does not have permission to change these settings.",
+          description: "This connection lacks permission to change settings on remote.",
         });
       }
     },

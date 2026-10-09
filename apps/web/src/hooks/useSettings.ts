@@ -30,6 +30,10 @@ import {
 } from "@t3tools/contracts/settings";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import {
   filterSharedServerPatch,
   splitSharedServerPatch,
   supportsSharedSettingsSync,
@@ -469,11 +473,29 @@ function useSharedSettingsSyncTargetIds(includePending = false): ReadonlyArray<E
 function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
   // Mount this session even on pages without a visible permission-gated control.
   useEnvironmentScope(environmentId, AuthSettingsWriteScope);
-  const persistServerSettings = useAtomCommand(
-    serverEnvironment.updateSettings,
-    "server settings update",
-  );
+  const persist = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "server settings update",
+    reportFailure: false,
+  });
   const { environments } = useEnvironments();
+  const persistServerSettings = useCallback(
+    async (request: Parameters<typeof persist>[0]) => {
+      const result = await persist(request);
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const label =
+          environments.find((environment) => environment.environmentId === request.environmentId)
+            ?.label ?? request.environmentId;
+        const error = squashAtomCommandFailure(result);
+        toastManager.add({
+          type: "error",
+          title: "Setting not saved",
+          description: `Could not save on ${label}: ${error instanceof Error ? error.message : "The save failed. Try reconnecting and saving again."}`,
+        });
+      }
+      return result;
+    },
+    [environments, persist],
+  );
   const sharedSettingsSyncTargetIds = useSharedSettingsSyncTargetIds(true);
   const updateSettings = useCallback(
     (patch: UnifiedSettingsPatch) => {
@@ -488,7 +510,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
         toastManager.add({
           type: "warning",
           title: "Setting not saved",
-          description: "This connection does not have permission to change these settings.",
+          description: `This connection lacks permission to change settings on ${environments.find((target) => target.environmentId === environmentId)?.label ?? "the selected environment"}.`,
         });
       }
       if (Object.keys(serverPatch).length > 0 && canWriteServerPatch) {
@@ -519,7 +541,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
             targets.add(environmentId);
           }
           let wroteToTarget = false;
-          let permissionDenied = false;
+          const deniedLabels: string[] = [];
           for (const targetId of targets) {
             const target = environments.find((candidate) => candidate.environmentId === targetId);
             const targetPatch = filterSharedServerPatch(
@@ -537,7 +559,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
                 readEnvironmentScope(targetId, scope),
               )
             ) {
-              permissionDenied = true;
+              deniedLabels.push(target?.label ?? targetId);
               continue;
             }
             wroteToTarget = true;
@@ -548,8 +570,8 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
           }
           if (!wroteToTarget) {
             warnUnsaved(
-              permissionDenied
-                ? "This connection does not have permission to change these settings."
+              deniedLabels.length > 0
+                ? `This connection lacks permission to change settings on ${deniedLabels.join(", ")}.`
                 : targets.size > 0
                   ? "Update older servers to save this setting."
                   : undefined,
