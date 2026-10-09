@@ -17,29 +17,24 @@ import {
   ModelCapabilities,
   TrimmedNonEmptyString,
   type ProviderDriverKind,
-  type ServerProviderModel,
-  type ServerProviderUpdateRequiredModel,
 } from "@t3tools/contracts";
-import { codexModelFamily } from "@t3tools/shared/model";
-import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
-import { writeFileStringAtomically } from "../atomicWrite.ts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { ServerConfig } from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
 import bundledManifestJson from "./model-manifest.json" with { type: "json" };
 import { ProviderCompatibilityPolicy } from "./providerCompatibility.ts";
-import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
+import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
 
 const MODEL_MANIFEST_URL =
   "https://raw.githubusercontent.com/pingdotgg/t3code/main/apps/server/src/provider/model-manifest.json";
@@ -126,19 +121,6 @@ const ModelManifestSchema = ModelManifestEnvelopeSchema.pipe(
 );
 export type ModelManifestData = typeof ModelManifestSchema.Type;
 
-export interface ResolvedManifestModel {
-  readonly model: ServerProviderModel;
-  readonly adapter: unknown;
-  readonly profileAdapter: unknown;
-}
-
-export interface ResolvedProviderCatalog {
-  readonly models: ReadonlyArray<ResolvedManifestModel>;
-  readonly defaults: {
-    readonly chat: string | undefined;
-  };
-}
-
 const decodeManifest = Schema.decodeUnknownEffect(ModelManifestSchema);
 
 export const BUNDLED_MODEL_MANIFEST: ModelManifestData =
@@ -151,16 +133,19 @@ function manifestUpdatedAtMs(manifest: ModelManifestData): number {
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-/** Resolve provider-neutral model presentation and capability data. */
+/**
+ * A driver's catalog entry as provider packages see it, or `null` when the
+ * manifest has none or its references are invalid.
+ */
 export function resolveProviderCatalog(
   manifest: ModelManifestData,
   driverKind: ProviderDriverKind,
-): ResolvedProviderCatalog | null {
+): ModelCatalog.ProviderCatalog | null {
   const catalog = manifest.providers?.[driverKind];
   if (!catalog) return null;
 
   const seen = new Set<string>();
-  const models: Array<ResolvedManifestModel> = [];
+  const models: Array<ModelCatalog.ProviderCatalogModel> = [];
   for (const entry of catalog.models) {
     if (seen.has(entry.slug)) return null;
     seen.add(entry.slug);
@@ -169,18 +154,14 @@ export function resolveProviderCatalog(
     if (entry.profile && !profile) return null;
 
     models.push({
-      model: {
-        slug: entry.slug,
-        name: entry.name,
-        ...(entry.shortName ? { shortName: entry.shortName } : {}),
-        ...(entry.subProvider ? { subProvider: entry.subProvider } : {}),
-        ...(entry.aliases ? { aliases: entry.aliases } : {}),
-        ...(entry.badge ? { badge: entry.badge } : {}),
-        isCustom: false,
-        ...(catalog.defaults?.chat === entry.slug ? { isDefault: true } : {}),
-        ...(entry.status === "legacy" ? { isLegacy: true } : {}),
-        capabilities: profile?.capabilities ?? null,
-      },
+      slug: entry.slug,
+      name: entry.name,
+      ...(entry.shortName ? { shortName: entry.shortName } : {}),
+      ...(entry.subProvider ? { subProvider: entry.subProvider } : {}),
+      ...(entry.aliases ? { aliases: entry.aliases } : {}),
+      ...(entry.badge ? { badge: entry.badge } : {}),
+      status: entry.status,
+      capabilities: profile?.capabilities ?? null,
       adapter: entry.adapter,
       profileAdapter: profile?.adapter,
     });
@@ -188,12 +169,7 @@ export function resolveProviderCatalog(
 
   if (catalog.defaults?.chat !== undefined && !seen.has(catalog.defaults.chat)) return null;
 
-  return {
-    models,
-    defaults: {
-      chat: catalog.defaults?.chat,
-    },
-  };
+  return { models, defaultChatModel: catalog.defaults?.chat };
 }
 
 /** On-disk shape of the last successfully fetched manifest. */
@@ -212,142 +188,6 @@ export const encodeManifestCache = Schema.encodeEffect(
     ManifestCacheFile as unknown as Schema.Codec<typeof ManifestCacheFile.Type>,
   ),
 );
-
-/** True when the manifest classifies `slug` as legacy for `driverKind`. */
-function isLegacyModel(
-  manifest: ModelManifestData,
-  driverKind: ProviderDriverKind,
-  slug: string,
-): boolean {
-  const family = driverKind === "codex" ? codexModelFamily(slug) : slug;
-  const catalog = manifest.providers?.[driverKind]?.models;
-  const catalogModel =
-    catalog?.find((model) => model.slug === slug) ??
-    catalog?.find((model) => model.slug === family);
-  return catalogModel?.status === "legacy";
-}
-
-/**
- * Reclassifies every built-in model on a snapshot draft against the manifest.
- * Custom models are user-defined and never reclassified.
- */
-export function applyModelManifest(
-  draft: ServerProviderDraft,
-  manifest: ModelManifestData,
-  driverKind: ProviderDriverKind,
-): ServerProviderDraft {
-  const { updateRequiredModels: _previous, ...rest } = draft;
-  const updateRequiredModels =
-    driverKind === "codex" ? codexUpdateRequiredModels(manifest, draft) : [];
-  return {
-    ...rest,
-    models: applyManifestDefault(
-      classifyModels(draft.models, manifest, driverKind),
-      manifest,
-      driverKind,
-    ),
-    ...(updateRequiredModels.length > 0 ? { updateRequiredModels } : {}),
-  };
-}
-
-const CodexModelAdapter = Schema.Struct({
-  codex: Schema.optional(Schema.Struct({ minVersion: Schema.optional(TrimmedNonEmptyString) })),
-});
-const decodeCodexModelAdapter = Schema.decodeUnknownOption(CodexModelAdapter);
-
-/**
- * Codex lists only the models its own build knows, so a model released after
- * the installed CLI never shows up. A current manifest entry with
- * `adapter.codex.minVersion` names that model, letting the picker say an update
- * unlocks it instead of leaving users to wonder where it is.
- */
-function codexUpdateRequiredModels(
-  manifest: ModelManifestData,
-  draft: ServerProviderDraft,
-): ReadonlyArray<ServerProviderUpdateRequiredModel> {
-  const version = draft.version?.replace(/^v/, "");
-  if (!version || parseSemver(version) === null) return [];
-  const discovered = new Set(draft.models.map((model) => codexModelFamily(model.slug)));
-  return (manifest.providers?.codex?.models ?? []).flatMap((entry) => {
-    if (entry.status !== "current" || discovered.has(codexModelFamily(entry.slug))) return [];
-    const minVersion = Option.getOrUndefined(decodeCodexModelAdapter(entry.adapter ?? {}))?.codex
-      ?.minVersion;
-    if (!minVersion || parseSemver(minVersion) === null) return [];
-    if (compareSemverVersions(version, minVersion) >= 0) return [];
-    return [
-      {
-        slug: entry.slug,
-        name: entry.name,
-        ...(entry.badge ? { badge: entry.badge } : {}),
-        minVersion,
-      },
-    ];
-  });
-}
-
-/** The manifest's chat default for `driverKind`, when it names one. */
-export function manifestDefaultModel(
-  manifest: ModelManifestData,
-  driverKind: ProviderDriverKind,
-): string | undefined {
-  return manifest.providers?.[driverKind]?.defaults?.chat;
-}
-
-/**
- * Moves `isDefault` to the manifest's chat default when the catalog carries
- * it. Providers that learn their default from the runtime (Antigravity takes
- * Google's current model) can be overridden here without a release. Aliases
- * that pointed at the old default move with the flag so the shared
- * "provider default" alias keeps resolving.
- */
-export function applyManifestDefault(
-  models: ReadonlyArray<ServerProviderModel>,
-  manifest: ModelManifestData,
-  driverKind: ProviderDriverKind,
-): ReadonlyArray<ServerProviderModel> {
-  const requestedSlug = manifestDefaultModel(manifest, driverKind);
-  if (requestedSlug === undefined) return models;
-  const slug =
-    models.find((model) => model.slug === requestedSlug)?.slug ??
-    (driverKind === "codex"
-      ? models.find(
-          (model) =>
-            !model.isCustom && codexModelFamily(model.slug) === codexModelFamily(requestedSlug),
-        )?.slug
-      : undefined);
-  if (slug === undefined) return models;
-  const previous = models.find((model) => model.isDefault && model.slug !== slug);
-  if (!previous) return models;
-  const movedAliases = previous.aliases ?? [];
-  return models.map((model) => {
-    if (model.slug === previous.slug) {
-      const { isDefault: _isDefault, aliases: _aliases, ...rest } = model;
-      return rest;
-    }
-    if (model.slug === slug) {
-      const aliases = [...new Set([...(model.aliases ?? []), ...movedAliases])];
-      return { ...model, isDefault: true, ...(aliases.length > 0 ? { aliases } : {}) };
-    }
-    return model;
-  });
-}
-
-/** Model-level half of `applyModelManifest`, exported for focused tests. */
-export function classifyModels(
-  models: ReadonlyArray<ServerProviderModel>,
-  manifest: ModelManifestData,
-  driverKind: ProviderDriverKind,
-): ReadonlyArray<ServerProviderModel> {
-  return models.map((model) => {
-    if (model.isCustom) return model;
-    if (isLegacyModel(manifest, driverKind, model.slug)) {
-      return model.isLegacy ? model : { ...model, isLegacy: true };
-    }
-    if (!model.isLegacy) return model;
-    const { isLegacy: _isLegacy, ...rest } = model;
-    return rest;
-  });
-}
 
 export class ModelManifest extends Context.Service<
   ModelManifest,
@@ -374,7 +214,7 @@ const BundledOnlyModelManifest: ModelManifest["Service"] = {
   refreshInBackground: Effect.void,
 };
 
-export const layerTest = Layer.succeed(ModelManifest, BundledOnlyModelManifest);
+const layerBundledOnly = Layer.succeed(ModelManifest, BundledOnlyModelManifest);
 
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -470,3 +310,25 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(ModelManifest, make);
+
+/** Bundled data only, with the provider catalog port drivers read; for tests. */
+export const layerTest = Layer.suspend(() =>
+  layerModelCatalog.pipe(Layer.provideMerge(layerBundledOnly)),
+);
+
+/** Exposes the manifest to provider packages as their per-driver catalogs. */
+export const layerModelCatalog = Layer.effect(
+  ModelCatalog.ModelCatalog,
+  Effect.gen(function* () {
+    const manifest = yield* ModelManifest;
+    return ModelCatalog.ModelCatalog.of({
+      current: (driverKind) =>
+        manifest.current.pipe(
+          Effect.map((data) => resolveProviderCatalog(data, driverKind) ?? undefined),
+        ),
+      bundled: (driverKind) =>
+        resolveProviderCatalog(BUNDLED_MODEL_MANIFEST, driverKind) ?? undefined,
+      refreshInBackground: manifest.refreshInBackground,
+    });
+  }),
+);

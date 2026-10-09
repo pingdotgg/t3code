@@ -2337,7 +2337,8 @@ code {
       0.75rem + var(--chat-lane-inset-end, 0px) - var(--chat-timeline-gutter, 0px)
     );
   }
-  .chat-scroll-to-bottom {
+  .chat-scroll-to-bottom,
+  .chat-banner-lane {
     inset-inline-start: var(--chat-lane-inset-start, 0px);
     inset-inline-end: var(--chat-lane-inset-end, 0px);
   }

@@ -2,6 +2,7 @@ import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay
 import * as RelayClient from "@t3tools/shared/relayClient";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -60,7 +61,8 @@ interface ActiveConnector {
   readonly configKey: string;
   readonly config: RelayManagedEndpointRuntimeConfig;
   readonly startedAtMillis: number;
-  readonly connected: Ref.Ref<boolean>;
+  /** Completes when the connector first registers a tunnel connection. */
+  readonly registered: Deferred.Deferred<void>;
 }
 
 // A connector that exits before running this long is treated as part of a
@@ -252,9 +254,10 @@ export const make = Effect.gen(function* () {
       Effect.catchCause((cause) => Effect.logWarning("Relay client supervisor failed", { cause })),
     );
 
-  // Installs the pinned relay client in the background, then restarts the
-  // connector on it. The running connector, if any, keeps serving until the new
-  // binary is installed and validated, so an update costs one brief reconnect.
+  // Installs the pinned relay client in the background, then moves the connector
+  // to it. The new connector starts next to the old one on the same tunnel, and
+  // the old one stops only once the new one registers, so clients never see the
+  // relay lose this host during the swap.
   const installPinnedRelayClient = Effect.gen(function* () {
     if (yield* Ref.getAndSet(installInFlightRef, true)) return;
     yield* Effect.logInfo("Installing the pinned relay client", {
@@ -286,17 +289,37 @@ export const make = Effect.gen(function* () {
             ) {
               return;
             }
-            yield* Effect.logInfo("Relay client installed; restarting the connector on it", {
+            yield* Effect.logInfo("Relay client installed; moving the connector to it", {
               version: installed.version,
               previousVersion: active?.executable.version,
             });
-            yield* stopActive;
+            // Detach the old connector so the reconcile starts a new one beside it.
+            const previous = yield* Ref.getAndSet(activeRef, null);
             const status = yield* reconcileConfig(desiredConfig);
-            // The old connector is gone and no supervisor watches a failed spawn,
-            // so ask for recovery like an exited connector would.
-            if (status.status === "failed") {
+            const next = yield* Ref.get(activeRef);
+            if (!next) {
               yield* Effect.logWarning("Relay client did not start after the update", status);
-              yield* Queue.offer(recoveryRequests, desiredConfig);
+              // A still-running old connector keeps serving and the retry loop
+              // tries the pin again. One that exited while detached was skipped
+              // by its supervisor, so ask for recovery like an exited connector.
+              const previousRunning = previous
+                ? yield* previous.child.isRunning.pipe(Effect.orElseSucceed(() => false))
+                : false;
+              if (previous && previousRunning) {
+                yield* Ref.set(activeRef, previous);
+              } else {
+                yield* stopConnector(previous);
+                yield* Queue.offer(recoveryRequests, desiredConfig);
+              }
+              return;
+            }
+            // Runs in the new connector's scope: the old one stops when the new
+            // one registers, or as soon as the new one is stopped or replaced.
+            if (previous) {
+              yield* Deferred.await(next.registered).pipe(
+                Effect.ensuring(stopConnector(previous)),
+                Effect.forkIn(next.scope),
+              );
             }
           }),
         ),
@@ -357,7 +380,7 @@ export const make = Effect.gen(function* () {
   const watchConnectorRegistration = (connector: ActiveConnector) =>
     Effect.gen(function* () {
       yield* Effect.sleep(CONNECTOR_REGISTRATION_TIMEOUT);
-      if (yield* Ref.get(connector.connected)) return true;
+      if (yield* Deferred.isDone(connector.registered)) return true;
       yield* Effect.logWarning(
         "Relay client has not registered a tunnel connection; requesting recovery",
         {
@@ -389,7 +412,7 @@ export const make = Effect.gen(function* () {
         switch (classifyRelayClientOutput(line)) {
           case "connected":
             rejectedRegistrations = 0;
-            return Ref.set(connector.connected, true).pipe(
+            return Deferred.succeed(connector.registered, undefined).pipe(
               Effect.andThen(
                 Effect.logInfo("Relay client tunnel connection registered", attributes),
               ),
@@ -539,7 +562,7 @@ export const make = Effect.gen(function* () {
         configKey: nextConfigKey,
         config,
         startedAtMillis: yield* Clock.currentTimeMillis,
-        connected: yield* Ref.make(false),
+        registered: yield* Deferred.make<void>(),
       } satisfies ActiveConnector;
       yield* Ref.set(activeRef, connector);
       yield* Effect.forkIn(observeConnectorOutput(connector), connectorScope);
