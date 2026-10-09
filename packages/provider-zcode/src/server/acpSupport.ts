@@ -10,6 +10,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -250,14 +251,19 @@ export function zcodePromptFailure(
   const failure = data._tag === "Some" ? data.value : undefined;
   const usageLimit =
     failure?.providerCode !== undefined && ZCODE_QUOTA_PROVIDER_CODES.has(failure.providerCode);
+  // A negative or out-of-range delay yields no reset time rather than a defect.
+  const resetAt =
+    usageLimit && failure?.retryAfterMs !== undefined && failure.retryAfterMs >= 0
+      ? Option.getOrUndefined(
+          Option.map(DateTime.make(now() + failure.retryAfterMs), DateTime.formatIso),
+        )
+      : undefined;
   return makeProviderFailure({
     cause,
     message: cause.errorMessage,
     code: failure?.providerCode ?? String(cause.code),
     class: usageLimit ? "usage_limit" : "provider_error",
     ...(failure?.retryable === undefined ? {} : { retryable: failure.retryable }),
-    ...(usageLimit && failure?.retryAfterMs !== undefined
-      ? { resetAt: DateTime.formatIso(DateTime.makeUnsafe(now() + failure.retryAfterMs)) }
-      : {}),
+    ...(resetAt === undefined ? {} : { resetAt }),
   });
 }

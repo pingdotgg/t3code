@@ -13,8 +13,8 @@ as the ZCode desktop app, including GLM Coding Plan models.
 
 The bridge finds the ZCode CLI on `PATH` or inside the desktop app. Set **ZCode CLI path** when
 ZCode lives elsewhere, and **ACP bridge path** when `zcode-acp-server` is not on the server's
-`PATH`. Set **ZCode data directory** to run an instance against a different `~/.zcode`, for
-example a second account.
+`PATH`. Set **ZCode data directory** in the instance's settings to run it against a different `~/.zcode`,
+for example a second account. It sets `ZCODE_HOME` for that instance.
 
 ## Models
 

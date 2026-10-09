@@ -103,6 +103,17 @@ describe("zcodePromptFailure", () => {
     });
   });
 
+  it("keeps the usage limit but drops a reset time it cannot represent", () => {
+    for (const retryAfterMs of [-1, 1e300]) {
+      const failure = zcodePromptFailure(
+        turnFailed({ type: "zcode_turn_failed", providerCode: "1308", retryAfterMs }),
+        () => Date.UTC(2026, 0, 1),
+      );
+      expect(failure.class).toBe("usage_limit");
+      expect(failure.resetAt).toBeUndefined();
+    }
+  });
+
   it("reports other turn failures as provider errors", () => {
     const failure = zcodePromptFailure(
       turnFailed({ type: "zcode_turn_failed", providerCode: "500", retryable: true }),

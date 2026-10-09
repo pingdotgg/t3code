@@ -59,6 +59,13 @@ export function assertZCodePermissionOutput(
     { outcome: { outcome: "selected", optionId: "deny" } },
   ]);
 
+  // Replay cannot write files, so the workspace check is ZCode's own report:
+  // the approved write completed and the declined command did not run.
+  const write = projection.turnItems.find((item) => item.type === "file_change");
+  assert.equal(write?.status, "completed", "the approved write ran");
+  const command = projection.turnItems.find((item) => item.type === "dynamic_tool");
+  assert.equal(command?.status, "failed", "the declined command did not run");
+
   const answers = projection.turnItems.flatMap((item) =>
     item.type === "assistant_message" ? [item.text.trim()] : [],
   );

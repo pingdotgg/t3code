@@ -180,7 +180,7 @@ export const ZCodeDriver: ProviderDriver<ZCodeSettings, ZCodeDriverEnv> = {
             new ProviderDriverError({
               driver: DRIVER_KIND,
               instanceId,
-              detail: `Failed to build ZCode snapshot: ${cause.message ?? String(cause)}`,
+              detail: "Failed to build ZCode snapshot.",
               cause,
             }),
         ),

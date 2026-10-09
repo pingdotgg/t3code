@@ -552,6 +552,8 @@ const recordScenario = Effect.fn("recordZCodeScenario")(function* (fixtureName: 
   );
   if (liveFailure._tag === "Some") {
     yield* Console.log(`Live orchestration failed ${fixtureName} assertions:`, liveFailure.value);
+    // The transcript stays on disk for inspection, but the run must not pass.
+    return yield* Effect.die(liveFailure.value);
   }
 });
 
