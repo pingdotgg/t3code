@@ -71,9 +71,8 @@ export const layer = Layer.effectDiscard(
         ) {
           // A newer release replaces the pending target only once it stages.
           yield* Effect.logInfo("Staging a background server update", { targetVersion });
-          const staged = yield* selfUpdate
-            .stage(targetVersion)
-            .pipe(Effect.tapError(() => Effect.sync(() => skippedTargets.add(targetVersion))));
+          // A failed download or preflight is retried at the next release check.
+          const staged = yield* selfUpdate.stage(targetVersion);
           if (staged.orchestrationProtocol !== ORCHESTRATION_PROTOCOL_VERSION) {
             // Without a matching protocol, connected clients could be refused after restart.
             skippedTargets.add(targetVersion);
