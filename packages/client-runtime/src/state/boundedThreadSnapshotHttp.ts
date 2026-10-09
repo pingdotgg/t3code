@@ -8,7 +8,6 @@ import { HttpClient } from "effect/http";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
-import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import {
   executeAuthenticatedEnvironmentHttpRequest,
@@ -35,20 +34,19 @@ export const fetchEnvironmentBoundedThreadSnapshot = Effect.fn(
   >;
   readonly timeoutMs?: number;
 }) {
+  const endpoint = {
+    params: { threadId: input.threadId },
+    query: { compactTurnItems: "1" },
+  };
   return yield* executeAuthenticatedEnvironmentHttpRequest({
     ...input,
     group: "orchestration",
     method: "GET",
-    url: (httpBaseUrl) =>
-      environmentEndpointUrl(
-        httpBaseUrl,
-        `/api/orchestration/threads/${encodeURIComponent(input.threadId)}/bounded`,
-      ),
+    url: (urls) => urls.threadBoundedSnapshot(endpoint),
     timeoutMs: input.timeoutMs ?? DEFAULT_BOUNDED_THREAD_SNAPSHOT_TIMEOUT_MS,
     request: ({ client, headers }) =>
       client.threadBoundedSnapshot({
-        params: { threadId: input.threadId },
-        query: { compactTurnItems: "1" },
+        ...endpoint,
         headers: withOrchestrationProtocolHeader(headers),
       }),
   }).pipe(
