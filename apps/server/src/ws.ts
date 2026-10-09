@@ -314,8 +314,8 @@ export const withLateEditorConfig = <E, R>(
         editors.join() !== config.availableEditors.join() ||
         (editors.includes("file-manager") && config.shellRevealInFileManagerKind === undefined),
     ),
-    // Unbounded, unlike the snapshot: the reveal-kind probe is not shared, so
-    // a timeout here would cancel a probe that outlasts it every time.
+    // Unbounded, unlike the snapshot: this exists to deliver a probe that
+    // outlasts the snapshot's timeout.
     Stream.mapEffect((editors) =>
       resolveEditorConfig(editors, launcher.resolveFileManagerRevealKind()),
     ),
@@ -357,6 +357,32 @@ export const withLateEditorConfig = <E, R>(
     ),
   );
 };
+
+// Discoveries run side by side so the slowest one, not their sum, bounds the
+// server config snapshot. Each degrades on timeout rather than failing it.
+export const resolveOpenDiscoveryForConfig = <T, D, E1, R1, E2, R2, E3, R3, E4, R4>(discovery: {
+  readonly editors: Effect.Effect<ReadonlyArray<EditorId>, E1, R1>;
+  readonly fileManagerRevealKind: Effect.Effect<FileManagerRevealKind | undefined, E2, R2>;
+  readonly remoteOpenTargets: Effect.Effect<ReadonlyArray<T>, E3, R3>;
+  readonly directEndpoints: Effect.Effect<ReadonlyArray<D>, E4, R4>;
+}) =>
+  Effect.all(
+    {
+      editorConfig: resolveAvailableEditorsForConfig(discovery.editors).pipe(
+        Effect.flatMap((availableEditors) =>
+          resolveEditorConfig(
+            availableEditors,
+            resolveFileManagerRevealKindForConfig(discovery.fileManagerRevealKind),
+          ),
+        ),
+      ),
+      // Same discovery-with-timeout treatment as editors: a slow probe must
+      // not stall server.getConfig, so it degrades to an empty list.
+      remoteOpenTargets: resolveAvailableEditorsForConfig(discovery.remoteOpenTargets),
+      directEndpoints: resolveAvailableEditorsForConfig(discovery.directEndpoints),
+    },
+    { concurrency: "unbounded" },
+  ).pipe(Effect.map(({ editorConfig, ...endpoints }) => ({ ...editorConfig, ...endpoints })));
 
 function unexpectedCompatibilityError(error: never): never {
   throw new Error(`Unhandled compatibility error: ${String(error)}`);
@@ -1690,10 +1716,12 @@ const layerWsRpc = (
           const environment = yield* serverEnvironment.getDescriptor;
           const auth = yield* serverAuth.getDescriptor();
           const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
-          const editorConfig = yield* resolveEditorConfig(
-            yield* resolveAvailableEditorsForConfig(externalLauncher.resolveAvailableEditors()),
-            resolveFileManagerRevealKindForConfig(externalLauncher.resolveFileManagerRevealKind()),
-          );
+          const discovery = yield* resolveOpenDiscoveryForConfig({
+            editors: externalLauncher.resolveAvailableEditors(),
+            fileManagerRevealKind: externalLauncher.resolveFileManagerRevealKind(),
+            remoteOpenTargets: remoteOpenTargets.resolveTargets(),
+            directEndpoints: directEndpoints.resolve(),
+          });
 
           return {
             environment,
@@ -1703,13 +1731,7 @@ const layerWsRpc = (
             keybindings: keybindingsConfig.keybindings,
             issues: keybindingsConfig.issues,
             providers,
-            ...editorConfig,
-            // Same discovery-with-timeout treatment as editors: a slow probe
-            // must not stall server.getConfig, so it degrades to no targets.
-            remoteOpenTargets: yield* resolveAvailableEditorsForConfig(
-              remoteOpenTargets.resolveTargets(),
-            ),
-            directEndpoints: yield* resolveAvailableEditorsForConfig(directEndpoints.resolve()),
+            ...discovery,
             observability: {
               logsDirectoryPath: config.logsDir,
               localTracingEnabled: true,
