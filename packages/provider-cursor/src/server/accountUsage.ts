@@ -1,5 +1,3 @@
-// Node fs reads CLI credentials, and crypto hashes account IDs for deduplication.
-// @effect-diagnostics nodeBuiltinImport:off
 /**
  * Cursor account usage from its dashboard API, read with the saved CLI or
  * Keychain login. The dashboard covers CLI, desktop and headless usage from
@@ -7,13 +5,22 @@
  *
  * @module provider-cursor/server/accountUsage
  */
-import * as NodeFSP from "node:fs/promises";
-import * as NodeCrypto from "node:crypto";
-import * as NodeTimersPromises from "node:timers/promises";
-
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
+import * as Crypto from "effect/Crypto";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Base64Url from "effect/encoding/Base64Url";
+import * as Hex from "effect/encoding/Hex";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as PlatformError from "effect/PlatformError";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 
-import { isCursorKeychainTimeoutError } from "./CursorKeychain.ts";
+import * as CursorKeychain from "./CursorKeychain.ts";
 
 function object(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -44,7 +51,27 @@ export interface CursorAccountUsageReadResult {
   readonly error: string | null;
 }
 
-const accountHash = (value: string) => NodeCrypto.createHash("sha256").update(value).digest("hex");
+/** Why a dashboard read was abandoned; the caller only sees the generic message. */
+class CursorAccountUsageInvalidError extends Schema.TaggedError<CursorAccountUsageInvalidError>()(
+  "CursorAccountUsageInvalidError",
+  { reason: Schema.String },
+) {}
+
+const invalid = (reason: string) => Effect.fail(new CursorAccountUsageInvalidError({ reason }));
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+const pageRequestBody = (page: number, pageSize: number, sinceMs: number, endDate: number) =>
+  JSON.stringify({ page, pageSize, startDate: String(sinceMs), endDate: String(endDate) });
+
+const billedEventIdentity = (...fields: readonly unknown[]) => JSON.stringify(fields);
+
+const textEncoder = new TextEncoder();
+
+const accountHash = Effect.fn("accountHash")(function* (value: string) {
+  const crypto = yield* Crypto.Crypto;
+  return Hex.encode(yield* crypto.digest("SHA-256", textEncoder.encode(value)));
+});
 
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -70,26 +97,54 @@ function boundaryOverlap(previous: readonly string[], current: readonly string[]
   return lengths.at(-1) ?? 0;
 }
 
+const DASHBOARD_USAGE_URL = "https://cursor.com/api/dashboard/get-filtered-usage-events";
+
+/** The session cookie must never follow a redirect off cursor.com. */
+const NO_REDIRECT: RequestInit = { redirect: "error" };
+
 /**
  * Dashboard usage includes headless agents and reports fresh input separately
- * from cache reads. `keychainToken` is only called for a Keychain login.
+ * from cache reads. `keychainToken` is only run for a Keychain login.
  */
-export async function readCursorAccountUsage(
+export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(function* (
   credentialSource: string | { readonly kind: "keychain" },
   sinceMs: number,
   endDate: number,
-  request: (url: string, init: RequestInit) => Promise<Response> = globalThis.fetch,
-  keychainToken: () => Promise<string | null> = () =>
-    Promise.reject(new Error("No Keychain reader")),
-): Promise<CursorAccountUsageReadResult> {
-  let accessToken: unknown;
-  try {
-    accessToken =
-      typeof credentialSource === "string"
-        ? object(JSON.parse(await NodeFSP.readFile(credentialSource, "utf8"))).accessToken
-        : await keychainToken();
-  } catch (cause) {
-    const missing = typeof credentialSource === "string" && object(cause).code === "ENOENT";
+  keychainToken: Effect.Effect<
+    string | null,
+    | CursorKeychain.CursorKeychainTimeoutError
+    | CursorKeychain.CursorKeychainReadError
+    | CursorAccountUsageInvalidError
+  > = invalid("No Keychain reader"),
+): Effect.fn.Return<
+  CursorAccountUsageReadResult,
+  never,
+  FileSystem.FileSystem | Crypto.Crypto | HttpClient.HttpClient
+> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const httpClient = yield* HttpClient.HttpClient;
+  const credential = yield* Effect.result<
+    unknown,
+    | PlatformError.PlatformError
+    | Schema.SchemaError
+    | CursorKeychain.CursorKeychainTimeoutError
+    | CursorKeychain.CursorKeychainReadError
+    | CursorAccountUsageInvalidError,
+    never
+  >(
+    typeof credentialSource === "string"
+      ? fileSystem.readFileString(credentialSource).pipe(
+          Effect.flatMap(decodeJson),
+          Effect.map((credentials) => object(credentials).accessToken),
+        )
+      : keychainToken,
+  );
+  if (Result.isFailure(credential)) {
+    const cause = credential.failure;
+    const missing =
+      typeof credentialSource === "string" &&
+      PlatformError.isPlatformError(cause) &&
+      cause.reason._tag === "NotFound";
     return {
       accountKey: null,
       records: [],
@@ -98,11 +153,12 @@ export async function readCursorAccountUsage(
         ? null
         : typeof credentialSource === "string"
           ? "Cursor credentials could not be read."
-          : isCursorKeychainTimeoutError(cause)
+          : CursorKeychain.isCursorKeychainTimeoutError(cause)
             ? "Allow Keychain access on the Mac running T3 Code, then refresh."
             : "Cursor Keychain credentials could not be read.",
     };
   }
+  const accessToken = credential.success;
   if (typeof accessToken !== "string" || !accessToken) {
     return {
       accountKey: null,
@@ -115,95 +171,112 @@ export async function readCursorAccountUsage(
     };
   }
   let accountKey: string | null = null;
-  const cancel = new AbortController();
-  try {
-    const payload = accessToken.split(".")[1];
+  const read = Effect.gen(function* () {
+    const payload = Base64Url.decodeString(accessToken.split(".")[1] ?? "");
+    if (Result.isFailure(payload)) return yield* invalid("Invalid authentication");
     const subject = object(
-      JSON.parse(Buffer.from(payload ?? "", "base64url").toString("utf8")),
+      yield* decodeJson(payload.success).pipe(
+        Effect.catch(() => invalid("Invalid authentication")),
+      ),
     ).sub;
-    if (typeof subject !== "string" || !subject) throw new Error("Invalid authentication");
+    if (typeof subject !== "string" || !subject) return yield* invalid("Invalid authentication");
     const userId = subject.split("|").at(-1);
-    if (!userId) throw new Error("Invalid authentication");
-    accountKey = accountHash(subject);
+    if (!userId) return yield* invalid("Invalid authentication");
+    accountKey = yield* accountHash(subject);
     if (!Number.isFinite(sinceMs) || !Number.isFinite(endDate) || sinceMs < 0 || sinceMs > endDate)
-      throw new Error("Invalid date window");
-    const deadline = AbortSignal.any([cancel.signal, AbortSignal.timeout(60_000)]);
+      return yield* invalid("Invalid date window");
     const records: UsageRecord[] = [];
     const occurrences = new Map<string, number>();
     const pages: unknown[][] = [];
     let completed = false;
     const pageSize = 1000;
     let total: number | undefined;
-    const readPage = async (page: number) => {
-      // A count can include overlapping page boundaries. Allow room to
-      // reconcile them without imposing a fixed account-size limit.
-      if (page > (total === undefined ? 1000 : Math.ceil(total / pageSize) * 2 + 1)) {
-        throw new Error("Account usage page limit exceeded");
-      }
-      const response = await request("https://cursor.com/api/dashboard/get-filtered-usage-events", {
-        method: "POST",
-        redirect: "error",
-        signal: AbortSignal.any([deadline, AbortSignal.timeout(10_000)]),
-        headers: {
-          "Content-Type": "application/json",
-          Origin: "https://cursor.com",
-          Cookie: `WorkosCursorSessionToken=${encodeURIComponent(`${userId}::${accessToken}`)}`,
-        },
-        body: JSON.stringify({
-          page,
-          pageSize,
-          startDate: String(sinceMs),
-          endDate: String(endDate),
+    const readPage = (page: number) =>
+      Effect.gen(function* () {
+        // A count can include overlapping page boundaries. Allow room to
+        // reconcile them without imposing a fixed account-size limit.
+        if (page > (total === undefined ? 1000 : Math.ceil(total / pageSize) * 2 + 1)) {
+          return yield* invalid("Account usage page limit exceeded");
+        }
+        const response = yield* httpClient
+          .execute(
+            HttpClientRequest.post(DASHBOARD_USAGE_URL).pipe(
+              HttpClientRequest.setHeaders({
+                Origin: "https://cursor.com",
+                Cookie: `WorkosCursorSessionToken=${encodeURIComponent(`${userId}::${accessToken}`)}`,
+              }),
+              HttpClientRequest.bodyText(
+                pageRequestBody(page, pageSize, sinceMs, endDate),
+                "application/json",
+              ),
+            ),
+          )
+          .pipe(
+            Effect.provideService(FetchHttpClient.RequestInit, NO_REDIRECT),
+            Effect.mapError(
+              () => new CursorAccountUsageInvalidError({ reason: "Account usage request failed" }),
+            ),
+          );
+        if (response.status === 401 || response.status === 403) {
+          return {
+            accountKey,
+            records: [],
+            missing: false,
+            error: "Sign in to Cursor again to read account usage.",
+          } satisfies CursorAccountUsageReadResult;
+        }
+        if (response.status < 200 || response.status >= 300)
+          return yield* invalid("Account usage request failed");
+        const parsed: unknown = yield* response.json.pipe(
+          Effect.mapError(
+            () => new CursorAccountUsageInvalidError({ reason: "Invalid account usage page" }),
+          ),
+        );
+        if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+          return yield* invalid("Invalid account usage page");
+        }
+        const body = object(parsed);
+        const keys = Object.keys(body);
+        if ("error" in body || "message" in body || "code" in body)
+          return yield* invalid("Account usage error response");
+        const count = keys.length === 0 ? 0 : body.totalUsageEventsCount;
+        const events =
+          keys.length === 0 || (keys.length === 1 && keys[0] === "totalUsageEventsCount")
+            ? []
+            : body.usageEventsDisplay;
+        if (
+          (count !== undefined &&
+            (typeof count !== "number" ||
+              !Number.isSafeInteger(count) ||
+              count < 0 ||
+              (total !== undefined && count !== total))) ||
+          !Array.isArray(events) ||
+          events.length > pageSize ||
+          (count === undefined && !Array.isArray(body.usageEventsDisplay))
+        ) {
+          return yield* invalid("Inconsistent account usage page");
+        }
+        if (typeof count === "number") total = count;
+        return events as unknown[];
+      }).pipe(
+        Effect.timeoutOrElse({
+          duration: Duration.seconds(10),
+          orElse: () => invalid("Account usage request timed out"),
         }),
-      });
-      if (response.status === 401 || response.status === 403) {
-        return {
-          accountKey,
-          records: [],
-          missing: false,
-          error: "Sign in to Cursor again to read account usage.",
-        };
-      }
-      if (!response.ok) throw new Error("Account usage request failed");
-      const parsed: unknown = await response.json();
-      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("Invalid account usage page");
-      }
-      const body = object(parsed);
-      const keys = Object.keys(body);
-      if ("error" in body || "message" in body || "code" in body)
-        throw new Error("Account usage error response");
-      const count = keys.length === 0 ? 0 : body.totalUsageEventsCount;
-      const events =
-        keys.length === 0 || (keys.length === 1 && keys[0] === "totalUsageEventsCount")
-          ? []
-          : body.usageEventsDisplay;
-      if (
-        (count !== undefined &&
-          (typeof count !== "number" ||
-            !Number.isSafeInteger(count) ||
-            count < 0 ||
-            (total !== undefined && count !== total))) ||
-        !Array.isArray(events) ||
-        events.length > pageSize ||
-        (count === undefined && !Array.isArray(body.usageEventsDisplay))
-      ) {
-        throw new Error("Inconsistent account usage page");
-      }
-      if (typeof count === "number") total = count;
-      return events;
-    };
+      );
     // Cursor caps a page at 1,000 events and takes about a second to answer one, so the pages
     // the first one's count implies are requested up to six ahead and consumed in page order.
-    const ahead: ReturnType<typeof readPage>[] = [];
+    // Pages still in flight when the read ends are interrupted with its scope.
+    const ahead: Fiber.Fiber<
+      Effect.Success<ReturnType<typeof readPage>>,
+      CursorAccountUsageInvalidError
+    >[] = [];
     for (let page = 1; ; page++) {
       while (ahead.length < Math.min(6, Math.ceil((total ?? 0) / pageSize) - page + 1)) {
-        const pending = readPage(page + ahead.length);
-        // Handled when its turn comes, or cancelled if the read ends first.
-        pending.catch(() => undefined);
-        ahead.push(pending);
+        ahead.push(yield* Effect.forkScoped(readPage(page + ahead.length)));
       }
-      const events = await (ahead.shift() ?? readPage(page));
+      const next = ahead.shift();
+      const events = yield* next === undefined ? readPage(page) : Fiber.join(next);
       // A rejected login comes back as the finished result instead of a page.
       if (!Array.isArray(events)) return events;
       pages.push(events);
@@ -212,14 +285,17 @@ export async function readCursorAccountUsage(
         break;
       }
     }
-    if (!completed) throw new Error("Account usage page limit exceeded");
+    if (!completed) return yield* invalid("Account usage page limit exceeded");
     const rawCount = pages.reduce((sum, page) => sum + page.length, 0);
-    if (total !== undefined && rawCount < total) throw new Error("Incomplete account usage pages");
+    if (total !== undefined && rawCount < total)
+      return yield* invalid("Incomplete account usage pages");
     let removalsRemaining = total === undefined ? 0 : rawCount - total;
     let previousKeys: string[] = [];
     for (const events of pages) {
       const eventKeys =
-        removalsRemaining > 0 ? events.map((event) => accountHash(canonicalJson(event))) : [];
+        removalsRemaining > 0
+          ? yield* Effect.forEach(events, (event) => accountHash(canonicalJson(event)))
+          : [];
       const removalCount = Math.min(removalsRemaining, boundaryOverlap(previousKeys, eventKeys));
       removalsRemaining -= removalCount;
       previousKeys = eventKeys;
@@ -239,7 +315,7 @@ export async function readCursorAccountUsage(
             value !== undefined &&
             (typeof value !== "number" || !Number.isFinite(value) || value < 0)
           ) {
-            throw new Error("Invalid account usage totals");
+            return yield* invalid("Invalid account usage totals");
           }
         }
         const timestampMs =
@@ -252,7 +328,7 @@ export async function readCursorAccountUsage(
           typeof event.model !== "string" ||
           !event.model
         )
-          throw new Error("Invalid account usage event");
+          return yield* invalid("Invalid account usage event");
         if (timestampMs < sinceMs || timestampMs > endDate) continue;
         const totals = {
           uncachedInputTokens: tokens(usage.inputTokens),
@@ -265,8 +341,8 @@ export async function readCursorAccountUsage(
           typeof usage.totalCents === "number" ? usage.totalCents / 100 : null;
         const sessionId = typeof event.conversationId === "string" ? event.conversationId : "";
         // No event ID is provided. Preserve identical billed rows with an occurrence index.
-        const key = accountHash(
-          JSON.stringify([timestampMs, event.model, sessionId, totals, reportedCostUsd]),
+        const key = yield* accountHash(
+          billedEventIdentity(timestampMs, event.model, sessionId, totals, reportedCostUsd),
         );
         const occurrence = occurrences.get(key) ?? 0;
         occurrences.set(key, occurrence + 1);
@@ -282,19 +358,29 @@ export async function readCursorAccountUsage(
           dedupeKey: `cursor-account:${accountKey}:${key}:${occurrence}`,
         });
       }
-      await NodeTimersPromises.setImmediate();
+      yield* Effect.yieldNow;
     }
-    if (removalsRemaining !== 0) throw new Error("Inconsistent account usage boundaries");
-    return { accountKey, records, missing: false, error: null };
-  } catch {
+    if (removalsRemaining !== 0) return yield* invalid("Inconsistent account usage boundaries");
     return {
       accountKey,
-      records: [],
+      records,
       missing: false,
-      error: "Cursor account usage could not be read.",
-    };
-  } finally {
-    // An early exit leaves the pages requested ahead of it in flight.
-    cancel.abort();
-  }
-}
+      error: null,
+    } satisfies CursorAccountUsageReadResult;
+  });
+  return yield* read.pipe(
+    Effect.scoped,
+    Effect.timeoutOrElse({
+      duration: Duration.seconds(60),
+      orElse: () => invalid("Account usage read timed out"),
+    }),
+    Effect.catch(() =>
+      Effect.succeed({
+        accountKey,
+        records: [],
+        missing: false,
+        error: "Cursor account usage could not be read.",
+      } satisfies CursorAccountUsageReadResult),
+    ),
+  );
+});

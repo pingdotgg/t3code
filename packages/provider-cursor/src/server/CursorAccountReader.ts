@@ -5,9 +5,11 @@
  * @module provider-cursor/server/CursorAccountReader
  */
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
-import * as Result from "effect/Result";
 
 import type { CursorCredentialSource } from "./accountCache.ts";
 import { readCursorAccountUsage, type CursorAccountUsageReadResult } from "./accountUsage.ts";
@@ -29,23 +31,16 @@ export const layer = Layer.effect(
   CursorAccountReader,
   Effect.gen(function* () {
     const keychain = yield* CursorKeychain.CursorKeychain;
+    const context = yield* Effect.context<
+      FileSystem.FileSystem | Crypto.Crypto | HttpClient.HttpClient
+    >();
     return CursorAccountReader.of({
+      // Only a Keychain login asks the Keychain. The dashboard reader turns
+      // its outcome, a failure included, into the source's message.
       read: (credentialSource, sinceMs, untilMs) =>
-        Effect.gen(function* () {
-          // Only a Keychain login asks the Keychain. The dashboard reader
-          // turns its outcome, a failure included, into the source's message.
-          const token =
-            typeof credentialSource === "string"
-              ? Result.succeed(null)
-              : yield* Effect.result(keychain.accessToken);
-          return yield* Effect.promise(() =>
-            readCursorAccountUsage(credentialSource, sinceMs, untilMs, globalThis.fetch, () =>
-              Result.isSuccess(token)
-                ? Promise.resolve(token.success)
-                : Promise.reject(token.failure),
-            ),
-          );
-        }),
+        readCursorAccountUsage(credentialSource, sinceMs, untilMs, keychain.accessToken).pipe(
+          Effect.provideContext(context),
+        ),
     });
   }),
 );

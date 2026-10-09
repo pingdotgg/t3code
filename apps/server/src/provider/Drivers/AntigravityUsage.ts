@@ -106,8 +106,9 @@ const make = Effect.gen(function* () {
         : resolvedRoot;
       conversationDirs.add(yield* fileSystem.realPath(dir).pipe(Effect.orElseSucceed(() => dir)));
     }
-    const result = yield* Effect.promise(() =>
-      readAntigravityUsage([...conversationDirs], windowStartMs, cache),
+    const result = yield* readAntigravityUsage([...conversationDirs], windowStartMs, cache).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
     );
     const scanned: ProviderUsageScan[] = [];
     for (const dir of conversationDirs) {
