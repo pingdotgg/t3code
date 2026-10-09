@@ -339,6 +339,9 @@ import {
   suppressActiveComposerScrollGesture,
 } from "./composerScrollGesture";
 import { prepareVideoFirstFrame } from "../../lib/videoFirstFrame";
+import { resolveVoiceAvailability } from "../../voice/voiceAvailability";
+import { toggleThreadVoice, useVoicePhaseFor, voiceMode } from "../../voice/voiceMode";
+import { VoiceModeStrip } from "./VoiceModeStrip";
 
 function ComposerVideoThumbnail({ file }: { file: File }) {
   const setVideo = useCallback(
@@ -1076,10 +1079,12 @@ function ComposerCommandMenuLayer(props: { anchor: HTMLElement | null; children:
   );
 }
 import { Button } from "../ui/button";
+import { Toggle } from "../ui/toggle";
 import { Select, SelectItem, SelectPopup, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import {
+  AudioLinesIcon,
   FileIcon,
   BotIcon,
   CircleAlertIcon,
@@ -2198,6 +2203,34 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [selectedProviderEntry],
   );
   const compactCommandAvailable = providerSupportsManualCompaction(selectedProviderEntry);
+  // Voice follows the provider that owns the thread; a draft without a thread
+  // shell follows the composer's selection and waits for its first message.
+  const voiceThread = activeThread ?? props.activeThreadShell ?? null;
+  const voiceProviderInstanceId = voiceThread?.providerInstanceId ?? selectedInstanceId;
+  const voiceThreadHasMessages = voiceThread?.latestUserMessageAt != null;
+  const voiceThreadHasSession = voiceThread?.activeProviderThreadId != null;
+  const voiceAvailability = useMemo(
+    () =>
+      resolveVoiceAvailability({
+        provider: providerStatuses.find(
+          (provider) => provider.instanceId === voiceProviderInstanceId,
+        ),
+        hasMessages: voiceThreadHasMessages,
+        hasSession: voiceThreadHasSession,
+      }),
+    [providerStatuses, voiceProviderInstanceId, voiceThreadHasMessages, voiceThreadHasSession],
+  );
+  const voicePhase = useVoicePhaseFor(routeThreadRef);
+  const voiceEngaged = voicePhase !== "idle";
+  // A conversation stays stoppable here even if its provider stopped offering voice.
+  const voiceSupported = voiceAvailability.kind !== "unsupported" || voiceEngaged;
+  const toggleVoice = useCallback(
+    () => toggleThreadVoice(routeThreadRef, voiceAvailability),
+    [routeThreadRef, voiceAvailability],
+  );
+  const voiceButtonDisabledReason =
+    voiceAvailability.kind === "unavailable" && !voiceEngaged ? voiceAvailability.reason : null;
+  const voiceButtonLabel = voiceEngaged ? "Stop voice conversation" : "Start voice conversation";
   // Memoized so the composer menu memo below can cache between renders.
   const selectedProviderSkills = useMemo(
     () =>
@@ -2695,6 +2728,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               },
             ] as const)
           : []),
+        ...(voiceSupported
+          ? ([
+              {
+                id: "slash:voice",
+                type: "slash-command",
+                command: "voice",
+                label: "/voice",
+                description: voiceEngaged
+                  ? "Stop the voice conversation"
+                  : "Start a voice conversation",
+              },
+            ] as const)
+          : []),
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const slashMenuSkills = getProviderSkillsForSlashMenu(
         selectedProviderSkills,
@@ -2814,6 +2860,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProviderSlashCommands,
     selectedProviderStatus,
     settings.showSkillsInSlashMenu,
+    voiceEngaged,
+    voiceSupported,
     workspaceEntries.entries,
   ]);
 
@@ -4012,6 +4060,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           }
           return;
         }
+        if (item.command === "voice") {
+          const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+            expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+          });
+          if (applied) {
+            setComposerHighlightedItemId(null);
+            toggleVoice();
+          }
+          return;
+        }
         if (!planModeUiEnabled) return;
         void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
@@ -4134,6 +4192,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       planModeUiEnabled,
       onUsageLimitsCommand,
       resolveActiveComposerTrigger,
+      toggleVoice,
     ],
   );
 
@@ -5733,6 +5792,32 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     terminalOpen,
   ]);
 
+  useEffect(() => {
+    const handler = (event: globalThis.KeyboardEvent) => {
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: getTerminalFocusOwner() !== null,
+          terminalOpen,
+          modelPickerOpen: isComposerModelPickerOpen,
+        },
+      });
+      if (command === "voice.toggleMute") {
+        // Muting is global: the microphone belongs to the one conversation.
+        if (voiceMode.getState().phase === "idle") return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) voiceMode.toggleMuted();
+        return;
+      }
+      if (command !== "voice.toggle" || !voiceSupported || isCommandPaletteOpen()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) toggleVoice();
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [isComposerModelPickerOpen, keybindings, terminalOpen, toggleVoice, voiceSupported]);
+
   // ------------------------------------------------------------------
   // Callbacks: attachments
   // ------------------------------------------------------------------
@@ -6725,6 +6810,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               </ComposerBanner.Root>
             </ComposerBanner.Attachment>
           ) : null}
+          {voiceEngaged ? (
+            <ComposerBanner.Attachment>
+              <VoiceModeStrip target={routeThreadRef} />
+            </ComposerBanner.Attachment>
+          ) : null}
           {showComposerTopDrawer && (!isTasksDrawerOpen || hasBlockingComposerTopDrawer) ? (
             <ComposerBanner.Attachment>
               <ComposerBanner.Root
@@ -7617,6 +7707,33 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         <TooltipPopup>Attach files</TooltipPopup>
                       </Tooltip>
                     </>
+                  ) : null}
+                  {voiceSupported && !isComposerResting ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Toggle
+                            variant="ghost"
+                            size="sm"
+                            // aria-disabled rather than disabled keeps the tooltip explaining why.
+                            className="aria-disabled:cursor-not-allowed"
+                            pressed={voiceEngaged}
+                            onPointerDown={(event) => event.preventDefault()}
+                            onPressedChange={() => {
+                              if (voiceButtonDisabledReason === null) toggleVoice();
+                            }}
+                            aria-disabled={voiceButtonDisabledReason !== null || undefined}
+                            aria-label={voiceButtonLabel}
+                          />
+                        }
+                      >
+                        {/* Dim the glyph, not the Toggle, which owns its own disabled styling. */}
+                        <AudioLinesIcon
+                          className={voiceButtonDisabledReason === null ? undefined : "opacity-50"}
+                        />
+                      </TooltipTrigger>
+                      <TooltipPopup>{voiceButtonDisabledReason ?? voiceButtonLabel}</TooltipPopup>
+                    </Tooltip>
                   ) : null}
                   <ComposerFooterPrimaryActions
                     compact={isComposerResting || isComposerPrimaryActionsCompact}

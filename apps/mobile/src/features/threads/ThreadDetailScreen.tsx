@@ -145,6 +145,8 @@ import { useThreadQueuedCount } from "./ThreadQueueControl";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
+import { ComposerVoiceStrip } from "../voice-mode/ComposerVoiceMode";
+import { useVoiceModePhase } from "../voice-mode/useVoiceMode";
 
 export interface ThreadDetailScreenProps {
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
@@ -563,6 +565,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   // A pending user-input request or a failed creation owns the composer slot.
   const composerSlotHidden =
     activeUserInputRequestId !== null || props.creationState?.kind === "failed";
+  const voiceTarget = useMemo(
+    () => ({ environmentId: props.environmentId, threadId: props.selectedThread.id }),
+    [props.environmentId, props.selectedThread.id],
+  );
+  const voiceLiveHere = useVoiceModePhase(voiceTarget) !== "idle";
   // The open /usage-limits panel for this thread, model and turn. Only the open
   // moment is stored: the rows read live provider data, so a redeemed reset
   // credit or refreshed probe shows through. Anything that spends quota closes
@@ -1333,7 +1340,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   ) : null}
                 </View>
 
-                {/* Hidden (not unmounted) while a user-input request owns the
+              {/* The composer below hides for a question card; keep a live
+                voice conversation's mute and stop controls reachable. */}
+              {activeUserInputRequestId !== null && voiceLiveHere ? <ComposerVoiceStrip /> : null}
+              {/* Hidden (not unmounted) while a user-input request owns the
                 composer slot, so composer drafts and editor state survive.
                 A rejected creation has no thread to send to; the failure card
                 owns the slot instead. */}

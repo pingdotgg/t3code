@@ -130,6 +130,7 @@
     "react-native-screens": "file:deps/react-native-screens-5.0.0-t3.7.tgz",
     "react-native-shiki-engine": "^0.3.12",
     "react-native-svg": "15.15.5",
+    "react-native-webrtc": "124.0.8",
     "react-native-webview": "14.0.1",
     "react-native-worklets": "0.13.0",
     "shiki": "4.2.0",
@@ -137,6 +138,7 @@
     "uniwind": "1.12.1"
   },
   "devDependencies": {
+    "@config-plugins/react-native-webrtc": "15.0.2",
     "@effect/vitest": "catalog:",
     "@pierre/trees": "1.0.0-beta.6",
     "@types/react": "~19.3.0",

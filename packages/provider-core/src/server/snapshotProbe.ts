@@ -92,6 +92,7 @@ export interface ServerProviderPresentation {
   readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
   readonly requiresNewThreadForModelChange?: boolean;
   readonly supportsConversationRollback?: boolean;
+  readonly supportsVoice?: boolean;
 }
 
 export type ServerProviderDraft = Omit<ServerProvider, "instanceId" | "driver">;
@@ -258,6 +259,7 @@ export function buildServerProvider(input: {
     ...(typeof input.presentation.requiresNewThreadForModelChange === "boolean"
       ? { requiresNewThreadForModelChange: input.presentation.requiresNewThreadForModelChange }
       : {}),
+    ...(input.presentation.supportsVoice ? { supportsVoice: true } : {}),
     enabled: input.enabled,
     installed: input.probe.installed,
     version: input.probe.version,

@@ -1403,6 +1403,8 @@ ${associatedDomains}
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
   </dict>
 </plist>
 `;
@@ -2813,6 +2815,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       extendInfo: {
         NSScreenCaptureUsageDescription:
           "T3 Code captures the active window when you use the window capture shortcut.",
+        NSMicrophoneUsageDescription:
+          "T3 Code uses the microphone when you start a voice conversation with an agent.",
       },
       protocols: [
         {
