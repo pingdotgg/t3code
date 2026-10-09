@@ -971,7 +971,7 @@ export const CLAUDE_T3_MCP_TOOL_TIMEOUT_MS = 65 * 60 * 1_000;
 // and process arguments are readable by every local user. The credential
 // therefore travels in the child's environment, which only its owner can read,
 // and the CLI expands the `${VAR}` reference when it connects.
-export const CLAUDE_T3_MCP_AUTHORIZATION_ENV = "T3_CODE_MCP_AUTHORIZATION";
+const CLAUDE_T3_MCP_AUTHORIZATION_ENV = "T3_CODE_MCP_AUTHORIZATION";
 
 export function claudeMcpQueryOverrides(input: {
   readonly threadId: ThreadId;
