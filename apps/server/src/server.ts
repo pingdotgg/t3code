@@ -742,7 +742,6 @@ const layerMakeRoutes = Layer.mergeAll(
   // Shares the routes' ServerSelfUpdate, so a manual and a background update never overlap.
   ServerAutoUpdater.layer.pipe(
     Layer.provide(UpdateWindow.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
-    Layer.provide(layerDesktopTelemetryReceiver),
   ),
 ).pipe(
   // Both transports consume the same service instance, so caches single-flight across clients
