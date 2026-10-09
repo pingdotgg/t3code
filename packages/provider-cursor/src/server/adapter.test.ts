@@ -22,11 +22,11 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   cursorMcpServers,
   cursorRuntimeAgentPolicy,
@@ -35,7 +35,7 @@ import {
   makeCursorAdapterV2,
   nestedToolCallFromEnvelope,
 } from "./adapter.ts";
-import { isCursorCancellationError, loggedCursorAgentOptions } from "./CursorAgentSdk.ts";
+import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 
 const decodeCursorSettings = Schema.decodeEffect(CursorSettings);
 
@@ -58,7 +58,7 @@ describe("CursorAdapterV2", () => {
         const instanceId = ProviderInstanceId.make("cursor");
         const threadId = ThreadId.make("cursor-lifecycle-thread");
         const modelSelection = { instanceId, model: "composer-2.5" };
-        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: "full-access",
           interactionMode: "default",
           cwd: workspace,
@@ -70,7 +70,9 @@ describe("CursorAdapterV2", () => {
           fileSystem,
           path,
           idAllocator: yield* IdAllocator.IdAllocatorV2,
-          host: yield* ProviderHost.pipe(Effect.provide(layerTestProviderHost({ cwd: workspace }))),
+          host: yield* ProviderHost.ProviderHost.pipe(
+            Effect.provide(layerTestProviderHost({ cwd: workspace })),
+          ),
           runner: {
             assertComplete: Effect.void,
             open: () =>
@@ -216,7 +218,7 @@ describe("CursorAdapterV2", () => {
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-transport-error-thread");
       const modelSelection = { instanceId, model: "composer-2.5" };
-      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
         interactionMode: "default",
         cwd: workspace,
@@ -228,7 +230,9 @@ describe("CursorAdapterV2", () => {
         fileSystem,
         path,
         idAllocator: yield* IdAllocator.IdAllocatorV2,
-        host: yield* ProviderHost.pipe(Effect.provide(layerTestProviderHost({ cwd: workspace }))),
+        host: yield* ProviderHost.ProviderHost.pipe(
+          Effect.provide(layerTestProviderHost({ cwd: workspace })),
+        ),
         runner: {
           assertComplete: Effect.void,
           open: () =>
@@ -362,7 +366,7 @@ describe("CursorAdapterV2", () => {
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-search-thread");
       const modelSelection = { instanceId, model: "composer-2.5" };
-      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
         interactionMode: "default",
         cwd: workspace,
@@ -567,7 +571,9 @@ describe("CursorAdapterV2", () => {
         fileSystem,
         path,
         idAllocator: yield* IdAllocator.IdAllocatorV2,
-        host: yield* ProviderHost.pipe(Effect.provide(layerTestProviderHost({ cwd: workspace }))),
+        host: yield* ProviderHost.ProviderHost.pipe(
+          Effect.provide(layerTestProviderHost({ cwd: workspace })),
+        ),
         runner: {
           assertComplete: Effect.void,
           open: () =>
@@ -901,7 +907,7 @@ describe("CursorAdapterV2", () => {
       });
       assert.deepEqual(options.mcpServers, cursorMcpServers(threadId));
 
-      const logged = JSON.stringify(loggedCursorAgentOptions(options));
+      const logged = JSON.stringify(CursorAgentSdk.loggedCursorAgentOptions(options));
       assert.notInclude(logged, "secret-cursor-api-key");
       assert.notInclude(logged, "secret-cursor-mcp-token");
     } finally {
@@ -910,9 +916,9 @@ describe("CursorAdapterV2", () => {
   });
 
   it("recognizes direct and SDK-wrapped abort failures as cancellation", () => {
-    assert.isTrue(isCursorCancellationError({ name: "AbortError" }));
+    assert.isTrue(CursorAgentSdk.isCursorCancellationError({ name: "AbortError" }));
     assert.isTrue(
-      isCursorCancellationError({
+      CursorAgentSdk.isCursorCancellationError({
         name: "ConnectError",
         cause: {
           name: "ConnectError",
@@ -920,8 +926,8 @@ describe("CursorAdapterV2", () => {
         },
       }),
     );
-    assert.isFalse(isCursorCancellationError(new Error("request failed")));
-    assert.isFalse(isCursorCancellationError(null));
+    assert.isFalse(CursorAgentSdk.isCursorCancellationError(new Error("request failed")));
+    assert.isFalse(CursorAgentSdk.isCursorCancellationError(null));
   });
 
   it("preserves failed nested read calls when Cursor omits their path", () => {

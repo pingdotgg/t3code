@@ -42,7 +42,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { ProviderHost, type ProviderHostShape } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import { CursorTransportFailure } from "./transportFailure.ts";
@@ -848,7 +848,7 @@ export interface CursorAdapterV2Options {
   readonly path: Path.Path;
   readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
   readonly runner: CursorAgentSdk.CursorAgentSdkRunnerShape;
-  readonly host: ProviderHostShape;
+  readonly host: ProviderHost.ProviderHostShape;
 }
 
 export function makeCursorAdapterV2(
@@ -2603,7 +2603,7 @@ export type CursorAdapterV2DriverEnv =
   | FileSystem.FileSystem
   | Path.Path
   | IdAllocator.IdAllocatorV2
-  | ProviderHost;
+  | ProviderHost.ProviderHost;
 
 export const CursorAdapterV2Driver: ProviderAdapterDriver<
   CursorSettings,
@@ -2619,7 +2619,7 @@ export const CursorAdapterV2Driver: ProviderAdapterDriver<
       const path = yield* Path.Path;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       return makeCursorAdapterV2({
         instanceId: input.instanceId,
         settings: {
@@ -2656,7 +2656,7 @@ const layer: Layer.Layer<
   | FileSystem.FileSystem
   | Path.Path
   | IdAllocator.IdAllocatorV2
-  | ProviderHost
+  | ProviderHost.ProviderHost
 > = Layer.effect(
   ProviderAdapter.ProviderAdapterV2,
   Effect.gen(function* () {
@@ -2665,7 +2665,7 @@ const layer: Layer.Layer<
     const path = yield* Path.Path;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
-    const host = yield* ProviderHost;
+    const host = yield* ProviderHost.ProviderHost;
     return makeCursorAdapterV2({
       instanceId: CURSOR_DEFAULT_INSTANCE_ID,
       settings: DEFAULT_CURSOR_SETTINGS,

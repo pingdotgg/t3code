@@ -6,7 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import * as Layer from "effect/Layer";
 import { makeCursorCredentialStore } from "./credentialStore.ts";
@@ -58,7 +58,7 @@ it.effect.each([
     const path = yield* Path.Path;
     const legacyFile = path.join(yield* fileSystem.makeTempDirectoryScoped(), "cursor.json");
     yield* fileSystem.writeFileString(legacyFile, legacy);
-    const host = yield* ProviderHost;
+    const host = yield* ProviderHost.ProviderHost;
     const instanceId = ProviderInstanceId.make("personal");
     if (stored !== undefined) {
       yield* (yield* host.credentials("cursor", instanceId)).set(new TextEncoder().encode(stored));
@@ -73,7 +73,7 @@ it.effect(
   "restores SDK credentials in a new controller and keeps another account when signing out",
   () =>
     Effect.gen(function* () {
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const makeStore = (id: string) => makeCursorCredentialStore(ProviderInstanceId.make(id));
       const personal = yield* makeStore("personal");
       const work = yield* makeStore("work");

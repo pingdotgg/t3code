@@ -17,7 +17,6 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import { Agent, createAgentPlatform } from "./sdk.ts";
-import type { EventNdjsonLogger } from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 
 export const CURSOR_AGENT_SDK_PROTOCOL = "cursor-agent-sdk.local" as const;
@@ -276,7 +275,7 @@ export function loggedCursorSendOptions(
 }
 
 function makeCursorAgentSdkProtocolLogger(input: {
-  readonly nativeEventLogger: EventNdjsonLogger | undefined;
+  readonly nativeEventLogger: ProviderEventLoggers.EventNdjsonLogger | undefined;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
 }): CursorAgentSdkProtocolLogger | undefined {

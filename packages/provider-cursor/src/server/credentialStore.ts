@@ -5,7 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 
 const Credentials = Schema.fromJsonString(
   Schema.Struct({
@@ -30,7 +30,7 @@ export const makeCursorCredentialStore = Effect.fn("makeCursorCredentialStore")(
   instanceId: ProviderInstanceId,
   legacyFile?: string,
 ) {
-  const credentials = yield* (yield* ProviderHost).credentials("cursor", instanceId);
+  const credentials = yield* (yield* ProviderHost.ProviderHost).credentials("cursor", instanceId);
   if (legacyFile !== undefined) {
     const fileSystem = yield* FileSystem.FileSystem;
     yield* Effect.gen(function* () {
