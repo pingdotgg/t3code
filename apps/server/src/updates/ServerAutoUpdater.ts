@@ -1,11 +1,9 @@
 import { ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
-import { CLI_RELEASE_BASE_URL_ENV, cliReleaseChannelOf } from "@t3tools/shared/cliRelease";
+import { cliReleaseChannelOf } from "@t3tools/shared/cliRelease";
 import * as Clock from "effect/Clock";
-import * as Config from "effect/Config";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import { HttpClient } from "effect/http";
 
@@ -18,6 +16,12 @@ import { compareExactServiceVersions } from "../cloud/serviceProtocol.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UpdateWindow from "./UpdateWindow.ts";
+
+const FIRST_PASS_DELAY = Duration.minutes(2);
+/** How often a staged update rechecks the update window. */
+const RECHECK = Duration.seconds(30);
+/** T3 releases are checked this often; the desktop app polls its own feed. */
+const RELEASE_CHECK_INTERVAL = Duration.hours(1);
 
 /**
  * Updates this environment in the background when `automaticUpdates` is on.
@@ -37,12 +41,7 @@ export const layer = Layer.effectDiscard(
     const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
     const updateWindow = yield* UpdateWindow.UpdateWindow;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
-    const timings = yield* UpdateWindow.updateTimings;
     const httpClient = yield* HttpClient.HttpClient;
-    // Same mirror the staged download uses, so a mirror lists what it serves.
-    const releaseBaseUrl = Option.getOrUndefined(
-      yield* Config.String(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option),
-    );
     const currentVersion = packageJson.version;
     let pendingTarget: string | undefined;
     let nextReleaseCheckAt = 0;
@@ -61,18 +60,16 @@ export const layer = Layer.effectDiscard(
       if (!(yield* automaticUpdatesEnabled)) return;
       const nowMs = yield* Clock.currentTimeMillis;
       if (nowMs >= nextReleaseCheckAt) {
-        nextReleaseCheckAt = nowMs + Duration.toMillis(timings.releaseCheckInterval);
-        const targetVersion = yield* resolveNewestVersion(
-          cliReleaseChannelOf(currentVersion),
-          releaseBaseUrl,
-        ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+        nextReleaseCheckAt = nowMs + Duration.toMillis(RELEASE_CHECK_INTERVAL);
+        const targetVersion = yield* resolveNewestVersion(cliReleaseChannelOf(currentVersion)).pipe(
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+        );
         if (
           compareExactServiceVersions(targetVersion, currentVersion) > 0 &&
           !skippedTargets.has(targetVersion) &&
           targetVersion !== pendingTarget
         ) {
-          // A newer release replaces the pending target even while the window stays closed.
-          pendingTarget = undefined;
+          // A newer release replaces the pending target only once it stages.
           yield* Effect.logInfo("Staging a background server update", { targetVersion });
           const staged = yield* selfUpdate
             .stage(targetVersion)
@@ -94,7 +91,6 @@ export const layer = Layer.effectDiscard(
       const targetVersion = pendingTarget;
       if (targetVersion === undefined) return;
       yield* updateWindow.runIfOpen(
-        { closesWindows: false, restartsServer: true },
         Effect.gen(function* () {
           // The setting may have been turned off while waiting.
           if (!(yield* automaticUpdatesEnabled)) return;
@@ -106,6 +102,7 @@ export const layer = Layer.effectDiscard(
           // starts behind the install permit until this runtime is shut down.
           return yield* Effect.never;
         }),
+        { restartsServer: true },
       );
     }).pipe(
       Effect.catchCause((cause) => Effect.logWarning("Background server update failed", { cause })),
@@ -113,8 +110,8 @@ export const layer = Layer.effectDiscard(
     );
 
     yield* forkParked(
-      Effect.sleep(timings.firstPassDelay).pipe(
-        Effect.andThen(updateBootService.pipe(Effect.repeat(Schedule.spaced(timings.recheck)))),
+      Effect.sleep(FIRST_PASS_DELAY).pipe(
+        Effect.andThen(updateBootService.pipe(Effect.repeat(Schedule.spaced(RECHECK)))),
       ),
     );
   }),
