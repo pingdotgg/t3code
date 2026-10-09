@@ -91,7 +91,7 @@ and trigger a check. A merge outside T3, such as an agent running `gh pr merge`,
 notification, so the [PR sync reactor](../../apps/server/src/orchestration-v2/PullRequestSyncReactor.ts)
 re-reads a thread's open links when a run that ran a merge or close command ends. The guarded
 `thread.auto-settle` command rejects newer activity, explicit settlement overrides, and live or
-blocked work. It records the activity timestamp for stable
+blocked work. It records the activity timestamp, or creation time for a thread with no activity, for stable
 sorting and detaches idle provider sessions. Clients render the persisted result; they do not
 derive settlement from their own clocks or PR caches.
 

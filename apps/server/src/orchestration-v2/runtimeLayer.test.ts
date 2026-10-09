@@ -77,6 +77,7 @@ import { shellStreamItemFromThreadShell } from "./ShellStream.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import * as ThreadSettlementService from "./ThreadSettlementService.ts";
 
 const layerPlatformTest = Layer.merge(
   NodeServices.layer,
@@ -1677,6 +1678,64 @@ it.layer(layerLegacyImportTest)("OrchestrationV2 legacy import", (it) => {
 });
 
 it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
+  it.effect("persists creation time when automatically settling a zero-activity thread", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make("runtime-zero-activity-settlement");
+      const projectId = ProjectId.make("runtime-zero-activity-settlement-project");
+      yield* seedProject({
+        projectId,
+        title: "Settlement project",
+        workspaceRoot: "/workspace/settlement",
+        defaultModelSelection: null,
+        createdAt: "2026-09-07T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("runtime-zero-activity-settlement-create"),
+        threadId,
+        projectId,
+        title: "Empty thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const [candidate] = yield* projections.getSettlementCandidates(threadId);
+      assert.isDefined(candidate);
+      assert.isNull(candidate!.latestUserMessageAt);
+      assert.isNull(candidate!.latestRunRequestedAt);
+      const settledAt = ThreadSettlementService.resolveAutoSettlementAt({
+        thread: candidate!,
+        pullRequest: null,
+        nowMs: DateTime.toEpochMillis(candidate!.createdAt) + 4 * 24 * 60 * 60 * 1_000,
+        autoSettleAfterDays: 3,
+        autoSettleOnMerge: true,
+      });
+      assert.deepEqual(settledAt, candidate!.createdAt);
+      yield* orchestrator.dispatch({
+        type: "thread.auto-settle",
+        commandId: CommandId.make("runtime-zero-activity-settlement-auto"),
+        threadId,
+        snapshotAt: candidate!.updatedAt,
+        settledAt: settledAt!,
+      });
+      const settled = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(settled.thread.settledOverride, "settled");
+      assert.deepEqual(settled.thread.settledAt, settled.thread.createdAt);
+      assert.isEmpty(settled.messages);
+      assert.isEmpty(settled.runs);
+      const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+        (thread) => thread.id === threadId,
+      );
+      assert.deepEqual(shell?.settledAt, settled.thread.createdAt);
+    }),
+  );
+
   it.effect("applies lifecycle commands idempotently and emits archive/removal shell deltas", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
