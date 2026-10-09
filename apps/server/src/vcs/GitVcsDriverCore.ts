@@ -29,6 +29,7 @@ import {
   type VcsRef,
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@t3tools/shared/git";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
@@ -136,6 +137,12 @@ type TraceTailState = {
 class StatusRemoteRefreshCacheKey extends Data.Class<{
   gitCommonDir: string;
   remoteName: string;
+}> {}
+
+class FetchRemoteKey extends Data.Class<{
+  cwd: string;
+  remoteName: string;
+  refName: string | undefined;
 }> {}
 
 function statusUpstreamRefreshFailureCooldown(consecutiveFailures: number): Duration.Duration {
@@ -444,6 +451,9 @@ const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFai
   [/would clobber existing tag/i, "tag_would_be_clobbered"],
   [/is already (?:used by worktree at|checked out at)/i, "branch_checked_out_in_worktree"],
   [/a branch named .+ already exists/i, "branch_already_exists"],
+  // Concurrent branch creation can pass Git's first existence check and lose
+  // the atomic ref claim instead. Restrict this to heads, not tag collisions.
+  [/cannot lock ref 'refs\/heads\/[^']+': reference already exists/i, "branch_already_exists"],
   // ssh names the methods it tried, so the parenthesized list varies:
   // `(publickey)`, `(publickey,password)`, `(keyboard-interactive)`.
   [
@@ -945,6 +955,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const { worktreesDir } = yield* ServerConfig.ServerConfig;
   const crypto = yield* Crypto.Crypto;
   const hostPlatform = yield* HostProcessPlatform;
+  // Worktrees share one Git config, and Git fails rather than waits when its
+  // lock is held. Config writes take this per-repository lock instead.
+  const configLocks = yield* KeyedLock.make<string>();
 
   const executeRaw: GitVcsDriver.GitVcsDriver["Service"]["execute"] = Effect.fnUntraced(
     function* (input) {
@@ -3527,11 +3540,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         remoteNames.toSorted((left, right) => right.length - left.length),
       );
       const baseBranch = parsedBaseRef?.branchName ?? input.baseRefName;
-      yield* runGit("GitVcsDriver.createWorktree.configureBaseRef", input.cwd, [
-        "config",
-        `branch.${input.newRefName}.gh-merge-base`,
-        baseBranch,
-      ]);
+      // Locked here rather than around the whole call so checkouts stay concurrent.
+      yield* configLocks.withLock(
+        yield* resolveGitCommonDir(input.cwd),
+        runGit("GitVcsDriver.createWorktree.configureBaseRef", input.cwd, [
+          "config",
+          `branch.${input.newRefName}.gh-merge-base`,
+          baseBranch,
+        ]),
+      );
     }
 
     return {
@@ -3721,6 +3738,26 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     },
   );
+  // Concurrent fetches of one ref race for the same ref lock and all but one
+  // fail, as when many threads launch from one base at once. Callers that
+  // arrive while a fetch is running share it instead.
+  const fetchRemoteInFlight = yield* Cache.makeWith(
+    ({ refName, ...input }: FetchRemoteKey) =>
+      fetchRemote(refName === undefined ? input : { ...input, refName }),
+    {
+      capacity: Number.POSITIVE_INFINITY,
+      timeToLive: () => Duration.zero,
+    },
+  );
+  const fetchRemoteShared: GitVcsDriver.GitVcsDriver["Service"]["fetchRemote"] = (input) =>
+    Cache.get(
+      fetchRemoteInFlight,
+      new FetchRemoteKey({
+        cwd: input.cwd,
+        remoteName: input.remoteName,
+        refName: input.refName,
+      }),
+    );
 
   const resolveRemoteTrackingCommit: GitVcsDriver.GitVcsDriver["Service"]["resolveRemoteTrackingCommit"] =
     Effect.fn("resolveRemoteTrackingCommit")(function* (input) {
@@ -3861,21 +3898,29 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (input.oldBranch === input.newBranch) {
       return { branch: input.newBranch };
     }
-    const targetBranch = input.exactName
-      ? input.newBranch
-      : yield* resolveAvailableBranchName(input.cwd, input.newBranch);
+    // `git branch -m` moves the branch's config section after the ref, so a
+    // lost config lock cannot be retried. The lock also keeps concurrent
+    // renames to one name from picking the same free suffix.
+    return yield* configLocks.withLock(
+      yield* resolveGitCommonDir(input.cwd),
+      Effect.gen(function* () {
+        const targetBranch = input.exactName
+          ? input.newBranch
+          : yield* resolveAvailableBranchName(input.cwd, input.newBranch);
 
-    yield* executeGit(
-      "GitVcsDriver.renameBranch",
-      input.cwd,
-      ["branch", "-m", "--", input.oldBranch, targetBranch],
-      {
-        timeoutMs: 10_000,
-        fallbackErrorDetail: "git branch rename failed",
-      },
+        yield* executeGit(
+          "GitVcsDriver.renameBranch",
+          input.cwd,
+          ["branch", "-m", "--", input.oldBranch, targetBranch],
+          {
+            timeoutMs: 10_000,
+            fallbackErrorDetail: "git branch rename failed",
+          },
+        );
+
+        return { branch: targetBranch };
+      }),
     );
-
-    return { branch: targetBranch };
   });
 
   const switchRef: GitVcsDriver.GitVcsDriver["Service"]["switchRef"] = Effect.fn("switchRef")(
@@ -4076,7 +4121,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ensureRemote: (input) => withListRefsInvalidation(input.cwd, ensureRemote(input)),
     resolvePrimaryRemoteName,
     resolveDefaultBranchName,
-    fetchRemote: (input) => withListRefsInvalidation(input.cwd, fetchRemote(input)),
+    fetchRemote: (input) => withListRefsInvalidation(input.cwd, fetchRemoteShared(input)),
     remoteExists,
     remoteBranchExists,
     resolveRemoteTrackingCommit,

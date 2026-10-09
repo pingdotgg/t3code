@@ -381,13 +381,14 @@ const make = Effect.gen(function* () {
           branch = flattenTemporaryWorktreeBranchName(branch);
         }
         yield* setupTracker.stageStatus(threadId, "checkout", "running");
-        const worktree = yield* git
-          .createWorktree(
+        const baseRefName = input.workspaceStrategy.baseRef;
+        const createWorktree = (newRefName: string) =>
+          git.createWorktree(
             {
               cwd: project.workspaceRoot,
               refName: startRef,
-              newRefName: branch!,
-              baseRefName: input.workspaceStrategy.baseRef,
+              newRefName,
+              baseRefName,
               path: null,
             },
             {
@@ -400,8 +401,38 @@ const make = Effect.gen(function* () {
                   setupTracker.stage(threadId, "checkout", { percent: progress.percent }),
               },
             },
-          )
-          .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+          );
+        const desiredBranch = branch!;
+        // Git claims the branch atomically. A preflight check alone would race
+        // with other launches, and retries must also escape leftover branches
+        // and directories from earlier attempts without touching those checkouts.
+        // Taken names get the same `-1`, `-2` suffixes renames use.
+        const worktree = yield* Effect.gen(function* () {
+          let candidate = desiredBranch;
+          for (let attempt = 1; ; attempt += 1) {
+            const result = yield* createWorktree(candidate).pipe(
+              Effect.catchTags({
+                GitCommandError: (error) =>
+                  attempt <= 100 &&
+                  createdWorktreePath === null &&
+                  (error.reason === "branch_already_exists" ||
+                    error.reason === "path_already_exists")
+                    ? Effect.succeed(null)
+                    : Effect.fail(error),
+              }),
+            );
+            if (result !== null) return result;
+            if (isTemporaryWorktreeBranch(desiredBranch)) {
+              const uuid = yield* randomUuidV4;
+              candidate = buildTemporaryWorktreeBranchName(() => uuid.replaceAll("-", ""));
+              if (!desiredBranch.includes("/")) {
+                candidate = flattenTemporaryWorktreeBranchName(candidate);
+              }
+            } else {
+              candidate = `${desiredBranch}-${attempt}`;
+            }
+          }
+        }).pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
         worktreePath = worktree.worktree.path;
         branch = worktree.worktree.refName;
         createdWorktreePath = worktreePath;
