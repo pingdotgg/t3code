@@ -1,12 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
-import * as NodePath from "node:path";
-import * as NodeChildProcess from "node:child_process";
+import * as NodeStream from "node:stream";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
@@ -15,22 +13,27 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
   BootstrapEnvelopeDecodeError,
+  BootstrapEnvelopeMissingError,
+  BootstrapEnvelopeReadError,
+  BootstrapEnvelopeTimeoutError,
   BootstrapFdStatError,
   BootstrapInputStreamOpenError,
   readBootstrapEnvelope,
 } from "./bootstrap.ts";
-import { assertNone, assertSome } from "@effect/vitest/utils";
 
 const openSyncInterceptor = vi.hoisted(() => ({
   failPath: null as string | null,
   errorCode: "ENXIO",
 }));
 const fstatSyncInterceptor = vi.hoisted(() => ({ failFd: null as number | null }));
+const readStreamInterceptor = vi.hoisted(() => ({ stream: null as NodeStream.Readable | null }));
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
   return {
     ...actual,
+    createReadStream: (...args: Parameters<typeof actual.createReadStream>) =>
+      readStreamInterceptor.stream ?? actual.createReadStream(...args),
     openSync: (...args: Parameters<typeof actual.openSync>) => {
       const [filePath, flags] = args;
       if (
@@ -76,6 +79,22 @@ const openBootstrapInputFd = (filePath: string) =>
 const TestEnvelopeSchema = Schema.Struct({ mode: Schema.String });
 const encodeTestEnvelopeSchema = Schema.encodeEffect(Schema.fromJsonString(TestEnvelopeSchema));
 
+// Control pipe delivery independently of the virtual timeout, on every host.
+const openControlledBootstrapInput = Effect.acquireRelease(
+  Effect.sync(() => {
+    const fd = NodeFS.openSync(nullDevice, "r");
+    const stream = new NodeStream.PassThrough();
+    readStreamInterceptor.stream = stream;
+    return { fd, stream };
+  }),
+  ({ fd, stream }) =>
+    Effect.sync(() => {
+      readStreamInterceptor.stream = null;
+      stream.destroy();
+      closeIfOpen(fd);
+    }),
+);
+
 it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
   it.effect("reads a bootstrap envelope from a provided fd", () =>
     Effect.gen(function* () {
@@ -90,7 +109,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
       const fd = yield* openBootstrapInputFd(filePath);
 
       const payload = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, { timeoutMs: 100 });
-      assertSome(payload, {
+      assert.deepEqual(payload, {
         mode: "desktop",
       });
     }),
@@ -117,7 +136,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
         const payload = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, {
           timeoutMs: 100,
         }).pipe(Effect.provideService(HostProcessPlatform, "linux"));
-        assertSome(payload, {
+        assert.deepEqual(payload, {
           mode: "desktop",
         });
       } finally {
@@ -159,13 +178,16 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
     }),
   );
 
-  it.effect("returns none when the fd is unavailable", () =>
+  it.effect("fails when the explicitly provided fd is unavailable", () =>
     Effect.gen(function* () {
       const fd = NodeFS.openSync(nullDevice, "r");
       NodeFS.closeSync(fd);
 
-      const payload = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, { timeoutMs: 100 });
-      assertNone(payload);
+      const error = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, {
+        timeoutMs: 100,
+      }).pipe(Effect.flip);
+      assert.instanceOf(error, BootstrapFdStatError);
+      assert.equal(error.fd, fd);
     }),
   );
 
@@ -213,43 +235,104 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
     }),
   );
 
-  // Needs a FIFO, which mkfifo creates; Windows has neither.
-  it.effect.skipIf(windowsHost)(
-    "returns none when the bootstrap read times out before any value arrives",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-bootstrap-" });
-        const fifoPath = NodePath.join(tempDir, "bootstrap.pipe");
+  it.effect("accepts an envelope arriving after the former one-second deadline", () =>
+    Effect.gen(function* () {
+      const { fd, stream } = yield* openControlledBootstrapInput;
+      const fiber = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.forkScoped,
+      );
 
-        yield* Effect.sync(() => NodeChildProcess.execFileSync("mkfifo", [fifoPath]));
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(1_001);
+      assert.isUndefined(fiber.pollUnsafe());
+      stream.end('{"mode":"desktop"}\n');
 
-        const _writer = yield* Effect.acquireRelease(
-          Effect.sync(() =>
-            NodeChildProcess.spawn("sh", ["-c", 'exec 3>"$1"; sleep 60', "sh", fifoPath], {
-              stdio: ["ignore", "ignore", "ignore"],
-            }),
-          ),
-          (writer) =>
-            Effect.sync(() => {
-              writer.kill("SIGKILL");
-            }),
-        );
+      const payload = yield* Fiber.join(fiber);
+      assert.deepEqual(payload, { mode: "desktop" });
+      assert.isTrue(stream.destroyed);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
 
-        const fd = yield* Effect.acquireRelease(
-          Effect.sync(() => NodeFS.openSync(fifoPath, "r")),
-          (fd) => Effect.sync(() => closeIfOpen(fd)),
-        );
+  it.effect("fails with the fd and deadline when no envelope arrives", () =>
+    Effect.gen(function* () {
+      const { fd, stream } = yield* openControlledBootstrapInput;
+      const fiber = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.flip,
+        Effect.forkScoped,
+      );
 
-        const fiber = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, {
-          timeoutMs: 100,
-        }).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(30_000);
 
-        yield* Effect.yieldNow;
-        yield* TestClock.adjust(Duration.millis(100));
+      const error = yield* Fiber.join(fiber);
+      assert.instanceOf(error, BootstrapEnvelopeTimeoutError);
+      assert.equal(error.fd, fd);
+      assert.equal(error.timeoutMs, 30_000);
+      assert.equal(
+        error.message,
+        `Timed out waiting for bootstrap envelope from file descriptor ${fd} after 30000 ms.`,
+      );
+      assert.isTrue(stream.destroyed);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
 
-        const payload = yield* Fiber.join(fiber);
-        assertNone(payload);
-      }).pipe(Effect.provide(TestClock.layer())),
+  it.effect("fails when the pipe closes without an envelope", () =>
+    Effect.gen(function* () {
+      const { fd, stream } = yield* openControlledBootstrapInput;
+      const fiber = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.flip,
+        Effect.forkScoped,
+      );
+
+      yield* Effect.yieldNow;
+      stream.end();
+
+      const error = yield* Fiber.join(fiber);
+      assert.instanceOf(error, BootstrapEnvelopeMissingError);
+      assert.equal(error.fd, fd);
+      assert.equal(
+        error.message,
+        `Bootstrap input on file descriptor ${fd} closed without an envelope.`,
+      );
+      assert.isTrue(stream.destroyed);
+    }),
+  );
+
+  it.effect("preserves read errors instead of treating an unavailable pipe as optional", () =>
+    Effect.gen(function* () {
+      const { fd, stream } = yield* openControlledBootstrapInput;
+      const cause = Object.assign(new Error("closed fd"), { code: "EBADF" });
+      const fiber = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.flip,
+        Effect.forkScoped,
+      );
+
+      yield* Effect.yieldNow;
+      stream.destroy(cause);
+
+      const error = yield* Fiber.join(fiber);
+      assert.instanceOf(error, BootstrapEnvelopeReadError);
+      assert.equal(error.fd, fd);
+      assert.equal(error.cause, cause);
+    }),
+  );
+
+  it.effect("destroys the bootstrap stream when the read is interrupted", () =>
+    Effect.gen(function* () {
+      const { fd, stream } = yield* openControlledBootstrapInput;
+      const fiber = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.forkScoped,
+      );
+
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(fiber);
+
+      assert.isTrue(stream.destroyed);
+    }),
   );
 });
