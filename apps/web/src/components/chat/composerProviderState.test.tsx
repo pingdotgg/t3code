@@ -15,9 +15,7 @@ import {
   withImplicitFastModeDefault,
 } from "./composerProviderState";
 
-// Everything in composerProviderState is now data-driven by the model's
-// optionDescriptors, so these tests use a single synthetic provider/model and
-// vary only the descriptor shape per scenario.
+// Use synthetic model descriptors to test resolved provider selections.
 
 const PROVIDER: ProviderDriverKind = ProviderDriverKind.make("codex");
 const MODEL = "test-model";
@@ -383,6 +381,119 @@ describe("getComposerProviderState", () => {
     expect(state).not.toHaveProperty("composerFrameClassName");
     expect(state).not.toHaveProperty("composerSurfaceClassName");
     expect(state).not.toHaveProperty("modelPickerIconClassName");
+  });
+
+  it("adds the shared border for a selected Codex Ultra effort", () => {
+    const state = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([
+        selectDescriptor("reasoningEffort", [
+          { id: "high", label: "High", isDefault: true },
+          { id: "ultra", label: "Ultra" },
+        ]),
+      ]),
+      modelOptions: selections(["reasoningEffort", "ultra"]),
+      planModeEnabled: true,
+    });
+
+    expect(state).toEqual({
+      provider: PROVIDER,
+      promptEffort: "ultra",
+      modelOptionsForDispatch: selections(["reasoningEffort", "ultra"]),
+      ...ULTRATHINK_FRAME_CLASSES,
+    });
+  });
+
+  it("adds the shared border for a Codex Ultra default after another select descriptor", () => {
+    const state = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([
+        selectDescriptor("contextWindow", [{ id: "200k", label: "200k", isDefault: true }]),
+        selectDescriptor("reasoningEffort", [{ id: "ultra", label: "Ultra", isDefault: true }]),
+      ]),
+      modelOptions: undefined,
+      planModeEnabled: true,
+    });
+
+    expect(state).toEqual({
+      provider: PROVIDER,
+      promptEffort: "200k",
+      modelOptionsForDispatch: undefined,
+      ...ULTRATHINK_FRAME_CLASSES,
+    });
+  });
+
+  it.each(["low", "medium", "high", "xhigh"])(
+    "keeps the ordinary border for Codex %s effort",
+    (effort) => {
+      const state = getComposerProviderState({
+        provider: PROVIDER,
+        model: MODEL,
+        models: modelWith([
+          selectDescriptor("reasoningEffort", [
+            { id: effort, label: effort },
+            { id: "ultra", label: "Ultra", isDefault: true },
+          ]),
+        ]),
+        modelOptions: selections(["reasoningEffort", effort]),
+        planModeEnabled: true,
+      });
+
+      expect(state).toEqual({
+        provider: PROVIDER,
+        promptEffort: effort,
+        modelOptionsForDispatch: selections(["reasoningEffort", effort]),
+      });
+    },
+  );
+
+  it("keeps the ordinary border when a saved Ultra effort is unsupported", () => {
+    const state = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([
+        selectDescriptor("reasoningEffort", [{ id: "high", label: "High", isDefault: true }]),
+      ]),
+      modelOptions: selections(["reasoningEffort", "ultra"]),
+      planModeEnabled: true,
+    });
+
+    expect(state).toEqual({
+      provider: PROVIDER,
+      promptEffort: "high",
+      modelOptionsForDispatch: selections(["reasoningEffort", "high"]),
+    });
+  });
+
+  it("does not activate the border for Ultra on another Codex descriptor", () => {
+    const state = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([
+        selectDescriptor("contextWindow", [{ id: "ultra", label: "Ultra", isDefault: true }]),
+        selectDescriptor("reasoningEffort", [{ id: "high", label: "High", isDefault: true }]),
+      ]),
+      modelOptions: undefined,
+      planModeEnabled: true,
+    });
+
+    expect(state.composerFrameClassName).toBeUndefined();
+  });
+
+  it("does not activate the Codex Ultra border for another provider", () => {
+    const state = getComposerProviderState({
+      provider: ProviderDriverKind.make("claudeAgent"),
+      model: MODEL,
+      models: modelWith([
+        selectDescriptor("reasoningEffort", [{ id: "ultra", label: "Ultra", isDefault: true }]),
+      ]),
+      modelOptions: undefined,
+      planModeEnabled: true,
+    });
+
+    expect(state.composerFrameClassName).toBeUndefined();
   });
 
   it("defaults fastMode to false when the provider reports true but the user has not selected it", () => {

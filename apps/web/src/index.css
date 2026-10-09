@@ -2126,8 +2126,7 @@ code {
 }
 
 .ultrathink-frame {
-  --ultrathink-spectrum: linear-gradient(
-    120deg,
+  --ultrathink-spectrum: conic-gradient(
     #ff6b6b 0%,
     #f59e0b 18%,
     #22c55e 36%,
@@ -2139,17 +2138,15 @@ code {
   position: relative;
 }
 
-.ultrathink-frame::before {
-  content: "";
+.ultrathink-frame > .ultrathink-border {
   position: absolute;
   inset: 0;
   border-radius: inherit;
+  /* Whole pixels keep the mask equally thick on opposite edges. */
   padding: 2px;
-  background-image: var(--ultrathink-spectrum);
-  background-size: 220% 220%;
-  background-position: 0% 50%;
+  overflow: hidden;
+  container-type: size;
   pointer-events: none;
-  filter: saturate(0.82) brightness(0.92);
   -webkit-mask:
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
@@ -2158,6 +2155,33 @@ code {
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
   mask-composite: exclude;
+}
+
+.ultrathink-border::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: calc(100cqw + 100cqh);
+  aspect-ratio: 1;
+  background-image: var(--ultrathink-spectrum);
+  animation: ultrathink-border-flow 2.5s linear infinite;
+}
+
+@keyframes ultrathink-border-flow {
+  from {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ultrathink-border::before {
+    animation: none;
+    transform: translate(-50%, -50%);
+  }
 }
 
 .ultrathink-frame > * {
