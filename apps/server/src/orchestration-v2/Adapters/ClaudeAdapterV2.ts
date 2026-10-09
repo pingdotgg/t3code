@@ -3024,7 +3024,7 @@ export interface ClaudeAdapterV2Options {
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
   /** Store for the composer's suggested next prompt; defaults to dropping it. */
-  readonly promptSuggestions?: Pick<PromptSuggestions.PromptSuggestionsShape, "publish">;
+  readonly promptSuggestions?: Pick<typeof PromptSuggestions.PromptSuggestions.Service, "publish">;
   /** Sink for wake-turn continuation requests; defaults to dropping them. */
   readonly continuationRequests?: {
     readonly offer: (

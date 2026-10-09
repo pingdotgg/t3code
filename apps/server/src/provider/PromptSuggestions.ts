@@ -11,14 +11,6 @@ interface PromptSuggestionChange {
   readonly suggestion: PromptSuggestion | null;
 }
 
-export interface PromptSuggestionsShape {
-  readonly publish: (
-    threadId: ThreadId,
-    suggestion: PromptSuggestion | null,
-  ) => Effect.Effect<void>;
-  readonly stream: (threadId: ThreadId) => Stream.Stream<PromptSuggestion | null>;
-}
-
 /**
  * The latest suggested next prompt per thread, in memory only. Adapters
  * publish `null` when the next turn starts or the session closes, which bounds
@@ -29,21 +21,24 @@ export interface PromptSuggestionsShape {
  * the adapter infrastructure and the WebSocket routes so layer memoization
  * yields one shared map.
  */
-export class PromptSuggestions extends Context.Reference<PromptSuggestionsShape>(
-  "t3/provider/PromptSuggestions",
-  {
-    defaultValue: () => ({
-      publish: () => Effect.void,
-      stream: () => Stream.make(null),
-    }),
-  },
-) {}
+export class PromptSuggestions extends Context.Reference<{
+  readonly publish: (
+    threadId: ThreadId,
+    suggestion: PromptSuggestion | null,
+  ) => Effect.Effect<void>;
+  readonly stream: (threadId: ThreadId) => Stream.Stream<PromptSuggestion | null>;
+}>("t3/provider/PromptSuggestions", {
+  defaultValue: () => ({
+    publish: () => Effect.void,
+    stream: () => Stream.make(null),
+  }),
+}) {}
 
 export const make = Effect.gen(function* () {
   const suggestions = new Map<ThreadId, PromptSuggestion>();
   const changes = yield* PubSub.unbounded<PromptSuggestionChange>();
 
-  const publish: PromptSuggestionsShape["publish"] = (threadId, suggestion) =>
+  const publish: (typeof PromptSuggestions.Service)["publish"] = (threadId, suggestion) =>
     Effect.gen(function* () {
       const existing = suggestions.get(threadId) ?? null;
       if (existing?.id === suggestion?.id) return;
@@ -59,7 +54,7 @@ export const make = Effect.gen(function* () {
    * One-slot sliding mailbox per subscriber: each value replaces the last, so
    * a slow socket only ever holds the current suggestion.
    */
-  const stream: PromptSuggestionsShape["stream"] = (threadId) =>
+  const stream: (typeof PromptSuggestions.Service)["stream"] = (threadId) =>
     Stream.callback<PromptSuggestion | null>(
       (mailbox) =>
         Effect.gen(function* () {
@@ -78,7 +73,7 @@ export const make = Effect.gen(function* () {
       { bufferSize: 1, strategy: "sliding" },
     );
 
-  return { publish, stream } satisfies PromptSuggestionsShape;
+  return { publish, stream } satisfies typeof PromptSuggestions.Service;
 });
 
 export const layer = Layer.effect(PromptSuggestions, make);
