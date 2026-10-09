@@ -152,6 +152,7 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.previewReportStatus,
       WS_METHODS.previewAdjust,
       WS_METHODS.previewClearProfile,
+      WS_METHODS.previewReportProfiles,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthPreviewOperateScope);
     }

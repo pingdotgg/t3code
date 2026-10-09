@@ -119,4 +119,33 @@ describe("DesktopBrowserHost", () => {
       expect(paths).toEqual(["/srv/downloads/guid-1"]);
     }),
   );
+
+  it.effect("tells a download the person clicked from one the agent's input started", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+      // Reading the page is not acting on it.
+      yield* host.handleCommandLine(
+        encodeJson({
+          type: "cdp",
+          ...key,
+          message: encodeJson({ id: 1, method: "DOM.getDocument", params: {} }),
+        }),
+      );
+      expect(host.humanStartedDownload(debuggee.tab.webContents)).toBe(true);
+      yield* host.handleCommandLine(
+        encodeJson({
+          type: "cdp",
+          ...key,
+          message: encodeJson({
+            id: 2,
+            method: "Input.dispatchMouseEvent",
+            params: { type: "mousePressed", x: 1, y: 1 },
+          }),
+        }),
+      );
+      expect(host.humanStartedDownload(debuggee.tab.webContents)).toBe(false);
+    }),
+  );
 });

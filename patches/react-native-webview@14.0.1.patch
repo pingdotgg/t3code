@@ -1,0 +1,56 @@
+diff --git a/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java b/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
+index 80c6803..374f824 100644
+--- a/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
++++ b/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
+@@ -122,14 +122,50 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+         cleanupCallbacksAndDestroy();
+     }
+ 
++    private float touchDownX;
++    private float touchDownY;
++    private float lastTouchY;
++    private boolean multiTouch;
++
+     @Override
+     public boolean onTouchEvent(MotionEvent event) {
+         if (this.nestedScrollEnabled) {
+-            requestDisallowInterceptTouchEvent(true);
++            requestDisallowInterceptTouchEvent(!shouldYieldToParent(event));
+         }
+         return super.onTouchEvent(event);
+     }
+ 
++    // A page that scrolls vertically hands a mostly vertical drag to the scrolling
++    // parent once it cannot scroll further that way, as nested scroll views do on iOS
++    // and the web. A page that never scrolls vertically keeps every gesture, since it
++    // may scroll inside an iframe this view cannot measure. A gesture that ever has
++    // a second finger, such as a pinch, stays with the page until every finger lifts.
++    private boolean shouldYieldToParent(MotionEvent event) {
++        switch (event.getActionMasked()) {
++            case MotionEvent.ACTION_DOWN:
++                touchDownX = event.getX();
++                touchDownY = event.getY();
++                lastTouchY = touchDownY;
++                multiTouch = false;
++                return false;
++            case MotionEvent.ACTION_POINTER_DOWN:
++                multiTouch = true;
++                return false;
++            case MotionEvent.ACTION_MOVE:
++                if (multiTouch) return false;
++                float dy = event.getY() - lastTouchY;
++                lastTouchY = event.getY();
++                if (dy == 0) return false;
++                if (Math.abs(event.getY() - touchDownY) < Math.abs(event.getX() - touchDownX)) {
++                    return false;
++                }
++                if (!canScrollVertically(1) && !canScrollVertically(-1)) return false;
++                return !canScrollVertically(dy > 0 ? -1 : 1);
++            default:
++                return false;
++        }
++    }
++
+     @Override
+     protected void onSizeChanged(int w, int h, int ow, int oh) {
+         super.onSizeChanged(w, h, ow, oh);

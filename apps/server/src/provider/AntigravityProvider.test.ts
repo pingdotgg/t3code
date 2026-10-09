@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
@@ -18,8 +19,11 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import type { AcpSessionRuntimeStartResult } from "./acp/AcpSessionRuntime.ts";
+import * as ProviderHostLive from "./ProviderHostLive.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   buildAntigravityModelsFromSession,
   makeAntigravityProvider,
@@ -94,7 +98,7 @@ const started = {
   initializeResult,
   sessionSetupResult,
   modelConfigId: "model",
-} satisfies AcpSessionRuntimeStartResult;
+} satisfies AcpSessionRuntime.AcpSessionRuntimeStartResult;
 
 const commands = [
   { name: "plan", description: "Create a plan", input: { type: "text", hint: "What to plan" } },
@@ -106,11 +110,19 @@ const expectedCommands = [
   { name: "logout", description: "Sign out of Google" },
 ];
 
-const layerTest = Layer.merge(
-  Layer.mock(BackgroundPolicy.BackgroundPolicy)({
-    shouldRunScopeWork: () => Effect.succeed(false),
-  }),
-  ServerSettings.layerTest(),
+const layerTest = ProviderHostLive.layer.pipe(
+  Layer.provideMerge(
+    Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+      shouldRunScopeWork: () => Effect.succeed(false),
+    }),
+  ),
+  Layer.provideMerge(ServerSettings.layerTest()),
+  Layer.provideMerge(ServerSecretStore.layer),
+  Layer.provide(
+    ServerConfig.layerTest(process.cwd(), { prefix: "t3-antigravity-provider-test-" }).pipe(
+      Layer.provideMerge(NodeServices.layer),
+    ),
+  ),
 );
 
 type ProbeError = EffectAcpErrors.AcpError | ProviderSetupError;
