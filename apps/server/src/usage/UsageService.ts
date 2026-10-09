@@ -60,6 +60,7 @@ import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { resolveAntigravityInstanceDirectories } from "../provider/antigravityAuthSupport.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { readOpenCodeUsage } from "./opencodeUsageReader.ts";
+import * as UsageAttribution from "./UsageAttribution.ts";
 import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUsageReader.ts";
 import {
   CURSOR_ACCOUNT_CACHE_FILE_NAME,
@@ -83,13 +84,14 @@ import {
 import {
   decodeScanCache,
   dedupeWithinFile,
-  LEGACY_SCAN_CACHE_FILE_NAME,
+  LEGACY_SCAN_CACHE_FILE_NAMES,
   makeScanCacheWriter,
   pruneScanCache,
   SCAN_CACHE_FILE_NAME,
   type CachedFile,
   type ScanCache,
 } from "./usageScanCache.ts";
+import { claudeSubagentId, EMPTY_ATTRIBUTION, UsageThreadIndex } from "./usageThreadIndex.ts";
 import type { UsageRecord } from "./usageTranscripts.ts";
 
 const LITELLM_RATES_URL =
@@ -106,7 +108,8 @@ const RATES_REFRESH_FLOOR_MS = 60 * 1000;
  * last write lands just before local midnight on the window's first day.
  */
 const MTIME_SLACK_MS = 36 * 60 * 60 * 1000;
-const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
+// Long enough for the week view's six-hour intervals.
+const MAX_HOURLY_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 
 /**
  * The longest window the UI offers, 90 days, plus its `MTIME_SLACK_MS`, rounded
@@ -120,6 +123,9 @@ const CURSOR_ACCOUNT_READ_ERROR = "Cursor account usage could not be read.";
 const TRANSCRIPT_READ_CONCURRENCY = 4;
 
 const decodeCodexSettings = Schema.decodeOption(CodexSettings);
+const decodeSubagentMeta = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ description: Schema.optional(Schema.String) })),
+);
 const decodeClaudeSettings = Schema.decodeOption(ClaudeSettings);
 
 /** On-disk shape of the rate snapshot. */
@@ -217,6 +223,7 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const hostEnvironment = yield* HostProcessEnvironment;
   const platform = yield* HostProcessPlatform;
+  const attribution = yield* UsageAttribution.UsageAttribution;
   const cursorAccountReader = yield* CursorUsageReader.CursorAccountReader;
 
   const fileCache: ScanCache = new Map();
@@ -244,7 +251,9 @@ export const make = Effect.gen(function* () {
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, SCAN_CACHE_FILE_NAME);
-  const legacyScanCachePath = path.join(config.stateDir, LEGACY_SCAN_CACHE_FILE_NAME);
+  const legacyScanCachePaths = LEGACY_SCAN_CACHE_FILE_NAMES.map((name) =>
+    path.join(config.stateDir, name),
+  );
   const cursorCachePath = path.join(config.stateDir, CURSOR_ACCOUNT_CACHE_FILE_NAME);
   const writeCacheFile = (filePath: string, contents: string) =>
     writeFileStringAtomically({ filePath, contents }).pipe(
@@ -348,8 +357,10 @@ export const make = Effect.gen(function* () {
       dir: string;
       volumeId: string;
       fileName?: string;
+      /** The only instance reading this directory; null when several share it. */
+      instanceId: string | null;
     }> = [];
-    const seen = new Set<string>();
+    const seen = new Map<string, (typeof dirs)[number]>();
     for (const driver of ["claudeAgent", "codex", "grok"] as const) {
       // Disabled accounts still have history. An unconfigured default slot
       // runs with default config, just as it does in the provider registry.
@@ -419,14 +430,20 @@ export const make = Effect.gen(function* () {
           cacheDirty = true;
         }
         const key = `${provider}\0${dir}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        dirs.push({
+        const shared = seen.get(key);
+        if (shared !== undefined) {
+          if (shared.instanceId !== instance.instanceId) shared.instanceId = null;
+          continue;
+        }
+        const entry: (typeof dirs)[number] = {
           provider,
           dir,
           volumeId,
+          instanceId: instance.instanceId,
           ...(provider === "grok" ? { fileName: "updates.jsonl" } : {}),
-        });
+        };
+        seen.set(key, entry);
+        dirs.push(entry);
       }
     }
     return dirs;
@@ -450,8 +467,9 @@ export const make = Effect.gen(function* () {
         cursorCaches.set(key, cache);
       }
       let document = yield* readDocument(scanCachePath);
-      if (document === null) {
-        document = yield* readDocument(legacyScanCachePath);
+      for (const legacyPath of legacyScanCachePaths) {
+        if (document !== null) break;
+        document = yield* readDocument(legacyPath);
         // Write the migrated cache to its own file on the next scan.
         cacheDirty = document !== null;
       }
@@ -538,6 +556,8 @@ export const make = Effect.gen(function* () {
     provider: UsageProviderKind,
   ): Effect.Effect<{
     readonly records: readonly UsageRecord[];
+    readonly cwd: string | null;
+    readonly label: string | null;
     readonly update?: { readonly entry: CachedFile; readonly replaces: CachedFile | undefined };
   }> =>
     Effect.gen(function* () {
@@ -555,6 +575,8 @@ export const make = Effect.gen(function* () {
             cached.tailRecords.length === 0
               ? cached.records
               : [...cached.records, ...cached.tailRecords],
+          cwd: cached.cwd,
+          label: cached.label,
         };
       }
 
@@ -570,10 +592,14 @@ export const make = Effect.gen(function* () {
       );
       // A read failure is not an empty transcript: caching it under this
       // (size, mtime) would silently drop the file's usage until it changes.
-      if (parsed === null)
+      if (parsed === null) {
+        const usable = cached?.provider === provider ? cached : undefined;
         return {
-          records: cached?.provider === provider ? [...cached.records, ...cached.tailRecords] : [],
+          records: usable === undefined ? [] : [...usable.records, ...usable.tailRecords],
+          cwd: usable?.cwd ?? null,
+          label: usable?.label ?? null,
         };
+      }
 
       // Stored already de-duplicated within the file, which is 99% of all
       // duplicates. The aggregator still runs the cross-file dedupe pass. One
@@ -583,31 +609,73 @@ export const make = Effect.gen(function* () {
       const seen = new Set<string>();
       const records = dedupeWithinFile([...base, ...parsed.records], seen);
       const tailRecords = dedupeWithinFile(parsed.tailRecords, seen);
+      // A session belongs to the folder it started in. A resumed read only saw
+      // appended lines, so the folder found before the resume point wins.
+      const cwd = parsed.resumed ? (cached?.cwd ?? parsed.cwd) : parsed.cwd;
+      // Re-read with the transcript, so a description written or edited
+      // since the last parse shows up.
+      const label =
+        provider === "claude" && claudeSubagentId(filePath) !== null
+          ? yield* readSubagentLabel(filePath)
+          : null;
 
       return {
         records: tailRecords.length === 0 ? records : [...records, ...tailRecords],
+        cwd,
+        label,
         update: {
-          entry: { size, mtimeMs, provider, records, tailRecords, position: parsed.position },
+          entry: {
+            size,
+            mtimeMs,
+            provider,
+            records,
+            tailRecords,
+            position: parsed.position,
+            cwd,
+            label,
+          },
           replaces: cached,
         },
       };
     });
+
+  /**
+   * Claude Code saves what each sub-agent was asked to do beside its
+   * transcript. A missing or unreadable file only costs the label.
+   */
+  const readSubagentLabel = (transcriptPath: string) =>
+    fileSystem.readFileString(transcriptPath.replace(/\.jsonl$/, ".meta.json")).pipe(
+      Effect.map((raw) =>
+        Option.match(decodeSubagentMeta(raw), {
+          onNone: () => null,
+          onSome: (meta) => meta.description?.trim() || null,
+        }),
+      ),
+      Effect.orElseSucceed(() => null),
+    );
 
   /** One provider directory's walk and parse, before rates are involved. */
   interface ScannedDir {
     readonly provider: UsageProviderKind;
     readonly dir: string;
     readonly volumeId: string;
+    /** The only provider instance reading this directory, when just one does. */
+    readonly instanceId?: string | null;
     readonly hostId?: string;
     readonly status?: UsageSource["status"];
     readonly message?: string;
     readonly action?: UsageSource["action"];
     /** Parsed records per file, or `null` when the directory does not exist. */
-    readonly files:
-      | readonly { readonly path: string; readonly records: readonly UsageRecord[] }[]
-      | null;
+    readonly files: readonly ScannedFile[] | null;
     /** Answered from a cache while a refresh runs. */
     readonly refreshing?: true;
+  }
+
+  interface ScannedFile {
+    readonly path: string;
+    readonly records: readonly UsageRecord[];
+    readonly cwd?: string | null;
+    readonly label?: string | null;
   }
 
   const scanTranscriptDir = Effect.fn("UsageService.scanTranscriptDir")(function* (
@@ -616,14 +684,15 @@ export const make = Effect.gen(function* () {
       readonly dir: string;
       readonly volumeId: string;
       readonly fileName?: string;
+      readonly instanceId: string | null;
     },
     windowStartMs: number,
   ) {
-    const { provider, dir, volumeId, fileName } = source;
+    const { provider, dir, volumeId, fileName, instanceId } = source;
     const exists = yield* fileSystem
       .exists(dir)
       .pipe(Effect.catchCause(() => Effect.succeed(false)));
-    if (!exists) return { provider, dir, volumeId, files: null } satisfies ScannedDir;
+    if (!exists) return { provider, dir, volumeId, instanceId, files: null } satisfies ScannedDir;
     const files = yield* Effect.promise(() =>
       listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
     );
@@ -637,8 +706,8 @@ export const make = Effect.gen(function* () {
         ),
       { concurrency: TRANSCRIPT_READ_CONCURRENCY },
     );
-    const parsedFiles = read.map(({ path, records, update }) => {
-      if (update === undefined) return { path, records };
+    const parsedFiles = read.map(({ path, records, cwd, label, update }) => {
+      if (update === undefined) return { path, records, cwd, label };
       // A scan of another window may have cached its own read of this file
       // meanwhile. Then keep whichever read saw the later file, so a slower
       // scan never replaces newer usage with older.
@@ -651,9 +720,9 @@ export const make = Effect.gen(function* () {
         fileCache.set(path, update.entry);
         cacheDirty = true;
       }
-      return { path, records };
+      return { path, records, cwd, label };
     });
-    return { provider, dir, volumeId, files: parsedFiles } satisfies ScannedDir;
+    return { provider, dir, volumeId, instanceId, files: parsedFiles } satisfies ScannedDir;
   });
 
   /** Fetches what one account cache is missing, then persists it if anything changed. */
@@ -1034,7 +1103,7 @@ export const make = Effect.gen(function* () {
       if (durationMs <= 0 || durationMs > MAX_HOURLY_WINDOW_MS) {
         return yield* new UsageReadError({
           reason: "invalidWindow",
-          detail: "Hourly usage window must be greater than zero and at most 24 hours",
+          detail: "Hourly usage window must be greater than zero and at most 14 days",
         });
       }
       hourlyWindow = { sinceTimeMs, untilTimeMs };
@@ -1059,13 +1128,32 @@ export const make = Effect.gen(function* () {
     // Pricing only matters once records are aggregated, so the rate table
     // loads while transcripts stream instead of gating them: a cold rates
     // fetch on a slow network no longer delays the scan by its own timeout.
-    const [, scannedDirs] = yield* Effect.all(
+    // Attribution reads T3's own records. A failure there costs the thread
+    // breakdown, never the totals.
+    const [, scannedDirs, attributionIndex] = yield* Effect.all(
       [
         ensureRates(false),
         collectDirs(windowStartMs, settings, retentionCutoffMs, input.awaitRefresh === true),
+        input.groupByThread
+          ? attribution.read.pipe(
+              // Usage still reads without threads; the stage says which read failed.
+              Effect.catchTags({
+                UsageAttributionError: (error) =>
+                  Effect.logWarning("Usage thread attribution unavailable", {
+                    stage: error.stage,
+                  }).pipe(Effect.as(EMPTY_ATTRIBUTION)),
+              }),
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Usage thread attribution failed", Cause.pretty(cause)).pipe(
+                  Effect.as(EMPTY_ATTRIBUTION),
+                ),
+              ),
+            )
+          : Effect.succeed(null),
       ],
-      { concurrency: 2 },
+      { concurrency: 3 },
     );
+    const threadIndex = attributionIndex === null ? null : new UsageThreadIndex(attributionIndex);
 
     const aggregator = new UsageAggregator({
       timeZone: input.timeZone,
@@ -1096,7 +1184,12 @@ export const make = Effect.gen(function* () {
           !isWithinDirectory(filePath, dir)
         )
           continue;
-        retainedFiles.push({ path: filePath, records: [...entry.records, ...entry.tailRecords] });
+        retainedFiles.push({
+          path: filePath,
+          records: [...entry.records, ...entry.tailRecords],
+          cwd: entry.cwd,
+          label: entry.label,
+        });
       }
       return retainedFiles;
     });
@@ -1104,7 +1197,18 @@ export const make = Effect.gen(function* () {
 
     for (const [
       index,
-      { provider, dir, volumeId, files, status, message, action, refreshing, hostId: sourceHostId },
+      {
+        provider,
+        dir,
+        volumeId,
+        files,
+        status,
+        message,
+        action,
+        refreshing,
+        hostId: sourceHostId,
+        instanceId,
+      },
     ] of scannedDirs.entries()) {
       let scannedFiles = 0;
       let skippedFiles = 0;
@@ -1119,6 +1223,7 @@ export const make = Effect.gen(function* () {
         }
         scannedFiles += 1;
         const codexEventOccurrences = new Map<string, number>();
+        const agentId = provider === "claude" ? claudeSubagentId(file.path) : null;
         for (const record of file.records) {
           let usageRecord = record;
           if (record.provider === "codex" && sharedSessions.has(record.sessionId)) {
@@ -1138,7 +1243,19 @@ export const make = Effect.gen(function* () {
           }
           // Only sessions contributing in-window count; the mtime slack can
           // admit boundary files whose records fall outside the range.
-          if (aggregator.add(usageRecord, dir) && record.sessionId.length > 0) {
+          const group =
+            threadIndex === null
+              ? undefined
+              : () =>
+                  threadIndex.groupFor({
+                    provider: record.provider,
+                    sessionId: record.sessionId,
+                    cwd: file.cwd ?? null,
+                    agentId,
+                    label: file.label ?? null,
+                    instanceId: instanceId ?? null,
+                  });
+          if (aggregator.add(usageRecord, dir, group) && record.sessionId.length > 0) {
             sessionIds.add(record.sessionId);
           }
         }
@@ -1175,6 +1292,7 @@ export const make = Effect.gen(function* () {
       buckets: aggregated.buckets,
       sources,
       pricing: pricing(),
+      ...threadIndex?.finish(),
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
     } satisfies UsageSummary;
   });
@@ -1194,6 +1312,7 @@ export const make = Effect.gen(function* () {
       input.resolution ?? "day",
       input.sinceTime ?? null,
       input.untilTime ?? null,
+      input.groupByThread === true,
       settings.usagePriceOverrides,
       settings.usageModelAliases,
       settings.cursorKeychainUsageEnabled,

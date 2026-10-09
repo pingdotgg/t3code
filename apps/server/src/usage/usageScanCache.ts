@@ -26,17 +26,23 @@ import type { CodexScanState, UsageRecord, UsageSpeed } from "./usageTranscripts
 // v4: records carry Claude fast mode, which v3 rows never captured.
 // v5: Codex records carry their service tier. v4 rows store speed the same
 // way, so v4 entries still load; see `decodeScanCache` for v4 Codex entries.
-const USAGE_SCAN_CACHE_VERSION = 5 as const;
+// v6: entries carry the session's working directory and sub-agent label, so
+// usage can be attributed to projects. Older entries still load, and live
+// transcripts re-parse once to pick these up.
+const USAGE_SCAN_CACHE_VERSION = 6 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
  * Each cache version writes its own file in the state directory. An older
  * server sharing that directory cannot read a newer cache and would replace
  * it, dropping saved usage for deleted transcripts. Separate files keep both.
- * A v5 server reads the legacy (v4) file once, when its own file is missing.
+ * When its own file is missing, a server reads the newest legacy file once.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v5.json";
-export const LEGACY_SCAN_CACHE_FILE_NAME = "usage-scan-cache.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v6.json";
+export const LEGACY_SCAN_CACHE_FILE_NAMES = [
+  "usage-scan-cache-v5.json",
+  "usage-scan-cache.json",
+] as const;
 
 /** Serialised as the index into this list. */
 const SPEEDS: readonly UsageSpeed[] = ["standard", "fast", "ultrafast"];
@@ -58,6 +64,10 @@ export interface CachedFile {
    */
   readonly tailRecords: readonly UsageRecord[];
   readonly position: TranscriptParsePosition;
+  /** Working directory the session ran in, when the transcript says. */
+  readonly cwd: string | null;
+  /** What a provider-native sub-agent was asked to do, from its metadata. */
+  readonly label: string | null;
 }
 
 export type ScanCache = Map<string, CachedFile>;
@@ -94,6 +104,9 @@ interface SerializedFile {
   readonly gh: number;
   /** Codex reducer state at `o`; `null` for stateless providers. */
   readonly cs: CodexScanState | null;
+  /** Working directory and sub-agent label; absent when unknown. */
+  readonly w?: string;
+  readonly l?: string;
 }
 
 interface SerializedCache {
@@ -148,6 +161,8 @@ function serializeFile(entry: CachedFile, tables: InternTables): SerializedFile 
     gl: entry.position.guardLength,
     gh: entry.position.guardHash,
     cs: entry.position.codexState,
+    ...(entry.cwd === null ? {} : { w: entry.cwd }),
+    ...(entry.label === null ? {} : { l: entry.label }),
   };
 }
 
@@ -320,11 +335,12 @@ export function decodeScanCache(document: unknown): ScanCache {
     ) {
       continue;
     }
-    // v4 Codex records predate service tiers, so they all priced as standard.
-    // Keep them, because the rollout may be gone, but make a live rollout
-    // re-parse whole: no file has size -1, and a zero position cannot resume.
-    const legacyCodex = entry.p === "codex" && version < USAGE_SCAN_CACHE_VERSION;
-    const codexState = legacyCodex ? null : decodeCodexState(entry.cs);
+    // v4 Codex records predate service tiers, and v5 entries predate working
+    // directories. Keep their records, because the transcript may be gone, but
+    // make a live transcript re-parse whole: no file has size -1, and a zero
+    // position cannot resume.
+    const legacy = version < USAGE_SCAN_CACHE_VERSION && entry.p !== "grok";
+    const codexState = legacy ? null : decodeCodexState(entry.cs);
     if (codexState === undefined) continue;
 
     const provider: UsageProviderKind = entry.p;
@@ -333,14 +349,16 @@ export function decodeScanCache(document: unknown): ScanCache {
     if (records === null || tailRecords === null) continue;
 
     cache.set(path, {
-      size: legacyCodex ? -1 : entry.s,
+      size: legacy ? -1 : entry.s,
       mtimeMs: entry.m,
       provider,
       records,
       tailRecords,
-      position: legacyCodex
+      position: legacy
         ? { resumeOffset: 0, guardLength: 0, guardHash: 0, codexState: null }
         : { resumeOffset: entry.o, guardLength: entry.gl, guardHash: entry.gh, codexState },
+      cwd: typeof entry.w === "string" && entry.w.length > 0 ? entry.w : null,
+      label: typeof entry.l === "string" && entry.l.length > 0 ? entry.l : null,
     });
   }
 
@@ -376,6 +394,7 @@ function decodeCodexState(value: unknown): CodexScanState | null | undefined {
     sawSessionMeta: state.sawSessionMeta,
     suppressingForkCopies: state.suppressingForkCopies,
     forkCopyAnchorMs: state.forkCopyAnchorMs,
+    cwd: typeof state.cwd === "string" ? state.cwd : "",
   };
 }
 

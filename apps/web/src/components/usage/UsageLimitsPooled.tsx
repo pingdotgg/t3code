@@ -641,7 +641,8 @@ function LimitNotices({ notices }: { readonly notices: readonly string[] }) {
   return (
     <Alert variant="warning" controlAlignment="first-line">
       <AlertTriangleIcon />
-      {notices.map((notice) => (
+      {/* Same-named environments can report the same notice. */}
+      {[...new Set(notices)].map((notice) => (
         <AlertTitle key={notice} className="break-words">
           {notice}
         </AlertTitle>

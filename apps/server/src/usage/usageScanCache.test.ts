@@ -51,6 +51,8 @@ function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][])
       records,
       tailRecords: [],
       position: position(),
+      cwd: null,
+      label: null,
     });
   }
   return cache;
@@ -75,6 +77,8 @@ describe("scan cache round trip", () => {
       ],
       tailRecords: [record({ provider: "grok", model: "grok-4.5-build", dedupeKey: null })],
       position: position({ resumeOffset: 30, guardLength: 30, guardHash: 123 }),
+      cwd: null,
+      label: null,
     });
     original.set("/codex.jsonl", {
       size: 80,
@@ -93,13 +97,29 @@ describe("scan cache round trip", () => {
           sawSessionMeta: true,
           suppressingForkCopies: false,
           forkCopyAnchorMs: 0,
+          cwd: "/work/codex",
         },
       }),
+      cwd: "/work/codex",
+      label: null,
+    });
+    original.set("/claude/s/subagents/agent-a.jsonl", {
+      size: 10,
+      mtimeMs: 500,
+      provider: "claude",
+      records: [record()],
+      tailRecords: [],
+      position: position({ resumeOffset: 10, guardLength: 10, guardHash: 7 }),
+      cwd: "/work/orbit",
+      label: "Map the API",
     });
 
     const restored = decodeScanCache(JSON.parse(JSON.stringify(encodeScanCache(original))));
 
-    expect(restored.size).toBe(4);
+    expect(restored.size).toBe(5);
+    expect(restored.get("/claude/s/subagents/agent-a.jsonl")).toEqual(
+      original.get("/claude/s/subagents/agent-a.jsonl"),
+    );
     expect(restored.get("/a.jsonl")).toEqual(original.get("/a.jsonl"));
     expect(restored.get("/b.jsonl")).toEqual(original.get("/b.jsonl"));
     expect(restored.get("/grok.jsonl")).toEqual(original.get("/grok.jsonl"));
@@ -148,6 +168,19 @@ describe("scan cache round trip", () => {
     const previous = { ...encoded, version: 3 };
 
     expect(decodeScanCache(JSON.parse(JSON.stringify(previous))).size).toBe(0);
+  });
+
+  it("keeps v5 records but re-parses live transcripts to learn their folder", () => {
+    // v5 entries predate working directories. Their records still count when
+    // the transcript is gone; a live one re-parses whole on the next scan.
+    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
+    const restored = decodeScanCache(JSON.parse(JSON.stringify({ ...encoded, version: 5 })));
+
+    const entry = restored.get("/a.jsonl");
+    expect(entry?.records).toEqual([record()]);
+    expect(entry?.size).toBe(-1);
+    expect(entry?.position.resumeOffset).toBe(0);
+    expect(entry?.cwd).toBeNull();
   });
 
   it("rewrites only changed entries and still restores the whole cache", () => {

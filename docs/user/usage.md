@@ -11,7 +11,27 @@ environments. It shows token use, cache savings, model breakdowns, and estimated
 cost, split by token type and by speed. These estimates are not your subscription bill.
 **Premium** is what Fast and Ultrafast requests cost above standard rates. Cost that cannot be
 split, such as a provider-reported cost for a model without public rates, shows as **Other**.
-Select a model under **Breakdown** to see its trend, cache hit rate, and cost per million tokens.
+
+Choose **Projects**, **Providers**, **Models**, or, with more than one environment selected,
+**Environments** to group the chart and the list below it. The
+list is the chart's legend: select a row's colour to hide or show it, and the smaller rows stack
+as **Other**. Open a row to see what it is made of, such as a project's threads or a provider's
+accounts and models. **Focus** narrows the whole page to one row; with a project focused,
+**Threads** shows its threads, with provider and model filters. Each thread includes the
+sub-agents and delegated threads it started; open it to see them beside its main conversation.
+Select a model's name under **Models** to see its trend, cache hit rate, and cost per million
+tokens. Right-click a row for more, such as opening its thread or setting a price for an unpriced
+model. Press `/` to search projects, threads, and models. **Columns** chooses the list's
+columns and downloads it as CSV.
+
+Select providers or accounts in the list beside the total to include only them. Usage from a T3
+thread counts toward that thread's project. Sessions you ran outside T3 count toward the project
+whose folder they ran in, or **Outside projects** when they ran in no project's folder. Usage T3
+cannot place shows as **Unknown folder**: Cursor and Antigravity history, OpenCode and Grok sessions
+run outside T3, and history from servers that predate this view.
+
+Select the dates beside the environment dropdown to pick exact days, or drag across the chart to
+zoom in. **Running total** adds up usage from the start of the range.
 
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.
@@ -40,7 +60,11 @@ your app understands. Update the app to include newly supported providers.
 On web and desktop, use the environment dropdown to filter costs, tokens, and limits. All
 environments are selected by default. The dropdown shows which environments are still scanning;
 results appear as each one responds, and figures still updating are dimmed. Cursor shows its last
-saved totals first, then updates them when Cursor's API responds.
+saved totals first, then updates them when Cursor's API responds. When an environment is offline,
+Usage shows the usage it last reported to this browser, marked with the time it was read, and
+switches back to live usage when the environment reconnects. Environments on one machine that read
+the same history folder count it once, under the environment that ran most of that work in T3
+threads.
 
 If recent work is missing or a new model shows no cost, refresh to rescan session history and
 update model pricing.
@@ -51,8 +75,8 @@ On web or desktop, open the environment dropdown on **Usage**, then choose **Mod
 edit, or reset a model's estimated price. **Apply to** starts with your current Usage filter;
 choose all environments or select individual destinations. Enter the exact model ID and USD
 rates per million input and output tokens. You can enter any model ID, including models
-without public pricing. When a model on **Usage** has no known price, select it under
-**Breakdown** and choose **Set price** to open this table with that model added.
+without public pricing. When a model on **Usage** has no known price, right-click it under
+**Models** and choose **Set price** to open this table with that model added.
 
 Cache read and cache write rates are optional and use the input rate when blank. Enter `0` for
 tokens that are free. Saved prices replace automatic pricing for all of that environment's

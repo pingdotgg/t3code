@@ -100,20 +100,32 @@ function grokCostTicksToUsd(ticks: unknown): number | null {
  * message. Summing them overcounts by roughly 2.4x on a real workload, so the
  * caller must drop repeats by `dedupeKey` and keep the first.
  */
-export function parseClaudeLine(line: string): UsageRecord | null {
+export function parseClaudeLine(line: string, session?: SessionContext): UsageRecord | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(line);
   } catch {
     return null;
   }
-  return parseClaudeRecord(parsed);
+  return parseClaudeRecord(parsed, session);
 }
 
-export function parseClaudeRecord(parsed: unknown): UsageRecord | null {
+/**
+ * What a transcript says about its session beyond usage. Parsers fill empty
+ * fields from the first record that carries them.
+ */
+export interface SessionContext {
+  /** Working directory the session started in; empty when not seen yet. */
+  cwd: string;
+}
+
+export function parseClaudeRecord(parsed: unknown, session?: SessionContext): UsageRecord | null {
   if (typeof parsed !== "object" || parsed === null) return null;
 
   const record = parsed as Record<string, unknown>;
+  if (session !== undefined && session.cwd === "" && typeof record["cwd"] === "string") {
+    session.cwd = record["cwd"];
+  }
   if (record["type"] !== "assistant") return null;
 
   const message = record["message"];
@@ -179,6 +191,8 @@ export interface CodexScanState {
   /** While true, leading usage events are re-stamped copies of parent history. */
   suppressingForkCopies: boolean;
   forkCopyAnchorMs: number;
+  /** Working directory from the session's own meta; empty when unknown. */
+  cwd: string;
 }
 
 export function initialCodexScanState(): CodexScanState {
@@ -190,6 +204,7 @@ export function initialCodexScanState(): CodexScanState {
     sawSessionMeta: false,
     suppressingForkCopies: false,
     forkCopyAnchorMs: 0,
+    cwd: "",
   };
 }
 
@@ -249,6 +264,7 @@ export function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageR
     state.sawSessionMeta = true;
     const id = payloadRecord["id"] ?? payloadRecord["session_id"];
     if (typeof id === "string") state.sessionId = id;
+    if (typeof payloadRecord["cwd"] === "string") state.cwd = payloadRecord["cwd"];
     const metaTimestampMs = parseTimestampMs(record["timestamp"]);
     if (metaTimestampMs !== null && isForkedSessionMeta(payloadRecord)) {
       state.suppressingForkCopies = true;

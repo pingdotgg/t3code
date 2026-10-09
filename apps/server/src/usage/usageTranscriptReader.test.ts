@@ -96,6 +96,17 @@ function codexUsageLine(outputTokens: number, secondsOffset: number): string {
 }
 
 describe("readTranscriptRecords resume", () => {
+  it("takes a Claude session's folder from a record without usage", async () => {
+    const path = NodePath.join(dir, "claude.jsonl");
+    const user = JSON.stringify({ type: "user", cwd: "/work/app", message: { role: "user" } });
+    // The usage line itself names no folder.
+    await NodeFSP.writeFile(path, `${user}\n${claudeLine(1, 5)}`);
+    const read = await readTranscriptRecords(path, "claude");
+    assert.isNotNull(read);
+    assert.strictEqual(read.cwd, "/work/app");
+    assert.strictEqual(read.records.length, 1);
+  });
+
   it("parses only appended lines when resuming a grown file", async () => {
     const path = NodePath.join(dir, "claude.jsonl");
     await NodeFSP.writeFile(path, claudeLine(1, 5) + claudeLine(2, 7));

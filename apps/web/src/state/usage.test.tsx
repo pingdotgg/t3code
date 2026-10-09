@@ -1,14 +1,25 @@
 import {
   EnvironmentId,
   UsageDay,
+  UsageReadError,
   USAGE_CONTRACT_VERSION,
   type UsageProviderKind,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/reactivity";
 import { act, useLayoutEffect } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { useUsage, type EnvironmentUsageStatus, type UsageView } from "./usage";
+import {
+  dailyFallback,
+  distinctLabels,
+  environmentsNeedingBaseline,
+  isRejectedWindow,
+  useUsage,
+  type EnvironmentUsageStatus,
+  type UsageView,
+} from "./usage";
 
 const testState = vi.hoisted(() => ({ environments: [] as EnvironmentUsageStatus[] }));
 vi.mock("@effect/atom-react", async (importOriginal) => ({
@@ -36,6 +47,10 @@ function environment(
     isConnected: true,
     error: null,
     needsCursorKeychainAccess: false,
+    readByDay: false,
+    offline: false,
+    savedAt: null,
+    window: input,
     summary:
       cost === null
         ? null
@@ -236,5 +251,80 @@ describe("usage provider filter", () => {
     await act(() => renderer?.update(<Probe selected={null} />));
     expect(latest.merged.costUsd).toBe(15);
     expect(latest.merged.sessions).toBe(2);
+  });
+});
+
+describe("environmentsNeedingBaseline", () => {
+  it("needs every answering environment, except an offline one counted elsewhere", () => {
+    const live = environment("live", 10);
+    // Saved usage of its own, but none in this span.
+    const base = environment("quiet", 0);
+    const quiet = {
+      ...base,
+      summary: base.summary === null ? null : { ...base.summary, buckets: [] },
+      offline: true,
+      savedAt: "2026-09-04T11:00:00Z",
+    };
+    // Reads the same folder as "live": its saved usage is counted from there.
+    const copy = {
+      ...environment("copy", 10, "live"),
+      offline: true,
+      savedAt: "2026-09-04T11:00:00Z",
+    };
+    expect(environmentsNeedingBaseline([live, quiet, copy, environment("pending", null)])).toEqual([
+      "live",
+      "quiet",
+    ]);
+  });
+});
+
+describe("distinctLabels", () => {
+  it("adds where each runs only to names environments share", () => {
+    const entry = (label: string, place: string) => ({ label, place: () => place });
+    expect(
+      distinctLabels([
+        entry("Studio", "127.0.0.1:3773"),
+        entry("Studio", "127.0.0.1:4000"),
+        entry("Laptop", "laptop.tail:3773"),
+      ]),
+    ).toEqual(["Studio · 127.0.0.1:3773", "Studio · 127.0.0.1:4000", "Laptop"]);
+  });
+});
+
+describe("dailyFallback", () => {
+  it("reads a week-long hourly window by day for servers that reject it", () => {
+    const week = {
+      sinceDay: UsageDay.make("2026-09-29"),
+      untilDay: UsageDay.make("2026-10-05"),
+      timeZone: "UTC",
+      resolution: "hour" as const,
+      sinceTime: "2026-09-29T00:00:00.000Z",
+      untilTime: "2026-10-05T12:00:00.000Z",
+      groupByThread: true,
+    };
+    expect(dailyFallback(week)).toEqual({
+      sinceDay: week.sinceDay,
+      untilDay: week.untilDay,
+      timeZone: "UTC",
+      resolution: "day",
+      groupByThread: true,
+    });
+    // Every server reads a day by hour, so there is nothing to fall back to.
+    expect(dailyFallback({ ...week, sinceTime: "2026-10-04T12:00:00.000Z" })).toBeNull();
+    expect(dailyFallback({ ...week, resolution: "day" })).toBeNull();
+  });
+});
+
+describe("isRejectedWindow", () => {
+  it("falls back only when the server rejects the window itself", () => {
+    const rejected = new UsageReadError({ reason: "invalidWindow", detail: "at most 24 hours" });
+    const failedScan = new UsageReadError({ reason: "scanFailed", detail: "disk error" });
+    expect(isRejectedWindow(AsyncResult.failure(Cause.fail(rejected)))).toBe(true);
+    // A scan failure or a dropped connection stays an error, not a quieter daily read.
+    expect(isRejectedWindow(AsyncResult.failure(Cause.fail(failedScan)))).toBe(false);
+    expect(isRejectedWindow(AsyncResult.failure(Cause.die(new Error("socket closed"))))).toBe(
+      false,
+    );
+    expect(isRejectedWindow(AsyncResult.success(1))).toBe(false);
   });
 });

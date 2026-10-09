@@ -37,6 +37,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { projectFaviconCache } from "../assets/projectFaviconCache";
+import { clearSavedUsage } from "../state/savedUsage";
 
 const DATABASE_NAME = "t3code:connection-runtime";
 const DATABASE_VERSION = 4;
@@ -892,6 +893,7 @@ export const layer = Layer.effectContext(
         Effect.all(
           [
             Effect.promise(() => projectFaviconCache.clearEnvironment(environmentId)),
+            Effect.promise(() => clearSavedUsage(environmentId)),
             removeDatabaseValue(database, SHELL_STORE_NAME, environmentId),
             removeDatabaseValuesInRange(
               database,
