@@ -181,7 +181,8 @@ export const make = DesktopLifecycle.of({
         return;
       }
       // app.exit still emits "quit", where electron-updater would install a
-      // downloaded update under the relaunched app. Keep it for a real quit.
+      // downloaded update under the relaunched app on Windows and Linux. Keep
+      // it for a real quit. A macOS update Squirrel already staged still applies.
       yield* electronUpdater.setAutoInstallOnAppQuit(false);
       yield* electronApp.relaunch({
         execPath: process.execPath,

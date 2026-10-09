@@ -87,8 +87,8 @@ hold updates back while they run. Then it installs:
 
 T3 Code server restarts also wait for integrated terminal commands to finish.
 
-Desktop updates download in the background when the app detects an available
-release and install when you quit the app. Linux `.deb` updates ask for your
+The desktop app downloads its updates in the background and installs them when
+you quit, whatever **Update automatically** is set to. Linux `.deb` updates ask for your
 password, so they wait for you to choose **Install**.
 The app stays open while you work, including when it hosts multiple backends.
 On macOS, quit and reopen the app to install a downloaded update before switching
