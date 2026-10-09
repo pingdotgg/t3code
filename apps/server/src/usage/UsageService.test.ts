@@ -33,7 +33,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CursorUsageReader from "./cursorUsageReader.ts";
-import type { UsageRecord } from "./usageTranscripts.ts";
+import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 import * as UsageService from "./UsageService.ts";
 
 const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -805,6 +805,8 @@ describe("UsageService", () => {
                 },
                 [ProviderInstanceId.make("grok-work")]: {
                   driver: ProviderDriverKind.make("grok"),
+                  // An undecodable config must not hide history Grok reads by home alone.
+                  config: { customModels: "not-a-list" },
                   environment: [{ name: "GROK_HOME", value: grokHome, sensitive: false }],
                 },
               },

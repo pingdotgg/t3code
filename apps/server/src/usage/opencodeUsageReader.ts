@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 import * as NodeTimersPromises from "node:timers/promises";
 
-import { totalTokens, type UsageRecord } from "./usageTranscripts.ts";
+import { totalTokens, type UsageRecord } from "@t3tools/provider-core/server/usage";
 
 function object(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
