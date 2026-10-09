@@ -377,6 +377,26 @@ layer("CommandOutputHub", (it) => {
     ),
   );
 
+  it.effect("a finished command whose output is one huge line still shows its tail", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const threadId = yield* seedThread;
+        const line = "x".repeat(TERMINAL_OUTPUT_TAIL_CHARS * 8);
+        yield* writeCommandItem(threadId, {
+          status: "completed",
+          exitCode: 0,
+          output: `${line}\n`,
+        });
+        const frames = yield* subscribeFrames(threadId);
+        const final = yield* takeFrame(frames);
+        assert.equal(final.kind, "replace");
+        assert.isTrue(final.truncated);
+        assert.isTrue(final.text.includes("xxxx"));
+        assert.isAtMost(final.text.length, TERMINAL_OUTPUT_TAIL_CHARS);
+      }),
+    ),
+  );
+
   it.effect("an old Claude row's raw Bash result shows as its stdout and stderr", () =>
     Effect.scoped(
       Effect.gen(function* () {

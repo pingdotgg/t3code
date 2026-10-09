@@ -6218,7 +6218,7 @@ export function makeClaudeAdapterV2(
               const tailedCall =
                 message.tool_use_id === undefined
                   ? undefined
-                  : context.toolCalls.get(message.tool_use_id);
+                  : findToolCall(context, message.tool_use_id);
               if (
                 taskOutputRoot !== undefined &&
                 message.task_type === "local_bash" &&

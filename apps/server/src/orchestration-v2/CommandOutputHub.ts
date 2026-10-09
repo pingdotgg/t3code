@@ -117,7 +117,7 @@ function persistedCommandOutput(rawOutput: string | undefined): {
     // Start on a fresh line, so the cut can't land inside an escape sequence.
     source = output.slice(output.length - MAX_FINAL_SOURCE_CHARS);
     const newline = source.indexOf("\n");
-    if (newline !== -1) source = source.slice(newline + 1);
+    if (newline !== -1 && newline + 1 < source.length) source = source.slice(newline + 1);
   }
   const normalized = normalizeTerminalOutput(source);
   return {
