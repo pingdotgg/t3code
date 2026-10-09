@@ -1,6 +1,6 @@
 import type { OrchestratorFixtureInput } from "../shared.ts";
 
-const ZCODE_PERMISSION_APPROVED_FILE = "zcode-approved.txt";
+export const ZCODE_PERMISSION_APPROVED_FILE = "zcode-approved.txt";
 export const ZCODE_PERMISSION_DECLINED_FILE = "zcode-declined.txt";
 
 /**

@@ -8,6 +8,7 @@ import {
   assertVisibleTurnItemsMirrorLocalTurnItems,
   projectionFor,
 } from "../shared.ts";
+import { ZCODE_PERMISSION_APPROVED_FILE, ZCODE_PERMISSION_DECLINED_FILE } from "./input.ts";
 
 /**
  * Supervised: ZCode's `build` mode asks before the write and the command. The
@@ -61,9 +62,18 @@ export function assertZCodePermissionOutput(
 
   // Replay cannot write files, so the workspace check is ZCode's own report:
   // the approved write completed and the declined command did not run.
-  const write = projection.turnItems.find((item) => item.type === "file_change");
+  const write = projection.turnItems.find(
+    (item) =>
+      item.type === "file_change" && item.fileName.endsWith(`/${ZCODE_PERMISSION_APPROVED_FILE}`),
+  );
   assert.equal(write?.status, "completed", "the approved write ran");
-  const command = projection.turnItems.find((item) => item.type === "dynamic_tool");
+  const command = projection.turnItems.find(
+    (item) =>
+      item.type === "dynamic_tool" &&
+      typeof item.input === "object" &&
+      item.input !== null &&
+      Reflect.get(item.input, "command") === `touch ${ZCODE_PERMISSION_DECLINED_FILE}`,
+  );
   assert.equal(command?.status, "failed", "the declined command did not run");
 
   const answers = projection.turnItems.flatMap((item) =>
