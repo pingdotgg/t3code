@@ -19,6 +19,12 @@ const UPDATE_LOOKAHEAD = Duration.minutes(5);
  * Clients report activity about every 25s, so this must stay well above that.
  */
 const QUIET_PERIOD = Duration.minutes(15);
+/**
+ * Tasks repeating more often than this always have a run due soon. A run that
+ * starts mid-install waits for the admission permit, and a run missed during a
+ * restart catches up afterwards, so these only block while running.
+ */
+const FREQUENT_TASK_INTERVAL = Duration.minutes(15);
 
 /**
  * Decides when a background update may restart the server or replace a
@@ -86,6 +92,12 @@ const make = Effect.fn("updates.UpdateWindow.make")(function* () {
         continue;
       }
       if (!task.enabled || task.nextRunAt === null) continue;
+      if (
+        task.schedule.type === "interval" &&
+        task.schedule.everyMs < Duration.toMillis(FREQUENT_TASK_INTERVAL)
+      ) {
+        continue;
+      }
       const runsAt = DateTime.make(task.nextRunAt);
       if (Option.isSome(runsAt) && !DateTime.isGreaterThan(runsAt.value, horizon)) {
         found.push("scheduled-task");
