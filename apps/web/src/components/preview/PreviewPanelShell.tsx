@@ -78,27 +78,33 @@ function PreviewPanelShellFrame(
   const localHostRef = useRef<HTMLDivElement | null>(null);
   const hostRef = props.hostRef ?? localHostRef;
   const { width, handlers } = props.inlineSize;
+  const live = props.inlineSize.liveWidth !== undefined;
   // Derive suppression before the layout commits so the browser never creates
   // a width transition for resize or maximize changes.
   const [layoutTransition, setLayoutTransition] = useState(() => ({
     open,
-    width,
+    width: width,
+    live,
     maximized,
     suppressed: false,
   }));
   if (
     layoutTransition.open !== open ||
     layoutTransition.width !== width ||
+    layoutTransition.live !== live ||
     layoutTransition.maximized !== maximized
   ) {
     setLayoutTransition({
       open,
-      width,
+      width: width,
+      live,
       maximized,
       suppressed:
         collapsible &&
         layoutTransition.open === open &&
-        (layoutTransition.width !== width || layoutTransition.maximized !== maximized),
+        (layoutTransition.width !== width ||
+          layoutTransition.maximized !== maximized ||
+          layoutTransition.live !== live),
     });
   }
   const suppressWidthTransition = layoutTransition.suppressed;
@@ -134,6 +140,7 @@ function PreviewPanelShellFrame(
         isInline
           ? ({
               [RESIZABLE_WIDTH_PROPERTY]: `${width}px`,
+              maxWidth: maximized ? undefined : props.inlineSize.liveWidth,
               width: maximized
                 ? "100%"
                 : collapsible && !open
@@ -152,7 +159,9 @@ function PreviewPanelShellFrame(
           className="flex h-full min-h-0 min-w-0 flex-col"
           style={
             collapsible && !maximized
-              ? { width: `calc(var(${RESIZABLE_WIDTH_PROPERTY}) - 1px)` }
+              ? {
+                  width: `calc(${props.inlineSize.liveWidth ? `min(var(${RESIZABLE_WIDTH_PROPERTY}), ${props.inlineSize.liveWidth})` : `var(${RESIZABLE_WIDTH_PROPERTY})`} - 1px)`,
+                }
               : undefined
           }
         >

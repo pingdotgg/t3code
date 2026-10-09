@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { resolveChatCanvasLayout } from "./chatCanvasLayout";
 import {
   resolveThreadDetailsCardDensity,
   resolveThreadDetailsCardLayout,
@@ -36,6 +37,26 @@ describe("workspace card", () => {
   it("hides when a readable chat lane cannot fit beside it", () => {
     expect(resolve(1012, 900)).toMatchObject({ x: 720 });
     expect(resolve(1011, 900)).toBeNull();
+  });
+  it("keeps the docking threshold aligned with rounded canvas measurements", () => {
+    expect(resolve(1011.4, 900)).toBeNull();
+    expect(resolve(1011.5, 900)).not.toBeNull();
+    expect(resolve(1011.6, 900)).not.toBeNull();
+  });
+  it("matches the closed-form reservation at every chat width and docking threshold", () => {
+    for (const maxChatWidth of [736, 1152, Infinity]) {
+      for (const width of [1011, 1012, 1013, 1100, 1300, 1600, 2000]) {
+        const card = resolve(width, 900);
+        const chat = resolveChatCanvasLayout({
+          container: { width, height: 900 },
+          preview: null,
+          maxChatWidth,
+          detailsCard: card && { left: card.x, right: card.x + card.width, bottom: 400 },
+        }).chat;
+        const reservation = card ? Math.max(0, Math.min(maxChatWidth + 648 - width, 276)) : 0;
+        expect(chat.insetEnd).toBe(reservation);
+      }
+    }
   });
   it("keeps the card at the top right while the preview is freely dragged vertically", () => {
     for (const y of [12, 170, 250, 400, 648]) {

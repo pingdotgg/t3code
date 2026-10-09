@@ -24,6 +24,7 @@ export interface UseResizableWidthOptions {
   readonly defaultWidth: number;
   readonly minWidth: number;
   readonly maxWidth: number;
+  readonly readMaxWidth?: () => number;
   /**
    * Which edge of the host element carries the drag handle:
    *   - "left"  → panel grows leftward (right-anchored panels)
@@ -52,14 +53,15 @@ export interface ResizableWidthHandlers {
  */
 export function useResizableWidth(options: UseResizableWidthOptions): {
   readonly width: number;
+  readonly requestedWidth: number;
   readonly handlers: ResizableWidthHandlers;
 } {
   const { storageKey, defaultWidth, minWidth, maxWidth, edge } = options;
 
   const clamp = useCallback(
-    (value: number): number => {
+    (value: number, maximum = maxWidth): number => {
       if (!Number.isFinite(value)) return defaultWidth;
-      return Math.max(minWidth, Math.min(maxWidth, value));
+      return Math.max(minWidth, Math.min(maximum, value));
     },
     [defaultWidth, maxWidth, minWidth],
   );
@@ -82,10 +84,20 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
   }
 
   const clampedWidth = clamp(widthState.width);
-  const latestOptions = useRef({ clamp, storageKey, width: clampedWidth });
+  const latestOptions = useRef({
+    clamp,
+    storageKey,
+    width: clampedWidth,
+    readMaxWidth: options.readMaxWidth,
+  });
   useLayoutEffect(() => {
-    latestOptions.current = { clamp, storageKey, width: clampedWidth };
-  }, [clamp, clampedWidth, storageKey]);
+    latestOptions.current = {
+      clamp,
+      storageKey,
+      width: clampedWidth,
+      readMaxWidth: options.readMaxWidth,
+    };
+  }, [clamp, clampedWidth, storageKey, options.readMaxWidth]);
 
   const { refresh, ...handlers } = useResizeDrag<HTMLElement>((event) => {
     const host = event.currentTarget.parentElement;
@@ -93,10 +105,13 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     // renders its own transition-duration, so override a property it leaves alone.
     host?.style.setProperty("transition-property", "none");
     return {
-      width: clampedWidth,
+      width: clamp(widthState.width, options.readMaxWidth?.()),
       edge,
       resize(value) {
-        const nextWidth = latestOptions.current.clamp(value);
+        const nextWidth = latestOptions.current.clamp(
+          value,
+          latestOptions.current.readMaxWidth?.(),
+        );
         host?.style.setProperty(RESIZABLE_WIDTH_PROPERTY, `${nextWidth}px`);
         return nextWidth;
       },
@@ -123,5 +138,5 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
   // rewrites the committed width, so re-apply the live pointer position.
   useLayoutEffect(refresh, [clamp, clampedWidth, refresh]);
 
-  return { width: clampedWidth, handlers };
+  return { width: clampedWidth, requestedWidth: widthState.width, handlers };
 }

@@ -5,6 +5,8 @@ import { observeResize } from "../lib/observeResize";
 
 export interface PreviewPanelInlineSize {
   readonly width: number;
+  readonly requestedWidth?: number;
+  readonly liveWidth?: string;
   readonly handlers: ResizableWidthHandlers;
 }
 
@@ -29,16 +31,28 @@ export function usePreviewPanelInlineSize(
     readonly enabled?: boolean | undefined;
     readonly widthStorageKey?: string | undefined;
     readonly defaultWidth?: number | undefined;
-    /** Measure this row instead of the panel's parent. */
     readonly container?: HTMLElement | null | undefined;
+    readonly containerWidth?: number | undefined;
   } = {},
 ): PreviewPanelInlineSize {
-  const maxWidth = useViewportClampedMaxWidth(hostRef, options.enabled ?? true, options.container);
+  const maxWidth = useViewportClampedMaxWidth(
+    hostRef,
+    options.enabled ?? true,
+    options.container,
+    options.containerWidth,
+  );
   return useResizableWidth({
     storageKey: options.widthStorageKey ?? PREVIEW_PANEL_WIDTH_STORAGE_KEY,
     defaultWidth: options.defaultWidth ?? PREVIEW_PANEL_DEFAULT_WIDTH,
     minWidth: PREVIEW_PANEL_MIN_WIDTH,
     maxWidth,
+    readMaxWidth: () =>
+      getPreviewPanelMaxWidth(
+        typeof window === "undefined" ? 1280 : window.innerWidth,
+        options.container?.clientWidth ??
+          hostRef?.current?.parentElement?.clientWidth ??
+          options.containerWidth,
+      ),
     edge: "left",
   });
 }
@@ -52,12 +66,13 @@ function useViewportClampedMaxWidth(
   hostRef: RefObject<HTMLElement | null> | undefined,
   enabled: boolean,
   container: HTMLElement | null | undefined,
+  containerWidth: number | undefined,
 ): number {
   const [maxWidth, setMaxWidth] = useState(() =>
     getPreviewPanelMaxWidth(typeof window === "undefined" ? 1280 : window.innerWidth),
   );
   useLayoutEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || containerWidth !== undefined) return;
     const row = container ?? (enabled ? hostRef?.current?.parentElement : null) ?? null;
     // Measure before first paint: the persisted width must be clamped against
     // the row on the initial render, not one observer tick later (the panel
@@ -83,8 +98,13 @@ function useViewportClampedMaxWidth(
       if (frame !== 0) window.cancelAnimationFrame(frame);
       stopObserving?.();
     };
-  }, [container, hostRef, enabled]);
-  return maxWidth;
+  }, [container, containerWidth, hostRef, enabled]);
+  return containerWidth === undefined
+    ? maxWidth
+    : getPreviewPanelMaxWidth(
+        typeof window === "undefined" ? 1280 : window.innerWidth,
+        containerWidth,
+      );
 }
 export function getPreviewPanelMaxWidth(viewportWidth: number, containerWidth?: number): number {
   const fractionCap = Math.floor(viewportWidth * PREVIEW_PANEL_MAX_WIDTH_FRACTION);
@@ -95,4 +115,8 @@ export function getPreviewPanelMaxWidth(viewportWidth: number, containerWidth?: 
   // not see max < min (it would resolve the inversion to min and, via
   // drag-end persistence, overwrite the user's stored width).
   return Math.max(PREVIEW_PANEL_MIN_WIDTH, Math.min(fractionCap, containerCap));
+}
+
+export function getPreviewPanelLiveWidth(requestedWidth: number, viewportWidth: number) {
+  return `min(${requestedWidth}px, max(${PREVIEW_PANEL_MIN_WIDTH}px, min(${getPreviewPanelMaxWidth(viewportWidth)}px, round(nearest, 100cqw, 1px) - ${SIBLING_COLUMN_MIN_WIDTH}px)))`;
 }

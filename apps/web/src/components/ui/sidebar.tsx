@@ -17,6 +17,7 @@ import {
 } from "~/components/ui/sheet";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useResizeDrag } from "~/hooks/useResizeDrag";
+import { observeResize } from "~/lib/observeResize";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
 import { resolveSidebarState, type ResponsiveSidebarState } from "./sidebarState";
@@ -30,6 +31,8 @@ const SIDEBAR_WIDTH_ICON = "3rem";
 const SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH = 16 * 16;
 
 type SidebarContextProps = {
+  workspaceWidth: number;
+  occupiedWidth: number;
   state: ResponsiveSidebarState;
   open: boolean;
   setOpen: (open: boolean) => void;
@@ -74,6 +77,11 @@ type SidebarInstanceContextProps = {
   side: "left" | "right";
 };
 
+export function useSidebarGeometry() {
+  const { workspaceWidth, occupiedWidth, isMobile, open } = useSidebar();
+  return { width: workspaceWidth, occupiedWidth, open: !isMobile && open };
+}
+
 const SidebarContext = React.createContext<SidebarContextProps | null>(null);
 const SidebarInstanceContext = React.createContext<SidebarInstanceContextProps | null>(null);
 
@@ -91,6 +99,20 @@ function useSidebarVisibility() {
   return isMobile ? openMobile : open;
 }
 
+function useSidebarElementWidth() {
+  const ref = React.useRef<HTMLDivElement | null>(null);
+  const [width, setWidth] = React.useState<number | null>(null);
+  React.useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    setWidth(element.getBoundingClientRect().width);
+    return observeResize(element, ([entry]) => {
+      if (entry) setWidth(entry.contentRect.width);
+    });
+  }, []);
+  return [ref, width] as const;
+}
+
 function SidebarProvider({
   defaultOpen = true,
   open: openProp,
@@ -105,6 +127,8 @@ function SidebarProvider({
   onOpenChange?: (open: boolean) => void;
 }) {
   const isMobile = useIsMobile();
+  const [wrapperRef, wrapperWidth] = useSidebarElementWidth();
+  const [widthProbeRef, sidebarWidth] = useSidebarElementWidth();
   const [openMobile, setOpenMobile] = React.useState(false);
 
   // This is the internal state of the sidebar.
@@ -142,6 +166,8 @@ function SidebarProvider({
 
   const contextValue = React.useMemo<SidebarContextProps>(
     () => ({
+      workspaceWidth: wrapperWidth ?? 0,
+      occupiedWidth: !isMobile && open ? (sidebarWidth ?? 256) : 0,
       isMobile,
       open,
       openMobile,
@@ -150,7 +176,7 @@ function SidebarProvider({
       state,
       toggleSidebar,
     }),
-    [state, open, setOpen, isMobile, openMobile, toggleSidebar],
+    [state, open, setOpen, isMobile, openMobile, toggleSidebar, wrapperWidth, sidebarWidth],
   );
 
   return (
@@ -161,6 +187,7 @@ function SidebarProvider({
           "group/sidebar-wrapper flex min-h-svh w-full max-sm:[--workspace-titlebar-control-size:--spacing(8)]",
           className,
         )}
+        ref={wrapperRef}
         data-sidebar-state={state}
         data-slot="sidebar-wrapper"
         style={
@@ -174,6 +201,11 @@ function SidebarProvider({
         }
         {...props}
       >
+        <div
+          ref={widthProbeRef}
+          aria-hidden
+          className="pointer-events-none invisible absolute h-0 w-(--sidebar-width)"
+        />
         {children}
       </div>
     </SidebarContext>

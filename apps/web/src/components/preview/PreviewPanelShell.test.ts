@@ -11,6 +11,12 @@ describe("getPreviewPanelMaxWidth", () => {
     expect(getPreviewPanelMaxWidth(2_001)).toBe(1_400);
   });
 
+  it("preserves the JavaScript viewport cap at floating-point boundaries", () => {
+    expect(getPreviewPanelMaxWidth(1_300)).toBe(909);
+    expect(getPreviewPanelMaxWidth(1_310)).toBe(916);
+    expect(getPreviewPanelMaxWidth(1_320)).toBe(923);
+  });
+
   it("reserves the sibling column minimum when the flex row is known", () => {
     // Fullscreen 14" MacBook: viewport 1512, sidebar ~256 → row of 1256.
     // The 70% fraction (1058) would leave the chat column only ~198px;

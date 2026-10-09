@@ -9,11 +9,10 @@ import { useChatCanvas } from "./ChatCanvasContext";
 import {
   THREAD_DETAILS_CARD_GAP,
   resolveThreadDetailsCardDensity,
-  resolveThreadDetailsCardLayout,
 } from "./threadDetailsCardLayout";
 import { observeResize } from "../../lib/observeResize";
 
-/** One card owns its placement and folds content only when that content cannot fit. */
+/** Docks where the chat canvas places it and folds content only when that content cannot fit. */
 export function ThreadDetailsCard({
   threadRef,
   anchor,
@@ -28,23 +27,8 @@ export function ThreadDetailsCard({
   children: (density: "full" | "compact" | "essential") => ReactNode;
 }) {
   const canvas = useChatCanvas();
-  const preferredPlacement = canvas
-    ? resolveThreadDetailsCardLayout({
-        container: canvas.container,
-        lane: canvas.lane,
-        frame: null,
-        topInset: canvas.detailsCardTopInset,
-      })
-    : null;
-  const placement = canvas
-    ? resolveThreadDetailsCardLayout({
-        container: canvas.container,
-        lane: canvas.lane,
-        frame: canvas.layout.frame,
-        overlapsDetailsCard: canvas.layout.overlapsDetailsCard,
-        topInset: canvas.detailsCardTopInset,
-      })
-    : null;
+  const preferredPlacement = canvas?.detailsCard.preferred ?? null;
+  const placement = canvas?.detailsCard.placement ?? null;
   const mode = placement ? "inline" : "popover";
   const topInset = canvas?.detailsCardTopInset ?? 0;
   const inlineOpen = useRightPanelStore((state) =>
@@ -62,25 +46,14 @@ export function ThreadDetailsCard({
   });
   const contentHeights =
     measurements.key === measurementKey ? measurements.heights : { full: 0, compact: 0 };
-  const height = placement?.height ?? Math.max(0, (canvas?.container.height ?? 0) - 52);
+  const height = placement?.height ?? Math.max(0, (canvas?.detailsCard.containerHeight ?? 0) - 52);
   const density = resolveThreadDetailsCardDensity(height, contentHeights);
   const reportDetailsCard = canvas?.reportDetailsCard;
-  const cardLeft = preferredPlacement?.x;
-  const cardRight = preferredPlacement
-    ? preferredPlacement.x + preferredPlacement.width
-    : undefined;
-  const cardBottom =
-    preferredPlacement && measurements.key === measurementKey && measurements.fullContentHeight > 0
-      ? preferredPlacement.y + Math.min(measurements.fullContentHeight, preferredPlacement.height)
-      : undefined;
+  const contentHeight = measurements.key === measurementKey ? measurements.fullContentHeight : 0;
   useLayoutEffect(() => {
-    reportDetailsCard?.(
-      inlineOpen && cardLeft !== undefined && cardRight !== undefined && cardBottom !== undefined
-        ? { left: cardLeft, right: cardRight, bottom: cardBottom }
-        : null,
-    );
-  }, [reportDetailsCard, inlineOpen, cardLeft, cardRight, cardBottom]);
-  useLayoutEffect(() => () => reportDetailsCard?.(null), [reportDetailsCard]);
+    reportDetailsCard?.(inlineOpen, contentHeight);
+  }, [reportDetailsCard, inlineOpen, contentHeight]);
+  useLayoutEffect(() => () => reportDetailsCard?.(false, 0), [reportDetailsCard]);
   useLayoutEffect(() => {
     onPresentationChange(mode);
     if (mode === "inline" && popoverOpen)
@@ -168,9 +141,11 @@ export function ThreadDetailsCard({
                 "transition-[top] duration-150 ease-out motion-reduce:transition-none",
             )}
             style={{
-              // Anchored to the right edge like the find bar, so both follow a resizing
-              // canvas in the same frame instead of waiting for its next measurement.
-              right: placement.right,
+              left: placement.x,
+              right:
+                placement.x === undefined
+                  ? `calc(${THREAD_DETAILS_CARD_GAP}px - var(--chat-canvas-rounding))`
+                  : undefined,
               top: placement.y,
               width: placement.width,
               maxHeight: height,

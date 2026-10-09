@@ -8,9 +8,13 @@ import { useChatCanvas } from "./ChatCanvasContext";
 
 const resize = vi.hoisted(() => ({ callbacks: new Set<() => void>() }));
 vi.mock("../../lib/observeResize", () => ({
-  observeResize: (_elements: unknown, callback: () => void) => {
-    resize.callbacks.add(callback);
-    return () => resize.callbacks.delete(callback);
+  observeResize: (
+    _elements: unknown,
+    callback: (entries: { contentRect: { width: number } }[]) => void,
+  ) => {
+    const notify = () => callback([{ contentRect: { width: 0 } }]);
+    resize.callbacks.add(notify);
+    return () => resize.callbacks.delete(notify);
   },
 }));
 
@@ -57,11 +61,12 @@ beforeEach(() => {
     }
     return new DOMRect(200, 100, 1800, 1000);
   });
-  vi.spyOn(window, "getComputedStyle").mockReturnValue({
-    paddingLeft: "48px",
-    width: "736px",
-    minWidth: "640px",
-  } as CSSStyleDeclaration);
+  const styles = document.createElement("div").style;
+  styles.paddingLeft = "48px";
+  styles.width = "736px";
+  styles.minWidth = "640px";
+  styles.setProperty("--chat-content-max-width", "736px");
+  vi.spyOn(window, "getComputedStyle").mockReturnValue(styles);
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -91,29 +96,29 @@ it.each([16, 24])(
   async (size) => {
     fontSize = size;
     await renderFind(false);
-    expect(canvas?.layout.frame?.y).toBe(12);
+    expect(canvas?.previewFrame?.y).toBe(12);
 
     await renderFind(true);
     expect(canvas?.detailsCardTopInset).toBe(3 * size);
-    expect(canvas?.layout.frame?.y).toBe(3 * size + 12);
+    expect(canvas?.previewFrame?.y).toBe(3 * size + 12);
 
     await renderFind(false);
     expect(canvas?.detailsCardTopInset).toBe(0);
-    expect(canvas?.layout.frame?.y).toBe(12);
+    expect(canvas?.previewFrame?.y).toBe(12);
 
     await renderFind(true);
-    expect(canvas?.layout.frame?.y).toBe(3 * size + 12);
+    expect(canvas?.previewFrame?.y).toBe(3 * size + 12);
   },
 );
 
 it("remeasures the open bar when its font size changes without resizing the canvas", async () => {
   await renderFind(true, 1200);
-  expect(canvas?.layout.frame?.y).toBe(12);
+  expect(canvas?.previewFrame?.y).toBe(12);
 
   fontSize = 24;
   await act(() => {
     for (const callback of resize.callbacks) callback();
   });
   expect(canvas?.detailsCardTopInset).toBe(72);
-  expect(canvas?.layout.frame?.y).toBe(84);
+  expect(canvas?.previewFrame?.y).toBe(84);
 });

@@ -52,16 +52,19 @@ function Panel({
   edge = "left",
   maxWidth = 800,
   storageKey = "test-panel-width",
+  readMaxWidth,
 }: {
   edge?: "left" | "right";
   maxWidth?: number;
   storageKey?: string;
+  readMaxWidth?: () => number;
 }) {
   const resize = useResizableWidth({
     storageKey,
     defaultWidth: 400,
     minWidth: 200,
     maxWidth,
+    ...(readMaxWidth ? { readMaxWidth } : {}),
     edge,
   });
   useLayoutEffect(() => {
@@ -201,6 +204,52 @@ describe("panel resize cleanup", () => {
     expect(setItem).toHaveBeenCalledExactlyOnceWith("test-panel-width", "450");
     expect(style.cursor).toBe("");
     expect(captured).toBe(false);
+  });
+});
+
+describe("panel container clamping", () => {
+  it("starts and updates a drag against live bounds while render measurements are cached", async () => {
+    savedWidths.set("wide-panel", "1120");
+    let maximum = 684;
+    await act(() =>
+      renderer.update(
+        <Panel storageKey="wide-panel" maxWidth={909} readMaxWidth={() => maximum} />,
+      ),
+    );
+    expect(result.width).toBe(909);
+    await act(() => {
+      result.handlers.onPointerDown(pointer());
+      result.handlers.onPointerMove(pointer(190));
+    });
+    await act(() => frame?.(0));
+    expect(hostStyle.get(RESIZABLE_WIDTH_PROPERTY)).toBe("594px");
+    expect(result.width).toBe(909);
+    maximum = 550;
+    await act(() => result.handlers.onPointerMove(pointer(190)));
+    await act(() => frame?.(0));
+    expect(hostStyle.get(RESIZABLE_WIDTH_PROPERTY)).toBe("550px");
+    expect(result.width).toBe(909);
+    maximum = 684;
+    await act(() => result.handlers.onPointerUp(pointer(190)));
+    expect(result.width).toBe(594);
+    await act(() => renderer.update(<Panel storageKey="wide-panel" maxWidth={684} />));
+    expect(result.width).toBe(594);
+    expect(result.requestedWidth).toBe(594);
+    expect(setItem).toHaveBeenCalledExactlyOnceWith("wide-panel", "594");
+  });
+
+  it("retains the requested width while the sibling needs more room", async () => {
+    await act(() => {
+      result.handlers.onPointerDown(pointer());
+      result.handlers.onPointerUp(pointer(-100));
+    });
+    expect(result.width).toBe(600);
+    await act(() => renderer.update(<Panel maxWidth={360} />));
+    expect(result.width).toBe(360);
+    expect(result.requestedWidth).toBe(600);
+    await act(() => renderer.update(<Panel maxWidth={800} />));
+    expect(result.width).toBe(600);
+    expect(setItem).toHaveBeenCalledExactlyOnceWith("test-panel-width", "600");
   });
 });
 

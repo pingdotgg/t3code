@@ -283,6 +283,7 @@ import { RightPanelTabs } from "./RightPanelTabs";
 import {
   ChatWorkspace,
   ChatWorkspaceColumn,
+  RightPanelControlClip,
   type RightPanelView,
   RightPanelSlot,
   RightPanelViewSlot,
@@ -11227,7 +11228,7 @@ export default function ChatView(props: ChatViewProps) {
       </div>
     </div>
   );
-  const renderPanelLayoutControls = (view: RightPanelView, panelWidth?: number) => (
+  const renderPanelLayoutControls = (view: RightPanelView, panelWidth?: number | string) => (
     <div
       className={cn(
         // Keep one viewport anchor inside the header's no-drag region. The
@@ -11237,17 +11238,14 @@ export default function ChatView(props: ChatViewProps) {
       data-workspace-titlebar-controls
     >
       {!shouldUsePlanSidebarSheet && view.open ? (
-        <div
-          className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-0 h-[var(--workspace-topbar-height)] [clip-path:inset(0)] [[data-panel-animations=true]_&]:transition-[width] [[data-panel-animations=true]_&]:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:ease-out [[data-panel-animations=true]_&]:starting:w-0!"
-          style={{ width: view.maximized ? "100%" : panelWidth }}
-        >
+        <RightPanelControlClip width={view.maximized ? "100%" : panelWidth}>
           <div className="pointer-events-auto fixed top-[var(--workspace-controls-top)] right-(--workspace-controls-cluster-inset) flex h-[var(--workspace-topbar-height)] items-center">
             <RightPanelMaximizeControl
               maximized={view.maximized}
               onToggle={toggleRightPanelMaximized}
             />
           </div>
-        </div>
+        </RightPanelControlClip>
       ) : null}
       <div className="pointer-events-auto flex h-full items-center">
         {renderPanelToggleControls(view)}
@@ -11324,13 +11322,17 @@ export default function ChatView(props: ChatViewProps) {
             {shouldUsePlanSidebarSheet && !view.open ? renderPanelLayoutControls(view) : null}
             {!shouldUsePlanSidebarSheet && view.ownsTitleBar ? (
               <RightPanelSlot key="panel-layout-controls">
-                {(panel, inlineSize) => renderPanelLayoutControls(panel, inlineSize.width)}
+                {(panel, inlineSize) =>
+                  renderPanelLayoutControls(panel, inlineSize.liveWidth ?? inlineSize.width)
+                }
               </RightPanelSlot>
             ) : null}
             {shouldUsePlanSidebarSheet ? null : threadPanelHeaderControl}
             {!shouldUsePlanSidebarSheet && !view.ownsTitleBar ? (
               <RightPanelSlot key="panel-layout-controls">
-                {(panel, inlineSize) => renderPanelLayoutControls(panel, inlineSize.width)}
+                {(panel, inlineSize) =>
+                  renderPanelLayoutControls(panel, inlineSize.liveWidth ?? inlineSize.width)
+                }
               </RightPanelSlot>
             ) : null}
             <ChatHeader
