@@ -1129,19 +1129,29 @@ function status(): void {
 async function busy(state: LabState, env: LabEnv): Promise<void> {
   const headers = await authHeaders(env);
   if (!env.projectId) {
-    const projectId = NodeCrypto.randomUUID();
-    const created = await fetch(`${originOf(state, env)}/api/projects/mutate`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        type: "project.create",
-        commandId: NodeCrypto.randomUUID(),
-        projectId,
-        title: `${env.id} lab project`,
-        workspaceRoot: projectDir(env.id),
-      }),
-    });
-    if (!created.ok) fail(`Project creation failed: ${created.status} ${await created.text()}`);
+    const response = await fetch(`${originOf(state, env)}/api/projects`, { headers });
+    if (!response.ok) fail(`Project snapshot failed: ${response.status} ${await response.text()}`);
+    const snapshot = (await response.json()) as {
+      projects: Array<{ id: string; workspaceRoot: string; deletedAt: string | null }>;
+    };
+    const existing = snapshot.projects.find(
+      (project) => project.workspaceRoot === projectDir(env.id) && project.deletedAt === null,
+    );
+    const projectId = existing?.id ?? NodeCrypto.randomUUID();
+    if (!existing) {
+      const created = await fetch(`${originOf(state, env)}/api/projects/mutate`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          type: "project.create",
+          commandId: NodeCrypto.randomUUID(),
+          projectId,
+          title: `${env.id} lab project`,
+          workspaceRoot: projectDir(env.id),
+        }),
+      });
+      if (!created.ok) fail(`Project creation failed: ${created.status} ${await created.text()}`);
+    }
     updateState((next) => {
       requireEnv(next, env.id).projectId = projectId;
     });
