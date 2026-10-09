@@ -567,6 +567,9 @@ export function buildBoundedThreadProjection(input: {
     // Always from the full projection so inherited-only windows still carry a
     // watermark for partial live reducers.
     latestLocalTurnOrdinal,
-    payloadBudgetExceeded: bytesOfJson(projection) > policy.maxEncodedBytes,
+    // Adding timeline rows and historical summaries cannot shrink control state.
+    // Avoid serializing the whole timeline when control state already exceeds the cap.
+    payloadBudgetExceeded:
+      controlBytes > policy.maxEncodedBytes || bytesOfJson(projection) > policy.maxEncodedBytes,
   };
 }
