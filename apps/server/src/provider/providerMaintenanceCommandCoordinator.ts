@@ -11,7 +11,7 @@ export class ProviderMaintenanceAdmission extends Context.Service<
   {
     readonly withPermit: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   }
->()("t3/provider/ProviderMaintenanceAdmission") {}
+>()("t3/provider/providerMaintenanceCommandCoordinator/ProviderMaintenanceAdmission") {}
 
 // Keep one layer reference so the update window and turn startup share its permit.
 export const admissionLayer = Layer.effect(
@@ -27,7 +27,7 @@ export interface ProviderMaintenanceCommandCoordinatorShape<E> {
     readonly lockKey: string;
     readonly onQueued?: Effect.Effect<void, E, R>;
     readonly onInterrupted?: Effect.Effect<void, E, R>;
-    readonly admit?: <A>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+    readonly admit?: ProviderMaintenanceAdmission["Service"]["withPermit"];
     readonly run: Effect.Effect<A, E, R>;
   }) => Effect.Effect<A, E, R>;
 }
