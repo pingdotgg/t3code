@@ -14,7 +14,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import * as EffectAcpErrors from "effect-acp/errors";
 
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import * as ServerSettings from "../../serverSettings.ts";
 import type {
@@ -201,7 +201,7 @@ describe("AcpRegistryAdapterV2", () => {
         fileSystem,
         idAllocator: yield* IdAllocator.IdAllocatorV2,
         resolver: { resolve: () => Effect.die("the runtime is injected") },
-        host: yield* ProviderHost,
+        host: yield* ProviderHost.ProviderHost,
         makeRuntime: makeAcpReplayRuntime({
           transcript,
           statusPath,
@@ -271,7 +271,7 @@ describe("AcpRegistryAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
@@ -347,7 +347,7 @@ describe("AcpRegistryAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );

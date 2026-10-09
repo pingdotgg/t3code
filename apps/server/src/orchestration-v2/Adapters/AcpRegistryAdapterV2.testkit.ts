@@ -9,7 +9,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
@@ -46,7 +46,7 @@ function layerAcpRegistryProviderAdapterRegistryReplay(
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const crypto = yield* Crypto.Crypto;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const replayGate = options.replayGate;
       const replayDir = yield* fileSystem
         .makeTempDirectory({

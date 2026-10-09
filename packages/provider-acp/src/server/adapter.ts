@@ -57,7 +57,7 @@ import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
-import type { ProviderHostShape } from "@t3tools/provider-core/server/ProviderHost";
+import type * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { makeAcpMcpOverAcpBridge, type AcpMcpOverAcpBridge } from "./mcpOverAcpBridge.ts";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
@@ -483,7 +483,7 @@ export interface AcpAdapterV2Options {
   readonly crypto: Crypto.Crypto;
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
-  readonly host: ProviderHostShape;
+  readonly host: ProviderHost.ProviderHostShape;
   /** How agents spawn this install's `acp-mcp-bridge`; see `resolveSelfInvocation`. */
   readonly selfInvocation: SelfInvocation;
   /**

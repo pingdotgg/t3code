@@ -10,7 +10,7 @@ import { ChildProcessSpawner } from "effect/process";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import {
   GROK_ACP_CANCEL_META,
@@ -47,7 +47,7 @@ function layerGrokProviderAdapterRegistryReplay(
       const crypto = yield* Crypto.Crypto;
       const hostPlatform = yield* HostProcessPlatform;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       // Same queue the continuation worker drains when the fixture runs it.
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       const replayGate = options.replayGate;

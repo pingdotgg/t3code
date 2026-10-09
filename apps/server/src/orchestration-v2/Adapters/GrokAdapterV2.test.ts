@@ -22,7 +22,7 @@ import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import * as ProjectStore from "../ProjectStore.ts";
 import { buildInitialGrokProviderSnapshot } from "../../provider/GrokProvider.ts";
@@ -341,7 +341,7 @@ describe("Grok launch permission mode", () => {
         crypto: yield* Crypto.Crypto,
         fileSystem: yield* FileSystem.FileSystem,
         idAllocator: yield* IdAllocator.IdAllocatorV2,
-        host: yield* ProviderHost,
+        host: yield* ProviderHost.ProviderHost,
         selfInvocation: yield* resolveSelfInvocation(),
       });
       yield* adapter

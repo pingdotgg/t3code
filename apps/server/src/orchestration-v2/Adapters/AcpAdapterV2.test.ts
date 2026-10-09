@@ -54,7 +54,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
@@ -615,7 +615,7 @@ describe("AcpAdapterV2", () => {
           instanceId,
           fileSystem: yield* FileSystem.FileSystem,
           idAllocator: yield* IdAllocator.IdAllocatorV2,
-          host: yield* ProviderHost,
+          host: yield* ProviderHost.ProviderHost,
           selfInvocation: yield* resolveSelfInvocation(),
           flavor: {
             driver: ProviderDriverKind.make("acpRegistry"),
@@ -712,7 +712,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation().pipe(
         Effect.provideService(HostProcessIsExecutable, true),
       );
@@ -785,7 +785,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -912,7 +912,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -1048,7 +1048,7 @@ describe("AcpAdapterV2", () => {
         crypto: yield* Crypto.Crypto,
         fileSystem: yield* FileSystem.FileSystem,
         idAllocator: yield* IdAllocator.IdAllocatorV2,
-        host: yield* ProviderHost,
+        host: yield* ProviderHost.ProviderHost,
         selfInvocation: yield* resolveSelfInvocation(),
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -1194,7 +1194,7 @@ describe("AcpAdapterV2", () => {
         crypto: yield* Crypto.Crypto,
         fileSystem: yield* FileSystem.FileSystem,
         idAllocator,
-        host: yield* ProviderHost,
+        host: yield* ProviderHost.ProviderHost,
         selfInvocation: yield* resolveSelfInvocation(),
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -1514,7 +1514,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -1708,7 +1708,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -1793,7 +1793,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -1939,7 +1939,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -2022,7 +2022,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -2107,7 +2107,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -2163,7 +2163,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -2241,7 +2241,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -2453,7 +2453,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -2550,7 +2550,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -2687,7 +2687,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -2749,7 +2749,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -2916,7 +2916,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -3077,7 +3077,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -3193,7 +3193,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -3244,7 +3244,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -3299,7 +3299,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -3380,7 +3380,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -3429,7 +3429,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -3540,7 +3540,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -3687,7 +3687,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
       const native: { current?: AcpSessionRuntime.AcpSessionRuntime["Service"] } = {};
@@ -3801,7 +3801,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -3902,7 +3902,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -4001,7 +4001,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -4090,7 +4090,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -4158,7 +4158,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -4266,7 +4266,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -4380,7 +4380,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -4521,7 +4521,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -4637,7 +4637,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -4742,7 +4742,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -4835,7 +4835,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -4928,7 +4928,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -5041,7 +5041,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -5144,7 +5144,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -5242,7 +5242,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -5338,7 +5338,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -5486,7 +5486,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -5633,7 +5633,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -5870,7 +5870,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -6093,7 +6093,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -6312,7 +6312,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -6460,7 +6460,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -6712,7 +6712,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -7000,7 +7000,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -7241,7 +7241,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -7470,7 +7470,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -7741,7 +7741,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -7983,7 +7983,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -8159,7 +8159,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -8249,7 +8249,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -8443,7 +8443,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -8590,7 +8590,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -8721,7 +8721,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -9025,7 +9025,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -9222,7 +9222,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -9392,7 +9392,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -9523,7 +9523,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -9643,7 +9643,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -9852,7 +9852,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -10018,7 +10018,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -10220,7 +10220,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -10460,7 +10460,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -10679,7 +10679,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -10894,7 +10894,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -11266,7 +11266,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -11420,7 +11420,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -11751,7 +11751,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -11938,7 +11938,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -12182,7 +12182,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -12372,7 +12372,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -12618,7 +12618,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -12836,7 +12836,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -12925,7 +12925,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -13038,7 +13038,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -13400,7 +13400,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -13525,7 +13525,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -13659,7 +13659,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -13936,7 +13936,7 @@ describe("AcpAdapterV2", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const path = yield* Path.Path;
-        const host = yield* ProviderHost;
+        const host = yield* ProviderHost.ProviderHost;
         const selfInvocation = yield* resolveSelfInvocation();
         const mockAgentPath = yield* path.fromFileUrl(
           new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -14090,7 +14090,7 @@ describe("AcpAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),

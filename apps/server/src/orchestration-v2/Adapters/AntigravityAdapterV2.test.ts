@@ -22,7 +22,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
@@ -139,7 +139,7 @@ describe("AntigravityAdapterV2 client file system", () => {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
@@ -293,7 +293,7 @@ describe("AntigravityAdapterV2 workspace changes", () => {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const crypto = yield* Crypto.Crypto;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -430,7 +430,7 @@ describe("AntigravityAdapterV2 client file system under restrictive policies", (
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const crypto = yield* Crypto.Crypto;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),

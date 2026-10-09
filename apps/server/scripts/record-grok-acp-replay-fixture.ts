@@ -24,7 +24,7 @@ import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import {
   GROK_DEFAULT_INSTANCE_ID,
@@ -455,7 +455,7 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
         crypto: yield* Crypto.Crypto,
         fileSystem: yield* FileSystem.FileSystem,
         idAllocator: yield* IdAllocator.IdAllocatorV2,
-        host: yield* ProviderHost,
+        host: yield* ProviderHost.ProviderHost,
         selfInvocation: yield* resolveSelfInvocation(),
         continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
         // Production's runtime factory, with the protocol logger teeing raw lines.

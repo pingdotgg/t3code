@@ -39,10 +39,7 @@ import {
   makeAntigravityAcpRuntime,
   type AntigravityAcpRuntimeInput,
 } from "../acp/AntigravityAcpSupport.ts";
-import type {
-  AcpSessionRuntime,
-  AcpSessionRuntimeStartResult,
-} from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   removeAntigravityRuntimeTempDirs,
@@ -159,7 +156,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
         input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
       ): Effect.fn.Return<
-        AcpSessionRuntime["Service"],
+        AcpSessionRuntime.AcpSessionRuntime["Service"],
         AcpError | ProviderSetupError,
         Scope.Scope
       > {
@@ -304,8 +301,8 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       });
 
       const publishCatalog = (
-        started: AcpSessionRuntimeStartResult,
-        runtime: Pick<AcpSessionRuntime["Service"], "getEvents" | "drainEvents">,
+        started: AcpSessionRuntime.AcpSessionRuntimeStartResult,
+        runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "getEvents" | "drainEvents">,
       ): Effect.Effect<void> =>
         Effect.gen(function* () {
           yield* provider.onSessionStarted(started);

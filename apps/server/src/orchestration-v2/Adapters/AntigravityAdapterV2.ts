@@ -14,7 +14,7 @@ import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import * as EffectAcpErrors from "effect-acp/errors";
 
-import { ProviderHost, type ProviderHostShape } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type { AntigravityAuth } from "../../provider/AntigravityAuth.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
@@ -68,7 +68,7 @@ export interface AntigravityAdapterV2Options {
   readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly idAllocator: IdAllocatorV2["Service"];
-  readonly host: ProviderHostShape;
+  readonly host: ProviderHost.ProviderHostShape;
   /** Spawns the official agent with the instance's Google profile. */
   readonly makeRuntime: (
     input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,

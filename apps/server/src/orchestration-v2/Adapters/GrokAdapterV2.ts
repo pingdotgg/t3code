@@ -23,7 +23,7 @@ import type * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/process";
 import * as EffectAcpErrors from "effect-acp/errors";
 
-import { ProviderHost, type ProviderHostShape } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeLogging";
 import {
   applyGrokAcpModelSelection,
@@ -117,7 +117,7 @@ export interface GrokAdapterV2Options {
   readonly selfInvocation: SelfInvocation;
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
-  readonly host: ProviderHostShape;
+  readonly host: ProviderHost.ProviderHostShape;
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   readonly testHooks?: Parameters<typeof makeAcpAdapterV2>[0]["testHooks"];
@@ -354,7 +354,7 @@ export type GrokAdapterV2DriverEnv =
   | IdAllocator.IdAllocatorV2
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers
-  | ProviderHost;
+  | ProviderHost.ProviderHost;
 
 export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapterV2DriverEnv> = {
   driverKind: GROK_DRIVER_KIND,
@@ -370,7 +370,7 @@ export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapte
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
       return makeGrokAdapterV2({
@@ -417,7 +417,7 @@ const layer: Layer.Layer<
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
   | ProviderEventLoggers.ProviderEventLoggers
-  | ProviderHost
+  | ProviderHost.ProviderHost
 > = Layer.effect(
   ProviderAdapter.ProviderAdapterV2,
   Effect.gen(function* () {
@@ -429,7 +429,7 @@ const layer: Layer.Layer<
     const fileSystem = yield* FileSystem.FileSystem;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-    const host = yield* ProviderHost;
+    const host = yield* ProviderHost.ProviderHost;
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
     return makeGrokAdapterV2({
