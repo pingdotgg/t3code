@@ -501,7 +501,10 @@ describe("OtelEnvironment", () => {
           ),
         );
         assert.deepStrictEqual(
-          resource.attributes.map((attribute) => attribute.key),
+          resource.attributes
+            .map((attribute) => attribute.key)
+            // Effect adds these to every resource.
+            .filter((key) => !key.startsWith("telemetry.sdk.")),
           [...attributes, "service.name"],
         );
       }),

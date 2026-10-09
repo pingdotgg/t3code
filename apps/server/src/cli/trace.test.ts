@@ -16,13 +16,18 @@ function span(name: string, durationMs: number, endMs: number, exitTag = "Succes
   });
 }
 
-function browserSpan(name: string, status: { code: string; message?: string }) {
+function browserSpan(
+  name: string,
+  status: { code: string; message?: string },
+  attributes: Record<string, unknown> = {},
+) {
   return JSON.stringify({
     type: "otlp-span",
     name,
     durationMs: 1,
     endTimeUnixNano: "1000000",
     status,
+    attributes,
   });
 }
 
@@ -91,10 +96,12 @@ it("reads failures and interrupts of browser spans from their OTLP status", () =
   const summarizer = makeTraceSpanSummary();
   [
     browserSpan("render", { code: "2", message: "boom" }),
+    browserSpan("render", { code: "0" }, { "effect.fiber.interrupted": true }),
+    // Clients before Effect 4.0.2.
     browserSpan("render", { code: "1", message: "Interrupted" }),
     browserSpan("render", { code: "1" }),
   ].forEach(summarizer.addLine);
 
   const [render] = summarizer.finish().spans;
-  assert.deepStrictEqual([render?.count, render?.interrupted, render?.failures], [3, 1, 1]);
+  assert.deepStrictEqual([render?.count, render?.interrupted, render?.failures], [4, 2, 1]);
 });

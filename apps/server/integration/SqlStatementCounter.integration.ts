@@ -7,16 +7,17 @@ export interface SqlStatementCounter {
 }
 
 /**
- * Counts `sql.execute` spans, which the Effect SQL client opens once per
- * statement. Spans behave exactly as with the native tracer. Install the same
- * counter on every runtime under test, otherwise statements run by background
- * reactors and statements run by request handlers land in different counters.
+ * Counts the client spans the Effect SQL client opens once per statement. Our
+ * SQLite client names them after its `db.system.name`, `sqlite`. Spans behave
+ * exactly as with the native tracer. Install the same counter on every runtime
+ * under test, otherwise statements run by background reactors and statements
+ * run by request handlers land in different counters.
  */
 export function makeSqlStatementCounter(): SqlStatementCounter {
   let statements = 0;
   const tracer = Tracer.make({
     span: (options) => {
-      if (options.name === "sql.execute") statements += 1;
+      if (options.kind === "client" && options.name === "sqlite") statements += 1;
       return new Tracer.NativeSpan(options);
     },
   });

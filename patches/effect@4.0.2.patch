@@ -1,0 +1,31 @@
+diff --git a/dist/rpc/RpcClient.d.ts b/dist/rpc/RpcClient.d.ts
+index ebfe86f..3ff235d 100644
+--- a/dist/rpc/RpcClient.d.ts
++++ b/dist/rpc/RpcClient.d.ts
+@@ -320,6 +320,8 @@ export declare const layerProtocolWorker: (options: {
+ declare const ConnectionHooks_base: Context.ServiceClass<ConnectionHooks, "effect/rpc/RpcClient/ConnectionHooks", {
+     readonly onConnect: Effect.Effect<void>;
+     readonly onDisconnect: Effect.Effect<void>;
++    /** Runs when the socket is dropped because the server stopped answering, before `onDisconnect`. */
++    readonly onPingTimeout?: Effect.Effect<void> | undefined;
+ }>;
+ /**
+  * Represents optional client protocol hooks that run when a transport connects
+diff --git a/dist/rpc/RpcClient.js b/dist/rpc/RpcClient.js
+index f5b14ef..cccf0a4 100644
+--- a/dist/rpc/RpcClient.js
++++ b/dist/rpc/RpcClient.js
+@@ -688,11 +688,11 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
+           yield* processData(frames[i]);
+         }
+       }
+-    }).pipe(Effect.scoped, Effect.raceFirst(Effect.flatMap(pinger.timeout, () => Effect.fail(new Socket.SocketError({
++    }).pipe(Effect.scoped, Effect.raceFirst(Effect.flatMap(pinger.timeout, () => (Option.isSome(hooks) && hooks.value.onPingTimeout ? hooks.value.onPingTimeout : Effect.void).pipe(Effect.andThen(Effect.fail(new Socket.SocketError({
+       reason: new Socket.SocketReadError({
+         cause: new Error("ping timeout")
+       })
+-    })))));
++    })))))));
+   }).pipe(Option.isSome(hooks) ? Effect.ensuring(hooks.value.onDisconnect) : identity, Effect.tapCause(cause => {
+     const error = Cause.findError(cause);
+     const hasError = Result.isSuccess(error);

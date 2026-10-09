@@ -1,8 +1,8 @@
 diff --git a/dist/index.d.ts b/dist/index.d.ts
-index 530795c..237d090 100644
+index 845cb4c..24ede42 100644
 --- a/dist/index.d.ts
 +++ b/dist/index.d.ts
-@@ -7,14 +7,14 @@ import type * as Effect from "effect/Effect";
+@@ -10,14 +10,14 @@ import type * as Effect from "effect/Effect";
  import type * as Layer from "effect/Layer";
  import type * as Schema from "effect/Schema";
  import type * as Scope from "effect/Scope";
@@ -17,10 +17,10 @@ index 530795c..237d090 100644
 -export * from "vitest";
 +export * from "vite-plus/test";
  /**
-  * @stability unstable
-  * @since 4.0.0
+  * Vitest test API without additional fixtures.
+  *
 diff --git a/dist/index.js b/dist/index.js
-index 740429f..b5c69b8 100644
+index 178cc74..9289296 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -5,7 +5,7 @@ import * as internal from "./internal/internal.js";
@@ -30,8 +30,8 @@ index 740429f..b5c69b8 100644
 -export * from "vitest";
 +export * from "vite-plus/test";
  /**
-  * @since 4.0.0
-  */
+  * Invokes the Effect Vitest equality-tester registration hook.
+  *
 diff --git a/dist/internal/internal.js b/dist/internal/internal.js
 index 7138319..4092c67 100644
 --- a/dist/internal/internal.js
@@ -46,7 +46,7 @@ index 7138319..4092c67 100644
  const runPromise = /*#__PURE__*/Effect.fnUntraced(function* (effect, _ctx) {
    const exit = yield* Effect.exit(effect);
 diff --git a/dist/utils.js b/dist/utils.js
-index 75a243d..08a4c89 100644
+index b97edbe..7dfd64a 100644
 --- a/dist/utils.js
 +++ b/dist/utils.js
 @@ -4,7 +4,7 @@ import * as Option from "effect/Option";
@@ -59,7 +59,7 @@ index 75a243d..08a4c89 100644
  // Primitives
  // ----------------------------
 diff --git a/package.json b/package.json
-index d64c43d..939548e 100644
+index 7dbb505..38d13cb 100644
 --- a/package.json
 +++ b/package.json
 @@ -37,7 +37,6 @@
@@ -67,14 +67,14 @@ index d64c43d..939548e 100644
    },
    "peerDependencies": {
 -    "vitest": ">=5.0.0 <6.0.0",
-     "effect": "^4.0.1"
+     "effect": "^4.0.2"
    },
    "devDependencies": {
 diff --git a/src/index.ts b/src/index.ts
-index 20c0497..2b16d32 100644
+index 9d65132..4aadda8 100644
 --- a/src/index.ts
 +++ b/src/index.ts
-@@ -7,7 +7,7 @@ import type * as Effect from "effect/Effect"
+@@ -10,7 +10,7 @@ import type * as Effect from "effect/Effect"
  import type * as Layer from "effect/Layer"
  import type * as Schema from "effect/Schema"
  import type * as Scope from "effect/Scope"
@@ -83,7 +83,7 @@ index 20c0497..2b16d32 100644
  import * as internal from "./internal/internal.ts"
  
  /**
-@@ -16,7 +16,7 @@ import * as internal from "./internal/internal.ts"
+@@ -19,7 +19,7 @@ import * as internal from "./internal/internal.ts"
   * @stability unstable
   * @since 4.0.0
   */
@@ -91,7 +91,7 @@ index 20c0497..2b16d32 100644
 +export * from "vite-plus/test"
  
  /**
-  * @stability unstable
+  * Vitest test API without additional fixtures.
 diff --git a/src/internal/internal.ts b/src/internal/internal.ts
 index b43385b..4da79fd 100644
 --- a/src/internal/internal.ts
@@ -106,10 +106,10 @@ index b43385b..4da79fd 100644
  
  const getCurrentSuite = V.TestRunner.getCurrentSuite
 diff --git a/src/utils.ts b/src/utils.ts
-index 8ce3409..259be29 100644
+index 4473632..2d04404 100644
 --- a/src/utils.ts
 +++ b/src/utils.ts
-@@ -16,7 +16,7 @@ import * as Option from "effect/Option"
+@@ -17,7 +17,7 @@ import * as Option from "effect/Option"
  import * as Predicate from "effect/Predicate"
  import * as Result from "effect/Result"
  import * as assert from "node:assert"
