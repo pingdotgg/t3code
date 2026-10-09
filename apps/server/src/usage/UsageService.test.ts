@@ -132,7 +132,9 @@ const layerService = (input: {
     Layer.provideMerge(ProviderHostLive.layer),
     Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
     Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: input.prefix })),
+    Layer.provideMerge(
+      ServerConfig.layerTest(process.cwd(), NodePath.join(input.home, input.prefix)),
+    ),
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(Layer.succeed(HostProcessPlatform, input.platform ?? "linux")),
     Layer.provideMerge(ServerSettings.layerTest(input.settings)),
