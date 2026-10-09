@@ -27,6 +27,9 @@ function isAutoUpdatable(provider: ServerProvider): boolean {
     advisory?.status === "behind_latest" &&
     advisory.canUpdate &&
     advisory.latestVersion !== null &&
+    // The runner refuses these, which would leave a failure nobody asked for.
+    provider.compatibilityAdvisory?.latestVersionStatus !== "broken" &&
+    provider.compatibilityAdvisory?.latestVersionStatus !== "unsupported" &&
     updateStatus !== "queued" &&
     updateStatus !== "running"
   );
