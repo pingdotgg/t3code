@@ -14,10 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
-import type {
-  ProviderAdapterV2McpApps,
-  ProviderAdapterV2SessionRuntime,
-} from "@t3tools/provider-core/server/ProviderAdapter";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpAppModelContext from "./McpAppModelContext.ts";
@@ -71,7 +68,7 @@ const storedContext = new Map<string, string>();
 
 function makeLayer(input: {
   readonly item: OrchestrationV2TurnItem | null;
-  readonly mcpApps?: ProviderAdapterV2McpApps;
+  readonly mcpApps?: ProviderAdapter.ProviderAdapterV2McpApps;
   readonly live?: boolean;
 }) {
   return McpAppRequests.layer.pipe(
@@ -121,7 +118,9 @@ function makeLayer(input: {
                 : Option.some(
                     (input.mcpApps === undefined
                       ? {}
-                      : { mcpApps: input.mcpApps }) as ProviderAdapterV2SessionRuntime,
+                      : {
+                          mcpApps: input.mcpApps,
+                        }) as ProviderAdapter.ProviderAdapterV2SessionRuntime,
                   ),
             ),
         }),
@@ -138,7 +137,7 @@ const reason = <A, R>(effect: Effect.Effect<A, McpAppRequestError, R>) =>
 
 describe("McpAppRequests", () => {
   const calls: Array<{ server: string; tool: string }> = [];
-  const mcpApps: ProviderAdapterV2McpApps = {
+  const mcpApps: ProviderAdapter.ProviderAdapterV2McpApps = {
     listTools: () =>
       Effect.succeed([
         { name: "refresh", annotations: { readOnlyHint: true } },

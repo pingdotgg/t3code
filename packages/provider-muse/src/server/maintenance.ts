@@ -1,19 +1,19 @@
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import { compareSemverVersions } from "@t3tools/shared/semver";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest } from "effect/http";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeManualOnlyProviderMaintenanceCapabilities,
   makeProviderMaintenanceCapabilities,
-  ProviderVersionCache,
   type ProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilitiesResolver,
 } from "@t3tools/provider-core/server/maintenanceResolver";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import { parseGenericCliVersion } from "@t3tools/provider-core/server/snapshotProbe";
 
 const DRIVER = ProviderDriverKind.make("muse");
@@ -97,26 +97,24 @@ export const latestMuseVersion = Effect.fn("latestMuseVersion")(function* (
   const channel = environment.MUSE_CHANNEL || "muse-stable";
   if (!MUSE_CHANNELS.has(channel)) return null;
   const channelUrl = `https://api.meta.ai/muse-code/channels/${channel}`;
-  const cache = yield* ProviderVersionCache;
-  const key = `muse:${channelUrl}`;
-  const now = DateTime.toEpochMillis(yield* DateTime.now);
-  const cached = cache.get(key);
-  if (!options?.fresh && cached && cached.expiresAt > now) return cached.version;
   const client = yield* HttpClient.HttpClient;
-  const version = yield* client.execute(HttpClientRequest.get(channelUrl)).pipe(
-    Effect.flatMap((response) =>
-      response.status >= 200 && response.status < 300
-        ? response.json.pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(ChannelManifest)),
-            Effect.map((manifest) => parseMuseVersion(manifest.version)),
-          )
-        : Effect.succeed(null),
+  const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+  return yield* latestVersions.cached(
+    `muse:${channelUrl}`,
+    client.execute(HttpClientRequest.get(channelUrl)).pipe(
+      Effect.flatMap((response) =>
+        response.status >= 200 && response.status < 300
+          ? response.json.pipe(
+              Effect.flatMap(Schema.decodeUnknownEffect(ChannelManifest)),
+              Effect.map((manifest) => parseMuseVersion(manifest.version)),
+            )
+          : Effect.succeed(null),
+      ),
+      Effect.timeout(4_000),
+      Effect.orElseSucceed(() => null),
     ),
-    Effect.timeout(4_000),
-    Effect.orElseSucceed(() => null),
+    options,
   );
-  cache.set(key, { version, expiresAt: now + (version === null ? 60_000 : 60 * 60 * 1_000) });
-  return version;
 });
 
 /** Feed Muse's release channel into the same advisory and notification flow as other drivers. */
