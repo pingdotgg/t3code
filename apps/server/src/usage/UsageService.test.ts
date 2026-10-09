@@ -124,6 +124,8 @@ const layerService = (input: {
   readonly ratesDocument?: unknown;
   readonly environment?: NodeJS.ProcessEnv;
   readonly platform?: NodeJS.Platform;
+  readonly hostname?: string;
+  readonly baseDir?: string;
 }) =>
   layerCursorUsageAccounts(
     CursorAccountReader.layer.pipe(Layer.provide(CursorKeychain.layer)),
@@ -132,9 +134,12 @@ const layerService = (input: {
     Layer.provideMerge(ProviderHostLive.layer),
     Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
     Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: input.prefix })),
+    Layer.provideMerge(
+      ServerConfig.layerTest(process.cwd(), input.baseDir ?? { prefix: input.prefix }),
+    ),
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(Layer.succeed(HostProcess.Platform, input.platform ?? "linux")),
+    Layer.provideMerge(Layer.succeed(HostProcess.Hostname, input.hostname ?? "usage-test-host")),
     Layer.provideMerge(ServerSettings.layerTest(input.settings)),
     Layer.provideMerge(
       Layer.succeed(
@@ -267,6 +272,37 @@ function cursorSource(summary: { readonly sources: readonly UsageSource[] }) {
 }
 
 describe("UsageService", () => {
+  it.live("keeps the first host identity across container recreates", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      for (const [hostname, override, expected] of [
+        ["container-a", undefined, "container-a"],
+        ["container-b", undefined, "container-a"],
+        ["container-c", "physical-host", "physical-host"],
+        ["container-d", undefined, "container-a"],
+      ] as const) {
+        const summary = yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          return yield* service.readSummary(WINDOW);
+        }).pipe(
+          Effect.provide(
+            layerService({
+              prefix: "usage-host-id",
+              baseDir: NodePath.join(home, "t3"),
+              home,
+              settings,
+              hostname,
+              environment: override === undefined ? {} : { T3CODE_HOST_ID: override },
+            }),
+          ),
+        );
+        const source = summary.sources.find((source) => source.fingerprint.provider === "claude");
+        assert.strictEqual(source?.fingerprint.hostId, expected);
+      }
+    }).pipe(Effect.scoped),
+  );
+
   it.live("reads shared managed default and disabled extra account history once", () =>
     Effect.gen(function* () {
       const { home, settings } = yield* setup;

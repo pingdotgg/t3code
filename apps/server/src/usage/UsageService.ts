@@ -17,7 +17,6 @@
  *
  * @module UsageService
  */
-import * as NodeOS from "node:os";
 
 import {
   type ProviderInstanceConfig,
@@ -228,6 +227,7 @@ export const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const httpClient = yield* HttpClient.HttpClient;
   const hostEnvironment = yield* HostProcess.Environment;
+  const hostname = yield* HostProcess.Hostname;
   // The readers yield their own services; scans run them against this context.
   const readerContext = yield* Effect.context<BuiltInUsageReadersEnv>();
 
@@ -247,6 +247,18 @@ export const make = Effect.gen(function* () {
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );
+  // Containers get a new hostname when recreated. Keep the first one so their
+  // usage sources keep one identity; T3CODE_HOST_ID overrides it.
+  const hostIdPath = path.join(config.baseDir, "usage-host-id");
+  const persistedHostId = yield* fileSystem.readFileString(hostIdPath).pipe(
+    Effect.map((value) => value.trim()),
+    Effect.orElseSucceed(() => ""),
+  );
+  const explicitHostId = hostEnvironment["T3CODE_HOST_ID"]?.trim();
+  if (!explicitHostId && !persistedHostId) {
+    yield* writeCacheFile(hostIdPath, `${hostname}\n`).pipe(Effect.ignore);
+  }
+  const hostId = explicitHostId || persistedHostId || hostname;
   let rates: RateTable = new Map();
   let ratesFetchedAtMs: number | null = null;
   let ratesStatus: UsagePricing["status"] = "unavailable";
@@ -720,7 +732,6 @@ export const make = Effect.gen(function* () {
     const startedAtMs = yield* Clock.currentTimeMillis;
     yield* ensureScanCacheLoaded;
 
-    const hostId = NodeOS.hostname();
     const windowStart = DateTime.make(`${input.sinceDay}T00:00:00Z`);
     if (Option.isNone(windowStart)) {
       return yield* new UsageReadError({
