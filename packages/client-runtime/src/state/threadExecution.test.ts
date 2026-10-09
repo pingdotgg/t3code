@@ -17,6 +17,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 import {
+  formatPendingBackgroundWorkStatus,
   presentPendingBackgroundWork,
   presentProviderGoal,
   deriveReportedModelSelection,
@@ -520,9 +521,47 @@ describe("presentPendingBackgroundWork", () => {
 
     expect(presentation).toEqual({
       title: "Waiting on subagent Luna Window Properties",
-      items: [{ taskId: "luna", kind: "subagent", label: "Luna Window Properties", childThreadId }],
+      items: [
+        {
+          taskId: "luna",
+          kind: "subagent",
+          label: "Luna Window Properties",
+          childThreadId,
+          kindLabel: "Subagent",
+          command: undefined,
+          startedAt: undefined,
+        },
+      ],
       waiting: true,
     });
+  });
+
+  it("says what each monitor runs and how long it has run", () => {
+    const startedAt = "2026-10-03T10:00:00.000Z";
+    const presentation = presentPendingBackgroundWork([
+      {
+        taskId: "refit",
+        kind: "monitor",
+        description: "refit end",
+        command: "until grep -q DONE refit.log; do sleep 20; done",
+        startedAt,
+      },
+      { taskId: "plain", kind: "command", description: "npm test", command: "npm test" },
+    ]);
+    // Commands sort before monitors.
+    const [command, monitor] = presentation?.items ?? [];
+    expect(monitor?.command).toBe("until grep -q DONE refit.log; do sleep 20; done");
+    // A command named by its own text is not repeated.
+    expect(command?.command).toBeUndefined();
+
+    const startMs = Date.parse(startedAt);
+    expect(formatPendingBackgroundWorkStatus(monitor!, startMs + 42_500)).toBe(
+      "Monitor · running 42s",
+    );
+    expect(
+      formatPendingBackgroundWorkStatus(monitor!, startMs + 2 * 3_600_000 + 14 * 60_000 + 59_000),
+    ).toBe("Monitor · running 2h 14m");
+    expect(formatPendingBackgroundWorkStatus(command!, startMs)).toBe("Command · running");
   });
 
   it("formats subagent names in a mixed roster and preserves command descriptions", () => {

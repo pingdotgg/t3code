@@ -1,6 +1,8 @@
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 import type { OrchestrationV2PendingBackgroundTask } from "@t3tools/contracts";
 import {
+  backgroundWorkCommand,
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
   turnItemUpdateCanEndBackgroundWork,
@@ -148,6 +150,7 @@ describe("derivePendingBackgroundWork", () => {
       {
         taskId: "cmd-new",
         description: "still pending",
+        command: "npm test",
         kind: "command",
       },
     ]);
@@ -303,7 +306,12 @@ describe("derivePendingBackgroundWork", () => {
       ],
     });
     expect(tasks).toEqual([
-      { taskId: "mon-2", description: "finite monitor", kind: "background_task" },
+      {
+        taskId: "mon-2",
+        description: "finite monitor",
+        command: "sleep 5",
+        kind: "background_task",
+      },
     ]);
   });
 
@@ -410,6 +418,7 @@ describe("derivePendingBackgroundWork", () => {
       {
         taskId: "cmd-new",
         description: "still pending",
+        command: "npm test",
         kind: "command",
       },
     ]);
@@ -465,6 +474,7 @@ describe("derivePendingBackgroundWork", () => {
       {
         taskId: "cmd-null",
         description: "orphan item",
+        command: "echo orphan",
         kind: "command",
       },
     ]);
@@ -585,5 +595,42 @@ describe("derivePendingBackgroundWork kinds", () => {
         }),
       ).toEqual([]);
     });
+  });
+});
+
+describe("background work details", () => {
+  it("carries a command's text and start time from its turn item", () => {
+    const startedAt = DateTime.makeUnsafe("2026-10-03T10:00:00.000Z");
+    const tasks = derivePendingBackgroundWork({
+      latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+      providerThreads: [],
+      turnItems: [
+        {
+          id: "item-1" as never,
+          type: "command_execution",
+          status: "running",
+          title: "Start the dev server",
+          nativeItemRef: { nativeId: "cmd-1" },
+          input: "vp run dev",
+          startedAt,
+        },
+      ],
+    });
+    expect(tasks).toEqual([
+      {
+        taskId: "cmd-1",
+        description: "Start the dev server",
+        command: "vp run dev",
+        startedAt: "2026-10-03T10:00:00.000Z",
+        kind: "command",
+      },
+    ]);
+  });
+
+  it("caps a long command so rosters stay small", () => {
+    const command = backgroundWorkCommand(`  ${"x".repeat(2_000)}  `);
+    expect(command).toHaveLength(500);
+    expect(command?.endsWith("…")).toBe(true);
+    expect(backgroundWorkCommand("  ")).toBeUndefined();
   });
 });

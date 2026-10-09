@@ -160,15 +160,16 @@ export function FloatingWorkingControl(props: {
     hasAgents ||
     hasQueue ||
     (props.devicePreview !== null && props.browserPreview !== null);
-  // The queue, agents, and reconnect labels have separate tap targets.
-  const statusInteractive = props.status?.kind === "connection";
+  // The queue, agents, reconnect, and background labels have separate tap targets.
+  const statusInteractive =
+    props.status?.kind === "connection" || props.status?.kind === "background";
   const capsuleInteractive = statusInteractive || hasQueue || hasAgents || hasPreview;
   // The host stays centered on the capsule, but its measurement constraint
   // comes from the overlay, independent of the capsule's current width.
   const statusContent =
     props.status !== null ? (
       <View
-        pointerEvents={props.status.kind === "connection" ? "box-none" : "none"}
+        pointerEvents={statusInteractive ? "box-none" : "none"}
         className="h-11 items-center justify-center"
       >
         <Animated.View className="h-11" style={capsuleSizerStyle} />
@@ -401,8 +402,10 @@ function FloatingStatusLabel(props: {
       <StatusLabelRow
         key="background"
         accessibilityLabel={props.status.accessibilityLabel}
+        accessibilityRole="button"
         className="gap-2"
         onLayout={props.onLayout}
+        onPress={props.status.onPress}
       >
         {/* A dev server can run for hours after the agent is done, so only work
             that will wake the agent gets the bolt. */}

@@ -11,11 +11,13 @@ export type FloatingWorkingStatus =
   | { readonly kind: "compacting" }
   // The turn settled while background work it started still runs. `waiting`
   // is false when only commands remain, such as a dev server: the agent is done.
+  // Tapping it says what each piece of work is and how long it has run.
   | {
       readonly kind: "background";
       readonly label: string;
       readonly accessibilityLabel: string;
       readonly waiting: boolean;
+      readonly onPress: () => void;
     }
   // A native /goal on an idle thread: paused, blocked, complete, or set.
   | { readonly kind: "goal"; readonly label: string; readonly accessibilityLabel: string }

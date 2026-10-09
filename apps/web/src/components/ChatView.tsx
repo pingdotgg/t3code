@@ -573,6 +573,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { Button, InlineButton } from "./ui/button";
+import { BackgroundWorkDetails } from "./chat/BackgroundWorkDetails";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -7584,6 +7585,9 @@ export default function ChatView(props: ChatViewProps) {
                 </Fragment>
               );
             }),
+      details: (
+        <BackgroundWorkDetails items={presentation.items} onOpenThread={onOpenRelatedThread} />
+      ),
       actions: (
         <Button
           size="xs"
