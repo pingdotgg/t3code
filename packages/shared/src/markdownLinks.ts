@@ -61,7 +61,7 @@ const POSIX_FILE_ROOT_PREFIXES = [
 ] as const;
 
 // `Name:digits` also matches `error:1`, `port:3000`, and `TODO:12`.
-const EXTENSIONLESS_FILE_NAMES = new Set([
+export const EXTENSIONLESS_FILE_NAMES = new Set([
   "Makefile",
   "makefile",
   "GNUmakefile",

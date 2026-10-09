@@ -3,6 +3,7 @@ import {
   getBuiltInSpriteSheet,
   type FileTreeIcons,
 } from "@pierre/trees";
+import { EXTENSIONLESS_FILE_NAMES } from "@t3tools/shared/markdownLinks";
 import { VIDEO_FILE_EXTENSIONS } from "@t3tools/shared/video";
 
 export interface PierreIconResolution {
@@ -145,10 +146,26 @@ export function basenameOfPath(pathValue: string): string {
   return slashIndex === -1 ? pathValue : pathValue.slice(slashIndex + 1);
 }
 
+const BIN_DIRECTORY_ENTRY_PATTERN = /(?:^|\/)\.?s?bin\/[^/]+$/;
+
+/**
+ * Guesses the kind for chips that only carry a path. Names without an extension
+ * default to directory, because agents often link folders without a trailing
+ * slash; only clear file signals override that.
+ */
 export function inferEntryKindFromPath(pathValue: string): "file" | "directory" {
   const base = basenameOfPath(pathValue);
-  if (base.startsWith(".") && !base.slice(1).includes(".")) return "directory";
-  return base.includes(".") ? "file" : "directory";
+  if (base === "" || base === "." || base === "..") return "directory";
+  const nameAfterLeadingDot = base.startsWith(".") ? base.slice(1) : base;
+  if (nameAfterLeadingDot.includes(".")) return "file";
+  if (
+    EXTENSIONLESS_FILE_NAMES.has(base) ||
+    hasSpecificPierreIconForFileName(base) ||
+    BIN_DIRECTORY_ENTRY_PATTERN.test(pathValue)
+  ) {
+    return "file";
+  }
+  return "directory";
 }
 
 /** Languages whose files are recognised by name rather than by extension. */

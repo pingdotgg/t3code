@@ -2,10 +2,36 @@ import { assert, describe, it } from "vite-plus/test";
 
 import {
   hasSpecificPierreIconForFileName,
+  inferEntryKindFromPath,
   resolvePierreIconForEntry,
   syntheticFileNameForLanguageId,
   T3_PIERRE_ICONS,
 } from "./pierre-icons";
+
+describe("inferEntryKindFromPath", () => {
+  it("treats names with an extension as files", () => {
+    assert.equal(inferEntryKindFromPath("src/app.ts"), "file");
+    assert.equal(inferEntryKindFromPath(".env.local"), "file");
+  });
+
+  it("treats known extensionless file names and dotfiles as files", () => {
+    for (const path of ["Makefile", "repo/LICENSE", "Dockerfile", ".gitignore", "~/.zshrc"]) {
+      assert.equal(inferEntryKindFromPath(path), "file", path);
+    }
+  });
+
+  it("treats entries inside bin folders as files", () => {
+    for (const path of ["~/.local/bin/portless", "/usr/sbin/sshd", "node_modules/.bin/tsc"]) {
+      assert.equal(inferEntryKindFromPath(path), "file", path);
+    }
+  });
+
+  it("keeps other extensionless names as directories", () => {
+    for (const path of ["/tmp/t3audit/t3-seeded", "..", ".github", "src/", "~/.local/bin"]) {
+      assert.equal(inferEntryKindFromPath(path), "directory", path);
+    }
+  });
+});
 
 describe("Pierre file icons", () => {
   it("uses Pierre exact filename and complete-set extension mappings", () => {
