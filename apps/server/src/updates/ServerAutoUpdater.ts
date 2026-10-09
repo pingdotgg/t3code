@@ -94,7 +94,7 @@ export const layer = Layer.effectDiscard(
       const targetVersion = pendingTarget;
       if (targetVersion === undefined) return;
       yield* updateWindow.runIfOpen(
-        { closesWindows: false },
+        { closesWindows: false, restartsServer: true },
         Effect.gen(function* () {
           // The setting may have been turned off while waiting.
           if (!(yield* automaticUpdatesEnabled)) return;

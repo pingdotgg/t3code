@@ -83,6 +83,8 @@ Then it installs:
 - the newest T3 Code release on its channel, when it runs as a background service
   (`t3 service install`). It downloads first and restarts only inside that window.
 
+Background services also wait for integrated terminal commands to finish.
+
 Desktop updates download in the background when the app detects an available
 release and install when you quit the app.
 The app stays open while you work, including when it hosts multiple backends.

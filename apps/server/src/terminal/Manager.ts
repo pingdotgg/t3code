@@ -60,6 +60,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as ServerConfig from "../config.ts";
@@ -219,6 +220,15 @@ export class TerminalManager extends Context.Service<
       readonly terminalId?: string;
     }) => Effect.Effect<void>;
 
+    /** Inspect current terminal work without changing sessions. Unknown activity is busy. */
+    readonly hasBusyTerminals: Effect.Effect<boolean>;
+
+    /**
+     * Hold terminal launches and input while checking idle state and handing off a server restart.
+     * Read-only activity checks stay available; do not call open, restart, or write inside this permit.
+     */
+    readonly withRestartPermit: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+
     /**
      * Subscribe to terminal runtime events with a direct callback.
      *
@@ -243,6 +253,8 @@ interface TerminalSubprocessInspectResult {
   readonly hasRunningSubprocess: boolean;
   readonly childCommand: string | null;
   readonly processIds: ReadonlyArray<number>;
+  /** False when an otherwise successful process snapshot omitted the shell. */
+  readonly terminalExists?: boolean;
 }
 
 interface TerminalSubprocessInspector {
@@ -727,7 +739,12 @@ function deriveSubprocessInspectResult(
       (snapshot.childrenByParent.get(pid)?.length ?? 0) > 0,
   );
   if (childPid === undefined) {
-    return { hasRunningSubprocess: false, childCommand: null, processIds: [] };
+    return {
+      hasRunningSubprocess: false,
+      childCommand: null,
+      processIds: [],
+      terminalExists: snapshot.commandById.has(terminalPid),
+    };
   }
   const processIds = new Set<number>([terminalPid]);
   const pending = [terminalPid];
@@ -745,6 +762,7 @@ function deriveSubprocessInspectResult(
     hasRunningSubprocess: true,
     childCommand: normalized ? truncateTerminalWireLabel(normalized) : null,
     processIds: [...processIds],
+    terminalExists: snapshot.commandById.has(terminalPid),
   };
 }
 
@@ -1577,6 +1595,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     killFibers: new Map(),
   });
   const threadLocks = yield* KeyedLock.make<string>();
+  const terminalAdmission = yield* Semaphore.make(1);
+  const withRestartPermit = terminalAdmission.withPermits(1);
   const terminalEventListeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
   const workerScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(workerScope, Exit.void));
@@ -2701,9 +2721,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   });
 
   const openLocked = (input: TerminalOpenInput) =>
-    withWorkspaceLease(
-      path.resolve(input.worktreePath ?? input.cwd),
-      openWithWorkspaceLease(input),
+    withRestartPermit(
+      withWorkspaceLease(
+        path.resolve(input.worktreePath ?? input.cwd),
+        openWithWorkspaceLease(input),
+      ),
     );
 
   const open: TerminalManager["Service"]["open"] = (input) =>
@@ -2950,29 +2972,34 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
   };
 
-  const write: TerminalManager["Service"]["write"] = Effect.fn("terminal.write")(function* (input) {
-    const terminalId = input.terminalId;
-    const session = yield* requireSession(input.threadId, terminalId);
-    const process = session.process;
-    if (!process || session.status !== "running") {
-      if (session.status === "exited") return;
-      return yield* new TerminalNotRunningError({
-        threadId: input.threadId,
-        terminalId,
-      });
-    }
-    session.inputCount += 1;
-    yield* Effect.try({
-      try: () => process.write(input.data),
-      catch: (cause) =>
-        new TerminalWriteError({
+  const writeUnlocked: TerminalManager["Service"]["write"] = Effect.fn("terminal.write")(
+    function* (input) {
+      const terminalId = input.terminalId;
+      const session = yield* requireSession(input.threadId, terminalId);
+      const process = session.process;
+      if (!process || session.status !== "running") {
+        if (session.status === "exited") return;
+        return yield* new TerminalNotRunningError({
           threadId: input.threadId,
           terminalId,
-          terminalPid: process.pid,
-          cause,
-        }),
-    });
-  });
+        });
+      }
+      session.inputCount += 1;
+      yield* Effect.try({
+        try: () => process.write(input.data),
+        catch: (cause) =>
+          new TerminalWriteError({
+            threadId: input.threadId,
+            terminalId,
+            terminalPid: process.pid,
+            cause,
+          }),
+      });
+    },
+  );
+
+  const write: TerminalManager["Service"]["write"] = (input) =>
+    withRestartPermit(writeUnlocked(input));
 
   const resizeLocked = Effect.fn("terminal.resize")(function* (input: TerminalResizeInput) {
     const session = yield* getSession(input.threadId, input.terminalId);
@@ -3103,6 +3130,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             restartResolved(resolved),
           ),
         ),
+        withRestartPermit,
       ),
     );
 
@@ -3174,6 +3202,54 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       ),
     );
 
+  const hasBusyTerminals: TerminalManager["Service"]["hasBusyTerminals"] = Effect.gen(function* () {
+    const state = yield* readManagerState;
+    const running = new Map(
+      [...state.sessions]
+        .filter(([, session]) => session.status === "starting" || session.status === "running")
+        .map(
+          ([key, session]) =>
+            [
+              key,
+              {
+                status: session.status,
+                pid: session.pid,
+                process: session.process,
+                activityMark: session.eventSequence + session.inputCount,
+              },
+            ] as const,
+        ),
+    );
+    if (running.size === 0) return false;
+    if ([...running.values()].some((session) => session.status === "starting")) return true;
+    const { inspector } = yield* acquireSubprocessInspector;
+    for (const session of running.values()) {
+      if (session.pid === null || !Number.isInteger(session.pid) || session.pid <= 0) return true;
+      const result = yield* inspector(session.pid);
+      if (result.hasRunningSubprocess || result.terminalExists === false) return true;
+    }
+    // Input, output, or a new process can arrive after the shared snapshot.
+    const latest = yield* readManagerState;
+    return [...latest.sessions].some(([key, session]) => {
+      if (session.status === "starting") return true;
+      if (session.status !== "running") return false;
+      const inspected = running.get(key);
+      return (
+        inspected === undefined ||
+        inspected.pid !== session.pid ||
+        inspected.process !== session.process ||
+        inspected.activityMark !== session.eventSequence + session.inputCount ||
+        session.pendingProcessEvents.length > session.pendingProcessEventIndex
+      );
+    });
+  }).pipe(
+    Effect.catch((error) =>
+      Effect.logWarning("failed to inspect busy terminals", { error: error.message }).pipe(
+        Effect.as(true),
+      ),
+    ),
+  );
+
   return TerminalManager.of({
     open,
     attachStream,
@@ -3184,6 +3260,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     restart,
     close,
     closeIdle,
+    hasBusyTerminals,
+    withRestartPermit,
     subscribe,
     subscribeMetadata,
   });

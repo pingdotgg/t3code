@@ -786,8 +786,14 @@ const make = Effect.gen(function* () {
       if (decoded._tag === "Failure" || legacySettings._tag === "Failure") {
         const failure = decoded._tag === "Failure" ? decoded : legacySettings;
         settingsFileTrusted = false;
+        // Unreadable persisted choices cannot authorize automatic updates or recovery.
+        settings = {
+          ...DEFAULT_SERVER_SETTINGS,
+          automaticUpdates: false,
+          continueThreadsAfterServerUpdate: false,
+        };
         if (failure._tag === "Failure") {
-          yield* Effect.logWarning("failed to parse settings.json, using defaults", {
+          yield* Effect.logWarning("failed to parse settings.json, using safe defaults", {
             path: settingsPath,
             issues: Cause.pretty(failure.cause),
             cause: failure.cause,

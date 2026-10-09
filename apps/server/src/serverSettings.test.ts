@@ -1030,23 +1030,44 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
-  it.effect("migrates legacy providers from an invalid file without rewriting it", () =>
-    Effect.gen(function* () {
-      const serverConfig = yield* ServerConfig.ServerConfig;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-      const raw = '{"addProjectBaseDirectory":42,"providers":{"codex":{"binaryPath":"/x"}}}';
-      yield* fileSystem.writeFileString(serverConfig.settingsPath, raw);
+  it.effect("disables automatic recovery and updates without rewriting an invalid file", () =>
+    Effect.forEach(
+      [
+        {
+          raw: '{"automaticUpdates":false,"continueThreadsAfterServerUpdate":false,"addProjectBaseDirectory":42,"providers":{"codex":{"binaryPath":"/x"}}}',
+          migratedProvider: {
+            driver: ProviderDriverKind.make("codex"),
+            config: { binaryPath: "/x" },
+          },
+        },
+        {
+          raw: '{"automaticUpdates":true,"continueThreadsAfterServerUpdate":true,"providers":42}',
+          migratedProvider: undefined,
+        },
+        {
+          raw: '{"automaticUpdates":false,"continueThreadsAfterServerUpdate":false',
+          migratedProvider: undefined,
+        },
+      ],
+      ({ raw, migratedProvider }) =>
+        Effect.gen(function* () {
+          const serverConfig = yield* ServerConfig.ServerConfig;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+          yield* fileSystem.writeFileString(serverConfig.settingsPath, raw);
 
-      const settings = yield* serverSettings.getSettings;
+          const settings = yield* serverSettings.getSettings;
 
-      // The readable provider settings still apply, but the file stays for the user to repair.
-      assert.deepEqual(settings.providerInstances[ProviderInstanceId.make("codex")], {
-        driver: ProviderDriverKind.make("codex"),
-        config: { binaryPath: "/x" },
-      });
-      assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), raw);
-    }).pipe(Effect.provide(layerServerSettings())),
+          // Readable legacy provider settings still apply while the file stays for repair.
+          assert.deepEqual(
+            settings.providerInstances[ProviderInstanceId.make("codex")],
+            migratedProvider,
+          );
+          assert.isFalse(settings.automaticUpdates);
+          assert.isFalse(settings.continueThreadsAfterServerUpdate);
+          assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), raw);
+        }).pipe(Effect.provide(layerServerSettings())),
+    ),
   );
 
   it.effect("skips a disabled provider instance when picking the text generation fallback", () =>
