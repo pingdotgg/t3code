@@ -52,8 +52,6 @@ export interface SkillRow {
 }
 
 function skillGroup(skill: ServerProviderSkill): SkillGroupKind {
-  const path = skill.path.replaceAll("\\", "/");
-  if (path.includes("/plugins/")) return "plugin";
   switch (resolveProviderSkillSourceKind(skill)) {
     case "project":
     case "repo":
@@ -64,7 +62,12 @@ function skillGroup(skill: ServerProviderSkill): SkillGroupKind {
       return "plugin";
     case "system":
     case "other":
-      return skill.scope?.trim().toLowerCase() === "plugin" ? "plugin" : "system";
+      // Some providers report plugin skills with no scope; their folder is the
+      // only sign. A repository folder named `plugins` already has a scope.
+      return skill.scope?.trim().toLowerCase() === "plugin" ||
+        skill.path.replaceAll("\\", "/").includes("/plugins/")
+        ? "plugin"
+        : "system";
   }
 }
 

@@ -1261,44 +1261,50 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-    // Copies read their source before any removal in the same save drops it.
-    const ordered = [
-      ...changes.filter((change) => change.kind === "copy"),
-      ...changes.filter((change) => change.kind !== "copy"),
-    ];
+    const apply = (copied: ReadonlyMap<string, Option.Option<Uint8Array>>) =>
+      Effect.forEach(
+        changes,
+        (change) =>
+          Effect.gen(function* () {
+            let value: Uint8Array | undefined;
+            if (change.kind === "write") value = change.value;
+            if (change.kind === "copy") {
+              const source = copied.get(change.secretName) ?? Option.none();
+              if (Option.isNone(source)) return;
+              value = source.value;
+            }
+            const previousValue = yield* readSecret(change, change.secretName);
+            // A store operation may mutate before reporting an error (for example chmod after rename).
+            applied.push({ ...change, previousValue });
+            yield* (
+              value !== undefined
+                ? secretStore.set(change.secretName, value)
+                : secretStore.remove(change.secretName)
+            ).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ServerSettingsError({
+                    settingsPath,
+                    operation: change.kind === "remove" ? change.operation : "write-secret",
+                    providerInstanceId: change.providerInstanceId,
+                    environmentVariable: change.environmentVariable,
+                    cause,
+                  }),
+              ),
+            );
+          }),
+        { discard: true },
+      );
+    // Every copy reads its source before anything is written or removed, so a
+    // rename that swaps two names, or drops the old one, still moves both values.
     return Effect.forEach(
-      ordered,
+      changes.filter((change) => change.kind === "copy"),
       (change) =>
-        Effect.gen(function* () {
-          let value: Uint8Array | undefined;
-          if (change.kind === "write") value = change.value;
-          if (change.kind === "copy") {
-            const source = yield* readSecret(change, change.from);
-            if (Option.isNone(source)) return;
-            value = source.value;
-          }
-          const previousValue = yield* readSecret(change, change.secretName);
-          // A store operation may mutate before reporting an error (for example chmod after rename).
-          applied.push({ ...change, previousValue });
-          yield* (
-            value !== undefined
-              ? secretStore.set(change.secretName, value)
-              : secretStore.remove(change.secretName)
-          ).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ServerSettingsError({
-                  settingsPath,
-                  operation: change.kind === "remove" ? change.operation : "write-secret",
-                  providerInstanceId: change.providerInstanceId,
-                  environmentVariable: change.environmentVariable,
-                  cause,
-                }),
-            ),
-          );
-        }),
-      { discard: true },
+        readSecret(change, change.from).pipe(
+          Effect.map((source) => [change.secretName, source] as const),
+        ),
     ).pipe(
+      Effect.flatMap((sources) => apply(new Map(sources))),
       Effect.tapError(() => rollback),
       Effect.as(rollback),
     );

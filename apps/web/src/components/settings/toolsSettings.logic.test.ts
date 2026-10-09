@@ -54,6 +54,19 @@ describe("collectSkillRows", () => {
             scope: "repo",
             enabled: true,
           },
+          // A repository folder that happens to be called `plugins`.
+          {
+            name: "release",
+            path: "/work/t3/packages/plugins/.agents/skills/release/SKILL.md",
+            scope: "repo",
+            enabled: true,
+          },
+          // A plugin skill the provider reports with no scope.
+          {
+            name: "docs",
+            path: "/home/me/.claude/plugins/cache/acme/docs/skills/docs/SKILL.md",
+            enabled: true,
+          },
         ]),
         provider("cursor", [], { enabled: false }),
       ],
@@ -62,8 +75,10 @@ describe("collectSkillRows", () => {
     expect(
       rows.map((row) => [row.name, row.group, row.paths.length, row.providers.length]),
     ).toEqual([
+      ["release", "project", 1, 1],
       ["test-t3-app", "project", 1, 1],
       ["frontend-design", "personal", 2, 2],
+      ["docs", "plugin", 1, 1],
     ]);
   });
 

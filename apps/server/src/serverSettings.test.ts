@@ -1638,6 +1638,62 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
+  it.effect("keeps both MCP secrets when two variables swap names", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const server = (
+        env: ReadonlyArray<{
+          name: string;
+          value: string;
+          sensitive: boolean;
+          valueRedacted?: boolean;
+          storedAs?: { server: string; variable: string };
+        }>,
+      ) => ({
+        enabled: true,
+        transport: { type: "stdio" as const, command: "npx", args: [], env },
+      });
+      yield* serverSettings.updateSettings({
+        mcpServers: {
+          db: server([
+            { name: "A", value: "value-a", sensitive: true },
+            { name: "B", value: "value-b", sensitive: true },
+          ]),
+        },
+      });
+
+      const swapped = yield* serverSettings.updateSettings({
+        mcpServers: {
+          db: server([
+            {
+              name: "A",
+              value: "",
+              sensitive: true,
+              valueRedacted: true,
+              storedAs: { server: "db", variable: "B" },
+            },
+            {
+              name: "B",
+              value: "",
+              sensitive: true,
+              valueRedacted: true,
+              storedAs: { server: "db", variable: "A" },
+            },
+          ]),
+        },
+      });
+
+      const env = swapped.mcpServers.db?.transport;
+      assert.deepEqual(
+        env?.type === "stdio" ? env.env.map((variable) => [variable.name, variable.value]) : [],
+        [
+          ["A", "value-b"],
+          ["B", "value-a"],
+        ],
+      );
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
   it.effect("moves a sensitive MCP value written into settings.json into the secret store", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;
