@@ -166,4 +166,16 @@ describe("SessionControl", () => {
     ).rejects.toThrow("navigation failed");
     await expect(control.agent("agent", async () => "recovered")).resolves.toBe("recovered");
   });
+
+  it("lets any agent act on a tab no agent opened, but only while no human controls it", async () => {
+    const control = new SessionControl(null);
+    await expect(control.agent("agent-a", async () => "acted")).resolves.toBe("acted");
+    await control.take("viewer-a");
+    await expect(control.agent("agent-a", async () => "racing")).rejects.toMatchObject({
+      reason: "humanControl",
+    });
+    await expect(control.observe(async () => "read")).resolves.toBe("read");
+    await control.release("viewer-a");
+    await expect(control.agent("agent-b", async () => "acted")).resolves.toBe("acted");
+  });
 });

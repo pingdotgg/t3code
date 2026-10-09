@@ -10,7 +10,7 @@
  */
 import { Schema } from "effect";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { BrowserProfileId } from "./browserProfile.ts";
+import { BROWSER_PROFILE_MAX_COUNT, BrowserProfile, BrowserProfileId } from "./browserProfile.ts";
 
 export const PREVIEW_URL_MAX_LENGTH = 2_048;
 export const CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS = 32;
@@ -294,6 +294,14 @@ export const PreviewCloseInput = Schema.Struct({
   tabId: Schema.optional(PreviewTabId),
 });
 export type PreviewCloseInput = typeof PreviewCloseInput.Type;
+
+/** A client's browser profiles, which agents choose from when they open a tab. */
+export const PreviewReportProfilesInput = Schema.Struct({
+  /** The user's own profiles; the server adds the built-ins. */
+  profiles: Schema.Array(BrowserProfile).check(Schema.isMaxLength(BROWSER_PROFILE_MAX_COUNT)),
+  defaultProfileId: BrowserProfileId,
+});
+export type PreviewReportProfilesInput = typeof PreviewReportProfilesInput.Type;
 
 export const PreviewClearProfileInput = Schema.Struct({
   profileId: BrowserProfileId,
