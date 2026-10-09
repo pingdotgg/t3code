@@ -136,10 +136,11 @@ The host runs `cloudflared` pinned by `CLOUDFLARED_VERSION` in
 [`relayClient.ts`](../../packages/shared/src/relayClient.ts), and bumping it there
 (version, URLs, and checksums) is the whole release step. A linked host that
 starts a server with a new pin keeps its connector up on the newest older managed
-release, installs the pinned one in the background, then restarts only the
-connector child on it. If that restart fails to spawn, the host requests recovery
-as it would for an exited connector. A host with no relay client installs one
-first. A `cloudflared` on `PATH` or an explicit `T3CODE_CLOUDFLARED_PATH` is the
+release, installs the pinned one in the background, then starts a second
+connector on it for the same tunnel. The old connector stops only after the new
+one registers, so the swap never takes the host off the relay. If the new one
+fails to spawn, the old one keeps serving and the install retries later. A host
+with no relay client installs one first. A `cloudflared` on `PATH` or an explicit `T3CODE_CLOUDFLARED_PATH` is the
 user's choice and is never replaced, since linking asks before downloading.
 
 Once the pinned release registers a connection, managed releases older than the

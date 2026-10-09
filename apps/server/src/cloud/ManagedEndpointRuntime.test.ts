@@ -851,7 +851,7 @@ describe("CloudManagedEndpointRuntime", () => {
   );
 
   it.effect(
-    "runs an older relay client while the pinned one installs, then restarts on it and prunes",
+    "runs an older relay client while the pinned one installs, then hands off to it and prunes",
     () =>
       Effect.gen(function* () {
         const olderClient = {
@@ -870,7 +870,7 @@ describe("CloudManagedEndpointRuntime", () => {
         const releaseInstall = yield* Deferred.make<void>();
         const pruned = yield* Deferred.make<void>();
         const spawned = yield* Queue.unbounded<string>();
-        const killed: Array<string> = [];
+        const olderStopped = yield* Deferred.make<void>();
         const output = yield* Queue.unbounded<Uint8Array>();
         const spawner = ChildProcessSpawner.make((command) =>
           Effect.gen(function* () {
@@ -878,7 +878,11 @@ describe("CloudManagedEndpointRuntime", () => {
             yield* Queue.offer(spawned, executable);
             const handle = makeHandle({
               pid: executable === pinnedClient.executablePath ? 2 : 1,
-              onKill: () => killed.push(executable),
+              onKill: () => {
+                if (executable === olderClient.executablePath) {
+                  Deferred.doneUnsafe(olderStopped, Effect.void);
+                }
+              },
               ...(executable === pinnedClient.executablePath
                 ? { output: Stream.fromQueue(output) }
                 : {}),
@@ -916,7 +920,8 @@ describe("CloudManagedEndpointRuntime", () => {
 
         yield* Deferred.succeed(releaseInstall, undefined);
         expect(yield* Queue.take(spawned)).toBe(pinnedClient.executablePath);
-        expect(killed).toEqual([olderClient.executablePath]);
+        // The older connector keeps serving until the pinned one registers.
+        expect(Option.isNone(yield* Deferred.poll(olderStopped))).toBe(true);
 
         yield* Queue.offer(
           output,
@@ -924,6 +929,7 @@ describe("CloudManagedEndpointRuntime", () => {
             "2026-10-08T00:00:00Z INF Registered tunnel connection connIndex=0\n",
           ),
         );
+        yield* Deferred.await(olderStopped);
         yield* Deferred.await(pruned);
       }),
   );
@@ -1118,7 +1124,7 @@ describe("CloudManagedEndpointRuntime", () => {
     }),
   );
 
-  it.effect("requests recovery when the updated relay client fails to start", () =>
+  it.effect("keeps the older connector when the updated relay client fails to start", () =>
     Effect.gen(function* () {
       const olderClient = {
         status: "available",
@@ -1133,18 +1139,26 @@ describe("CloudManagedEndpointRuntime", () => {
         version: RelayClient.CLOUDFLARED_VERSION,
       } as const;
       let installed = false;
+      let olderKilled = false;
       const releaseInstall = yield* Deferred.make<void>();
+      const pinnedAttempted = yield* Deferred.make<void>();
       const spawner = ChildProcessSpawner.make((command) =>
         Effect.gen(function* () {
           const executable = ChildProcess.isStandardCommand(command) ? command.command : "";
           if (executable === pinnedClient.executablePath) {
+            yield* Deferred.succeed(pinnedAttempted, undefined);
             return yield* PlatformError.systemError({
               _tag: "PermissionDenied",
               module: "ChildProcess",
               method: "spawn",
             });
           }
-          const handle = makeHandle({ pid: 6, onKill: () => {} });
+          const handle = makeHandle({
+            pid: 6,
+            onKill: () => {
+              olderKilled = true;
+            },
+          });
           yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
           return handle;
         }),
@@ -1170,6 +1184,68 @@ describe("CloudManagedEndpointRuntime", () => {
       );
       const config = { providerKind: "cloudflare_tunnel", connectorToken: "token" } as const;
       expect(yield* runtime.applyConfig(config)).toMatchObject({ status: "running", pid: 6 });
+
+      yield* Deferred.succeed(releaseInstall, undefined);
+      yield* Deferred.await(pinnedAttempted);
+      // The failed swap leaves the older connector active and running.
+      expect(yield* runtime.applyConfig(config)).toMatchObject({ status: "running", pid: 6 });
+      expect(olderKilled).toBe(false);
+    }),
+  );
+
+  it.effect("requests recovery when the older connector exited during a failed swap", () =>
+    Effect.gen(function* () {
+      const olderClient = {
+        status: "available",
+        executablePath: "/managed/2025.9.0/cloudflared",
+        source: "managed",
+        version: "2025.9.0",
+      } as const;
+      const pinnedClient = {
+        status: "available",
+        executablePath: "/managed/pinned/cloudflared",
+        source: "managed",
+        version: RelayClient.CLOUDFLARED_VERSION,
+      } as const;
+      let installed = false;
+      const releaseInstall = yield* Deferred.make<void>();
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          const executable = ChildProcess.isStandardCommand(command) ? command.command : "";
+          if (executable === pinnedClient.executablePath) {
+            return yield* PlatformError.systemError({
+              _tag: "PermissionDenied",
+              module: "ChildProcess",
+              method: "spawn",
+            });
+          }
+          // The older connector has exited by the time the swap fails.
+          const handle = makeHandle({ pid: 12, onKill: () => {}, isRunning: () => !installed });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        spawner,
+        Layer.succeed(
+          RelayClient.RelayClient,
+          RelayClient.RelayClient.of({
+            resolve: Effect.sync(() => (installed ? pinnedClient : olderClient)),
+            install: Deferred.await(releaseInstall).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  installed = true;
+                  return pinnedClient;
+                }),
+              ),
+            ),
+            installWithProgress: () => Effect.die("unused"),
+            pruneManagedVersions: Effect.void,
+          }),
+        ),
+      );
+      const config = { providerKind: "cloudflare_tunnel", connectorToken: "token" } as const;
+      expect(yield* runtime.applyConfig(config)).toMatchObject({ status: "running", pid: 12 });
 
       yield* Deferred.succeed(releaseInstall, undefined);
       expect(Option.getOrThrow(yield* Stream.runHead(runtime.recoveryRequests))).toEqual(config);
