@@ -73,8 +73,9 @@ update can roll back to the previous version. If the update still fails:
 ## Automatic updates
 
 **Settings → General → Update automatically** is on by default. Each environment
-waits until no thread is running or waiting for you, no client has been used for
-15 minutes, and no scheduled task or usage-limit resume is due within 5 minutes.
+waits until no thread is running or waiting for you, no background work is pending,
+no client has been used for 15 minutes, and no scheduled task or usage-limit resume
+is due within 5 minutes.
 Then it installs:
 
 - provider CLI updates that have a one-click update;
