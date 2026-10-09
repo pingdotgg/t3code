@@ -16,8 +16,9 @@ import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
@@ -356,11 +357,9 @@ const discoverGrokMetadataViaAcpInitialize = (
   environment: NodeJS.ProcessEnv,
 ) =>
   Effect.gen(function* () {
-    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const acp = yield* makeGrokAcpRuntime({
       grokSettings,
       environment,
-      childProcessSpawner,
       cwd: process.cwd(),
       clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
     });

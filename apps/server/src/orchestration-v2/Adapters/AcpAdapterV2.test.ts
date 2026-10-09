@@ -48,7 +48,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/process";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
@@ -1150,7 +1150,7 @@ describe("AcpAdapterV2", () => {
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
         // Production Devin runs commands through client terminals.
-        clientTerminals: { childProcessSpawner, shellCommands: true },
+        clientTerminals: { shellCommands: true },
         selfInvocation: yield* resolveSelfInvocation(),
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -2190,7 +2190,7 @@ describe("AcpAdapterV2", () => {
           makeRuntime,
         },
         selfInvocation,
-        clientTerminals: { childProcessSpawner },
+        clientTerminals: {},
       });
       const sourceThreadId = ThreadId.make("thread-acp-native-fork-source");
       const targetThreadId = ThreadId.make("thread-acp-native-fork-target");
@@ -2476,7 +2476,7 @@ describe("AcpAdapterV2", () => {
             }).pipe(Effect.andThen(makeRuntime(input))),
         },
         selfInvocation,
-        clientTerminals: { childProcessSpawner },
+        clientTerminals: {},
       });
       const threadId = ThreadId.make("thread-acp-unknown-permission-grant");
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -12045,9 +12045,11 @@ describe("AcpAdapterV2", () => {
     Effect.gen(function* () {
       const commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> =
         [];
-      yield* AcpSessionRuntime.terminateWindowsProcessTreeWithTaskkill(
-        makeTaskkillSpawner({ exitCode: 0, commands }),
-        4321,
+      yield* AcpSessionRuntime.terminateWindowsProcessTreeWithTaskkill(4321).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          makeTaskkillSpawner({ exitCode: 0, commands }),
+        ),
       );
       assert.deepEqual(commands, [{ command: "taskkill", args: ["/PID", "4321", "/T", "/F"] }]);
 
@@ -12058,10 +12060,13 @@ describe("AcpAdapterV2", () => {
         { exitCode: 128, output: "ERROR: Access is denied." },
         { exitCode: 1, output: "generic failure" },
       ]) {
-        const failed = yield* AcpSessionRuntime.terminateWindowsProcessTreeWithTaskkill(
-          makeTaskkillSpawner(fixture),
-          4321,
-        ).pipe(Effect.exit);
+        const failed = yield* AcpSessionRuntime.terminateWindowsProcessTreeWithTaskkill(4321).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            makeTaskkillSpawner(fixture),
+          ),
+          Effect.exit,
+        );
         if (Exit.isSuccess(failed)) assert.fail(`taskkill ${fixture.exitCode} must fail`);
         const error = Cause.squash(failed.cause);
         assert.instanceOf(error, AcpSessionRuntime.AcpProcessGroupTerminationError);
@@ -12082,10 +12087,13 @@ describe("AcpAdapterV2", () => {
         { outputFailure: true },
         { exitFailure: true },
       ]) {
-        const failed = yield* AcpSessionRuntime.terminateWindowsProcessTreeWithTaskkill(
-          makeTaskkillSpawner(fixture),
-          4321,
-        ).pipe(Effect.exit);
+        const failed = yield* AcpSessionRuntime.terminateWindowsProcessTreeWithTaskkill(4321).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            makeTaskkillSpawner(fixture),
+          ),
+          Effect.exit,
+        );
         if (Exit.isSuccess(failed)) assert.fail("taskkill infrastructure failure must fail");
         const error = Cause.squash(failed.cause);
         assert.instanceOf(error, AcpSessionRuntime.AcpProcessGroupTerminationError);
