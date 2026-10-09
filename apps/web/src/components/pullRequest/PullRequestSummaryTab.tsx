@@ -873,7 +873,11 @@ export function PullRequestSummaryTab({
             <Menu>
               <MenuTrigger
                 render={<Button size="xs" variant="ghost-muted" />}
-                aria-label="Filter comments"
+                aria-label={
+                  filteredOutCount > 0
+                    ? `Filter comments, ${filteredOutCount} hidden`
+                    : "Filter comments"
+                }
               >
                 <ListFilterIcon aria-hidden className="size-3" />
                 {filteredOutCount > 0 ? `${filteredOutCount} hidden` : "Filter"}
@@ -883,14 +887,12 @@ export function PullRequestSummaryTab({
                   <MenuGroupLabel>Show</MenuGroupLabel>
                   <MenuCheckboxItem
                     checked={commentFilter.bots}
-                    closeOnClick={false}
                     onCheckedChange={(bots) => setCommentFilter((value) => ({ ...value, bots }))}
                   >
                     Bot comments
                   </MenuCheckboxItem>
                   <MenuCheckboxItem
                     checked={commentFilter.resolved}
-                    closeOnClick={false}
                     onCheckedChange={(resolved) =>
                       setCommentFilter((value) => ({ ...value, resolved }))
                     }
@@ -941,7 +943,9 @@ export function PullRequestSummaryTab({
                 {commentOrder === "oldest" ? showOldestCommentsButton : null}
                 {visibleComments.map(renderComment)}
                 {commentOrder === "newest" ? showOldestCommentsButton : null}
-                {shownComments > COMMENT_PAGE ? (
+                {/* Against what the filter leaves, not the window's size: hiding a kind can shrink
+                    the list below one page while the window still reaches further back. */}
+                {recentComments.length > COMMENT_PAGE ? (
                   <Button
                     size="sm"
                     variant="ghost"

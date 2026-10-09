@@ -173,6 +173,12 @@ function texts() {
     .filter((text) => text !== detail.body);
 }
 
+function buttonWith(text: string) {
+  return renderer.root
+    .findAllByType("button")
+    .find((button) => button.children.some((child) => child === text));
+}
+
 function filterItem(label: string) {
   return renderer.root.find(
     (node) => typeof node.props.onCheckedChange === "function" && node.children.includes(label),
@@ -221,7 +227,7 @@ it("hides bot and resolved comments until the filter shows them, and remembers t
   });
   expect(texts()).toEqual(["Human comment"]);
   expect(
-    renderer.root.findByProps({ "aria-label": "Filter comments" }).children.join(""),
+    renderer.root.findByProps({ "aria-label": "Filter comments, 13 hidden" }).children.join(""),
   ).toContain("13 hidden");
 
   act(() => filterItem("Bot comments").props.onCheckedChange(true));
@@ -229,6 +235,15 @@ it("hides bot and resolved comments until the filter shows them, and remembers t
   expect(texts().filter((text) => text.startsWith("Bot report"))).toHaveLength(9);
   expect(texts()).toContain("Human comment");
   expect(texts()).not.toContain("Bot report 0");
+
+  // Reading further back and then hiding bots again leaves one comment, and no way to shrink it.
+  act(() => buttonWith(" older comment")!.props.onClick());
+  expect(texts().filter((text) => text.startsWith("Bot report"))).toHaveLength(12);
+  expect(buttonWith(" recent comments")).toBeDefined();
+  act(() => filterItem("Bot comments").props.onCheckedChange(false));
+  expect(texts()).toEqual(["Human comment"]);
+  expect(buttonWith(" recent comments")).toBeUndefined();
+  act(() => filterItem("Bot comments").props.onCheckedChange(true));
 
   act(() => filterItem("Resolved or dismissed").props.onCheckedChange(true));
   expect(
