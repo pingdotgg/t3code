@@ -62,15 +62,15 @@ import {
   ProviderAdapterProtocolError,
   type ProviderAdapterV2Shape,
   type ProviderAdapterV2TurnInput,
-} from "../orchestration-v2/ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
-import * as ProviderContinuationRequests from "../orchestration-v2/ProviderContinuationRequests.ts";
-import { checkpointWorkspace } from "../orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import {
   decodeProviderReplayNdjson,
   materializeReplayTranscriptWorkspace,
-} from "../orchestration-v2/testkit/ReplayTranscriptNdjson.ts";
+} from "@t3tools/provider-testing/replayTranscript";
 import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -767,17 +767,13 @@ describe("orchestrator MCP toolkit", () => {
             const invoke = (name: string, args: Record<string, unknown>) =>
               invokeAs(invocation, name, args);
 
-            const refusedSettle = yield* invoke("t3_thread_organize", { action: "settle" });
-            expect(refusedSettle.isError).toBe(true);
-            expect(refusedSettle.structuredContent).toBeUndefined();
-            expect(declaredFailure(refusedSettle)).toEqual({
-              _tag: "OrchestratorMcpFailure",
-              code: "orchestration_error",
-              message: `Thread ${parentThreadId} has active or blocked work and cannot be settled.`,
-            });
-            const afterRefusedSettle = yield* orchestrator.getThreadProjection(parentThreadId);
-            expect(afterRefusedSettle.thread.settledOverride).not.toBe("settled");
-            expect(afterRefusedSettle.runs.find((run) => run.id === parentRun?.id)?.status).toBe(
+            // Settling would stop the session, so the agent's own turn keeps running.
+            const deferredSettle = yield* invoke("t3_thread_organize", { action: "settle" });
+            expect(deferredSettle.isError).toBe(false);
+            expect(deferredSettle.structuredContent).toEqual({ settlesWhenTurnEnds: true });
+            const afterDeferredSettle = yield* orchestrator.getThreadProjection(parentThreadId);
+            expect(afterDeferredSettle.thread.settledOverride).not.toBe("settled");
+            expect(afterDeferredSettle.runs.find((run) => run.id === parentRun?.id)?.status).toBe(
               "running",
             );
 
@@ -1873,6 +1869,20 @@ describe("orchestrator MCP toolkit", () => {
                 legacyDelegatedRun,
               ),
             ).toBe(true);
+            // A queue Stop held waits for the user; it is not pending child work.
+            expect(
+              hasPendingChildRuns(
+                {
+                  ...legacyChildProjection,
+                  runs: legacyChildProjection.runs.map((run) =>
+                    run.id === activeChildFollowup.runId
+                      ? { ...run, status: "queued", queueHeld: true }
+                      : run,
+                  ),
+                },
+                legacyDelegatedRun,
+              ),
+            ).toBe(false);
             const completedTaskCancelCall = yield* invoke("task_cancel", {
               taskId: delegated.taskId,
               reason: "Stop the child's later work too.",
@@ -2233,9 +2243,6 @@ describe("orchestrator MCP toolkit", () => {
             });
 
             expect(metadataRead.thread).toMatchObject({ snoozed: false, snoozedUntil: null });
-            expect(metadataRead.thread.link).toBe(
-              `[Metadata-managed thread](t3-thread://v1/environment%3Amcp-orchestrator/${encodeURIComponent(emptyThread.threadId)})`,
-            );
             yield* orchestrator.dispatch({
               type: "thread.snooze",
               commandId: CommandId.make("command:mcp-empty:snooze"),

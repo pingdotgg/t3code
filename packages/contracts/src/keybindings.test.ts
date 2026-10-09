@@ -108,6 +108,12 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedSendWithoutProject.command, "composer.sendAndNewThreadWithoutProject");
 
+    const parsedFind = yield* decode(KeybindingRule, {
+      key: "mod+f",
+      command: "chat.find",
+    });
+    assert.strictEqual(parsedFind.command, "chat.find");
+
     const parsedModelPickerToggle = yield* decode(KeybindingRule, {
       key: "mod+shift+m",
       command: "modelPicker.toggle",

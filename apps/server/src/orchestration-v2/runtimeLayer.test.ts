@@ -50,7 +50,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
-import type { ProviderInstance } from "../provider/ProviderDriver.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -67,7 +67,10 @@ import * as PullRequestWatchReactor from "./PullRequestWatchReactor.ts";
 import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
-import type { ProviderAdapterV2SessionRuntime, ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
+import type {
+  ProviderAdapterV2SessionRuntime,
+  ProviderAdapterV2Shape,
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import { shellStreamItemFromThreadShell } from "./ShellStream.ts";
@@ -3370,6 +3373,74 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.isNull(projection.thread.settledOverride);
       assert.isNull(projection.thread.settledAt);
       assert.isNotNull(projection.thread.unsettledAt);
+    }),
+  );
+
+  it.effect("settles a thread its own agent settled once the turn completes", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+      const projectId = ProjectId.make("runtime-layer-settle-after-run-project");
+      const threadId = ThreadId.make("runtime-layer-settle-after-run-thread");
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-settle-after-run-create"),
+        threadId,
+        projectId,
+        title: "Settle after run",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/tmp/runtime-layer-settle-after-run",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-settle-after-run-message"),
+        threadId,
+        messageId: MessageId.make("runtime-layer-settle-after-run-message"),
+        text: "Fix it and then settle this thread.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0];
+      if (run === undefined) return yield* Effect.die(new Error("Run missing."));
+
+      const settled = yield* orchestrator
+        .streamStoredEventsFrom({ threadId, afterSequence: 0, eventType: "thread.settled" })
+        .pipe(Stream.runHead, Effect.forkChild);
+      const result = yield* threadManagement.settleThread({
+        threadId,
+        commandId: CommandId.make("runtime-layer-settle-after-run-settle"),
+        byOwnAgent: true,
+      });
+      assert.deepEqual(result, { settlesWhenTurnEnds: true });
+      assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.settledOverride);
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        commandId: CommandId.make("runtime-layer-settle-after-run-completed"),
+        events: [
+          {
+            id: EventId.make("runtime-layer-settle-after-run-completed"),
+            type: "run.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+          },
+        ],
+      });
+      yield* Fiber.join(settled);
+
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(projection.thread.settledOverride, "settled");
     }),
   );
 

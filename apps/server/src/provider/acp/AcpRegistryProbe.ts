@@ -25,10 +25,10 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
-import { parseSessionModeState } from "./AcpRuntimeModel.ts";
-import { acpProviderOptionDescriptors } from "./AcpSessionConfig.ts";
+import { parseSessionModeState } from "@t3tools/provider-acp/server/runtimeModel";
+import { acpProviderOptionDescriptors } from "@t3tools/provider-acp/server/sessionConfig";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
-import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 const MAX_AUTH_METHODS = 32;
 const MAX_MODELS = 256;

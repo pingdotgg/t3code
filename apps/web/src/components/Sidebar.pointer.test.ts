@@ -147,6 +147,48 @@ describe("sidebar pointer lifecycle", () => {
     expect(inside.onCancel).not.toHaveBeenCalled();
   });
 
+  it("drops context when a zero-button move precedes pointerup", () => {
+    const onDrop = vi.fn((point: { x: number; y: number }) => point.x > 50);
+    const drag = gesture({ onMove: (point) => point.x > 50, onDrop });
+    document.dispatchEvent(pointer("pointermove", { clientY: 20 }));
+    document.dispatchEvent(pointer("pointermove", { clientX: 90, clientY: 30 }));
+
+    // Native desktop releases can report the released button on the final move.
+    document.dispatchEvent(pointer("pointermove", { buttons: 0, clientX: 94, clientY: 32 }));
+    document.dispatchEvent(pointer("pointerup", { buttons: 0, clientX: 94, clientY: 32 }));
+    document.dispatchEvent(pointer("pointermove", { buttons: 0, clientX: 100, clientY: 40 }));
+
+    expect(onDrop).toHaveBeenCalledExactlyOnceWith({ x: 94, y: 32 });
+    expect(drag.onCancel).toHaveBeenCalledOnce();
+    expect(drag.onEnd).not.toHaveBeenCalled();
+    expect(drag.onFinish).toHaveBeenCalledExactlyOnceWith(true);
+  });
+
+  it("cancels a missed sidebar release without committing a reorder", () => {
+    const onDrop = vi.fn((point: { x: number; y: number }) => point.x > 50);
+    const drag = gesture({ onMove: (point) => point.x > 50, onDrop });
+    document.dispatchEvent(pointer("pointermove", { clientX: 90, clientY: 30 }));
+    document.dispatchEvent(pointer("pointermove", { buttons: 0, clientX: 30, clientY: 40 }));
+    document.dispatchEvent(pointer("pointerup", { buttons: 0, clientX: 30, clientY: 40 }));
+
+    expect(onDrop).toHaveBeenCalledExactlyOnceWith({ x: 30, y: 40 });
+    expect(drag.onCancel).toHaveBeenCalledOnce();
+    expect(drag.onEnd).not.toHaveBeenCalled();
+    expect(drag.onFinish).toHaveBeenCalledExactlyOnceWith(true);
+  });
+
+  it("does not drop context when the button is released before activation", () => {
+    const onDrop = vi.fn(() => true);
+    const drag = gesture({ onDrop });
+    document.dispatchEvent(pointer("pointermove", { buttons: 0, clientX: 90, clientY: 30 }));
+    document.dispatchEvent(pointer("pointerup", { buttons: 0, clientX: 90, clientY: 30 }));
+
+    expect(onDrop).not.toHaveBeenCalled();
+    expect(drag.onStart).not.toHaveBeenCalled();
+    expect(drag.onAbort).toHaveBeenCalledOnce();
+    expect(drag.onFinish).toHaveBeenCalledExactlyOnceWith(false);
+  });
+
   it("resumes reordering when a context drag returns to the sidebar", () => {
     const drag = gesture({
       onMove: (point) => point.x > 50,

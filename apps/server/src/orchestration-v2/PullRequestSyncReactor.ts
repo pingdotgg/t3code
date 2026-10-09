@@ -28,6 +28,7 @@ import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import * as GitManager from "../git/GitManager.ts";
 import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -155,6 +156,7 @@ export const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const pullRequests = yield* PullRequestService.PullRequestService;
+  const git = yield* GitManager.GitManager;
   const crypto = yield* Crypto.Crypto;
 
   const lastSyncedAt = new Map<string, number>();
@@ -424,8 +426,12 @@ export const make = Effect.gen(function* () {
     "PullRequestSyncReactor.start",
   )(function* () {
     const events = engine.streamDomainEvents;
-    // A client reading a pull request can see it merge or close before the next sweep does.
-    const stateChanges = yield* pullRequests.subscribeStateChanges;
+    // A client reading a pull request, or its branch status, can see it merge or close before
+    // the next sweep does.
+    const stateChanges = Stream.merge(
+      yield* pullRequests.subscribeStateChanges,
+      yield* git.subscribePullRequestStateChanges,
+    );
     yield* forkParked(
       Stream.runForEach(stateChanges, requestSync).pipe(
         Effect.catchCause(logSkipped("pull request state change stream failed", {})),

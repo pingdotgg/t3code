@@ -10,7 +10,7 @@
  */
 import { Schema } from "effect";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { BrowserProfileId } from "./browserProfile.ts";
+import { BROWSER_PROFILE_MAX_COUNT, BrowserProfile, BrowserProfileId } from "./browserProfile.ts";
 
 export const PREVIEW_URL_MAX_LENGTH = 2_048;
 export const CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS = 32;
@@ -143,6 +143,9 @@ export type PreviewAppearancePreference = typeof PreviewAppearancePreference.Typ
 
 export const DEFAULT_PREVIEW_APPEARANCE: PreviewAppearancePreference = "system";
 
+/** A file a server tab downloaded, served by the tab's download route by this id. */
+const PreviewFileDownload = Schema.Struct({ id: Schema.String, fileName: Schema.String });
+
 export const PreviewNavStatus = Schema.Union([
   Schema.TaggedStruct("Idle", {}),
   Schema.TaggedStruct("Loading", {
@@ -158,6 +161,12 @@ export const PreviewNavStatus = Schema.Union([
     title: Title,
     code: Schema.Int,
     description: Schema.String,
+    /**
+     * Set when the address was a file the browser downloaded instead of a page
+     * it could show (a PDF in a server tab). The server tab's download route
+     * serves it by this id.
+     */
+    download: Schema.optional(PreviewFileDownload),
   }),
 ]);
 export type PreviewNavStatus = typeof PreviewNavStatus.Type;
@@ -286,6 +295,14 @@ export const PreviewCloseInput = Schema.Struct({
 });
 export type PreviewCloseInput = typeof PreviewCloseInput.Type;
 
+/** A client's browser profiles, which agents choose from when they open a tab. */
+export const PreviewReportProfilesInput = Schema.Struct({
+  /** The user's own profiles; the server adds the built-ins. */
+  profiles: Schema.Array(BrowserProfile).check(Schema.isMaxLength(BROWSER_PROFILE_MAX_COUNT)),
+  defaultProfileId: BrowserProfileId,
+});
+export type PreviewReportProfilesInput = typeof PreviewReportProfilesInput.Type;
+
 export const PreviewClearProfileInput = Schema.Struct({
   profileId: BrowserProfileId,
 });
@@ -347,6 +364,7 @@ const PreviewFailedEvent = Schema.Struct({
   title: Title,
   code: Schema.Int,
   description: Schema.String,
+  download: Schema.optional(PreviewFileDownload),
 });
 
 const PreviewClosedEvent = Schema.Struct({

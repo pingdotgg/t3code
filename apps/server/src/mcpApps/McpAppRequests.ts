@@ -24,7 +24,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import type {
   ProviderAdapterV2McpApps,
   ProviderAdapterV2McpTool,
-} from "../orchestration-v2/ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpAppModelContext from "./McpAppModelContext.ts";
