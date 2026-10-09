@@ -89,6 +89,8 @@ T3 Code server restarts also wait for integrated terminal commands to finish.
 Desktop updates download in the background when the app detects an available
 release and install when you quit the app.
 The app stays open while you work, including when it hosts multiple backends.
+On macOS, quit and reopen the app to install a downloaded update before switching
+update channels.
 
 Servers started from a terminal or with `npx` are never replaced automatically.
 A failed provider update is retried after 6 hours or when a newer version is
