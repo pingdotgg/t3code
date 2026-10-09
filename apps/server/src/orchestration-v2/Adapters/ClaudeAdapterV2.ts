@@ -66,6 +66,7 @@ import {
   type ProviderRequestKind,
   type ProviderUserInputAnswers,
   type ProviderThreadId,
+  type McpServerVariable,
   type ResolvedMcpServer,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -999,12 +1000,13 @@ export function claudeMcpQueryOverrides(input: {
   const userAllowedTools = input.readOnlySandbox
     ? []
     : tools.servers.map((server) => `mcp__${server.name}__*`);
+  const userServers = claudeUserMcpServers(tools.servers);
   return {
     allowedTools: Array.from(
       new Set([...(input.allowedTools ?? []), ...mcpAllowedTools, ...userAllowedTools]),
     ),
     mcpServers: {
-      ...claudeUserMcpServers(tools.servers),
+      ...userServers.mcpServers,
       "t3-code": {
         type: "http",
         url: session.endpoint,
@@ -1026,14 +1028,35 @@ export function claudeMcpQueryOverrides(input: {
             ),
           },
         }),
-    mcpEnvironment: { [CLAUDE_T3_MCP_AUTHORIZATION_ENV]: session.authorizationHeader },
+    mcpEnvironment: {
+      ...userServers.environment,
+      [CLAUDE_T3_MCP_AUTHORIZATION_ENV]: session.authorizationHeader,
+    },
   };
 }
 
-function claudeUserMcpServers(
-  servers: ReadonlyArray<ResolvedMcpServer>,
-): NonNullable<ClaudeQueryOptions["mcpServers"]> {
-  return Object.fromEntries(
+/**
+ * The user's servers for `--mcp-config`. Like T3's own token, a sensitive
+ * env value or header becomes a `${VAR}` reference there, and its value goes
+ * into the child's environment.
+ */
+function claudeUserMcpServers(servers: ReadonlyArray<ResolvedMcpServer>): {
+  readonly mcpServers: NonNullable<ClaudeQueryOptions["mcpServers"]>;
+  readonly environment: Readonly<Record<string, string>>;
+} {
+  const environment: Record<string, string> = {};
+  const values = (server: string, variables: ReadonlyArray<McpServerVariable>) => {
+    const record = mcpServerVariableRecord(variables);
+    for (const variable of variables) {
+      if (!variable.sensitive || !Object.hasOwn(record, variable.name)) continue;
+      // Indexed, so two names that read the same once uppercased stay apart.
+      const reference = `T3_MCP_SECRET_${Object.keys(environment).length}`;
+      environment[reference] = record[variable.name]!;
+      record[variable.name] = `\${${reference}}`;
+    }
+    return record;
+  };
+  const mcpServers = Object.fromEntries(
     servers.map((server) => [
       server.name,
       server.transport.type === "stdio"
@@ -1041,15 +1064,16 @@ function claudeUserMcpServers(
             type: "stdio" as const,
             command: server.transport.command,
             args: [...server.transport.args],
-            env: mcpServerVariableRecord(server.transport.env),
+            env: values(server.name, server.transport.env),
           }
         : {
             type: "http" as const,
             url: server.transport.url,
-            headers: mcpServerVariableRecord(server.transport.headers),
+            headers: values(server.name, server.transport.headers),
           },
     ]),
   );
+  return { mcpServers, environment };
 }
 
 function providerSession(input: {

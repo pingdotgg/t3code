@@ -667,6 +667,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       mcpSession,
       readOnlySandbox: false,
     });
+    // The secret reaches the child's environment, never `--mcp-config`.
     assert.deepEqual(overrides, {
       allowedTools: [ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD, "mcp__supabase__*"],
       mcpServers: {
@@ -674,12 +675,12 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
           type: "stdio",
           command: "npx",
           args: ["-y", "@supabase/mcp-server-supabase"],
-          env: { SUPABASE_ACCESS_TOKEN: "token" },
+          env: { SUPABASE_ACCESS_TOKEN: "${T3_MCP_SECRET_0}" },
         },
         ...T3_MCP_SERVERS,
       },
       sdkSettings: { skillOverrides: { "grill-me": "off" } },
-      mcpEnvironment: T3_MCP_ENVIRONMENT,
+      mcpEnvironment: { T3_MCP_SECRET_0: "token", ...T3_MCP_ENVIRONMENT },
     });
     // Read-only sandboxes keep the user's servers behind the permission prompt.
     assert.deepEqual(
