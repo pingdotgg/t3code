@@ -11,7 +11,7 @@ import { HttpClient } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { CursorDriver } from "./driver.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -19,7 +19,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { Cursor } from "./sdk.ts";
 
-const layerTest = layerTestProviderHost({ runBackgroundWork: false }).pipe(
+const layerTest = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(McpProviderSessions.layer),

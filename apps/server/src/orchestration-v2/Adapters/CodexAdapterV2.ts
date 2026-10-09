@@ -12,7 +12,7 @@ import {
   completeCodexTurnTokenUsage,
   type CodexTurnTokenUsageState,
 } from "../../provider/CodexTurnTokenUsage.ts";
-import type { ServerProviderShape } from "@t3tools/provider-core/server/snapshot";
+import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
 import type { CodexEffectiveRuntime } from "../../provider/CodexManagedRuntime.ts";
 import { buildCodexInitializeParams } from "../../provider/CodexProvider.ts";
 import {
@@ -1646,7 +1646,7 @@ export interface CodexAdapterV2Options {
   readonly settings: CodexSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly clientFactory: CodexAppServerClientFactoryShape;
-  readonly onUsageLimits?: ServerProviderShape["applyUsageLimits"];
+  readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
   /**
    * Resolves launch settings when each session opens, replacing `settings` and
    * `environment`. Managed ChatGPT sign-in uses it to launch the T3-installed

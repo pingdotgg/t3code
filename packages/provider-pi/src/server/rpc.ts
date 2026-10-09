@@ -26,7 +26,8 @@ import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 

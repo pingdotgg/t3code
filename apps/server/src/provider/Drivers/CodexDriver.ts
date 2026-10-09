@@ -3,7 +3,7 @@
  *
  * A driver is a plain value (not a Context.Service) whose `create()` returns
  * one `ProviderInstance` bundling:
- *   - `snapshot`   — the live `ServerProviderShape` for this instance;
+ *   - `snapshot`   — the live `ManagedServerProvider` for this instance;
  *   - `adapter`    — the Codex session/turn/approval runtime;
  *   - `textGeneration` — commit/PR/branch/title generation via `codex exec`.
  *

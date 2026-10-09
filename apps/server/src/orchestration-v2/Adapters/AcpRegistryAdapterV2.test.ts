@@ -15,7 +15,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as ServerSettings from "../../serverSettings.ts";
 import type {
   AcpRegistryAvailableCommands,
@@ -44,7 +44,7 @@ const decodeAcpRegistryAdapterSettings = Schema.decodeUnknownEffect(
   AcpRegistryAdapterV2Driver.configSchema,
 );
 
-const layerHost = layerTestProviderHost().pipe(Layer.provide(NodeServices.layer));
+const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
 
 const layerRegistry = Layer.succeed(
   HttpClient.HttpClient,

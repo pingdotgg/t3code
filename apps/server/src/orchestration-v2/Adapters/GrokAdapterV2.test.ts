@@ -20,7 +20,7 @@ import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as ProjectStore from "../ProjectStore.ts";
 import { buildInitialGrokProviderSnapshot } from "@t3tools/provider-grok/testing";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
@@ -309,7 +309,7 @@ describe("Grok permission prompts", () => {
 });
 
 describe("Grok launch permission mode", () => {
-  const layerHost = layerTestProviderHost().pipe(Layer.provide(NodeServices.layer));
+  const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
   const layerTest = Layer.mergeAll(
     NodeServices.layer,
     IdAllocator.layer,

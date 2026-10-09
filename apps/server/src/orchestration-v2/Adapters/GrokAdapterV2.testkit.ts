@@ -9,7 +9,7 @@ import { ChildProcessSpawner } from "effect/process";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { GROK_ACP_CANCEL_META, GROK_ACP_INITIALIZE_META } from "@t3tools/provider-grok/testing";
 import { makeXAiPromptCompletionRuntime } from "@t3tools/provider-grok/testing";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -36,7 +36,7 @@ function layerGrokProviderAdapterRegistryReplay(
   transcript: AcpReplayTranscript,
   options: { readonly replayGate?: ProviderReplayGate } = {},
 ) {
-  const layerHost = layerTestProviderHost().pipe(Layer.provide(NodeServices.layer));
+  const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
 
   return ProviderAdapterRegistry.layerFromAdaptersEffect(
     Effect.gen(function* () {
