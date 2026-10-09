@@ -1,8 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId } from "@t3tools/contracts";
+import { AuthStandardClientScopes, EnvironmentId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Deferred from "effect/Deferred";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -20,6 +22,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as SessionStore from "./SessionStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
+import { base64UrlDecodeUtf8, base64UrlEncode, signPayload } from "./utils.ts";
 
 const layerServerConfig = (overrides?: Partial<ServerConfig.ServerConfig["Service"]>) =>
   Layer.effect(
@@ -112,6 +115,57 @@ const layerFailingSessionLookupCredential = Layer.effect(
 );
 
 it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
+  it.effect.each(["revoke", "revokeAllExcept", "replace"] as const)(
+    "invalidates every connection for a session on %s and leaves other sessions active",
+    (operation) =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const owner = yield* sessions.issue({ subject: "owner" });
+        const client = yield* sessions.issue(relaySessionInput);
+        const ownerInvalidated = yield* Deferred.make<void>();
+        yield* sessions
+          .awaitInvalidation(owner.sessionId)
+          .pipe(
+            Effect.andThen(Deferred.succeed(ownerInvalidated, undefined)),
+            Effect.forkScoped({ startImmediately: true }),
+          );
+        const first = yield* sessions
+          .awaitInvalidation(client.sessionId)
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        const second = yield* sessions
+          .awaitInvalidation(client.sessionId)
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        if (operation === "revoke") yield* sessions.revoke(client.sessionId);
+        else if (operation === "revokeAllExcept") yield* sessions.revokeAllExcept(owner.sessionId);
+        else yield* sessions.issue({ ...relaySessionInput, replaceSessionId: client.sessionId });
+        yield* Fiber.join(first);
+        yield* Fiber.join(second);
+        expect(yield* Deferred.isDone(ownerInvalidated)).toBe(false);
+        // A connection whose upgrade authenticated just before revocation must also stop.
+        yield* sessions.awaitInvalidation(client.sessionId);
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
+  it.effect("expires a connected session at its credential deadline", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const client = yield* sessions.issue(relaySessionInput);
+      yield* sessions.markConnected(client.sessionId);
+      const invalidated = yield* Deferred.make<void>();
+      const watcher = yield* sessions
+        .awaitInvalidation(client.sessionId)
+        .pipe(
+          Effect.andThen(Deferred.succeed(invalidated, undefined)),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+      yield* TestClock.adjust(Duration.minutes(59));
+      expect(yield* Deferred.isDone(invalidated)).toBe(false);
+      yield* TestClock.adjust(Duration.minutes(1));
+      yield* Fiber.join(watcher);
+      yield* sessions.awaitInvalidation(client.sessionId);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+  );
+
   it.effect("keys remote cookies by environment identity instead of state directory", () =>
     Effect.gen(function* () {
       const cookieName = (stateDir: string, environmentId: EnvironmentId) =>
@@ -276,6 +330,48 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       expect(verified.expiresAt?.toString()).toBe(issued.expiresAt.toString());
     }).pipe(Effect.provide(layerSessionStore())),
   );
+  it.effect("carries a runtime-mode ceiling only on sessions issued with one", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const capped = yield* sessions.issue({
+        subject: "mcp-client",
+        method: "bearer-access-token",
+        runtimeModeCeiling: "auto",
+      });
+      const uncapped = yield* sessions.issue({ method: "bearer-access-token" });
+
+      expect((yield* sessions.verify(capped.token)).runtimeModeCeiling).toBe("auto");
+      expect((yield* sessions.verify(uncapped.token)).runtimeModeCeiling).toBeUndefined();
+    }).pipe(Effect.provide(layerSessionStore())),
+  );
+  it.effect("keeps recorded scopes unchanged for both token versions", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const secrets = yield* ServerSecretStore.ServerSecretStore;
+      const legacyScopes = ["orchestration:read", "terminal:operate", "review:write"] as const;
+      const issued = yield* sessions.issue({ subject: "one-time-token", scopes: legacyScopes });
+      // Accept prerelease v2 credentials without widening their recorded grant.
+      const [encodedPayload] = issued.token.split(".");
+      const currentClaims = base64UrlDecodeUtf8(encodedPayload!);
+      expect(currentClaims).toContain('"v":1');
+      const legacyPayload = base64UrlEncode(currentClaims.replace('"v":1', '"v":2'));
+      const secret = yield* secrets.getOrCreateRandom("server-signing-key", 32);
+      const legacyToken = `${legacyPayload}.${signPayload(legacyPayload, secret)}`;
+
+      expect((yield* sessions.verify(issued.token)).scopes).toEqual(legacyScopes);
+      expect((yield* sessions.verify(legacyToken)).scopes).toEqual(legacyScopes);
+    }).pipe(
+      Effect.provide(
+        SessionStore.layer.pipe(
+          Layer.provideMerge(ServerSecretStore.layer),
+          Layer.provide(SqlitePersistence.layerMemory),
+          Layer.provide(layerServerEnvironment(EnvironmentId.make("test-environment"))),
+          Layer.provide(layerServerConfig()),
+        ),
+      ),
+    ),
+  );
+
   it.effect("rejects malformed session tokens", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;
@@ -332,13 +428,7 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
 
       expect(verified.method).toBe("bearer-access-token");
       expect(verified.subject).toBe("test-clock");
-      expect(verified.scopes).toEqual([
-        "orchestration:read",
-        "orchestration:operate",
-        "terminal:operate",
-        "review:write",
-        "relay:read",
-      ]);
+      expect(verified.scopes).toEqual(AuthStandardClientScopes);
     }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
 
@@ -412,6 +502,47 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         previous.sessionId,
       ]);
     }).pipe(Effect.provide(Layer.mergeAll(layerSessionStore(), SqlitePersistence.layerMemory))),
+  );
+
+  it.effect.each(["insert", "revoke"] as const)(
+    "keeps existing browser sessions valid when replacement cannot %s",
+    (operation) =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const sql = yield* SqlClient.SqlClient;
+        const previous = yield* sessions.issue({ subject: "one-time-token" });
+        const unrelated = yield* sessions.issue({ subject: "one-time-token" });
+        if (operation === "insert") {
+          yield* sql`
+            CREATE TRIGGER reject_auth_session_insert BEFORE INSERT ON auth_sessions
+            BEGIN
+              SELECT RAISE(ABORT, 'simulated insert failure');
+            END
+          `;
+        } else {
+          yield* sql`
+            CREATE TRIGGER reject_auth_session_revocation BEFORE UPDATE OF revoked_at ON auth_sessions
+            BEGIN
+              SELECT RAISE(ABORT, 'simulated revocation failure');
+            END
+          `;
+        }
+
+        const error = yield* sessions
+          .issue({
+            subject: "replacement-pairing",
+            scopes: ["orchestration:read"],
+            replaceSessionId: previous.sessionId,
+          })
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("SessionCredentialIssueError");
+        expect((yield* sessions.verify(previous.token)).sessionId).toBe(previous.sessionId);
+        expect((yield* sessions.verify(unrelated.token)).sessionId).toBe(unrelated.sessionId);
+        expect((yield* sessions.listActive()).map((session) => session.sessionId).sort()).toEqual(
+          [previous.sessionId, unrelated.sessionId].sort(),
+        );
+      }).pipe(Effect.provide(Layer.mergeAll(layerSessionStore(), SqlitePersistence.layerMemory))),
   );
 
   it.effect("rejects websocket tokens once the parent session has expired", () =>

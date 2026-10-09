@@ -754,3 +754,23 @@ export function toolGroupSummaryKind(
   );
   return fallbackKinds.size === 1 ? fallbackKinds.values().next().value! : "mixed";
 }
+
+/**
+ * Plain-text line for the latest thought in the live activity row. A
+ * bold-only opening line (the Codex summary heading) wins; otherwise this is
+ * the first sentence of the reasoning text. Web and mobile both render it.
+ */
+export function liveThoughtLine(markdown: string): string {
+  const heading = /^\s*\*\*([^*\r\n]+)\*\*[ \t]*\r?(?:\n|$)/.exec(markdown)?.[1];
+  const text = (heading ?? markdown)
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^[ \t]*(?:#{1,6}|[-*+]|\d+\.)[ \t]+/gm, "")
+    .replace(/`+|\*\*|~~/g, "")
+    .replace(/(^|[^\w*])[*_]([^*_\n]+)[*_](?![\w*])/g, "$1$2")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (heading !== undefined) return text;
+  // Cut after the first . ? or ! (plus a closing quote or paren) that a space follows.
+  const end = /[.?!]["'”’)]?(?=\s)/.exec(text);
+  return end ? text.slice(0, end.index + end[0].length) : text;
+}

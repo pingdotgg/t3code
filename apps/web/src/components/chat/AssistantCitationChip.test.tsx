@@ -19,11 +19,6 @@ vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: ReactNode }) => <a>{children}</a>,
 }));
 // Keep the real chip/editor lifecycle while replacing DOM positioning and floating layers.
-vi.mock("../ui/tooltip", () => ({
-  Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
-  TooltipTrigger: ({ render }: { render: ReactNode }) => render,
-  TooltipPopup: ({ children }: { children: ReactNode }) => <>{children}</>,
-}));
 vi.mock("../ui/popover", () => ({
   Popover: ({ children }: { children: ReactNode }) => <>{children}</>,
   PopoverTrigger: ({ children }: { children: ReactNode }) => <button>{children}</button>,
@@ -62,6 +57,7 @@ function mount(onSave = vi.fn(() => true)) {
     return (
       <AssistantCitationChip
         citation={citation}
+        composer
         commentEditor={{ open, sourceAnchor, onOpenChange: setOpen, onSave }}
       />
     );

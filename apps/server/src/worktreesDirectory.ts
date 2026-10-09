@@ -1,6 +1,6 @@
 import type * as Path from "effect/Path";
 
-import { expandHomePathWith } from "./pathExpansion.ts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 
 /**
  * Directory new worktrees are created under: the `worktreesDirectory`
@@ -15,7 +15,7 @@ export function resolveWorktreesDirectory(
   path: Path.Path,
 ): string | null {
   if (setting === "") return defaultDir;
-  const expanded = expandHomePathWith(setting, path);
+  const expanded = expandHomePath(setting);
   if (!path.isAbsolute(expanded)) return null;
   const resolved = path.resolve(expanded);
   return isFilesystemRoot(resolved, path) ? null : resolved;

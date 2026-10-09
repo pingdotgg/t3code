@@ -1,8 +1,6 @@
 import {
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
-  ThreadId,
-  TurnItemId,
   type OrchestrationProjectShell,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -24,14 +22,14 @@ import {
   buildBoundedThreadProjection,
   decodeThreadHistoryCursor,
   InvalidThreadHistoryCursorError,
-  selectHistoryPageFromCursor,
   THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
   THREAD_HISTORY_PAGE_POLICY,
   OLDER_THREAD_USER_TURN_LIMIT,
 } from "./threadHistoryPaging.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
-import { buildActiveShellSnapshot } from "./ShellStream.ts";
+import { buildActiveShellSnapshot, loadShellSnapshotParts } from "./ShellStream.ts";
+import { boundedSnapshotResponseFields } from "./ThreadStream.ts";
 import { projectThreadProjectionForWire } from "./WireProjection.ts";
 
 function isThreadNotFound(error: unknown): boolean {
@@ -40,22 +38,6 @@ function isThreadNotFound(error: unknown): boolean {
     Predicate.hasProperty(error.cause, "_tag") &&
     error.cause._tag === "ProjectionStoreThreadNotFoundError"
   );
-}
-
-function selectHistoryPageFromCursorOrError(
-  input: Parameters<typeof selectHistoryPageFromCursor>[0],
-):
-  | { readonly _tag: "ok"; readonly page: ReturnType<typeof selectHistoryPageFromCursor> }
-  | { readonly _tag: "invalid_cursor" }
-  | { readonly _tag: "error"; readonly cause: unknown } {
-  try {
-    return { _tag: "ok", page: selectHistoryPageFromCursor(input) };
-  } catch (cause) {
-    if (cause instanceof InvalidThreadHistoryCursorError) {
-      return { _tag: "invalid_cursor" };
-    }
-    return { _tag: "error", cause };
-  }
 }
 
 /**
@@ -94,14 +76,12 @@ export const layer = HttpApiBuilder.group(
     );
 
     const loadShellSnapshot = Effect.fn("http.orchestration.loadShellSnapshot")(function* () {
-      const base = yield* sql.withTransaction(
-        Effect.gen(function* () {
-          const threads = yield* threadManagement.getShellSnapshot({ location: "active" });
-          return buildActiveShellSnapshot({
-            projects: yield* projectStore.listShells(),
-            threads,
-            snapshotSequence: yield* applicationEvents.latestApplicationSequence,
-          });
+      const base = buildActiveShellSnapshot(
+        yield* loadShellSnapshotParts({
+          sql,
+          readThreads: threadManagement.readShellSnapshot({ location: "active" }),
+          listProjects: projectStore.listShells(),
+          latestSequence: applicationEvents.latestApplicationSequence,
         }),
       );
       const projects = yield* enrichProjectShells(base.projects);
@@ -211,11 +191,10 @@ export const layer = HttpApiBuilder.group(
           });
           return {
             snapshotSequence: snapshot.snapshotSequence,
-            projection: bounded.projection,
-            historyCursor: bounded.historyCursor,
-            hasMoreHistory: bounded.hasMoreHistory,
-            latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
-            payloadBudgetExceeded: bounded.payloadBudgetExceeded,
+            ...boundedSnapshotResponseFields({
+              bounded,
+              compactTurnItems: args.query.compactTurnItems === "1",
+            }),
           };
         }),
       )
@@ -224,41 +203,33 @@ export const layer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.threadHistoryPage")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          let anchorItemId;
           try {
-            anchorItemId = TurnItemId.make(decodeThreadHistoryCursor(args.query.cursor).si);
+            decodeThreadHistoryCursor(args.query.cursor);
           } catch (cause) {
-            if (cause instanceof InvalidThreadHistoryCursorError) {
+            if (cause instanceof InvalidThreadHistoryCursorError)
               return yield* failEnvironmentInvalidRequest("invalid_history_cursor");
-            }
             return yield* failEnvironmentInternal("orchestration_thread_history_failed", cause);
           }
-          const decodedCursor = decodeThreadHistoryCursor(args.query.cursor);
-          const snapshot = yield* loadThreadSnapshotWindow(
-            args.params.threadId,
-            anchorItemId,
-            ThreadId.make(decodedCursor.st),
-          ).pipe(traceLocalHandlerWork);
-          const pageOrError = selectHistoryPageFromCursorOrError({
-            items: snapshot.projection.visibleTurnItems,
-            cursor: args.query.cursor,
-            snapshotSequence: snapshot.snapshotSequence,
-          });
-          if (pageOrError._tag === "invalid_cursor") {
-            return yield* failEnvironmentInvalidRequest("invalid_history_cursor");
-          }
-          if (pageOrError._tag === "error") {
-            return yield* failEnvironmentInternal(
-              "orchestration_thread_history_failed",
-              pageOrError.cause,
+          return yield* threadManagement
+            .getThreadHistoryPage(
+              args.params.threadId,
+              args.query.cursor,
+              args.query.throughEntryId,
+              args.query.view === "conversation",
+            )
+            .pipe(
+              traceLocalHandlerWork,
+              Effect.catch(
+                Effect.fnUntraced(function* (cause) {
+                  if (isThreadNotFound(cause))
+                    return yield* failEnvironmentNotFound("thread_not_found");
+                  return yield* failEnvironmentInternal(
+                    "orchestration_thread_history_failed",
+                    cause,
+                  );
+                }),
+              ),
             );
-          }
-          return {
-            snapshotSequence: snapshot.snapshotSequence,
-            items: pageOrError.page.items,
-            nextCursor: pageOrError.page.nextCursor,
-            hasMoreHistory: pageOrError.page.hasMoreHistory,
-          };
         }),
       );
   }),

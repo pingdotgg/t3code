@@ -219,7 +219,6 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
       yield* fs.writeFileString(
         keybindingsConfigPath,
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
         JSON.stringify([
           { key: "mod+j", command: "terminal.toggle" },
           { key: "mod+shift+d+o", command: "terminal.new" },
@@ -257,21 +256,25 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       Effect.gen(function* () {
         const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
         yield* writeKeybindingsConfig(keybindingsConfigPath, [
-          { key: "mod+shift+t", command: "terminal.toggle" },
+          { key: "mod+shift+y", command: "terminal.toggle" },
           { key: "mod+shift+r", command: "script.run-tests.run" },
+          { key: "mod+shift+b", command: "script.custom-panel.run" },
+          {
+            key: "mod+shift+b",
+            command: "script.custom-composer.run",
+            when: "composerFocus",
+          },
         ]);
 
-        yield* Effect.gen(function* () {
-          const keybindings = yield* Keybindings.Keybindings;
-          yield* keybindings.syncDefaultKeybindingsOnStartup;
-        });
+        const keybindings = yield* Keybindings.Keybindings;
+        yield* keybindings.syncDefaultKeybindingsOnStartup;
 
         const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
         const byCommand = new Map(persisted.map((entry) => [entry.command, entry]));
 
         const persistedToggle = byCommand.get("terminal.toggle");
         assert.isNotNull(persistedToggle);
-        assert.equal(persistedToggle?.key, "mod+shift+t");
+        assert.equal(persistedToggle?.key, "mod+shift+y");
         assert.isFalse(
           persisted.some((entry) => entry.command === "terminal.toggle" && entry.key === "mod+j"),
         );
@@ -280,6 +283,14 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           assert.isTrue(byCommand.has(defaultRule.command), `expected ${defaultRule.command}`);
         }
         assert.isTrue(byCommand.has("script.run-tests.run"));
+
+        const configState = yield* keybindings.loadConfigState;
+        assert.deepEqual(
+          configState.keybindings
+            .filter((entry) => entry.shortcut.key === "b" && entry.shortcut.shiftKey)
+            .map((entry) => entry.command),
+          ["threadPanel.toggle", "script.custom-panel.run", "script.custom-composer.run"],
+        );
       }).pipe(Effect.provide(layerKeybindings())),
   );
 
@@ -296,8 +307,8 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
 
       yield* keybindings.syncDefaultKeybindingsOnStartup;
       assert.deepStrictEqual(yield* backgroundRules, [
-        existing,
         { key: "mod+enter", command: "composer.sendBackground", when },
+        existing,
       ]);
 
       // Removing the added rule later must survive the next startup.

@@ -1,5 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import {
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
   MessageId,
   type ModelSelection,
   NodeId,
@@ -14,6 +17,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   PlanId,
+  type ProviderThreadId,
+  ProviderTurnId,
   RunAttemptId,
   RunId,
   RuntimeRequestId,
@@ -27,14 +32,15 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
-import { makeProviderFailure } from "./ProviderFailure.ts";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
   makeProviderEventRoutingState,
   type ProviderEventRouteIdentity,
@@ -314,6 +320,254 @@ layer("ProviderEventIngestorV2", (it) => {
         ["provider-thread.updated"],
       );
       assert.equal(latestThreadSequence, 2);
+    }),
+  );
+
+  it.effect("rolls back runs a provider rewound off its active branch", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      const threadId = threadEvent.threadId;
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const rewoundThreadId = idAllocator.derive.providerThread({
+        driver: CODEX_DRIVER,
+        nativeThreadId: "rewound-thread",
+      });
+      const otherThreadId = idAllocator.derive.providerThread({
+        driver: CODEX_DRIVER,
+        nativeThreadId: "other-thread",
+      });
+      const scopeId = CheckpointScopeId.make("checkpoint-scope:rewound");
+      // A run as execution leaves it: attempt, provider turn, root node, and a
+      // checkpoint once completed. A null native turn id is a weak ref.
+      const seedRun = Effect.fnUntraced(function* (input: {
+        readonly ordinal: number;
+        readonly providerThreadId: ProviderThreadId;
+        readonly status: "completed" | "interrupted" | "running";
+        readonly nativeTurnId: string | null;
+      }) {
+        const runId = RunId.make(`run:rewound:${input.ordinal}`);
+        const attemptId = RunAttemptId.make(`attempt:rewound:${input.ordinal}`);
+        const nodeId = NodeId.make(`node:rewound:${input.ordinal}`);
+        const providerTurnId = ProviderTurnId.make(`provider-turn:rewound:${input.ordinal}`);
+        const completedAt = input.status === "running" ? null : now;
+        const eventId = () => idAllocator.allocate.event({ threadId });
+        const events: Array<OrchestrationV2DomainEvent> = [
+          {
+            id: yield* eventId(),
+            type: "run.created",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: runId,
+              threadId,
+              ordinal: input.ordinal,
+              providerInstanceId: modelSelection.instanceId,
+              modelSelection,
+              providerThreadId: input.providerThreadId,
+              userMessageId: MessageId.make(`message:rewound:${input.ordinal}`),
+              rootNodeId: nodeId,
+              activeAttemptId: attemptId,
+              status: input.status,
+              requestedAt: now,
+              startedAt: now,
+              completedAt,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          },
+          {
+            id: yield* eventId(),
+            type: "run-attempt.created",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: attemptId,
+              runId,
+              attemptOrdinal: 1,
+              rootNodeId: nodeId,
+              providerInstanceId: modelSelection.instanceId,
+              providerThreadId: input.providerThreadId,
+              providerTurnId,
+              reason: "initial",
+              status: input.status,
+              startedAt: now,
+              completedAt,
+            },
+          },
+          {
+            id: yield* eventId(),
+            type: "provider-turn.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: providerTurnId,
+              providerThreadId: input.providerThreadId,
+              nodeId,
+              runAttemptId: attemptId,
+              nativeTurnRef:
+                input.nativeTurnId === null
+                  ? {
+                      driver: CODEX_DRIVER,
+                      nativeId: `synthetic:${input.ordinal}`,
+                      strength: "weak",
+                    }
+                  : { driver: CODEX_DRIVER, nativeId: input.nativeTurnId, strength: "strong" },
+              ordinal: input.ordinal,
+              status: input.status,
+              startedAt: now,
+              completedAt,
+            },
+          },
+          {
+            id: yield* eventId(),
+            type: "node.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: nodeId,
+              threadId,
+              runId,
+              parentNodeId: null,
+              rootNodeId: nodeId,
+              kind: "root_turn",
+              status: input.status,
+              countsForRun: true,
+              providerThreadId: input.providerThreadId,
+              providerTurnId,
+              nativeItemRef: null,
+              runtimeRequestId: null,
+              checkpointScopeId: scopeId,
+              startedAt: now,
+              completedAt,
+            },
+          },
+          ...(input.status === "completed"
+            ? [
+                {
+                  id: yield* eventId(),
+                  type: "checkpoint.captured" as const,
+                  threadId,
+                  occurredAt: now,
+                  payload: {
+                    id: CheckpointId.make(`checkpoint:rewound:${input.ordinal}`),
+                    threadId,
+                    scopeId,
+                    runId,
+                    nodeId,
+                    parentCheckpointId: null,
+                    ordinalWithinScope: input.ordinal,
+                    appRunOrdinal: input.ordinal,
+                    ref: CheckpointRef.make(`refs/t3/checkpoints/rewound/${input.ordinal}`),
+                    status: "ready" as const,
+                    files: [],
+                    capturedAt: now,
+                  },
+                },
+              ]
+            : []),
+        ];
+        yield* eventSink.write({ events });
+        return runId;
+      });
+
+      yield* eventSink.write({ events: [threadEvent] });
+      const otherProviderRun = yield* seedRun({
+        ordinal: 1,
+        providerThreadId: otherThreadId,
+        status: "completed",
+        nativeTurnId: "other-turn",
+      });
+      const keptRun = yield* seedRun({
+        ordinal: 2,
+        providerThreadId: rewoundThreadId,
+        status: "completed",
+        nativeTurnId: "kept-turn",
+      });
+      const abandonedRun = yield* seedRun({
+        ordinal: 3,
+        providerThreadId: rewoundThreadId,
+        status: "completed",
+        nativeTurnId: "abandoned-turn",
+      });
+      const unlocatedRun = yield* seedRun({
+        ordinal: 4,
+        providerThreadId: rewoundThreadId,
+        status: "interrupted",
+        nativeTurnId: null,
+      });
+      const rewindingRun = yield* seedRun({
+        ordinal: 5,
+        providerThreadId: rewoundThreadId,
+        status: "running",
+        nativeTurnId: null,
+      });
+
+      yield* ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+        runId: rewindingRun,
+        event: {
+          type: "provider_thread.updated",
+          driver: CODEX_DRIVER,
+          providerThread: {
+            id: rewoundThreadId,
+            driver: CODEX_DRIVER,
+            providerInstanceId: modelSelection.instanceId,
+            providerSessionId,
+            appThreadId: threadId,
+            ownerNodeId: null,
+            nativeThreadRef: {
+              driver: CODEX_DRIVER,
+              nativeId: "rewound-thread",
+              strength: "strong",
+            },
+            nativeConversationHeadRef: {
+              driver: CODEX_DRIVER,
+              nativeId: "kept-turn-reply",
+              strength: "strong",
+            },
+            status: "idle",
+            firstRunOrdinal: 2,
+            lastRunOrdinal: 5,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+          retainedNativeTurnIds: ["turn-started-outside-t3", "kept-turn"],
+        },
+      });
+
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      const runIds = [otherProviderRun, keptRun, abandonedRun, unlocatedRun, rewindingRun];
+      assert.deepEqual(
+        runIds.map((runId) => projection.runs.find((run) => run.id === runId)?.status),
+        ["completed", "completed", "rolled_back", "rolled_back", "running"],
+      );
+      assert.deepEqual(
+        runIds.map((runId) => projection.nodes.find((node) => node.runId === runId)?.status),
+        ["completed", "completed", "rolled_back", "rolled_back", "running"],
+      );
+      assert.deepEqual(
+        [otherProviderRun, keptRun, abandonedRun].map(
+          (runId) =>
+            projection.checkpoints.find((checkpoint) => checkpoint.runId === runId)?.status,
+        ),
+        ["ready", "ready", "stale"],
+      );
+      assert.equal(
+        projection.providerThreads.find((thread) => thread.id === rewoundThreadId)?.lastRunOrdinal,
+        5,
+      );
     }),
   );
 
@@ -1166,6 +1420,97 @@ layer("ProviderEventIngestorV2", (it) => {
       assert.equal(DateTime.toEpochMillis(errorStartedAt), DateTime.toEpochMillis(retryStartedAt));
       assert.equal(errorItem.providerThreadId, providerThreadId);
       assert.equal(errorItem.providerTurnId, providerTurnId);
+    }),
+  );
+
+  it.effect("stores tool image bytes only where a tool-output-image asset serves them", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const eventStore = yield* EventStore.EventStoreV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+      });
+      const readBase64 = Buffer.alloc(30_000, 7).toString("base64");
+      const screenshotBase64 = Buffer.alloc(20_000, 9).toString("base64");
+      const toolItem = (
+        id: string,
+        ordinal: number,
+        toolName: string,
+        output: unknown,
+      ): OrchestrationV2TurnItem => ({
+        id: TurnItemId.make(id),
+        threadId: threadEvent.threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal,
+        status: "completed",
+        title: toolName,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "dynamic_tool",
+        toolName,
+        input: {},
+        output,
+      });
+      const read = toolItem("turn-item:read-image", 1, "Read", {
+        type: "image",
+        file: { base64: readBase64, type: "image/png", originalSize: 30_000 },
+      });
+      const screenshot = toolItem("turn-item:screenshot", 2, "mcp__t3-code__device_screenshot", {
+        content: [
+          {
+            type: "image",
+            source: { type: "base64", media_type: "image/png", data: screenshotBase64 },
+          },
+        ],
+      });
+
+      yield* eventSink.write({ events: [threadEvent] });
+      for (const turnItem of [read, screenshot]) {
+        yield* ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+          event: { type: "turn_item.updated", driver: CODEX_DRIVER, turnItem },
+        });
+      }
+
+      const storedEvents = yield* eventStore
+        .read({ threadId: threadEvent.threadId, eventType: "turn-item.updated" })
+        .pipe(Stream.runCollect);
+      const storedJson = JSON.stringify(Array.from(storedEvents, (stored) => stored.event));
+      const projectedRead = yield* projectionStore.getTurnItem({
+        threadId: threadEvent.threadId,
+        itemId: read.id,
+      });
+      const projectedScreenshot = yield* projectionStore.getTurnItem({
+        threadId: threadEvent.threadId,
+        itemId: screenshot.id,
+      });
+
+      assert.equal(storedJson.includes(readBase64), false);
+      assert.equal(storedJson.includes(screenshotBase64), true);
+      assert.deepEqual(projectedRead?.type === "dynamic_tool" ? projectedRead.output : null, {
+        type: "image",
+        file: { type: "image/png", originalSize: 30_000, sizeBytes: 30_000 },
+      });
+      assert.deepEqual(
+        toolOutputImages(
+          projectedScreenshot?.type === "dynamic_tool" ? projectedScreenshot.output : null,
+        ),
+        [{ mimeType: "image/png", data: screenshotBase64 }],
+      );
     }),
   );
 

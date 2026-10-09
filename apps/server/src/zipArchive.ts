@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- type-only, to adapt a Node Readable into Effect.
 import type * as NodeStream from "node:stream";
 import * as Yauzl from "yauzl";
 

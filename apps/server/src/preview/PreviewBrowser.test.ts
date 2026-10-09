@@ -2,9 +2,11 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Deferred from "effect/Deferred";
+import * as Crypto from "effect/Crypto";
 import type * as Duration from "effect/Duration";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -12,7 +14,6 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
-import * as NodeCrypto from "node:crypto";
 import * as NodeZlib from "node:zlib";
 
 import * as PreviewBrowser from "./PreviewBrowser.ts";
@@ -87,6 +88,9 @@ const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
   const path = yield* Path.Path;
   const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-preview-browser-test-" });
   const archive = options.archive ?? browserArchive;
+  const crypto = yield* Crypto.Crypto;
+  const sha256 =
+    options.sha256 ?? Hex.encode(yield* crypto.digest("SHA-256", archive).pipe(Effect.orDie));
   const requests: Array<string> = [];
   const browser = yield* PreviewBrowser.makePreviewBrowser({
     baseDir,
@@ -97,7 +101,7 @@ const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
           platform: "fixture",
           url: "https://storage.googleapis.com/chrome-headless-shell-fixture.zip",
           bytes: archive.byteLength,
-          sha256: options.sha256 ?? NodeCrypto.createHash("sha256").update(archive).digest("hex"),
+          sha256,
         },
     ...(options.wait === undefined ? {} : { wait: options.wait }),
   }).pipe(
