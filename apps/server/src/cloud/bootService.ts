@@ -91,6 +91,11 @@ export interface BootServicePlan {
   readonly baseDir: string;
   readonly logPath: string;
   readonly unitPath: string;
+  /**
+   * Set by an install run inside the service: a transient unit carries it out
+   * after this call returns and appends its outcome to `logPath`.
+   */
+  readonly handedOff?: boolean;
 }
 
 /** Pure renderer: service units cannot rely on the user's shell or PATH. */
@@ -228,6 +233,12 @@ export interface BootServiceManager {
   readonly activate: ReadonlyArray<BootServiceStep>;
   /** Best-effort recovery after a failed repair of an installed service. */
   readonly restart: ReadonlyArray<BootServiceStep>;
+  /**
+   * Replaces stop + activate for `restart` when the caller runs inside the
+   * service, where a stop would kill it before the start. The last entry
+   * queues the restart with the service manager instead of waiting for it.
+   */
+  readonly handoff?: ReadonlyArray<BootServiceStep>;
   /** Uninstall, before the unit file is removed. */
   readonly deactivate: ReadonlyArray<BootServiceStep>;
   /** Uninstall, after the unit file is removed. */
@@ -280,6 +291,25 @@ function systemdManager(input: {
         step: "restarting the service after a failed update",
         command: "systemctl",
         args: ["--user", "restart", BOOT_SERVICE_UNIT_FILE],
+      },
+    ],
+    handoff: [
+      {
+        step: "reloading systemd user units",
+        command: "systemctl",
+        args: ["--user", "daemon-reload"],
+      },
+      {
+        step: "enabling the service",
+        command: "systemctl",
+        args: ["--user", "enable", BOOT_SERVICE_UNIT_FILE],
+      },
+      // The user manager owns the queued job and finishes it after the stop
+      // has killed this process along with the rest of the unit.
+      {
+        step: "restarting the service",
+        command: "systemctl",
+        args: ["--user", "restart", "--no-block", BOOT_SERVICE_UNIT_FILE],
       },
     ],
     deactivate: [
@@ -539,10 +569,11 @@ export class BootService extends Context.Service<
     /**
      * Stop and start the installed service on the version its unit names.
      * Only when the unit serves this base dir: the unit name is per user, so
-     * another home's service is left alone. Resolves false when nothing was
-     * restarted.
+     * another home's service is left alone, which resolves `skipped`. From
+     * inside the service the restart can only be `queued` with the service
+     * manager, since the stop ends this process.
      */
-    readonly restart: Effect.Effect<boolean, BootServiceError>;
+    readonly restart: Effect.Effect<"restarted" | "queued" | "skipped", BootServiceError>;
     readonly uninstall: Effect.Effect<boolean, BootServiceError>;
     readonly status: Effect.Effect<BootServiceStatus, BootServiceError>;
   }
@@ -568,6 +599,11 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   );
   const homeDir = yield* Config.String("HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
+  // The unit exports its name to everything it runs, so this is set for agent
+  // tool calls and terminals started by the service.
+  const runningInsideService =
+    (yield* Config.String(BOOT_SERVICE_UNIT_ENV).pipe(Config.withDefault(""))) ===
+    BOOT_SERVICE_UNIT_FILE;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
@@ -824,6 +860,30 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     // written, from the same read the downgrade check uses; the stop that
     // normally serialises against the launcher is skipped on purpose.
     const start = options?.start !== false;
+    if (installed && start && runningInsideService && manager.kind === "systemd") {
+      // Stopping the unit from inside it kills this process before the start.
+      // A transient unit runs the same install from outside, stop first, so it
+      // still serialises with a remote update the launcher may be starting.
+      yield* runStep("handing the install to a transient unit", "systemd-run", [
+        "--user",
+        "--collect",
+        "--quiet",
+        // Nobody waits on the transient unit; its outcome goes where
+        // `t3 triage` and the CLI already point. Property values reach
+        // systemd literally, unlike the unit file, so no specifier escaping.
+        `--property=StandardOutput=append:${logPath}`,
+        `--property=StandardError=append:${logPath}`,
+        `--setenv=${BOOT_SERVICE_UNIT_ENV}=`,
+        runtimePaths.entryPath,
+        "service",
+        "install",
+        "--base-dir",
+        // systemd expands $VAR in arguments (not in the executable path).
+        input.baseDir.replaceAll("$", () => "$$"),
+        ...(options?.allowDowngrade === true ? ["--allow-downgrade"] : []),
+      ]);
+      return { ...plan, handedOff: true };
+    }
     if (installed && start) {
       yield* runSteps(manager.stop);
     }
@@ -904,13 +964,19 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const restart: BootService["Service"]["restart"] = Effect.gen(function* () {
     const manager = yield* requireManager;
     const unit = yield* fs.readFileString(unitPath).pipe(Effect.option);
-    if (Option.isNone(unit)) return false;
+    if (Option.isNone(unit)) return "skipped" as const;
     const installedBaseDir = bootServiceBaseDirOf(unit.value);
     if (
       installedBaseDir === undefined ||
       path.resolve(installedBaseDir) !== path.resolve(input.baseDir)
     ) {
-      return false;
+      return "skipped" as const;
+    }
+    // Writes no state, and the launcher lets an update transition in flight
+    // finish before the queued stop tears it down.
+    if (runningInsideService && manager.handoff !== undefined) {
+      yield* runSteps(manager.handoff);
+      return "queued" as const;
     }
     yield* runSteps(manager.stop);
     yield* runSteps(manager.activate).pipe(
@@ -919,7 +985,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       Effect.tapError(() => runSteps(manager.restart).pipe(Effect.ignore)),
     );
     yield* fs.remove(restartPendingPath, { force: true });
-    return true;
+    return "restarted" as const;
   }).pipe(
     Effect.mapError((cause) =>
       cause._tag === "PlatformError" ? new BootServiceInstallError({ cause }) : cause,

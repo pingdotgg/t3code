@@ -15,6 +15,7 @@ import {
   acquireRelayClientForLink,
   headlessSessionConfig,
   reportCloudDisconnectResults,
+  reportServiceOnboarding,
 } from "./connect.ts";
 import { recoverServiceOnboardingOffer } from "./service.ts";
 
@@ -40,7 +41,7 @@ it.effect("detects headless operation from individual SSH config values", () =>
 it.effect("treats cancelling optional background setup as a successful skip", () =>
   Effect.gen(function* () {
     const result = yield* recoverServiceOnboardingOffer(Effect.fail(new Terminal.QuitError({})));
-    assert.isFalse(result);
+    assert.equal(result, "skipped");
   }),
 );
 
@@ -49,9 +50,31 @@ it.effect("keeps a successful connection when a remote service update is pending
     const result = yield* recoverServiceOnboardingOffer(
       Effect.fail(new BootService.BootServiceUpdatePendingError()),
     );
-    assert.isFalse(result);
+    assert.equal(result, "skipped");
   }),
 );
+
+it.effect("does not announce a background service that is still switching over", () => {
+  const lines: Array<string> = [];
+  const testConsole = {
+    ...globalThis.console,
+    log: (...args: ReadonlyArray<unknown>) => {
+      lines.push(args.map(String).join(" "));
+    },
+  } satisfies Console.Console;
+
+  return reportServiceOnboarding("pending").pipe(
+    Effect.provideService(Console.Console, testConsole),
+    Effect.tap(() =>
+      Effect.sync(() => {
+        const output = lines.join("\n");
+        assert.notInclude(output, "ready");
+        assert.notInclude(output, "Start the server");
+        assert.include(output, "Background service restarting");
+      }),
+    ),
+  );
+});
 
 it.effect("does not install the relay client when the user declines the managed download", () =>
   Effect.gen(function* () {
