@@ -1743,16 +1743,10 @@ export function claudeMcpQueryOverrides(input: {
   const mcpAllowedTools = input.readOnlySandbox
     ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
     : [CLAUDE_T3_MCP_TOOL_WILDCARD];
-  // Servers the user added in T3 are trusted like T3's own: their tools are
-  // pre-approved outside read-only sandboxes, where the permission prompt
-  // still decides.
-  const userAllowedTools = input.readOnlySandbox
-    ? []
-    : tools.servers.map((server) => `mcp__${server.name}__*`);
+  // The user's servers are not pre-approved: full access already skips the
+  // prompt, so an allow rule would only bypass the modes that ask to approve.
   return {
-    allowedTools: Array.from(
-      new Set([...(input.allowedTools ?? []), ...mcpAllowedTools, ...userAllowedTools]),
-    ),
+    allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
     mcpServers: {
       ...claudeUserMcpServers(tools.servers),
       "t3-code": {

@@ -599,7 +599,8 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       readOnlySandbox: false,
     });
     assert.deepEqual(overrides, {
-      allowedTools: [ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD, "mcp__supabase__*"],
+      // Its tools go through the session's approval like any other tool.
+      allowedTools: [ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD],
       mcpServers: {
         supabase: {
           type: "stdio",
@@ -611,11 +612,6 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       },
       sdkSettings: { skillOverrides: { "grill-me": "off" } },
     });
-    // Read-only sandboxes keep the user's servers behind the permission prompt.
-    assert.deepEqual(
-      ClaudeAdapterV2.claudeMcpQueryOverrides({ mcpSession, readOnlySandbox: true }).allowedTools,
-      ClaudeAdapterV2.CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS,
-    );
 
     const initialKey = ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(queryPolicy, overrides);
     const clearedKey = ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(
