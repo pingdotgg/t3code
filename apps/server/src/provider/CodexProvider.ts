@@ -38,9 +38,9 @@ import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
   type ServerProviderDraft,
-} from "./providerSnapshot.ts";
-import { expandHomePath } from "../pathExpansion.ts";
-import { makeUnavailableUsageLimits } from "./providerUsageLimits.ts";
+} from "@t3tools/provider-core/server/snapshotProbe";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import {
   codexRateLimitsFailureMessage,
   codexRateLimitsToLimits,

@@ -21,7 +21,7 @@ import {
   delegatedTaskProgress,
   subagentResultForRun,
   makeSubagentConversationArtifacts,
-} from "./SubagentProjection.ts";
+} from "@t3tools/provider-core/server/subagentProjection";
 
 import { emptyProjection } from "./ProjectionStore.ts";
 
@@ -237,6 +237,14 @@ it("waits for nested work and retains the report across monitor acknowledgements
     startedAt: null,
   };
   assert.equal(delegatedTaskProgress({ ...projection, runs: [run, pending] }).state, "working");
+  // Stop or a restart holds queued wakes for the user; they are not work the task owes.
+  const cancelled = { ...run, status: "cancelled" as const };
+  const held = delegatedTaskProgress({
+    ...projection,
+    runs: [cancelled, { ...pending, queueHeld: true }],
+  });
+  assert.equal(held.state, "result_available");
+  assert.equal(held.resultRun?.id, cancelled.id);
   const report = { ...pending, status: "completed" as const, startedAt: parentCreatedAt };
   const monitor = { ...report, id: RunId.make("monitor"), ordinal: 3 };
   const artifacts = makeSubagentConversationArtifacts({

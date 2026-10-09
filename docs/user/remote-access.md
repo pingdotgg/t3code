@@ -91,6 +91,13 @@ or remove it. On mobile, open the machine under **Settings → Environments** an
 choose **Edit**. Signing out of T3 Connect removes only that route; a machine
 you can still reach another way stays saved.
 
+Open **Permissions** next to **Routes** in web or desktop, or **Your permissions**
+in the mobile route details, to see what your current connection can do on that
+environment. For a remote environment, this is in its route details. Permissions
+shown there apply only to the route marked **In use**; other routes are not
+checked. Direct pairing and T3 Connect have separate sessions and may grant
+different permissions.
+
 ### Balance new threads across machines
 
 Auto balance is off by default. On web and desktop, enable it in
@@ -213,7 +220,8 @@ sudo t3 browser setup
 
 The server shows the exact line for how you started it, such as
 `sudo npx t3 browser setup`, and keeps your `PATH` when Node is installed only
-for your user. It allows Chrome's sandbox with an AppArmor profile and installs
+for your user. Where `t3` is not on your `PATH`, such as with only the
+desktop app installed, it names the full path of the app's own `t3` instead. It allows Chrome's sandbox with an AppArmor profile and installs
 any missing libraries with apt. It is safe to run again. Without `sudo`, it
 only reports what it would change.
 
