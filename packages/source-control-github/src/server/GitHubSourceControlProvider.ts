@@ -22,8 +22,6 @@ import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 
-import * as ServerSettings from "../serverSettings.ts";
-import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as GitHubApi from "./GitHubApi.ts";
 import {
   decodeGitHubPullRequestEntries,
@@ -54,7 +52,7 @@ import {
   type SourceControlCliDiscoverySpec,
   type SourceControlManagedCliDiscoverySpec,
 } from "@t3tools/source-control-core/server/discovery";
-import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 
 const decodeLinkSubject = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
@@ -192,9 +190,9 @@ function environmentTokenVariable(environment: NodeJS.ProcessEnv): string | null
  */
 export const makeDiscovery = Effect.gen(function* () {
   const api = yield* GitHubApi.GitHubApi;
-  const process = yield* VcsProcess.VcsProcess;
+  const sourceControlHost = yield* SourceControlHost.SourceControlHost;
+  const process = sourceControlHost.process;
   const environment = yield* HostProcessEnvironment;
-  const serverSettings = yield* ServerSettings.ServerSettingsService;
 
   return {
     type: "managed-cli",
@@ -202,7 +200,7 @@ export const makeDiscovery = Effect.gen(function* () {
     label: discovery.label,
     installHint: discovery.installHint,
     probe: Effect.fn("GitHubSourceControlProvider.discovery")(function* (cwd: string) {
-      const settings = yield* serverSettings.getSettings.pipe(
+      const settings = yield* sourceControlHost.settings.get.pipe(
         Effect.map((current) => current.github),
         Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS.github),
       );
@@ -477,9 +475,10 @@ const contextHost = (context: SourceControlProvider.SourceControlProviderContext
 
 export const make = Effect.gen(function* () {
   const api = yield* GitHubApi.GitHubApi;
-  const process = yield* VcsProcess.VcsProcess;
+  const sourceControlHost = yield* SourceControlHost.SourceControlHost;
+  const process = sourceControlHost.process;
   const environment = yield* HostProcessEnvironment;
-  const git = yield* GitVcsDriver.GitVcsDriver;
+  const git = sourceControlHost.git;
   const fileSystem = yield* FileSystem.FileSystem;
 
   const gitRead = (cwd: string, args: ReadonlyArray<string>) =>

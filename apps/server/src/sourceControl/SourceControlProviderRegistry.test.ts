@@ -18,8 +18,9 @@ import * as AzureDevOpsPullRequestCli from "@t3tools/source-control-azure-devops
 import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
 import * as BitbucketPullRequestApi from "@t3tools/source-control-bitbucket/server/BitbucketPullRequestApi";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import * as GitHubApi from "./GitHubApi.ts";
-import * as GitHubCredentials from "./GitHubCredentials.ts";
+import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
+import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
 import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
 import * as GitLabPullRequestCli from "@t3tools/source-control-gitlab/server/GitLabPullRequestCli";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
@@ -115,6 +116,7 @@ function makeRegistry(input: {
         Layer.mock(BitbucketApi.BitbucketApi)({}),
         Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({}),
         ServerSettings.ServerSettingsService.layerTest(),
+        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({}),
         Layer.mock(GitHubApi.GitHubApi)({
           // No GitHub credential unless a test supplies one, so custom hosts stay unclaimed.
           credential: (host) => Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host })),

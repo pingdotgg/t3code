@@ -7,7 +7,7 @@ import type {
   PullRequestViewerPermissions,
 } from "@t3tools/contracts";
 
-import * as GitHubApi from "../sourceControl/GitHubApi.ts";
+import * as GitHubApi from "./GitHubApi.ts";
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
 import {
   PullRequestProviderError,

@@ -35,7 +35,7 @@ import type {
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
-import { aliasedGraphQlDocument, type GraphQlDocument } from "../sourceControl/githubGraphQl.ts";
+import { aliasedGraphQlDocument, type GraphQlDocument } from "./githubGraphQl.ts";
 import { dedupeChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
 
 /**

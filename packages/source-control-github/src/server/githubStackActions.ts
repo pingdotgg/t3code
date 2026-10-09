@@ -8,8 +8,8 @@ import * as Clock from "effect/Clock";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import * as GitHubApi from "../sourceControl/GitHubApi.ts";
-import { aliasedGraphQlDocument } from "../sourceControl/githubGraphQl.ts";
+import * as GitHubApi from "./GitHubApi.ts";
+import { aliasedGraphQlDocument } from "./githubGraphQl.ts";
 import { decodePullRequestStacksJson } from "./gitHubPullRequestJson.ts";
 import { cascadeRebaseStack } from "./githubStackRebase.ts";
 

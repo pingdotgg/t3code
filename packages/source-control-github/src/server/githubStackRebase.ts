@@ -4,8 +4,8 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Base64 from "effect/encoding/Base64";
 
-import * as GitHubApi from "../sourceControl/GitHubApi.ts";
-import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as GitHubApi from "./GitHubApi.ts";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 
 /** One open layer of a stack, bottom to top, with the head the reader reviewed. */
 export interface CascadeLayer {
@@ -58,7 +58,7 @@ export const cascadeRebaseStack = Effect.fn("cascadeRebaseStack")(function* (inp
   readonly remote?: string;
 }) {
   const api = yield* GitHubApi.GitHubApi;
-  const process = yield* VcsProcess.VcsProcess;
+  const { process } = yield* SourceControlHost.SourceControlHost;
   const fileSystem = yield* FileSystem.FileSystem;
   const { token } = yield* api.credential(input.host);
   const first = input.layers[0];

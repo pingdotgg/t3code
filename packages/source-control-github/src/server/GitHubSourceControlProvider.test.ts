@@ -10,8 +10,8 @@ import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 
-import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import * as VcsProcess from "../vcs/VcsProcess.ts";
+import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitHubApi from "./GitHubApi.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import { parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
@@ -25,7 +25,7 @@ const processResult = (
     readonly stderr?: string;
     readonly exitCode?: ChildProcessSpawner.ExitCode;
   },
-): VcsProcess.VcsProcessOutput => ({
+): SourceControlHost.SourceControlProcessOutput => ({
   exitCode: options?.exitCode ?? ChildProcessSpawner.ExitCode(0),
   stdout,
   stderr: options?.stderr ?? "",
@@ -33,7 +33,10 @@ const processResult = (
   stderrTruncated: false,
 });
 
-const processOutput = (stdout: string, exitCode = 0): VcsProcess.VcsProcessOutput => ({
+const processOutput = (
+  stdout: string,
+  exitCode = 0,
+): SourceControlHost.SourceControlProcessOutput => ({
   exitCode: ChildProcessSpawner.ExitCode(exitCode),
   stdout,
   stderr: "",
@@ -87,7 +90,7 @@ function harness(input: {
         git.push([name, args]);
         return value;
       });
-  const driver = Layer.mock(GitVcsDriver.GitVcsDriver)({
+  const hostGit: Partial<SourceControlHost.SourceControlHost["Service"]["git"]> = {
     execute: (args) =>
       Effect.sync(() => {
         git.push(["execute", args.args]);
@@ -108,18 +111,20 @@ function harness(input: {
         ? Effect.succeed([...(input.localBranches ?? [])])
         : Effect.fail(input.gitFailure as never),
     resolveCommit: () => Effect.succeed({ commitSha: "abc123" }),
-  });
-  const process = Layer.mock(VcsProcess.VcsProcess)({
-    run: (args) =>
-      Effect.succeed(
-        args.args[0] === "remote"
-          ? processOutput(input.remotes)
-          : processOutput(input.resolved ?? "", input.resolved ? 0 : 1),
-      ),
+  };
+  const host = TestSourceControlHost.layer({
+    git: hostGit,
+    process: {
+      run: (args) =>
+        Effect.succeed(
+          args.args[0] === "remote"
+            ? processOutput(input.remotes)
+            : processOutput(input.resolved ?? "", input.resolved ? 0 : 1),
+        ),
+    },
   });
   const layer = Layer.mergeAll(
-    driver,
-    process,
+    host,
     Layer.mock(GitHubApi.GitHubApi)(input.api),
     NodeServices.layer,
   );

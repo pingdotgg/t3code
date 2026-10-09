@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -12,10 +13,10 @@ import { HttpClient, HttpClientResponse, type HttpClientRequest } from "effect/h
 
 import * as GitHubApi from "./GitHubApi.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
-import * as GitHubQuota from "./githubQuota.ts";
+import * as GitHubQuota from "./GitHubQuota.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
-import * as VcsProcess from "../vcs/VcsProcess.ts";
-import * as ServerSettings from "../serverSettings.ts";
+import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
 const NOW = Date.parse("2026-10-05T12:00:00.000Z");
 
@@ -439,11 +440,10 @@ describe("GitHubApi", () => {
 });
 
 describe("GitHubCredentials", () => {
-  const credentialsWith = (run: VcsProcess.VcsProcess["Service"]["run"]) =>
+  const credentialsWith = (run: SourceControlHost.SourceControlHost["Service"]["process"]["run"]) =>
     GitHubCredentials.layer.pipe(
-      Layer.provide(Layer.mock(VcsProcess.VcsProcess)({ run })),
-      Layer.provide(NodeServices.layer),
-      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(TestSourceControlHost.layer({ process: { run } })),
+      Layer.provide(NodeCrypto.layer),
     );
 
   it.effect("fails with GitHubCliMissingError when gh is not on PATH", () =>

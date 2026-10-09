@@ -13,8 +13,7 @@ import * as Schema from "effect/Schema";
 
 import { HostProcessEnvironment, HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
 
-import * as ServerSettings from "../serverSettings.ts";
-import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 
 /** How long a token is reused before `gh` is asked again, so a `gh auth switch` applies soon. */
 const TOKEN_TTL = Duration.minutes(5);
@@ -94,7 +93,7 @@ export class GitHubCredentials extends Context.Service<
     /** Drops the held token after GitHub refused it, so the next read asks its source again. */
     readonly invalidate: (host: string) => Effect.Effect<void>;
   }
->()("t3/sourceControl/GitHubCredentials") {}
+>()("@t3tools/source-control-github/server/GitHubCredentials") {}
 
 function normalizeHost(host: string): string {
   return host.trim().toLowerCase();
@@ -128,8 +127,8 @@ export function environmentToken(
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
-  const process = yield* VcsProcess.VcsProcess;
-  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const sourceControlHost = yield* SourceControlHost.SourceControlHost;
+  const process = sourceControlHost.process;
   const crypto = yield* Crypto.Crypto;
   const environment = yield* HostProcessEnvironment;
   const workingDirectory = yield* HostProcessWorkingDirectory;
@@ -179,14 +178,14 @@ export const make = Effect.gen(function* () {
 
   /** The Settings choice for a host; unreadable settings fall back to gh's own choice. */
   const hostChoice = (host: string) =>
-    serverSettings.getSettings.pipe(
+    sourceControlHost.settings.get.pipe(
       Effect.map((settings) => settings.github.hosts[host]),
       Effect.orElseSucceed(() => undefined),
     );
 
   /** A token saved in Settings for the host, read fresh so a saved or removed one applies at once. */
   const savedToken = (host: string) =>
-    serverSettings.getSettings.pipe(
+    sourceControlHost.settings.get.pipe(
       Effect.map((settings) => settings.github.tokens[host]?.trim() || null),
       Effect.orElseSucceed(() => null),
     );

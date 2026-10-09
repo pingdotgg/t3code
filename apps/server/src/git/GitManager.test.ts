@@ -43,7 +43,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { decodeGitHubPullRequestListJson } from "../sourceControl/gitHubPullRequests.ts";
+import { decodeGitHubPullRequestListJson } from "@t3tools/source-control-github/server/gitHubPullRequests";
 import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";

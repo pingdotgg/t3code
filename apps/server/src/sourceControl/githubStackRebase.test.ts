@@ -5,15 +5,26 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 
-import * as GitHubApi from "../sourceControl/GitHubApi.ts";
+import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import { cascadeRebaseStack } from "@t3tools/source-control-github/server/githubStackRebase";
+
+import * as ServerSettings from "../serverSettings.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import { cascadeRebaseStack } from "./githubStackRebase.ts";
+import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
 
 const layer = Layer.mergeAll(
   Layer.mock(GitHubApi.GitHubApi)({
     credential: () => Effect.succeed({ token: Redacted.make("token"), fingerprint: "fp" }),
   }),
-  VcsProcess.layer,
+  // The cascade runs real git through the server's host; the git driver itself is never asked.
+  ServerSourceControlHost.layer.pipe(
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+    Layer.provide(Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({})),
+    Layer.provideMerge(VcsProcess.layer),
+  ),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 /**
