@@ -126,8 +126,8 @@ interface RightPanelStoreState {
   selectedThreadTabKey: string | null;
   /** Session-only count of user panel choices per thread. Automatic updates do not advance it. */
   userActionRevisionByThreadKey: Record<string, number>;
-  selectThreadTab: (ref: ScopedThreadRef) => void;
-  selectPanelTab: (ref: ScopedThreadRef) => void;
+  /** Selecting or leaving the Thread tab is a user choice; leaving it when unselected is a no-op. */
+  setThreadTabSelected: (ref: ScopedThreadRef, selected: boolean) => void;
   closeRevisionByThreadKey: Record<string, number>;
   getUserActionRevision: (ref: ScopedThreadRef) => number;
   /**
@@ -599,24 +599,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       threadPanelVisibilityByThreadKey: {},
       selectedThreadTabKey: null,
       userActionRevisionByThreadKey: {},
-      selectThreadTab: (ref) =>
+      setThreadTabSelected: (ref, selected) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
+          if (!selected && state.selectedThreadTabKey !== threadKey) return state;
           return {
-            selectedThreadTabKey: threadKey,
-            userActionRevisionByThreadKey: {
-              ...state.userActionRevisionByThreadKey,
-              [threadKey]: (state.userActionRevisionByThreadKey[threadKey] ?? 0) + 1,
-            },
-          };
-        }),
-      selectPanelTab: (ref) =>
-        set((state) => {
-          const threadKey = scopedThreadKey(ref);
-          if (state.selectedThreadTabKey !== threadKey) return state;
-
-          return {
-            selectedThreadTabKey: null,
+            selectedThreadTabKey: selected ? threadKey : null,
             userActionRevisionByThreadKey: {
               ...state.userActionRevisionByThreadKey,
               [threadKey]: (state.userActionRevisionByThreadKey[threadKey] ?? 0) + 1,
@@ -982,12 +970,15 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           })),
         ),
       toggle: (ref, kind) =>
-        set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => {
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          // While the Thread tab covers the panel, toggling reveals the surface instead of closing it.
+          const panelVisible = state.selectedThreadTabKey !== threadKey;
+          return userAction(state, threadKey, (current) => {
             const active = current.surfaces.find(
               (surface) => surface.id === current.activeSurfaceId,
             );
-            if (current.isOpen && active?.kind === kind) {
+            if (panelVisible && current.isOpen && active?.kind === kind) {
               return { ...current, isOpen: false };
             }
             if (kind === "preview") {
@@ -995,8 +986,8 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               return upsertSurface(current, existing ?? browserSurface(null));
             }
             return upsertSurface(current, singletonSurface(kind));
-          }),
-        ),
+          });
+        }),
       setThreadPanelOpen: (ref, presentation, open) =>
         set((state) => ({
           threadPanelVisibilityByThreadKey: updateThreadPanelVisibilityMap(

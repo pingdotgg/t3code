@@ -219,7 +219,7 @@ describe("rightPanelStore", () => {
   it("returns to the panel when a manual panel action follows Thread selection", () => {
     const store = useRightPanelStore.getState();
     store.open(refA, "diff");
-    store.selectThreadTab(refA);
+    store.setThreadTabSelected(refA, true);
 
     expect(useRightPanelStore.getState().selectedThreadTabKey).toBe("env-1:thread-A");
 
@@ -231,7 +231,7 @@ describe("rightPanelStore", () => {
   it("keeps Thread selected when an automatic panel update arrives", () => {
     const store = useRightPanelStore.getState();
     store.open(refA, "diff");
-    store.selectThreadTab(refA);
+    store.setThreadTabSelected(refA, true);
     const revision = store.getUserActionRevision(refA);
 
     expect(store.openProactive(refA, linkedPullRequest, revision)).toBe(true);
@@ -241,14 +241,14 @@ describe("rightPanelStore", () => {
   it("rejects pending proactive panels after leaving the Thread tab", () => {
     const store = useRightPanelStore.getState();
     store.openFile(refA, "src/app.ts", 42);
-    store.selectThreadTab(refA);
+    store.setThreadTabSelected(refA, true);
     const turnRevision = store.getUserActionRevision(refA);
     const selectedPanel = selectThreadRightPanelState(
       useRightPanelStore.getState().byThreadKey,
       refA,
     );
 
-    store.selectPanelTab(refA);
+    store.setThreadTabSelected(refA, false);
 
     expect(useRightPanelStore.getState().selectedThreadTabKey).toBeNull();
     expect(store.openProactive(refA, completedDiff, turnRevision)).toBe(false);
@@ -269,9 +269,9 @@ describe("rightPanelStore", () => {
     store.openFile(refA, "src/app.ts");
     const turnRevision = store.getUserActionRevision(refA);
 
-    store.selectPanelTab(refA);
-    store.selectThreadTab(refB);
-    store.selectPanelTab(refA);
+    store.setThreadTabSelected(refA, false);
+    store.setThreadTabSelected(refB, true);
+    store.setThreadTabSelected(refA, false);
 
     expect(useRightPanelStore.getState().selectedThreadTabKey).toBe("env-1:thread-B");
     expect(store.openProactive(refA, completedDiff, turnRevision)).toBe(true);
@@ -283,13 +283,31 @@ describe("rightPanelStore", () => {
     (kind) => {
       const store = useRightPanelStore.getState();
       store.open(refA, kind);
-      store.selectThreadTab(refA);
+      store.setThreadTabSelected(refA, true);
       store.open(refA, kind);
 
       expect(useRightPanelStore.getState().selectedThreadTabKey).toBeNull();
       expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe(kind);
     },
   );
+
+  it("reveals the active panel instead of closing it when toggled from the Thread tab", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "diff");
+    store.setThreadTabSelected(refA, true);
+    store.toggle(refA, "diff");
+
+    expect(useRightPanelStore.getState().selectedThreadTabKey).toBeNull();
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).isOpen,
+    ).toBe(true);
+
+    store.toggle(refA, "diff");
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).isOpen,
+    ).toBe(false);
+  });
 
   it("reveals resource tabs opened from the conversation", () => {
     const store = useRightPanelStore.getState();
@@ -309,7 +327,7 @@ describe("rightPanelStore", () => {
     ];
 
     for (const open of openings) {
-      store.selectThreadTab(refA);
+      store.setThreadTabSelected(refA, true);
       open();
 
       expect(useRightPanelStore.getState().selectedThreadTabKey).toBeNull();
@@ -323,7 +341,7 @@ describe("rightPanelStore", () => {
     const store = useRightPanelStore.getState();
     store.open(refA, "diff");
     const revision = store.getUserActionRevision(refA);
-    store.selectThreadTab(refA);
+    store.setThreadTabSelected(refA, true);
     store.openFile(refB, "src/app.ts");
 
     expect(useRightPanelStore.getState().selectedThreadTabKey).toBe("env-1:thread-A");

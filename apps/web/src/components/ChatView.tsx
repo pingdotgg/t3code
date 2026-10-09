@@ -2380,15 +2380,15 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelMaximized =
     canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
   const maximizedThreadTabActive = rightPanelMaximized && threadTabSelected;
+  const chatColumnMaximizedAway = rightPanelMaximized && !maximizedThreadTabActive;
   const rightPanelSurfaceVisible = rightPanelOpen && !maximizedThreadTabActive;
   const diffOpen = activeRightPanelKind === "diff" && rightPanelSurfaceVisible;
   const previewPanelOpen =
     activeRightPanelKind === "preview" && rightPanelSurfaceVisible && browserAvailable;
-  const previewMiniPlayerVisible = shouldRenderPreviewMiniPlayer({
-    source: activePreviewMiniPlayer?.source ?? null,
-    renderedRightPanelSurface,
-    rightPanelSurfaceVisible,
-  });
+  const previewMiniPlayerVisible = shouldRenderPreviewMiniPlayer(
+    activePreviewMiniPlayer?.source ?? null,
+    rightPanelSurfaceVisible ? renderedRightPanelSurface : null,
+  );
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const [threadPanelPresentation, setThreadPanelPresentation] =
     useState<ThreadPanelPresentation>("inline");
@@ -4334,14 +4334,9 @@ export default function ChatView(props: ChatViewProps) {
       onDiffPanelOpen?.();
     }
     if (activeThreadRef) {
-      const panels = useRightPanelStore.getState();
-      if (maximizedThreadTabActive) {
-        panels.open(activeThreadRef, "diff");
-      } else {
-        panels.toggle(activeThreadRef, "diff");
-      }
+      useRightPanelStore.getState().toggle(activeThreadRef, "diff");
     }
-  }, [activeThreadRef, diffOpen, isServerThread, maximizedThreadTabActive, onDiffPanelOpen]);
+  }, [activeThreadRef, diffOpen, isServerThread, onDiffPanelOpen]);
 
   const needsLoadBalancing = automaticEnvironment && !draftThread?.loadBalancedEnvironmentId;
   const loadBalancingCandidates = useMemo(
@@ -5859,22 +5854,15 @@ export default function ChatView(props: ChatViewProps) {
   const closePreviewPanel = useCallback(() => {
     if (activeThreadRef) {
       // Closing the panel on a live browser or device floats it instead of dropping it.
-      if (
-        rightPanelSurfaceVisible &&
-        activeRightPanelSurface?.kind === "preview" &&
-        activeRightPanelSurface.resourceId
-      ) {
+      const visibleSurface = rightPanelSurfaceVisible ? activeRightPanelSurface : null;
+      if (visibleSurface?.kind === "preview" && visibleSurface.resourceId) {
         usePreviewMiniPlayerStore
           .getState()
-          .open(activeThreadRef, browserMiniPlayerSource(activeRightPanelSurface.resourceId));
-      } else if (
-        rightPanelSurfaceVisible &&
-        activeRightPanelSurface?.kind === "device" &&
-        activeRightPanelSurface.target
-      ) {
+          .open(activeThreadRef, browserMiniPlayerSource(visibleSurface.resourceId));
+      } else if (visibleSurface?.kind === "device" && visibleSurface.target) {
         usePreviewMiniPlayerStore
           .getState()
-          .open(activeThreadRef, { kind: "device", ...activeRightPanelSurface.target });
+          .open(activeThreadRef, { kind: "device", ...visibleSurface.target });
       }
       setMaximizedRightPanelThreadKey(null);
       useRightPanelStore.getState().close(activeThreadRef);
@@ -6068,13 +6056,11 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeThreadRef, threadPanelPresentation]);
   const toggleRightPanelMaximized = useCallback(() => {
     if (!canMaximizeRightPanel) return;
-    if (activeThreadRef) useRightPanelStore.getState().selectPanelTab(activeThreadRef);
-    if (rightPanelMaximized) {
-      setMaximizedRightPanelThreadKey(null);
-      return;
-    }
-    setMaximizedRightPanelThreadKey(routeThreadKey);
-  }, [activeThreadRef, canMaximizeRightPanel, rightPanelMaximized, routeThreadKey]);
+    if (activeThreadRef) useRightPanelStore.getState().setThreadTabSelected(activeThreadRef, false);
+    setMaximizedRightPanelThreadKey((threadKey) =>
+      threadKey === routeThreadKey ? null : routeThreadKey,
+    );
+  }, [activeThreadRef, canMaximizeRightPanel, routeThreadKey]);
   const cleanupRightPanelSurfaces = useCallback(
     (surfaces: readonly RightPanelSurface[]) => {
       if (!activeThreadRef) return;
@@ -10921,7 +10907,6 @@ export default function ChatView(props: ChatViewProps) {
   const onOpenTurnDiff = useCallback(
     (runId: RunId, filePath?: string) => {
       if (!isServerThread || !activeThreadRef) return;
-
       useDiffPanelStore.getState().selectTurn(activeThreadRef, runId, filePath);
       useRightPanelStore.getState().open(activeThreadRef, "diff");
       onDiffPanelOpen?.();
@@ -11292,10 +11277,8 @@ export default function ChatView(props: ChatViewProps) {
               ? "w-0 flex-none"
               : "flex-1",
         )}
-        data-chat-column-maximized-away={
-          rightPanelMaximized && !maximizedThreadTabActive ? "true" : "false"
-        }
-        inert={(rightPanelMaximized && !maximizedThreadTabActive) || undefined}
+        data-chat-column-maximized-away={chatColumnMaximizedAway ? "true" : "false"}
+        inert={chatColumnMaximizedAway || undefined}
       >
         {/* Top bar */}
         <header
@@ -11959,7 +11942,7 @@ export default function ChatView(props: ChatViewProps) {
                   label: activeThread.title,
                   active: maximizedThreadTabActive,
                   onActivate: () => {
-                    useRightPanelStore.getState().selectThreadTab(activeThreadRef);
+                    useRightPanelStore.getState().setThreadTabSelected(activeThreadRef, true);
                   },
                 },
               }
