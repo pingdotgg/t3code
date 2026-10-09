@@ -1193,7 +1193,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   {renamingDevice === surface.id ? (
                     <input
                       aria-label="Device tab name"
-                      className="w-24 min-w-0 rounded-sm bg-background px-1 outline-none ring-1 ring-ring"
+                      className="w-24 min-w-0 rounded-sm bg-background px-1 outline-none ring-1 ring-inset ring-ring"
                       defaultValue={title}
                       ref={(element) => {
                         element?.focus();

@@ -244,10 +244,12 @@ describe("HtmlRender", () => {
           const htmlRender = yield* HtmlRender.HtmlRender;
           const preview = yield* htmlRender.preview({
             html: [
-              '<!doctype html><html><head></head><body><div style="height:300px;background:var(--accent)"></div>',
+              '<!doctype html><html><head></head><body><div id="page" tabindex="0" style="height:300px;background:var(--accent)"></div>',
               '<img src="/nonexistent/t3-missing.png" hidden>',
               "<script>",
               "const root = getComputedStyle(document.documentElement);",
+              'const page = document.getElementById("page"); page.focus();',
+              'const focus = getComputedStyle(page); console.log("focus", focus.outlineWidth, focus.outlineOffset, page.getBoundingClientRect().width, document.documentElement.scrollWidth);',
               'console.log("ready", 3); console.info(root.getPropertyValue("--font-sans"));',
               'console.warn(root.getPropertyValue("--background")); console.error("boom");',
               "</script>",
@@ -271,6 +273,7 @@ describe("HtmlRender", () => {
           expect(preview.consoleMessages).toEqual(
             expect.arrayContaining([
               { level: "log", text: "ready 3" },
+              { level: "log", text: "focus 2px -2px 400 400" },
               { level: "info", text: HTML_RENDER_MEASURE_FONTS.sans },
               {
                 level: "warning",

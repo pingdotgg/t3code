@@ -257,6 +257,11 @@ export default defineConfig({
         rules: { "shadcn/no-unknown-classes": "error" },
       },
       {
+        // State indicators paint inward; decorative rings keep their own geometry.
+        files: ["apps/web/src/**"],
+        rules: { "t3code/no-outset-state-indicators": "error" },
+      },
+      {
         // Colors come from theme tokens so status tones follow custom themes. components/ui
         // has no findings and stays covered too.
         files: ["apps/web/src/**"],
