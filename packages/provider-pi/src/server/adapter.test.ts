@@ -37,7 +37,13 @@ import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
-import { makePiAdapterV2, PI_PROVIDER, type PiAdapterV2Options } from "./adapter.ts";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import {
+  makePiAdapterV2,
+  PiAdapterV2Driver,
+  PI_PROVIDER,
+  type PiAdapterV2Options,
+} from "./adapter.ts";
 import { makePiRpcConnection, type PiRpcRecord } from "./rpc.ts";
 
 const layerTest = Layer.mergeAll(
@@ -317,11 +323,28 @@ const makeAdapter = Effect.fnUntraced(function* (
             ? forkFake.spawner.spawn(command)
             : fake.spawner.spawn(command),
         );
+  // Continuation cases go through the driver, which wires the offer from the
+  // environment the way production does.
+  if (continuationRequests !== undefined) {
+    return yield* PiAdapterV2Driver.create({
+      instanceId: PI_INSTANCE_ID,
+      displayName: undefined,
+      enabled: true,
+      environment: [],
+      config: { enabled: true, binaryPath: "pi", launchArgs, customModels: [] },
+    }).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(HostProcessEnvironment, {}),
+      Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+        ...continuationRequests,
+        take: Effect.never,
+      }),
+    );
+  }
   return yield* makePiAdapterV2({
     instanceId: PI_INSTANCE_ID,
     settings: { enabled: true, binaryPath: "pi", launchArgs, customModels: [] },
     environment: {},
-    ...(continuationRequests === undefined ? {} : { continuationRequests }),
   }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
 });
 
