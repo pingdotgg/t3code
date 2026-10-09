@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { openCommandPalette } from "~/commandPaletteBus";
 import { shortcutLabelForCommand } from "~/keybindings";
 import { projectIconColorClassName } from "~/projectIconColors";
+import { showProjectSettingsContextMenu } from "~/projectSettingsContextMenu";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useScratchProject } from "~/hooks/useScratchProject";
 import { useClientSettings } from "~/hooks/useSettings";
@@ -48,12 +49,14 @@ interface DraftHeroHeadlineProps {
   readonly draftId: DraftId | null;
   readonly activeProjectRef: ScopedProjectRef | null;
   readonly activeProjectTitle: string | null;
+  readonly onOpenProjectSettings?: (() => void) | undefined;
 }
 
 export function DraftHeroHeadline({
   draftId,
   activeProjectRef,
   activeProjectTitle,
+  onOpenProjectSettings,
 }: DraftHeroHeadlineProps) {
   const projects = useProjects();
   const threads = useThreadShells();
@@ -237,6 +240,11 @@ export function DraftHeroHeadline({
             <MenuTrigger
               render={<InlineButton tone="picker" />}
               data-draft-project-trigger=""
+              onContextMenu={
+                onOpenProjectSettings && !isScratchDraft
+                  ? (event) => showProjectSettingsContextMenu(event, onOpenProjectSettings)
+                  : undefined
+              }
               className="pointer-events-auto max-w-64 align-baseline"
             />
           }
