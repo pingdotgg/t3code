@@ -3073,7 +3073,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     openSession: Effect.fn("ClaudeAdapterV2.openSession")(
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
         const sessionScope = yield* Effect.scope;
-        const sessionThreadId = input.threadId;
         const now = yield* DateTime.now;
         const session = providerSession({
           providerSessionId: input.providerSessionId,
@@ -3164,6 +3163,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // Native threads whose last turn completed with nothing after it yet.
         // Only these may take the prompt suggestion that follows a `result`.
         const promptSuggestionEligibleNativeThreads = new Set<string>();
+        // The app thread each native thread's published suggestion belongs to;
+        // one session can serve several app threads.
+        const promptSuggestionThreadByNativeThread = new Map<string, ThreadId>();
+        const revokePromptSuggestion = Effect.fnUntraced(function* (nativeThreadId: string) {
+          promptSuggestionEligibleNativeThreads.delete(nativeThreadId);
+          const threadId = promptSuggestionThreadByNativeThread.get(nativeThreadId);
+          if (threadId === undefined) return;
+          promptSuggestionThreadByNativeThread.delete(nativeThreadId);
+          yield* promptSuggestions.publish(threadId, null);
+        });
         // Subagent frames can precede the task_started that registers their
         // subagent (the same race rememberPendingClaudeSubagentLaunch covers).
         // They wait here and replay once task_started registers the owner.
@@ -5775,6 +5784,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               promptSuggestionEligibleNativeThreads.has(nativeThreadId) &&
               (yield* Ref.get(activeTurn)) === null
             ) {
+              promptSuggestionThreadByNativeThread.set(nativeThreadId, settled.input.threadId);
               yield* promptSuggestions.publish(settled.input.threadId, {
                 id: message.uuid,
                 runId: settled.input.runId,
@@ -5889,8 +5899,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               message.type === "result" ||
               (message.type === "assistant" && !message.parent_tool_use_id)
             ) {
-              promptSuggestionEligibleNativeThreads.delete(liveQuery.nativeThreadId);
-              yield* promptSuggestions.publish(sessionThreadId, null);
+              yield* revokePromptSuggestion(liveQuery.nativeThreadId);
             }
             // task_notification must buffer wake evidence while still tracked
             // on the roster; clearing first would drop the wake pin.
@@ -7518,7 +7527,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
             const startedAt = yield* DateTime.now;
             const nativeThreadId = yield* getNativeThreadId(turnInput.providerThread);
-            promptSuggestionEligibleNativeThreads.delete(nativeThreadId);
+            yield* revokePromptSuggestion(nativeThreadId);
             yield* promptSuggestions.publish(turnInput.threadId, null);
             const nativeTurnId = `turn:${turnInput.attemptId}`;
             // Fresh for every offer: Claude acks a prompt whose uuid its
@@ -7849,8 +7858,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         );
 
         const closeSession = Effect.fnUntraced(function* () {
+          yield* Effect.forEach(
+            [...promptSuggestionThreadByNativeThread.keys()],
+            revokePromptSuggestion,
+            { discard: true },
+          );
           promptSuggestionEligibleNativeThreads.clear();
-          yield* promptSuggestions.publish(sessionThreadId, null);
           const existing = yield* Ref.get(queryContext);
           if (existing !== null) {
             yield* existing.query.close.pipe(Effect.ignore);
@@ -8067,8 +8080,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
               const nativeThreadId = yield* getNativeThreadId(rollbackInput.providerThread);
               // The suggestion followed a turn the rollback discards.
-              promptSuggestionEligibleNativeThreads.delete(nativeThreadId);
-              yield* promptSuggestions.publish(sessionThreadId, null);
+              yield* revokePromptSuggestion(nativeThreadId);
               yield* closeLiveQueryForNativeThread(nativeThreadId);
               const now = yield* DateTime.now;
 

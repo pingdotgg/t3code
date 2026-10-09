@@ -2837,9 +2837,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       },
     });
     const now = yield* DateTime.now;
-    const startTurn = Effect.fnUntraced(function* (ordinal: number) {
+    const startTurn = Effect.fnUntraced(function* (
+      ordinal: number,
+      threadId: ThreadId = harness.threadId,
+    ) {
       const input = makeClaudeTestTurnInput({
-        threadId: harness.threadId,
+        threadId,
         providerThread: harness.providerThread,
         now,
         attemptId: RunAttemptId.make(`attempt-claude-suggestion-${ordinal}`),
@@ -2850,8 +2853,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* harness.runtime.startTurn(input);
       return input;
     });
-    const completeTurn = Effect.fnUntraced(function* (ordinal: number) {
-      const input = yield* startTurn(ordinal);
+    const completeTurn = Effect.fnUntraced(function* (
+      ordinal: number,
+      threadId: ThreadId = harness.threadId,
+    ) {
+      const input = yield* startTurn(ordinal, threadId);
       yield* Queue.offer(
         harness.sdkMessages,
         makeResultFrame({
@@ -2896,6 +2902,30 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* startTurn(2);
       yield* harness.offerAndWait(promptSuggestionFrame);
       assert.lengthOf(publishedSuggestions(), 0);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("clears a suggestion for another app thread of the session on rollback", () =>
+    Effect.gen(function* () {
+      const { harness, published, completeTurn } = yield* makePromptSuggestionHarness;
+      const otherThreadId = ThreadId.make("thread-claude-suggestion-other");
+      yield* completeTurn(1, otherThreadId);
+      yield* harness.offerAndWait(promptSuggestionFrame);
+      assert.equal(published.at(-1)?.[0], otherThreadId);
+      yield* harness.runtime.rollbackThread({
+        providerThread: harness.providerThread,
+        providerThreadTurns: [],
+        target: {
+          type: "thread_start",
+          checkpointId: CheckpointId.make("checkpoint-claude-suggestion-other-rollback"),
+          appRunOrdinal: 0,
+        },
+      });
+      assert.deepEqual(published.at(-1), [otherThreadId, null]);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
