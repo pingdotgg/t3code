@@ -83,6 +83,8 @@ export class SourceControlHost extends Context.Service<
         readonly operation: string;
         readonly cwd: string;
         readonly args: ReadonlyArray<string>;
+        readonly maxOutputBytes?: number;
+        readonly appendTruncationMarker?: boolean;
       }) => Effect.Effect<SourceControlGitOutput, GitCommandError>;
       readonly resolveCommit: (input: {
         readonly cwd: string;
