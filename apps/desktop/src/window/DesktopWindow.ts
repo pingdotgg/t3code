@@ -11,7 +11,7 @@ import * as Electron from "electron";
 import {
   type DesktopSnapShotEvent,
   DEFAULT_CLIENT_SETTINGS,
-  type ImageContextMenuRequest,
+  type DesktopContextMenuRequest,
 } from "@t3tools/contracts";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
@@ -23,7 +23,7 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import {
-  IMG_CONTEXT_MENU_CHANNEL,
+  DESKTOP_CONTEXT_MENU_CHANNEL,
   MENU_ACTION_CHANNEL,
   QUIT_SHORTCUT_CHANNEL,
   SNAP_SHOT_EVENT_CHANNEL,
@@ -78,11 +78,11 @@ const DEVELOPMENT_RETRYABLE_LOAD_ERROR_CODES = new Set([
 ]);
 
 /**
- * Coordinates of the last right-click on an image in the main renderer,
- * keyed by webContents id. Written when `nativeContextMenus` is off (the
- * renderer draws its own menu); consumed by the image-context IPC handler.
+ * Coordinates and safe link target for a styled main-renderer context menu,
+ * keyed by webContents id until its selected action is applied.
  */
-export const imageContextMenuRequests = new Map<number, ImageContextMenuRequest>();
+export const desktopContextMenuRequests = new Map<number, DesktopContextMenuRequest>();
+let nextDesktopContextMenuRequestId = 0;
 
 type WindowTitleBarOptions = Pick<
   Electron.BrowserWindowConstructorOptions,
@@ -575,13 +575,9 @@ export const make = Effect.gen(function* () {
         contents.focus();
 
         void runPromise(
-          Effect.map(
-            clientSettings.get,
-            Option.match({
-              onNone: () => DEFAULT_CLIENT_SETTINGS.nativeContextMenus,
-              onSome: (settings) => settings.nativeContextMenus,
-            }),
-          ).pipe(
+          clientSettings.get.pipe(
+            Effect.map(Option.getOrElse(() => DEFAULT_CLIENT_SETTINGS)),
+            Effect.map((settings) => settings.nativeContextMenus),
             // If the settings file can't be read, fall back to default
             // (native menus) rather than denying every context menu.
             Effect.orElseSucceed(() => DEFAULT_CLIENT_SETTINGS.nativeContextMenus),
@@ -589,23 +585,29 @@ export const make = Effect.gen(function* () {
         ).then((nativeContextMenus) => {
           if (contents.isDestroyed() || ownerWindow.isDestroyed()) return;
 
-          // Main-window renders with native menus off get the styled DOM menu
-          // instead of the ad-hoc native one. Guests and popups keep native.
+          // Main-window image and link menus can use DOM styling; guests,
+          // popups, and text menus keep their native actions.
+          const isImage = params.mediaType === "image";
+          const linkURL = Option.isSome(ElectronShell.parseSafeExternalUrl(params.linkURL))
+            ? params.linkURL
+            : undefined;
+          const hasTextActions =
+            params.editFlags.canCut || params.editFlags.canCopy || params.editFlags.canPaste;
           if (
             !nativeContextMenus &&
-            params.mediaType === "image" &&
-            contents === window.webContents
+            contents === window.webContents &&
+            (isImage || (!params.misspelledWord && !hasTextActions && linkURL !== undefined))
           ) {
-            const linkURL = Option.isSome(ElectronShell.parseSafeExternalUrl(params.linkURL))
-              ? params.linkURL
-              : undefined;
-            const request: ImageContextMenuRequest = {
+            const request: DesktopContextMenuRequest = {
+              requestId: ++nextDesktopContextMenuRequestId,
+              copyImage: isImage,
+              selectAll: params.editFlags.canSelectAll,
               x: params.x,
               y: params.y,
               ...(linkURL === undefined ? {} : { linkURL }),
             };
-            imageContextMenuRequests.set(contents.id, request);
-            void runPromise(dispatchRendererEvent(IMG_CONTEXT_MENU_CHANNEL, request));
+            desktopContextMenuRequests.set(contents.id, request);
+            void runPromise(dispatchRendererEvent(DESKTOP_CONTEXT_MENU_CHANNEL, request));
             return;
           }
 
@@ -659,7 +661,9 @@ export const make = Effect.gen(function* () {
             electronMenu.popupTemplate({
               window: ownerWindow,
               template: menuTemplate,
-              ...(params.frame ? { frame: params.frame } : {}),
+              // A frame can be destroyed while the settings read is in flight;
+              // popping against a dead frame throws.
+              ...(params.frame && !params.frame.isDestroyed() ? { frame: params.frame } : {}),
             }),
           );
         });
@@ -908,6 +912,7 @@ export const make = Effect.gen(function* () {
     window.on("closed", () => {
       clearDevelopmentLoadRetry();
       clearBoundsPersist();
+      desktopContextMenuRequests.delete(window.webContents.id);
       void runPromise(electronWindow.clearMain(Option.some(window)));
     });
 

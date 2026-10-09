@@ -53,7 +53,7 @@ import {
   pickThemeFiles,
   setTheme,
   showContextMenu,
-  applyImageContextAction,
+  applyDesktopContextMenuAction,
 } from "./methods/window.ts";
 import {
   acknowledgeSnapShot,
@@ -143,7 +143,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(pickThemeFiles);
   yield* ipc.handle(setTheme);
   yield* ipc.handle(showContextMenu);
-  yield* ipc.handle(applyImageContextAction);
+  yield* ipc.handle(applyDesktopContextMenuAction);
   yield* ipc.handle(openExternal);
   yield* ipc.handle(receiveProviderAuthCallback);
   yield* ipc.handle(cancelProviderAuthCallback);

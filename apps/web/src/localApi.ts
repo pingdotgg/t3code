@@ -53,45 +53,32 @@ function createBrowserLocalApi(): LocalApi {
         items: readonly ContextMenuItem<T>[],
         position?: { x: number; y: number },
       ): Promise<T | null> => {
-        if (window.desktopBridge) {
-          if (!cachedClientSettings.nativeContextMenus) {
-            return showContextMenuFallback(items, position);
-          }
-          return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
+        if (!window.desktopBridge || !cachedClientSettings.nativeContextMenus) {
+          return showContextMenuFallback(items, position);
         }
-        return showContextMenuFallback(items, position);
+        return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
       },
-      // A native desktop menu blocks keyboard input and closes on outside
-      // interaction, so nothing to do there; the DOM fallback needs an explicit
-      // dismiss when the state behind it goes away.
+      // Dismissing is a no-op when no DOM menu is open, so this stays
+      // unconditional: a native menu closes itself, and a state change that
+      // deselects the menu's target still clears the fallback.
       close: async () => {
-        if (!window.desktopBridge) {
-          dismissContextMenu();
-          return;
-        }
-        if (!cachedClientSettings.nativeContextMenus) {
-          dismissContextMenu();
-        }
+        dismissContextMenu();
       },
     },
     persistence: {
       getClientSettings: async () => {
-        if (window.desktopBridge) {
-          const settings = await window.desktopBridge.getClientSettings();
-          cachedClientSettings = settings ?? DEFAULT_CLIENT_SETTINGS;
-          return settings;
-        }
-        const settings = readBrowserClientSettings();
+        const settings = window.desktopBridge
+          ? await window.desktopBridge.getClientSettings()
+          : readBrowserClientSettings();
         cachedClientSettings = settings ?? DEFAULT_CLIENT_SETTINGS;
         return settings;
       },
       setClientSettings: async (settings) => {
         if (window.desktopBridge) {
           await window.desktopBridge.setClientSettings(settings);
-          cachedClientSettings = settings;
-          return;
+        } else {
+          writeBrowserClientSettings(settings);
         }
-        writeBrowserClientSettings(settings);
         cachedClientSettings = settings;
       },
     },

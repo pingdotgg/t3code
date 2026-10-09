@@ -49,7 +49,7 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import {
-  IMG_CONTEXT_MENU_CHANNEL,
+  DESKTOP_CONTEXT_MENU_CHANNEL,
   MENU_ACTION_CHANNEL,
   SNAP_SHOT_EVENT_CHANNEL,
   TRACKPAD_SCROLL_END_CHANNEL,
@@ -632,9 +632,22 @@ describe("DesktopWindow", () => {
 
           assert.equal(popupCount, 0);
           assert.deepEqual(host.send.mock.calls, [
-            [IMG_CONTEXT_MENU_CHANNEL, { x: 12, y: 34, linkURL: "https://example.com/image.png" }],
+            [
+              DESKTOP_CONTEXT_MENU_CHANNEL,
+              {
+                requestId: 1,
+                copyImage: true,
+                selectAll: true,
+                x: 12,
+                y: 34,
+                linkURL: "https://example.com/image.png",
+              },
+            ],
           ]);
-          assert.deepEqual(DesktopWindow.imageContextMenuRequests.get(1), {
+          assert.deepEqual(DesktopWindow.desktopContextMenuRequests.get(1), {
+            requestId: 1,
+            copyImage: true,
+            selectAll: true,
             x: 12,
             y: 34,
             linkURL: "https://example.com/image.png",

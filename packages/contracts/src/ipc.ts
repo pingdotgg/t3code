@@ -36,10 +36,16 @@ export interface ContextMenuItem<T extends string = string> {
   children?: readonly ContextMenuItem<T>[];
 }
 
-export const ImageContextMenuActionSchema = Schema.Literals(["copy-image", "copy-link"]);
-export type ImageContextMenuAction = typeof ImageContextMenuActionSchema.Type;
+export const DesktopContextMenuActionSchema = Schema.Struct({
+  action: Schema.Literals(["copy-image", "copy-link", "select-all"]),
+  requestId: Schema.Number,
+});
+export type DesktopContextMenuAction = typeof DesktopContextMenuActionSchema.Type;
 
-export interface ImageContextMenuRequest {
+export interface DesktopContextMenuRequest {
+  readonly requestId: number;
+  readonly copyImage: boolean;
+  readonly selectAll: boolean;
   readonly x: number;
   readonly y: number;
   readonly linkURL?: string;
@@ -1234,10 +1240,10 @@ export interface DesktopBridge {
   /** Present when the desktop shell can perform an ordered plain-text paste. */
   pasteAsText?: () => Promise<void>;
   onMenuAction: (listener: (action: string) => void) => () => void;
-  /** Pushes the ad-hoc image context menu request when native menus are off. */
-  onImageContextMenu: (listener: (payload: ImageContextMenuRequest) => void) => () => void;
-  /** Applies the chosen image context menu action to the last stashed click. */
-  applyImageContextAction: (action: ImageContextMenuAction) => Promise<void>;
+  /** Pushes a styled main-window image or safe-link context menu request. */
+  onDesktopContextMenu: (listener: (payload: DesktopContextMenuRequest) => void) => () => void;
+  /** Applies an action only to the matching context menu request. */
+  applyDesktopContextMenuAction: (action: DesktopContextMenuAction) => Promise<void>;
   onSnapShotEvent?: (listener: (event: DesktopSnapShotEvent) => void) => () => void;
   /**
    * Quit-confirmation hint pushes. Optional: older desktop builds never emit

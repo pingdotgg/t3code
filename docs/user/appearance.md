@@ -44,6 +44,7 @@ controls the style of right-click menus:
 - **Off** (default): menus use the operating system's native style.
 - **On**: menus use T3 Code styling.
 
+Spellcheck suggestions, editable-text menus, and preview guest menus remain native.
 The setting only applies to the desktop app; web and mobile always use T3 Code styling.
 
 ## Custom themes

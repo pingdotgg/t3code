@@ -201,7 +201,7 @@ describe("LocalApi", () => {
     expect(showContextMenuFallbackMock).not.toHaveBeenCalled();
 
     await api.contextMenu.close();
-    expect(dismissContextMenuMock).not.toHaveBeenCalled();
+    expect(dismissContextMenuMock).toHaveBeenCalledOnce();
   });
 
   it("persists client settings in browser storage", async () => {

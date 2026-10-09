@@ -5,7 +5,7 @@ import {
   DesktopThemeSchema,
   EDITORS,
   EditorId,
-  ImageContextMenuActionSchema,
+  DesktopContextMenuActionSchema,
   PickedThemeFileSchema,
   PickFolderOptionsSchema,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
@@ -42,7 +42,7 @@ import * as MacPermissions from "../../permissions/MacPermissions.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
-import { imageContextMenuRequests } from "../../window/DesktopWindow.ts";
+import { desktopContextMenuRequests } from "../../window/DesktopWindow.ts";
 import {
   extractDistroFromUncPath,
   resolveWslPickFolderDefaultPath,
@@ -59,35 +59,36 @@ const ContextMenuInput = Schema.Struct({
   position: Schema.optionalKey(ContextMenuPosition),
 });
 
-export const applyImageContextAction = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.IMG_CONTEXT_ACTION_CHANNEL,
-  payload: ImageContextMenuActionSchema,
+export const applyDesktopContextMenuAction = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.DESKTOP_CONTEXT_MENU_ACTION_CHANNEL,
+  payload: DesktopContextMenuActionSchema,
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.window.applyImageContextAction")(function* (action, event) {
-    const electronWindow = yield* ElectronWindow.ElectronWindow;
-    const electronShell = yield* ElectronShell.ElectronShell;
-    const window = yield* electronWindow.main;
-    if (
-      event === undefined ||
-      Option.isNone(window) ||
-      window.value.isDestroyed() ||
-      window.value.webContents.id !== event.sender.id
-    ) {
-      return;
-    }
-    const stashed = imageContextMenuRequests.get(window.value.webContents.id);
-    imageContextMenuRequests.delete(window.value.webContents.id);
-    if (stashed === undefined) return;
-    if (action === "copy-image") {
-      if (!window.value.webContents.isDestroyed()) {
-        window.value.webContents.copyImageAt(stashed.x, stashed.y);
+  handler: Effect.fn("desktop.ipc.window.applyDesktopContextMenuAction")(
+    function* (payload, event) {
+      const electronWindow = yield* ElectronWindow.ElectronWindow;
+      const electronShell = yield* ElectronShell.ElectronShell;
+      const window = yield* electronWindow.main;
+      if (event === undefined || Option.isNone(window) || window.value.isDestroyed()) return;
+      const contents = window.value.webContents;
+      if (contents.id !== event.sender.id) return;
+      const stashed = desktopContextMenuRequests.get(contents.id);
+      if (stashed === undefined || stashed.requestId !== payload.requestId) return;
+      desktopContextMenuRequests.delete(contents.id);
+      if (payload.action === "copy-image") {
+        if (stashed.copyImage && !contents.isDestroyed()) {
+          contents.copyImageAt(stashed.x, stashed.y);
+        }
+        return;
       }
-      return;
-    }
-    if (stashed.linkURL !== undefined) {
-      yield* electronShell.copyText(stashed.linkURL);
-    }
-  }),
+      if (payload.action === "select-all") {
+        if (stashed.selectAll && !contents.isDestroyed()) contents.selectAll();
+        return;
+      }
+      if (stashed.linkURL !== undefined) {
+        yield* electronShell.copyText(stashed.linkURL);
+      }
+    },
+  ),
 });
 
 function toWebSocketBaseUrl(httpBaseUrl: URL): string {
