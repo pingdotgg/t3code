@@ -577,9 +577,13 @@ function needsRecovery(
             ["preparing", "starting", "running", "waiting"].includes(run.status) ||
             (run.status === "queued" && run.queueHeld !== true),
         ) ||
-        projection.providerThreads.some(
+        // A roster left by a crashed provider or archived thread has no live session.
+        (projection.providerThreads.some(
           (thread) => (thread.pendingBackgroundTasks?.length ?? 0) > 0,
-        )
+        ) &&
+          projection.providerSessions.some(
+            (session) => session.status !== "stopped" && session.status !== "error",
+          ))
       );
     case "runtime":
       return (
@@ -3620,10 +3624,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     THEN json_extract(payload_json, '$.queueHeld') IS NOT 1
                     ELSE 1 END
                 UNION
-                SELECT thread_id FROM orchestration_v2_projection_provider_threads
-                WHERE CASE WHEN json_valid(payload_json)
-                  THEN json_array_length(payload_json, '$.pendingBackgroundTasks') > 0
-                  ELSE 0 END
+                SELECT threads.thread_id FROM orchestration_v2_projection_provider_threads AS threads
+                WHERE CASE WHEN json_valid(threads.payload_json)
+                    THEN json_array_length(threads.payload_json, '$.pendingBackgroundTasks') > 0
+                    ELSE 0 END
+                  AND EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_provider_session_bindings AS bindings
+                    CROSS JOIN orchestration_v2_projection_provider_sessions AS sessions
+                      ON sessions.provider_session_id = bindings.provider_session_id
+                    WHERE bindings.thread_id = threads.thread_id
+                      AND sessions.status NOT IN ('stopped', 'error')
+                  )
               `;
             case "runtime":
               return sql`
