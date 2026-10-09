@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 import type {
+  RepositoryIdentity,
   ChangeRequest,
   ChangeRequestState,
   SourceControlProviderError,
@@ -135,6 +136,18 @@ export class SourceControlProvider extends Context.Service<
      * more than that (Forgejo's HTTP installation mount). Absent means the whole path.
      */
     readonly repositoryNameFromRemoteUrl?: (url: string) => string | null;
+    /**
+     * Fills in what a repository identity read from git cannot know, such as the browser URL of
+     * a host the remote URL does not name. `resolveContext` asks the registry which host (and
+     * base URL) serves a remote. Only consulted for identities this host may own.
+     */
+    readonly refineRepositoryIdentity?: (input: {
+      readonly identity: RepositoryIdentity;
+      readonly resolveContext: (input: {
+        readonly cwd: string;
+        readonly context: SourceControlProviderContext;
+      }) => Effect.Effect<SourceControlProviderContext | null, SourceControlProviderError>;
+    }) => Effect.Effect<RepositoryIdentity, SourceControlProviderError>;
     /** Optional capability for issue and change-request subjects. */
     readonly resolveLink?: ResolveSourceControlLink;
     readonly listChangeRequests: (input: {

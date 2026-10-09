@@ -352,6 +352,19 @@ export interface PullRequestProviderApi {
    * project asks for it.
    */
   readonly mergeMessageRewrite?: (message: string) => string;
+  /**
+   * The key a checkout's repository is known by on this host, where `owner/name` is not enough.
+   * Absent means `owner/name` on the host identifies it, and any checkout on the host can serve a
+   * change request in another repository there.
+   *
+   * A host that resolves it (Azure DevOps: `dev.azure.com/org/project/_git/repo`) derives its
+   * organization from the checkout, so only a checkout whose key matches the reference serves
+   * it. The key also names the repository in list cursors and on routing.
+   */
+  readonly repositoryKey?: (input: {
+    /** The checkout's canonical key, as its remote names it. */
+    readonly canonicalKey: string;
+  }) => string;
 
   /** The signed-in account, which is what involvement filtering compares against. */
   readonly getViewer: (input: {

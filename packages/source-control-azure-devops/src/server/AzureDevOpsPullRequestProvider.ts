@@ -298,6 +298,8 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: "azure-devops",
     capabilities: CAPABILITIES,
+    // The bare repository name repeats across an organization; the project path does not.
+    repositoryKey: ({ canonicalKey }) => canonicalKey,
 
     getViewer: (input) =>
       cli.getViewer({ cwd: input.cwd }).pipe(Effect.mapError(fail("getViewer"))),
