@@ -83,20 +83,27 @@ function useRunScopedPlan() {
               Cause.fail(
                 new EnvironmentAuthorizationError({
                   requiredScope: missing,
-                  message: "This connection cannot change these settings.",
+                  message: "This connection lacks permission to change these settings.",
                 }),
               ),
             );
           return persistServer(request);
         },
         persistClientSettingsPatch,
-      ).then(({ failedEnvironments, savedEnvironmentCount }) => {
+      ).then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
         if (failedEnvironments.length === 0) return;
         toastManager.add({
           type: "error",
           title:
             savedEnvironmentCount > 0 ? "Setting saved on some environments" : "Setting not saved",
-          description: `Could not update ${failedEnvironments.map((environment) => environment.label).join(", ")}.${savedEnvironmentCount > 0 ? " The other selected environments saved the change." : ""}`,
+          description: [
+            ...failedEnvironments.map(
+              ({ label, message }) => `Could not save on ${label}: ${message}`,
+            ),
+            ...(savedEnvironmentCount > 0
+              ? [`Saved on ${savedEnvironments.map(({ label }) => label).join(", ")}.`]
+              : []),
+          ].join("\n"),
         });
       });
     },
