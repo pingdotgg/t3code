@@ -2205,6 +2205,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       interactionMode: command.interactionMode,
       branch: command.branch,
       worktreePath: command.worktreePath,
+      workspaceBindingId: command.commandId,
       activeProviderThreadId: null,
       lineage: {
         parentThreadId: null,
@@ -2471,13 +2472,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     if (
       command.type === "thread.metadata.update" &&
-      command.expectedWorktreePath !== undefined &&
-      command.expectedWorktreePath !== thread.worktreePath
+      ((command.expectedWorktreePath !== undefined &&
+        command.expectedWorktreePath !== thread.worktreePath) ||
+        (command.expectedBranch !== undefined && command.expectedBranch !== thread.branch) ||
+        (command.expectedWorkspaceBindingId !== undefined &&
+          command.expectedWorkspaceBindingId !== (thread.workspaceBindingId ?? null)))
     ) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: `Thread ${command.threadId} worktree changed before the metadata update could be applied.`,
+        cause: `Thread ${command.threadId} workspace binding changed before the metadata update could be applied.`,
       });
     }
     if (command.type === "thread.metadata.update" && command.expectedEmpty === true) {
@@ -2939,6 +2943,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : {}),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
+            ...(command.branch === undefined && command.worktreePath === undefined
+              ? {}
+              : { workspaceBindingId: command.commandId }),
             ...(command.linkedPullRequest === undefined
               ? {}
               : {
@@ -5320,7 +5327,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ? {}
             : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
           ...(dispatchMode.type === "defer_start" && dispatchMode.workspaceStrategy !== undefined
-            ? { workspacePreparation: dispatchMode.workspaceStrategy }
+            ? {
+                workspacePreparation: dispatchMode.workspaceStrategy,
+                ...(dispatchMode.workspaceStrategy.type === "worktree"
+                  ? { completedWorktreePath: null }
+                  : {}),
+              }
             : {}),
           ...wakeWorkStartedAt(projection.runs, command),
         };
@@ -7744,7 +7756,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
 
   const loadProjectionForCommand = <K extends ProjectionRecordField>(
-    command: OrchestrationV2Command,
+    command: OrchestrationV2ServerCommand,
     fields: ReadonlyArray<K>,
     filter?: ProjectionRecordFilter,
   ) =>
@@ -7758,7 +7770,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const preparedRunState = (
     command: Extract<
-      OrchestrationV2Command,
+      OrchestrationV2ServerCommand,
       {
         readonly type:
           | "prepared-run.release"
@@ -7799,7 +7811,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   };
 
   const dispatchPreparedRunProgress = (
-    command: Extract<OrchestrationV2Command, { readonly type: "prepared-run.progress" }>,
+    command: Extract<OrchestrationV2ServerCommand, { readonly type: "prepared-run.progress" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) =>
     Effect.gen(function* () {
@@ -7817,6 +7829,56 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       const now = yield* DateTime.now;
+      const workspace = command.completedWorkspace;
+      if (
+        workspace !== undefined &&
+        (command.phase !== "setup" ||
+          state.run.workspacePreparation?.type !== "worktree" ||
+          projection.thread.worktreePath !== workspace.expectedWorktreePath ||
+          projection.thread.branch !== workspace.expectedBranch ||
+          (workspace.expectedWorkspaceBindingId !== undefined &&
+            workspace.expectedWorkspaceBindingId !==
+              (projection.thread.workspaceBindingId ?? null)))
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The prepared run no longer owns the workspace binding.",
+        });
+      }
+      if (workspace !== undefined) {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          occurredAt: now,
+          payload: {
+            ...projection.thread,
+            worktreePath: workspace.worktreePath,
+            branch: workspace.branch,
+            workspaceBindingId: command.commandId,
+            updatedAt: now,
+          },
+        });
+      }
+      if (workspace !== undefined || command.phase === "worktree") {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "run.updated",
+          threadId: command.threadId,
+          runId: state.run.id,
+          providerInstanceId: state.run.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            ...state.run,
+            completedWorktreePath: workspace?.worktreePath ?? null,
+          },
+        });
+      }
       yield* emit(
         events,
         command,
@@ -7852,6 +7914,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandId: command.commandId,
           commandType: command.type,
           cause: `Run ${command.runId} is not awaiting workspace preparation.`,
+        });
+      }
+      if (
+        state.run.workspacePreparation?.type === "worktree" &&
+        state.run.completedWorktreePath !== undefined &&
+        (state.run.completedWorktreePath === null ||
+          state.run.completedWorktreePath !== projection.thread.worktreePath)
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The prepared run has no completed checkout at its current workspace binding.",
         });
       }
       const now = yield* DateTime.now;

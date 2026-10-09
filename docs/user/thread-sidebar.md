@@ -13,6 +13,18 @@ an existing worktree, use **New thread in this worktree** from the branch toolba
 When you change a new thread's project, T3 Code stays in the current environment
 if that project exists there. Otherwise it selects an environment that has it.
 
+If preparing a new worktree fails before a queued agent can start, the thread,
+messages, recorded worktree, and setup output stay visible. Use **Retry** on the
+preparation failure to try again on the same thread. Retry reuses a worktree that
+finished provisioning, including one whose setup script failed.
+Cancelling preparation removes a newly created worktree. A checkout that fails
+before it is recorded is also removed. If removal fails, the surviving worktree
+stays linked to the thread so you can inspect or remove it. Retry preserves an
+incomplete checkout and asks you to back up any changes and remove the worktree
+and its branch with Git before creating a fresh checkout.
+An idle thread created without a message keeps its prepared worktree if shutdown
+interrupts an asynchronous setup script.
+
 ### Start without a project
 
 A thread does not need a project. To start one without a project, click **or

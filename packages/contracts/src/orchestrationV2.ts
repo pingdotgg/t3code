@@ -372,6 +372,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  /** Last explicit workspace write, including an equal-valued clear. Absent on legacy threads. */
+  workspaceBindingId: Schema.optional(CommandId),
   /** Pull request the user linked to this thread (#8160); optional so
       pre-linking servers still decode. */
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
@@ -583,6 +585,8 @@ export const OrchestrationV2Run = Schema.Struct({
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
   /** How a launch prepares this run's workspace; prepared-run.retry repeats it. */
   workspacePreparation: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+  /** Successful provisioning of this exact checkout, before its setup script runs. */
+  completedWorktreePath: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
 
@@ -1846,6 +1850,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  workspaceBindingId: Schema.optional(CommandId),
   /** Pull request the user linked to this thread (#8160). */
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
@@ -2749,6 +2754,8 @@ export const OrchestrationV2Command = Schema.Union([
     branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     expectedWorktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    expectedWorkspaceBindingId: Schema.optional(Schema.NullOr(CommandId)),
     /** Reject unless no message or run has landed on this thread. */
     expectedEmpty: Schema.optional(Schema.Boolean),
     limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecoveryUpdate)),
@@ -2889,13 +2896,6 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     messageId: MessageId,
-  }),
-  Schema.Struct({
-    type: Schema.Literal("prepared-run.progress"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    runId: RunId,
-    phase: Schema.Literals(["worktree", "setup"]),
   }),
   Schema.Struct({
     type: Schema.Literal("prepared-run.fail"),
@@ -3063,6 +3063,23 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
+  /** Only the launch service can attest that provisioning completed. */
+  Schema.Struct({
+    type: Schema.Literal("prepared-run.progress"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    phase: Schema.Literals(["worktree", "setup"]),
+    completedWorkspace: Schema.optional(
+      Schema.Struct({
+        worktreePath: Schema.String,
+        branch: Schema.String,
+        expectedWorktreePath: Schema.NullOr(Schema.String),
+        expectedBranch: Schema.NullOr(Schema.String),
+        expectedWorkspaceBindingId: Schema.optional(Schema.NullOr(CommandId)),
+      }),
+    ),
+  }),
   /**
    * Records what a pull request watch saw, and wakes the agent in the same transaction when
    * `wake` is set. Rejected once the watch started at `startedAt` has ended, and a wake is

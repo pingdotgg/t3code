@@ -67,4 +67,38 @@ describe("WebSocket RPC contracts", () => {
       ),
     ).toBe(true);
   });
+
+  it("rejects client assertions that worktree provisioning completed", () => {
+    const dispatchCommand = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
+    if (dispatchCommand === undefined) throw new Error("dispatchCommand is not registered");
+    const decode = Schema.decodeUnknownExit(dispatchCommand.payloadSchema);
+
+    expect(
+      Exit.isFailure(
+        decode({
+          type: "prepared-run.progress",
+          commandId: "forged-workspace-completion",
+          threadId: "thread-1",
+          runId: "run-1",
+          phase: "setup",
+          completedWorkspace: {
+            worktreePath: "/unprovisioned-directory",
+            branch: "forged-branch",
+            expectedWorktreePath: null,
+            expectedBranch: null,
+          },
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      Exit.isSuccess(
+        decode({
+          type: "prepared-run.retry",
+          commandId: "retry-preparation",
+          threadId: "thread-1",
+          runId: "run-1",
+        }),
+      ),
+    ).toBe(true);
+  });
 });
