@@ -571,11 +571,12 @@ function needsRecovery(
       );
     }
     case "active-work":
+      // Queued runs don't count: one behind a live run is covered by that run,
+      // one about to start waits for the update admission permit, and one held
+      // by a usage limit would otherwise block updates until the limit resets.
       return (
-        projection.runs.some(
-          (run) =>
-            ["preparing", "starting", "running", "waiting"].includes(run.status) ||
-            (run.status === "queued" && run.queueHeld !== true),
+        projection.runs.some((run) =>
+          ["preparing", "starting", "running", "waiting"].includes(run.status),
         ) ||
         // A roster left by a crashed provider or archived thread has no live session.
         (projection.providerThreads.some(
@@ -3617,12 +3618,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               return sql`
                 SELECT thread_id FROM orchestration_v2_projection_runs
                 WHERE status IN ('preparing', 'starting', 'running', 'waiting')
-                UNION
-                SELECT thread_id FROM orchestration_v2_projection_runs
-                WHERE status = 'queued'
-                  AND CASE WHEN json_valid(payload_json)
-                    THEN json_extract(payload_json, '$.queueHeld') IS NOT 1
-                    ELSE 1 END
                 UNION
                 SELECT threads.thread_id FROM orchestration_v2_projection_provider_threads AS threads
                 WHERE CASE WHEN json_valid(threads.payload_json)
