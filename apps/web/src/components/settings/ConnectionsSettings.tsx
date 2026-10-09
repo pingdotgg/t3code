@@ -1494,6 +1494,7 @@ function SavedBackendListRow({
   onAddRoute,
 }: SavedBackendListRowProps) {
   const [routesOpen, setRoutesOpen] = useState(false);
+  const [permissionsOpen, setPermissionsOpen] = useState(false);
   const environmentId = environment.environmentId;
   const unsupported = environment.connection.phase === "unsupported";
   const enabled = environment.entry.enabled && !unsupported;
@@ -1661,6 +1662,25 @@ function SavedBackendListRow({
               )}
             />
           </button>
+          <span aria-hidden className="shrink-0">
+            ·
+          </span>
+          <button
+            type="button"
+            aria-expanded={permissionsOpen}
+            aria-controls={`remote-permissions-${environmentId}`}
+            onClick={() => setPermissionsOpen((open) => !open)}
+            className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            Permissions
+            <ChevronRightIcon
+              aria-hidden
+              className={cn(
+                "size-3 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
+                permissionsOpen && "rotate-90",
+              )}
+            />
+          </button>
         </span>
       }
       below={
@@ -1671,12 +1691,26 @@ function SavedBackendListRow({
         ) : null
       }
       detail={
-        routesOpen ? (
-          <EnvironmentRoutesList
-            environment={environment}
-            onAddRoute={() => onAddRoute(environment)}
-          />
-        ) : null
+        <>
+          {routesOpen && (
+            <EnvironmentRoutesList
+              environment={environment}
+              onAddRoute={() => onAddRoute(environment)}
+            />
+          )}
+          {permissionsOpen && (
+            <div
+              id={`remote-permissions-${environmentId}`}
+              className="mt-2 border-t border-border/50"
+            >
+              <SessionPermissions
+                environmentId={environmentId}
+                connected={isConnected}
+                routeContext
+              />
+            </div>
+          )}
+        </>
       }
     >
       {unsupported &&
@@ -3682,15 +3716,22 @@ export function ConnectionsSettings() {
                 ) : null}
               </>
             ) : null}
+            {primaryEnvironment ? (
+              <details className="group px-3 sm:px-4">
+                <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-md text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+                  Permissions
+                  <ChevronRightIcon
+                    aria-hidden
+                    className="size-3 text-muted-foreground group-open:rotate-90"
+                  />
+                </summary>
+                <SessionPermissions
+                  environmentId={primaryEnvironment.environmentId}
+                  connected={primaryEnvironment.connection.phase === "connected"}
+                />
+              </details>
+            ) : null}
           </SettingsSection>
-
-          {primaryEnvironment ? (
-            <SessionPermissions
-              environmentId={primaryEnvironment.environmentId}
-              label={primaryEnvironment.label}
-              connected={primaryEnvironment.connection.phase === "connected"}
-            />
-          ) : null}
 
           {canReadAccess || canWriteAccess ? (
             <FoldedSettingsSection
