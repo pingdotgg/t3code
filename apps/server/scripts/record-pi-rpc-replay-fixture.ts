@@ -70,7 +70,17 @@ if (fixture === undefined || variant === undefined) {
 
 const piBinary = process.env.T3_PI_BIN ?? "pi";
 const [modelProvider, ...modelId] = variant.modelSelection.model.split("/");
-const launchArgs = `--provider ${modelProvider} --model ${modelId.join("/")} ${HERMETIC_LAUNCH_ARGS}`;
+/** Loads a third-party extension, such as pi-subagents, without recording its local path. */
+const recordedExtension = process.env.T3_PI_RECORD_EXTENSION;
+const baseLaunchArgs = `--provider ${modelProvider} --model ${modelId.join("/")} ${HERMETIC_LAUNCH_ARGS}`;
+const launchArgs =
+  recordedExtension === undefined
+    ? baseLaunchArgs
+    : `${baseLaunchArgs} --extension ${JSON.stringify(recordedExtension)}`;
+const transcriptLaunchArgs =
+  recordedExtension === undefined
+    ? baseLaunchArgs
+    : `${baseLaunchArgs} --extension ${PI_REPLAY_ANY}`;
 const home = process.env.HOME ?? "";
 
 // ── normalization ─────────────────────────────────────────────
@@ -230,7 +240,7 @@ const record = Effect.gen(function* () {
   const workspace = yield* Effect.promise(() =>
     makeCheckpointWorkspace(`pi-rpc-record-${fixture.name}`, fixtureInput.workspaceFiles),
   );
-  yield* fs.makeDirectory(path.join(workspace, ".pi"));
+  yield* fs.makeDirectory(path.join(workspace, ".pi"), { recursive: true });
   yield* fs.writeFileString(
     path.join(workspace, ".pi", "settings.json"),
     encodeJson(WORKSPACE_PI_SETTINGS),
@@ -304,7 +314,7 @@ const record = Effect.gen(function* () {
       generatedBy: "live-pi-recorder",
       piVersion,
       model: variant.modelSelection.model,
-      launchArgs,
+      launchArgs: transcriptLaunchArgs,
     },
     entries: normalizeEntries({
       entries,

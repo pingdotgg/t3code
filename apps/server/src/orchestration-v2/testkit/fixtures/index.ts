@@ -64,6 +64,11 @@ import { assertMuseMultiTurnOutput } from "./multi_turn/muse_output.ts";
 import { assertMuseTurnInterruptOutput } from "./turn_interrupt/muse_output.ts";
 import { piCompactionInput } from "./pi_compaction/input.ts";
 import { assertPiCompactionOutput } from "./pi_compaction/output.ts";
+import {
+  PI_ASYNC_SUBAGENT_MODEL_SELECTION,
+  piAsyncSubagentInput,
+} from "./pi_async_subagent/input.ts";
+import { assertPiAsyncSubagentOutput } from "./pi_async_subagent/output.ts";
 import { providerThreadResumeInput } from "./provider_thread_resume/input.ts";
 import { assertPiProviderThreadResumeOutput } from "./provider_thread_resume/pi_output.ts";
 import { assertMultiTurnClaudeOutput } from "./multi_turn/claude_output.ts";
@@ -1249,6 +1254,19 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         transcriptFile: new URL("./pi_compaction/pi_transcript.ndjson", import.meta.url),
         modelSelection: PI_MODEL_SELECTION,
         assertOutput: assertPiCompactionOutput,
+      },
+    ],
+  },
+  {
+    name: "pi_async_subagent",
+    buildInput: piAsyncSubagentInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("pi"),
+        transcriptFile: new URL("./pi_async_subagent/pi_transcript.ndjson", import.meta.url),
+        modelSelection: PI_ASYNC_SUBAGENT_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertPiAsyncSubagentOutput,
       },
     ],
   },
