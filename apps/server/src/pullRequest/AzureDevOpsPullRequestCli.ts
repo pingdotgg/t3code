@@ -343,9 +343,7 @@ function isReviewerName(value: string): boolean {
 export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
 
-  // Every command resolves the organization, project and repository from the checkout, which is
-  // what the rest of the Azure wrapper does. The remote takes three shapes and only `az` knows
-  // how to read all of them.
+  // The shared Azure executor replaces detection with explicit checkout coordinates when known.
   const detectArgs = ["--detect", "true"] as const;
 
   const executeJson = (input: {
