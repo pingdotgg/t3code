@@ -1123,6 +1123,28 @@ function codexErrorInfoCode(value: unknown): string | null {
   return Object.keys(value)[0] ?? null;
 }
 
+function codexErrorInfoHttpStatus(value: unknown, code: string | null): number | null {
+  if (code === null || typeof value !== "object" || value === null) {
+    return null;
+  }
+  const detail = (value as Record<string, unknown>)[code];
+  if (typeof detail !== "object" || detail === null) {
+    return null;
+  }
+  const status = (detail as Record<string, unknown>).httpStatusCode;
+  return typeof status === "number" ? status : null;
+}
+
+/**
+ * Retry exhaustion is reported as `responseTooManyFailedAttempts`, and only the
+ * embedded last-attempt status says why. Exhaustion that ended on HTTP 429 is
+ * a usage or rate limit, so it keeps the Limited state and resume controls;
+ * exhaustion on other statuses stays a provider or transport error.
+ */
+function codexExhaustedOnRateLimit(code: string | null, info: unknown): boolean {
+  return code === "responseTooManyFailedAttempts" && codexErrorInfoHttpStatus(info, code) === 429;
+}
+
 interface ActiveCodexTurnContext {
   latestProviderFailure?: {
     readonly nativeMessage: string;
@@ -4489,7 +4511,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   code: notificationCode,
                   class:
                     notificationCode === "usageLimitExceeded" ||
-                    notificationCode === "rateLimitExceeded"
+                    notificationCode === "rateLimitExceeded" ||
+                    codexExhaustedOnRateLimit(notificationCode, payload.error.codexErrorInfo)
                       ? "usage_limit"
                       : "provider_error",
                 }),
@@ -4513,7 +4536,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   : additionalDetails,
               code,
               class:
-                code === "usageLimitExceeded" || code === "rateLimitExceeded"
+                code === "usageLimitExceeded" ||
+                code === "rateLimitExceeded" ||
+                codexExhaustedOnRateLimit(code, payload.error.codexErrorInfo)
                   ? "usage_limit"
                   : code?.startsWith("http") === true || code?.startsWith("responseStream") === true
                     ? "transport_error"
@@ -5494,6 +5519,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             readonly status: OrchestrationV2ProviderTurn["status"];
             readonly failureMessage?: string;
             readonly failureCode?: string | null;
+            readonly failureInfo?: unknown;
             readonly providerRetry?: ActiveCodexProviderRetry;
           }): Effect.fn.Return<CodexRootTerminalEvent> {
             const terminalStatus = providerTurnStatusToTerminal(input.status);
@@ -5511,7 +5537,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                       code: input.failureCode,
                       class:
                         input.failureCode === "usageLimitExceeded" ||
-                        input.failureCode === "rateLimitExceeded"
+                        input.failureCode === "rateLimitExceeded" ||
+                        codexExhaustedOnRateLimit(input.failureCode ?? null, input.failureInfo)
                           ? "usage_limit"
                           : "provider_error",
                     });
@@ -5711,6 +5738,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           readonly completedAt: DateTime.Utc;
           readonly failureMessage?: string;
           readonly failureCode?: string | null;
+          readonly failureInfo?: unknown;
         }) =>
           turnTerminalizationPermit.withPermits(1)(
             Effect.gen(function* () {
@@ -5989,6 +6017,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                       ? {}
                       : {
                           failureCode: codexErrorInfoCode(payload.turn.error.codexErrorInfo),
+                          failureInfo: payload.turn.error.codexErrorInfo,
                         }),
                   }),
             });

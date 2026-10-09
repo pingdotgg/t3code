@@ -6064,12 +6064,34 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       expectedClass: "usage_limit",
     },
     { name: "retry", code: "usageLimitExceeded", notification: true, expectedClass: "usage_limit" },
+    {
+      name: "exhausted-429",
+      code: "responseTooManyFailedAttempts",
+      errorInfo: { responseTooManyFailedAttempts: { httpStatusCode: 429 } },
+      notification: false,
+      expectedClass: "usage_limit",
+    },
+    {
+      name: "exhausted-429-notification",
+      code: "responseTooManyFailedAttempts",
+      errorInfo: { responseTooManyFailedAttempts: { httpStatusCode: 429 } },
+      notification: true,
+      expectedClass: "usage_limit",
+    },
+    {
+      name: "exhausted-500",
+      code: "responseTooManyFailedAttempts",
+      errorInfo: { responseTooManyFailedAttempts: { httpStatusCode: 500 } },
+      notification: false,
+      expectedClass: "provider_error",
+    },
   ] as const)("classifies Codex terminal failures from $name evidence", (scenario) =>
     Effect.scoped(
       Effect.gen(function* () {
         const nativeThreadId = `native-limit-${scenario.name}`;
         const nativeTurnId = `turn-limit-${scenario.name}`;
         const message = "Provider stopped this request.";
+        const errorInfo = "errorInfo" in scenario ? scenario.errorInfo : scenario.code;
         const resetAt = "2033-05-19T07:20:00.000Z";
         const snapshot = {
           type: "emit_inbound" as const,
@@ -6140,7 +6162,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                         willRetry: scenario.name === "retry",
                         error: {
                           message,
-                          codexErrorInfo: scenario.code,
+                          codexErrorInfo: errorInfo,
                           additionalDetails:
                             scenario.name === "matching-details"
                               ? "Detailed provider allowance explanation."
@@ -6164,7 +6186,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                       message: scenario.name === "replacement" ? "A different failure." : message,
                       ...(scenario.notification && scenario.name !== "matching-details"
                         ? {}
-                        : { codexErrorInfo: scenario.code }),
+                        : { codexErrorInfo: errorInfo }),
                     },
                   },
                 },
