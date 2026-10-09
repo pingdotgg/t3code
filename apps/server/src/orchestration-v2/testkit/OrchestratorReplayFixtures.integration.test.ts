@@ -21,7 +21,7 @@ import {
 } from "../Adapters/OpenCode2AdapterV2.testkit.ts";
 import { MuseOrchestratorReplayHarness } from "../Adapters/MuseAdapterV2.testkit.ts";
 import { PiOrchestratorReplayHarness } from "../Adapters/PiAdapterV2.testkit.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "./fixtures/index.ts";
 import { messageRestartInput } from "./fixtures/message_steering/input.ts";
@@ -36,12 +36,12 @@ import {
   runOrchestratorV2ProviderReplayScenario,
   type OrchestratorV2ProviderReplayHarness,
 } from "./ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import { materializeReplayTranscriptRuntimeInstructions } from "./ReplayRuntimeInstructions.ts";
 import {
-  materializeReplayTranscriptRuntimeInstructions,
   materializeReplayTranscriptWorkspace,
   readProviderReplayTranscript,
-} from "./ReplayTranscriptNdjson.ts";
+} from "@t3tools/provider-testing/replayTranscript";
 
 const readTranscript = Effect.fn("readOrchestratorReplayTranscript")(function* (file: URL) {
   return yield* readProviderReplayTranscript(file);

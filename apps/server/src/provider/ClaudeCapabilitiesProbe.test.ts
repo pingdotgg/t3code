@@ -24,7 +24,7 @@ import {
   probeClaudeCapabilities,
   probeClaudeWorkspaceSnapshot,
 } from "./ClaudeProvider.ts";
-import { COMPACT_SLASH_COMMAND } from "./providerSnapshot.ts";
+import { COMPACT_SLASH_COMMAND } from "@t3tools/provider-core/server/snapshotProbe";
 
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 

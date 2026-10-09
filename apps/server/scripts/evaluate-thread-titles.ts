@@ -20,7 +20,7 @@ import { threadTitleEvaluationCases } from "./threadTitleEvaluationCases.ts";
 import {
   formatThreadTitleContext,
   type ThreadTitleMessage,
-} from "../src/textGeneration/ThreadTitleContext.ts";
+} from "@t3tools/provider-core/server/threadTitleContext";
 import * as ThreadTitleLinks from "../src/textGeneration/ThreadTitleLinks.ts";
 import * as SourceControlProviderRegistry from "../src/sourceControl/SourceControlProviderRegistry.ts";
 import * as GitHubApi from "../src/sourceControl/GitHubApi.ts";

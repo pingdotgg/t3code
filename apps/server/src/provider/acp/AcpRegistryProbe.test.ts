@@ -12,7 +12,7 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as EffectAcpErrors from "effect-acp/errors";
 
-import type { AcpSessionRuntimeStartResult } from "./AcpSessionRuntime.ts";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   acpRegistryProbeFailure,
   acpRegistryProbeResult,
@@ -68,7 +68,7 @@ describe("ACP Registry probe", () => {
         ],
       },
       modelConfigId: "model",
-    } satisfies AcpSessionRuntimeStartResult);
+    } satisfies AcpSessionRuntime.AcpSessionRuntimeStartResult);
 
     expect(result).toEqual({
       instanceId,
@@ -186,7 +186,7 @@ describe("ACP Registry probe", () => {
         ],
       },
       modelConfigId: "model",
-    } satisfies AcpSessionRuntimeStartResult);
+    } satisfies AcpSessionRuntime.AcpSessionRuntimeStartResult);
 
     expect(result.models).toEqual([
       { id: "sonnet", name: "Sonnet", description: "Balanced" },
@@ -216,7 +216,7 @@ describe("ACP Registry probe", () => {
         ],
       },
       modelConfigId: "model",
-    } satisfies AcpSessionRuntimeStartResult);
+    } satisfies AcpSessionRuntime.AcpSessionRuntimeStartResult);
 
     expect(result.models).toEqual([{ id: "valid", name: "Valid", description: null }]);
     expect(result.currentModelId).toBeNull();
@@ -270,7 +270,7 @@ describe("ACP Registry probe", () => {
         ],
       },
       modelConfigId: "model",
-    } satisfies AcpSessionRuntimeStartResult);
+    } satisfies AcpSessionRuntime.AcpSessionRuntimeStartResult);
 
     expect(result.models).toEqual([
       { id: codexModel, name: "GPT-6.1 Sol", description: null },
@@ -312,7 +312,7 @@ describe("ACP Registry probe", () => {
         ],
       },
       modelConfigId: "model",
-    } satisfies AcpSessionRuntimeStartResult);
+    } satisfies AcpSessionRuntime.AcpSessionRuntimeStartResult);
 
     expect(result.models).toHaveLength(256);
     expect(result.currentModelId).toBeNull();

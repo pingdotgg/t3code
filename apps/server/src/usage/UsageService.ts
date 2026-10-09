@@ -52,13 +52,13 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
-import { writeFileStringAtomically } from "../atomicWrite.ts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerConfig from "../config.ts";
-import { expandHomePath } from "../pathExpansion.ts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { resolveAntigravityInstanceDirectories } from "../provider/antigravityAuthSupport.ts";
-import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { readOpenCodeUsage } from "./opencodeUsageReader.ts";
 import * as UsageAttribution from "./UsageAttribution.ts";
 import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUsageReader.ts";
@@ -362,18 +362,15 @@ export const make = Effect.gen(function* () {
     }> = [];
     const seen = new Map<string, (typeof dirs)[number]>();
     for (const driver of ["claudeAgent", "codex", "grok"] as const) {
-      // Disabled accounts still have history. Explicit default slots replace
-      // the legacy settings, just as they do in the provider registry.
+      // Disabled accounts still have history. An unconfigured default slot
+      // runs with default config, just as it does in the provider registry.
       const instances: Array<
         Pick<ProviderInstanceConfig, "config" | "environment"> & { instanceId: ProviderInstanceId }
       > = Object.entries(settings.providerInstances)
         .filter(([, instance]) => instance.driver === driver)
         .map(([id, instance]) => ({ ...instance, instanceId: ProviderInstanceId.make(id) }));
       if (!Object.hasOwn(settings.providerInstances, driver)) {
-        instances.push({
-          config: settings.providers[driver],
-          instanceId: ProviderInstanceId.make(driver),
-        });
+        instances.push({ instanceId: ProviderInstanceId.make(driver) });
       }
       for (const instance of instances) {
         const environment = mergeProviderInstanceEnvironment(instance.environment, hostEnvironment);

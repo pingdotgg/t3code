@@ -100,7 +100,9 @@ vi.mock("./UsageExplorer", () => ({ UsageExplorer: () => null }));
 vi.mock("./UsagePriceOverrides", () => ({ UsagePriceOverrides: () => null }));
 vi.mock("../chat/ProviderInstanceIcon", () => ({ ProviderInstanceIcon: () => null }));
 vi.mock("../settings/RedactedSensitiveText", () => ({ RedactedSensitiveText: "span" }));
-vi.mock("../settings/providerDriverMeta", () => ({ getDriverOption: () => ({ label: "Codex" }) }));
+vi.mock("../settings/providerDriverMeta", () => ({
+  providerClients: { get: () => ({ label: "Codex" }) },
+}));
 
 import { UsagePage } from "./UsagePage";
 

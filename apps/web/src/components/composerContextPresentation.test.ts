@@ -8,6 +8,44 @@ import {
 } from "./composerContextPresentation";
 
 describe("composerContextRecordsFromDraft", () => {
+  it("pairs a picked element with its crop, which the draft keeps as an image", () => {
+    const annotation = {
+      id: "pick-1",
+      pageUrl: "http://localhost:3000/",
+      pageTitle: "Example",
+      comment: "",
+      elements: [],
+      regions: [],
+      strokes: [],
+      styleChanges: [],
+      // The draft stores annotations without their data URL.
+      screenshot: {
+        dataUrl: "",
+        width: 10,
+        height: 10,
+        cropRect: { x: 0, y: 0, width: 10, height: 10 },
+      },
+      createdAt: "2026-10-08T00:00:00.000Z",
+    };
+    const crop = {
+      type: "image" as const,
+      id: "pick-1",
+      name: "preview-annotation-pick-1.png",
+      mimeType: "image/png",
+      sizeBytes: 1,
+      previewUrl: "blob:crop",
+      file: new File(["x"], "preview-annotation-pick-1.png"),
+    };
+
+    expect(
+      composerContextRecordsFromDraft({
+        terminalContexts: [],
+        previewAnnotations: [annotation],
+        images: [crop],
+      }).get("preview-annotation_pick-1"),
+    ).toMatchObject({ kind: "preview-annotation", screenshot: { previewUrl: "blob:crop" } });
+  });
+
   it("recovers the uploaded record when clipboard data points at an attachment already in the draft", () => {
     const file = {
       type: "file" as const,
