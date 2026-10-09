@@ -39,7 +39,7 @@ import {
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
 import {
   ProviderAdapterTurnStartError,
-  type ProviderAdapterV2Error,
+  ProviderAdapterV2Error,
   type ProviderAdapterV2HistoricalContext,
   type ProviderAdapterV2SessionRuntime,
 } from "@t3tools/provider-core/server/ProviderAdapter";
@@ -64,6 +64,27 @@ export class ProviderTurnStartError extends Schema.TaggedError<ProviderTurnStart
 ) {}
 
 const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
+const isProviderAdapterError = Schema.is(ProviderAdapterV2Error);
+const isProviderSessionOpenError = Schema.is(ProviderSessionManager.ProviderSessionOpenError);
+
+/**
+ * The provider's own reason for a failed start. Session and adapter errors
+ * only name the session or turn that failed, so this reads through them to the
+ * first error beneath. Protocol errors carry their own detail and stop the walk.
+ */
+function providerStartFailureReason(error: Error): string {
+  let current = error;
+  while (
+    isProviderSessionOpenError(current) ||
+    (isProviderAdapterError(current) && current._tag !== "ProviderAdapterProtocolError")
+  ) {
+    const cause = Cause.isCause(current.cause) ? Cause.squash(current.cause) : current.cause;
+    if (typeof cause === "string") return cause;
+    if (!(cause instanceof Error)) break;
+    current = cause;
+  }
+  return current.message;
+}
 
 /** Claude refuses to replace a process running background work before it reads the prompt. */
 const refusedBeforePrompt = (error: unknown): boolean =>
@@ -559,7 +580,6 @@ export const layer: Layer.Layer<
         readonly error: Error;
       }) =>
         Effect.gen(function* () {
-          const nestedCause = "cause" in failed.error ? failed.error.cause : undefined;
           yield* settleRunBeforeStart({
             signal: failed.signal,
             status: "failed",
@@ -571,12 +591,7 @@ export const layer: Layer.Layer<
               title: failed.title,
               failure: makeProviderFailure({
                 cause: failed.error,
-                message:
-                  nestedCause instanceof Error
-                    ? nestedCause.message
-                    : typeof nestedCause === "string"
-                      ? nestedCause
-                      : failed.error.message,
+                message: providerStartFailureReason(failed.error),
                 class: "provider_error",
               }),
             },
