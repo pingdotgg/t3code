@@ -3,7 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
-import { HostProcessPlatform } from "./hostProcess.ts";
+import * as HostProcess from "./HostProcess.ts";
 
 import {
   RotatingFileSink,
@@ -11,7 +11,7 @@ import {
   RotatingFileSinkError,
 } from "./logging.ts";
 
-const windowsHost = HostProcessPlatform.defaultValue() === "win32";
+const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 const tempDirectories: string[] = [];
 
 const makeTempDirectory = (): string => {

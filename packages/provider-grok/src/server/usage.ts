@@ -19,7 +19,7 @@ import {
 } from "@t3tools/provider-core/server/usage";
 
 import type { GrokSettings } from "../settings.ts";
-import { HostProcessHomeDirectory } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 /**
  * Grok reports cost in integer ticks where `1 USD = 10^10` ticks. See Grok
@@ -229,7 +229,7 @@ export const grokUsageReader: ProviderUsageReader<GrokSettings, Path.Path> = {
   format: grokUsageFormat,
   directories: Effect.fn("grokUsageReader.directories")(function* ({ environment }) {
     const path = yield* Path.Path;
-    const homeDirectory = yield* HostProcessHomeDirectory;
+    const homeDirectory = yield* HostProcess.HomeDirectory;
     const home = expandHomePath(
       environment.GROK_HOME?.trim() || path.join(homeDirectory, ".grok"),
       homeDirectory,

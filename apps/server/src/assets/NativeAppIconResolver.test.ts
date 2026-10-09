@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ServerConfig from "../config.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
@@ -44,7 +44,7 @@ describe("resolveNativeAppIcon", () => {
     });
     const layerDependencies = Layer.mergeAll(
       layerConfig,
-      Layer.succeed(HostProcessPlatform, "darwin"),
+      Layer.succeed(HostProcess.Platform, "darwin"),
       Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
     ).pipe(Layer.provideMerge(NodeServices.layer));
     const layerTest = NativeAppIconResolver.layer.pipe(Layer.provide(layerDependencies));

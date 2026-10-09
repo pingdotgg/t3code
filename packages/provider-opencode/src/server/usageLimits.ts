@@ -16,7 +16,7 @@ import {
   makeUnavailableUsageLimits,
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
-import { HostProcessHomeDirectory } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const AuthFile = Schema.Struct({ "opencode-go": Schema.optionalKey(Schema.Unknown) });
 const ApiAuth = Schema.Struct({ type: Schema.Literal("api"), key: Schema.String });
@@ -47,7 +47,7 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
     const dataHome =
       env.XDG_DATA_HOME ||
       path.join(
-        env.HOME || env.USERPROFILE || (yield* HostProcessHomeDirectory),
+        env.HOME || env.USERPROFILE || (yield* HostProcess.HomeDirectory),
         ".local",
         "share",
       );

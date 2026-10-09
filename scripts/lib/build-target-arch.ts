@@ -1,4 +1,4 @@
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -27,8 +27,8 @@ const optionToUndefined = <A>(value: Option.Option<A>): A | undefined =>
   Option.getOrUndefined(value);
 
 const resolveHostProcessArch = Effect.fn("resolveHostProcessArch")(function* () {
-  const platform = yield* HostProcessPlatform;
-  const processArch = yield* HostProcessArchitecture;
+  const platform = yield* HostProcess.Platform;
+  const processArch = yield* HostProcess.Architecture;
   if (processArch === "arm64") return "arm64";
   if (processArch === "x64") {
     if (platform !== "win32") return "x64";

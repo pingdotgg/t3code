@@ -9,11 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
-import {
-  HostProcessEnvironment,
-  HostProcessExecutablePath,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
@@ -217,9 +213,9 @@ it.layer(layerTest)("OpenCodeRuntime inventory", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const hostEnvironment = yield* HostProcessEnvironment;
-      const executablePath = yield* HostProcessExecutablePath;
-      const hostPlatform = yield* HostProcessPlatform;
+      const hostEnvironment = yield* HostProcess.Environment;
+      const executablePath = yield* HostProcess.ExecutablePath;
+      const hostPlatform = yield* HostProcess.Platform;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-inventory-" });
       const isWindows = hostPlatform === "win32";
       const binaryPath = path.join(tempDir, isWindows ? "opencode.cmd" : "opencode");
@@ -271,7 +267,7 @@ it.layer(layerTest)("OpenCodeRuntime inventory", (it) => {
   it.effect("caps and drains command stdout and stderr when requested", () =>
     Effect.gen(function* () {
       const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
-      const executablePath = yield* HostProcessExecutablePath;
+      const executablePath = yield* HostProcess.ExecutablePath;
       const outputBytes = 2 * 1024 * 1024;
       const result = yield* runtime.runOpenCodeCommand({
         binaryPath: executablePath,

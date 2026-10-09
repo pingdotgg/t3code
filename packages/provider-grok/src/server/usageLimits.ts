@@ -13,7 +13,7 @@ import {
   makeUnavailableUsageLimits,
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
-import { HostProcessHomeDirectory } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const GrokCredentials = Schema.Record(
   Schema.String,
@@ -101,7 +101,7 @@ const readGrokCredential = Effect.fn("readGrokCredential")(function* (
   const home =
     environment.GROK_HOME?.trim() ||
     path.join(
-      environment.HOME || environment.USERPROFILE || (yield* HostProcessHomeDirectory),
+      environment.HOME || environment.USERPROFILE || (yield* HostProcess.HomeDirectory),
       ".grok",
     );
   for (const configPath of [

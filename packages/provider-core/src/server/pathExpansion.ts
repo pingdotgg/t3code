@@ -3,7 +3,7 @@ import * as NodePath from "node:path";
 
 /**
  * Expand a leading `~` (or `~/…`, `~\…`) in a user-supplied path to `home`,
- * the current user's home directory (`HostProcessHomeDirectory`). Spawned
+ * the current user's home directory (`HostProcess.HomeDirectory`). Spawned
  * processes don't get shell expansion, so env vars like
  * `CODEX_HOME=~/.codex-work` would be passed verbatim and treated as relative
  * paths by the receiver.

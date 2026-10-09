@@ -27,7 +27,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import { HostProcessHomeDirectory, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "./stderr.ts";
@@ -1408,7 +1408,7 @@ export const make = (
     const stoppingRef = yield* Ref.make(false);
     const stderrFailure = yield* Deferred.make<never, EffectAcpErrors.AcpError>();
     const stderrTailRef = yield* Ref.make("");
-    const homeDirectory = yield* HostProcessHomeDirectory;
+    const homeDirectory = yield* HostProcess.HomeDirectory;
     const stderrDrained = yield* Deferred.make<void>();
     const runtimeClosed = yield* Deferred.make<void>();
     const promptSerializationSemaphore = yield* Semaphore.make(1);
@@ -1729,7 +1729,7 @@ export const make = (
       Effect.uninterruptible(terminateOwnedProcessGroupImpl),
     );
     if (options.ownDetachedProcessGroup === true) {
-      const hostPlatform = yield* HostProcessPlatform;
+      const hostPlatform = yield* HostProcess.Platform;
       const forceTerminateOwnedProcessGroup =
         hostPlatform === "win32"
           ? terminateWindowsProcessTreeWithTaskkill(Number(child.pid)).pipe(

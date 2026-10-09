@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import { describe, expect, it, vi } from "@effect/vitest";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -155,7 +155,7 @@ describe("terminatePosixOwnedProcessTree", () => {
 
   it.live("preserves exact argv and strips wrapper-only environment before exec", () =>
     Effect.gen(function* () {
-      if ((yield* HostProcessPlatform) !== "linux") return;
+      if ((yield* HostProcess.Platform) !== "linux") return;
       const lease = AcpSessionRuntime.makeLinuxCgroupController().create();
       if (lease === undefined) return;
       const scratchRoot = NodePath.join(process.cwd(), "tmp");
@@ -235,7 +235,7 @@ describe("terminatePosixOwnedProcessTree", () => {
   );
 
   it("contains a packaged-runtime command without requiring cgroup delegation", () => {
-    if (HostProcessPlatform.defaultValue() !== "linux") return;
+    if (HostProcess.Platform.defaultValue() !== "linux") return;
     const scratchRoot = NodePath.join(process.cwd(), "tmp");
     NodeFS.mkdirSync(scratchRoot, { recursive: true });
     const scratch = NodeFS.mkdtempSync(NodePath.join(scratchRoot, "acp-cgroup-wrapper-fake-"));
@@ -316,7 +316,7 @@ describe("terminatePosixOwnedProcessTree", () => {
 
   it.live("kills a post-TERM detached double fork without touching an unrelated sentinel", () =>
     Effect.gen(function* () {
-      if ((yield* HostProcessPlatform) !== "linux") return;
+      if ((yield* HostProcess.Platform) !== "linux") return;
       const controller = AcpSessionRuntime.makeLinuxCgroupController();
       const lease = controller.create();
       if (lease === undefined) return;
@@ -531,7 +531,7 @@ describe("terminatePosixOwnedProcessTree", () => {
 
   it.live("finds a child forked by a non-leader pthread", () =>
     Effect.gen(function* () {
-      if ((yield* HostProcessPlatform) !== "linux") return;
+      if ((yield* HostProcess.Platform) !== "linux") return;
       const scratchRoot = NodePath.join(process.cwd(), "tmp");
       NodeFS.mkdirSync(scratchRoot, { recursive: true });
       const scratch = NodeFS.mkdtempSync(NodePath.join(scratchRoot, "acp-pthread-spawn-"));

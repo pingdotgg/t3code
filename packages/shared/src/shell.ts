@@ -11,7 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
-import { HostProcessEnvironment, HostProcessPlatform } from "./hostProcess.ts";
+import * as HostProcess from "./HostProcess.ts";
 import * as Context from "effect/Context";
 const SHELL_ENV_NAME_PATTERN = /^[A-Z0-9_]+$/;
 const WINDOWS_PATH_DELIMITER = ";";
@@ -503,7 +503,7 @@ interface CommandResolutionCacheEntry {
   readonly expiresAtNanos: bigint;
 }
 
-// The cache lives in the Effect environment (like HostProcessPlatform above)
+// The cache lives in the Effect environment (like HostProcess.Platform above)
 // so tests and embedders can provide an isolated instance; the default is a
 // single process-wide map shared by all consumers.
 export const CommandResolutionCache = Context.Reference<Map<string, CommandResolutionCacheEntry>>(
@@ -688,8 +688,8 @@ export const resolveCommandPath = Effect.fn("shell.resolveCommandPath")(function
   options: CommandAvailabilityOptions = {},
 ) {
   return yield* resolveCommandPathForPlatform(command, {
-    env: options.env ?? (yield* HostProcessEnvironment),
-    platform: yield* HostProcessPlatform,
+    env: options.env ?? (yield* HostProcess.Environment),
+    platform: yield* HostProcess.Platform,
   });
 });
 
@@ -699,12 +699,12 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
   args: ReadonlyArray<string>,
   options: CommandAvailabilityOptions = {},
 ): Effect.fn.Return<ResolvedSpawnCommand> {
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   if (platform !== "win32") {
     return { command, args: [...args], shell: false };
   }
 
-  const hostEnvironment = yield* HostProcessEnvironment;
+  const hostEnvironment = yield* HostProcess.Environment;
   const env =
     options.env === undefined
       ? hostEnvironment

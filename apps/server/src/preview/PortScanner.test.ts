@@ -6,7 +6,7 @@ import {
   PREVIEW_URL_MAX_LENGTH,
   type DiscoveredLocalServer,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Net from "@t3tools/shared/Net";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -74,7 +74,7 @@ const layerProbeFailure = (
           reserveLoopbackPort: () => Effect.succeed(40_000),
           findAvailablePort: (preferred) => Effect.succeed(preferred),
         }),
-        Layer.succeed(HostProcessPlatform, "linux"),
+        Layer.succeed(HostProcess.Platform, "linux"),
         FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch))),
       ),
     ),
@@ -86,7 +86,7 @@ const layerTestPortDiscovery = PortScanner.layer.pipe(
       layerNoProc,
       layerTestProcessRunner,
       layerTestIntegrationNet,
-      Layer.succeed(HostProcessPlatform, "win32"),
+      Layer.succeed(HostProcess.Platform, "win32"),
       FetchHttpClient.layer,
     ),
   ),
@@ -122,7 +122,7 @@ const layerLsofScanner = (input: {
           reserveLoopbackPort: () => Effect.succeed(40_000),
           findAvailablePort: (preferred) => Effect.succeed(preferred),
         }),
-        Layer.succeed(HostProcessPlatform, "linux"),
+        Layer.succeed(HostProcess.Platform, "linux"),
         FetchHttpClient.layer.pipe(
           Layer.provide(Layer.succeed(FetchHttpClient.Fetch, input.fetch)),
         ),

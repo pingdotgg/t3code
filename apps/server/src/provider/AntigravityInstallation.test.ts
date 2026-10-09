@@ -1,11 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import {
-  HostProcessArchitecture,
-  HostProcessEnvironment,
-  HostProcessIsExecutable,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -62,7 +57,7 @@ const zipFixtures = {
 // the host and let the fixture names follow; the suite is about install
 // mechanics, which are the same on every platform.
 const hostPlatform: NodeJS.Platform =
-  HostProcessPlatform.defaultValue() === "win32" ? "win32" : "linux";
+  HostProcess.Platform.defaultValue() === "win32" ? "win32" : "linux";
 const completeArchive = Buffer.from(
   hostPlatform === "win32" ? zipFixtures.windows : zipFixtures.complete,
   "base64",
@@ -189,9 +184,9 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
         }),
   }).pipe(
     Effect.provideService(FileSystem.FileSystem, trackedFs),
-    Effect.provideService(HostProcessPlatform, platform),
-    Effect.provideService(HostProcessArchitecture, "x64"),
-    Effect.provideService(HostProcessEnvironment, { PATH: options.path ?? "" }),
+    Effect.provideService(HostProcess.Platform, platform),
+    Effect.provideService(HostProcess.Architecture, "x64"),
+    Effect.provideService(HostProcess.Environment, { PATH: options.path ?? "" }),
     Effect.provideService(
       HttpClient.HttpClient,
       HttpClient.make((request) =>
@@ -259,7 +254,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       });
       expect(requests).toEqual([]);
       expect(validations).toEqual([]);
-    }).pipe(Effect.provideService(HostProcessIsExecutable, true)),
+    }).pipe(Effect.provideService(HostProcess.IsExecutable, true)),
   );
 
   it.effect("verifies both files before activating a streamed download", () =>
@@ -734,7 +729,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
 
   // Real posix executables in a real temp dir, resolved by a linux-mocked
   // PATH walk; a Windows temp path cannot be split on `:`.
-  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "honors explicit paths and reports invalid overrides without falling back",
     () =>
       Effect.gen(function* () {

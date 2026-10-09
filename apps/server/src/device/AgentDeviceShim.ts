@@ -5,7 +5,7 @@
  * types `agent-device …` and gets the version the injected instructions were
  * written for, regardless of what is or is not globally installed.
  */
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveNodeExecutable } from "@t3tools/shared/nodeRuntime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -20,7 +20,7 @@ export const ensureAgentDeviceShim = Effect.fn("AgentDeviceShim.ensure")(functio
   const { entryPath } = input;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   const node = yield* resolveNodeExecutable("Device automation");
   const shimDir = path.join(input.stateDir, SHIM_DIR);
   yield* fs.makeDirectory(shimDir, { recursive: true });

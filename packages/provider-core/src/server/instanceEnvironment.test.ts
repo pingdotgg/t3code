@@ -2,7 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
-import { HostProcessHomeDirectory } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { mergeProviderInstanceEnvironment } from "./instanceEnvironment.ts";
 
@@ -36,7 +36,7 @@ describe("mergeProviderInstanceEnvironment", () => {
         CLAUDE_CONFIG_DIR: "~/.inherited-claude",
       });
     }).pipe(
-      Effect.provideService(HostProcessHomeDirectory, "/home/ada"),
+      Effect.provideService(HostProcess.HomeDirectory, "/home/ada"),
       Effect.provide(NodeServices.layer),
     ),
   );

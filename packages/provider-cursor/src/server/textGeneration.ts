@@ -12,7 +12,7 @@ import * as TextGenerationOperations from "@t3tools/provider-core/server/textGen
 import { cursorSdkModelSelection } from "./sdkModel.ts";
 import type { CursorAuth } from "./auth.ts";
 import * as CursorSdk from "./CursorSdk.ts";
-import { HostProcessHomeDirectory } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const CURSOR_TIMEOUT_MS = 180_000;
 
@@ -90,7 +90,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       const apiKey = yield* resolveCursorApiKey(operation);
       // The SDK loads sandbox.json independently of settingSources and lets it
       // expand the writable paths. Its public API cannot override that policy.
-      if (yield* fs.exists(`${yield* HostProcessHomeDirectory}/.cursor/sandbox.json`)) {
+      if (yield* fs.exists(`${yield* HostProcess.HomeDirectory}/.cursor/sandbox.json`)) {
         return yield* new TextGenerationError({
           operation,
           detail:

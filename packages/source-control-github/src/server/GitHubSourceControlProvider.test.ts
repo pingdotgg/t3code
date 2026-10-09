@@ -1,4 +1,4 @@
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -1075,7 +1075,7 @@ it.live.each([
       remoteName: "enterprise",
       remoteBranch: "feature",
     });
-  }).pipe(Effect.provide(layer), Effect.provideService(HostProcessEnvironment, {}), Effect.scoped);
+  }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}), Effect.scoped);
 });
 
 it.effect.each([
@@ -1162,7 +1162,7 @@ it.effect.each([
       ]);
     }).pipe(
       Effect.provide(layer),
-      Effect.provideService(HostProcessEnvironment, { GH_REPO: envRepository }),
+      Effect.provideService(HostProcess.Environment, { GH_REPO: envRepository }),
       Effect.scoped,
     );
   },

@@ -11,7 +11,7 @@ import {
   type ProviderUsageReader,
   type UsageRecord,
 } from "@t3tools/provider-core/server/usage";
-import { HostProcessEnvironment, HostProcessHomeDirectory } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -257,8 +257,8 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
 const resolveOpenCodeDataDirs = Effect.fn("resolveOpenCodeDataDirs")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const environment = yield* HostProcessEnvironment;
-  const homeDirectory = yield* HostProcessHomeDirectory;
+  const environment = yield* HostProcess.Environment;
+  const homeDirectory = yield* HostProcess.HomeDirectory;
   const roots = environment["OPENCODE_DATA_DIR"]
     ?.split(",")
     .map((value) => value.trim())

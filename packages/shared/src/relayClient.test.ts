@@ -14,18 +14,18 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { HostProcessArchitecture, HostProcessPlatform } from "./hostProcess.ts";
+import * as HostProcess from "./HostProcess.ts";
 
 import * as RelayClient from "./relayClient.ts";
 
 // The suite runs the linux code path against the real filesystem, checking
 // POSIX exec bits that NTFS never reports; the win32 branch skips that check.
-const windowsHost = HostProcessPlatform.defaultValue() === "win32";
+const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 
 const layerHostRuntime = (env: Record<string, string> = {}, platform: NodeJS.Platform = "linux") =>
   Layer.mergeAll(
-    Layer.succeed(HostProcessPlatform, platform),
-    Layer.succeed(HostProcessArchitecture, "x64"),
+    Layer.succeed(HostProcess.Platform, platform),
+    Layer.succeed(HostProcess.Architecture, "x64"),
     ConfigProvider.layer(ConfigProvider.fromEnv({ env })),
   );
 

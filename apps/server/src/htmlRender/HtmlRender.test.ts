@@ -2,7 +2,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   HTML_RENDER_MEASURE_FONTS,
   HTML_RENDER_MEASURE_WIDTHS,
@@ -238,7 +238,7 @@ describe("HtmlRender", () => {
     "screenshots the page in headless Chrome with the requested theme and every console level",
     (ctx) =>
       Effect.gen(function* () {
-        const executable = (yield* HostProcessEnvironment)[TEST_BROWSER_ENV];
+        const executable = (yield* HostProcess.Environment)[TEST_BROWSER_ENV];
         if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
         yield* Effect.gen(function* () {
           const htmlRender = yield* HtmlRender.HtmlRender;
@@ -292,7 +292,7 @@ describe("HtmlRender", () => {
     "keeps every local file but the page itself out of the browser",
     (ctx) =>
       Effect.gen(function* () {
-        const executable = (yield* HostProcessEnvironment)[TEST_BROWSER_ENV];
+        const executable = (yield* HostProcess.Environment)[TEST_BROWSER_ENV];
         if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
         yield* Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
@@ -323,7 +323,7 @@ describe("HtmlRender", () => {
     "keeps the page off this machine's local network",
     (ctx) =>
       Effect.gen(function* () {
-        const executable = (yield* HostProcessEnvironment)[TEST_BROWSER_ENV];
+        const executable = (yield* HostProcess.Environment)[TEST_BROWSER_ENV];
         if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
         // The page's connections go through a proxy that only reaches public
         // addresses, and WebRTC is gone. Each line below is a way out that
@@ -381,7 +381,7 @@ describe("HtmlRender", () => {
     "measures a published page at every client width with a fresh load each",
     (ctx) =>
       Effect.gen(function* () {
-        const executable = (yield* HostProcessEnvironment)[TEST_BROWSER_ENV];
+        const executable = (yield* HostProcess.Environment)[TEST_BROWSER_ENV];
         if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
         yield* Effect.gen(function* () {
           const htmlRender = yield* HtmlRender.HtmlRender;

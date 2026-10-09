@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerConfig from "../config.ts";
-import { HostProcessHomeDirectory } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 /**
  * Codex writes `tokens` only for ChatGPT logins and omits the key for API-key,
@@ -312,6 +312,6 @@ export const getTelemetryIdentifierForHome = Effect.fn("getTelemetryIdentifierFo
 );
 
 export const getTelemetryIdentifier = Effect.flatMap(
-  HostProcessHomeDirectory,
+  HostProcess.HomeDirectory,
   getTelemetryIdentifierForHome,
 );

@@ -2,7 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 export interface FakeCliOptions {
   /** Directory the launcher and its stub are written into. */
@@ -15,7 +15,7 @@ export interface FakeCliOptions {
   readonly env?: Readonly<Record<string, string>>;
   /**
    * Platform the launcher is shaped for. Effect callers should pass the value
-   * they read from `HostProcessPlatform` so an injected override is honoured;
+   * they read from `HostProcess.Platform` so an injected override is honoured;
    * defaults to the real host for plain tests.
    */
   readonly platform?: NodeJS.Platform;
@@ -45,7 +45,7 @@ export function writeFakeCli(options: FakeCliOptions): string {
     "utf8",
   );
 
-  if ((options.platform ?? HostProcessPlatform.defaultValue()) === "win32") {
+  if ((options.platform ?? HostProcess.Platform.defaultValue()) === "win32") {
     const launcherPath = NodePath.join(options.directory, `${options.name}.cmd`);
     NodeFS.writeFileSync(
       launcherPath,

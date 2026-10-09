@@ -11,7 +11,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
-import { HostProcessEnvironment, HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 
@@ -130,8 +130,8 @@ export const make = Effect.gen(function* () {
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const process = sourceControlHost.process;
   const crypto = yield* Crypto.Crypto;
-  const environment = yield* HostProcessEnvironment;
-  const workingDirectory = yield* HostProcessWorkingDirectory;
+  const environment = yield* HostProcess.Environment;
+  const workingDirectory = yield* HostProcess.WorkingDirectory;
 
   /** `host:sha256(token)`, safe for cache keys and rate-limit scopes. */
   const fingerprintOf = (host: string, token: string) =>

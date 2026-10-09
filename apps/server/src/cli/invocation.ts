@@ -5,13 +5,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import type { ServerInstallation } from "@t3tools/contracts";
-import {
-  HostProcessArguments,
-  HostProcessEnvironment,
-  HostProcessExecutablePath,
-  HostProcessIsExecutable,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isCommandAvailable } from "@t3tools/shared/shell";
 
 import packageJson from "../../package.json" with { type: "json" };
@@ -60,10 +54,10 @@ const decodeInstallManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(I
 export const resolveServerInstallation = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const args = yield* HostProcessArguments;
-  const executable = yield* HostProcessIsExecutable;
-  const executablePath = yield* HostProcessExecutablePath;
-  const platform = yield* HostProcessPlatform;
+  const args = yield* HostProcess.Arguments;
+  const executable = yield* HostProcess.IsExecutable;
+  const executablePath = yield* HostProcess.ExecutablePath;
+  const platform = yield* HostProcess.Platform;
   const entry = yield* fs.realPath(executable ? executablePath : (args[1] ?? ""));
   const match =
     /^(.*)\/lib\/node_modules\/t3\/(?:dist\/bin\.mjs|bin\/t3\.js|node_modules\/@t3code\/t3-[^/]+\/t3)$/.exec(
@@ -141,7 +135,7 @@ export function formatCliCommand(input: {
 
 /** `formatCliCommand` against this process's real entry path and version. */
 export const resolveCliCommand = (subcommand: string) =>
-  Effect.map(HostProcessArguments, (processArguments) =>
+  Effect.map(HostProcess.Arguments, (processArguments) =>
     formatCliCommand({
       subcommand,
       entryPath: processArguments[1] ?? "",
@@ -161,12 +155,12 @@ const shellWord = (value: string) =>
  */
 const resolveInstallLauncher = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
-  const shim = (yield* HostProcessEnvironment).T3CODE_CLI_PATH?.trim();
+  const shim = (yield* HostProcess.Environment).T3CODE_CLI_PATH?.trim();
   if (shim && (yield* fs.exists(shim).pipe(Effect.orElseSucceed(() => false)))) {
     return Option.some(shim);
   }
-  return (yield* HostProcessIsExecutable)
-    ? Option.some(yield* HostProcessExecutablePath)
+  return (yield* HostProcess.IsExecutable)
+    ? Option.some(yield* HostProcess.ExecutablePath)
     : Option.none<string>();
 });
 
@@ -197,7 +191,7 @@ export const resolveRootCliCommand = (subcommand: string) =>
   Effect.gen(function* () {
     const { command, launcher } = yield* resolveHostCliCommand(subcommand);
     if (launcher) return `sudo ${command}`;
-    const executablePath = yield* HostProcessExecutablePath;
+    const executablePath = yield* HostProcess.ExecutablePath;
     const systemNode = ROOT_PATH_DIRECTORIES.some((directory) =>
       executablePath.startsWith(`${directory}/`),
     );

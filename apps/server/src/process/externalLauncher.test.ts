@@ -17,7 +17,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as ExternalLauncher from "./externalLauncher.ts";
 
@@ -25,7 +25,7 @@ import * as ExternalLauncher from "./externalLauncher.ts";
 // directory to a posix-mocked resolver as PATH. On a Windows host the temp
 // path carries a drive letter, so the posix `:` split shatters it; there is
 // no posix executable to find there anyway.
-const windowsHost = HostProcessPlatform.defaultValue() === "win32";
+const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 
 interface MockSpawnResult {
   readonly exitCode?: number;
@@ -85,7 +85,7 @@ const layerTest = (input: {
 
   return Layer.mergeAll(
     ExternalLauncher.layer.pipe(Layer.provide(Layer.merge(NodeServices.layer, layerSpawner))),
-    Layer.succeed(HostProcessPlatform, input.platform),
+    Layer.succeed(HostProcess.Platform, input.platform),
     Layer.succeed(
       SpawnExecutableResolution,
       (command) => input.resolveExecutable?.(command) ?? command,
@@ -1302,7 +1302,7 @@ it.effect("memoizes editor discovery and refreshes after the cache window", () =
     Effect.provide(
       Layer.mergeAll(
         layerLauncher,
-        Layer.succeed(HostProcessPlatform, "win32"),
+        Layer.succeed(HostProcess.Platform, "win32"),
         ConfigProvider.layer(
           ConfigProvider.fromEnv({
             env: {
@@ -1367,7 +1367,7 @@ it.effect("keeps scanning after the caller is interrupted and shares that scan",
     Effect.provide(
       Layer.mergeAll(
         layerLauncher,
-        Layer.succeed(HostProcessPlatform, "win32"),
+        Layer.succeed(HostProcess.Platform, "win32"),
         ConfigProvider.layer(
           ConfigProvider.fromEnv({
             env: {

@@ -315,7 +315,7 @@ export interface ChromiumCookieSource {
   readonly keychainAccount: string | undefined;
   readonly linuxSecretApplication: string | undefined;
   readonly windowsLocalStatePath?: string;
-  /** Supplied by the caller from `HostProcessPlatform` rather than read here. */
+  /** Supplied by the caller from `HostProcess.Platform` rather than read here. */
   readonly platform: NodeJS.Platform;
 }
 
