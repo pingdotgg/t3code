@@ -463,6 +463,8 @@ function fakeProvider(
     setReaction: () => Effect.void,
     listReviewerCandidates: () => Effect.succeed({ candidates: [], truncated: false }),
     setReviewerRequest: () => Effect.void,
+    // GitHub's own merge message rewrite, which the service reads instead of the kind.
+    ...(kind === "github" ? { mergeMessageRewrite: (message: string) => message } : {}),
     ...overrides,
   };
 }

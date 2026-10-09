@@ -34,16 +34,6 @@ export const PinnedGitHubCredential = Context.Reference<{
   defaultValue: () => null,
 });
 
-/**
- * Set by interactive callers (a user's read or write, not a background sweep). Requests made
- * under it may spend the GraphQL reserve and go through a rate-limit pause: a user acting on a
- * pull request should not be refused because a background read exhausted the quota.
- */
-export const AllowGitHubReserve = Context.Reference<boolean>(
-  "@t3tools/source-control-github/server/GitHubApi/AllowGitHubReserve",
-  { defaultValue: () => false },
-);
-
 export class GitHubApiRequestError extends Schema.TaggedError<GitHubApiRequestError>()(
   "GitHubApiRequestError",
   { host: Schema.String, operation: Schema.String, cause: Schema.Defect() },
@@ -137,7 +127,7 @@ export interface GitHubRestInput {
   readonly maxResponseBytes?: number;
   /** Defaults to 30 seconds; a whole pull request's patch may need longer. */
   readonly timeout?: Duration.Input;
-  /** Overrides `AllowGitHubReserve` for this one request. */
+  /** Overrides `SourceControlRateLimit.Interactive` for this one request. */
   readonly allowReserve?: boolean;
 }
 
@@ -525,7 +515,7 @@ export const make = Effect.gen(function* () {
       input.body === undefined
         ? withEtag
         : withEtag.pipe(HttpClientRequest.bodyJsonUnsafe(input.body));
-    return AllowGitHubReserve.pipe(
+    return SourceControlRateLimit.Interactive.pipe(
       Effect.flatMap((interactive) =>
         send({
           host: input.host,
@@ -545,7 +535,7 @@ export const make = Effect.gen(function* () {
       const host = normalizeHost(input.host);
       const { fingerprint } = yield* credential(host);
       const scope = (yield* SourceControlRateLimit.CredentialScope) || fingerprint;
-      const allowReserve = input.allowReserve ?? (yield* AllowGitHubReserve);
+      const allowReserve = input.allowReserve ?? (yield* SourceControlRateLimit.Interactive);
       // The document, never its variables: user text (bodies, search terms) travels as variables.
       yield* Effect.annotateCurrentSpan({
         "github.operation": input.operation,

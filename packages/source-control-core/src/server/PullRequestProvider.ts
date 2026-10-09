@@ -345,6 +345,13 @@ export interface PullRequestProviderApi {
   >;
   readonly kind: SourceControlProviderKind;
   readonly capabilities: PullRequestCapabilities;
+  /**
+   * Rewrites the message a merge will use, for a host that lets the merge carry custom text.
+   * Absent means the host always writes its own message, so nothing is read to decide on one.
+   * Today's only rewrite strips agent credits (`mergeMessage.removeAgentCredits`) when the
+   * project asks for it.
+   */
+  readonly mergeMessageRewrite?: (message: string) => string;
 
   /** The signed-in account, which is what involvement filtering compares against. */
   readonly getViewer: (input: {
@@ -561,7 +568,7 @@ export interface PullRequestProviderApi {
       readonly action: PullRequestAction;
       readonly stackNumber?: number;
       readonly expectedStackHeads?: ReadonlyArray<PullRequestStackHead>;
-      /** GitHub merge message cleanup; ignored by hosts without support. */
+      /** Apply `mergeMessageRewrite` to the merge message; never sent to a host without one. */
       readonly removeAgentCreditsOnMerge?: boolean;
       /** Meaningful for `merge` and `enable-auto-merge`; absent takes the host's own default. */
       readonly mergeMethod?: PullRequestMergeMethod;
