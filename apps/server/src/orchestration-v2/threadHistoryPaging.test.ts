@@ -634,7 +634,7 @@ describe("threadHistoryPaging", () => {
   });
 
   it("preserves oversized actionable state and reports the budget exception", () => {
-    const projection = makeProjection([]);
+    const projection = makeProjection([makeRow(0)]);
     const actionable = {
       ...projection,
       plans: [
@@ -654,6 +654,7 @@ describe("threadHistoryPaging", () => {
 
     expect(bounded.payloadBudgetExceeded).toBe(true);
     expect(bounded.projection.plans[0]).toEqual(actionable.plans[0]);
+    expect(bounded.projection.visibleTurnItems).toEqual(actionable.visibleTurnItems);
   });
 
   it("keeps paged historical plan detail in the turn item and only status in its artifact", () => {
