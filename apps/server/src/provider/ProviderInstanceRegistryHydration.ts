@@ -143,7 +143,7 @@ export const layer: Layer.Layer<
       configMap: initialConfigMap,
     }).pipe(
       Layer.provide(ProviderOrchestrationAdapterInfrastructure.layer),
-      Layer.provide(AcpRegistrySupport.AcpRegistryCatalog.layerFromHost),
+      Layer.provide(AcpRegistrySupport.layerFromHost),
       Layer.provide(ProviderHostLive.layer),
     );
 

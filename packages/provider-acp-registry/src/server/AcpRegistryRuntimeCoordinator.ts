@@ -96,11 +96,7 @@ export class AcpRegistryRuntimeCoordinator extends Context.Service<
       onUpdate: (action: AcpRegistryUrlAuthAction | null) => Effect.Effect<void>,
     ) => Effect.Effect<void>;
   }
->()("@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator") {
-  static get layer() {
-    return layer;
-  }
-}
+>()("@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator") {}
 
 const make = Effect.gen(function* () {
   const foregroundStarts = yield* PubSub.unbounded<string>();
@@ -363,4 +359,4 @@ const make = Effect.gen(function* () {
   });
 });
 
-const layer = Layer.effect(AcpRegistryRuntimeCoordinator, make);
+export const layer = Layer.effect(AcpRegistryRuntimeCoordinator, make);

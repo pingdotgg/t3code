@@ -504,31 +504,30 @@ export class AcpRegistryCatalog extends Context.Service<
       input: AcpRegistryManagedBinaryUninstallInput,
     ) => Effect.Effect<AcpRegistryManagedBinaryUninstallResult, AcpRegistryError>;
   }
->()("@t3tools/provider-acp-registry/server/AcpRegistrySupport/AcpRegistryCatalog") {
-  static layer(options: AcpRegistryCatalogOptions) {
-    return Layer.effect(AcpRegistryCatalog, makeAcpRegistryCatalog(options));
-  }
+>()("@t3tools/provider-acp-registry/server/AcpRegistrySupport/AcpRegistryCatalog") {}
 
-  /**
-   * The server-lifetime catalog, with the runtime coordinator built alongside
-   * it so setup, snapshots, and turn launch share one of each. Its cache lives
-   * in the host's provider status cache and installed agents under the T3
-   * home's `tools` directory.
-   */
-  static readonly layerFromHost = Layer.merge(
-    Layer.unwrap(
-      Effect.gen(function* () {
-        const { paths } = yield* ProviderHost.ProviderHost;
-        const path = yield* Path.Path;
-        return AcpRegistryCatalog.layer({
-          cacheDir: paths.providerStatusCacheDir,
-          toolsDir: path.join(paths.baseDir, "tools"),
-        });
-      }),
-    ),
-    AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator.layer,
-  );
-}
+const layer = (options: AcpRegistryCatalogOptions) =>
+  Layer.effect(AcpRegistryCatalog, makeAcpRegistryCatalog(options));
+
+/**
+ * The server-lifetime catalog, with the runtime coordinator built alongside
+ * it so setup, snapshots, and turn launch share one of each. Its cache lives
+ * in the host's provider status cache and installed agents under the T3
+ * home's `tools` directory.
+ */
+export const layerFromHost = Layer.merge(
+  Layer.unwrap(
+    Effect.gen(function* () {
+      const { paths } = yield* ProviderHost.ProviderHost;
+      const path = yield* Path.Path;
+      return layer({
+        cacheDir: paths.providerStatusCacheDir,
+        toolsDir: path.join(paths.baseDir, "tools"),
+      });
+    }),
+  ),
+  AcpRegistryRuntimeCoordinator.layer,
+);
 
 export interface AcpRegistryCatalogOptions {
   readonly cacheDir: string;
