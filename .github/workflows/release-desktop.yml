@@ -246,15 +246,8 @@ jobs:
             sudo /usr/sbin/softwareupdate --install-rosetta --agree-to-license
           fi
 
-      - name: Cache patched Linux Cua build
-        if: inputs.platform == 'linux'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: node_modules/.cache/t3code/cua-linux
-          key: cua-linux-${{ inputs.arch }}-${{ hashFiles('scripts/build-cua-linux.sh', 'patches/cua-driver-linux/0.34.0.patch') }}
-
       - name: Setup Rust
-        if: inputs.platform == 'linux' || steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true' || (inputs.platform == 'linux' && steps.capture_helper_cache.outputs.cache-hit != 'true')
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: stable
@@ -513,7 +506,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsecret-1-dev pkg-config libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev libxkbcommon-dev
+          sudo apt-get install -y libsecret-1-dev pkg-config libgtk-3-0t64 libnss3 libasound2t64 libgbm1
           if ! command -v magick >/dev/null 2>&1 && ! command -v convert >/dev/null 2>&1; then
               sudo apt-get install -y imagemagick
           fi
