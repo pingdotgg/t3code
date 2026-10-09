@@ -24,6 +24,8 @@ describe("terminal selection menus", () => {
       "add-to-chat",
       "copy",
       "paste",
+      "select-all",
+      "scroll-to-bottom",
     ]);
 
     expect(terminalSelectionMenuItems({ canAddToChat: false }).map(({ id }) => id)).toEqual([
@@ -31,7 +33,20 @@ describe("terminal selection menus", () => {
     ]);
     expect(
       terminalContextMenuItems({ hasSelection: true, canAddToChat: false }).map(({ id }) => id),
-    ).toEqual(["copy", "paste"]);
+    ).toEqual(["copy", "paste", "select-all", "scroll-to-bottom"]);
+  });
+
+  it("keeps local viewing actions available to a read-only observer", () => {
+    const items = terminalContextMenuItems({ hasSelection: false, readOnly: true });
+    expect(items.filter((item) => item.disabled).map((item) => item.id)).toEqual([
+      "add-to-chat",
+      "copy",
+      "paste",
+    ]);
+    expect(items.filter((item) => !item.disabled).map((item) => item.id)).toEqual([
+      "select-all",
+      "scroll-to-bottom",
+    ]);
   });
 });
 
