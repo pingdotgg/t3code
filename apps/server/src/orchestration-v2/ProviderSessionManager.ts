@@ -5,7 +5,6 @@ import {
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
-  OrchestrationV2RuntimeRequest,
   ProviderInstanceId,
   ProviderSessionId,
   ThreadId,
@@ -201,6 +200,11 @@ export class ProviderSessionManagerV2 extends Context.Service<
 
 interface LiveSessionEntry {
   readonly attachedThreadIds: ReadonlySet<ThreadId>;
+  // Adapters discover child threads without attaching them through the manager.
+  // Only an explicit detach blocks their request artifacts until reattachment.
+  readonly detachedThreadIds: ReadonlySet<ThreadId>;
+  /** Unfinished cleanup, always a subset of detachedThreadIds; explicit retry may finish it. */
+  readonly pendingDetachThreadIds: ReadonlySet<ThreadId>;
   readonly loadedProviderThreadKeyByThread: ReadonlyMap<ThreadId, string>;
   /**
    * MCP credential session id issued for each attached thread. Revocation on
@@ -266,7 +270,7 @@ function releaseStatusFor(
 
 function releasedRuntimeRequestStatusFor(
   reason: ProviderSessionReleaseReason,
-): OrchestrationV2RuntimeRequest["status"] {
+): "cancelled" | "expired" {
   return reason === "manual_shutdown" || reason === "server_shutdown" ? "cancelled" : "expired";
 }
 
@@ -290,6 +294,22 @@ function sessionScopedRuntimeRequestThreadId(event: ProviderAdapterV2Event): Thr
     case "turn_item.updated":
       return event.turnItem.runId === null &&
         (event.turnItem.type === "approval_request" || event.turnItem.type === "user_input_request")
+        ? event.turnItem.threadId
+        : undefined;
+    default:
+      return undefined;
+  }
+}
+
+function runtimeRequestArtifactThreadId(event: ProviderAdapterV2Event): ThreadId | undefined {
+  switch (event.type) {
+    case "runtime_request.updated":
+      return event.threadId;
+    case "node.updated":
+      return event.node.runtimeRequestId !== null ? event.node.threadId : undefined;
+    case "turn_item.updated":
+      return event.turnItem.type === "approval_request" ||
+        event.turnItem.type === "user_input_request"
         ? event.turnItem.threadId
         : undefined;
     default:
@@ -417,7 +437,8 @@ export const layerWithOptions = (
       const releaseRecordRetries = yield* FiberSet.make();
       const nextSubscriberId = yield* Ref.make(0);
       const sessionOpen = yield* KeyedLock.make<ProviderSessionId>();
-      // Orders a thread's attach against a detach unloading it on the same session.
+      // Orders full attach/detach lifecycles on one thread and session, including
+      // credential preparation/revocation, persistence, guard clearing and unload.
       const threadAttachment = yield* KeyedLock.make<string>();
       const threadAttachmentKey = (input: {
         readonly providerSessionId: ProviderSessionId;
@@ -671,21 +692,19 @@ export const layerWithOptions = (
 
       const writeReleasedRuntimeRequestEvents = (input: {
         readonly entry: LiveSessionEntry;
-        readonly reason: ProviderSessionReleaseReason;
+        readonly status: "cancelled" | "expired";
+        readonly artifactStatus: "cancelled" | "failed";
+        readonly reason: string;
         /** Requests created later belong to a replacement session with the same id. */
         readonly releasedAt: DateTime.Utc;
+        readonly threadIds?: ReadonlySet<ThreadId>;
       }) =>
         Effect.gen(function* () {
           const providerSessionId = input.entry.runtime.providerSessionId;
           const now = yield* DateTime.now;
-          const status = releasedRuntimeRequestStatusFor(input.reason);
-          const reason =
-            input.reason === "runtime_error"
-              ? "Provider session failed before this runtime request was resolved."
-              : "Provider session was closed before this runtime request was resolved.";
 
           const events: Array<OrchestrationV2DomainEvent> = [];
-          for (const threadId of input.entry.attachedThreadIds) {
+          for (const threadId of input.threadIds ?? input.entry.attachedThreadIds) {
             const projection = yield* projectionStore.getThreadRecords(
               threadId,
               ["runtimeRequests", "nodes", "turnItems"],
@@ -712,10 +731,10 @@ export const layerWithOptions = (
                 occurredAt: now,
                 payload: {
                   ...request,
-                  status,
+                  status: input.status,
                   responseCapability: {
                     type: "not_resumable",
-                    reason,
+                    reason: input.reason,
                   },
                   resolvedAt: now,
                 },
@@ -736,7 +755,7 @@ export const layerWithOptions = (
                   occurredAt: now,
                   payload: {
                     ...requestNode,
-                    status: input.reason === "runtime_error" ? "failed" : "cancelled",
+                    status: input.artifactStatus,
                     completedAt: now,
                   },
                 });
@@ -761,7 +780,7 @@ export const layerWithOptions = (
                   occurredAt: now,
                   payload: {
                     ...turnItem,
-                    status: input.reason === "runtime_error" ? "failed" : "cancelled",
+                    status: input.artifactStatus,
                     completedAt: now,
                     updatedAt: now,
                   },
@@ -771,7 +790,7 @@ export const layerWithOptions = (
           }
 
           if (events.length > 0) {
-            yield* eventSink.write({ events });
+            yield* eventSink.write({ events, guardPendingRuntimeRequestRetirements: true });
           }
         });
 
@@ -792,9 +811,20 @@ export const layerWithOptions = (
               ? Effect.succeed(Exit.void)
               : Effect.exit(writeReleasedSessionEvents(input)),
             Effect.exit(
-              writeReleasedRuntimeRequestEvents(input).pipe(
-                input.entry.requestEventPermit.withPermits(1),
-              ),
+              writeReleasedRuntimeRequestEvents({
+                entry: input.entry,
+                threadIds: new Set([
+                  ...input.entry.attachedThreadIds,
+                  ...input.entry.detachedThreadIds,
+                ]),
+                releasedAt: input.releasedAt,
+                status: releasedRuntimeRequestStatusFor(input.reason),
+                artifactStatus: input.reason === "runtime_error" ? "failed" : "cancelled",
+                reason:
+                  input.reason === "runtime_error"
+                    ? "Provider session failed before this runtime request was resolved."
+                    : "Provider session was closed before this runtime request was resolved.",
+              }).pipe(input.entry.requestEventPermit.withPermits(1)),
             ),
           ],
           { concurrency: 1 },
@@ -1298,17 +1328,35 @@ export const layerWithOptions = (
               dropMcpCredentialReservation(input.threadId, preparedForCleanup.mcpCredentialId);
             }
           };
-          // The whole attach, including undoing a failed one, holds the
-          // thread's lock: a concurrent attach of the same thread waits, so it
-          // never sees an attachment that this call is about to roll back.
+          // Hold the attachment lock through pending cleanup and failed-attach rollback.
           const attach = Effect.gen(function* () {
+            const candidate = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
+            const pendingDetach =
+              candidate?.pendingDetachThreadIds.has(input.threadId) === true &&
+              (yield* withActivityError(
+                input.providerSessionId,
+                Effect.gen(function* () {
+                  const entry = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
+                  if (entry?.runtime !== candidate.runtime) return false;
+                  yield* writeReleasedRuntimeRequestEvents({
+                    entry,
+                    status: "cancelled",
+                    artifactStatus: "cancelled",
+                    reason:
+                      "Thread detached from the provider session before this runtime request was resolved.",
+                    threadIds: new Set([input.threadId]),
+                    releasedAt: yield* DateTime.now,
+                  });
+                  return true;
+                }).pipe(candidate.requestEventPermit.withPermits(1)),
+              ));
             const attached = yield* attachThread(input).pipe(
               // Recorded with no gap for an interrupt: cleanup undoes only an
               // attach this call made, never one an earlier open made.
               Effect.tap((runtime) => Effect.sync(() => (attachedTo = runtime))),
               Effect.uninterruptible,
             );
-            if (attached !== undefined) {
+            if (attached !== undefined || pendingDetach) {
               const prepared = yield* prepareMcpSession(input.threadId, input.providerInstanceId);
               preparedForCleanup = prepared;
               if (prepared.mcpCredentialId !== undefined) {
@@ -1335,6 +1383,23 @@ export const layerWithOptions = (
                     payload: entry.runtime.providerSession,
                   }),
                 );
+                yield* Ref.update(sessions, (current) => {
+                  const key = sessionKey(input.providerSessionId);
+                  const currentEntry = current.get(key);
+                  if (
+                    currentEntry?.runtime !== entry.runtime ||
+                    !currentEntry.attachedThreadIds.has(input.threadId) ||
+                    !currentEntry.detachedThreadIds.has(input.threadId)
+                  )
+                    return current;
+                  const detachedThreadIds = new Set(currentEntry.detachedThreadIds);
+                  detachedThreadIds.delete(input.threadId);
+                  const pendingDetachThreadIds = new Set(currentEntry.pendingDetachThreadIds);
+                  pendingDetachThreadIds.delete(input.threadId);
+                  const updated = new Map(current);
+                  updated.set(key, { ...currentEntry, detachedThreadIds, pendingDetachThreadIds });
+                  return updated;
+                });
               }
             }
           }).pipe(
@@ -1909,12 +1974,25 @@ export const layerWithOptions = (
                   // their runless request artifacts directly so the normal T3
                   // request UI can answer them and unblock session setup.
                   const threadId = sessionScopedRuntimeRequestThreadId(event);
-                  if (threadId !== undefined) {
+                  const requestThreadId = runtimeRequestArtifactThreadId(event);
+                  if (requestThreadId !== undefined) {
                     yield* Effect.gen(function* () {
                       const current = (yield* Ref.get(sessions)).get(
                         sessionKey(entry.runtime.providerSessionId),
                       );
-                      if (current?.runtime !== entry.runtime) return;
+                      if (
+                        current?.runtime !== entry.runtime ||
+                        current.detachedThreadIds.has(requestThreadId)
+                      ) {
+                        return;
+                      }
+                      if (threadId === undefined) {
+                        yield* publishToSubscribers(entry.eventSubscribers, {
+                          type: "event",
+                          event,
+                        });
+                        return;
+                      }
                       yield* providerEventIngestor
                         .ingestNormalized({
                           providerSessionId: entry.runtime.providerSessionId,
@@ -2148,6 +2226,8 @@ export const layerWithOptions = (
               const now = yield* Clock.currentTimeMillis;
               const entry: LiveSessionEntry = {
                 attachedThreadIds: new Set([input.threadId]),
+                detachedThreadIds: new Set(),
+                pendingDetachThreadIds: new Set(),
                 loadedProviderThreadKeyByThread: new Map(),
                 mcpCredentialIdByThread:
                   mcpCredentialId === undefined
@@ -2268,6 +2348,11 @@ export const layerWithOptions = (
         release: releaseEntry,
         detach: (input) =>
           Effect.gen(function* () {
+            // Archive/delete credentials cannot depend on fallible request
+            // cleanup. Plain workspace detaches retain them for reattachment.
+            if (input.revokeMcpCredential === true) {
+              yield* clearMcpSession(input.threadId).pipe(Effect.uninterruptible);
+            }
             const key = sessionKey(input.providerSessionId);
             const currentEntry = (yield* Ref.get(sessions)).get(key);
             let detachedProviderThreads: ReadonlyArray<OrchestrationV2ProviderThread> = [];
@@ -2313,73 +2398,121 @@ export const layerWithOptions = (
                 );
               }
             }
-            const detachResult = yield* Ref.modify(sessions, (current) => {
-              const entry = current.get(key);
-              if (entry === undefined || !entry.attachedThreadIds.has(input.threadId)) {
-                return [
-                  Option.none<{
+            // Drain in-flight runless request writes, then close requests and
+            // remove the attachment before the pump can accept another write.
+            // Provider interrupts stay outside this permit: they may wait for
+            // an event that the pump needs to persist.
+            const detachResult =
+              currentEntry === undefined
+                ? Option.none<{
                     readonly entry: LiveSessionEntry;
                     readonly idleUnloadFiber: Fiber.Fiber<void, never> | null;
-                  }>(),
-                  current,
-                ] as const;
-              }
-              const attachedThreadIds = new Set(entry.attachedThreadIds);
-              attachedThreadIds.delete(input.threadId);
-              const loadedProviderThreadKeyByThread = new Map(
-                entry.loadedProviderThreadKeyByThread,
-              );
-              loadedProviderThreadKeyByThread.delete(input.threadId);
-              // For a plain (workspace-change) detach, the credential id stays
-              // recorded: the thread may re-attach and reuse it, and
-              // releaseEntry revokes it when the provider process finally goes
-              // away. A terminal detach (archive/delete) prunes the record so
-              // nothing vetoes the revocation below.
-              const mcpCredentialIdByThread =
-                input.revokeMcpCredential === true
-                  ? (() => {
-                      const pruned = new Map(entry.mcpCredentialIdByThread);
-                      pruned.delete(input.threadId);
-                      return pruned;
-                    })()
-                  : entry.mcpCredentialIdByThread;
-              // The detach unloads the thread itself below.
-              const idleThreadUnloads = new Map(entry.idleThreadUnloads);
-              idleThreadUnloads.delete(input.threadId);
-              const updatedEntry = {
-                ...entry,
-                attachedThreadIds,
-                loadedProviderThreadKeyByThread,
-                mcpCredentialIdByThread,
-                idleThreadUnloads,
-              };
-              const updated = new Map(current);
-              updated.set(key, updatedEntry);
-              return [
-                Option.some({
-                  entry: updatedEntry,
-                  idleUnloadFiber: entry.idleThreadUnloads.get(input.threadId)?.fiber ?? null,
-                }),
-                updated,
-              ] as const;
-            });
+                  }>()
+                : yield* Effect.gen(function* () {
+                    const entry = (yield* Ref.get(sessions)).get(key);
+                    if (
+                      entry?.runtime !== currentEntry.runtime ||
+                      (entry.detachedThreadIds.has(input.threadId) &&
+                        !entry.pendingDetachThreadIds.has(input.threadId))
+                    ) {
+                      return Option.none<{
+                        readonly entry: LiveSessionEntry;
+                        readonly idleUnloadFiber: Fiber.Fiber<void, never> | null;
+                      }>();
+                    }
+                    // Keep cleanup ownership even if the read/write fails or is
+                    // interrupted. Attachment and loaded state move only on success.
+                    yield* Ref.update(sessions, (current) => {
+                      const currentEntry = current.get(key);
+                      if (currentEntry?.runtime !== entry.runtime) return current;
+                      const updated = new Map(current);
+                      updated.set(key, {
+                        ...currentEntry,
+                        detachedThreadIds: new Set([
+                          ...currentEntry.detachedThreadIds,
+                          input.threadId,
+                        ]),
+                        pendingDetachThreadIds: new Set([
+                          ...currentEntry.pendingDetachThreadIds,
+                          input.threadId,
+                        ]),
+                      });
+                      return updated;
+                    });
+                    yield* writeReleasedRuntimeRequestEvents({
+                      entry,
+                      status: "cancelled",
+                      artifactStatus: "cancelled",
+                      reason:
+                        "Thread detached from the provider session before this runtime request was resolved.",
+                      threadIds: new Set([input.threadId]),
+                      releasedAt: yield* DateTime.now,
+                    });
+                    return yield* Ref.modify(sessions, (current) => {
+                      const entry = current.get(key);
+                      if (
+                        entry?.runtime !== currentEntry.runtime ||
+                        (entry.detachedThreadIds.has(input.threadId) &&
+                          !entry.pendingDetachThreadIds.has(input.threadId))
+                      ) {
+                        return [
+                          Option.none<{
+                            readonly entry: LiveSessionEntry;
+                            readonly idleUnloadFiber: Fiber.Fiber<void, never> | null;
+                          }>(),
+                          current,
+                        ] as const;
+                      }
+                      const attachedThreadIds = new Set(entry.attachedThreadIds);
+                      attachedThreadIds.delete(input.threadId);
+                      const detachedThreadIds = new Set(entry.detachedThreadIds);
+                      detachedThreadIds.add(input.threadId);
+                      const pendingDetachThreadIds = new Set(entry.pendingDetachThreadIds);
+                      pendingDetachThreadIds.delete(input.threadId);
+                      const loadedProviderThreadKeyByThread = new Map(
+                        entry.loadedProviderThreadKeyByThread,
+                      );
+                      loadedProviderThreadKeyByThread.delete(input.threadId);
+                      // For a plain (workspace-change) detach, the credential id stays
+                      // recorded: the thread may re-attach and reuse it, and
+                      // releaseEntry revokes it when the provider process finally goes
+                      // away. A terminal detach prunes the already revoked record.
+                      const mcpCredentialIdByThread =
+                        input.revokeMcpCredential === true
+                          ? (() => {
+                              const pruned = new Map(entry.mcpCredentialIdByThread);
+                              pruned.delete(input.threadId);
+                              return pruned;
+                            })()
+                          : entry.mcpCredentialIdByThread;
+                      // Detach owns the unload below; retire the pending idle unload.
+                      const idleThreadUnloads = new Map(entry.idleThreadUnloads);
+                      idleThreadUnloads.delete(input.threadId);
+                      const updatedEntry = {
+                        ...entry,
+                        attachedThreadIds,
+                        detachedThreadIds,
+                        pendingDetachThreadIds,
+                        loadedProviderThreadKeyByThread,
+                        mcpCredentialIdByThread,
+                        idleThreadUnloads,
+                      };
+                      const updated = new Map(current);
+                      updated.set(key, updatedEntry);
+                      return [
+                        Option.some({
+                          entry: updatedEntry,
+                          idleUnloadFiber:
+                            entry.idleThreadUnloads.get(input.threadId)?.fiber ?? null,
+                        }),
+                        updated,
+                      ] as const;
+                    });
+                  }).pipe(currentEntry.requestEventPermit.withPermits(1));
             if (Option.isSome(detachResult)) {
               yield* cancelIdleFiber(detachResult.value.idleUnloadFiber);
             }
             const detached = Option.map(detachResult, (result) => result.entry);
-            // Plain detaches deliberately do not revoke: a detached thread's
-            // provider process may still be alive (shared multi-thread codex
-            // session across a workspace handoff) and holds its MCP client's
-            // credential for the thread it will re-attach with. Credentials
-            // are revoked when the session entry is released (process gone)
-            // or rotated on the next attach if they stopped resolving.
-            // Terminal detaches (thread archived or deleted) revoke the
-            // thread's credentials immediately, even on a retry where the
-            // entry is already gone: there is no legitimate future re-attach,
-            // and the token must not outlive the thread.
-            if (input.revokeMcpCredential === true) {
-              yield* clearMcpSession(input.threadId);
-            }
             if (Option.isNone(detached)) {
               return;
             }
@@ -2399,45 +2532,39 @@ export const layerWithOptions = (
             // servers) resident until the whole runtime is released.
             const unloadThread = detached.value.exposedRuntime.unloadThread;
             if (detached.value.supportsMultipleProviderThreads && unloadThread !== undefined) {
-              // Serialized with re-attachment: a thread whose next turn
-              // attaches first stays loaded, and one that attaches during the
-              // unload waits for it, so its resume reloads the native thread.
-              yield* threadAttachment.withLock(
-                threadAttachmentKey(input),
-                Effect.gen(function* () {
-                  const entry = (yield* Ref.get(sessions)).get(key);
-                  if (
-                    entry?.runtime !== detached.value.runtime ||
-                    entry.attachedThreadIds.has(input.threadId)
-                  ) {
-                    return;
-                  }
-                  yield* Effect.forEach(
-                    detachedProviderThreads.filter((thread) => thread.nativeThreadRef !== null),
-                    (providerThread) =>
-                      unloadThread({ providerThread }).pipe(
-                        // Bounded so a wedged provider cannot hold up the
-                        // thread's next attach.
-                        Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
-                        Effect.catchCause((cause) =>
-                          Effect.logWarning(
-                            "orchestration-v2.driver-session.detach-unload-failed",
-                            {
-                              providerSessionId: input.providerSessionId,
-                              threadId: input.threadId,
-                              providerThreadId: providerThread.id,
-                              cause,
-                            },
-                          ),
-                        ),
+              // Keep the attachment lock through unload so a later reattach
+              // reloads the native thread only after this unload finishes.
+              yield* Effect.gen(function* () {
+                const entry = (yield* Ref.get(sessions)).get(key);
+                if (
+                  entry?.runtime !== detached.value.runtime ||
+                  entry.attachedThreadIds.has(input.threadId)
+                ) {
+                  return;
+                }
+                yield* Effect.forEach(
+                  detachedProviderThreads.filter((thread) => thread.nativeThreadRef !== null),
+                  (providerThread) =>
+                    unloadThread({ providerThread }).pipe(
+                      // Bounded so a wedged provider cannot hold up the
+                      // thread's next attach.
+                      Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
+                      Effect.catchCause((cause) =>
+                        Effect.logWarning("orchestration-v2.driver-session.detach-unload-failed", {
+                          providerSessionId: input.providerSessionId,
+                          threadId: input.threadId,
+                          providerThreadId: providerThread.id,
+                          cause,
+                        }),
                       ),
-                    { concurrency: 1, discard: true },
-                  );
-                }),
-              );
+                    ),
+                  { concurrency: 1, discard: true },
+                );
+              });
             }
             yield* scheduleIdleRelease(input.providerSessionId);
           }).pipe(
+            (detach) => threadAttachment.withLock(threadAttachmentKey(input), detach),
             Effect.catchCause((cause) =>
               Effect.fail(
                 new ProviderSessionReleaseError({

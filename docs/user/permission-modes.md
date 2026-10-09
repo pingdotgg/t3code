@@ -18,6 +18,11 @@ and modes you choose in a draft keep their permissions.
 Approve or reject requests in the conversation to let the agent continue. Permission modes do
 not prevent the agent from asking questions about the task.
 
+A provider approval or question tied to a live process is cancelled when its
+thread detaches, such as after changing workspaces, settling the thread, or
+switching its provider model or runtime mode. Start or resume a turn to receive
+a new prompt. Questions answered through a message keep their resumable behavior.
+
 ## Provider differences
 
 Providers enforce permissions differently. Some read-only actions can proceed in **Supervised**.

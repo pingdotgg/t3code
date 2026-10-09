@@ -22,6 +22,7 @@ import {
   ProviderThreadId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -348,6 +349,439 @@ it.effect("keeps other database work runnable while discovering compaction candi
       }
     }),
   ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each([
+  { trigger: "startup", runStatus: null },
+  { trigger: "shutdown", runStatus: null },
+  { trigger: "startup", runStatus: "completed" },
+  { trigger: "shutdown", runStatus: "completed" },
+  { trigger: "startup", runStatus: null, answerBeforeCommit: true },
+  { trigger: "shutdown", runStatus: null, answerBeforeCommit: true },
+] as const)(
+  "recovers request transcripts through SQLite on $trigger with run status $runStatus and race $answerBeforeCommit",
+  (scenario) =>
+    Effect.gen(function* () {
+      const { trigger, runStatus } = scenario;
+      const answerBeforeCommit = "answerBeforeCommit" in scenario;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make(`thread:request-transcript:${trigger}:${runStatus}`);
+      const runId = runStatus === null ? null : RunId.make(`run:${threadId}`);
+      const events: Array<OrchestrationV2DomainEvent> = [
+        threadCreatedEvent({
+          id: `event:${threadId}:thread`,
+          thread: makeThread(threadId, now),
+          now,
+        }),
+      ];
+      if (runId !== null) {
+        events.push({
+          id: EventId.make(`event:${threadId}:run`),
+          type: "run.created",
+          threadId,
+          runId,
+          occurredAt: now,
+          payload: {
+            id: runId,
+            threadId,
+            ordinal: 1,
+            providerInstanceId,
+            modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make(`message:${threadId}`),
+            rootNodeId: null,
+            activeAttemptId: null,
+            status: "completed",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: now,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        });
+      }
+      for (const kind of ["approval", "question", "durable-question"] as const) {
+        const requestId = RuntimeRequestId.make(`request:${threadId}:${kind}`);
+        const nodeId = NodeId.make(`node:${threadId}:${kind}`);
+        const itemType = kind === "approval" ? "approval_request" : "user_input_request";
+        const itemBase = {
+          id: TurnItemId.make(`item:${threadId}:${kind}`),
+          threadId,
+          runId,
+          nodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: events.length,
+          status: "waiting" as const,
+          title: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          requestId,
+        };
+        const item: OrchestrationV2TurnItem =
+          kind === "approval"
+            ? {
+                ...itemBase,
+                type: "approval_request",
+                requestKind: "command",
+                prompt: "Run command?",
+              }
+            : { ...itemBase, type: "user_input_request", questions: [] };
+        events.push(
+          {
+            id: EventId.make(`event:${nodeId}`),
+            type: "node.updated",
+            threadId,
+            nodeId,
+            occurredAt: now,
+            payload: {
+              id: nodeId,
+              threadId,
+              runId,
+              parentNodeId: null,
+              rootNodeId: nodeId,
+              kind: itemType,
+              status: "waiting",
+              countsForRun: false,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              runtimeRequestId: requestId,
+              checkpointScopeId: null,
+              startedAt: now,
+              completedAt: null,
+            },
+          },
+          {
+            id: EventId.make(`event:${requestId}`),
+            type: "runtime-request.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: requestId,
+              nodeId,
+              providerTurnId: null,
+              nativeRequestRef: null,
+              kind: kind === "approval" ? "command" : "user_input",
+              status: "pending",
+              responseCapability:
+                kind === "durable-question"
+                  ? { type: "message" }
+                  : {
+                      type: "live",
+                      providerSessionId: ProviderSessionId.make(`session:${threadId}`),
+                    },
+              createdAt: now,
+              resolvedAt: null,
+            },
+          },
+          {
+            id: EventId.make(`event:${item.id}`),
+            type: "turn-item.updated",
+            threadId,
+            occurredAt: now,
+            payload: item,
+          },
+        );
+        if (kind === "approval") {
+          events.push({
+            id: EventId.make(`event:${item.id}:terminal`),
+            type: "turn-item.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              ...item,
+              id: TurnItemId.make(`item:${threadId}:terminal`),
+              status: "completed",
+              completedAt: now,
+            },
+          });
+        }
+      }
+      yield* eventSink.commitCommand({
+        commandId: CommandId.make(`command:${threadId}:seed`),
+        threadId,
+        commandType: "foundation.request-transcript",
+        acceptedAt: now,
+        events,
+        effects: [],
+      });
+      const selected = yield* projections.getRuntimeRecoveryProjection(threadId);
+      assert.sameMembers(
+        selected.nodes.map((node) => node.id),
+        [NodeId.make(`node:${threadId}:approval`), NodeId.make(`node:${threadId}:question`)],
+      );
+      assert.sameMembers(
+        selected.turnItems.map((item) => item.id),
+        [
+          TurnItemId.make(`item:${threadId}:approval`),
+          TurnItemId.make(`item:${threadId}:question`),
+        ],
+      );
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const eventStore = yield* EventStore.EventStoreV2;
+      const pendingEffectCommandId = CommandId.make(`command:${threadId}:pending`);
+      if (answerBeforeCommit) {
+        yield* outbox.enqueue([
+          {
+            id: `effect:${threadId}:pending`,
+            commandId: pendingEffectCommandId,
+            threadId,
+            request: { type: "provider-turn.start", runId: RunId.make(`run:${threadId}`) },
+          },
+        ]);
+      }
+      const recoverySink = EventSink.EventSinkV2.of({
+        ...eventSink,
+        commitCommand: (input) =>
+          Effect.gen(function* () {
+            if (answerBeforeCommit && input.commandType === "provider-runtime.reconcile") {
+              const answers = events.flatMap((event): Array<OrchestrationV2DomainEvent> => {
+                if (
+                  event.type === "runtime-request.updated" &&
+                  event.payload.responseCapability.type !== "message"
+                ) {
+                  return [
+                    {
+                      ...event,
+                      id: EventId.make(`${event.id}:answer`),
+                      payload: { ...event.payload, status: "resolved", resolvedAt: now },
+                    },
+                  ];
+                }
+                if (
+                  event.type === "node.updated" &&
+                  event.payload.id !== `node:${threadId}:durable-question`
+                ) {
+                  return [
+                    {
+                      ...event,
+                      id: EventId.make(`${event.id}:answer`),
+                      payload: { ...event.payload, status: "completed", completedAt: now },
+                    },
+                  ];
+                }
+                if (
+                  event.type === "turn-item.updated" &&
+                  event.payload.id !== `item:${threadId}:durable-question`
+                ) {
+                  return [
+                    {
+                      ...event,
+                      id: EventId.make(`${event.id}:answer`),
+                      payload: { ...event.payload, status: "completed", completedAt: now },
+                    },
+                  ];
+                }
+                return [];
+              });
+              yield* eventSink.write({ events: answers });
+            }
+            const result = yield* eventSink.commitCommand(input);
+            if (answerBeforeCommit) {
+              assert.deepEqual(result.storedEvents, []);
+              assert.equal(result.receipt.status, "accepted");
+              assert.equal(
+                result.receipt.resultSequence,
+                yield* eventStore.latestSequence({ threadId }).pipe(Effect.orDie),
+              );
+              assert.equal(result.cancelledEffectCount, 1);
+              assert.isFalse((yield* eventSink.commitCommand(input)).committed);
+            }
+            return result;
+          }),
+      });
+      const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+        Effect.provide(ServerSettings.layerTest()),
+        Effect.provideService(EventSink.EventSinkV2, recoverySink),
+      );
+      assert.equal((yield* recovery.reconcile(trigger)).closedRequests, 2);
+      const final = yield* projections.getThreadProjection(threadId);
+      for (const kind of ["approval", "question", "durable-question"] as const) {
+        const durable = kind === "durable-question";
+        assert.equal(
+          final.runtimeRequests.find((request) => request.id === `request:${threadId}:${kind}`)
+            ?.status,
+          durable
+            ? "pending"
+            : answerBeforeCommit
+              ? "resolved"
+              : trigger === "startup"
+                ? "expired"
+                : "cancelled",
+        );
+        assert.equal(
+          final.nodes.find((node) => node.id === `node:${threadId}:${kind}`)?.status,
+          durable ? "waiting" : answerBeforeCommit ? "completed" : "cancelled",
+        );
+        assert.equal(
+          final.turnItems.find((item) => item.id === `item:${threadId}:${kind}`)?.status,
+          durable ? "waiting" : answerBeforeCommit ? "completed" : "cancelled",
+        );
+      }
+      assert.equal(
+        final.turnItems.find((item) => item.id === `item:${threadId}:terminal`)?.status,
+        "completed",
+      );
+      if (answerBeforeCommit) {
+        assert.equal(
+          (yield* outbox.listByCommandId(pendingEffectCommandId))[0]?.status,
+          "cancelled",
+        );
+      }
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
+);
+
+it.effect.each(
+  (["approval_request", "user_input_request"] as const).flatMap((requestType) =>
+    (["cancelled", "expired"] as const).map((status) => ({ requestType, status })),
+  ),
+)(
+  "enqueues effects when guarded $status $requestType retirement has no remaining events",
+  ({ requestType, status }) =>
+    Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make(`thread:guarded-retirement:${requestType}:${status}`);
+      const nodeId = NodeId.make(`node:${threadId}`);
+      const requestId = RuntimeRequestId.make(`request:${threadId}`);
+      const itemBase = {
+        id: TurnItemId.make(`item:${threadId}`),
+        threadId,
+        runId: null,
+        nodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed" as const,
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        requestId,
+      };
+      const answered: Array<OrchestrationV2DomainEvent> = [
+        {
+          id: EventId.make(`event:${nodeId}`),
+          type: "node.updated",
+          threadId,
+          nodeId,
+          occurredAt: now,
+          payload: {
+            id: nodeId,
+            threadId,
+            runId: null,
+            parentNodeId: null,
+            rootNodeId: nodeId,
+            kind: requestType,
+            status: "completed",
+            countsForRun: false,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            runtimeRequestId: requestId,
+            checkpointScopeId: null,
+            startedAt: now,
+            completedAt: now,
+          },
+        },
+        {
+          id: EventId.make(`event:${requestId}`),
+          type: "runtime-request.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: requestId,
+            nodeId,
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: requestType === "approval_request" ? "command" : "user_input",
+            status: "resolved",
+            responseCapability: {
+              type: "live",
+              providerSessionId: ProviderSessionId.make(`session:${threadId}`),
+            },
+            createdAt: now,
+            resolvedAt: now,
+          },
+        },
+        {
+          id: EventId.make(`event:${itemBase.id}`),
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: now,
+          payload:
+            requestType === "approval_request"
+              ? { ...itemBase, type: requestType, requestKind: "command" }
+              : { ...itemBase, type: requestType, questions: [] },
+        },
+      ];
+      yield* sink.write({
+        events: [
+          threadCreatedEvent({ id: `event:${threadId}`, thread: makeThread(threadId, now), now }),
+          ...answered,
+        ],
+      });
+      const before = yield* sink.latestSequence();
+      const retired = answered.map((event): OrchestrationV2DomainEvent => {
+        const id = EventId.make(`${event.id}:retired`);
+        if (event.type === "runtime-request.updated")
+          return {
+            ...event,
+            id,
+            payload: {
+              ...event.payload,
+              status,
+              responseCapability: { type: "not_resumable", reason: "Session closed." },
+            },
+          };
+        if (event.type === "node.updated")
+          return {
+            ...event,
+            id,
+            payload: { ...event.payload, status: status === "expired" ? "failed" : "cancelled" },
+          };
+        if (event.type === "turn-item.updated")
+          return {
+            ...event,
+            id,
+            payload: { ...event.payload, status: status === "expired" ? "failed" : "cancelled" },
+          };
+        return event;
+      });
+      const effectId = `effect:${threadId}:cleanup`;
+      const commandId = CommandId.make(`command:${threadId}:cleanup`);
+      assert.deepEqual(
+        yield* sink.writeWithEffects({
+          guardPendingRuntimeRequestRetirements: true,
+          events: retired,
+          effects: [{ id: effectId, commandId, threadId, request: { type: "terminal.cleanup" } }],
+        }),
+        [],
+      );
+      assert.equal(yield* sink.latestSequence(), before);
+      const projection = yield* projections.getThreadProjection(threadId);
+      assert.equal(projection.runtimeRequests[0]?.status, "resolved");
+      assert.equal(projection.nodes[0]?.status, "completed");
+      assert.equal(projection.turnItems[0]?.status, "completed");
+      assert.equal((yield* outbox.listByCommandId(commandId))[0]?.status, "pending");
+      // Filtering the entire event batch must retain the outbox wakeup too.
+      yield* outbox.awaitAvailable;
+      const claimed = yield* outbox.claimNext({
+        workerId: "guarded-retirement-worker",
+        leaseDurationMs: 1_000,
+      });
+      assert.equal(Option.getOrUndefined(claimed)?.id, effectId);
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
 );
 
 it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {

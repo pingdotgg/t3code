@@ -1684,3 +1684,49 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 });
+
+it.effect.each(["cancelled", "expired"] as const)(
+  "preserves an adapter's initial %s approval snapshot",
+  (status) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const sink = yield* EventSink.EventSinkV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const ids = yield* IdAllocator.IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      const threadId = threadEvent.threadId;
+      yield* sink.write({ events: [threadEvent] });
+      const providerSessionId = yield* ids.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const requestId = RuntimeRequestId.make(`initial-approval:${status}`);
+      const stored = yield* ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+        event: {
+          type: "runtime_request.updated",
+          driver: CODEX_DRIVER,
+          threadId,
+          runtimeRequest: {
+            id: requestId,
+            nodeId: NodeId.make(`initial-approval-node:${status}`),
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "command",
+            status,
+            responseCapability: {
+              type: "not_resumable",
+              reason: "Native request already retired.",
+            },
+            createdAt: now,
+            resolvedAt: now,
+          },
+        },
+      });
+      assert.lengthOf(stored, 1);
+      assert.equal((yield* projections.getRuntimeRequest(threadId, requestId))?.status, status);
+    }).pipe(Effect.provide(layerTest)),
+);
