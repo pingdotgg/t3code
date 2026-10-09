@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { parseDiffFileRevisions } from "./bitbucketDiffRevisions.ts";
+import { parseDiffFileRevisions } from "./diffFileRevisions.ts";
 
 function patchOf(...lines: ReadonlyArray<string>): string {
   return `${lines.join("\n")}\n`;

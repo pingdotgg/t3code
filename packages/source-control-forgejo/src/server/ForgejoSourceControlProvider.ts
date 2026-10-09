@@ -3,7 +3,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import { SourceControlProviderError } from "@t3tools/contracts";
-import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import {
@@ -55,7 +55,7 @@ export const discovery = {
 
 export const makeDiscovery = Effect.gen(function* () {
   const cli = yield* ForgejoCli.ForgejoCli;
-  const process = yield* VcsProcess.VcsProcess;
+  const { process } = yield* SourceControlHost.SourceControlHost;
   const listLogins = cli.listLogins;
   if (!listLogins) return discovery;
   return {
@@ -175,7 +175,7 @@ const repositoryPath = (repository: string) =>
 export const make = Effect.gen(function* () {
   const cli = yield* ForgejoCli.ForgejoCli;
   const fs = yield* FileSystem.FileSystem;
-  const process = yield* VcsProcess.VcsProcess;
+  const { process } = yield* SourceControlHost.SourceControlHost;
   const request = <S extends Schema.Codec<unknown, unknown, never, never>>(
     input: ForgejoCli.ForgejoApiInput,
     schema: S,

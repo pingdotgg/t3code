@@ -57,7 +57,7 @@ import * as GitLabSourceControlProvider from "../sourceControl/GitLabSourceContr
 import {
   ForgejoPullRequestSchema,
   toForgejoChangeRequest,
-} from "../sourceControl/forgejoPullRequests.ts";
+} from "@t3tools/source-control-forgejo/server/forgejoPullRequests";
 import type { SourceControlProvider } from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
