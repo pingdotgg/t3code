@@ -68,10 +68,13 @@ export class SidebarPointerSensor {
 
   private move = (event: PointerEvent) => {
     if (this.phase === "finished" || event.pointerId !== this.pointer.pointerId) return;
-    // A release outside the window can be missed. Never activate or continue
-    // a drag when the initiating button is no longer held.
-    if ((event.buttons & 1) === 0) return this.cancel();
     const coordinates = { x: event.clientX, y: event.clientY };
+    // Desktop can report buttons=0 on the final move before pointerup. Let an
+    // active context drag drop there before cancelling the sidebar sort.
+    if ((event.buttons & 1) === 0) {
+      if (this.phase === "dragging") this.props.options.onDrop?.(coordinates);
+      return this.cancel();
+    }
     if (this.phase === "pending") {
       const offset = {
         x: event.clientX - this.pointer.clientX,
