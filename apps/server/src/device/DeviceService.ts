@@ -26,7 +26,7 @@ import {
   type DeviceOpenInput,
   type DevicePlatform,
   DevicePlatformUnavailableError,
-  type DeviceServiceState,
+  DeviceServiceState,
   type DeviceSession,
   type DeviceShutdownInput,
   type DeviceSummary,
@@ -42,10 +42,14 @@ import { ensureAgentDevice, ensureDeviceHub } from "./DeviceToolchain.ts";
 import * as ServerConfig from "../config.ts";
 import {
   agentDeviceConfigPath,
+  agentDeviceThreadConfigDirectory,
   agentDeviceSession,
+  retireLegacyAgentDeviceConfig,
   writeAgentDeviceConfig,
 } from "./AgentDeviceTarget.ts";
 import * as Context from "effect/Context";
+import * as DeviceAgentAccess from "./DeviceAgentAccess.ts";
+import { HttpServer } from "effect/http";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -74,6 +78,8 @@ export const DEVICE_HUB_ROUTE_PREFIX = "/api/device-hub";
 
 const BOOT_TIMEOUT = Duration.minutes(3);
 const SCREENSHOT_TIMEOUT = Duration.seconds(20);
+const sameDeviceState = Schema.toEquivalence(DeviceServiceState);
+const sameDevices = Schema.toEquivalence(DeviceServiceState.fields.devices);
 
 const HubDevice = Schema.Struct({
   id: Schema.String,
@@ -111,14 +117,16 @@ export interface DeviceAgentReadiness extends DeviceReadiness {
 export class DeviceService extends Context.Service<
   DeviceService,
   {
+    readonly retireThreadAgentAccess: (threadId: ThreadId) => Effect.Effect<void, DeviceError>;
     readonly agentCli: Effect.Effect<string, DeviceError>;
     readonly testHost: (
       config: SshDeviceHostConfig,
     ) => Effect.Effect<DeviceHostSummary, DeviceError>;
     readonly agentTarget: (input: {
-      threadId: ThreadId;
-      hostId: DeviceHostId;
-      deviceId: DeviceId;
+      /** The exact session returned by open; replaced or closed sessions cannot issue access. */
+      openedSession: DeviceSession;
+      /** Project access already authorized by the caller; omitted uses the global setting. */
+      agentAccessEnabled?: boolean;
     }) => Effect.Effect<ReadonlyArray<string>, DeviceError>;
     readonly state: Effect.Effect<DeviceServiceState>;
     readonly subscribe: Effect.Effect<PubSub.Subscription<DeviceServiceState>, never, Scope.Scope>;
@@ -130,7 +138,13 @@ export class DeviceService extends Context.Service<
     readonly updateTool: (tool: "hub" | "agent") => Effect.Effect<DeviceServiceState, DeviceError>;
     readonly inspect: Effect.Effect<DeviceServiceState>;
     readonly retryHost: (hostId: DeviceHostId) => Effect.Effect<DeviceServiceState, DeviceError>;
-    readonly open: (input: DeviceOpenInput) => Effect.Effect<DeviceSession, DeviceError>;
+    readonly open: (
+      input: DeviceOpenInput,
+      setup?: { readonly rollbackOnFailure: true },
+    ) => Effect.Effect<DeviceSession, DeviceError>;
+    readonly completeOpen: (openedSession: DeviceSession) => Effect.Effect<void>;
+    readonly abortOpen: (openedSession: DeviceSession) => Effect.Effect<void, DeviceError>;
+    readonly refreshAgentDevice: (ready: DeviceAgentReadiness) => Effect.Effect<void, DeviceError>;
     readonly close: (input: DeviceCloseInput) => Effect.Effect<void, DeviceError>;
     readonly shutdown: (input: DeviceShutdownInput) => Effect.Effect<void, DeviceError>;
     /** Current settings and foreground app for one device. */
@@ -152,6 +166,7 @@ export class DeviceService extends Context.Service<
     ) => Effect.Effect<DeviceReadiness | null, DeviceError>;
     readonly agentReadinessIfSupported: (
       hostId?: DeviceHostId,
+      agentAccessEnabled?: boolean,
     ) => Effect.Effect<DeviceAgentReadiness | null, DeviceError>;
     readonly currentReadiness: (hostId?: DeviceHostId) => Effect.Effect<DeviceReadiness | null>;
     readonly sessionsForThread: (threadId: ThreadId) => Effect.Effect<ReadonlyArray<DeviceSession>>;
@@ -177,6 +192,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   configureAgent: (
     hostId: DeviceHostId,
     ready: DeviceHost.DeviceHostAgentReady,
+    target: { threadId: ThreadId; deviceId: DeviceId; session: string },
   ) => Effect.Effect<string, DeviceError> = (hostId) =>
     Effect.fail(
       new DeviceHostUnavailableError({
@@ -185,6 +201,16 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       }),
     ),
   installTool?: (tool: "hub" | "agent") => Effect.Effect<unknown, DeviceError>,
+  retireThreadAgentAccess: (threadId: ThreadId) => Effect.Effect<void, DeviceError> = () =>
+    Effect.void,
+  retireDeviceAgentAccess: (hostId: DeviceHostId, deviceId: DeviceId) => Effect.Effect<void> = () =>
+    Effect.void,
+  retireThreadDeviceAgentAccess: (
+    threadId: ThreadId,
+    hostId: DeviceHostId,
+    deviceId: DeviceId,
+  ) => Effect.Effect<void> = () => Effect.void,
+  retireHostAgentAccess: (hostId: DeviceHostId) => Effect.Effect<void> = () => Effect.void,
 ) {
   const settings = yield* ServerSettings.ServerSettingsService;
   const crypto = yield* Crypto.Crypto;
@@ -193,6 +219,11 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     Effect.map((value) => ({
       enabled: value.enableDeviceSupport,
       agentAccessEnabled: value.enableAgentDeviceAccess,
+      anyAgentAccessEnabled:
+        value.enableAgentDeviceAccess ||
+        Object.values(value.projectSettingsOverrides).some(
+          (override) => override.enableAgentDeviceAccess === true,
+        ),
       onboardingCompleted: value.deviceOnboardingCompleted,
     })),
     Effect.mapError(
@@ -225,7 +256,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 
   const publish = (update: (state: DeviceServiceState) => DeviceServiceState) =>
     SynchronizedRef.updateAndGetEffect(stateRef, ({ state }) => {
-      const next = { ...update(state), revision: state.revision + 1 };
+      const updated = update(state);
+      if (updated === state) return Effect.succeed({ state });
+      const next = { ...updated, revision: state.revision + 1 };
       return PubSub.publish(statePubSub, next).pipe(Effect.as({ state: next }));
     }).pipe(Effect.map(({ state }) => state));
 
@@ -312,14 +345,27 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     return yield* readiness(host.id);
   });
 
+  const activeAgentHosts = new Set<DeviceHost.DeviceHost["Service"]>();
   const agentReadinessIfSupported: DeviceService["Service"]["agentReadinessIfSupported"] =
-    Effect.fn("DeviceService.agentReadinessIfSupported")(function* (hostId) {
+    Effect.fn("DeviceService.agentReadinessIfSupported")(function* (hostId, agentAccessEnabled) {
       const deviceSettings = yield* readDeviceSettings;
-      if (!deviceSettings.enabled || !deviceSettings.agentAccessEnabled) return null;
+      // A caller's earlier project authorization cannot revive a revoked final grant.
+      if (
+        !deviceSettings.enabled ||
+        !deviceSettings.anyAgentAccessEnabled ||
+        !(agentAccessEnabled ?? deviceSettings.agentAccessEnabled)
+      )
+        return null;
       const host = yield* resolveHost(hostId);
+      const current = yield* host.current;
+      if (current?.agentDevice) {
+        activeAgentHosts.add(host);
+        return { hostId: host.id, ...current, agentDevice: current.agentDevice };
+      }
       const summary = yield* host.summary;
       if (summary.kind === "local" && !summary.platforms.some((platform) => platform.available))
         return null;
+      activeAgentHosts.add(host);
       const ready = yield* host
         .ensureAgentReady((phase, detail) =>
           setHostStatus(host.id, { status: phase, detail }).pipe(Effect.asVoid),
@@ -379,7 +425,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       ),
     );
 
-  const fetchDevices = Effect.fn("DeviceService.fetchDevices")(function* (ready: DeviceReadiness) {
+  const fetchDevices = Effect.fn("DeviceService.fetchDevices")(function* (
+    ready: DeviceReadiness,
+    includeAvailableAvds = true,
+  ) {
     const list = yield* hubJson(
       HttpClientRequest.get(`${ready.hub.origin}/api/devices`),
       HubDeviceList,
@@ -396,7 +445,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     });
     const devices = [...list.simulators, ...list.emulators].map(toSummary);
     const host = yield* resolveHost(ready.hostId);
-    if ((yield* host.platformAvailability("android")).available) {
+    if (includeAvailableAvds && (yield* host.platformAvailability("android")).available) {
       const avds = yield* ready.run("emulator", ["-list-avds"]);
       if (avds.code !== 0) {
         return yield* new DeviceOperationError({
@@ -426,27 +475,96 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     return { devices, detail: list.errors?.map((error) => error.message).join("\n") || undefined };
   });
 
-  const refresh = Effect.fn("DeviceService.refresh")(function* (ready: DeviceReadiness) {
+  const refreshLocks = new WeakMap<DeviceHost.DeviceHost["Service"], Semaphore.Semaphore>();
+  const refresh = Effect.fn("DeviceService.refresh")(function* (
+    ready: DeviceReadiness,
+    includeAvailableAvds = true,
+  ) {
     const host = hosts.get(ready.hostId);
-    const { devices, detail } = yield* fetchDevices(ready);
-    const hostSummaries = yield* Effect.forEach(hosts.values(), (host) => host.summary);
-    return yield* lifecycleLock.withPermit(
+    if (!host) return (yield* SynchronizedRef.get(stateRef)).state;
+    let refreshLock = refreshLocks.get(host);
+    if (!refreshLock) {
+      refreshLock = Semaphore.makeUnsafe(1);
+      refreshLocks.set(host, refreshLock);
+    }
+    // Serialize observation as well as application: invocation order does not
+    // tell us which overlapping query observed the replacement runtime.
+    return yield* refreshLock.withPermit(
       Effect.gen(function* () {
-        if (!(yield* readDeviceSettings).enabled || !host || hosts.get(ready.hostId) !== host)
-          return (yield* SynchronizedRef.get(stateRef)).state;
-        return yield* publish((state) => ({
-          ...state,
-          hosts: hostSummaries,
-          ...(ready.hostId === LOCAL_DEVICE_HOST_ID ? { hostStatusDetail: detail } : {}),
-          devices: [
-            ...state.devices.filter((device) => device.hostId !== ready.hostId),
-            ...devices,
-          ],
-          hostStatuses: {
-            ...state.hostStatuses,
-            [ready.hostId]: { status: "ready", ...(detail ? { detail } : {}) },
-          },
-        }));
+        if (hosts.get(ready.hostId) !== host) return (yield* SynchronizedRef.get(stateRef)).state;
+        const { devices: discovered, detail } = yield* fetchDevices(ready, includeAvailableAvds);
+        const hostSummaries = yield* Effect.forEach(hosts.values(), (host) => host.summary);
+        return yield* lifecycleLock.withPermit(
+          Effect.gen(function* () {
+            if (!(yield* readDeviceSettings).enabled || hosts.get(ready.hostId) !== host)
+              return (yield* SynchronizedRef.get(stateRef)).state;
+            const { state } = yield* SynchronizedRef.get(stateRef);
+            // Command preflight observes live runtimes over the existing hub
+            // connection. Keep known unbooted AVDs until explicit discovery,
+            // without probing SSH or listing available AVDs for every command.
+            const devices = includeAvailableAvds
+              ? discovered
+              : [
+                  ...discovered,
+                  ...state.devices.filter(
+                    (previous) =>
+                      previous.hostId === ready.hostId &&
+                      previous.platform === "android" &&
+                      !previous.physical &&
+                      !previous.booted &&
+                      !discovered.some(
+                        (current) =>
+                          current.id === previous.id ||
+                          (current.platform === "android" && current.name === previous.name),
+                      ),
+                  ),
+                ];
+            const retired = state.devices.filter((previous) => {
+              if (previous.hostId !== ready.hostId || !previous.booted) return false;
+              const current = devices.find((device) => device.id === previous.id);
+              return (
+                !current?.booted ||
+                current.platform !== previous.platform ||
+                current.name !== previous.name ||
+                current.version !== previous.version ||
+                current.physical !== previous.physical
+              );
+            });
+            yield* Effect.forEach(
+              retired,
+              (device) => retireDeviceAgentAccess(device.hostId, device.id),
+              { discard: true },
+            );
+            return yield* publish((state) => {
+              const next: DeviceServiceState = {
+                ...state,
+                sessions: state.sessions.filter(
+                  (session) =>
+                    !retired.some(
+                      (device) =>
+                        device.hostId === session.hostId && device.id === session.deviceId,
+                    ),
+                ),
+                hosts: hostSummaries,
+                ...(ready.hostId === LOCAL_DEVICE_HOST_ID ? { hostStatusDetail: detail } : {}),
+                devices: sameDevices(
+                  state.devices.filter((device) => device.hostId === ready.hostId),
+                  devices,
+                )
+                  ? state.devices
+                  : [
+                      ...state.devices.filter((device) => device.hostId !== ready.hostId),
+                      ...devices,
+                    ],
+                hostStatuses: {
+                  ...state.hostStatuses,
+                  [ready.hostId]: { status: "ready", ...(detail ? { detail } : {}) },
+                },
+              };
+              return sameDeviceState(state, next) ? state : next;
+            });
+          }),
+        );
       }),
     );
   });
@@ -524,6 +642,24 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     },
   );
 
+  const stopUnusedAgents = Effect.gen(function* () {
+    if ((yield* readDeviceSettings).anyAgentAccessEnabled) return;
+    yield* Effect.forEach(
+      hosts.values(),
+      (host) =>
+        Effect.gen(function* () {
+          if (!activeAgentHosts.has(host) && !(yield* host.current)?.agentDevice) return;
+          yield* host.stopAgent;
+          activeAgentHosts.delete(host);
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Could not stop unused device agent", { hostId: host.id, cause }),
+          ),
+        ),
+      { discard: true },
+    );
+  });
+
   const configure: DeviceService["Service"]["configure"] = Effect.fn("DeviceService.configure")(
     function* (input) {
       const currentSettings = yield* readDeviceSettings;
@@ -552,9 +688,11 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               ),
             );
           if (!nextEnabled) {
+            yield* Effect.forEach(hosts.keys(), retireHostAgentAccess, { discard: true });
             yield* Effect.forEach(hosts.values(), (host) => host.stop, { discard: true });
-          } else if (input.agentAccessEnabled === false) {
-            yield* Effect.forEach(hosts.values(), (host) => host.stopAgent, { discard: true });
+            activeAgentHosts.clear();
+          } else {
+            yield* stopUnusedAgents;
           }
           yield* publish((state) => ({
             ...state,
@@ -647,94 +785,111 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     return result.serial ?? result.id ?? device.id;
   });
 
-  const open: DeviceService["Service"]["open"] = Effect.fn("DeviceService.open")(function* (input) {
-    const host = yield* resolveHost(input.hostId);
-    yield* ensurePlatform(host, input.platform);
-    const ready = yield* readiness(host.id);
-    let state = yield* refresh(ready);
-    let device = findDevice(state, host.id, input.deviceId);
-    if (!device) {
-      return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: input.deviceId });
-    }
-    if (!device.booted && input.boot !== false) {
-      const booting = { ...device, threadId: input.threadId };
-      yield* publish((current) => ({
-        ...current,
-        bootingDevices: [
-          ...(current.bootingDevices ?? []).filter(
-            (entry) => entry.hostId !== booting.hostId || entry.id !== booting.id,
-          ),
-          booting,
-        ],
-      }));
-      const bootedId = yield* boot(ready, device).pipe(
-        Effect.ensuring(
-          publish((current) => ({
-            ...current,
-            bootingDevices: (current.bootingDevices ?? []).filter(
-              (entry) => entry.hostId !== booting.hostId || entry.id !== booting.id,
-            ),
-          })),
-        ),
-      );
-      state = yield* refresh(ready);
-      device = findDevice(state, host.id, bootedId) ?? findDevice(state, host.id, device.id);
+  // Only agent setup retains a predecessor, and its completion/failure releases it.
+  const rollbackSessions = new WeakMap<
+    DeviceSession,
+    { readonly previous: DeviceSession | undefined; failed: boolean }
+  >();
+  const open: DeviceService["Service"]["open"] = Effect.fn("DeviceService.open")(
+    function* (input, setup) {
+      const host = yield* resolveHost(input.hostId);
+      yield* ensurePlatform(host, input.platform);
+      const ready = yield* readiness(host.id);
+      let state = yield* refresh(ready);
+      let device = findDevice(state, host.id, input.deviceId);
       if (!device) {
-        return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: bootedId });
+        return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: input.deviceId });
       }
-    } else if (device.platform === "ios" && device.booted) {
-      // A simulator booted outside T3 has no helper attached yet.
-      yield* HttpClientRequest.post(
-        `${ready.hub.origin}${vendorPrefix("ios")}/grid/api/start`,
-      ).pipe(
-        HttpClientRequest.bodyJson({ udid: device.id }),
-        Effect.mapError(
-          (cause) =>
-            new DeviceOperationError({ operation: "open", reason: "invalid_payload", cause }),
-        ),
-        Effect.flatMap((request) =>
-          hubJson(request, HubActionResult, "attach stream", BOOT_TIMEOUT),
-        ),
-      );
-    }
-    if (hosts.get(host.id) !== host)
-      return yield* new DeviceHostUnavailableError({
-        hostId: host.id,
-        reason: "Host configuration changed. Retry the operation.",
-      });
-    const openedAt = DateTime.formatIso(yield* DateTime.now);
-    const session: DeviceSession = {
-      threadId: input.threadId,
-      hostId: host.id,
-      deviceId: device.id,
-      platform: device.platform,
-      openedAt,
-    };
-    yield* lifecycleLock.withPermit(
-      Effect.gen(function* () {
-        if (!(yield* readDeviceSettings).enabled)
-          return yield* new DeviceHostUnavailableError({
-            hostId: host.id,
-            reason: "Device support was turned off while the device was opening.",
-          });
+      if (!device.booted && input.boot !== false) {
+        const booting = { ...device, threadId: input.threadId };
         yield* publish((current) => ({
           ...current,
-          sessions: [
-            ...current.sessions.filter(
-              (existing) =>
-                !(
-                  existing.threadId === session.threadId &&
-                  existing.hostId === session.hostId &&
-                  existing.deviceId === session.deviceId
-                ),
+          bootingDevices: [
+            ...(current.bootingDevices ?? []).filter(
+              (entry) => entry.hostId !== booting.hostId || entry.id !== booting.id,
             ),
-            session,
+            booting,
           ],
         }));
-      }),
-    );
-    return session;
-  });
+        const bootedId = yield* boot(ready, device).pipe(
+          Effect.ensuring(
+            publish((current) => ({
+              ...current,
+              bootingDevices: (current.bootingDevices ?? []).filter(
+                (entry) => entry.hostId !== booting.hostId || entry.id !== booting.id,
+              ),
+            })),
+          ),
+        );
+        state = yield* refresh(ready);
+        device = findDevice(state, host.id, bootedId) ?? findDevice(state, host.id, device.id);
+        if (!device) {
+          return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: bootedId });
+        }
+      } else if (device.platform === "ios" && device.booted) {
+        // A simulator booted outside T3 has no helper attached yet.
+        yield* HttpClientRequest.post(
+          `${ready.hub.origin}${vendorPrefix("ios")}/grid/api/start`,
+        ).pipe(
+          HttpClientRequest.bodyJson({ udid: device.id }),
+          Effect.mapError(
+            (cause) =>
+              new DeviceOperationError({ operation: "open", reason: "invalid_payload", cause }),
+          ),
+          Effect.flatMap((request) =>
+            hubJson(request, HubActionResult, "attach stream", BOOT_TIMEOUT),
+          ),
+        );
+      }
+      const openedAt = DateTime.formatIso(yield* DateTime.now);
+      const session: DeviceSession = {
+        threadId: input.threadId,
+        hostId: host.id,
+        deviceId: device.id,
+        platform: device.platform,
+        openedAt,
+      };
+      yield* lifecycleLock.withPermit(
+        Effect.gen(function* () {
+          if (hosts.get(host.id) !== host)
+            return yield* new DeviceHostUnavailableError({
+              hostId: host.id,
+              reason: "Host configuration changed. Retry the operation.",
+            });
+          if (!(yield* readDeviceSettings).enabled)
+            return yield* new DeviceHostUnavailableError({
+              hostId: host.id,
+              reason: "Device support was turned off while the device was opening.",
+            });
+          if (setup?.rollbackOnFailure) {
+            const { state } = yield* SynchronizedRef.get(stateRef);
+            const previous = state.sessions.find(
+              (existing) =>
+                existing.threadId === session.threadId &&
+                existing.hostId === session.hostId &&
+                existing.deviceId === session.deviceId,
+            );
+            rollbackSessions.set(session, { previous, failed: false });
+          }
+          yield* publish((current) => ({
+            ...current,
+            sessions: [
+              ...current.sessions.filter(
+                (existing) =>
+                  !(
+                    existing.threadId === session.threadId &&
+                    existing.hostId === session.hostId &&
+                    existing.deviceId === session.deviceId
+                  ),
+              ),
+              session,
+            ],
+          }));
+        }),
+      );
+      return session;
+    },
+  );
 
   const shutdownDevice = Effect.fn("DeviceService.shutdownDevice")(function* (
     hostId: DeviceHostId,
@@ -762,35 +917,42 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               ),
         ),
       );
-    // serve-sim's shutdown closes its in-process capture session before it runs
-    // `simctl shutdown`; the hub's generic shutdown can leave that session cached
-    // across a reboot. serve-sim runs simctl bare, though, so a simulator that is
-    // already off fails there. Accept that failure only when the hub confirms
-    // the simulator is off; a failure on a running one still surfaces.
-    yield* platform === "ios"
-      ? postShutdown(`${vendorPrefix("ios")}/grid/api/shutdown`, { udid: deviceId }).pipe(
-          Effect.catch((cause) =>
-            fetchDevices(ready).pipe(
-              Effect.flatMap(({ devices }) =>
-                devices.find((device) => device.id === deviceId)?.booted === false
-                  ? Effect.logInfo("iOS simulator was already shut down", { deviceId })
-                  : Effect.fail(cause),
+    yield* lifecycleLock.withPermit(
+      Effect.gen(function* () {
+        // serve-sim's shutdown closes its in-process capture session before it runs
+        // `simctl shutdown`; the hub's generic shutdown can leave that session cached
+        // across a reboot. serve-sim runs simctl bare, though, so a simulator that is
+        // already off fails there. Accept that failure only when the hub confirms
+        // the simulator is off; a failure on a running one still surfaces.
+        yield* platform === "ios"
+          ? postShutdown(`${vendorPrefix("ios")}/grid/api/shutdown`, { udid: deviceId }).pipe(
+              Effect.catch((cause) =>
+                fetchDevices(ready).pipe(
+                  Effect.flatMap(({ devices }) =>
+                    devices.find((device) => device.id === deviceId)?.booted === false
+                      ? Effect.logInfo("iOS simulator was already shut down", { deviceId })
+                      : Effect.fail(cause),
+                  ),
+                ),
               ),
-            ),
+            )
+          : postShutdown("/api/devices/shutdown", { platform, id: deviceId });
+        // Android can reuse an emulator serial for another AVD after shutdown.
+        // Retire every thread targeting this slot before exposing it as available.
+        yield* retireDeviceAgentAccess(ready.hostId, deviceId);
+        yield* publish((state) => ({
+          ...state,
+          devices: state.devices.map((device) =>
+            device.hostId === ready.hostId && device.id === deviceId
+              ? { ...device, booted: false }
+              : device,
           ),
-        )
-      : postShutdown("/api/devices/shutdown", { platform, id: deviceId });
-    yield* publish((state) => ({
-      ...state,
-      devices: state.devices.map((device) =>
-        device.hostId === ready.hostId && device.id === deviceId
-          ? { ...device, booted: false }
-          : device,
-      ),
-      sessions: state.sessions.filter(
-        (session) => !(session.hostId === ready.hostId && session.deviceId === deviceId),
-      ),
-    }));
+          sessions: state.sessions.filter(
+            (session) => !(session.hostId === ready.hostId && session.deviceId === deviceId),
+          ),
+        }));
+      }),
+    );
     // Discovery can stall while an emulator saves its snapshot. A failed
     // refresh must not turn an accepted shutdown into an action failure.
     yield* refresh(ready).pipe(
@@ -828,13 +990,6 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     function* (input) {
       const host = yield* resolveHost(input.hostId);
       yield* shutdownDevice(host.id, input.deviceId, input.platform);
-      // Sessions on a powered-off device are stale in every thread.
-      yield* publish((current) => ({
-        ...current,
-        sessions: current.sessions.filter(
-          (session) => !(session.hostId === host.id && session.deviceId === input.deviceId),
-        ),
-      }));
     },
   );
 
@@ -904,6 +1059,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   return {
     ...DeviceService.of({
       testHost,
+      retireThreadAgentAccess: (threadId) =>
+        lifecycleLock.withPermit(retireThreadAgentAccess(threadId)),
       updateTool: (tool) =>
         lifecycleLock.withPermit(
           Effect.gen(function* () {
@@ -925,16 +1082,65 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           reason: "Agent CLI installation is unavailable in this device service.",
         }),
       ),
+      refreshAgentDevice: (ready) => refresh(ready, false).pipe(Effect.asVoid),
+      completeOpen: (openedSession) =>
+        Effect.sync(() => {
+          rollbackSessions.delete(openedSession);
+        }),
+      abortOpen: (openedSession) =>
+        lifecycleLock.withPermit(
+          Effect.gen(function* () {
+            const rollback = rollbackSessions.get(openedSession) ?? {
+              previous: undefined,
+              failed: false,
+            };
+            rollback.failed = true;
+            rollbackSessions.set(openedSession, rollback);
+            const { state } = yield* SynchronizedRef.get(stateRef);
+            // A newer pending open still needs the failed predecessor's rollback chain.
+            if (!state.sessions.includes(openedSession)) return;
+            let previous = rollback.previous;
+            while (previous) {
+              const predecessor = rollbackSessions.get(previous);
+              if (!predecessor?.failed) break;
+              previous = predecessor.previous;
+            }
+            rollbackSessions.delete(openedSession);
+            if (previous) {
+              const restored = previous;
+              yield* publish((current) => ({
+                ...current,
+                sessions: current.sessions.map((session) =>
+                  session === openedSession ? restored : session,
+                ),
+              }));
+              return;
+            }
+            yield* retireThreadDeviceAgentAccess(
+              openedSession.threadId,
+              openedSession.hostId,
+              openedSession.deviceId,
+            );
+            yield* publish((current) => ({
+              ...current,
+              sessions: current.sessions.filter((session) => session !== openedSession),
+            }));
+          }),
+        ),
       agentTarget: (input) =>
         Effect.gen(function* () {
-          const host = yield* resolveHost(input.hostId);
-          const ready = yield* agentReadinessIfSupported(input.hostId);
+          const { threadId, hostId, deviceId } = input.openedSession;
+          const host = yield* resolveHost(hostId);
+          const ready = yield* agentReadinessIfSupported(hostId, input.agentAccessEnabled);
           if (!ready)
             return yield* new DeviceHostUnavailableError({
-              hostId: input.hostId,
+              hostId: hostId,
               reason:
                 "Agent device access requires enabled device support, agent access, and an available simulator platform on this host.",
             });
+          const session = yield* agentDeviceSession(threadId, hostId, deviceId).pipe(
+            Effect.provideService(Crypto.Crypto, crypto),
+          );
           const configPath = yield* lifecycleLock.withPermit(
             Effect.gen(function* () {
               if (hosts.get(host.id) !== host)
@@ -942,14 +1148,21 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                   hostId: host.id,
                   reason: "Host configuration changed. Retry the operation.",
                 });
-              return yield* configureAgent(input.hostId, ready);
+              const { state } = yield* SynchronizedRef.get(stateRef);
+              // Session identity pins this issuance to the particular open, even when
+              // a host or Android serial is reused before the request resumes.
+              if (
+                !state.sessions.includes(input.openedSession) ||
+                !findDevice(state, hostId, deviceId)?.booted
+              )
+                return yield* new DeviceNotFoundError({ hostId, deviceId });
+              return yield* configureAgent(hostId, ready, {
+                threadId,
+                deviceId,
+                session,
+              });
             }),
           );
-          const session = yield* agentDeviceSession(
-            input.threadId,
-            input.hostId,
-            input.deviceId,
-          ).pipe(Effect.provideService(Crypto.Crypto, crypto));
           return ["--config", configPath, "--session", session];
         }),
       state: SynchronizedRef.get(stateRef).pipe(Effect.map(({ state }) => state)),
@@ -969,11 +1182,15 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       sessionsForThread,
     }),
     setHostStatus,
+    reconcileAgentAccess: lifecycleLock.withPermit(stopUnusedAgents),
     withLifecycleLock: lifecycleLock.withPermit,
     refreshHosts: Effect.gen(function* () {
       const summaries = yield* Effect.forEach(hosts.values(), (host) => host.summary);
       const unchanged = (id: DeviceHostId) =>
         hosts.has(id) && hosts.get(id) === publishedHosts.get(id);
+      for (const host of activeAgentHosts) {
+        if (hosts.get(host.id) !== host) activeAgentHosts.delete(host);
+      }
       yield* publish((state) => ({
         ...state,
         hosts: summaries,
@@ -990,8 +1207,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
-  const localHost = yield* DeviceHost.DeviceHost;
+  const unpreparedLocalHost = yield* DeviceHost.DeviceHost;
   const config = yield* ServerConfig.ServerConfig;
+  const localHost = yield* retireLegacyAgentDeviceConfig(config.stateDir, unpreparedLocalHost);
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
@@ -1001,14 +1219,32 @@ export const make = Effect.gen(function* () {
     [localHost.id, localHost],
   ]);
   const crypto = yield* Crypto.Crypto;
-  const configPath = (hostId: DeviceHostId) =>
-    agentDeviceConfigPath(config.stateDir, hostId, path).pipe(
-      Effect.provideService(Crypto.Crypto, crypto),
-    );
-  const configureAgent = (hostId: DeviceHostId, ready: DeviceHost.DeviceHostAgentReady) =>
+  const access = yield* DeviceAgentAccess.DeviceAgentAccess;
+  const server = yield* HttpServer.HttpServer;
+  const configureAgent = (
+    hostId: DeviceHostId,
+    ready: DeviceHost.DeviceHostAgentReady,
+    target: { threadId: ThreadId; deviceId: DeviceId; session: string },
+  ) =>
     Effect.gen(function* () {
-      const file = yield* configPath(hostId);
-      yield* writeAgentDeviceConfig(file, ready.agentDevice);
+      const address = server.address;
+      if (typeof address === "string" || !("port" in address))
+        return yield* new DeviceHostUnavailableError({
+          hostId,
+          reason: "Agent device access requires an HTTP listener.",
+        });
+      const origin = new URL(HttpServer.formatAddress(address));
+      if (origin.hostname === "0.0.0.0") origin.hostname = "127.0.0.1";
+      if (origin.hostname === "[::]") origin.hostname = "[::1]";
+      const file = yield* agentDeviceConfigPath(config.stateDir, hostId, path, target).pipe(
+        Effect.provideService(Crypto.Crypto, crypto),
+      );
+      const token = yield* access.issue({ ...target, hostId });
+      yield* writeAgentDeviceConfig(file, {
+        ...ready.agentDevice,
+        baseUrl: `${origin.origin}${DeviceAgentAccess.AGENT_DEVICE_ROUTE_PREFIX}`,
+        token,
+      });
       return file;
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
@@ -1059,6 +1295,26 @@ export const make = Effect.gen(function* () {
             }),
         ),
       ),
+    (threadId) =>
+      Effect.gen(function* () {
+        yield* access.retireThread(threadId);
+        yield* fs.remove(agentDeviceThreadConfigDirectory(config.stateDir, threadId, path), {
+          recursive: true,
+          force: true,
+        });
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new DeviceOperationError({
+              operation: "retire agent access",
+              reason: "settings_failed",
+              cause,
+            }),
+        ),
+      ),
+    access.retireDevice,
+    access.retireThreadDevice,
+    access.retireHost,
   );
   const hostContext =
     yield* Effect.context<Effect.Services<ReturnType<typeof SshDeviceHost.make>>>();
@@ -1083,6 +1339,7 @@ export const make = Effect.gen(function* () {
               )
             )
               continue;
+            yield* access.retireHost(id);
             hosts.delete(id);
             configured.delete(id);
             removed.push({ id, scope: previous.scope });
@@ -1091,13 +1348,12 @@ export const make = Effect.gen(function* () {
           return removed;
         }),
       );
-      // Stop old writers before deleting config files or publishing replacements, without blocking healthy hosts.
+      // Stop old writers before publishing replacements, without blocking healthy hosts.
       yield* Effect.forEach(
         removed,
-        ({ id, scope }) =>
+        ({ scope }) =>
           Effect.gen(function* () {
             yield* Scope.close(scope, Exit.void);
-            yield* fs.remove(yield* configPath(id), { force: true }).pipe(Effect.ignore);
           }),
         { concurrency: 4, discard: true },
       );
@@ -1108,23 +1364,16 @@ export const make = Effect.gen(function* () {
             const hostScope = yield* Scope.fork(scope);
             const instance = yield* SshDeviceHost.make(
               host,
-              (ready) =>
-                configureAgent(host.id, ready).pipe(
-                  Effect.asVoid,
-                  Effect.mapError(
-                    (error) =>
-                      new DeviceHost.DeviceHostError({
-                        hostId: host.id,
-                        step: "configuring agent access",
-                        cause: error,
-                      }),
-                  ),
-                ),
+              () => Effect.void,
               (status, detail) =>
                 service
                   .setHostStatus(host.id, { status, ...(detail ? { detail } : {}) })
                   .pipe(Effect.asVoid),
-            ).pipe(Effect.provideService(Scope.Scope, hostScope), Effect.provide(hostContext));
+            ).pipe(
+              Effect.flatMap((host) => retireLegacyAgentDeviceConfig(config.stateDir, host)),
+              Effect.provideService(Scope.Scope, hostScope),
+              Effect.provide(hostContext),
+            );
             hosts.set(host.id, instance);
             configured.set(host.id, { config: host, scope: hostScope });
           }
@@ -1135,7 +1384,9 @@ export const make = Effect.gen(function* () {
   const changes = yield* settings.subscribeChanges;
   yield* reconcile((yield* settings.getSettings).deviceHosts);
   yield* changes.pipe(
-    Stream.runForEach((value) => reconcile(value.deviceHosts)),
+    Stream.runForEach((value) =>
+      reconcile(value.deviceHosts).pipe(Effect.andThen(service.reconcileAgentAccess)),
+    ),
     Effect.forkIn(scope),
   );
   yield* Effect.addFinalizer(() =>

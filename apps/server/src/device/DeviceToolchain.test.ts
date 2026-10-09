@@ -12,6 +12,8 @@ import {
   DEVICE_HUB_VERSION,
   ensureDeviceHub,
   isDeviceHubInstalled,
+  installedAgentDevice,
+  isAgentDeviceInstalled,
 } from "./DeviceToolchain.ts";
 
 it.effect("failed installation cleans staging and exposes only a safe failure message", () =>
@@ -96,4 +98,36 @@ it.effect("unreadable inventory stays unknown instead of reporting no installs",
     ),
     Effect.provide(NodeServices.layer),
   ),
+);
+
+it.effect(
+  "recorded agent launcher lookup requires a safe version and a completed matching install",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const base = yield* fs.makeTempDirectoryScoped();
+      const install = path.join(base, "tools", "agent-device", "0.0.1");
+      const entry = path.join(install, "node_modules/agent-device/bin/agent-device.mjs");
+      yield* fs.makeDirectory(path.dirname(entry), { recursive: true });
+      yield* fs.writeFileString(entry, "");
+      expect(yield* installedAgentDevice(base, "0.0.1")).toBeNull();
+      yield* fs.writeFileString(path.join(install, ".install-complete"), "wrong");
+      expect(yield* installedAgentDevice(base, "0.0.1")).toBeNull();
+      yield* fs.writeFileString(path.join(install, ".install-complete"), "0.0.1\n");
+      expect((yield* installedAgentDevice(base, "0.0.1"))?.entryPath).toBe(entry);
+      expect(yield* isAgentDeviceInstalled(base)).toBe(false);
+      for (const version of [
+        "../0.0.1",
+        "..\\0.0.1",
+        "/0.0.1",
+        "latest",
+        "",
+        "0.0.1/other",
+        "0.0.1\n",
+      ])
+        expect(yield* installedAgentDevice(base, version)).toBeNull();
+      yield* fs.remove(entry);
+      expect(yield* installedAgentDevice(base, "0.0.1")).toBeNull();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

@@ -8,6 +8,17 @@ import {
   type DeviceServiceState,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as NetAddress from "effect/net/NetAddress";
+import * as Result from "effect/Result";
+import * as NetService from "@t3tools/shared/Net";
+import * as ServerConfig from "../config.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import * as DeviceAgentAccess from "./DeviceAgentAccess.ts";
+import { agentDeviceConfigPath, writeAgentDeviceConfig } from "./AgentDeviceTarget.ts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
@@ -16,7 +27,7 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientResponse, HttpServer } from "effect/http";
 import * as ServerSettings from "../serverSettings.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
@@ -69,6 +80,7 @@ const fixture = Effect.fn("fixture")(function* (
   runtimeFailure?: NodeRuntimeUnavailableError | DeviceHost.DeviceHostError,
   inspectError = false,
   installTool?: Parameters<typeof DeviceService.makeWithHosts>[3],
+  agentIsAlreadyRunning = false,
 ) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
   const starts: string[] = [];
@@ -122,7 +134,14 @@ const fixture = Effect.fn("fixture")(function* (
           agentDevice: { baseUrl: "http://agent.test", token: "test", entryPath: "/agent" },
         };
       }),
-    current: Effect.succeed(null),
+    current: Effect.succeed(
+      agentIsAlreadyRunning
+        ? {
+            ...ready,
+            agentDevice: { baseUrl: "http://agent.test", token: "test", entryPath: "/agent" },
+          }
+        : null,
+    ),
     stopAgent: Effect.sync(() => {
       agentStops.push("stop");
     }),
@@ -133,7 +152,7 @@ const fixture = Effect.fn("fixture")(function* (
   const service = yield* DeviceService.makeWithHosts(
     new Map([[host.id, host]]),
     undefined,
-    undefined,
+    () => Effect.succeed("/test/agent-device.json"),
     installTool,
   ).pipe(
     Effect.provide(NodeCrypto.layer),
@@ -303,6 +322,55 @@ describe("device setup consent", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("starts agent helpers for authorized project access when global access is off", () =>
+    Effect.gen(function* () {
+      const { service, agentStarts, settings } = yield* fixture();
+      yield* Ref.update(settings, (current) => ({
+        ...current,
+        projectSettingsOverrides: { "project-1": { enableAgentDeviceAccess: true } },
+      }));
+      yield* service.configure({ enabled: true });
+      expect((yield* Ref.get(settings)).enableAgentDeviceAccess).toBe(false);
+      expect(yield* service.agentReadinessIfSupported()).toBeNull();
+      expect(yield* service.agentReadinessIfSupported(LOCAL_DEVICE_HOST_ID, true)).not.toBeNull();
+      const target = yield* service.agentTarget({
+        openedSession: yield* service.open({
+          threadId: ThreadId.make("project-enabled-thread"),
+          deviceId: "Pixel_API_35",
+          platform: "android",
+        }),
+        agentAccessEnabled: true,
+      });
+      expect(target.slice(0, 2)).toEqual(["--config", "/test/agent-device.json"]);
+      expect(target[2]).toBe("--session");
+      expect(agentStarts).toEqual(["start", "start"]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("withholds agent helpers for denied project access even when global access is on", () =>
+    Effect.gen(function* () {
+      const { service, agentStarts, settings } = yield* fixture();
+      yield* Ref.update(settings, (current) => ({
+        ...current,
+        enableDeviceSupport: true,
+        enableAgentDeviceAccess: true,
+      }));
+      expect(yield* service.agentReadinessIfSupported(LOCAL_DEVICE_HOST_ID, false)).toBeNull();
+      const result = yield* service
+        .agentTarget({
+          openedSession: yield* service.open({
+            threadId: ThreadId.make("project-denied-thread"),
+            deviceId: "Pixel_API_35",
+            platform: "android",
+          }),
+          agentAccessEnabled: false,
+        })
+        .pipe(Effect.result);
+      expect(result._tag).toBe("Failure");
+      expect(agentStarts).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("installs agent support only after the separate agent permission", () =>
     Effect.gen(function* () {
       const { service, agentStarts, agentStops, settings } = yield* fixture();
@@ -317,11 +385,67 @@ describe("device setup consent", () => {
 
       yield* service.configure({ agentAccessEnabled: false, onboardingCompleted: true });
       expect(agentStops).toEqual(["stop"]);
+      expect(yield* service.agentReadinessIfSupported()).toBeNull();
+      expect(yield* service.agentReadinessIfSupported(LOCAL_DEVICE_HOST_ID, true)).toBeNull();
+      yield* Ref.update(settings, (current) => ({
+        ...current,
+        projectSettingsOverrides: { "project-1": { enableAgentDeviceAccess: true } },
+      }));
+      expect(yield* service.agentReadinessIfSupported(LOCAL_DEVICE_HOST_ID, true)).not.toBeNull();
       expect((yield* service.state).onboardingCompleted).toBe(true);
       expect((yield* Ref.get(settings)).deviceOnboardingCompleted).toBe(true);
     }).pipe(Effect.scoped),
   );
 });
+
+it.effect.each(["disabled", "removed"] as const)(
+  "stops active helpers only after the last project grant is %s",
+  (change) =>
+    Effect.gen(function* () {
+      const { service, agentStarts, agentStops, starts, settings } = yield* fixture();
+      yield* Ref.update(settings, (current) => ({
+        ...current,
+        enableDeviceSupport: true,
+        projectSettingsOverrides: { "project-1": { enableAgentDeviceAccess: true } },
+      }));
+      const opened = yield* service.open({
+        threadId: ThreadId.make("thread-1"),
+        deviceId: "Pixel_API_35",
+        platform: "android",
+      });
+      yield* service.agentReadinessIfSupported(LOCAL_DEVICE_HOST_ID, true);
+      yield* service.configure({ agentAccessEnabled: false });
+      yield* service.reconcileAgentAccess;
+      expect(agentStops).toEqual([]);
+      yield* Ref.update(settings, (current) => ({
+        ...current,
+        projectSettingsOverrides:
+          change === "removed" ? {} : { "project-1": { enableAgentDeviceAccess: false } },
+      }));
+      yield* service.reconcileAgentAccess;
+      expect(agentStops).toEqual(["stop"]);
+      // A delayed caller's earlier grant must not restart the just-stopped helper.
+      expect(yield* service.agentReadinessIfSupported(LOCAL_DEVICE_HOST_ID, true)).toBeNull();
+      expect(agentStarts).toHaveLength(1);
+      expect(starts).not.toContain("stop");
+      expect((yield* service.state).sessions).toContain(opened);
+      // Unrelated settings changes do not contact an inactive host again.
+      yield* service.reconcileAgentAccess;
+      expect(agentStops).toEqual(["stop"]);
+      yield* service.configure({ agentAccessEnabled: true });
+      expect(agentStarts).toHaveLength(2);
+    }).pipe(Effect.scoped),
+);
+
+it.effect("does not start or stop inactive agent hosts for denied settings updates", () =>
+  Effect.gen(function* () {
+    const { service, agentStarts, agentStops } = yield* fixture();
+    yield* service.reconcileAgentAccess;
+    yield* service.reconcileAgentAccess;
+    expect(agentStarts).toEqual([]);
+    expect(agentStops).toEqual([]);
+  }).pipe(Effect.scoped),
+);
 
 it.effect("publishes boot progress and does not restore sessions after support is disabled", () =>
   Effect.gen(function* () {
@@ -738,4 +862,110 @@ it.effect("failed manual installation leaves lifecycle state unchanged and can b
     expect(starts).toEqual([]);
     expect(agentStarts).toEqual([]);
   }).pipe(Effect.scoped),
+);
+
+it.effect("reads an already running daemon without startup phases or state broadcasts", () =>
+  Effect.gen(function* () {
+    const { service, settings, agentStarts } = yield* fixture(
+      Effect.void,
+      undefined,
+      false,
+      undefined,
+      false,
+      undefined,
+      true,
+    );
+    yield* Ref.update(settings, (current) => ({
+      ...current,
+      enableDeviceSupport: true,
+      projectSettingsOverrides: { "project-1": { enableAgentDeviceAccess: true } },
+    }));
+    const revision = (yield* service.state).revision;
+    expect(
+      (yield* service.agentReadinessIfSupported(LOCAL_DEVICE_HOST_ID, true))?.agentDevice.baseUrl,
+    ).toBe("http://agent.test");
+    expect(
+      (yield* service.agentReadinessIfSupported(LOCAL_DEVICE_HOST_ID, true))?.agentDevice.baseUrl,
+    ).toBe("http://agent.test");
+    expect(agentStarts).toEqual([]);
+    expect((yield* service.state).revision).toBe(revision);
+  }).pipe(Effect.scoped),
+);
+
+it.effect.each([true, false])(
+  "blocks revoked local startup until legacy retirement completes (stop succeeds: %s)",
+  (stopSucceeds) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-local-admission-" });
+      const config = yield* ServerConfig.ServerConfig.pipe(
+        Effect.provide(ServerConfig.layerTest(directory, directory)),
+      );
+      const legacy = yield* agentDeviceConfigPath(config.stateDir, LOCAL_DEVICE_HOST_ID, path);
+      yield* writeAgentDeviceConfig(legacy, {
+        baseUrl: "http://127.0.0.1:1234",
+        token: "recovered-raw-token",
+        entryPath: "/agent.mjs",
+      });
+      const stopping = yield* Deferred.make<void>();
+      const finish = yield* Deferred.make<void>();
+      const admitted = yield* Ref.make(false);
+      let rawCredentialAccepted = true;
+      const dependencies = Layer.mergeAll(
+        Layer.succeed(ServerConfig.ServerConfig, config),
+        Layer.mock(DeviceHost.DeviceHost)({
+          id: LOCAL_DEVICE_HOST_ID,
+          summary: Effect.succeed({
+            id: LOCAL_DEVICE_HOST_ID,
+            kind: "local",
+            label: "Test host",
+            platforms: [],
+            hubInstalled: true,
+            agentDeviceInstalled: true,
+          }),
+          stopAgent: Effect.gen(function* () {
+            yield* Deferred.succeed(stopping, undefined);
+            yield* Deferred.await(finish);
+            if (!stopSucceeds)
+              return yield* new DeviceHost.DeviceHostError({
+                hostId: LOCAL_DEVICE_HOST_ID,
+                step: "stop-agent",
+                cause: new Error("could not stop"),
+              });
+            rawCredentialAccepted = false;
+          }),
+          ensureReady: () => Effect.die("Revoked startup must not start manual helpers"),
+          ensureAgentReady: () => Effect.die("Revoked startup must not start agent helpers"),
+        }),
+        // Consent was revoked before restart; cleanup cannot depend on a new device_open.
+        ServerSettings.layerTest({ enableDeviceSupport: false, enableAgentDeviceAccess: false }),
+        Layer.mock(ProcessRunner.ProcessRunner)({}),
+        Layer.mock(DeviceAgentAccess.DeviceAgentAccess)({}),
+        Layer.mock(HttpServer.HttpServer)({
+          address: Result.getOrThrow(NetAddress.inetAddressV4(NetAddress.ipv4Loopback, 1234)),
+        }),
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("Revoked startup must not contact devices")),
+        ),
+        NetService.layer,
+      );
+      const construction = yield* DeviceService.make.pipe(
+        Effect.provide(dependencies),
+        Effect.tap(() => Ref.set(admitted, true)),
+        Effect.result,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(stopping);
+      expect(yield* Ref.get(admitted)).toBe(false);
+      expect(rawCredentialAccepted).toBe(true);
+      expect(yield* fs.exists(legacy)).toBe(true);
+      yield* Deferred.succeed(finish, undefined);
+      const result = yield* Fiber.join(construction);
+      expect(result._tag).toBe(stopSucceeds ? "Success" : "Failure");
+      expect(yield* Ref.get(admitted)).toBe(stopSucceeds);
+      expect(rawCredentialAccepted).toBe(!stopSucceeds);
+      expect(yield* fs.exists(legacy)).toBe(!stopSucceeds);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

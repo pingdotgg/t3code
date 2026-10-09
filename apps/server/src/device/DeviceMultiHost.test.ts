@@ -92,8 +92,20 @@ it.effect("keeps hosts independent when serials collide and another host fails",
     expect(state.sessions.map((session) => session.hostId)).toEqual(["b"]);
     expect(state.hostStatuses.a?.status).toBe("ready");
     expect(state.hostStatuses.offline?.status).toBe("failed");
+    for (const hostId of ["a", "b", "a", "b"]) {
+      const ready = yield* service.agentReadinessIfSupported(hostId, true);
+      expect(ready).not.toBeNull();
+      yield* service.refreshAgentDevice(ready!);
+    }
+    expect(yield* service.state).toBe(state);
+    const resumeTargeting = yield* Deferred.make<void>();
+    const staleTargeting = yield* Deferred.await(resumeTargeting).pipe(
+      Effect.andThen(service.agentTarget({ openedSession: state.sessions[0]! })),
+      Effect.exit,
+      Effect.forkChild,
+    );
     const targeting = yield* service
-      .agentTarget({ threadId, hostId: "b", deviceId: "emulator-5554" })
+      .agentTarget({ openedSession: state.sessions[0]! })
       .pipe(Effect.forkChild);
     yield* Deferred.await(writeStarted);
     const replacing = yield* service
@@ -113,7 +125,23 @@ it.effect("keeps hosts independent when serials collide and another host fails",
     expect(replaced.sessions).toEqual([]);
     expect(replaced.devices.map((device) => device.hostId)).toEqual(["a"]);
     expect(replaced.hostStatuses.b).toBeUndefined();
-    yield* service.open({ threadId, hostId: "b", deviceId: "emulator-5554", platform: "android" });
+    const reopenedSession = yield* service.open({
+      threadId,
+      hostId: "b",
+      deviceId: "emulator-5554",
+      platform: "android",
+    });
+    yield* Deferred.succeed(resumeTargeting, undefined);
+    expect((yield* Fiber.join(staleTargeting))._tag).toBe("Failure");
+    expect(order).toEqual(["write started", "write finished", "replace"]);
+    yield* service.agentTarget({ openedSession: reopenedSession });
+    expect(order).toEqual([
+      "write started",
+      "write finished",
+      "replace",
+      "write started",
+      "write finished",
+    ]);
     hosts.delete("b");
     yield* service.refreshHosts;
     yield* service.setHostStatus("b", { status: "ready" });

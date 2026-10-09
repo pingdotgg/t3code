@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 
 const EPOCH = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
 
@@ -69,6 +70,11 @@ export const liveThreadShell = (
  * may call it.
  */
 export const liveThreadsLayer = Layer.mock(ThreadManagement.ThreadManagementService)({
+  getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
+});
+
+/** Flat thread reader for capability checks that need the current project and deletion state. */
+export const liveThreadProjectionsLayer = Layer.mock(ProjectionStore.ProjectionStoreV2)({
   getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
 });
 

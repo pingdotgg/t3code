@@ -5,9 +5,11 @@ import {
   type DevicePlatform,
   type DeviceSummary,
   DeviceToolUnavailableError,
+  DeviceHostUnavailableError,
   LOCAL_DEVICE_HOST_ID,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Path from "effect/Path";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as ServerConfig from "../../../config.ts";
@@ -63,11 +65,12 @@ export function agentDeviceQuickStart(
     "Prefer agent-device for driving this device. simctl, adb, and xcrun remain available for anything it does not cover.",
     "For remote hosts, arrange builds, app installation, and any Metro reverse forwarding yourself. T3 provides discovery, streaming, and control only.",
     "Keep the returned --config and --session flags on every command. Other hosts can be used concurrently; opening one does not switch these commands.",
+    "Power off with device_close({ shutdown: true }). Use explicit commands or batch steps; replay/test scripts are unavailable through this scoped session.",
     platformNotes,
   ].join("\n");
 }
 
-const requireDeviceAccess = McpInvocationContext.requireThreadMcpCapability("device").pipe(
+const requireDeviceAccess = McpInvocationContext.requireCurrentThreadDeviceAccess.pipe(
   Effect.mapError(
     () =>
       new DeviceToolUnavailableError({
@@ -159,51 +162,82 @@ const handlers = {
         });
       }
       const target = yield* pickDevice(state.devices, input);
-      // Resolve consent and agent connectivity before booting or registering a session.
-      const agentArgs = yield* devices.agentTarget({
-        threadId: scope.thread.threadId,
-        hostId: target.hostId,
-        deviceId: target.id,
-      });
-      const session = yield* devices.open({
-        threadId: scope.thread.threadId,
-        hostId: target.hostId,
-        deviceId: target.id,
-        platform: target.platform,
-      });
-      const after = yield* devices.state;
-      const device =
-        after.devices.find(
+      // Check consent and connectivity before booting, without issuing a credential yet.
+      if (!(yield* devices.agentReadinessIfSupported(target.hostId, true))) {
+        return yield* new DeviceHostUnavailableError({
+          hostId: target.hostId,
+          reason:
+            "Agent device access requires enabled device support, agent access, and an available simulator platform on this host.",
+        });
+      }
+      // Installing or starting agent tools can outlive the caller's consent.
+      yield* requireDeviceAccess;
+      const session = yield* devices.open(
+        {
+          threadId: scope.thread.threadId,
+          hostId: target.hostId,
+          deviceId: target.id,
+          platform: target.platform,
+        },
+        { rollbackOnFailure: true },
+      );
+      return yield* Effect.gen(function* () {
+        // Android boot resolves an AVD name to the serial used by subsequent CLI commands.
+        const agentArgs = yield* devices.agentTarget({
+          openedSession: session,
+          agentAccessEnabled: true,
+        });
+        const after = yield* devices.state;
+        const device = after.devices.find(
           (candidate) => candidate.hostId === session.hostId && candidate.id === session.deviceId,
-        ) ?? target;
-      const targetArgs = [...agentDeviceTargetArgs(device), ...agentArgs];
-      const config = yield* ServerConfig.ServerConfig;
-      const path = yield* Path.Path;
-      const platform = yield* HostProcessPlatform;
-      const shimDir = yield* ensureAgentDeviceShim({
-        entryPath: yield* devices.agentCli,
-        stateDir: config.stateDir,
+        ) ?? {
+          ...target,
+          hostId: session.hostId,
+          id: session.deviceId,
+          platform: session.platform,
+        };
+        const targetArgs = [...agentDeviceTargetArgs(device), ...agentArgs];
+        const config = yield* ServerConfig.ServerConfig;
+        const path = yield* Path.Path;
+        const platform = yield* HostProcessPlatform;
+        const shimDir = yield* ensureAgentDeviceShim({
+          entryPath: yield* devices.agentCli,
+          stateDir: config.stateDir,
+        }).pipe(
+          Effect.mapError(
+            (error) =>
+              new DeviceToolUnavailableError({
+                reason:
+                  error._tag === "NodeRuntimeUnavailableError"
+                    ? nodeRuntimeUnavailableMessage("Device automation")
+                    : "Could not prepare the agent-device launcher.",
+                cause: error,
+              }),
+          ),
+        );
+        const command = path.join(
+          shimDir,
+          platform === "win32" ? "agent-device.cmd" : "agent-device",
+        );
+        return {
+          device,
+          agentDevice: { command, targetArgs },
+          quickStart: agentDeviceQuickStart(device, targetArgs, command),
+        };
       }).pipe(
-        Effect.mapError(
-          (error) =>
-            new DeviceToolUnavailableError({
-              reason:
-                error._tag === "NodeRuntimeUnavailableError"
-                  ? nodeRuntimeUnavailableMessage("Device automation")
-                  : "Could not prepare the agent-device launcher.",
-              cause: error,
-            }),
+        Effect.onExit((exit) =>
+          Exit.isFailure(exit)
+            ? devices.abortOpen(session).pipe(
+                Effect.catch(() =>
+                  Effect.logWarning("Could not roll back failed device open", {
+                    hostId: session.hostId,
+                    deviceId: session.deviceId,
+                  }),
+                ),
+              )
+            : devices.completeOpen(session),
         ),
       );
-      const command = path.join(
-        shimDir,
-        platform === "win32" ? "agent-device.cmd" : "agent-device",
-      );
-      return {
-        device,
-        agentDevice: { command, targetArgs },
-        quickStart: agentDeviceQuickStart(device, targetArgs, command),
-      };
     }).pipe(Effect.mapError(toolError)),
   ),
   device_screenshot: McpToolAccess.readsAsCaller((input) =>

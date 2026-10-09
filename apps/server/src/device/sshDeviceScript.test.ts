@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalFetchInEffect:off - verifies generated remote scripts using real shell and Node processes.
+// @effect-diagnostics nodeBuiltinImport:off globalFetchInEffect:off globalFetch:off - verifies generated remote scripts using real shell, Node processes, and native HTTP requests.
 import * as Effect from "effect/Effect";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { describe, expect, it } from "@effect/vitest";
@@ -48,6 +48,111 @@ it.effect("preserves shell metacharacters and newlines in remote arguments", () 
 );
 
 describe("remote helper lifecycle", () => {
+  it.effect.each(
+    (["stop-agent", "stop"] as const).flatMap((mode) =>
+      (["daemon", "hub"] as const).flatMap((record) =>
+        [
+          "truncated",
+          "null",
+          "array",
+          "invalidFields",
+          "unreadable",
+          ...(record === "daemon" ? ["missing", "valid"] : []),
+        ].map((state) => ({ mode, state, record })),
+      ),
+    ),
+  )("retires only readable runtime state ($mode, $record, $state)", ({ mode, state, record }) =>
+    Effect.gen(function* () {
+      if ((yield* HostProcessPlatform) === "win32") return;
+      yield* Effect.promise(async () => {
+        const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ssh-retirement-"));
+        try {
+          const directory = NodePath.join(home, ".t3/device/hosts/one");
+          const runtimeRecord = NodePath.join(directory, `${record}.json`);
+          const stopped = NodePath.join(home, "stopped");
+          const launcher = NodePath.join(home, "agent.cjs");
+          const bin = NodePath.join(home, "bin");
+          await NodeFSP.mkdir(directory, { recursive: true });
+          await NodeFSP.mkdir(bin);
+          for (const command of ["adb", "xcrun"]) {
+            await NodeFSP.writeFile(NodePath.join(bin, command), "#!/bin/sh\nexit 1\n", {
+              mode: 0o755,
+            });
+          }
+          await NodeFSP.writeFile(
+            launcher,
+            `require('node:fs').writeFileSync(${JSON.stringify(stopped)}, 'stopped');`,
+          );
+          await NodeFSP.writeFile(
+            NodePath.join(directory, "agent.json"),
+            JSON.stringify({ entryPath: launcher }),
+          );
+          const content =
+            state === "truncated"
+              ? '{"httpPort":1234'
+              : state === "null"
+                ? "null"
+                : state === "array"
+                  ? "[]"
+                  : JSON.stringify(
+                      record === "hub"
+                        ? {
+                            owner: "one",
+                            pid: "invalid",
+                            port: 1234,
+                            entryPath: launcher,
+                          }
+                        : {
+                            httpPort: state === "invalidFields" ? "invalid" : 1234,
+                            token: "fixture-token",
+                          },
+                    );
+          if (state === "unreadable") await NodeFSP.mkdir(runtimeRecord);
+          else if (state !== "missing") await NodeFSP.writeFile(runtimeRecord, content);
+          const ignoresHub = mode === "stop-agent" && record === "hub";
+          if (ignoresHub) {
+            await NodeFSP.writeFile(
+              NodePath.join(directory, "daemon.json"),
+              JSON.stringify({ httpPort: 1234, token: "fixture-token" }),
+            );
+          }
+          const script = NodePath.join(home, "stop.cjs");
+          await NodeFSP.writeFile(script, remoteDeviceScript("one", mode));
+          const invocation = exec(process.execPath, [script], {
+            env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` },
+          });
+          const fails = state !== "missing" && state !== "valid" && !ignoresHub;
+          if (fails) await expect(invocation).rejects.toMatchObject({ code: 1 });
+          else await invocation;
+          if (record === "daemon" && !fails) {
+            await expect(NodeFSP.stat(runtimeRecord)).rejects.toMatchObject({ code: "ENOENT" });
+          } else {
+            if (state === "unreadable")
+              expect((await NodeFSP.stat(runtimeRecord)).isDirectory()).toBe(true);
+            else expect(await NodeFSP.readFile(runtimeRecord, "utf8")).toBe(content);
+          }
+          if (ignoresHub) {
+            await expect(
+              NodeFSP.stat(NodePath.join(directory, "daemon.json")),
+            ).rejects.toMatchObject({
+              code: "ENOENT",
+            });
+          }
+          if (state === "valid" || ignoresHub)
+            expect(await NodeFSP.readFile(stopped, "utf8")).toBe("stopped");
+          else await expect(NodeFSP.stat(stopped)).rejects.toMatchObject({ code: "ENOENT" });
+          await expect(
+            NodeFSP.lstat(NodePath.join(directory, "runtime.lock")),
+          ).rejects.toMatchObject({
+            code: "ENOENT",
+          });
+        } finally {
+          await NodeFSP.rm(home, { recursive: true, force: true });
+        }
+      });
+    }),
+  );
+
   it.effect("reuses its own healthy helpers and stops only its own runtime", () =>
     Effect.gen(function* () {
       if ((yield* HostProcessPlatform) === "win32") return;
@@ -82,7 +187,7 @@ const args=process.argv.slice(2);
 const state=process.env.AGENT_DEVICE_STATE_DIR || args[args.indexOf('--state-dir')+1];
 const file=path.join(state,'daemon.json');
 if(args[0]==='daemon') { const data=JSON.parse(fs.readFileSync(file,'utf8')); fs.writeFileSync(path.join(state,'stopped-agent'),String(data.pid)); try {process.kill(data.pid,'SIGTERM')} catch {} }
-else if(args[0]==='serve') { const server=http.createServer((req,res)=>{res.statusCode=fs.existsSync(path.join(state,'unhealthy-agent-'+process.pid))?503:200;res.end('ok');}); server.listen(0,'127.0.0.1',()=>{fs.writeFileSync(file,JSON.stringify({httpPort:server.address().port,pid:process.pid,token:'test'}));process.send?.('ready');process.disconnect?.();}); }
+else if(args[0]==='serve') { const token='test-'+process.pid; const server=http.createServer((req,res)=>{res.statusCode=req.url!=='/health' && req.headers.authorization!==('Bearer '+token)?401:fs.existsSync(path.join(state,'unhealthy-agent-'+process.pid))?503:200;res.end('ok');}); server.listen(0,'127.0.0.1',()=>{fs.writeFileSync(file,JSON.stringify({httpPort:server.address().port,pid:process.pid,token}));process.send?.('ready');process.disconnect?.();}); }
 else { const child=spawn(process.execPath,[path.join(path.dirname(process.argv[1]),'daemon.mjs'),'serve'],{detached:true,stdio:['ignore','ignore','ignore','ipc'],env:process.env});await new Promise((resolve,reject)=>{child.once('message',resolve);child.once('error',reject);});child.unref(); }
 `,
         );
@@ -94,12 +199,13 @@ else { const child=spawn(process.execPath,[path.join(path.dirname(process.argv[1
           owner: string,
           mode: "probe" | "start" | "agent-start" | "stop-agent" | "stop",
           upgraded = false,
+          runtimeId?: string,
         ) => {
           const file = NodePath.join(home, `${owner}-${mode}-${invocation++}.cjs`);
           await NodeFSP.writeFile(
             file,
             `const originalKill = process.kill; process.kill = (pid, signal) => { if (signal === 'SIGTERM') require('node:fs').appendFileSync(${JSON.stringify(NodePath.join(home, "stops"))}, pid+'\\n'); return originalKill(pid, signal); };\n` +
-              remoteDeviceScript(owner, mode)
+              remoteDeviceScript(owner, mode, runtimeId)
                 .replace(DEVICE_HUB_VERSION, upgraded ? nextHubVersion : DEVICE_HUB_VERSION)
                 .replace(AGENT_DEVICE_VERSION, upgraded ? nextAgentVersion : AGENT_DEVICE_VERSION),
           );
@@ -198,6 +304,64 @@ else { const child=spawn(process.execPath,[path.join(path.dirname(process.argv[1
             await NodeFSP.readFile(NodePath.join(root, "hosts/one/stopped-agent"), "utf8"),
           ).toBe(String(upgradedDaemon.pid));
           expect(repaired.daemonPort).not.toBe(upgraded.daemonPort);
+          const legacyConfig = {
+            daemonBaseUrl: `http://127.0.0.1:${repaired.daemonPort}`,
+            daemonAuthToken: repaired.token,
+          };
+          const authStatus = async (baseUrl: string, token: string) => {
+            try {
+              return (
+                await fetch(baseUrl + "/command", { headers: { authorization: "Bearer " + token } })
+              ).status;
+            } catch {
+              return 0;
+            }
+          };
+          expect(await authStatus(legacyConfig.daemonBaseUrl, legacyConfig.daemonAuthToken)).toBe(
+            200,
+          );
+          // Older servers recorded only the installation path and exposed this raw credential.
+          const agentRecord = NodePath.join(root, "hosts/one/agent.json");
+          await NodeFSP.writeFile(agentRecord, JSON.stringify({ entryPath: repaired.entryPath }));
+          const recovered = await invoke("one", "agent-start", true, "current-runtime");
+          expect(recovered.hubPort).toBe(repaired.hubPort);
+          expect(recovered.token).not.toBe(legacyConfig.daemonAuthToken);
+          expect(
+            await authStatus(legacyConfig.daemonBaseUrl, legacyConfig.daemonAuthToken),
+          ).not.toBe(200);
+          expect(
+            await authStatus(
+              `http://127.0.0.1:${recovered.daemonPort}`,
+              legacyConfig.daemonAuthToken,
+            ),
+          ).toBe(401);
+          expect(
+            await authStatus(`http://127.0.0.1:${recovered.daemonPort}`, recovered.token),
+          ).toBe(200);
+          expect(await invoke("one", "agent-start", true, "current-runtime")).toEqual(recovered);
+          repaired = recovered;
+          const daemonRecord = NodePath.join(root, "hosts/one/daemon.json");
+          const savedDaemon = await NodeFSP.readFile(daemonRecord, "utf8");
+          for (const corruptState of [
+            "null",
+            '{"httpPort":',
+            '{"httpPort":"invalid","token":"fixture"}',
+          ]) {
+            await NodeFSP.writeFile(daemonRecord, corruptState);
+            try {
+              await expect(
+                invoke("one", "agent-start", true, "current-runtime"),
+              ).rejects.toMatchObject({
+                code: 1,
+              });
+              expect(await NodeFSP.readFile(daemonRecord, "utf8")).toBe(corruptState);
+              expect(
+                await authStatus(`http://127.0.0.1:${recovered.daemonPort}`, recovered.token),
+              ).toBe(200);
+            } finally {
+              await NodeFSP.writeFile(daemonRecord, savedDaemon);
+            }
+          }
           // Stop still uses the recorded entry when a future pinned package is not installed yet.
           const originalScript = remoteDeviceScript("one", "stop-agent");
           const upgradedStop = NodePath.join(home, "upgraded-stop.cjs");
@@ -205,12 +369,15 @@ else { const child=spawn(process.execPath,[path.join(path.dirname(process.argv[1
             upgradedStop,
             originalScript.replace(AGENT_DEVICE_VERSION, "999.0.0"),
           );
-          await exec(process.execPath, [upgradedStop], {
-            env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` },
-          });
           const daemon = JSON.parse(
             await NodeFSP.readFile(NodePath.join(root, "hosts/one/daemon.json"), "utf8"),
           );
+          await exec(process.execPath, [upgradedStop], {
+            env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` },
+          });
+          await expect(
+            NodeFSP.stat(NodePath.join(root, "hosts/one/daemon.json")),
+          ).rejects.toThrow();
           expect(
             await NodeFSP.readFile(NodePath.join(root, "hosts/one/stopped-agent"), "utf8"),
           ).toBe(String(daemon.pid));

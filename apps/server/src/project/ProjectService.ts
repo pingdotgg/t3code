@@ -17,6 +17,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import * as ServerSettings from "../serverSettings.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
@@ -91,6 +92,7 @@ export class ProjectOperationError extends Schema.TaggedError<ProjectOperationEr
       "list-projects",
       "list-threads",
       "delete-thread",
+      "delete-project-settings",
       "dispatch-project-command",
     ]),
     projectId: Schema.optional(ProjectId),
@@ -99,6 +101,8 @@ export class ProjectOperationError extends Schema.TaggedError<ProjectOperationEr
   },
 ) {
   override get message(): string {
+    if (this.operation === "delete-project-settings")
+      return `Project deletion committed, but settings cleanup failed${this.projectId === undefined ? "" : ` for ${this.projectId}`}. Retry using the original command ID to finish cleanup.`;
     return `Project operation '${this.operation}' failed${this.projectId === undefined ? "" : ` for ${this.projectId}`}.`;
   }
 }
@@ -120,7 +124,10 @@ export class ProjectService extends Context.Service<
       ProjectServiceError
     >;
     readonly update: (input: ProjectUpdateInput) => Effect.Effect<Project, ProjectServiceError>;
-    readonly delete: (input: ProjectDeleteInput) => Effect.Effect<Project, ProjectServiceError>;
+    readonly delete: (
+      input: ProjectDeleteInput,
+      onCommitted?: Effect.Effect<void>,
+    ) => Effect.Effect<Project, ProjectServiceError>;
     readonly getById: (
       projectId: ProjectId,
       options?: { readonly includeDeleted?: boolean },
@@ -145,6 +152,7 @@ export class ProjectService extends Context.Service<
 >()("t3/project/ProjectService") {}
 
 export const make = Effect.gen(function* () {
+  const settings = yield* ServerSettings.ServerSettingsService;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
@@ -487,7 +495,7 @@ export const make = Effect.gen(function* () {
   });
 
   const deleteProject: ProjectService["Service"]["delete"] = Effect.fn("ProjectService.delete")(
-    function* (input) {
+    function* (input, onCommitted = Effect.void) {
       const { projectId } = input;
       // A deleted row still reaches commit, so a retried command id replays its
       // receipt and any other command id is rejected as not found.
@@ -500,7 +508,17 @@ export const make = Effect.gen(function* () {
         yield* deleteChildThreads(input);
       }
       yield* commit({ type: "project.delete", commandId: input.commandId, projectId });
+      // Caller-owned cleanup follows durable acceptance, before fallible grant cleanup.
+      yield* onCommitted;
       yield* projectEnrichment.invalidate([existing.value.workspaceRoot]);
+      // Terminal deletion removes grants; receipt replay retries interrupted cleanup.
+      yield* settings.updateSettings({ projectSettingsOverrides: { [projectId]: null } }).pipe(
+        Effect.retry({ times: 2 }),
+        Effect.mapError(
+          (cause) =>
+            new ProjectOperationError({ operation: "delete-project-settings", projectId, cause }),
+        ),
+      );
       return yield* readCommitted(projectId);
     },
   );

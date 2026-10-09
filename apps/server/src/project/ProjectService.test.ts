@@ -1,6 +1,15 @@
+import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
+import * as ServerSettings from "../serverSettings.ts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  CommandId,
+  DEFAULT_SERVER_SETTINGS,
+  type ServerSettings as ServerSettingsValue,
+  type Project,
+  ProjectId,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -56,6 +65,7 @@ const layerTestFor = (
   >,
 ) =>
   RuntimeLayer.layerProjectService.pipe(
+    Layer.provideMerge(ServerSettings.layerTest()),
     Layer.provideMerge(ProjectEnrichmentService.layer),
     Layer.provideMerge(layerWorkspacePaths),
     Layer.provideMerge(projectMetadataLayer),
@@ -73,6 +83,7 @@ const layerProjectServiceDependencies = Layer.mergeAll(
   ProjectionStore.layer,
   IdAllocator.layer,
   ThreadCommandExecutor.layer,
+  ServerSettings.layerTest(),
 ).pipe(
   Layer.provideMerge(LegacyV1ThreadImporter.layer.pipe(Layer.provide(RuntimeLayer.layerEventSink))),
   Layer.provideMerge(ProjectEnrichmentService.layer),
@@ -797,4 +808,48 @@ it.effect("rejects an update that waited on the lock while its project was delet
       "Update race",
     );
   }).pipe(Effect.provide(layerProjectServiceDependencies)),
+);
+
+it.effect("project deletion removes its override and repairs settings on receipt replay", () =>
+  Effect.gen(function* () {
+    const deletedId = ProjectId.make("deleted-grant-project");
+    const activeId = ProjectId.make("active-grant-project");
+    const initial = {
+      ...DEFAULT_SERVER_SETTINGS,
+      enableAgentDeviceAccess: false,
+      projectSettingsOverrides: {
+        [deletedId]: { enableAgentDeviceAccess: true },
+        [activeId]: { enableAgentDeviceAccess: true },
+      },
+    };
+    const current = yield* Ref.make<ServerSettingsValue>(initial);
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const service = yield* ProjectService.make.pipe(
+      Effect.provideService(ServerSettings.ServerSettingsService, {
+        ...settings,
+        updateSettings: (patch) =>
+          Ref.updateAndGet(current, (value) => applyServerSettingsPatch(value, patch)),
+      }),
+    );
+    yield* service.create({
+      commandId: CommandId.make("grant-project-create"),
+      projectId: deletedId,
+      title: "Deleted grant",
+      workspaceRoot: "/work/deleted-grant",
+    });
+    const input = { commandId: CommandId.make("grant-project-delete"), projectId: deletedId };
+    yield* service.delete(input);
+    assert.isUndefined((yield* Ref.get(current)).projectSettingsOverrides[deletedId]);
+    assert.deepEqual(
+      (yield* Ref.get(current)).projectSettingsOverrides[activeId],
+      initial.projectSettingsOverrides[activeId],
+    );
+    yield* Ref.set(current, initial);
+    yield* service.delete(input);
+    assert.isUndefined((yield* Ref.get(current)).projectSettingsOverrides[deletedId]);
+    assert.deepEqual(
+      (yield* Ref.get(current)).projectSettingsOverrides[activeId],
+      initial.projectSettingsOverrides[activeId],
+    );
+  }).pipe(Effect.provide(layerProjectServiceDependencies), Effect.scoped),
 );

@@ -18,7 +18,14 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as DeviceService from "../../../device/DeviceService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 
+import * as ProjectStore from "../../../orchestration-v2/ProjectStore.ts";
+import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
+
 const dependencies = [
+  ProjectionStore.ProjectionStoreV2,
+  ProjectStore.ProjectStoreV2,
+  ServerSettings.ServerSettingsService,
   McpInvocationContext.McpInvocationContext,
   ThreadManagementService.ThreadManagementService,
   DeviceService.DeviceService,

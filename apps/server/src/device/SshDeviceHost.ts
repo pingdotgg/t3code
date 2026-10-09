@@ -60,13 +60,14 @@ const bootstrap = (
   config: SshDeviceHostConfig,
   owner: string,
   mode: "probe" | "start" | "agent-start" | "stop-agent" | "stop",
+  agentRuntimeId?: string,
 ) =>
   runSshCommand(targetFor(config), {
     preHostArgs: identityArgs(config),
     remoteCommandArgs: commandArgs(
       'command -v node >/dev/null 2>&1 || { echo "Node is missing from the non-interactive SSH PATH" >&2; exit 1; }; exec node',
     ),
-    stdin: remoteDeviceScript(owner, mode),
+    stdin: remoteDeviceScript(owner, mode, agentRuntimeId),
     timeoutMs: mode === "start" || mode === "agent-start" ? 1_300_000 : 45_000,
   }).pipe(
     Effect.mapError(
@@ -131,6 +132,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
   const parentScope = yield* Scope.Scope;
   const ssh = yield* resolveSshCommand;
   const owner = yield* ownerFor(config.id);
+  const agentRuntimeId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
   const provide = <A, E>(
     effect: Effect.Effect<
       A,
@@ -192,7 +194,9 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
     DeviceHost.DeviceHostError
   > {
     activated = true;
-    const result = yield* provide(bootstrap(config, owner, wantsAgent ? "agent-start" : "start"));
+    const result = yield* provide(
+      bootstrap(config, owner, wantsAgent ? "agent-start" : "start", agentRuntimeId),
+    );
     yield* onStatus("starting");
     const remote = yield* decodeStarted(result.stdout.trim()).pipe(
       Effect.mapError(
@@ -406,7 +410,10 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
       Effect.gen(function* () {
         wantsAgent = enabled;
         if (enabled && ready?.agentDevice) return { ...ready, agentDevice: ready.agentDevice };
-        if (!enabled && !ready?.agentDevice) return null;
+        if (!enabled && !ready?.agentDevice) {
+          yield* provide(bootstrap(config, owner, "stop-agent"));
+          return null;
+        }
         ready = null;
         const previousScope = connectionScope;
         connectionScope = null;
@@ -461,7 +468,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
               ),
         ),
       ),
-    stopAgent: changeAgent(false).pipe(Effect.asVoid, Effect.ignore),
+    stopAgent: changeAgent(false).pipe(Effect.asVoid),
     stop,
     platformAvailability: (platform) =>
       provide(probe(config, owner)).pipe(

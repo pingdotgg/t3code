@@ -223,6 +223,20 @@ export const isDeviceHubInstalled = (baseDir: string) =>
 export const isAgentDeviceInstalled = (baseDir: string) =>
   isToolInstalled(baseDir, AGENT_DEVICE_SPEC, (paths) => paths.agentDevice);
 
+/** Resolve a completed recorded install for daemon retirement, without installing anything. */
+export const installedAgentDevice = Effect.fn("DeviceToolchain.installedAgentDevice")(function* (
+  baseDir: string,
+  version = AGENT_DEVICE_VERSION,
+) {
+  // Recorded versions must be a single version directory, never a path or npm selector.
+  if (version.trim() !== version || !/^[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?$/.test(version))
+    return null;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const paths = toolPaths(path, baseDir, { ...AGENT_DEVICE_SPEC, version });
+  return (yield* isInstalled(fs, paths, version)) ? paths : null;
+});
+
 /** Read completed installs without downloading or starting either tool. */
 export const deviceToolVersions = Effect.fn("DeviceToolchain.versions")(function* (
   baseDir: string,
