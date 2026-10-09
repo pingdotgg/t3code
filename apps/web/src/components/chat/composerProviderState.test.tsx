@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { getProviderOptionDescriptors } from "@t3tools/shared/model";
 import { getProviderModelCapabilities } from "../../providerModels";
+import { shouldRenderTraitsControls } from "./TraitsPicker";
 import {
   getComposerPromptInjectionState,
   getComposerProviderState,
@@ -19,7 +20,8 @@ import {
 // optionDescriptors, so these tests use a single synthetic provider/model and
 // vary only the descriptor shape per scenario.
 
-const PROVIDER: ProviderDriverKind = ProviderDriverKind.make("codex");
+const PROVIDER = ProviderDriverKind.make("claudeAgent");
+const CODEX = ProviderDriverKind.make("codex");
 const MODEL = "test-model";
 
 function selectDescriptor(
@@ -73,6 +75,38 @@ const ULTRATHINK_FRAME_CLASSES = {
 } as const;
 
 describe("getComposerProviderState", () => {
+  const daybreak = selectDescriptor("cyberAccessProgram", [
+    { id: "standard", label: "Off", isDefault: true },
+    { id: "daybreakBlue", label: "Blue" },
+  ]);
+  it.each([
+    ["reasoningEffort", "high", "high"],
+    ["serviceTier", "priority", null],
+    [null, "", null],
+  ] as const)("keeps traits independent of Daybreak access: %s", (id, value, effort) => {
+    for (const available of [true, false]) {
+      const options = selections(["cyberAccessProgram", "daybreakBlue"]);
+      const modelOptions = id ? [...options, { id, value }] : options;
+      const input = {
+        provider: CODEX,
+        model: MODEL,
+        models: modelWith([
+          ...(available ? [daybreak] : []),
+          ...(id ? [selectDescriptor(id, [{ id: value, label: value, isDefault: true }])] : []),
+        ]),
+        modelOptions,
+        planModeEnabled: true,
+        prompt: "",
+      };
+      const state = getComposerProviderState(input);
+      expect(state.promptEffort).toBe(effort);
+      expect(state.modelOptionsForDispatch ?? []).toEqual(
+        available ? modelOptions : modelOptions.slice(1),
+      );
+      if (!id) expect(shouldRenderTraitsControls(input)).toBe(false);
+    }
+  });
+
   it("derives a stable prompt injection state for ordinary prompt edits", () => {
     expect(getComposerPromptInjectionState("Investigate this failure")).toBe("none");
     expect(getComposerPromptInjectionState("Ultrathink:\nInvestigate this failure")).toBe(

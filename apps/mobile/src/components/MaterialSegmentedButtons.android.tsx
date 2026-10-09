@@ -16,6 +16,7 @@ export function MaterialSegmentedButtons<Value extends number | string>(
         <SegmentedButton
           key={String(option.value)}
           selected={option.value === props.selected}
+          enabled={!option.disabled}
           onClick={() => props.onSelect(option.value)}
           modifiers={[defaultMinSize({ minHeight: 48 })]}
           colors={{

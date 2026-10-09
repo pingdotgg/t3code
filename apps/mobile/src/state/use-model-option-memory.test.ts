@@ -35,6 +35,17 @@ describe("model option memory state", () => {
     rememberModelOptions("codex", "gpt-5.4", []);
     expect(rememberedModelOptions("codex", "gpt-5.4")).toBeUndefined();
   });
+
+  it("clears revoked Daybreak memory only when explicitly requested", () => {
+    const blue = [{ id: "cyberAccessProgram", value: "daybreakBlue" }];
+    const selection = { instanceId: "codex", model: "gpt-test", options: [] };
+    rememberModelOptions("codex", "gpt-test", blue);
+    rememberModelOptions("codex", "gpt-test", []);
+    expect(withRememberedModelOptions(selection).options).toEqual(blue);
+    rememberModelOptions("codex", "gpt-test", [], true);
+    expect(rememberedModelOptions("codex", "gpt-test")).toEqual([]);
+    expect(withRememberedModelOptions(selection)).toBe(selection);
+  });
 });
 
 describe("withRememberedModelOptions", () => {

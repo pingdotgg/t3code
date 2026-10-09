@@ -3276,7 +3276,7 @@ export function GeneralSettingsPanel() {
                         },
                       }
                     : {})}
-                  onInstanceModelChange={(instanceId, model) => {
+                  onInstanceModelChange={({ instanceId, model }) => {
                     const reason = textGenerationModelDisabledReason(instanceId, model);
                     if (reason) {
                       toastManager.add({

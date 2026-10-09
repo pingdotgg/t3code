@@ -343,7 +343,10 @@ import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations"
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useRemoveClonedProject } from "../hooks/useRemoveClonedProject";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
-import { resolveAppModelSelectionForInstance } from "../modelSelection";
+import {
+  mergeRememberedModelOptions,
+  resolveAppModelSelectionForInstance,
+} from "../modelSelection";
 import {
   getComposerPromptInjectionState,
   getComposerProviderState,
@@ -10696,7 +10699,8 @@ export default function ChatView(props: ChatViewProps) {
   );
 
   const onProviderModelSelect = useCallback(
-    (instanceId: ProviderInstanceId, model: string, options?: { focusComposer?: boolean }) => {
+    (selection: ModelSelection, options?: { focusComposer?: boolean }) => {
+      const { instanceId, model } = selection;
       if (!activeThread) return;
       // Look up the configured instance so model normalization and custom
       // model lookup stay scoped to that exact instance. Unknown instance ids
@@ -10745,10 +10749,11 @@ export default function ChatView(props: ChatViewProps) {
         useComposerDraftStore.getState().stickyOptionsByModelByProvider[instanceId]?.[
           resolvedModel
         ];
-      const nextModelSelection: ModelSelection =
-        rememberedOptions !== undefined && rememberedOptions.length > 0
-          ? { instanceId, model: resolvedModel, options: [...rememberedOptions] }
-          : { instanceId, model: resolvedModel };
+      const nextModelSelection = mergeRememberedModelOptions(
+        { ...selection, model: resolvedModel },
+        rememberedOptions,
+        entry,
+      );
       const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
         providers: providerStatuses,
         hasStartedSession: activeRuntime !== null,

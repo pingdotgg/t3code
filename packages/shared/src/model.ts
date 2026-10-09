@@ -266,6 +266,45 @@ export function getProviderOptionCurrentLabel(
   );
 }
 
+/** Resolve an explicit treatment against the selected account and model's advertised choices. */
+export function getCodexDaybreakState(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor> | undefined,
+  value?: string | boolean,
+) {
+  const descriptor = descriptors?.find(
+    (candidate) => candidate.id === "cyberAccessProgram" && candidate.type === "select",
+  );
+  if (descriptor?.type !== "select") return null;
+  if (!descriptor.options.some((option) => option.id === "standard")) return null;
+  const programs = (["daybreakBlue", "daybreakRed"] as const).filter((program) =>
+    descriptor.options.some((option) => option.id === program),
+  );
+  if (programs.length === 0) return null;
+  value ??= getProviderOptionCurrentValue(descriptor);
+  return {
+    program: programs.find((program) => program === value) ?? "standard",
+    programs,
+  } as const;
+}
+
+export const CODEX_DAYBREAK_CHOICES = [
+  { value: "daybreakRed", label: "Red" },
+  { value: "daybreakBlue", label: "Blue" },
+  { value: "standard", label: "Off" },
+] as const;
+
+/** Apply a treatment, clear it with null, or leave it unchanged with undefined. */
+export function withCodexDaybreakProgram(selection: ModelSelection, value?: string | null) {
+  if (value === undefined) return selection;
+  return {
+    ...selection,
+    options: [
+      ...(selection.options ?? []).filter((option) => option.id !== "cyberAccessProgram"),
+      ...(value === null ? [] : [{ id: "cyberAccessProgram", value }]),
+    ],
+  };
+}
+
 export function buildProviderOptionSelectionsFromDescriptors(
   descriptors: ReadonlyArray<ProviderOptionDescriptor> | null | undefined,
 ): Array<ProviderOptionSelection> | undefined {

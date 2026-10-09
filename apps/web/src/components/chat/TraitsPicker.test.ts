@@ -164,8 +164,15 @@ describe("buildTraitsTriggerDisplay", () => {
   );
 
   it("treats Codex standard and fast service tiers as fast mode states", () => {
+    const daybreak = selectDescriptor(
+      "cyberAccessProgram",
+      [{ id: "daybreakBlue", label: "Blue" }],
+      "daybreakBlue",
+    );
     expect(display([EFFORT, serviceTierDescriptor("default")])).toEqual({ label: "High" });
-    expect(display([EFFORT, serviceTierDescriptor("priority")])).toEqual({ label: "High Fast" });
+    expect(display([EFFORT, serviceTierDescriptor("priority"), daybreak])).toEqual({
+      label: "High Fast",
+    });
   });
 
   it("keeps Codex Ultrafast distinct from Fast", () => {

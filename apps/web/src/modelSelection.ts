@@ -11,6 +11,7 @@ import {
 import {
   type CustomModelDefinition,
   createModelSelection,
+  getCodexDaybreakState,
   normalizeCustomModelSlug,
   readCustomModelEntries,
   resolveSelectableModel,
@@ -310,6 +311,29 @@ export function resolveAppModelSelectionForInstance(
     }
   }
   return options.find((option) => option.isDefault)?.slug ?? options[0]?.slug ?? null;
+}
+
+/** Restore remembered options with explicit choices taking precedence and current Daybreak access. */
+export function mergeRememberedModelOptions(
+  selection: ModelSelection,
+  rememberedOptions: ModelSelection["options"],
+  provider: ServerProvider | undefined,
+): ModelSelection {
+  const explicitIds = new Set(selection.options?.map((option) => option.id));
+  const descriptors =
+    provider?.instanceId === selection.instanceId && provider.driver === "codex"
+      ? provider.models.find((model) => model.slug === selection.model)?.capabilities
+          ?.optionDescriptors
+      : undefined;
+  return createModelSelection(selection.instanceId, selection.model, [
+    ...(rememberedOptions ?? []).filter(
+      (option) =>
+        !explicitIds.has(option.id) &&
+        (option.id !== "cyberAccessProgram" ||
+          getCodexDaybreakState(descriptors, option.value)?.program === option.value),
+    ),
+    ...(selection.options ?? []),
+  ]);
 }
 
 /**

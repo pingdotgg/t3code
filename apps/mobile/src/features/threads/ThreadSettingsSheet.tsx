@@ -11,6 +11,8 @@ import type { LegendListRenderItemProps } from "@legendapp/list/react-native";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import {
+  getCodexDaybreakState,
+  CODEX_DAYBREAK_CHOICES,
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
@@ -48,12 +50,16 @@ import { MaterialButton } from "../../components/MaterialButton";
 import { MaterialIconButton } from "../../components/MaterialIconButton";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
+import { SegmentedControl } from "../../components/SegmentedControl";
 import { cn } from "../../lib/cn";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import { applyProviderOptionSelection } from "../../lib/providerOptions";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
-import { rememberModelOptions } from "../../state/use-model-option-memory";
+import {
+  rememberModelOptions,
+  withRememberedModelOptions,
+} from "../../state/use-model-option-memory";
 import {
   NativeHeaderToolbar,
   NativeStackScreenOptions,
@@ -82,8 +88,9 @@ import {
   selectableChoices,
 } from "./thread-settings-options";
 import {
-  canCommitPendingModel,
+  resolvePendingModelForCommit,
   favoritesFirst,
+  getModelDaybreakToggleState,
   modelFavoriteKey,
   modelMatchesCatalogQuery,
   pendingModelAfterPress,
@@ -304,6 +311,9 @@ type ThreadSettingsSessionValue = {
   readonly runtimeModeChoices: ReturnType<typeof runtimeModeChoicesForSupportedModes>;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
   readonly displayedDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
+  readonly daybreakPrograms: ReadonlySet<string>;
+  readonly selectedDaybreakProgram: string;
+  readonly setDaybreakProgram: (program: string) => void;
   readonly displayedModelSelection: ModelSelection | null;
   readonly reportedModelSelection: ModelSelection | null;
   readonly providerExpansionOverrides: ReadonlySet<string>;
@@ -359,18 +369,37 @@ function ThreadSettingsSessionProvider(
   );
   const [showLegacyToggle, setShowLegacyToggle] = useState(false);
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
+  const [daybreakProgram, setDaybreakProgram] = useState<string>(
+    () => getCodexDaybreakState(props.optionDescriptors)?.program ?? "standard",
+  );
   const [searchQuery, setSearchQuery] = useState("");
   const [providerExpansionOverrides, setProviderExpansionOverrides] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
   const [pendingModel, setPendingModel] = useState<ModelOption | null>(null);
-
   const isApplied = useCallback(
     (option: ModelOption) =>
       option.selection.instanceId === props.selectedModel?.instanceId &&
       option.selection.model === props.selectedModel.model,
     [props.selectedModel],
   );
+  const daybreakPrograms = useMemo(
+    () =>
+      new Set<string>(
+        props.providerGroups
+          .flatMap((group) => group.models)
+          .filter((option) =>
+            providerFilter === FAVORITES_PROVIDER_FILTER
+              ? favoriteKeys.has(option.key)
+              : option.providerKey === providerFilter,
+          )
+          .flatMap((option) => getModelDaybreakToggleState(option)?.programs ?? []),
+      ),
+    [favoriteKeys, props.providerGroups, providerFilter],
+  );
+  const selectedDaybreakProgram = daybreakPrograms.has(daybreakProgram)
+    ? daybreakProgram
+    : "standard";
   // The list highlights the staged pick; Save turns it into the applied one.
   const isDisplayed = useCallback(
     (option: ModelOption) => (pendingModel ? option.key === pendingModel.key : isApplied(option)),
@@ -413,7 +442,8 @@ function ThreadSettingsSessionProvider(
   );
   const commitPendingModel = useCallback(() => {
     if (pendingModel) {
-      if (!canCommitPendingModel(pendingModel, props.providerGroups)) {
+      const model = resolvePendingModelForCommit(pendingModel, props.providerGroups);
+      if (!model) {
         Alert.alert(
           "Model unavailable",
           "Set up this provider on web or desktop, or select another model.",
@@ -421,7 +451,13 @@ function ThreadSettingsSessionProvider(
         return false;
       }
       void Haptics.selectionAsync();
-      props.onSelectModel(pendingModel);
+      rememberModelOptions(
+        model.selection.instanceId,
+        model.selection.model,
+        model.selection.options ?? [],
+        pendingModel.selection.options?.some((option) => option.id === "cyberAccessProgram"),
+      );
+      props.onSelectModel(model);
     }
     return true;
   }, [pendingModel, props.onSelectModel, props.providerGroups]);
@@ -461,12 +497,16 @@ function ThreadSettingsSessionProvider(
       setPendingModel((current) =>
         pendingModelAfterPress({
           current,
-          pressed: option,
+          pressed:
+            daybreakPrograms.size > 0 && !isApplied(option)
+              ? { ...option, selection: withRememberedModelOptions(option.selection) }
+              : option,
           pressedIsApplied: isApplied(option),
+          daybreakProgram: daybreakPrograms.size > 0 ? selectedDaybreakProgram : undefined,
         }),
       );
     },
-    [isApplied],
+    [daybreakPrograms, selectedDaybreakProgram, isApplied],
   );
 
   const value = useMemo<ThreadSettingsSessionValue>(
@@ -478,6 +518,9 @@ function ThreadSettingsSessionProvider(
       runtimeModeChoices,
       onUpdateRuntimeMode: props.onUpdateRuntimeMode,
       displayedDescriptors,
+      daybreakPrograms,
+      selectedDaybreakProgram,
+      setDaybreakProgram,
       displayedModelSelection: pendingModel?.selection ?? props.selectedModel,
       reportedModelSelection: pendingModel ? null : (props.reportedModelSelection ?? null),
       favoriteKeys,
@@ -504,6 +547,8 @@ function ThreadSettingsSessionProvider(
       commitPendingModel,
       compatibleRuntimeMode,
       displayedDescriptors,
+      daybreakPrograms,
+      selectedDaybreakProgram,
       favoriteKeys,
       favoritesLoaded,
       providerExpansionOverrides,
@@ -653,6 +698,10 @@ function useThreadSettingsCatalogItems(
         const visibleModels = favoritesFirst(
           catalogModels.filter(
             (model) =>
+              (session.selectedDaybreakProgram === "standard" ||
+                getModelDaybreakToggleState(model)?.programs.some(
+                  (program) => program === session.selectedDaybreakProgram,
+                )) &&
               (session.providerFilter !== FAVORITES_PROVIDER_FILTER ||
                 session.favoriteKeys.has(model.key)) &&
               modelMatchesCatalogQuery({
@@ -719,6 +768,7 @@ function useThreadSettingsCatalogItems(
       }),
     [
       session.isApplied,
+      session.selectedDaybreakProgram,
       session.isDisplayed,
       session.favoriteKeys,
       session.providerExpansionOverrides,
@@ -756,6 +806,7 @@ function ThreadSettingsOptionsItem(props: {
         layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
       >
         {session.displayedDescriptors.map((descriptor) => {
+          if (descriptor.id === "cyberAccessProgram") return null;
           if (descriptor.type === "select") {
             return (
               <Animated.View
@@ -939,6 +990,23 @@ function ThreadSettingsMainContent(props: {
       maintainVisibleContentPosition={THREAD_SETTINGS_MAINTAIN_VISIBLE_CONTENT_POSITION}
       ListHeaderComponent={
         <>
+          {session.daybreakPrograms.size > 0 ? (
+            <View className="mx-4 flex-row items-center justify-between rounded-2xl bg-grouped-card px-4 py-1">
+              <Text className="text-sm font-t3-medium text-foreground">Daybreak</Text>
+              <SegmentedControl
+                size="compact"
+                className="w-48"
+                selected={session.selectedDaybreakProgram}
+                onSelect={session.setDaybreakProgram}
+                options={CODEX_DAYBREAK_CHOICES.map(({ value, label }) => ({
+                  value,
+                  label,
+                  accessibilityLabel: `Daybreak ${label}`,
+                  disabled: value !== "standard" && !session.daybreakPrograms.has(value),
+                }))}
+              />
+            </View>
+          ) : null}
           {Platform.OS === "android" ? (
             <View className="px-4 pb-2 pt-3">
               <View

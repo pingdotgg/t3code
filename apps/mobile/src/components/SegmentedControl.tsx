@@ -48,11 +48,13 @@ export function SegmentedControl<Value extends number | string>(
             key={String(option.value)}
             accessibilityRole={Platform.OS === "ios" ? "button" : (props.role ?? "button")}
             accessibilityLabel={option.accessibilityLabel ?? option.label}
-            accessibilityState={{ selected: active }}
+            accessibilityState={{ selected: active, disabled: option.disabled }}
+            disabled={option.disabled}
             onPress={() => props.onSelect(option.value)}
             className={cn(
               "flex-1 items-center justify-center rounded-full",
               compact ? "h-9" : "h-11",
+              option.disabled && "opacity-40",
             )}
           >
             <Text

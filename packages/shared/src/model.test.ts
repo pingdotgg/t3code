@@ -13,6 +13,7 @@ import {
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
+  getCodexDaybreakState,
   readCustomModelEntries,
   toCustomModelSetting,
   getProviderOptionBooleanSelectionValue,
@@ -21,6 +22,36 @@ import {
   normalizeModelSlug,
   modelSelectionsEqual,
 } from "./model.ts";
+
+describe("Daybreak state", () => {
+  const blue = "daybreakBlue";
+  const red = "daybreakRed";
+  const standard = "standard";
+  it.each([
+    [[], standard, null],
+    [[blue], standard, null],
+    [[standard, red, blue], standard, { program: standard, programs: [blue, red] }],
+    [[standard, blue], blue, { program: blue, programs: [blue] }],
+    [[standard, red], red, { program: red, programs: [red] }],
+    [[standard, red], standard, { program: standard, programs: [red] }],
+    [[standard, red], blue, { program: standard, programs: [red] }],
+    [[standard, blue, red], red, { program: red, programs: [blue, red] }],
+  ])("resolves advertised %j with saved %s", (programs, currentValue, expected) => {
+    const descriptors = [
+      {
+        id: "cyberAccessProgram",
+        label: "Daybreak",
+        type: "select" as const,
+        options: programs.map((id) => ({ id, label: id })),
+        currentValue,
+      },
+    ];
+    expect(getCodexDaybreakState(descriptors)).toEqual(expected);
+    expect(
+      getCodexDaybreakState([{ ...descriptors[0]!, currentValue: blue }], currentValue),
+    ).toEqual(expected);
+  });
+});
 
 it("keeps the Codex catalog display formatting", () => {
   expect(formatCodexModelName("gpt-5.3-codex-spark")).toBe("GPT-5.3-Codex-Spark");

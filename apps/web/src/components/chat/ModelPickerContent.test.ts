@@ -12,6 +12,8 @@ import {
   resolveModelPickerSelectedModel,
   shouldIncludeModelPickerOption,
   shouldOfferModelPickerSetup,
+  modelPickerDaybreakPrograms,
+  modelPickerSelection,
 } from "./ModelPickerContent";
 
 function entry(status: ServerProvider["status"], driver = "opencode") {
@@ -31,6 +33,87 @@ function entry(status: ServerProvider["status"], driver = "opencode") {
     },
   ])[0]!;
 }
+
+describe("Daybreak picker mode", () => {
+  const luna = {
+    instanceId: ProviderInstanceId.make("codex_work"),
+    slug: "luna",
+    daybreakPrograms: ["daybreakBlue"],
+  };
+  const claude = ProviderInstanceId.make("claude");
+  const blue = ["daybreakBlue"];
+  const both = [...blue, "daybreakRed"];
+  const favorites = new Set([`${luna.instanceId}:luna`]);
+  const models = [
+    luna,
+    {
+      instanceId: ProviderInstanceId.make("codex_red"),
+      slug: "sol",
+      daybreakPrograms: ["daybreakRed"],
+    },
+  ];
+  const reasoning = { id: "reasoningEffort", value: "high" };
+  const selection = (value: string) => ({
+    instanceId: luna.instanceId,
+    model: luna.slug,
+    options: [{ ...reasoning }, { id: "cyberAccessProgram", value }],
+  });
+
+  it.each([
+    [luna.instanceId, favorites, false, blue],
+    ["favorites", favorites, false, blue],
+    [claude, favorites, true, []],
+    ["favorites", new Set<string>(), false, []],
+    [luna.instanceId, favorites, true, both],
+  ] as const)("scopes access to %s (case %#)", (instance, saved, searching, expected) => {
+    expect(modelPickerDaybreakPrograms(models, instance, saved, searching)).toEqual(expected);
+  });
+
+  it("unions current account models and a favorite with both entitlements", () => {
+    expect(
+      modelPickerDaybreakPrograms(
+        models.map((model) => ({ ...model, instanceId: luna.instanceId })),
+        luna.instanceId,
+        favorites,
+      ),
+    ).toEqual(both);
+    expect(
+      modelPickerDaybreakPrograms([{ ...luna, daybreakPrograms: both }], "favorites", favorites),
+    ).toEqual(both);
+  });
+
+  it.each(["daybreakBlue", "daybreakRed", "standard"])(
+    "selects %s without mutating reasoning or the current program",
+    (program) => {
+      const previous = program === "standard" ? "daybreakBlue" : "standard";
+      const current = selection(previous);
+      const target = { ...luna, daybreakPrograms: both };
+      expect(modelPickerSelection(target, current, program)).toEqual(selection(program));
+      expect(current.options[1]?.value).toBe(previous);
+    },
+  );
+
+  it("rejects a program unavailable to the selected account and model", () => {
+    expect(modelPickerSelection(luna, selection("standard"), "daybreakRed")).toBeNull();
+  });
+
+  it.each(["daybreakBlue", "daybreakRed"])(
+    "clears revoked %s access when reselecting the same model, retaining other options",
+    (program) => {
+      const options = [reasoning, { id: "serviceTier", value: "fast" }];
+      const current = {
+        ...selection(program),
+        options: [...options, { id: "cyberAccessProgram", value: program }],
+      };
+      for (const daybreakPrograms of [undefined, []]) {
+        const target = { ...luna, daybreakPrograms };
+        expect(modelPickerSelection(target, current, "standard")).toEqual({ ...current, options });
+        expect(modelPickerSelection(target, current, undefined)).toEqual({ ...current, options });
+        expect(modelPickerSelection(target, current, program)).toBeNull();
+      }
+    },
+  );
+});
 
 describe("shouldIncludeModelPickerOption", () => {
   it.each(["ready", "error"] as const)(

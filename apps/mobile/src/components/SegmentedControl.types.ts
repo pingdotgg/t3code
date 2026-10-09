@@ -3,6 +3,7 @@ export interface SegmentedControlProps<Value extends number | string> {
     readonly value: Value;
     readonly label: string;
     readonly accessibilityLabel?: string;
+    readonly disabled?: boolean;
   }[];
   readonly selected: Value;
   readonly onSelect: (value: Value) => void;
