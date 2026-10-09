@@ -6,10 +6,19 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as CursorKeychain from "./CursorKeychain.ts";
 import { cursorUsageResponseToLimits, readCursorUsageLimits } from "./usageLimits.ts";
 
-const withNodeServices = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>) =>
-  effect.pipe(Effect.provide(NodeServices.layer));
+const withNodeServices = <A, E>(
+  effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | CursorKeychain.CursorKeychain>,
+  accessToken: CursorKeychain.CursorKeychain["Service"]["accessToken"] = Effect.die(
+    "must not read Keychain",
+  ),
+) =>
+  effect.pipe(
+    Effect.provideService(CursorKeychain.CursorKeychain, { accessToken }),
+    Effect.provide(NodeServices.layer),
+  );
 
 describe("Cursor usage limits", () => {
   const checkedAt = "2026-09-16T00:00:00.000Z";
@@ -121,9 +130,6 @@ describe("Cursor usage limits", () => {
                   ...(token ? { CURSOR_AUTH_TOKEN: token } : {}),
                 },
                 false,
-                async () => {
-                  throw new Error("must not read Keychain before opt-in");
-                },
               ).pipe(
                 Effect.provideService(HostProcessPlatform, platform),
                 Effect.provideService(
@@ -195,7 +201,7 @@ describe("Cursor usage limits", () => {
   it.effect("reads the default macOS Cursor login from Keychain for limits", () =>
     Effect.gen(function* () {
       const limits = yield* withNodeServices(
-        readCursorUsageLimits({ apiEndpoint: "" }, {}, true, async () => "keychain-token").pipe(
+        readCursorUsageLimits({ apiEndpoint: "" }, {}, true).pipe(
           Effect.provideService(HostProcessPlatform, "darwin"),
           Effect.provideService(
             FileSystem.FileSystem,
@@ -216,6 +222,7 @@ describe("Cursor usage limits", () => {
             }),
           ),
         ),
+        Effect.succeed("keychain-token"),
       );
       expect(limits.windows[0]?.usedPercent).toBe(42);
     }),
@@ -224,14 +231,17 @@ describe("Cursor usage limits", () => {
   it.effect("reports a Keychain initialization failure without failing the provider refresh", () =>
     Effect.gen(function* () {
       const limits = yield* withNodeServices(
-        readCursorUsageLimits({ apiEndpoint: "" }, {}, true, async () => {
-          throw new Error("Keychain initialization failed");
-        }).pipe(
+        readCursorUsageLimits({ apiEndpoint: "" }, {}, true).pipe(
           Effect.provideService(HostProcessPlatform, "darwin"),
           Effect.provideService(
             HttpClient.HttpClient,
             HttpClient.make(() => Effect.die("must not request limits without a login")),
           ),
+        ),
+        Effect.fail(
+          new CursorKeychain.CursorKeychainReadError({
+            cause: new Error("Keychain initialization failed"),
+          }),
         ),
       );
       expect(limits.unavailable?.reason).toBe("probeFailed");
@@ -247,9 +257,7 @@ describe("Cursor usage limits", () => {
         ["", { CURSOR_API_ENDPOINT: "https://cursor-proxy.example" }],
       ] as const) {
         const limits = yield* withNodeServices(
-          readCursorUsageLimits({ apiEndpoint }, environment, true, async () => {
-            throw new Error("must not read Keychain for a custom endpoint");
-          }).pipe(
+          readCursorUsageLimits({ apiEndpoint }, environment, true).pipe(
             Effect.provideService(HostProcessPlatform, "darwin"),
             Effect.provideService(
               HttpClient.HttpClient,

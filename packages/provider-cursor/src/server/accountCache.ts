@@ -10,9 +10,9 @@
  * that range rather than adding to it, so each timestamp's records always come
  * from a single fetch and their occurrence indexes cannot collide.
  *
- * @module cursorAccountCache
+ * @module provider-cursor/server/accountCache
  */
-import { cursorRateModel } from "./cursorUsageReader.ts";
+import { cursorRateModel } from "./accountUsage.ts";
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 
 export type CursorCredentialSource = string | { readonly kind: "keychain" };

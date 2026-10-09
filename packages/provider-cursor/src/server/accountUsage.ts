@@ -1,18 +1,19 @@
 // Node fs reads CLI credentials, and crypto hashes account IDs for deduplication.
 // @effect-diagnostics nodeBuiltinImport:off
+/**
+ * Cursor account usage from its dashboard API, read with the saved CLI or
+ * Keychain login. The dashboard covers CLI, desktop and headless usage from
+ * every machine on the account.
+ *
+ * @module provider-cursor/server/accountUsage
+ */
 import * as NodeFSP from "node:fs/promises";
 import * as NodeCrypto from "node:crypto";
 import * as NodeTimersPromises from "node:timers/promises";
 
-import * as Context from "effect/Context";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
-import {
-  CursorKeychainTimeoutError,
-  readMacCursorAccessToken,
-} from "@t3tools/provider-cursor/server";
+
+import { isCursorKeychainTimeoutError } from "./CursorKeychain.ts";
 
 function object(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -69,13 +70,17 @@ function boundaryOverlap(previous: readonly string[], current: readonly string[]
   return lengths.at(-1) ?? 0;
 }
 
-/** Dashboard usage includes headless agents and reports fresh input separately from cache reads. */
+/**
+ * Dashboard usage includes headless agents and reports fresh input separately
+ * from cache reads. `keychainToken` is only called for a Keychain login.
+ */
 export async function readCursorAccountUsage(
   credentialSource: string | { readonly kind: "keychain" },
   sinceMs: number,
   endDate: number,
   request: (url: string, init: RequestInit) => Promise<Response> = globalThis.fetch,
-  keychainToken: () => Promise<string | null> = readMacCursorAccessToken,
+  keychainToken: () => Promise<string | null> = () =>
+    Promise.reject(new Error("No Keychain reader")),
 ): Promise<CursorAccountUsageReadResult> {
   let accessToken: unknown;
   try {
@@ -93,7 +98,7 @@ export async function readCursorAccountUsage(
         ? null
         : typeof credentialSource === "string"
           ? "Cursor credentials could not be read."
-          : cause instanceof CursorKeychainTimeoutError
+          : isCursorKeychainTimeoutError(cause)
             ? "Allow Keychain access on the Mac running T3 Code, then refresh."
             : "Cursor Keychain credentials could not be read.",
     };
@@ -293,24 +298,3 @@ export async function readCursorAccountUsage(
     cancel.abort();
   }
 }
-
-/** Reads one range of Cursor account usage. A service so tests can stand in for Cursor's API. */
-export class CursorAccountReader extends Context.Service<
-  CursorAccountReader,
-  {
-    readonly read: (
-      credentialSource: string | { readonly kind: "keychain" },
-      sinceMs: number,
-      untilMs: number,
-    ) => Effect.Effect<CursorAccountUsageReadResult>;
-  }
->()("t3/usage/cursorUsageReader/CursorAccountReader") {}
-
-/** Reads Cursor's dashboard API with the saved CLI or Keychain login. */
-export const layer = Layer.succeed(
-  CursorAccountReader,
-  CursorAccountReader.of({
-    read: (credentialSource, sinceMs, untilMs) =>
-      Effect.promise(() => readCursorAccountUsage(credentialSource, sinceMs, untilMs)),
-  }),
-);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { cursorRateModel } from "./cursorUsageReader.ts";
+import { cursorRateModel } from "@t3tools/provider-cursor/server/accountUsage";
 import type { UsageSpeed } from "@t3tools/provider-core/server/usage";
 import {
   cacheSavingsUsd,
