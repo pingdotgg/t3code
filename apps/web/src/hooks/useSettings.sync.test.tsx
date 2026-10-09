@@ -122,6 +122,40 @@ afterEach(async () => {
 });
 
 describe("shared settings writes", () => {
+  it("waits for the remaining target before reporting a partial save", async () => {
+    let finishRemote = () => {};
+    const remote = new Promise((resolve) => {
+      finishRemote = () => resolve(AsyncResult.success(DEFAULT_SERVER_SETTINGS));
+    });
+    state.persist.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("Permission denied"))),
+    );
+    state.persist.mockReturnValueOnce(remote);
+    await mountEditor();
+    await act(async () => saveSharedSettings());
+    expect(state.toast).not.toHaveBeenCalled();
+    await act(async () => finishRemote());
+    expect(state.toast).toHaveBeenCalledExactlyOnceWith({
+      type: "error",
+      title: "Setting saved on some environments",
+      description: "Could not save on primary: Permission denied\nSaved on remote.",
+    });
+  });
+
+  it("keeps a single-target failure specific to that environment", async () => {
+    state.registry!.set(state.sessions.get(remoteId)!, AsyncResult.success(session([])));
+    state.persist.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("Permission denied"))),
+    );
+    await mountEditor();
+    await act(async () => saveSharedSettings());
+    expect(state.toast).toHaveBeenCalledExactlyOnceWith({
+      type: "error",
+      title: "Setting not saved",
+      description: "Could not save on primary: Permission denied",
+    });
+  });
+
   it("names the failed environment when a server rejects a save after the grant check", async () => {
     state.persist.mockResolvedValueOnce(AsyncResult.success(DEFAULT_SERVER_SETTINGS));
     state.persist.mockResolvedValueOnce(
@@ -131,8 +165,8 @@ describe("shared settings writes", () => {
     await act(async () => saveSharedSettings());
     expect(state.toast).toHaveBeenCalledExactlyOnceWith({
       type: "error",
-      title: "Setting not saved",
-      description: "Could not save on remote: Permission denied",
+      title: "Setting saved on some environments",
+      description: "Could not save on remote: Permission denied\nSaved on primary.",
     });
   });
 

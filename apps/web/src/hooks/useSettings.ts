@@ -540,7 +540,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
           if (environmentId) {
             targets.add(environmentId);
           }
-          let wroteToTarget = false;
+          const writes: Array<Parameters<typeof persist>[0]> = [];
           const deniedLabels: string[] = [];
           for (const targetId of targets) {
             const target = environments.find((candidate) => candidate.environmentId === targetId);
@@ -562,13 +562,12 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
               deniedLabels.push(target?.label ?? targetId);
               continue;
             }
-            wroteToTarget = true;
-            void persistServerSettings({
+            writes.push({
               environmentId: targetId,
               input: { patch: targetPatch },
             });
           }
-          if (!wroteToTarget) {
+          if (writes.length === 0) {
             warnUnsaved(
               deniedLabels.length > 0
                 ? `This connection lacks permission to change settings on ${deniedLabels.join(", ")}.`
@@ -576,6 +575,36 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
                   ? "Update older servers to save this setting."
                   : undefined,
             );
+          } else {
+            void Promise.all(
+              writes.map(async (request) => ({
+                label:
+                  environments.find((target) => target.environmentId === request.environmentId)
+                    ?.label ?? request.environmentId,
+                result: await persist(request),
+              })),
+            ).then((outcomes) => {
+              const failures = outcomes.flatMap(({ label, result }) => {
+                if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return [];
+                const error = squashAtomCommandFailure(result);
+                return [
+                  `Could not save on ${label}: ${error instanceof Error ? error.message : "The save failed. Try reconnecting and saving again."}`,
+                ];
+              });
+              if (failures.length === 0) return;
+              const saved = outcomes
+                .filter(({ result }) => result._tag === "Success")
+                .map(({ label }) => label);
+              toastManager.add({
+                type: "error",
+                title:
+                  saved.length > 0 ? "Setting saved on some environments" : "Setting not saved",
+                description: [
+                  ...failures,
+                  ...(saved.length > 0 ? [`Saved on ${saved.join(", ")}.`] : []),
+                ].join("\n"),
+              });
+            });
           }
         }
       }
@@ -583,7 +612,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
         void persistClientSettingsPatch(clientPatch);
       }
     },
-    [environmentId, environments, persistServerSettings, sharedSettingsSyncTargetIds],
+    [environmentId, environments, persist, persistServerSettings, sharedSettingsSyncTargetIds],
   );
 
   return updateSettings;
