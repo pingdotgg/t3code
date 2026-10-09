@@ -30,6 +30,7 @@ import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor
 import { resolveAssistantCitationCommentDismissal } from "./assistantCitationCommentDismissal";
 import { observeAssistantCitationCommentSource } from "./AssistantCitationSource";
 import { composerFloatingLayerProps } from "./composerEventScope";
+import { observeResize } from "~/lib/observeResize";
 
 export function AssistantCitationChip({
   citation,
@@ -253,9 +254,7 @@ function AssistantCitationQuote({ citation }: { citation: AssistantCitation }) {
     <div
       ref={(element) => {
         if (!element) return;
-        const observer = new ResizeObserver(() => updateFade(element));
-        observer.observe(element);
-        return () => observer.disconnect();
+        return observeResize(element, () => updateFade(element));
       }}
       onScroll={(event) => updateFade(event.currentTarget)}
       className={cn(

@@ -41,6 +41,7 @@ import { Input } from "~/components/ui/input";
 import { toastManager } from "~/components/ui/toast";
 import { cn } from "~/lib/utils";
 import { refreshPreviewStreamAccess, usePreviewStreamAccess } from "~/state/previewStream";
+import { observeResize } from "~/lib/observeResize";
 
 /** Chrome-row controls for a server tab; commands require current ownership. */
 export interface ServerBrowserHandle {
@@ -354,14 +355,13 @@ export function ServerBrowserSurface(props: {
             },
       );
     };
-    const observer = new ResizeObserver(() => {
+    const stopObserving = observeResize(element, () => {
       if (timer !== null) clearTimeout(timer);
       // The first size connects right away; later ones settle before resizing the page.
       timer = setTimeout(measure, sizeRef.current === null ? 0 : RESIZE_DEBOUNCE_MS);
     });
-    observer.observe(element);
     return () => {
-      observer.disconnect();
+      stopObserving();
       if (timer !== null) clearTimeout(timer);
     };
   }, [followSize]);

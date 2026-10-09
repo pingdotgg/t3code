@@ -7,10 +7,10 @@ import {
   type ComponentProps,
   type CSSProperties,
 } from "react";
-import { flushSync } from "react-dom";
 import { ChatCanvasContext } from "./ChatCanvasContext";
 import { resolveChatCanvasLayout, type ChatCanvasPreview } from "./chatCanvasLayout";
 import type { PreviewMiniPlayerObstacles } from "../preview/previewMiniPlayerLayout";
+import { observeResize } from "../../lib/observeResize";
 
 /**
  * Owns the available conversation space. Cards only report where they sit; the
@@ -91,12 +91,10 @@ export function ChatCanvas({
       );
     };
     measure();
-    const observer = new ResizeObserver(() => flushSync(measure));
-    observer.observe(element);
-    observer.observe(probe);
-    if (composerOverlayElement) observer.observe(composerOverlayElement);
-    if (timelineElement) observer.observe(timelineElement);
-    return () => observer.disconnect();
+    const observed: Element[] = [element, probe];
+    if (composerOverlayElement) observed.push(composerOverlayElement);
+    if (timelineElement) observed.push(timelineElement);
+    return observeResize(observed, measure);
   }, [composerOverlayElement, timelineElement]);
   const context = useMemo(() => {
     const container = { width: measurements.width, height: measurements.height };
