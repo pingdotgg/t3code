@@ -426,6 +426,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
   },
   {
+    id: "automatic-updates",
+    title: "Update automatically",
+    to: "/settings/general",
+    searchTerms: ["background auto install provider cli upgrade idle restart"],
+    scope: "environment-defaults",
+  },
+  {
     id: "continue-threads-after-server-update",
     title: "Continue threads after restarts",
     to: "/settings/general",

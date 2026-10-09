@@ -16,6 +16,7 @@ import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
@@ -40,6 +41,8 @@ export class BackgroundPolicy extends Context.Service<
     ) => Effect.Effect<void>;
     readonly reportHostPowerState: (snapshot: HostPowerSnapshot) => Effect.Effect<void>;
     readonly snapshot: Effect.Effect<BackgroundPolicySnapshot>;
+    /** When any client last reported recent interaction, so updates can wait for quiet. */
+    readonly lastClientInteractionAt: Effect.Effect<Option.Option<DateTime.Utc>>;
     readonly streamChanges: Stream.Stream<BackgroundPolicySnapshot>;
     readonly subscribe: Effect.Effect<
       {
@@ -213,6 +216,7 @@ export const make = Effect.fn("background.policy.make")(function* () {
   const hostPowerMonitor = yield* HostPowerMonitor.HostPowerMonitor;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const leasesRef = yield* Ref.make(new Map<string, ClientActivityLease>());
+  const lastClientInteractionAtRef = yield* Ref.make(Option.none<DateTime.Utc>());
   const changes = yield* PubSub.sliding<BackgroundPolicySnapshot>(1);
   const publishMutex = yield* Semaphore.make(1);
 
@@ -266,6 +270,9 @@ export const make = Effect.fn("background.policy.make")(function* () {
           expiresAt,
         };
         yield* Ref.update(leasesRef, (leases) => upsertClientActivityLease(leases, lease, now));
+        if (input.recentlyInteracted) {
+          yield* Ref.set(lastClientInteractionAtRef, Option.some(now));
+        }
         yield* publishSnapshotUnlocked;
       }),
     );
@@ -339,6 +346,7 @@ export const make = Effect.fn("background.policy.make")(function* () {
     removeRpcClient,
     reportHostPowerState: hostPowerMonitor.report,
     snapshot,
+    lastClientInteractionAt: Ref.get(lastClientInteractionAtRef),
     streamChanges: Stream.fromPubSub(changes),
     subscribe: subscribeBeforeSnapshot(changes, snapshot, publishMutex),
     hasDemand,

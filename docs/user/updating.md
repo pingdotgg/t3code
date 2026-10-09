@@ -74,6 +74,12 @@ update can roll back to the previous version. If the update still fails:
 
 ## Update providers
 
+**Settings → General → Update automatically** is on by default. Each environment
+installs provider CLI updates in the background once no thread is running or
+waiting for you, no client has been used for 15 minutes, and no scheduled task
+or usage-limit resume is due within 5 minutes. A failed update is retried
+after 6 hours or when a newer version is published.
+
 **Settings → Providers** shows provider updates for the selected environment.
 **Update all** updates every outdated provider on every connected environment
 at once. Hover it to see which providers it will update. Providers that only

@@ -147,6 +147,9 @@ export type ProjectionStoreV2Error = typeof ProjectionStoreV2Error.Type;
 export type ProjectionRecoveryKind =
   | "queued-runs"
   | "runtime"
+  // Work a restart or CLI replacement would cut off. Idle provider sessions
+  // do not count: they resume on the next turn.
+  | "active-work"
   | "subagent-results"
   | "delegated-completions";
 
@@ -564,6 +567,19 @@ function needsRecovery(
         )
       );
     }
+    case "active-work":
+      return (
+        projection.runs.some(
+          (run) =>
+            ["preparing", "starting", "running", "waiting"].includes(run.status) ||
+            (run.status === "queued" && run.queueHeld !== true),
+        ) ||
+        projection.runtimeRequests.some((request) => request.status === "pending") ||
+        projection.providerThreads.some(
+          (thread) =>
+            thread.status === "active" || (thread.pendingBackgroundTasks?.length ?? 0) > 0,
+        )
+      );
     case "runtime":
       return (
         projection.runs.some(
@@ -3591,6 +3607,26 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       AND type = 'subagent_result'
                   )
                   ELSE 0 END
+              `;
+            case "active-work":
+              return sql`
+                SELECT thread_id FROM orchestration_v2_projection_runs
+                WHERE status IN ('preparing', 'starting', 'running', 'waiting')
+                UNION
+                SELECT thread_id FROM orchestration_v2_projection_runs
+                WHERE status = 'queued'
+                  AND CASE WHEN json_valid(payload_json)
+                    THEN json_extract(payload_json, '$.queueHeld') IS NOT 1
+                    ELSE 1 END
+                UNION
+                SELECT thread_id FROM orchestration_v2_projection_runtime_requests
+                WHERE status = 'pending'
+                UNION
+                SELECT thread_id FROM orchestration_v2_projection_provider_threads
+                WHERE status = 'active'
+                  OR CASE WHEN json_valid(payload_json)
+                    THEN json_array_length(payload_json, '$.pendingBackgroundTasks') > 0
+                    ELSE 0 END
               `;
             case "runtime":
               return sql`
