@@ -48,6 +48,7 @@ import {
 } from "@t3tools/shared/relayJwt";
 import { isSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Context from "effect/Context";
+import * as Config from "effect/Config";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -56,6 +57,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -114,9 +116,9 @@ import {
   isAllowedEndpointOrigin,
   isSupportedLinkProviderKind,
   linkProofScopes,
+  linkProofRequestUrl,
   managedEndpointRuntimeConfigsMatch,
   parseManagedEndpointLocalOrigin,
-  requestAbsoluteUrl,
 } from "./linkChecks.ts";
 import { desktopUpdateRestartPending, pendingUpdateHandoffExists } from "./updateHandoff.ts";
 
@@ -674,8 +676,19 @@ const make = Effect.gen(function* () {
 
   const linkProof = Effect.fn("environment.cloud.linkProof")(
     function* (request: RelayLinkProofRequest, httpRequest: HttpServerRequest.HttpServerRequest) {
-      const requestUrl = requestAbsoluteUrl(httpRequest);
-      if (requestUrl === null || hasForwardedAuthorityHeaders(httpRequest)) {
+      const proxyToken = hasForwardedAuthorityHeaders(httpRequest)
+        ? yield* Config.Redacted("T3CODE_WORKER_PROXY_TOKEN").pipe(
+            Config.option,
+            Effect.mapError(() => new CloudLinkOriginInvalidError({ origin: "endpoint" })),
+          )
+        : Option.none();
+      const address = httpServer.address;
+      const requestUrl = linkProofRequestUrl(
+        httpRequest,
+        Option.isSome(proxyToken) ? Redacted.value(proxyToken.value) : undefined,
+        typeof address !== "string" && "port" in address ? address.port : undefined,
+      );
+      if (requestUrl === null) {
         return yield* new CloudLinkOriginInvalidError({ origin: "endpoint" });
       }
       const proof = yield* makeCloudLinkProof(request, requestUrl);

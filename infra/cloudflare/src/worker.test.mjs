@@ -23,6 +23,31 @@ NodeTest.test("migration restricts the gateway to one upstream", async () => {
 });
 
 NodeTest.test(
+  "replaces client proxy credentials only with a configured Worker secret",
+  async () => {
+    const token = "test-worker-proxy-secret-32-characters-long";
+    for (const configured of [undefined, "short", token]) {
+      const gateway = createGateway(async (request) => {
+        NodeAssert.equal(
+          request.headers.get("x-t3code-proxy-token"),
+          configured === token ? token : null,
+        );
+        NodeAssert.equal(request.headers.get("x-forwarded-host"), "app.example");
+        NodeAssert.equal(request.headers.get("x-forwarded-proto"), "https");
+        return new Response("ok");
+      });
+      const response = await gateway.fetch(
+        new Request("https://app.example/api/connect/link-proof", {
+          headers: { "x-t3code-proxy-token": "spoofed-client-secret" },
+        }),
+        { ...database("https://backend.example"), T3CODE_WORKER_PROXY_TOKEN: configured },
+      );
+      NodeAssert.equal(response.status, 200);
+    }
+  },
+);
+
+NodeTest.test(
   "forwards streamed bodies, auth, cookies and queries to the configured origin",
   async () => {
     const gateway = createGateway(async (request) => {

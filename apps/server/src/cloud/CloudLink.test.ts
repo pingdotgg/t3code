@@ -1,11 +1,13 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import { HttpClient, HttpServer } from "effect/http";
+import { HttpClient, HttpServer, HttpServerRequest } from "effect/http";
+import { decodeJwt } from "jose";
 import * as NetAddress from "effect/net/NetAddress";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
@@ -29,6 +31,7 @@ const encode = (value: string) => new TextEncoder().encode(value);
 /** A linked environment whose secret store can refuse writes, and the relay calls it made. */
 const withService = <A, E>(
   options: {
+    readonly proxyToken?: string;
     readonly failHoldWrite?: boolean;
     readonly failActivityWrite?: boolean;
     readonly relayFails?: boolean;
@@ -42,6 +45,7 @@ const withService = <A, E>(
   },
   body: (input: {
     readonly preferences: { readonly update: CloudLink.CloudLink["Service"]["updatePreferences"] };
+    readonly linkProof: CloudLink.CloudLink["Service"]["linkProof"];
     readonly stored: Map<string, Uint8Array>;
     readonly relayCalls: Array<boolean>;
   }) => Effect.Effect<A, E, never>,
@@ -70,6 +74,7 @@ const withService = <A, E>(
     );
     const layerDependencies = Layer.mergeAll(
       Layer.mock(ServerSecretStore.ServerSecretStore)({
+        create: (name, value) => Effect.sync(() => void stored.set(name, value)),
         get: (name) =>
           (options.failActivityRead && name === PUBLISH_AGENT_ACTIVITY_SECRET) ||
           (options.failHoldRead && name === HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET)
@@ -93,6 +98,13 @@ const withService = <A, E>(
       }),
       Layer.mock(ServerEnvironment.ServerEnvironment)({
         getEnvironmentId: Effect.succeed(EnvironmentId.make("environment-1")),
+        getDescriptor: Effect.succeed({
+          environmentId: EnvironmentId.make("environment-1"),
+          label: "test",
+          platform: { os: "linux", arch: "x64" },
+          serverVersion: "test",
+          capabilities: { repositoryIdentity: false },
+        }),
       }),
       Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({ requestCatchUp: () => Effect.void }),
       // Saving preferences touches none of the link's other dependencies.
@@ -111,12 +123,94 @@ const withService = <A, E>(
     );
     return yield* Effect.gen(function* () {
       const link = yield* CloudLink.CloudLink;
-      return yield* body({ preferences: { update: link.updatePreferences }, stored, relayCalls });
+      return yield* body({
+        preferences: { update: link.updatePreferences },
+        linkProof: link.linkProof,
+        stored,
+        relayCalls,
+      });
     }).pipe(
       Effect.provide(CloudLink.layer.pipe(Layer.provide(layerDependencies))),
       Effect.provideService(FetchHttpClient.Fetch, fetch),
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env: options.proxyToken ? { T3CODE_WORKER_PROXY_TOKEN: options.proxyToken } : {},
+          }),
+        ),
+      ),
     );
   });
+
+it.effect("only signs forwarded link proofs authenticated by the configured Worker", () => {
+  const token = "test-worker-proxy-secret-32-characters-long";
+  return withService({ proxyToken: token }, ({ linkProof }) =>
+    Effect.gen(function* () {
+      const payload = {
+        challenge: "challenge",
+        relayIssuer: "https://relay.example.test",
+        endpoint: {
+          providerKind: "manual" as const,
+          httpBaseUrl: "https://app.example.test",
+          wsBaseUrl: "wss://app.example.test",
+        },
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      };
+      const request = (credential: string) =>
+        HttpServerRequest.fromWeb(
+          new Request("http://app.example.test/api/connect/link-proof", {
+            headers: {
+              "x-forwarded-host": "app.example.test",
+              "x-forwarded-proto": "https",
+              "x-t3code-proxy-token": credential,
+            },
+          }),
+        );
+      const proof = yield* linkProof(payload, request(token));
+      assert.deepEqual(decodeJwt(proof).origin, payload.origin);
+      const invalidToken = yield* Effect.flip(linkProof(payload, request("spoofed")));
+      assert.equal(invalidToken._tag, "CloudLinkOriginInvalidError");
+      const wrongPort = yield* Effect.flip(
+        linkProof(
+          { ...payload, origin: { ...payload.origin, localHttpPort: 4884 } },
+          request(token),
+        ),
+      );
+      assert.equal(wrongPort._tag, "CloudLinkOriginInvalidError");
+    }),
+  );
+});
+
+it.effect("rejects forwarded link proofs when Worker trust is not configured", () =>
+  withService({}, ({ linkProof }) =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        linkProof(
+          {
+            challenge: "challenge",
+            relayIssuer: "https://relay.example.test",
+            endpoint: {
+              providerKind: "manual",
+              httpBaseUrl: "https://app.example.test",
+              wsBaseUrl: "wss://app.example.test",
+            },
+            origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+          },
+          HttpServerRequest.fromWeb(
+            new Request("http://app.example.test/api/connect/link-proof", {
+              headers: {
+                "x-forwarded-host": "app.example.test",
+                "x-forwarded-proto": "https",
+                "x-t3code-proxy-token": "test-worker-proxy-secret-32-characters-long",
+              },
+            }),
+          ),
+        ),
+      );
+      assert.equal(error._tag, "CloudLinkOriginInvalidError");
+    }),
+  ),
+);
 
 it.effect("tells the relay before saving the hold setting locally", () =>
   withService({}, ({ preferences, stored, relayCalls }) =>

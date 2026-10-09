@@ -48,6 +48,25 @@ pass through the Worker without cookie-domain rewriting. Interactive Cloudflare
 Access on the upstream requires additional service authentication and is not
 configured by this deployment.
 
+For T3 Connect link proofs through the Worker, generate a random secret of at
+least 32 characters and set `T3CODE_WORKER_PROXY_TOKEN` in the **backend server's
+environment**. Use a backend built from this branch. Store the same value as a
+Worker secret (Wrangler prompts for it without putting it in command arguments):
+
+```sh
+cd infra/cloudflare
+pnpm dlx wrangler@4.149.0 secret put T3CODE_WORKER_PROXY_TOKEN
+```
+
+The Worker replaces any client-supplied `X-T3Code-Proxy-Token` with its configured
+secret. CloudLink verifies it before accepting forwarded authority and checks
+the requested loopback origin against the server's actual listening port.
+The secret does not replace T3 session authentication. Without matching secrets,
+link proofs containing forwarded authority remain rejected. Keep the upstream
+on HTTPS and keep the secret out of D1, source files, and logs. To revoke proxy
+trust, remove the backend variable and restart the server. To rotate the secret,
+update both sides; link proofs are rejected while they differ.
+
 ## Create D1 and deploy
 
 Requires Node 24, pnpm, and a Cloudflare account. Commands below run in

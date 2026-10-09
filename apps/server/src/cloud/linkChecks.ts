@@ -3,6 +3,8 @@
  * origin a link may point at, and which scopes and lifetimes a proof claims and
  * accepts.
  */
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no timingSafeEqual.
+import * as NodeCrypto from "node:crypto";
 import type {
   RelayEnvironmentLinkProofPayload,
   RelayLinkProofRequest,
@@ -49,8 +51,44 @@ export function hasForwardedAuthorityHeaders(
 ): boolean {
   return (
     firstForwardedHeaderValue(request.headers["x-forwarded-host"]) !== undefined ||
-    firstForwardedHeaderValue(request.headers["x-forwarded-proto"]) !== undefined
+    firstForwardedHeaderValue(request.headers["x-forwarded-proto"]) !== undefined ||
+    firstForwardedHeaderValue(request.headers.forwarded) !== undefined
   );
+}
+
+/** A verified gateway reaches this listener; public forwarded authority is
+ * retained for MCP, but never decides which local port a proof can authorize. */
+export function linkProofRequestUrl(
+  request: HttpServerRequest.HttpServerRequest,
+  proxyToken: string | undefined,
+  listeningPort: number | undefined,
+): string | null {
+  if (!hasForwardedAuthorityHeaders(request)) return requestAbsoluteUrl(request);
+  const credential = request.headers["x-t3code-proxy-token"];
+  const host = request.headers["x-forwarded-host"];
+  const protocol = request.headers["x-forwarded-proto"];
+  if (
+    !proxyToken ||
+    proxyToken.length < 32 ||
+    !credential ||
+    !host ||
+    (protocol !== "https" && protocol !== "http") ||
+    !Number.isInteger(listeningPort) ||
+    listeningPort === undefined ||
+    listeningPort < 1 ||
+    listeningPort > 65535 ||
+    request.headers.forwarded !== undefined
+  )
+    return null;
+  try {
+    const authority = new URL(`${protocol}://${host}`);
+    if (authority.host !== host || authority.username || authority.password) return null;
+  } catch {
+    return null;
+  }
+  const hash = (value: string) => NodeCrypto.createHash("sha256").update(value).digest();
+  if (!NodeCrypto.timingSafeEqual(hash(proxyToken), hash(credential))) return null;
+  return `http://127.0.0.1:${listeningPort}`;
 }
 
 function endpointRequestPort(url: URL): number {

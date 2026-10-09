@@ -2,6 +2,8 @@ import { parseOrigin } from "./origin.ts";
 
 // Narrow binding interfaces keep this gateway independent of the Node server.
 export interface Env {
+  /** Shared only with the backend; never accept a client's proxy credential. */
+  T3CODE_WORKER_PROXY_TOKEN?: string;
   DB: {
     prepare(sql: string): {
       first<T>(): Promise<T | null>;
@@ -44,6 +46,10 @@ export function createGateway(fetchUpstream: typeof fetch = fetch) {
       headers.delete("host");
       headers.delete("forwarded");
       headers.delete("x-forwarded-for");
+      headers.delete("x-t3code-proxy-token");
+      if (env.T3CODE_WORKER_PROXY_TOKEN && env.T3CODE_WORKER_PROXY_TOKEN.length >= 32) {
+        headers.set("x-t3code-proxy-token", env.T3CODE_WORKER_PROXY_TOKEN);
+      }
       headers.set("x-forwarded-host", publicUrl.host);
       headers.set("x-forwarded-proto", publicUrl.protocol.slice(0, -1));
       const clientIp = request.headers.get("cf-connecting-ip");
