@@ -23,6 +23,22 @@
       "types": "./src/server/CursorAgentSdk.ts",
       "import": "./src/server/CursorAgentSdk.ts"
     },
+    "./server/accountUsage": {
+      "types": "./src/server/accountUsage.ts",
+      "import": "./src/server/accountUsage.ts"
+    },
+    "./server/CursorAccountReader": {
+      "types": "./src/server/CursorAccountReader.ts",
+      "import": "./src/server/CursorAccountReader.ts"
+    },
+    "./server/CursorKeychain": {
+      "types": "./src/server/CursorKeychain.ts",
+      "import": "./src/server/CursorKeychain.ts"
+    },
+    "./server/CursorUsageAccounts": {
+      "types": "./src/server/CursorUsageAccounts.ts",
+      "import": "./src/server/CursorUsageAccounts.ts"
+    },
     "./server/CursorSdk": {
       "types": "./src/server/CursorSdk.ts",
       "import": "./src/server/CursorSdk.ts"

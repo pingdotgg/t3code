@@ -154,7 +154,9 @@ import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClien
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinary.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
-import * as CursorUsageReader from "./usage/cursorUsageReader.ts";
+import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAccountReader";
+import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
+import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
@@ -252,8 +254,13 @@ const layerBackground = BackgroundPolicy.layer.pipe(
 );
 
 const layerUsage = UsageService.layer.pipe(
+  Layer.provide(
+    CursorUsageAccounts.layer.pipe(
+      Layer.provide(CursorAccountReader.layer.pipe(Layer.provide(CursorKeychain.layer))),
+      Layer.provide(ProviderHostLive.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+    ),
+  ),
   Layer.provide(layerServerSettings),
-  Layer.provide(CursorUsageReader.layer),
 );
 
 const layerResourceDiagnostics = Layer.mergeAll(
@@ -666,9 +673,11 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
 
 const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   // Misc.
+  // Usage reads provider history through the ProviderHost, which needs the
+  // background policy below it.
+  Layer.provideMerge(layerUsage),
   Layer.provideMerge(layerBackground),
   Layer.provideMerge(layerResourceDiagnostics),
-  Layer.provideMerge(layerUsage),
   Layer.provideMerge(TraceDiagnostics.layer),
   Layer.provideMerge(AnalyticsService.layer),
   Layer.provideMerge(ExternalLauncher.layer),

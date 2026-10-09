@@ -12,9 +12,9 @@
  * remain visible. Antigravity databases are memoised in memory while the
  * database and its WAL keep the same `(size, mtime, ctime)`.
  *
- * Cursor's account API is slow, so its source answers from a cache and marks
- * itself `refreshing` while a background refresh runs; `awaitRefresh` waits
- * for that refresh instead. See `cursorAccountCache`.
+ * A scan reader with a slow source (an account API) may answer from its own
+ * cache and mark itself `refreshing` while a background refresh runs;
+ * `awaitRefresh` waits for that refresh instead.
  *
  * @module UsageService
  */
@@ -32,7 +32,7 @@ import {
   type UsageSummaryInput,
   UsageReadError,
 } from "@t3tools/contracts";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -64,18 +64,6 @@ import type {
   UsageRecord,
 } from "@t3tools/provider-core/server/usage";
 import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUsageReader.ts";
-import {
-  CURSOR_ACCOUNT_CACHE_FILE_NAME,
-  CURSOR_ACCOUNT_TTL_MS,
-  cursorFetchRange,
-  decodeCursorAccountCaches,
-  encodeCursorAccountCaches,
-  isCursorCacheFresh,
-  mergeCursorFetch,
-  type CursorAccountCache,
-  type CursorCredentialSource,
-} from "./cursorAccountCache.ts";
-import * as CursorUsageReader from "./cursorUsageReader.ts";
 import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
@@ -115,8 +103,6 @@ const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
  * up. Older entries are pruned.
  */
 const CACHE_RETENTION_DAYS = 92;
-
-const CURSOR_ACCOUNT_READ_ERROR = "Cursor account usage could not be read.";
 
 /** Transcripts parsed at once. More gains little once the disk stays busy. */
 const TRANSCRIPT_READ_CONCURRENCY = 4;
@@ -248,8 +234,6 @@ export const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const httpClient = yield* HttpClient.HttpClient;
   const hostEnvironment = yield* HostProcessEnvironment;
-  const platform = yield* HostProcessPlatform;
-  const cursorAccountReader = yield* CursorUsageReader.CursorAccountReader;
   // The readers yield their own services; scans run them against this context.
   const readerContext = yield* Effect.context<BuiltInUsageReadersEnv>();
 
@@ -257,20 +241,6 @@ export const make = Effect.gen(function* () {
   const antigravityCache = makeAntigravityUsageCache();
   const sourceCache = new Map<string, typeof CachedSource.Type>();
   let cacheDirty = false;
-  /** Cursor account caches by credential source. */
-  const cursorCaches = new Map<string, CursorAccountCache>();
-  let cursorCacheDirty = false;
-  /**
-   * The last failed refresh per credential source, standing for a TTL so a
-   * client refetching a broken login does not refetch Cursor each time. A
-   * `null` error means there is no login: no source to report.
-   */
-  const cursorFailures = new Map<
-    string,
-    { readonly atMs: number; readonly error: string | null }
-  >();
-  /** The refresh in flight per credential source, which every read joins. */
-  const cursorRefreshes = new Map<string, Deferred.Deferred<void>>();
   const isWithinDirectory = (filePath: string, dir: string) => {
     const relative = path.relative(dir, filePath);
     return relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative);
@@ -279,7 +249,6 @@ export const make = Effect.gen(function* () {
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, SCAN_CACHE_FILE_NAME);
   const legacyScanCachePath = path.join(config.stateDir, LEGACY_SCAN_CACHE_FILE_NAME);
-  const cursorCachePath = path.join(config.stateDir, CURSOR_ACCOUNT_CACHE_FILE_NAME);
   const writeCacheFile = (filePath: string, contents: string) =>
     writeFileStringAtomically({ filePath, contents }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -453,7 +422,7 @@ export const make = Effect.gen(function* () {
   });
 
   /**
-   * Loads the persisted scan and Cursor account caches exactly once per process.
+   * Loads the persisted scan cache exactly once per process.
    *
    * `Effect.cached` makes concurrent first readers await the same load rather
    * than each seeing a "loaded" flag set before the read finished and cold
@@ -466,9 +435,6 @@ export const make = Effect.gen(function* () {
           Effect.flatMap((raw) => decodeScanCacheFile(raw)),
           Effect.catchCause(() => Effect.succeed(null)),
         );
-      for (const [key, cache] of decodeCursorAccountCaches(yield* readDocument(cursorCachePath))) {
-        cursorCaches.set(key, cache);
-      }
       let document = yield* readDocument(scanCachePath);
       if (document === null) {
         document = yield* readDocument(legacyScanCachePath);
@@ -492,7 +458,7 @@ export const make = Effect.gen(function* () {
   // keeps an older snapshot from landing after a newer one.
   const persistLock = yield* Semaphore.make(1);
 
-  // Each dirty flag is cleared before encoding, so a change while the write is
+  // The dirty flag is cleared before encoding, so a change while the write is
   // in flight marks it dirty again. A failed write restores the flag, so the
   // next persist retries instead of leaving disk stale. A cache we cannot
   // write is a slower next start, not a failed read.
@@ -506,17 +472,6 @@ export const make = Effect.gen(function* () {
         Effect.catchCause(() =>
           Effect.sync(() => {
             cacheDirty = true;
-          }),
-        ),
-      );
-    }
-    if (cursorCacheDirty) {
-      cursorCacheDirty = false;
-      yield* Effect.sync(() => encodeCursorAccountCaches(cursorCaches)).pipe(
-        Effect.flatMap((contents) => writeCacheFile(cursorCachePath, contents)),
-        Effect.catchCause(() =>
-          Effect.sync(() => {
-            cursorCacheDirty = true;
           }),
         ),
       );
@@ -674,162 +629,6 @@ export const make = Effect.gen(function* () {
     return { provider, dir, volumeId, files: parsedFiles } satisfies ScannedDir;
   });
 
-  /** Fetches what one account cache is missing, then persists it if anything changed. */
-  const refreshCursorAccount = Effect.fn("UsageService.refreshCursorAccount")(function* (
-    credential: CursorCredentialSource,
-    credentialKey: string,
-    retentionStartMs: number,
-  ) {
-    const nowMs = yield* Clock.currentTimeMillis;
-    const fetchMissing = (cache: CursorAccountCache | undefined) => {
-      const range = cursorFetchRange(cache, retentionStartMs, nowMs);
-      return cursorAccountReader
-        .read(credential, range.sinceMs, range.untilMs)
-        .pipe(Effect.map((result) => ({ range, result })));
-    };
-    let base = cursorCaches.get(credentialKey);
-    let fetched = yield* fetchMissing(base);
-    // Another login's history replaces the cached account's, even if reading it fails.
-    if (
-      base !== undefined &&
-      fetched.result.accountKey !== null &&
-      fetched.result.accountKey !== base.accountKey
-    ) {
-      cursorCaches.delete(credentialKey);
-      cursorCacheDirty = true;
-      base = undefined;
-      fetched = yield* fetchMissing(base);
-    }
-    const { range, result } = fetched;
-    if (result.missing || result.error !== null || result.accountKey === null) {
-      cursorFailures.set(credentialKey, {
-        atMs: nowMs,
-        error: result.missing || result.error !== null ? result.error : CURSOR_ACCOUNT_READ_ERROR,
-      });
-      yield* schedulePersist;
-      return;
-    }
-    const merged = mergeCursorFetch(
-      base,
-      result.accountKey,
-      range,
-      result.records,
-      nowMs,
-      retentionStartMs,
-    );
-    cursorCaches.set(credentialKey, merged.cache);
-    cursorFailures.delete(credentialKey);
-    // An unchanged edge is not worth rewriting the file for: after a restart
-    // the cache just refetches a slightly wider edge.
-    if (merged.changed) {
-      cursorCacheDirty = true;
-      yield* schedulePersist;
-    }
-  });
-
-  /** Joins the refresh in flight, or starts one. */
-  const startCursorRefresh = (
-    credential: CursorCredentialSource,
-    credentialKey: string,
-    retentionStartMs: number,
-  ) =>
-    // Enrollment and fork are atomic, so an interrupted caller cannot leave a
-    // registered refresh that nothing will finish.
-    Effect.uninterruptible(
-      Effect.gen(function* () {
-        const current = cursorRefreshes.get(credentialKey);
-        if (current !== undefined) return current;
-        const done = Deferred.makeUnsafe<void>();
-        cursorRefreshes.set(credentialKey, done);
-        // Detached: a departing client must not cancel a fetch later reads reuse.
-        yield* refreshCursorAccount(credential, credentialKey, retentionStartMs).pipe(
-          Effect.catchCause(() =>
-            Clock.currentTimeMillis.pipe(
-              Effect.map((atMs) =>
-                cursorFailures.set(credentialKey, { atMs, error: CURSOR_ACCOUNT_READ_ERROR }),
-              ),
-            ),
-          ),
-          Effect.ensuring(
-            Effect.suspend(() => {
-              cursorRefreshes.delete(credentialKey);
-              return Deferred.succeed(done, undefined);
-            }),
-          ),
-          Effect.forkDetach,
-        );
-        return done;
-      }),
-    );
-
-  /**
-   * The Cursor account source. A cache inside its TTL, or a refresh that failed
-   * inside it, answers directly. Otherwise a refresh starts: `awaitRefresh`
-   * waits for it, and anything else answers from the cache marked `refreshing`.
-   */
-  const cursorAccountSource = Effect.fn("UsageService.cursorAccountSource")(function* (
-    credential: CursorCredentialSource,
-    authPath: string,
-    windowStartMs: number,
-    retentionStartMs: number,
-    awaitRefresh: boolean,
-  ) {
-    // No saved login means there is no account source to report, not a setup error.
-    if (
-      typeof credential === "string" &&
-      !(yield* fileSystem.exists(credential).pipe(Effect.orElseSucceed(() => true)))
-    ) {
-      return null;
-    }
-    const credentialKey = typeof credential === "string" ? credential : "keychain";
-    const nowMs = yield* Clock.currentTimeMillis;
-    const recentFailure = cursorFailures.get(credentialKey);
-    let refreshing = false;
-    if (
-      (recentFailure === undefined || nowMs - recentFailure.atMs >= CURSOR_ACCOUNT_TTL_MS) &&
-      !isCursorCacheFresh(cursorCaches.get(credentialKey), nowMs)
-    ) {
-      const refresh = yield* startCursorRefresh(credential, credentialKey, retentionStartMs);
-      if (awaitRefresh) yield* Deferred.await(refresh);
-      else refreshing = true;
-    }
-
-    const cache = cursorCaches.get(credentialKey);
-    const failure = refreshing ? undefined : cursorFailures.get(credentialKey);
-    const failureMessage = failure === undefined ? undefined : failure.error;
-    if (failureMessage === null) return null;
-    if (cache === undefined) {
-      return {
-        provider: "cursor",
-        dir: authPath,
-        volumeId: yield* Effect.promise(() => readDirectoryVolumeId(authPath)),
-        // Never combine a local fallback with another server's account-wide history.
-        ...(refreshing
-          ? { files: [], refreshing: true }
-          : { files: null, message: failureMessage ?? CURSOR_ACCOUNT_READ_ERROR }),
-      } satisfies ScannedDir;
-    }
-    // The same account includes CLI and desktop history from every machine.
-    // A stable remote fingerprint prevents connected environments counting it twice.
-    const source = `cursor-account:${cache.accountKey}`;
-    return {
-      provider: "cursor",
-      dir: source,
-      hostId: "cursor.com",
-      volumeId: cache.accountKey,
-      files: [
-        {
-          path: source,
-          records: cache.records.filter((record) => record.timestampMs >= windowStartMs),
-        },
-      ],
-      ...(failureMessage === undefined
-        ? { status: "ok" }
-        : { status: "partial", message: failureMessage }),
-      ...(refreshing ? { refreshing: true } : {}),
-    } satisfies ScannedDir;
-  });
-
   const collectDirs = Effect.fn("UsageService.collectDirs")(function* (
     windowStartMs: number,
     settings: ServerSettingsValue,
@@ -862,6 +661,7 @@ export const make = Effect.gen(function* () {
         reader
           .scan({
             instances: usageInstances(driver, settings),
+            settings,
             windowStartMs,
             retentionCutoffMs,
             awaitRefresh,
@@ -884,7 +684,7 @@ export const make = Effect.gen(function* () {
             Effect.provideContext(readerContext),
           ),
       { concurrency: "unbounded" },
-    ).pipe(Effect.map((sources) => sources.flat()));
+    );
 
     const antigravity = Effect.gen(function* () {
       const antigravityRoots = yield* envRoots("ANTIGRAVITY_DATA_DIR", [
@@ -949,78 +749,19 @@ export const make = Effect.gen(function* () {
       return scanned;
     });
 
-    const cursor = Effect.gen(function* () {
-      const cursorUserHome =
-        (platform === "win32" ? hostEnvironment["USERPROFILE"] : hostEnvironment["HOME"]) || home;
-      const configHome = hostEnvironment["XDG_CONFIG_HOME"]?.trim();
-      const cursorHome =
-        platform === "darwin"
-          ? path.join(cursorUserHome, "Library", "Application Support")
-          : platform === "win32"
-            ? hostEnvironment["APPDATA"] || path.join(cursorUserHome, "AppData", "Roaming")
-            : configHome && path.isAbsolute(configHome)
-              ? configHome
-              : path.join(cursorUserHome, ".config");
-      const cursorAuthPath =
-        platform === "darwin"
-          ? path.join(cursorUserHome, ".cursor", "auth.json")
-          : path.join(cursorHome, platform === "win32" ? "Cursor" : "cursor", "auth.json");
-      const credentialStore = hostEnvironment["AGENT_CLI_CREDENTIAL_STORE"];
-      const loginUnavailable =
-        Boolean(hostEnvironment["CURSOR_AUTH_TOKEN"]?.trim()) ||
-        Boolean(hostEnvironment["CURSOR_API_KEY"]?.trim()) ||
-        credentialStore === "memory";
-      const useKeychain = platform === "darwin" && credentialStore !== "file";
-      if (useKeychain && !loginUnavailable && !settings.cursorKeychainUsageEnabled) {
-        return [
-          {
-            provider: "cursor",
-            dir: cursorAuthPath,
-            volumeId: "",
-            files: null,
-            message: "Cursor account usage is off on this environment.",
-            action: "enableCursorKeychain",
-          } satisfies ScannedDir,
-        ];
-      }
-      if (loginUnavailable) {
-        return [
-          {
-            provider: "cursor",
-            dir: cursorAuthPath,
-            volumeId: yield* Effect.promise(() => readDirectoryVolumeId(cursorAuthPath)),
-            files: null,
-            message: "Cursor account history needs a Cursor CLI login on this server.",
-          } satisfies ScannedDir,
-        ];
-      }
-      const source = yield* cursorAccountSource(
-        useKeychain ? { kind: "keychain" } : cursorAuthPath,
-        cursorAuthPath,
-        windowStartMs,
-        retentionCutoffMs,
-        awaitRefresh,
-      );
-      return source === null ? [] : [source];
-    });
-
     // Independent sources scan together. Transcript directories go one at a
     // time, so open files stay at `TRANSCRIPT_READ_CONCURRENCY`. The result
     // keeps this order, since aggregation keeps the first copy of a duplicate.
-    const [transcripts, scanDirs, antigravityDirs, cursorDirs] = yield* Effect.all(
-      [
-        Effect.forEach(dirs, (dir) => scanTranscriptDir(dir, windowStartMs)),
-        scans,
-        antigravity,
-        cursor,
-      ],
+    const [transcripts, scanDirs, antigravityDirs] = yield* Effect.all(
+      [Effect.forEach(dirs, (dir) => scanTranscriptDir(dir, windowStartMs)), scans, antigravity],
       { concurrency: "unbounded" },
     );
+    // Antigravity reads between the other scan readers until it has a reader of its own.
     const scanned: readonly ScannedDir[] = [
       ...transcripts,
-      ...scanDirs,
+      ...scanDirs.slice(0, -1).flat(),
       ...antigravityDirs,
-      ...cursorDirs,
+      ...(scanDirs.at(-1) ?? []),
     ];
     return scanned;
   });

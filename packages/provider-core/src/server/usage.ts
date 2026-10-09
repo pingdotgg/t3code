@@ -11,6 +11,7 @@
  */
 import type {
   ProviderInstanceId,
+  ServerSettings,
   UsageProviderKind,
   UsageSource,
   UsageTokenTotals,
@@ -146,6 +147,8 @@ export interface ProviderUsageScan {
 
 export interface ProviderUsageScanInput<Config> {
   readonly instances: ReadonlyArray<ProviderUsageInstance<Config>>;
+  /** The settings snapshot the whole read runs against. */
+  readonly settings: ServerSettings;
   /** Files last written before this cannot hold records inside the window. */
   readonly windowStartMs: number;
   /** The oldest usage the server keeps; account caches cover back to here. */

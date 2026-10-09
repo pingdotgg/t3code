@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { cursorFetchRange, mergeCursorFetch } from "./cursorAccountCache.ts";
+import { cursorFetchRange, mergeCursorFetch } from "./accountCache.ts";
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
