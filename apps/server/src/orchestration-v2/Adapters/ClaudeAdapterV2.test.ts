@@ -3,6 +3,7 @@ import * as NodeOS from "node:os";
 import type {
   Query as ClaudeQuery,
   SDKMessage,
+  SDKRateLimitInfo,
   SDKResultMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -2898,6 +2899,486 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.include(terminal.failure.message, expected);
       assert.equal(terminal.failure.class, recovered ? "provider_error" : "usage_limit");
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  const limitResetAt = "2026-10-04T14:00:00.000Z";
+  const limitResetsAt = DateTime.toEpochMillis(DateTime.makeUnsafe(limitResetAt)) / 1000;
+  it.effect.each([
+    {
+      name: "a repeated window omits its reset",
+      updates: [
+        { status: "rejected", rateLimitType: "five_hour", resetsAt: limitResetsAt },
+        { status: "rejected", rateLimitType: "five_hour" },
+      ],
+      expectedResetAt: limitResetAt,
+    },
+    {
+      name: "a repeated window follows an updated reset",
+      updates: [
+        { status: "rejected", rateLimitType: "five_hour", resetsAt: limitResetsAt },
+        { status: "rejected", rateLimitType: "five_hour", resetsAt: limitResetsAt + 3600 },
+        { status: "rejected", rateLimitType: "five_hour" },
+      ],
+      expectedResetAt: "2026-10-04T15:00:00.000Z",
+    },
+    {
+      name: "another exhausted window has no reset",
+      updates: [
+        { status: "rejected", rateLimitType: "five_hour", resetsAt: limitResetsAt },
+        { status: "rejected", rateLimitType: "seven_day" },
+      ],
+      expectedResetAt: null,
+    },
+    {
+      name: "the unknown-reset window recovers",
+      updates: [
+        { status: "rejected", rateLimitType: "five_hour", resetsAt: limitResetsAt },
+        { status: "rejected", rateLimitType: "seven_day" },
+        { status: "allowed", rateLimitType: "seven_day" },
+      ],
+      expectedResetAt: limitResetAt,
+    },
+    {
+      name: "a recovered window is rejected again without a reset",
+      updates: [
+        { status: "rejected", rateLimitType: "five_hour", resetsAt: limitResetsAt },
+        { status: "allowed", rateLimitType: "five_hour" },
+        { status: "rejected", rateLimitType: "five_hour" },
+      ],
+      expectedResetAt: null,
+    },
+    {
+      name: "the previous reset has expired",
+      updates: [
+        { status: "rejected", rateLimitType: "five_hour", resetsAt: limitResetsAt - 10800 },
+        { status: "rejected", rateLimitType: "five_hour" },
+      ],
+      expectedResetAt: null,
+    },
+    {
+      name: "a repeated window reports an invalid reset",
+      updates: [
+        { status: "rejected", rateLimitType: "five_hour", resetsAt: limitResetsAt },
+        { status: "rejected", rateLimitType: "five_hour", resetsAt: NaN },
+      ],
+      expectedResetAt: null,
+    },
+    {
+      name: "the window cannot be identified",
+      updates: [{ status: "rejected", resetsAt: limitResetsAt }, { status: "rejected" }],
+      expectedResetAt: null,
+    },
+    {
+      name: "several exhausted windows have known resets",
+      updates: [
+        { status: "rejected", rateLimitType: "five_hour", resetsAt: limitResetsAt },
+        { status: "rejected", rateLimitType: "seven_day", resetsAt: limitResetsAt + 3600 },
+        { status: "rejected", rateLimitType: "five_hour" },
+      ],
+      expectedResetAt: "2026-10-04T15:00:00.000Z",
+    },
+    {
+      name: "only the assistant reports the limit",
+      updates: [],
+      expectedResetAt: null,
+    },
+  ] satisfies ReadonlyArray<{
+    readonly name: string;
+    readonly updates: ReadonlyArray<SDKRateLimitInfo>;
+    readonly expectedResetAt: string | null;
+  }>)("retains a trustworthy usage-limit reset when $name", ({ updates, expectedResetAt }) =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(
+        DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-04T12:00:00.000Z")),
+      );
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-limit-reset"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      for (const [index, rate_limit_info] of updates.entries()) {
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "rate_limit_event",
+            rate_limit_info,
+            uuid: `00000000-0000-4000-8000-00000000066${index}`,
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+      }
+      yield* Queue.offerAll(harness.sdkMessages, [
+        makeAssistantErrorFrame({
+          uuid: "00000000-0000-4000-8000-000000000668",
+          error: "rate_limit",
+        }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000669",
+          result: "You've hit your session limit · resets 4:40pm (Europe/London)",
+          isError: true,
+          apiErrorStatus: 429,
+          terminalReason: "api_error",
+        }),
+      ]);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.equal(terminal.failure.class, "usage_limit");
+      assert.equal(terminal.failure.resetAt, expectedResetAt);
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect.each([
+    {
+      name: "newer reset",
+      wakeStatus: "rejected",
+      update: { status: "rejected", rateLimitType: "five_hour", resetsAt: limitResetsAt + 3600 },
+      expected: "2026-10-04T15:00:00.000Z",
+    },
+    {
+      name: "newer recovery",
+      wakeStatus: "rejected",
+      update: { status: "allowed", rateLimitType: "five_hour" },
+      expected: null,
+    },
+    {
+      name: "newer invalid reset",
+      wakeStatus: "rejected",
+      update: { status: "rejected", rateLimitType: "five_hour", resetsAt: NaN },
+      expected: null,
+    },
+    {
+      name: "newer rejection after an old recovery",
+      wakeStatus: "allowed",
+      update: { status: "rejected", rateLimitType: "five_hour", resetsAt: limitResetsAt + 3600 },
+      expected: "2026-10-04T15:00:00.000Z",
+    },
+  ] satisfies ReadonlyArray<{
+    name: string;
+    wakeStatus: "rejected" | "allowed";
+    update: SDKRateLimitInfo;
+    expected: string | null;
+  }>)(
+    "wake replay preserves $name for the continuation and later failures",
+    ({ wakeStatus, update, expected }) =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(
+          DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-04T12:00:00.000Z")),
+        );
+        const harness = yield* makeWakeHarness;
+        let serial = 800;
+        const uuid = () => `00000000-0000-4000-8000-${String(serial++).padStart(12, "0")}`;
+        const start = Effect.fnUntraced(function* (turn: number, continuation = false) {
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`attempt-limit-replay-${turn}`),
+              text: "Continue",
+              attachments: [],
+              providerTurnOrdinal: turn,
+              ...(continuation
+                ? { messageCreatedBy: "agent" as const, messageCreationSource: "provider" as const }
+                : {}),
+            }),
+          );
+        });
+        const limit = (info: SDKRateLimitInfo) =>
+          harness.offerAndWait(
+            claudeSdkFrame({
+              type: "rate_limit_event",
+              rate_limit_info: info,
+              uuid: uuid(),
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        const failure = Effect.fnUntraced(function* () {
+          yield* harness.offerAndWait(
+            makeAssistantErrorFrame({ uuid: uuid(), error: "rate_limit" }),
+          );
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: uuid(),
+              result: "limited",
+              isError: true,
+              apiErrorStatus: 429,
+              terminalReason: "api_error",
+            }),
+          );
+        });
+        yield* start(1);
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        yield* harness.offerAndWait(wakeNotification);
+        yield* limit({ status: wakeStatus, rateLimitType: "five_hour", resetsAt: limitResetsAt });
+        yield* failure();
+        assert.lengthOf(harness.continuationRequests, 1);
+        yield* start(2);
+        yield* limit(update);
+        yield* harness.offerAndWait(makeResultFrame({ uuid: uuid(), result: "user turn done" }));
+        yield* Queue.take(harness.terminalReceipts);
+        yield* start(3, true);
+        const replayed = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(replayed.status, "failed");
+        if (replayed.status !== "failed") return;
+        assert.equal(replayed.failure.class, "usage_limit");
+        assert.equal(replayed.failure.resetAt, expected);
+        yield* start(4);
+        yield* failure();
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "failed");
+        if (terminal.status !== "failed") return;
+        assert.equal(terminal.failure.class, "usage_limit");
+        assert.equal(terminal.failure.resetAt, expected);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  const crossTurnResetCases: ReadonlyArray<{
+    readonly name: string;
+    readonly updates: ReadonlyArray<SDKRateLimitInfo>;
+    readonly expectedResetAt: string | null;
+    readonly expires?: boolean;
+    readonly otherConversation?: boolean;
+    readonly unrelatedError?: boolean;
+    readonly unidentifiedWindow?: boolean;
+  }> = [
+    { name: "a manual retry has no new event", updates: [], expectedResetAt: limitResetAt },
+    {
+      name: "the window recovers between turns",
+      updates: [{ status: "allowed", rateLimitType: "five_hour" }],
+      expectedResetAt: null,
+    },
+    {
+      name: "the window recovers with a warning between turns",
+      updates: [{ status: "allowed_warning", rateLimitType: "five_hour" }],
+      expectedResetAt: null,
+    },
+    {
+      name: "overage becomes available between turns",
+      updates: [{ status: "rejected", rateLimitType: "five_hour", overageStatus: "allowed" }],
+      expectedResetAt: null,
+    },
+    {
+      name: "another exhausted window has an unknown reset between turns",
+      updates: [{ status: "rejected", rateLimitType: "seven_day" }],
+      expectedResetAt: null,
+    },
+    {
+      name: "an invalid reset arrives between turns",
+      updates: [{ status: "rejected", rateLimitType: "five_hour", resetsAt: NaN }],
+      expectedResetAt: null,
+    },
+    {
+      name: "a sparse event arrives between turns",
+      updates: [{ status: "rejected", rateLimitType: "five_hour" }],
+      expectedResetAt: limitResetAt,
+    },
+    { name: "the reset expires", updates: [], expires: true, expectedResetAt: null },
+    {
+      name: "the earlier window cannot be identified",
+      updates: [],
+      unidentifiedWindow: true,
+      expectedResetAt: null,
+    },
+    {
+      name: "another native conversation fails",
+      updates: [],
+      otherConversation: true,
+      expectedResetAt: null,
+    },
+    {
+      name: "the next failure is unrelated to limits",
+      updates: [],
+      unrelatedError: true,
+      expectedResetAt: null,
+    },
+  ];
+  it.effect.each(crossTurnResetCases)(
+    "reuses conversation resets only when valid: $name",
+    (testCase) =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(
+          DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-04T12:00:00.000Z")),
+        );
+        const harness = yield* makeWakeHarness;
+        for (let turn = 0; turn < 2; turn++) {
+          const providerThread =
+            turn === 1 && testCase.otherConversation
+              ? {
+                  ...harness.providerThread,
+                  nativeThreadRef: {
+                    ...harness.providerThread.nativeThreadRef!,
+                    nativeId: "native-thread-other-conversation",
+                  },
+                }
+              : harness.providerThread;
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`attempt-limit-cross-turn-${turn}`),
+              text: "Continue.",
+              attachments: [],
+              providerTurnOrdinal: turn + 1,
+            }),
+          );
+          if (turn === 0) {
+            yield* harness.offerAndWait(
+              claudeSdkFrame({
+                type: "rate_limit_event",
+                rate_limit_info: {
+                  status: "rejected",
+                  ...(testCase.unidentifiedWindow ? {} : { rateLimitType: "five_hour" }),
+                  resetsAt: limitResetsAt,
+                },
+                uuid: "00000000-0000-4000-8000-000000000760",
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+            );
+          }
+          const unrelatedError = turn === 1 && testCase.unrelatedError;
+          yield* harness.offerAndWait(
+            makeAssistantErrorFrame({
+              uuid: `00000000-0000-4000-8000-00000000077${turn}`,
+              error: unrelatedError ? "server_error" : "rate_limit",
+            }),
+          );
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: `00000000-0000-4000-8000-00000000078${turn}`,
+              result: "API Error",
+              isError: true,
+              apiErrorStatus: unrelatedError ? 500 : 429,
+              terminalReason: "api_error",
+            }),
+          );
+          const terminal = yield* Queue.take(harness.terminalReceipts);
+          assert.equal(terminal.status, "failed");
+          if (terminal.status !== "failed") return;
+          assert.equal(terminal.failure.class, unrelatedError ? "provider_error" : "usage_limit");
+          assert.equal(
+            terminal.failure.resetAt,
+            turn === 0 ? limitResetAt : testCase.expectedResetAt,
+          );
+          if (turn === 0) {
+            for (const [index, rate_limit_info] of testCase.updates.entries()) {
+              yield* harness.offerAndWait(
+                claudeSdkFrame({
+                  type: "rate_limit_event",
+                  rate_limit_info,
+                  uuid: `00000000-0000-4000-8000-00000000079${index}`,
+                  session_id: WAKE_NATIVE_SESSION,
+                }),
+              );
+            }
+            if (testCase.expires) {
+              yield* TestClock.setTime(limitResetsAt * 1000);
+            }
+          }
+        }
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect(
+    "retains the reset through consecutive subagent wake failures without new limit events",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(
+          DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-04T12:00:00.000Z")),
+        );
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-limit-before-wakes"),
+            text: "Run background agents.",
+            attachments: [],
+          }),
+        );
+        for (let index = 0; index < 3; index++) {
+          yield* harness.offerAndWait(
+            makeSubagentTaskStartedFrame({
+              taskId: `task-limited-${index}`,
+              toolUseId: `toolu_limited_${index}`,
+              uuid: `00000000-0000-4000-8000-00000000071${index}`,
+            }),
+          );
+        }
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "rate_limit_event",
+            rate_limit_info: {
+              status: "rejected",
+              rateLimitType: "five_hour",
+              resetsAt: limitResetsAt,
+            },
+            uuid: "00000000-0000-4000-8000-000000000720",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        for (let index = 0; index < 4; index++) {
+          if (index > 0) {
+            yield* harness.offerAndWait(
+              makeSubagentNotificationFrame({
+                taskId: `task-limited-${index - 1}`,
+                toolUseId: `toolu_limited_${index - 1}`,
+                summary: "Agent hit the usage limit.",
+                uuid: `00000000-0000-4000-8000-00000000073${index}`,
+              }),
+            );
+          }
+          yield* harness.offerAndWait(
+            makeAssistantErrorFrame({
+              uuid: `00000000-0000-4000-8000-00000000074${index}`,
+              error: "rate_limit",
+            }),
+          );
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: `00000000-0000-4000-8000-00000000075${index}`,
+              result: "Usage limit reached.",
+              isError: true,
+              apiErrorStatus: 429,
+              terminalReason: "api_error",
+              ...(index > 0 ? { origin: { kind: "task-notification" as const } } : {}),
+            }),
+          );
+          if (index > 0) {
+            assert.lengthOf(harness.continuationRequests, index);
+            yield* harness.runtime.startTurn(
+              makeClaudeTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: harness.providerThread,
+                now,
+                attemptId: RunAttemptId.make(`attempt-limit-wake-${index}`),
+                text: "Background task completed.",
+                attachments: [],
+                providerTurnOrdinal: index + 1,
+                messageCreatedBy: "agent",
+                messageCreationSource: "provider",
+              }),
+            );
+          }
+          const terminal = yield* Queue.take(harness.terminalReceipts);
+          assert.equal(terminal.status, "failed");
+          if (terminal.status !== "failed") return;
+          assert.equal(terminal.failure.class, "usage_limit");
+          assert.equal(terminal.failure.resetAt, limitResetAt);
+        }
+        assert.lengthOf(harness.offeredMessages, 1);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
   it.effect.each([

@@ -2749,7 +2749,6 @@ interface ActiveClaudeTurnContext {
   readonly announcedUsageLimits: Set<string>;
   authenticationFailureMessage: string | undefined;
   readonly rejectedRateLimitTypes: Set<string>;
-  readonly rateLimitResetTimes: Map<string, string | null>;
   latestAssistantRateLimited: boolean;
   readonly subagentsByTaskId: Map<string, ActiveClaudeSubagent>;
   readonly subagentsByToolUseId: Map<string, ActiveClaudeSubagent>;
@@ -3027,6 +3026,11 @@ export interface ClaudeAdapterV2Options {
   };
 }
 
+/**
+ * Creates the Claude provider adapter with the supplied SDK runner and server
+ * dependencies. Each session translates SDK messages into orchestration events
+ * and terminal receipts, including usage-limit resets used for recovery.
+ */
 export function makeClaudeAdapterV2(
   adapterOptions: ClaudeAdapterV2Options,
 ): ProviderAdapter.ProviderAdapterV2Shape {
@@ -3079,6 +3083,11 @@ export function makeClaudeAdapterV2(
         const steeredTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
         const openedNativeThreads = yield* Ref.make(new Set<string>());
+        // Wake turns can fail without another rate_limit_event. Keep rejected
+        // windows for this native conversation, including updates between turns.
+        const rateLimitResetTimesByNativeThread = yield* Ref.make(
+          new Map<string, Map<string, string | null>>(),
+        );
         const latestPlanByKind = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact>());
         const planIdsByNativeItem = yield* Ref.make(
           new Map<string, OrchestrationV2PlanArtifact["id"]>(),
@@ -5727,6 +5736,7 @@ export function makeClaudeAdapterV2(
         const handleSdkMessageFrame = Effect.fnUntraced(function* (input: {
           readonly query: ClaudeAgentSdkQuerySession;
           readonly message: SDKMessage;
+          readonly replayedWake?: boolean;
           // A held subagent frame replayed after its owner registered. Its
           // turn-level assistant bookkeeping already ran when it arrived.
           readonly replayed?: boolean;
@@ -5766,41 +5776,63 @@ export function makeClaudeAdapterV2(
               });
             }
             const context = yield* Ref.get(activeTurn);
-            if (context === null) {
-              // A rejected window can open the CLI's notification wake,
-              // before the continuation turn exists to record it on. Park
-              // the frame with the wake output so the drain replays it to
-              // the turn; dropping it here loses the reset time the
-              // provider just reported.
-              yield* bufferWakeMessage({
-                nativeThreadId: liveQuery.nativeThreadId,
-                message,
-              });
-              return;
-            }
             const overageAllowed =
               rateLimitInfo.overageStatus === "allowed" ||
               rateLimitInfo.overageStatus === "allowed_warning" ||
               rateLimitInfo.isUsingOverage === true ||
               rateLimitInfo.overageInUse === true;
             const blocked = rateLimitInfo.status === "rejected" && !overageAllowed;
-            const limitType = rateLimitInfo.rateLimitType ?? "unknown";
-            if (blocked) {
-              context.rejectedRateLimitTypes.add(limitType);
-              const resetMs = (rateLimitInfo.resetsAt ?? NaN) * 1000;
-              context.rateLimitResetTimes.set(
-                limitType,
-                Number.isFinite(resetMs) && resetMs > 0 && resetMs < 8.64e15
-                  ? DateTime.formatIso(DateTime.makeUnsafe(resetMs))
-                  : null,
-              );
-            } else if (
+            const recovered =
               rateLimitInfo.status === "allowed" ||
               rateLimitInfo.status === "allowed_warning" ||
-              overageAllowed
-            ) {
-              context.rejectedRateLimitTypes.delete(limitType);
-              context.rateLimitResetTimes.delete(limitType);
+              overageAllowed;
+            const limitType = rateLimitInfo.rateLimitType ?? "unknown";
+            if (blocked) {
+              context?.rejectedRateLimitTypes.add(limitType);
+            } else if (recovered) {
+              context?.rejectedRateLimitTypes.delete(limitType);
+            }
+            // A user turn may report newer limits before the queued wake drains.
+            // Replay its classification and notice without rolling back the cache.
+            if (input.replayedWake !== true) {
+              const resetTimes = yield* Ref.modify(rateLimitResetTimesByNativeThread, (current) => {
+                const existing = current.get(liveQuery.nativeThreadId);
+                if (existing !== undefined) return [existing, current];
+                const windows = new Map<string, string | null>();
+                return [windows, new Map(current).set(liveQuery.nativeThreadId, windows)];
+              });
+              if (blocked) {
+                const resetMs = (rateLimitInfo.resetsAt ?? NaN) * 1000;
+                const previousResetAt = resetTimes.get(limitType);
+                let resetAt =
+                  Number.isFinite(resetMs) && resetMs > 0 && resetMs < 8.64e15
+                    ? DateTime.formatIso(DateTime.makeUnsafe(resetMs))
+                    : null;
+                // Sparse events can repeat a window without its reset. Keep only
+                // that named window's future timestamp until an allowed event clears it.
+                if (
+                  rateLimitInfo.rateLimitType !== undefined &&
+                  rateLimitInfo.resetsAt === undefined &&
+                  previousResetAt !== undefined &&
+                  previousResetAt !== null &&
+                  DateTime.toEpochMillis(DateTime.makeUnsafe(previousResetAt)) >
+                    DateTime.toEpochMillis(now)
+                ) {
+                  resetAt = previousResetAt;
+                }
+                resetTimes.set(limitType, resetAt);
+              } else if (recovered) {
+                resetTimes.delete(limitType);
+              }
+            }
+            if (context === null) {
+              // Replay the frame when the wake turn attaches so it also
+              // receives the limit classification and pause notice.
+              yield* bufferWakeMessage({
+                nativeThreadId: liveQuery.nativeThreadId,
+                message,
+              });
+              return;
             }
             // Rejected windows pause the SDK without ending its turn. Overage
             // and warnings keep running; repeats of a window need only one notice.
@@ -6674,10 +6706,20 @@ export function makeClaudeAdapterV2(
               (usageLimited
                 ? "Claude usage limit reached. Send the message again once the limit resets."
                 : undefined);
-            const resetTimes = Array.from(context.rateLimitResetTimes.values());
+            const resetTimes = Array.from(
+              (yield* Ref.get(rateLimitResetTimesByNativeThread)).get(liveQuery.nativeThreadId) ??
+                [],
+            );
             const resetAt =
-              resetTimes.length > 0 && resetTimes.every((time) => time !== null)
-                ? resetTimes.reduce((latest, time) => (time! > latest ? time! : latest), "")
+              resetTimes.length > 0 &&
+              resetTimes.every(
+                ([limitType, time]) =>
+                  time !== null &&
+                  DateTime.toEpochMillis(DateTime.makeUnsafe(time)) >
+                    DateTime.toEpochMillis(completedAt) &&
+                  (limitType !== "unknown" || context.rejectedRateLimitTypes.has(limitType)),
+              )
+                ? resetTimes.reduce((latest, [, time]) => (time! > latest ? time! : latest), "")
                 : null;
             const resultFailure = interrupted
               ? null
@@ -6729,6 +6771,7 @@ export function makeClaudeAdapterV2(
         const handleRoutedSdkMessage = Effect.fnUntraced(function* (input: {
           readonly query: ClaudeAgentSdkQuerySession;
           readonly message: SDKMessage;
+          readonly replayedWake?: boolean;
         }) {
           // Progress or a notification can be the first frame naming a known
           // subagent's tool_use_id; its held frames must precede the result.
@@ -6785,6 +6828,7 @@ export function makeClaudeAdapterV2(
         const handleSdkMessage = Effect.fnUntraced(function* (input: {
           readonly query: ClaudeAgentSdkQuerySession;
           readonly message: SDKMessage;
+          readonly replayedWake?: boolean;
         }) {
           const message = input.message;
           const context = yield* Ref.get(activeTurn);
@@ -7547,7 +7591,6 @@ export function makeClaudeAdapterV2(
               announcedUsageLimits: new Set(),
               authenticationFailureMessage: undefined,
               rejectedRateLimitTypes: new Set(),
-              rateLimitResetTimes: new Map(),
               latestAssistantRateLimited: false,
               subagentsByTaskId: new Map(),
               subagentsByToolUseId: new Map(),
@@ -7634,7 +7677,11 @@ export function makeClaudeAdapterV2(
             );
             for (const entry of drained) {
               if (entry.type !== "result") {
-                yield* handleSdkMessage({ query: querySession.query, message: entry });
+                yield* handleSdkMessage({
+                  query: querySession.query,
+                  message: entry,
+                  replayedWake: true,
+                });
               }
             }
             const lastResult = resultMessages.at(-1);
