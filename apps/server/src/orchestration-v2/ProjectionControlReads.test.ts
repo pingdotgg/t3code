@@ -19,8 +19,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
@@ -186,12 +186,17 @@ function fixtureEvents(now: DateTime.Utc): ReadonlyArray<OrchestrationV2DomainEv
   ];
 }
 
-for (const storage of ["sqlite", "memory"] as const) {
-  const storeLayer =
+const storageCases = (["sqlite", "memory"] as const).map((storage) => ({
+  storage,
+  storeLayer:
     storage === "sqlite"
-      ? ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory))
-      : ProjectionStore.layerMemory;
-  it.effect(`${storage}: finds the active root turn without an attempt reverse link`, () =>
+      ? ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))
+      : ProjectionStore.layerMemory,
+}));
+
+it.effect.each(storageCases)(
+  "$storage: finds the active root turn without an attempt reverse link",
+  ({ storeLayer }) =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
@@ -210,8 +215,10 @@ for (const storage of ["sqlite", "memory"] as const) {
       });
       assert.isUndefined((yield* store.getRunningTurnContext(threadId)).providerTurn);
     }).pipe(Effect.provide(storeLayer)),
-  );
-  it.effect(`${storage}: controls and replies read only their exact durable targets`, () =>
+);
+it.effect.each(storageCases)(
+  "$storage: controls and replies read only their exact durable targets",
+  ({ storage, storeLayer }) =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
@@ -267,7 +274,7 @@ for (const storage of ["sqlite", "memory"] as const) {
       assert.instanceOf(missingThread, ProjectionStore.ProjectionStoreThreadNotFoundError);
 
       const calls: string[] = [];
-      const sessions = Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+      const layerSessions = Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
         get: () =>
           Effect.succeed(
             Option.some({
@@ -339,10 +346,9 @@ for (const storage of ["sqlite", "memory"] as const) {
       }).pipe(
         Effect.provide(
           Layer.merge(ProviderTurnControlService.layer, RuntimeRequestService.layer).pipe(
-            Layer.provide(sessions),
+            Layer.provide(layerSessions),
           ),
         ),
       );
-    }).pipe(Effect.provide(Layer.merge(storeLayer, SqlitePersistenceMemory))),
-  );
-}
+    }).pipe(Effect.provide(Layer.merge(storeLayer, SqlitePersistence.layerMemory))),
+);

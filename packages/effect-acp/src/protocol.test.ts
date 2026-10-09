@@ -11,7 +11,8 @@ import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 import * as Ref from "effect/Ref";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as TestClock from "effect/testing/TestClock";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { it, assert } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -257,6 +258,42 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
+  it.effect("terminates when a callback on the reader dies", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const termination = yield* Deferred.make<AcpError.AcpError>();
+      yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        transformSessionUpdate: () => {
+          throw new Error("normalizer bug");
+        },
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+
+      yield* Queue.offer(
+        input,
+        encoder.encode(
+          `${encodeUnknownJsonString({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: "session-1",
+              update: { sessionUpdate: "plan", entries: [] },
+            },
+          })}\n`,
+        ),
+      );
+
+      // Pending requests are failed through termination instead of hanging.
+      const error = yield* TestClock.withLive(
+        Deferred.await(termination).pipe(Effect.timeout("2 seconds")),
+      );
+      assert.instanceOf(error, AcpError.AcpTransportError);
+      assert.equal((error as AcpError.AcpTransportError).operation, "read-input-stream");
+    }),
+  );
+
   it.effect("logs outgoing notifications when logOutgoing is enabled", () =>
     Effect.gen(function* () {
       const { stdio } = yield* makeInMemoryStdio();
@@ -497,6 +534,38 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
         requestId: 1,
         operation: "receive-response",
       });
+    }),
+  );
+
+  it.effect("answers an extension request whose handler also dies as an internal error", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        // The typed failure must not hide the defect from its cleanup.
+        onExtRequest: () =>
+          Effect.fail(AcpError.AcpRequestError.invalidParams("bad params")).pipe(
+            Effect.ensuring(Effect.die(new Error("cleanup bug"))),
+          ),
+      });
+
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(ExtRequest, {
+          jsonrpc: "2.0",
+          id: 9,
+          method: "x/test",
+          params: { hello: "world" },
+          headers: [],
+        }),
+      );
+
+      const response = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(JsonRpcErrorResponse),
+      )(yield* Queue.take(output));
+      assert.equal(response.id, 9);
+      assert.equal(response.error.code, -32603);
     }),
   );
 
@@ -1088,8 +1157,9 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
-  for (const operation of ["request", "notification"] as const) {
-    it.effect(`rejects a ${operation} if the connection ends while its logger is running`, () =>
+  it.effect.each(["request", "notification"] as const)(
+    "rejects a %s if the connection ends while its logger is running",
+    (operation) =>
       Effect.gen(function* () {
         const { stdio, input, output } = yield* makeInMemoryStdio();
         const writeStarted = yield* Deferred.make<void>();
@@ -1127,6 +1197,5 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
         assert.strictEqual(failure, error);
         assert.equal(yield* Queue.size(output), 0);
       }),
-    );
-  }
+  );
 });

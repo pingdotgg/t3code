@@ -1,12 +1,15 @@
+import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   type OrchestrationV2DomainEvent,
   type ProviderThreadId,
   type OrchestrationV2RestartCancelledBackgroundWork,
+  type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -15,7 +18,7 @@ import * as Schema from "effect/Schema";
 
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
@@ -93,6 +96,23 @@ function isNonterminalNodeStatus(status: string): boolean {
   return status === "pending" || status === "running" || status === "waiting";
 }
 
+/**
+ * A delegate_task child. Its own thread is reconciled and continued on its own
+ * and reports back through the app, so it is not provider background work.
+ */
+function isAppOwnedDelegation(task: {
+  readonly origin: OrchestrationV2Subagent["origin"];
+  readonly childThreadId: ThreadId | null;
+}): boolean {
+  return task.origin === "app_owned" && task.childThreadId !== null;
+}
+
+function isAppOwnedDelegationItem(
+  item: OrchestrationV2ThreadProjection["turnItems"][number],
+): boolean {
+  return item.type === "subagent" && isAppOwnedDelegation(item);
+}
+
 function providerThreadHasPendingBackgroundTasks(
   providerThread: OrchestrationV2ThreadProjection["providerThreads"][number],
 ): boolean {
@@ -129,28 +149,14 @@ function resolveStaleBackgroundItemProviderInstanceId(
   return projection.providerThreads[0]?.providerInstanceId ?? projection.thread.providerInstanceId;
 }
 
-/**
- * Provider threads with background work reconciliation would cancel and
- * record for their next turn.
- */
-function providerThreadsWithOpenBackgroundWork(
-  projection: ProjectionStore.ProjectionRuntimeRecoveryState,
-): ReadonlySet<ProviderThreadId> {
-  const ids = new Set<ProviderThreadId>();
-  for (const item of projection.turnItems ?? []) {
-    if (!isBackgroundCapableTurnItemType(item.type) || !isNonterminalTurnItemStatus(item.status))
-      continue;
-    const providerThreadId =
-      item.providerThreadId ??
-      projection.runs.find((run) => run.id === item.runId)?.providerThreadId;
-    if (providerThreadId != null) ids.add(providerThreadId);
-  }
-  for (const thread of projection.providerThreads ?? []) {
-    if (thread.ownerNodeId === null && providerThreadHasPendingBackgroundTasks(thread))
-      ids.add(thread.id);
-  }
-  return ids;
-}
+/** An open item closed by recovery. A secret card also closes its form, so it takes no answer. */
+const cancelledItem = (
+  item: OrchestrationV2ThreadProjection["turnItems"][number],
+  now: DateTime.Utc,
+): OrchestrationV2ThreadProjection["turnItems"][number] =>
+  item.type === "secret_request" && item.secretStatus === "pending"
+    ? { ...item, status: "cancelled", secretStatus: "cancelled", completedAt: now, updatedAt: now }
+    : { ...item, status: "cancelled", completedAt: now, updatedAt: now };
 
 /**
  * A provider thread's latest started run: the last turn that provider saw.
@@ -166,7 +172,7 @@ function latestStartedRun(
       run.providerThreadId === providerThreadId &&
       run.status !== "queued" &&
       run.status !== "rolled_back" &&
-      (latest === undefined || run.ordinal > latest.ordinal)
+      (latest === undefined || runRanAfter(run, latest))
         ? run
         : latest,
     undefined,
@@ -222,6 +228,13 @@ export const make = Effect.gen(function* () {
       const requests = projection.runtimeRequests.filter(
         (request) => request.status === "pending" && request.responseCapability.type !== "message",
       );
+      // Delegated task rows, items and nodes stay open: the child settles them.
+      const delegatedTaskNodeIds = new Set<string>([
+        ...(projection.subagents ?? []).filter(isAppOwnedDelegation).map((subagent) => subagent.id),
+        ...(projection.turnItems ?? []).flatMap((item) =>
+          item.type === "subagent" && isAppOwnedDelegation(item) ? [item.subagentId] : [],
+        ),
+      ]);
       const detail = `Cancelled because the server ${trigger === "startup" ? "restarted" : "shut down"} before the provider work completed.`;
       const commandId = CommandId.make(
         `command:runtime-reconcile:${trigger}:${projection.thread.id}:${DateTime.formatIso(now)}`,
@@ -333,6 +346,7 @@ export const make = Effect.gen(function* () {
           (candidate) =>
             candidate.runId === run.id &&
             !messageRequestNodeIds.has(candidate.id) &&
+            !delegatedTaskNodeIds.has(candidate.id) &&
             (candidate.status === "pending" ||
               candidate.status === "running" ||
               candidate.status === "waiting"),
@@ -351,6 +365,7 @@ export const make = Effect.gen(function* () {
         for (const subagent of projection.subagents.filter(
           (candidate) =>
             candidate.runId === run.id &&
+            !isAppOwnedDelegation(candidate) &&
             (candidate.status === "pending" ||
               candidate.status === "running" ||
               candidate.status === "waiting"),
@@ -404,6 +419,7 @@ export const make = Effect.gen(function* () {
           (candidate) =>
             candidate.runId === run.id &&
             (candidate.nodeId === null || !messageRequestNodeIds.has(candidate.nodeId)) &&
+            !isAppOwnedDelegationItem(candidate) &&
             (candidate.status === "pending" ||
               candidate.status === "running" ||
               candidate.status === "waiting"),
@@ -419,7 +435,7 @@ export const make = Effect.gen(function* () {
             ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
             providerInstanceId: run.providerInstanceId,
             occurredAt: now,
-            payload: { ...item, status: "cancelled", completedAt: now, updatedAt: now },
+            payload: cancelledItem(item, now),
           });
         }
       }
@@ -436,7 +452,7 @@ export const make = Effect.gen(function* () {
         if (!isBackgroundCapableTurnItemType(item.type)) {
           continue;
         }
-        if (!isNonterminalTurnItemStatus(item.status)) {
+        if (!isNonterminalTurnItemStatus(item.status) || isAppOwnedDelegationItem(item)) {
           continue;
         }
         const providerInstanceId = resolveStaleBackgroundItemProviderInstanceId(item, projection);
@@ -449,7 +465,7 @@ export const make = Effect.gen(function* () {
           ...(item.nodeId === null || item.nodeId === undefined ? {} : { nodeId: item.nodeId }),
           providerInstanceId,
           occurredAt: now,
-          payload: { ...item, status: "cancelled", completedAt: now, updatedAt: now },
+          payload: cancelledItem(item, now),
         });
         if (item.nodeId !== null && item.nodeId !== undefined) {
           const staleItemNode = projection.nodes.find(
@@ -634,7 +650,7 @@ export const make = Effect.gen(function* () {
       }
       const continuationRun =
         continueAfterRestart && trigger === "startup"
-          ? restartContinuationRun(projection, new Set(cancelledBackgroundWork.keys()))
+          ? restartContinuationRun(projection)
           : undefined;
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [
@@ -763,32 +779,36 @@ export const make = Effect.gen(function* () {
     if (!enabled) return;
     const threadIds = yield* projections.getRecoveryThreadIds("runtime");
     for (const threadId of threadIds) {
-      const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
-      if (
-        !resolveProjectSettings(enabled, projection.thread.projectId).settings
-          .continueThreadsAfterServerUpdate
-      )
-        continue;
-      // Shutdown reconciliation cancels the background work below, so a
-      // settled thread's continuation must be captured while it is still open.
-      const run = restartContinuationRun(
-        projection,
-        providerThreadsWithOpenBackgroundWork(projection),
+      yield* Effect.gen(function* () {
+        const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
+        if (
+          !resolveProjectSettings(enabled, projection.thread.projectId).settings
+            .continueThreadsAfterServerUpdate
+        )
+          return;
+        const run = restartContinuationRun(projection);
+        if (!run) return;
+        const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
+        yield* eventSink.writeWithEffects({
+          commandId,
+          events: [],
+          effects: [
+            {
+              id: `effect:restart-continuation:${run.id}`,
+              commandId,
+              threadId,
+              request: { type: "provider-runtime.continue", sourceRunId: run.id },
+            },
+          ],
+        });
+      }).pipe(
+        // One failing thread must not cost the threads after it their continuation.
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning("Failed to prepare a restart continuation", { threadId, cause }),
+        ),
       );
-      if (!run) continue;
-      const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
-      yield* eventSink.writeWithEffects({
-        commandId,
-        events: [],
-        effects: [
-          {
-            id: `effect:restart-continuation:${run.id}`,
-            commandId,
-            threadId,
-            request: { type: "provider-runtime.continue", sourceRunId: run.id },
-          },
-        ],
-      });
     }
   }).pipe(
     Effect.mapError((cause) => new ProviderRuntimeRecoveryError({ operation: "reconcile", cause })),

@@ -1,5 +1,11 @@
 import { Fragment, useEffect, useRef, useState } from "react";
-import { Line, sleep, TermChrome, useSpinner } from "./_terminal";
+import {
+  Line,
+  prefersReducedMotion,
+  sleep,
+  TermChrome,
+  useSpinner,
+} from "./_terminal";
 
 const TEST_STAGE = "pr-1729";
 
@@ -90,7 +96,7 @@ export default function TestTerminal({
       while (!aborted()) {
         setSteps([]);
         setSummary(null);
-        await typeCmd("bun test");
+        await typeCmd("pnpm test");
         if (aborted()) return;
         await sleep(280);
 
@@ -106,7 +112,11 @@ export default function TestTerminal({
           await sleep(160);
         }
         if (aborted()) return;
-        const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+        // Reduced motion skips the waits, so report the scripted total.
+        const ms = prefersReducedMotion()
+          ? TEST_STEPS.reduce((sum, step) => sum + step.runMs + 160, 0)
+          : Date.now() - t0;
+        const elapsed = (ms / 1000).toFixed(1);
         setSummary({ tests: 2, secs: elapsed });
         await sleep(2800);
       }

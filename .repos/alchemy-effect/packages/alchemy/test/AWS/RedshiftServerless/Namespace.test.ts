@@ -21,6 +21,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:redshiftserverless", "live"] },
 );
 
 test.provider(
@@ -34,6 +35,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:redshiftserverless", "live"] },
 );
 
 const assertNamespaceGone = (name: string) =>
@@ -144,5 +146,8 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       yield* assertNamespaceGone(namespace.namespaceName);
     }),
   // namespace (~1 min) + workgroup create (~2-5 min) + delete (~3-5 min).
-  { timeout: 1_200_000 },
+  {
+    tags: ["provider:aws", "provider:aws:redshiftserverless", "live"],
+    timeout: 1_200_000,
+  },
 );

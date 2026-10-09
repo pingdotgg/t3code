@@ -25,6 +25,7 @@ test.provider(
       );
       expect(error._tag).toBe("NotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:kafka", "live"] },
 );
 
 const nonexistentClusterArn = Effect.gen(function* () {
@@ -45,6 +46,7 @@ test.provider(
       );
       expect(error._tag).toBe("NotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:kafka", "live"] },
 );
 
 test.provider(
@@ -55,6 +57,7 @@ test.provider(
       const error = yield* Effect.flip(Kafka.listTopics({ ClusterArn }));
       expect(error._tag).toBe("NotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:kafka", "live"] },
 );
 
 test.provider(
@@ -67,6 +70,7 @@ test.provider(
       );
       expect(error._tag).toBe("NotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:kafka", "live"] },
 );
 
 test.provider(
@@ -85,6 +89,7 @@ test.provider(
       // the cluster, so a nonexistent cluster surfaces the typed 400.
       expect(error._tag).toBe("BadRequestException");
     }),
+  { tags: ["provider:aws", "provider:aws:kafka", "live"] },
 );
 
 // Resolve two default-for-AZ subnets from the account's default VPC — MSK
@@ -151,7 +156,10 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       yield* assertClusterDeleted(cluster.clusterArn);
     }),
   // create (~5-10 min) + destroy initiation, one test.
-  { timeout: 1_200_000 },
+  {
+    tags: ["provider:aws", "provider:aws:ec2", "provider:aws:kafka", "live"],
+    timeout: 1_200_000,
+  },
 );
 
 // Deletion is verified as INITIATED (state DELETING, irreversible) or fully

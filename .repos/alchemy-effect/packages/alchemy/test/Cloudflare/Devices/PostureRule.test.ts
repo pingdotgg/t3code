@@ -43,135 +43,144 @@ const expectGone = (accountId: string, ruleId: string) =>
     }),
   );
 
-test.provider("create, update in place, and delete a posture rule", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "create, update in place, and delete a posture rule",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const rule = yield* stack.deploy(
-      Cloudflare.Devices.DevicePostureRule("WindowsOsVersion", {
-        name: "alchemy-test-posture-os",
-        type: "os_version",
-        description: "Require Windows 10.0.19045+",
-        match: [{ platform: "windows" }],
-        schedule: "5m",
-        input: {
-          operatingSystem: "windows",
-          operator: ">=",
-          version: "10.0.19045",
-        },
-      }),
-    );
+      const rule = yield* stack.deploy(
+        Cloudflare.Devices.DevicePostureRule("WindowsOsVersion", {
+          name: "alchemy-test-posture-os",
+          type: "os_version",
+          description: "Require Windows 10.0.19045+",
+          match: [{ platform: "windows" }],
+          schedule: "5m",
+          input: {
+            operatingSystem: "windows",
+            operator: ">=",
+            version: "10.0.19045",
+          },
+        }),
+      );
 
-    expect(rule.postureRuleId).toBeTruthy();
-    expect(rule.accountId).toEqual(accountId);
-    expect(rule.name).toEqual("alchemy-test-posture-os");
-    expect(rule.type).toEqual("os_version");
-    expect(rule.description).toEqual("Require Windows 10.0.19045+");
+      expect(rule.postureRuleId).toBeTruthy();
+      expect(rule.accountId).toEqual(accountId);
+      expect(rule.name).toEqual("alchemy-test-posture-os");
+      expect(rule.type).toEqual("os_version");
+      expect(rule.description).toEqual("Require Windows 10.0.19045+");
 
-    // Out-of-band verify against the live API.
-    const live = yield* getRule(accountId, rule.postureRuleId);
-    expect(live.name).toEqual("alchemy-test-posture-os");
-    expect(live.type).toEqual("os_version");
+      // Out-of-band verify against the live API.
+      const live = yield* getRule(accountId, rule.postureRuleId);
+      expect(live.name).toEqual("alchemy-test-posture-os");
+      expect(live.type).toEqual("os_version");
 
-    // Update mutable props in place — same rule id.
-    const updated = yield* stack.deploy(
-      Cloudflare.Devices.DevicePostureRule("WindowsOsVersion", {
-        name: "alchemy-test-posture-os",
-        type: "os_version",
-        description: "Require Windows 10.0.22631+",
-        match: [{ platform: "windows" }],
-        schedule: "10m",
-        input: {
-          operatingSystem: "windows",
-          operator: ">=",
-          version: "10.0.22631",
-        },
-      }),
-    );
-    expect(updated.postureRuleId).toEqual(rule.postureRuleId);
-    expect(updated.description).toEqual("Require Windows 10.0.22631+");
-    expect(updated.schedule).toEqual("10m");
+      // Update mutable props in place — same rule id.
+      const updated = yield* stack.deploy(
+        Cloudflare.Devices.DevicePostureRule("WindowsOsVersion", {
+          name: "alchemy-test-posture-os",
+          type: "os_version",
+          description: "Require Windows 10.0.22631+",
+          match: [{ platform: "windows" }],
+          schedule: "10m",
+          input: {
+            operatingSystem: "windows",
+            operator: ">=",
+            version: "10.0.22631",
+          },
+        }),
+      );
+      expect(updated.postureRuleId).toEqual(rule.postureRuleId);
+      expect(updated.description).toEqual("Require Windows 10.0.22631+");
+      expect(updated.schedule).toEqual("10m");
 
-    const live2 = yield* getRule(accountId, rule.postureRuleId);
-    expect(live2.description).toEqual("Require Windows 10.0.22631+");
-    expect(live2.schedule).toEqual("10m");
+      const live2 = yield* getRule(accountId, rule.postureRuleId);
+      expect(live2.description).toEqual("Require Windows 10.0.22631+");
+      expect(live2.schedule).toEqual("10m");
 
-    yield* stack.destroy();
-    yield* expectGone(accountId, rule.postureRuleId);
-  }).pipe(logLevel),
+      yield* stack.destroy();
+      yield* expectGone(accountId, rule.postureRuleId);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:devices", "live"] },
 );
 
-test.provider("changing the rule type triggers a replacement", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "changing the rule type triggers a replacement",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const original = yield* stack.deploy(
-      Cloudflare.Devices.DevicePostureRule("Replace", {
-        name: "alchemy-test-posture-replace",
-        type: "firewall",
-        match: [{ platform: "mac" }],
-        schedule: "5m",
-        input: { enabled: true, operatingSystem: "mac" },
-      }),
-    );
-    expect(original.type).toEqual("firewall");
+      const original = yield* stack.deploy(
+        Cloudflare.Devices.DevicePostureRule("Replace", {
+          name: "alchemy-test-posture-replace",
+          type: "firewall",
+          match: [{ platform: "mac" }],
+          schedule: "5m",
+          input: { enabled: true, operatingSystem: "mac" },
+        }),
+      );
+      expect(original.type).toEqual("firewall");
 
-    // `type` is immutable — diff must request a replacement.
-    const replaced = yield* stack.deploy(
-      Cloudflare.Devices.DevicePostureRule("Replace", {
-        name: "alchemy-test-posture-replace",
-        type: "disk_encryption",
-        match: [{ platform: "mac" }],
-        schedule: "5m",
-        input: { requireAll: true },
-      }),
-    );
-    expect(replaced.type).toEqual("disk_encryption");
-    expect(replaced.postureRuleId).not.toEqual(original.postureRuleId);
+      // `type` is immutable — diff must request a replacement.
+      const replaced = yield* stack.deploy(
+        Cloudflare.Devices.DevicePostureRule("Replace", {
+          name: "alchemy-test-posture-replace",
+          type: "disk_encryption",
+          match: [{ platform: "mac" }],
+          schedule: "5m",
+          input: { requireAll: true },
+        }),
+      );
+      expect(replaced.type).toEqual("disk_encryption");
+      expect(replaced.postureRuleId).not.toEqual(original.postureRuleId);
 
-    // The old rule must be gone after the replacement completes.
-    yield* expectGone(accountId, original.postureRuleId);
+      // The old rule must be gone after the replacement completes.
+      yield* expectGone(accountId, original.postureRuleId);
 
-    yield* stack.destroy();
-    yield* expectGone(accountId, replaced.postureRuleId);
-  }).pipe(logLevel),
+      yield* stack.destroy();
+      yield* expectGone(accountId, replaced.postureRuleId);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:devices", "live"] },
 );
 
-test.provider("list enumerates the deployed posture rule", (stack) =>
-  Effect.gen(function* () {
-    const { accountId } = yield* yield* CloudflareEnvironment;
+test.provider(
+  "list enumerates the deployed posture rule",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const deployed = yield* stack.deploy(
-      Cloudflare.Devices.DevicePostureRule("ListRule", {
-        name: "alchemy-test-posture-list",
-        type: "os_version",
-        match: [{ platform: "windows" }],
-        schedule: "5m",
-        input: {
-          operatingSystem: "windows",
-          operator: ">=",
-          version: "10.0.19045",
-        },
-      }),
-    );
+      const deployed = yield* stack.deploy(
+        Cloudflare.Devices.DevicePostureRule("ListRule", {
+          name: "alchemy-test-posture-list",
+          type: "os_version",
+          match: [{ platform: "windows" }],
+          schedule: "5m",
+          input: {
+            operatingSystem: "windows",
+            operator: ">=",
+            version: "10.0.19045",
+          },
+        }),
+      );
 
-    const provider = yield* Provider.findProvider(
-      Cloudflare.Devices.DevicePostureRule,
-    );
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(
+        Cloudflare.Devices.DevicePostureRule,
+      );
+      const all = yield* provider.list();
 
-    // Exhaustive pagination must include the rule we just deployed.
-    expect(
-      all.some((rule) => rule.postureRuleId === deployed.postureRuleId),
-    ).toBe(true);
+      // Exhaustive pagination must include the rule we just deployed.
+      expect(
+        all.some((rule) => rule.postureRuleId === deployed.postureRuleId),
+      ).toBe(true);
 
-    yield* stack.destroy();
-    yield* expectGone(accountId, deployed.postureRuleId);
-  }).pipe(logLevel),
+      yield* stack.destroy();
+      yield* expectGone(accountId, deployed.postureRuleId);
+    }).pipe(logLevel),
+  { tags: ["provider:cloudflare", "provider:cloudflare:devices", "live"] },
 );

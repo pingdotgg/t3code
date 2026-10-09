@@ -4,23 +4,31 @@ import type {
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
-import { compactDynamicToolOutput, toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
+import {
+  compactDynamicToolOutput,
+  omitToolOutputImageData,
+  toolOutputImages,
+  toolOutputIndicatesFailure,
+} from "@t3tools/shared/toolOutput";
 
 const MAX_DETAIL_STRING_BYTES = 32_768;
 const MAX_DYNAMIC_VALUE_BYTES = 16_384;
+const MAX_ON_DEMAND_BYTES = 256 * 1024;
 
-function truncateDetail(value: string | undefined): string | undefined {
+function truncateDetail(
+  value: string | undefined,
+  maxBytes = MAX_DETAIL_STRING_BYTES,
+): string | undefined {
   if (
     value === undefined ||
-    (value.length <= MAX_DETAIL_STRING_BYTES &&
-      Buffer.byteLength(value, "utf8") <= MAX_DETAIL_STRING_BYTES)
+    (value.length <= maxBytes && Buffer.byteLength(value, "utf8") <= maxBytes)
   ) {
     return value;
   }
   // UTF-8 needs at least one byte per UTF-16 code unit. Only encode the prefix
   // that could fit, rather than allocating a buffer for the complete output.
-  const prefix = Buffer.from(value.slice(0, MAX_DETAIL_STRING_BYTES), "utf8")
-    .subarray(0, MAX_DETAIL_STRING_BYTES)
+  const prefix = Buffer.from(value.slice(0, maxBytes), "utf8")
+    .subarray(0, maxBytes)
     .toString("utf8")
     .replace(/\uFFFD$/u, "");
   return `${prefix}\n… output truncated for transport`;
@@ -80,13 +88,20 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
         (item.exitCode !== undefined && item.exitCode !== 0) ||
         (output !== undefined &&
           toolOutputIndicatesFailure(output.slice(0, MAX_DETAIL_STRING_BYTES)));
-      return failed ? { ...projected, outputIndicatesFailure: true } : projected;
+      return {
+        ...projected,
+        ...(failed ? { outputIndicatesFailure: true } : {}),
+        ...(output?.trim() ? { outputOmitted: true } : {}),
+      };
     }
     case "file_change": {
       // File identity and counts are enough for activity. Full diffs already
       // have a dedicated read path and remain intact in persistence.
-      const { diffStr: _diff, oldStr: _old, newStr: _new, ...projected } = item;
-      return projected;
+      const { diffStr, oldStr: _old, newStr: _new, ...projected } = item;
+      // A failed edit stores the provider's error where the diff would be.
+      return item.status === "failed" && diffStr?.trim()
+        ? { ...projected, diffStr: truncateDetail(diffStr) }
+        : projected;
     }
     case "subagent":
       return {
@@ -102,8 +117,84 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
         ...projected,
         input: summarizeDynamicValue(item.input),
         ...(output === undefined ? {} : { output }),
+        ...(hasDynamicValue(rawOutput) ? { outputOmitted: true } : {}),
       };
     }
+    default:
+      return item;
+  }
+}
+
+function hasDynamicValue(value: unknown): boolean {
+  if (value === undefined || value === null) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  return typeof value !== "object" || Object.keys(value).length > 0;
+}
+
+function boundDynamicValue(value: unknown): unknown {
+  if (value === undefined) return value;
+  if (typeof value === "string") return truncateDetail(value, MAX_ON_DEMAND_BYTES);
+  let json: string;
+  try {
+    // Compact, so measuring does not inflate the value; clients indent it.
+    json = JSON.stringify(value) ?? String(value);
+  } catch {
+    return "Unserializable tool value";
+  }
+  return Buffer.byteLength(json, "utf8") <= MAX_ON_DEMAND_BYTES
+    ? value
+    : truncateDetail(json, MAX_ON_DEMAND_BYTES);
+}
+
+/**
+ * A tool output for a detail read, without image bytes. When the rest is too
+ * large to send whole, its truncated text still comes with the image markers,
+ * in order, so clients can load each image by index.
+ */
+function boundToolOutput(output: unknown): unknown {
+  const omitted = omitToolOutputImageData(output);
+  const bounded = boundDynamicValue(omitted);
+  if (typeof bounded !== "string" || typeof omitted === "string") return bounded;
+  const images = toolOutputImages(omitted);
+  return images.length === 0
+    ? bounded
+    : [
+        { type: "text", text: bounded },
+        ...images.map((image) => ({ type: "image", mimeType: image.mimeType })),
+      ];
+}
+
+/**
+ * Projects one item for an on-demand detail read: keeps the input and output
+ * the timeline withholds, bounded so a huge result cannot stall the socket.
+ * Image bytes are left out; clients load them as `tool-output-image` assets.
+ */
+export function projectTurnItemForDetail(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
+  switch (item.type) {
+    case "command_execution":
+      return {
+        ...item,
+        input: truncateDetail(item.input, MAX_ON_DEMAND_BYTES) ?? "",
+        output: truncateDetail(item.output, MAX_ON_DEMAND_BYTES),
+      };
+    case "dynamic_tool":
+      return {
+        ...item,
+        input: boundDynamicValue(item.input),
+        output: boundToolOutput(item.output),
+      };
+    case "subagent":
+      return {
+        ...item,
+        prompt: truncateDetail(item.prompt, MAX_ON_DEMAND_BYTES) ?? "",
+        progress: truncateDetail(item.progress, MAX_ON_DEMAND_BYTES),
+        result:
+          item.result === null ? null : (truncateDetail(item.result, MAX_ON_DEMAND_BYTES) ?? null),
+      };
+    case "handoff":
+    case "file_change":
+      return projectTurnItemForWire(item);
     default:
       return item;
   }

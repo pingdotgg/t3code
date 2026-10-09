@@ -3,9 +3,9 @@ import * as BunHttpPlatform from "@effect/platform-bun/BunHttpPlatform"
 import { assert, describe, it } from "@effect/vitest"
 import * as ByteSize from "effect/ByteSize"
 import * as Effect from "effect/Effect"
-import type * as HttpBody from "effect/unstable/http/HttpBody"
-import * as HttpPlatform from "effect/unstable/http/HttpPlatform"
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
+import type * as HttpBody from "effect/http/HttpBody"
+import * as HttpPlatform from "effect/http/HttpPlatform"
+import * as HttpServerResponse from "effect/http/HttpServerResponse"
 import { afterEach, beforeEach, vi } from "vitest"
 
 const readBody = (body: HttpBody.HttpBody) => {

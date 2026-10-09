@@ -22,6 +22,7 @@ import type { RuntimeContext } from "../RuntimeContext.ts";
  * ```
  *
  * @binding
+ * @product Customer
  */
 export interface CreateCustomer extends Binding.Service<
   CreateCustomer,

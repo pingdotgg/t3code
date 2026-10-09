@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Schema } from "effect"
-import { Multipart } from "effect/unstable/http"
+import { Multipart } from "effect/http"
 import {
   HttpApi,
   HttpApiEndpoint,
@@ -9,7 +9,7 @@ import {
   HttpApiMiddleware,
   HttpApiSchema,
   OpenApi
-} from "effect/unstable/httpapi"
+} from "effect/http-api"
 
 describe("OpenAPI spec", () => {
   describe("api", () => {
@@ -1017,7 +1017,7 @@ describe("OpenAPI spec", () => {
           if (stream?.encoding !== "sse") {
             assert.fail("expected SSE stream metadata")
           }
-          assert.strictEqual(stream.failureEvent, "effect/httpapi/stream/failure")
+          assert.strictEqual(stream.failureEvent, "effect/http-api/stream/failure")
           assert.strictEqual(typeof stream.causeSchema, "object")
           assert.strictEqual(typeof stream.errorSchema, "object")
         })

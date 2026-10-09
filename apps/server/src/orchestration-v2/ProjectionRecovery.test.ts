@@ -20,16 +20,16 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
 
-const TestLayer = Layer.mergeAll(ProjectionStore.layer, EffectOutbox.layer).pipe(
-  Layer.provideMerge(SqlitePersistenceMemory),
+const layerTest = Layer.mergeAll(ProjectionStore.layer, EffectOutbox.layer).pipe(
+  Layer.provideMerge(SqlitePersistence.layerMemory),
 );
 const providerInstanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId: providerInstanceId, model: "gpt-5.4" };
@@ -221,7 +221,7 @@ it.effect("selects unfinished recovery work without reading settled thread histo
       queued,
       ThreadId.make("thread:recovery:settled-599"),
     ]);
-  }).pipe(Effect.provide(TestLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("recovers terminal subagent results until their cross-thread transfer exists", () =>
@@ -231,7 +231,7 @@ it.effect("recovers terminal subagent results until their cross-thread transfer 
     const now = yield* DateTime.now;
     const parent = yield* createThread("subagent-parent");
     const children: Array<ThreadId> = [];
-    for (const name of ["terminal", "archived", "deleted", "running"]) {
+    for (const name of ["terminal", "archived", "deleted", "running", "held", "queued"]) {
       const child = yield* createThread(`subagent-${name}`, {
         lineage: { parentThreadId: parent, relationshipToParent: "subagent", rootThreadId: parent },
         forkedFrom: { type: "node", nodeId: NodeId.make(`node:${name}`) },
@@ -239,12 +239,22 @@ it.effect("recovers terminal subagent results until their cross-thread transfer 
         deletedAt: name === "deleted" ? now : null,
       });
       yield* createRun(child, name === "running" ? "running" : "completed");
+      // A wake queued behind the result: held by Stop or a restart, or still deliverable.
+      if (name === "held" || name === "queued") {
+        yield* createRun(child, "queued", {
+          ordinal: 2,
+          startedAt: null,
+          ...(name === "held" ? { queueHeld: true } : {}),
+        });
+      }
       children.push(child);
     }
+    const terminalChildren = new Set([children[0]!, children[1]!, children[4]!]);
     assert.deepEqual(
       new Set(yield* projections.getRecoveryThreadIds("subagent-results")),
-      new Set(children.slice(0, 2)),
+      terminalChildren,
     );
+
     const completed = children[0]!;
     const transferId = ContextTransferId.make("transfer:recovery:subagent-result");
     yield* projections.apply({
@@ -273,7 +283,10 @@ it.effect("recovers terminal subagent results until their cross-thread transfer 
     });
     const archivedChild = children[1];
     assert.isDefined(archivedChild);
-    assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), [archivedChild]);
+    assert.deepEqual(
+      new Set(yield* projections.getRecoveryThreadIds("subagent-results")),
+      new Set([archivedChild, children[4]!]),
+    );
     assert.deepEqual(yield* projections.getUnreadableThreadIds(), []);
     yield* sql`
       UPDATE orchestration_v2_projection_context_transfers SET payload_json = '{}'
@@ -283,7 +296,7 @@ it.effect("recovers terminal subagent results until their cross-thread transfer 
       new Set(yield* projections.getUnreadableThreadIds()),
       new Set([parent, completed]),
     );
-  }).pipe(Effect.provide(TestLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("includes shared sessions and provider-owned background rosters in recovery", () =>
@@ -417,7 +430,74 @@ it.effect("includes shared sessions and provider-owned background rosters in rec
       new Set(yield* projections.getUnreadableThreadIds()),
       new Set([first, second]),
     );
-  }).pipe(Effect.provide(TestLayer)),
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("reads the run that owns a background roster, not a queued or resumed one", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const withRoster = Effect.fn(function* (threadId: ThreadId) {
+      yield* projections.apply({
+        id: EventId.make(`event:${threadId}:roster`),
+        type: "provider-thread.updated",
+        threadId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: ProviderThreadId.make(`provider-thread:${threadId}`),
+          appThreadId: threadId,
+          ownerNodeId: null,
+          driver,
+          providerInstanceId,
+          providerSessionId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: null,
+          lastRunOrdinal: null,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          pendingBackgroundTasks: [
+            { taskId: "background", description: "Still running", kind: "command" },
+          ],
+        },
+      });
+    });
+    const runIds = (threadId: ThreadId) =>
+      projections
+        .getRuntimeRecoveryProjection(threadId)
+        .pipe(Effect.map((state) => state.runs.map((run) => run.id)));
+    // Settled with background work left, then a queued follow-up.
+    const settled = yield* createThread("roster-before-queue");
+    const settledRun = yield* createRun(settled, "completed", {
+      providerThreadId: ProviderThreadId.make(`provider-thread:${settled}`),
+    });
+    const queuedRun = yield* createRun(settled, "queued", { ordinal: 2, completedAt: null });
+    yield* withRoster(settled);
+    assert.deepEqual(yield* runIds(settled), [settledRun, queuedRun]);
+    // A resumed queued run (ordinal 1) ended after a continuation (ordinal 2).
+    const resumed = yield* createThread("roster-after-resume");
+    const resumedRun = yield* createRun(resumed, "completed", {
+      providerThreadId: ProviderThreadId.make(`provider-thread:${resumed}`),
+      completedAt: DateTime.makeUnsafe("2026-10-03T10:05:00.000Z"),
+    });
+    const continuationRun = yield* createRun(resumed, "completed", {
+      providerThreadId: ProviderThreadId.make(`provider-thread:${resumed}`),
+      ordinal: 2,
+      completedAt: DateTime.makeUnsafe("2026-10-03T10:00:00.000Z"),
+    });
+    yield* withRoster(resumed);
+    assert.deepEqual(yield* runIds(resumed), [resumedRun, continuationRun]);
+    // Without a roster, settled history is not read.
+    const quiet = yield* createThread("no-roster-before-queue");
+    yield* createRun(quiet, "completed");
+    const quietQueued = yield* createRun(quiet, "queued", { ordinal: 2, completedAt: null });
+    assert.deepEqual(yield* runIds(quiet), [quietQueued]);
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("marks fork descendants unreadable when their source is missing or corrupt", () =>
@@ -446,5 +526,5 @@ it.effect("marks fork descendants unreadable when their source is missing or cor
       new Set(yield* projections.getUnreadableThreadIds()),
       new Set([fork, descendant]),
     );
-  }).pipe(Effect.provide(TestLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );

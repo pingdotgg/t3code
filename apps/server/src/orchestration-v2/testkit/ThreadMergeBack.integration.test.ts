@@ -19,7 +19,7 @@ import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 
 import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
-import * as IdAllocator from "../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import {
   CODEX_MODEL_SELECTION,
@@ -37,11 +37,11 @@ import {
   THREAD_MERGE_BACK_SOURCE_PROMPT,
 } from "./fixtures/shared.ts";
 import { runOrchestratorV2ProviderReplayScenario } from "./ProviderReplayHarness.ts";
-import { makeCheckpointWorkspace } from "./ReplayFixtureWorkspace.ts";
+import { makeCheckpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import {
   decodeProviderReplayNdjson,
   materializeReplayTranscriptWorkspace,
-} from "./ReplayTranscriptNdjson.ts";
+} from "@t3tools/provider-testing/replayTranscript";
 
 // These recorded 0.137 rollouts predate injection. Preserve their native fork
 // and turn exchanges, and assert the new history delivery at the adapter boundary.
@@ -257,8 +257,9 @@ function makeCreateCommand(input: {
 }
 
 describe("orchestration V2 merge-back provider replay", () => {
-  for (const variant of PROVIDERS) {
-    it.effect(`merges one fork delta back into the original ${variant.driver} thread`, () =>
+  it.effect.each(PROVIDERS)(
+    "merges one fork delta back into the original $driver thread",
+    (variant) =>
       Effect.gen(function* () {
         const rawTranscript = yield* readTranscript("thread_merge_back_continue", variant.driver);
         const materialized = yield* Effect.gen(function* () {
@@ -452,9 +453,11 @@ describe("orchestration V2 merge-back provider replay", () => {
         assert.notInclude(visibleConversationText(source), "Context handoff (");
         assert.include(visibleConversationText(fork), "merge fork stored");
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-    );
+  );
 
-    it.effect(`merges two sibling fork deltas into the original ${variant.driver} thread`, () =>
+  it.effect.each(PROVIDERS)(
+    "merges two sibling fork deltas into the original $driver thread",
+    (variant) =>
       Effect.gen(function* () {
         const rawTranscript = yield* readTranscript("thread_merge_back_siblings", variant.driver);
         const materialized = yield* Effect.gen(function* () {
@@ -725,6 +728,5 @@ describe("orchestration V2 merge-back provider replay", () => {
         assert.include(visibleConversationText(secondFork), "second merge sibling stored");
         assert.notInclude(visibleConversationText(secondFork), "first merge sibling stored");
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-    );
-  }
+  );
 });

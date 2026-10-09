@@ -104,5 +104,8 @@ test.provider(
         );
       expect(after).toBe(0);
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:ec2", "provider:aws:elbv2", "live"],
+    timeout: 240_000,
+  },
 );

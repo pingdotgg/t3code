@@ -15,7 +15,7 @@ vi.mock("node:os", () => ({
 
 import * as DesktopNetworkInterfaces from "./DesktopNetworkInterfaces.ts";
 
-const TestLayer = DesktopNetworkInterfaces.layer.pipe(
+const layerTest = DesktopNetworkInterfaces.layer.pipe(
   Layer.provide(Layer.succeed(HostProcessPlatform, "linux")),
 );
 
@@ -39,7 +39,7 @@ describe("DesktopNetworkInterfaces", () => {
     return Effect.gen(function* () {
       const service = yield* DesktopNetworkInterfaces.DesktopNetworkInterfaces;
       assert.strictEqual(yield* service.read, interfaces);
-    }).pipe(Effect.provide(TestLayer));
+    }).pipe(Effect.provide(layerTest));
   });
 
   it.effect("preserves network interface read failures as structured defects", () => {
@@ -60,6 +60,6 @@ describe("DesktopNetworkInterfaces", () => {
         assert.strictEqual(error.cause, cause);
         assert.equal(error.message, "Failed to read desktop network interfaces on linux.");
       }
-    }).pipe(Effect.provide(TestLayer));
+    }).pipe(Effect.provide(layerTest));
   });
 });

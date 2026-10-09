@@ -4,7 +4,7 @@ import { PlatformServices } from "@/Util/PlatformServices.ts";
 import { expect, it } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcess from "effect/process/ChildProcess";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { nodePath, nodeSupportsDevMode } from "./nodeProbe.ts";
@@ -26,44 +26,58 @@ class CaptureStream extends PassThrough {
 const nonInteractive = (stdout: CaptureStream) =>
   layerNonInteractive({ stdout: stdout as unknown as NodeJS.WriteStream });
 
-it("prints plain status lines and fails prompts typed", () => {
-  const stdout = new CaptureStream();
-  return Effect.gen(function* () {
-    const interaction = yield* Interaction;
-    yield* interaction.output.info({ message: "plain info", detail: "extra" });
-    yield* accessors.output.success("plain success");
-    const failure = yield* Effect.flip(
-      interaction.prompt.confirm({ message: "proceed?" }),
-    );
-    expect(failure._tag).toBe("NonInteractiveTerminal");
-    const select = yield* Effect.flip(
-      accessors.prompt.select({ message: "pick", options: [] }),
-    );
-    expect(select._tag).toBe("NonInteractiveTerminal");
-    const lines = stdout.output.split("\n");
-    expect(lines[0]).toContain("plain info");
-    expect(lines[0]).toContain("· extra");
-    expect(lines[1]).toContain("plain success");
-  }).pipe(Effect.provide(nonInteractive(stdout)));
-});
+it(
+  "prints plain status lines and fails prompts typed",
+  () => {
+    const stdout = new CaptureStream();
+    return Effect.gen(function* () {
+      const interaction = yield* Interaction;
+      yield* interaction.output.info({
+        message: "plain info",
+        detail: "extra",
+      });
+      yield* accessors.output.success("plain success");
+      const failure = yield* Effect.flip(
+        interaction.prompt.confirm({ message: "proceed?" }),
+      );
+      expect(failure._tag).toBe("NonInteractiveTerminal");
+      const select = yield* Effect.flip(
+        accessors.prompt.select({ message: "pick", options: [] }),
+      );
+      expect(select._tag).toBe("NonInteractiveTerminal");
+      const lines = stdout.output.split("\n");
+      expect(lines[0]).toContain("plain info");
+      expect(lines[0]).toContain("· extra");
+      expect(lines[1]).toContain("plain success");
+    }).pipe(Effect.provide(nonInteractive(stdout)));
+  },
+  { tags: ["unit", "local"] },
+);
 
-it("task prints a start line and settles with a status line", () => {
-  const stdout = new CaptureStream();
-  return Effect.gen(function* () {
-    const interaction = yield* Interaction;
-    yield* interaction.task({ label: "working", detail: "step" }, Effect.void);
-    const failed = yield* Effect.result(
-      interaction.task({ label: "breaking" }, Effect.fail("boom")),
-    );
-    expect(failed._tag).toBe("Failure");
-    const lines = stdout.output.trimEnd().split("\n");
-    expect(lines[0]).toContain("working");
-    expect(lines[0]).toContain("· step");
-    expect(lines[1]).toContain("working");
-    expect(lines[2]).toContain("breaking");
-    expect(lines[3]).toContain("breaking");
-  }).pipe(Effect.provide(nonInteractive(stdout)));
-});
+it(
+  "task prints a start line and settles with a status line",
+  () => {
+    const stdout = new CaptureStream();
+    return Effect.gen(function* () {
+      const interaction = yield* Interaction;
+      yield* interaction.task(
+        { label: "working", detail: "step" },
+        Effect.void,
+      );
+      const failed = yield* Effect.result(
+        interaction.task({ label: "breaking" }, Effect.fail("boom")),
+      );
+      expect(failed._tag).toBe("Failure");
+      const lines = stdout.output.trimEnd().split("\n");
+      expect(lines[0]).toContain("working");
+      expect(lines[0]).toContain("· step");
+      expect(lines[1]).toContain("working");
+      expect(lines[2]).toContain("breaking");
+      expect(lines[3]).toContain("breaking");
+    }).pipe(Effect.provide(nonInteractive(stdout)));
+  },
+  { tags: ["unit", "local"] },
+);
 
 // The regression this pins: spawned dev children carry NO interaction
 // services at all, so the vite child runner's entire module graph must load
@@ -118,5 +132,5 @@ it.live.skipIf(!nodeSupportsDevMode)(
       // graph (auth providers, credentials, vite loader) parsed under node.
       expect(combined).toContain("ALCHEMY_RPC_SERVER_ENVIRONMENT");
     }).pipe(Effect.scoped, Effect.provide(PlatformServices)),
-  { timeout: 60_000 },
+  { tags: ["unit", "local"], timeout: 60_000 },
 );

@@ -7,6 +7,7 @@ const ACP_REGISTRY_IDENTITY_STEP = 1;
 
 export const ADD_PROVIDER_WIZARD_STEPS = ["Provider", "Identity", "Config"] as const;
 export const ACP_REGISTRY_WIZARD_STEPS = ["Provider", "Identity", "Sign in"] as const;
+export const LOCAL_ACP_WIZARD_STEPS = ["Provider", "Identity"] as const;
 
 export interface ProviderIdentityDraft {
   readonly label: string;
@@ -65,7 +66,8 @@ export function isConfiguredAcpRegistryAgent(
     ) {
       return false;
     }
-    return (instance.config as Record<string, unknown>).agentId === agentId;
+    const config = instance.config as Record<string, unknown>;
+    return config.source !== "local" && config.agentId === agentId;
   });
 }
 

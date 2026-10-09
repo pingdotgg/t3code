@@ -9,6 +9,8 @@ export * from "./model.ts";
 export * as ConnectionOnboarding from "./onboarding.ts";
 export * from "./presentation.ts";
 export * as ProfileStore from "./profileStore.ts";
+export * from "./routes.ts";
+export { type RouteCheck } from "./driver.ts";
 export * as EnvironmentRegistry from "./registry.ts";
 // Flat so consumers' inferred types can name them.
 export { EnvironmentNotRegisteredError, PlatformEnvironmentRemovalError } from "./registry.ts";
@@ -16,3 +18,5 @@ export * as EnvironmentSupervisor from "./supervisor.ts";
 export * as Wakeups from "./wakeups.ts";
 
 export { orchestrationProtocolCompatibilityError } from "./compatibility.ts";
+// Flat so consumers' inferred command types can name it.
+export { OutdatedHostUpdateError } from "./outdatedHostUpdate.ts";

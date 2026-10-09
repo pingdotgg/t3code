@@ -17,7 +17,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
-import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import * as EffectAcpErrors from "effect-acp/errors";
 
@@ -33,8 +33,9 @@ const mockRuntimeOptions = {
 } satisfies AcpSessionRuntime.AcpSessionRuntimeOptions;
 
 describe("AcpSessionRuntime", () => {
-  for (const setupMethod of ["session/new", "session/resume"] as const) {
-    it.effect(`buffers root metadata while ${setupMethod} startup is still pending`, () =>
+  it.effect.each(["session/new", "session/resume"] as const)(
+    "buffers root metadata while %s startup is still pending",
+    (setupMethod) =>
       Effect.gen(function* () {
         const setupReplied = yield* Deferred.make<void>();
         const allowStartup = yield* Deferred.make<void>();
@@ -91,8 +92,7 @@ describe("AcpSessionRuntime", () => {
           (yield* runtime.getConfigOptions).find((option) => option.category === "model"),
         ).toMatchObject({ currentValue: "gpt-5.4" });
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-    );
-  }
+  );
 
   it.effect("publishes model changes returned by a config request and live notifications", () =>
     Effect.gen(function* () {

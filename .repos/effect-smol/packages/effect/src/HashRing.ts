@@ -150,12 +150,9 @@ export const addMany: {
         if (entry[1] === weight) continue
         toRemove ??= new Set()
         toRemove.add(key)
-        self.totalWeightCache -= entry[1]
-        self.totalWeightCache += weight
         entry[1] = weight
       } else {
         self.nodes.set(key, [node, weight])
-        self.totalWeightCache += weight
       }
       keys.push(key)
     }
@@ -163,6 +160,7 @@ export const addMany: {
       self.ring = self.ring.filter(([, n]) => !toRemove.has(n))
     }
     addNodesToRing(self, keys, Math.round(weight * self.baseWeight))
+    updateTotalWeight(self)
     return self
   }
 )
@@ -177,7 +175,18 @@ function addNodesToRing<A extends PrimaryKey.PrimaryKey>(self: HashRing<A>, keys
       ])
     }
   }
-  self.ring.sort((a, b) => a[0] - b[0])
+  // Break hash ties by node key to avoid insertion-order dependence.
+  self.ring.sort((a, b) => a[0] - b[0] || (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0))
+}
+
+// Sum in key order to avoid history-dependent floating-point rounding.
+function updateTotalWeight<A extends PrimaryKey.PrimaryKey>(self: HashRing<A>) {
+  const keys = Array.from(self.nodes.keys()).sort()
+  let total = 0
+  for (let i = 0; i < keys.length; i++) {
+    total += self.nodes.get(keys[i])![1]
+  }
+  self.totalWeightCache = total
 }
 
 /**
@@ -248,7 +257,7 @@ export const remove: {
   if (entry) {
     self.nodes.delete(key)
     self.ring = self.ring.filter(([, n]) => n !== key)
-    self.totalWeightCache -= entry[1]
+    updateTotalWeight(self)
   }
   return self
 })

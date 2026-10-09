@@ -4,22 +4,37 @@ import * as Equal from "effect/Equal";
 import * as Hash from "effect/Hash";
 import { PullRequestOperationError, PullRequestUnavailableError } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
-import * as Encoding from "effect/Encoding";
+import * as Hex from "effect/encoding/Hex";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore";
-import * as Persistable from "effect/unstable/persistence/Persistable";
-import * as PersistedCache from "effect/unstable/persistence/PersistedCache";
-import * as Persistence from "effect/unstable/persistence/Persistence";
+import * as KeyValueStore from "effect/persistence/KeyValueStore";
+import * as Persistable from "effect/persistence/Persistable";
+import * as PersistedCache from "effect/persistence/PersistedCache";
+import * as Persistence from "effect/persistence/Persistence";
 import * as ServerConfig from "../config.ts";
+import { forkParked } from "../serverActivation.ts";
 
 const CONCURRENT_READS = 512;
+// Persistence prefixes every entry key with the store id, so each entry file
+// name starts with it. The scope `revisions` file does not.
+const STORE_ID = "pr-v2";
+// An entry file is the store id followed by the SHA-256 hex digest of its key.
+const ENTRY_FILE_NAME = new RegExp(`^${STORE_ID}[0-9a-f]{64}$`);
+/**
+ * Entries expire a minute after they are written, and a write sets the file's
+ * mtime. A file untouched for a day is long expired; the day only leaves slack
+ * for clock changes. Pruning a live entry would cost one refetch.
+ */
+export const ENTRY_FILE_MAX_AGE = Duration.days(1);
 type ReadError = PullRequestOperationError | PullRequestUnavailableError;
 const revisionCodec = Schema.fromJsonString(
   Schema.Record(
@@ -72,7 +87,7 @@ export const make = Effect.gen(function* () {
   let enabled = true;
   const lock = yield* Semaphore.make(CONCURRENT_READS);
   const digest = (key: string) =>
-    crypto.digest("SHA-256", new TextEncoder().encode(key)).pipe(Effect.map(Encoding.encodeHex));
+    crypto.digest("SHA-256", new TextEncoder().encode(key)).pipe(Effect.map(Hex.encode));
   const revisions = yield* Cache.makeWith(
     () =>
       backing
@@ -97,7 +112,7 @@ export const make = Effect.gen(function* () {
         })),
       ),
     {
-      storeId: "pr-v2",
+      storeId: STORE_ID,
       timeToLive,
       inMemoryTTL: timeToLive,
       inMemoryCapacity: CONCURRENT_READS,
@@ -162,15 +177,60 @@ export const make = Effect.gen(function* () {
   });
 });
 
+/**
+ * Deletes entry files in `directory` not written within `ENTRY_FILE_MAX_AGE`.
+ * The persisted cache drops an expired entry only when it is read again, so
+ * files for PRs nobody reopens would otherwise stay forever.
+ */
+export const pruneExpiredEntryFiles = Effect.fn("PullRequestReadCache.pruneExpiredEntryFiles")(
+  function* (directory: string) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const cutoff = (yield* Clock.currentTimeMillis) - Duration.toMillis(ENTRY_FILE_MAX_AGE);
+    const entries = (yield* fileSystem.readDirectory(directory)).filter((name) =>
+      ENTRY_FILE_NAME.test(name),
+    );
+    // One file at a time, and `partition` visits every file, so one locked file
+    // does not stop the sweep.
+    const [, failures] = yield* Effect.partition(entries, (name) => {
+      const entryPath = path.join(directory, name);
+      return fileSystem.stat(entryPath).pipe(
+        Effect.flatMap((info) =>
+          Option.exists(info.mtime, (mtime) => mtime.getTime() < cutoff)
+            ? fileSystem.remove(entryPath)
+            : Effect.void,
+        ),
+        Effect.catchReason("PlatformError", "NotFound", () => Effect.void),
+      );
+    });
+    if (failures.length > 0) {
+      yield* Effect.logWarning("Failed to prune some PR cache files", {
+        failed: failures.length,
+        cause: failures[0],
+      });
+    }
+  },
+);
+
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const path = yield* Path.Path;
+    const directory = path.join(config.providerStatusCacheDir, "pull-requests");
     return Layer.effect(PullRequestReadCache, make).pipe(
       Layer.provide(
-        KeyValueStore.layerFileSystem(
-          path.join(config.providerStatusCacheDir, "pull-requests"),
-        ).pipe(
+        KeyValueStore.layerFileSystem(directory).pipe(
+          // Prunes once the server is active, then every hour.
+          Layer.tap(() =>
+            forkParked(
+              pruneExpiredEntryFiles(directory).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("Failed to prune PR cache files", { cause }),
+                ),
+                Effect.repeat(Schedule.spaced(Duration.hours(1))),
+              ),
+            ),
+          ),
           Layer.catch(() =>
             Layer.effectDiscard(
               Effect.logWarning("PR cache directory unavailable; using memory cache"),

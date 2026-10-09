@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./authScopeOptions": {
+      "types": "./src/authScopeOptions.ts",
+      "import": "./src/authScopeOptions.ts"
+    },
     "./orchestrationV2ThreadError": {
       "types": "./src/orchestrationV2ThreadError.ts",
       "import": "./src/orchestrationV2ThreadError.ts"
@@ -95,6 +99,10 @@
       "types": "./src/KeyedCoalescingWorker.ts",
       "import": "./src/KeyedCoalescingWorker.ts"
     },
+    "./KeyedLock": {
+      "types": "./src/KeyedLock.ts",
+      "import": "./src/KeyedLock.ts"
+    },
     "./schemaJson": {
       "types": "./src/schemaJson.ts",
       "import": "./src/schemaJson.ts"
@@ -110,6 +118,10 @@
     "./toolOutput": {
       "types": "./src/toolOutput.ts",
       "import": "./src/toolOutput.ts"
+    },
+    "./htmlRender": {
+      "types": "./src/htmlRender.ts",
+      "import": "./src/htmlRender.ts"
     },
     "./favicon": {
       "types": "./src/favicon.ts",
@@ -159,6 +171,10 @@
       "types": "./src/dpop.ts",
       "import": "./src/dpop.ts"
     },
+    "./desktopBootstrapToken": {
+      "types": "./src/desktopBootstrapToken.ts",
+      "import": "./src/desktopBootstrapToken.ts"
+    },
     "./dpopCommon": {
       "types": "./src/dpopCommon.ts",
       "import": "./src/dpopCommon.ts"
@@ -195,6 +211,10 @@
       "types": "./src/connectAuth.ts",
       "import": "./src/connectAuth.ts"
     },
+    "./symlink": {
+      "types": "./src/symlink.ts",
+      "import": "./src/symlink.ts"
+    },
     "./path": {
       "types": "./src/path.ts",
       "import": "./src/path.ts"
@@ -226,6 +246,10 @@
     "./assistantCitations": {
       "types": "./src/assistantCitations.ts",
       "import": "./src/assistantCitations.ts"
+    },
+    "./threadLinks": {
+      "types": "./src/threadLinks.ts",
+      "import": "./src/threadLinks.ts"
     },
     "./composerContextReferences": {
       "types": "./src/composerContextReferences.ts",
@@ -339,6 +363,10 @@
       "types": "./src/nodeSqliteClient.ts",
       "import": "./src/nodeSqliteClient.ts"
     },
+    "./orchestrationV2BoundedSnapshot": {
+      "types": "./src/orchestrationV2BoundedSnapshot.ts",
+      "import": "./src/orchestrationV2BoundedSnapshot.ts"
+    },
     "./orchestrationV2Timeline": {
       "types": "./src/orchestrationV2Timeline.ts",
       "import": "./src/orchestrationV2Timeline.ts"
@@ -382,6 +410,70 @@
     "./codexAuthHandoff": {
       "types": "./src/codexAuthHandoff.ts",
       "import": "./src/codexAuthHandoff.ts"
+    },
+    "./codexArtifactTemplates": {
+      "types": "./src/codexArtifactTemplates.ts",
+      "import": "./src/codexArtifactTemplates.ts"
+    },
+    "./codexFileCitations": {
+      "types": "./src/codexFileCitations.ts",
+      "import": "./src/codexFileCitations.ts"
+    },
+    "./codexMarkdownDirectives": {
+      "types": "./src/codexMarkdownDirectives.ts",
+      "import": "./src/codexMarkdownDirectives.ts"
+    },
+    "./markdownGithubAlerts": {
+      "types": "./src/markdownGithubAlerts.ts",
+      "import": "./src/markdownGithubAlerts.ts"
+    },
+    "./markdownListIndentation": {
+      "types": "./src/markdownListIndentation.ts",
+      "import": "./src/markdownListIndentation.ts"
+    },
+    "./proposedPlanText": {
+      "types": "./src/proposedPlanText.ts",
+      "import": "./src/proposedPlanText.ts"
+    },
+    "./markdownPipeline": {
+      "types": "./src/markdownPipeline.ts",
+      "import": "./src/markdownPipeline.ts"
+    },
+    "./threadFindText": {
+      "types": "./src/threadFindText.ts",
+      "import": "./src/threadFindText.ts"
+    },
+    "./threadSearch": {
+      "types": "./src/threadSearch.ts",
+      "import": "./src/threadSearch.ts"
+    },
+    "./markdownLinks": {
+      "types": "./src/markdownLinks.ts",
+      "import": "./src/markdownLinks.ts"
+    },
+    "./fileLinks": {
+      "types": "./src/fileLinks.ts",
+      "import": "./src/fileLinks.ts"
+    },
+    "./inlineSkills": {
+      "types": "./src/inlineSkills.ts",
+      "import": "./src/inlineSkills.ts"
+    },
+    "./mcpApp": {
+      "types": "./src/mcpApp.ts",
+      "import": "./src/mcpApp.ts"
+    },
+    "./atomicWrite": {
+      "types": "./src/atomicWrite.ts",
+      "import": "./src/atomicWrite.ts"
+    },
+    "./mcpResponsePayloads": {
+      "types": "./src/mcpResponsePayloads.ts",
+      "import": "./src/mcpResponsePayloads.ts"
+    },
+    "./PtyAdapter": {
+      "types": "./src/PtyAdapter.ts",
+      "import": "./src/PtyAdapter.ts"
     }
   },
   "scripts": {
@@ -394,12 +486,23 @@
     "@t3tools/contracts": "workspace:*",
     "effect": "catalog:",
     "jose": "catalog:",
+    "mdast-util-directive": "catalog:",
+    "micromark-extension-directive": "catalog:",
+    "micromark-util-character": "catalog:",
+    "rehype-raw": "catalog:",
+    "rehype-sanitize": "catalog:",
+    "remark-breaks": "catalog:",
+    "remark-gfm": "catalog:",
+    "remark-parse": "catalog:",
+    "remark-rehype": "catalog:",
+    "unified": "catalog:",
     "yaml": "catalog:"
   },
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
+    "micromark-util-types": "catalog:",
     "vite-plus": "catalog:"
   }
 }

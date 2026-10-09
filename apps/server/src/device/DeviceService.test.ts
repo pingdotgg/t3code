@@ -7,6 +7,7 @@ import {
   ThreadId,
   type DeviceServiceState,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
@@ -15,7 +16,7 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ServerSettings from "../serverSettings.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
@@ -135,6 +136,7 @@ const fixture = Effect.fn("fixture")(function* (
     undefined,
     installTool,
   ).pipe(
+    Effect.provide(NodeCrypto.layer),
     Effect.provideService(DeviceHost.DeviceHost, host),
     Effect.provideService(
       ServerSettings.ServerSettingsService,
@@ -361,29 +363,39 @@ describe("device discovery after server restart", () => {
   );
 });
 
-for (const [diagnostic, reason, message] of [
-  ["Insufficient disk space at /private/user/path", "disk_space", "not enough free disk space"],
-  ["Timed out spawning /private/user/command", "timeout", "did not become ready in time"],
-  ["Unexpected failure: secret-token", "launch_failed", "could not start"],
-] as const) {
-  it.effect(`normalizes boot failure: ${reason}`, () =>
-    Effect.gen(function* () {
-      const { service } = yield* fixture(Effect.void, diagnostic);
-      yield* service.configure({ enabled: true });
-      const error = yield* service
-        .open({
-          threadId: ThreadId.make("boot-failure"),
-          deviceId: "Pixel_API_35",
-          platform: "android",
-        })
-        .pipe(Effect.flip);
-      expect(error._tag).toBe("DeviceBootError");
-      expect(error.message).toContain(message);
-      expect(error.message).not.toContain(diagnostic);
-      expect((yield* service.state).bootingDevices).toEqual([]);
-    }).pipe(Effect.scoped),
-  );
-}
+it.effect.each([
+  {
+    diagnostic: "Insufficient disk space at /private/user/path",
+    reason: "disk_space",
+    message: "not enough free disk space",
+  },
+  {
+    diagnostic: "Timed out spawning /private/user/command",
+    reason: "timeout",
+    message: "did not become ready in time",
+  },
+  {
+    diagnostic: "Unexpected failure: secret-token",
+    reason: "launch_failed",
+    message: "could not start",
+  },
+] as const)("normalizes boot failure: $reason", ({ diagnostic, message }) =>
+  Effect.gen(function* () {
+    const { service } = yield* fixture(Effect.void, diagnostic);
+    yield* service.configure({ enabled: true });
+    const error = yield* service
+      .open({
+        threadId: ThreadId.make("boot-failure"),
+        deviceId: "Pixel_API_35",
+        platform: "android",
+      })
+      .pipe(Effect.flip);
+    expect(error._tag).toBe("DeviceBootError");
+    expect(error.message).toContain(message);
+    expect(error.message).not.toContain(diagnostic);
+    expect((yield* service.state).bootingDevices).toEqual([]);
+  }).pipe(Effect.scoped),
+);
 
 it.effect("keeps shutdown successful when subsequent discovery fails", () =>
   Effect.gen(function* () {
@@ -472,6 +484,7 @@ it.effect.each(["shutdown", "close"] as const)(
         }),
       );
       const service = yield* DeviceService.makeWithHosts(new Map([[host.id, host]])).pipe(
+        Effect.provide(NodeCrypto.layer),
         Effect.provideService(HttpClient.HttpClient, http),
       );
       const input = { threadId, deviceId, platform: "ios" as const };
@@ -564,6 +577,7 @@ it.effect.each([
         }),
       );
       const service = yield* DeviceService.makeWithHosts(new Map([[host.id, host]])).pipe(
+        Effect.provide(NodeCrypto.layer),
         Effect.provideService(HttpClient.HttpClient, http),
       );
       yield* service.list;

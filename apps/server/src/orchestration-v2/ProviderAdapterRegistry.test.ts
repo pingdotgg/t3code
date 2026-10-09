@@ -18,15 +18,18 @@ import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import * as ProviderAuthFlow from "../provider/ProviderAuthFlow.ts";
-import type { ProviderAuthController } from "../provider/Services/ProviderAuthService.ts";
-import type { ProviderInstance } from "../provider/ProviderDriver.ts";
-import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
-import { ProviderAdapterOpenSessionError, type ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
+import * as ProviderAuthFlow from "@t3tools/provider-core/server/ProviderAuthFlow";
+import type { ProviderAuthController } from "../provider/ProviderAuthService.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import {
+  ProviderAdapterOpenSessionError,
+  type ProviderAdapterV2Shape,
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriver,
-} from "./ProviderAdapterDriver.ts";
+} from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 
 const driver = ProviderDriverKind.make("codex");
@@ -65,7 +68,7 @@ const instances = [
   makeInstance(personalId, personalAdapter),
   makeInstance(workId, workAdapter),
 ] as const;
-const instanceRegistryLayer = Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+const layerInstanceRegistry = Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
   getInstance: (instanceId) =>
     Effect.succeed(instances.find((instance) => instance.instanceId === instanceId)),
   listInstances: Effect.succeed(instances),
@@ -73,8 +76,8 @@ const instanceRegistryLayer = Layer.succeed(ProviderInstanceRegistry.ProviderIns
   streamChanges: Stream.empty,
   subscribeChanges: Effect.never,
 });
-const TestLayer = ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
-  Layer.provide(instanceRegistryLayer),
+const layerTest = ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
+  Layer.provide(layerInstanceRegistry),
 );
 
 it.effect("routes two configured instances of the same driver independently", () =>
@@ -84,7 +87,7 @@ it.effect("routes two configured instances of the same driver independently", ()
     assert.strictEqual(yield* registry.get(personalId), personalAdapter);
     assert.strictEqual(yield* registry.get(workId), workAdapter);
     assert.deepEqual(yield* registry.list(), [personalId, workId]);
-  }).pipe(Effect.provide(TestLayer)),
+  }).pipe(Effect.provide(layerTest)),
 );
 
 const lifecycleDriver = ProviderDriverKind.make("lifecycle-test");

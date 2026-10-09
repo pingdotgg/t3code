@@ -28,7 +28,7 @@
     "tc": "vp run -r --concurrency-limit 2 typecheck",
     "lint": "vp lint --report-unused-disable-directives",
     "knip": "knip --preprocessor ./scripts/knip-schemas.ts",
-    "knip:check": "knip --include files,dependencies --no-config-hints && knip --workspace apps/server --workspace apps/desktop --workspace apps/web --workspace packages/client-runtime --workspace packages/contracts --workspace packages/effect-acp --workspace packages/effect-codex-app-server --workspace packages/shared --workspace packages/ssh --workspace packages/tailscale --exports --preprocessor ./scripts/knip-schemas.ts --no-config-hints",
+    "knip:check": "knip --include files,dependencies --no-config-hints && knip --workspace apps/server --workspace apps/desktop --workspace apps/web --workspace packages/client-runtime --workspace packages/contracts --workspace packages/effect-acp --workspace packages/effect-codex-app-server --workspace packages/shared --workspace packages/ssh --workspace packages/tailscale --workspace packages/provider-core --workspace packages/provider-acp --workspace packages/provider-acp-registry --workspace packages/provider-testing --workspace packages/provider-pi --workspace packages/provider-muse --workspace packages/provider-opencode --workspace packages/provider-cursor --workspace packages/provider-grok --exports --preprocessor ./scripts/knip-schemas.ts --no-config-hints",
     "knip:production": "knip --production --preprocessor ./scripts/knip-schemas.ts",
     "lint:mobile": "node scripts/mobile-native-static-check.ts",
     "test": "vp run -r test",
@@ -51,6 +51,7 @@
     "sync:repos": "node scripts/sync-reference-repos.ts"
   },
   "devDependencies": {
+    "@coderabbitai/config": "1.1.0",
     "@effect/tsgo": "catalog:",
     "@shadcn/lint": "0.1.5",
     "@types/node": "catalog:",

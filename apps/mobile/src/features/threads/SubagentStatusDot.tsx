@@ -10,19 +10,25 @@ const TONE_CLASS = {
   stopped: "bg-foreground-muted",
 } as const satisfies Record<SubagentRowTone, string>;
 
+export const SUBAGENT_TONE_TEXT_CLASS = {
+  working: "text-adaptive-sky-600-400",
+  completed: "text-adaptive-emerald-600-400",
+  failed: "text-adaptive-rose-600-400",
+  stopped: "text-foreground-muted",
+} as const satisfies Record<SubagentRowTone, string>;
+
 export function SubagentStatusDot({
   tone,
   placement = "inline",
 }: {
   readonly tone: SubagentRowTone;
-  readonly placement?: "inline" | "provider" | "sheet";
+  readonly placement?: "inline" | "sheet";
 }) {
   return (
     <View
       className={cn(
         "shrink-0 rounded-full",
         placement === "sheet" ? "h-2 w-2" : "h-1.5 w-1.5",
-        placement === "provider" && "absolute bottom-0.5 right-0.5",
         TONE_CLASS[tone],
       )}
     />

@@ -1,71 +1,69 @@
 ---
 title: Migrations
-description: Drizzle.Schema runs drizzle-kit generate as part of deploy — unambiguous schema changes regenerate automatically, ambiguous ones stop and ask you.
+description: Generate migrations when your schema changes, review and commit the SQL and snapshots, then deploy from Git.
 ---
 
-`Drizzle.Schema` puts `drizzle-kit generate` inside the deploy
-graph: on each deploy it diffs your schema module against the latest
-checked-in snapshot, writes any pending migration SQL to `out`, and
-the database resource downstream applies it via `migrations` — in
-that order, because `schema.out` is an `Output` the database depends
-on.
+Migration files belong in Git alongside your schema. Generate and review them
+when the schema changes, commit them, then deploy.
 
-```typescript
-const schema = yield* Drizzle.Schema("app-schema", {
-  schema: "./src/schema.ts",
-  out: "./migrations",
-  dialect: "sqlite",
-});
+## Generate migrations when the schema changes
 
-const db = yield* Cloudflare.D1.Database("app-db", {
-  migrations: schema,
-});
+```sh
+pnpm exec drizzle-kit generate
 ```
 
-## What a deploy actually does
+Answer any rename prompts and review the generated SQL before applying it.
+`generate` writes migration files; `migrate` applies them to a database.
 
-- **No drift** — the schema matches the latest snapshot: nothing is
-  generated, the resource is a noop, and nothing cascades into the
-  database resource.
-- **Unambiguous drift** — a new table, a new column: the migration
-  SQL is generated automatically and applied in the same deploy.
-- **Ambiguous drift** — a change drizzle-kit cannot decide alone
-  (did you rename `email` to `contact`, or drop one column and add
-  another? a change that would lose data): it needs your answer.
-  - In a terminal, `alchemy deploy` surfaces drizzle-kit's
-    interactive prompts and you answer inline.
-  - Non-interactively (CI, `--yes` pipelines), the deploy **fails**
-    with drizzle-kit's report and instructions: run
-    `drizzle-kit generate` yourself, answer the prompts, commit the
-    generated files, and redeploy. The generated SQL is applied to a
-    real database in the same deploy — alchemy never guesses on a
-    destructive choice.
+## Commit the schema and migrations
 
-Generated files land under `out` as ordered migration directories
-containing `migration.sql` and `snapshot.json`. Commit them — they
-are source code, shared with every other environment that deploys
-the same app.
+```sh
+git add src/schema.ts drizzle
+git commit -m "Add schema migration"
+```
 
-## Or: run drizzle-kit yourself
+Include both the SQL and snapshots:
 
-`Drizzle.Schema` is optional. If you prefer to run
-`drizzle-kit generate` manually and commit the output, point
-`migrations` at the checked-in directory — the database resource
-only sees `.sql` files:
+```text
+drizzle/
+└── 20260919000000_create_users/
+    ├── migration.sql
+    └── snapshot.json
+```
+
+## Deploy the committed migrations
+
+Point the database resource at the checked-in directory:
 
 ```typescript
 const db = yield* Cloudflare.D1.Database("app-db", {
-  migrations: "./drizzle", // drizzle-kit's default out
+  migrations: "./drizzle",
 });
 ```
+
+```sh
+pnpm alchemy deploy
+```
+
+This resource applies pending SQL from `./drizzle`. CI should deploy the
+committed files, not generate a new migration history.
+
+For optional schema-generation automation, see the
+[`Drizzle.Schema` reference](/providers/drizzle/schema). The workflow above
+keeps generation and review separate from deployment.
 
 ## Durable Object migrations
 
-A Durable Object's SQLite database is per-instance, so its
-migrations run inside the object at runtime rather than from the
-deploy graph (see drizzle's
-[Durable Objects guide](https://orm.drizzle.team/docs/connect-cloudflare-do)).
-Generate them with drizzle-kit's `durable-sqlite` driver:
+Capture SQL during construction; apply it when each object activates:
+
+```text
+Cloudflare.SqlMigrations("./drizzle")       → read files into the Worker bundle
+Drizzle.DurableObject({ migrations, ... }) → migrate this object's SQLite database
+```
+
+Deployment does not eagerly migrate every object in the namespace.
+
+### Generate and commit the SQL
 
 ```typescript
 // drizzle.config.ts
@@ -73,18 +71,15 @@ import { defineConfig } from "drizzle-kit";
 
 export default defineConfig({
   dialect: "sqlite",
-  driver: "durable-sqlite",
   schema: "./src/schema.ts",
   out: "./drizzle",
 });
 ```
 
-Define the schema — tables plus
-[`defineRelations`](https://orm.drizzle.team/docs/relations-v2) for
-typed relational queries:
+Define a table and its [query relations](https://orm.drizzle.team/docs/relations-v2):
 
 ```typescript
-// schema.ts
+// src/schema.ts
 import { defineRelations } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
@@ -93,109 +88,147 @@ export const users = sqliteTable("users", {
   name: text("name").notNull(),
 });
 
-export const posts = sqliteTable("posts", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  userId: integer("user_id").notNull().references(() => users.id),
-  title: text("title").notNull(),
-});
-
-export const relations = defineRelations({ users, posts }, (t) => ({
-  users: { posts: t.many.posts() },
-  posts: { author: t.one.users({ from: t.posts.userId, to: t.users.id }) },
-}));
+export const relations = defineRelations({ users });
 ```
 
-[`drizzle-kit generate`](https://orm.drizzle.team/docs/drizzle-kit-generate)
-writes the migration directories plus a `migrations.js` bundle that
-imports each migration's `.sql` file. The alchemy bundler loads bare
-`.sql` imports as text modules (the same way it handles `.txt` and
-`.html`), so the generated bundle imports directly into your Durable
-Object. Commit it and hand it to `Drizzle.DurableObject`, along with
-the `relations`:
+Generate locally, review the SQL, and commit the schema and migrations together:
+
+```sh
+pnpm exec drizzle-kit generate
+git add src/schema.ts drizzle
+git commit -m "Create users table"
+```
+
+CI uses these committed files when deploying.
+
+`SqlMigrations` reads existing files. It does not run drizzle-kit or wait for `Drizzle.Schema`.
+
+### Load the directory in the outer Effect
 
 ```typescript
+// src/Users.ts
+import * as Cloudflare from "alchemy/Cloudflare";
 import * as Drizzle from "alchemy/Drizzle/Cloudflare";
-import migrations from "./drizzle/migrations.js";
-import { posts, relations, users } from "./schema.ts";
+import * as Effect from "effect/Effect";
+import { relations, users } from "./schema.ts";
 
 export class Users extends Cloudflare.DurableObject<Users>()(
   "Users",
   Effect.gen(function* () {
+    // Construction: capture SQL without importing .sql or migrations.js.
+    const migrations = yield* Cloudflare.SqlMigrations("./drizzle");
+
     return Effect.gen(function* () {
+      // Activation: apply pending SQL before exposing methods.
       const db = yield* Drizzle.DurableObject({ migrations, relations });
 
       return {
-        addUser: (name: string) => db.insert(users).values({ name }),
-        listUsers: () => db.select().from(users),
-        listUsersWithPosts: () =>
-          db.query.users.findMany({ with: { posts: true } }),
+        addUser: (name: string) => db.insert(users).values({ name }).returning(),
+        listUsers: () => db.query.users.findMany(),
       };
     });
   }),
 ) {}
 ```
 
-`Drizzle.DurableObject` (from `alchemy/Drizzle/Cloudflare`) opens
-drizzle over the instance's own SQLite storage using the
-`drizzle-orm/effect-sqlite-do` integration — the
-same effect-native query surface as [`Drizzle.D1`](/sql/drizzle/d1)
-and [`Drizzle.Postgres`](/sql/drizzle/postgres). It lives in the
-object's inner Effect — the instance constructor, which runs only in the
-deployed object, before any request reaches its methods. The config
-passes the driver's options through — the `relations` make
-`db.query.users.findMany({ with: { posts: true } })` fully typed.
+Paths are relative to the Alchemy command's working directory, not `Users.ts`:
 
-Every query carries a typed error channel, so failures are handled
-per operation with `Effect.catchTag`:
-
-```typescript
-db.insert(users).values({ name }).pipe(
-  Effect.catchTag("EffectDrizzleQueryError", (error) =>
-    Effect.succeed(undefined),
-  ),
-);
+```sh
+cd my-app # Contains ./drizzle.
+pnpm alchemy dev
 ```
 
-`EffectDrizzleQueryError` carries the query, its params, and the
-underlying cause. Transactions add the effect-sql `SqlError` to the
-union, and the migrator can fail with `MigratorInitError`.
+After SQL edits, restart `alchemy dev` or redeploy. SQL directories are not watched.
 
-## Migrating from drizzle-kit
+### Choose a history table
 
-Already ran `drizzle-kit migrate` against the database before
-Alchemy? No baselining needed: on the first deploy Alchemy copies
-the applied history out of `__drizzle_migrations` (the `drizzle`
-schema on Postgres) into its own `__alchemy_migrations` table —
-hashes carry over verbatim, since both record sha256 of
-`migration.sql` — and only genuinely pending migrations run. The
-drizzle table is left frozen, never written or dropped.
+```typescript
+// Default: __alchemy_migrations
+const migrations = yield* Cloudflare.SqlMigrations("./drizzle");
+```
 
-It's a one-way move: from then on Alchemy owns the bookkeeping, so
-retire `drizzle-kit migrate` from your workflow (`drizzle-kit
-generate` is subsumed by `Drizzle.Schema`). See
-[adopting an existing database](/sql/effect-sql/migrations#adopting-an-existing-database)
-for the shared mechanics and guard rails.
+```typescript
+// Custom table
+const migrations = yield* Cloudflare.SqlMigrations({
+  dir: "./drizzle",
+  table: "app_migrations",
+});
+```
+
+### Apply migrations before activation
+
+Each pending file and its history row commit in one native SQLite transaction:
+
+```text
+0001_create_users  → SQL + history row commit
+0002_add_email     → SQL fails; this file rolls back; activation fails
+next activation    → skip 0001; retry 0002
+```
+
+Keep applied files unchanged. Migration failures are initialization defects; the object serves no requests until activation succeeds. Query errors remain typed (`EffectDrizzleQueryError`; transactions can also fail with `SqlError`).
+
+Without Drizzle, use the same engine in the inner Effect:
+
+```typescript
+yield* migrations.apply().pipe(Effect.orDie);
+```
+
+See the [raw SQL example](/sql/effect-sql/migrations#durable-object-migrations) for the complete object.
+
+### Existing Drizzle migrations
+
+Generated `migrations.js` inputs still work with Drizzle's migrator. To switch to Alchemy's engine, replace the import with a construction-time capture:
+
+```diff lang="typescript"
+-import migrations from "../drizzle/migrations.js";
+
+ Effect.gen(function* () {
++  const migrations = yield* Cloudflare.SqlMigrations("./drizzle");
+   return Effect.gen(function* () {
+     const db = yield* Drizzle.DurableObject({ migrations, relations });
+```
+
+```text
+__drizzle_migrations → copy matching history → __alchemy_migrations
+                      leave old table frozen; apply only pending files
+```
+
+:::caution[One-way adoption]
+Keep every historical SQL file and stop using Drizzle's migrator after adoption. Missing matches fail with `MigrationHistoryConflictError`; changing `migrationsTable` alone does not switch engines or convert history.
+:::
+
+For the legacy `meta/_journal.json` layout, upgrade before planning:
+
+```sh
+pnpm exec drizzle-kit up
+# Review the upgraded SQL and snapshots.
+git add drizzle
+git commit -m "Upgrade Drizzle migration layout"
+```
+
+See the [complete Worker example](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-durable-object-sql) for named-object POST and GET routes.
+
+## Existing migration history
+
+If you explicitly choose Alchemy to manage migrations for an existing database,
+see [adopting an existing database](/sql/effect-sql/migrations#adopting-an-existing-database)
+for the one-way history conversion and compatibility checks. Adoption is a
+separate decision from generating and committing migration files.
 
 ## Destroy never deletes migrations
 
-The provider's `delete` operation is a deliberate no-op. Removing
-the resource (or destroying the stack) never wipes the migrations
-directory — migration files are source code you commit, not cloud
-state to tear down.
+Removing `Drizzle.Schema` or destroying the stack leaves the checked-in migration directory intact. Database deletion still follows the database resource's lifecycle.
 
 ## Dialects
 
-`dialect` selects drizzle-kit's target: `"postgres"` (the default)
-for [Neon / PlanetScale / Fly / Hyperdrive-fronted
-Postgres](/sql/drizzle/postgres), `"mysql"` for
-[PlanetScale MySQL](/sql/drizzle/mysql), `"sqlite"` for
-[D1](/sql/drizzle/d1).
+| `dialect` | Database guide |
+| --- | --- |
+| `"postgres"` (default) | [Neon, PlanetScale, Fly, Hyperdrive](/sql/drizzle/postgres) |
+| `"mysql"` | [PlanetScale MySQL](/sql/drizzle/mysql) |
+| `"sqlite"` | [D1](/sql/drizzle/d1), Durable Objects |
 
 ## Where next
 
-- [Postgres](/sql/drizzle/postgres) / [MySQL](/sql/drizzle/mysql) /
-  [D1](/sql/drizzle/d1) — the full schema-to-queries flow per
-  database.
-- [Effect SQL migrations](/sql/effect-sql/migrations) — the same
-  `migrations` application without an ORM.
+- [Postgres](/sql/drizzle/postgres) / [MySQL](/sql/drizzle/mysql) / [D1](/sql/drizzle/d1)
+- [Effect SQL migrations](/sql/effect-sql/migrations)
 - [Schema API reference](/providers/drizzle/schema)

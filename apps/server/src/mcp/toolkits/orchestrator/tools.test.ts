@@ -1,9 +1,10 @@
 import { assert, describe, it } from "@effect/vitest";
-import { Tool } from "effect/unstable/ai";
+import { Tool } from "effect/ai";
 
 import {
   CreateThreadsTool,
   DelegateTaskTool,
+  OrchestratorToolkit,
   ScheduleTaskTool,
   ThreadUpdateTool,
 } from "./tools.ts";
@@ -17,6 +18,16 @@ describe("orchestrator MCP tool guidance", () => {
     assert.include(DelegateTaskTool.description ?? "", "waitTimedOut");
     assert.include(DelegateTaskTool.description ?? "", "does not cancel the child");
     assert.include(DelegateTaskTool.description ?? "", "keep that taskId");
+    assert.include(DelegateTaskTool.description ?? "", "call delegate_task again");
+    assert.include(DelegateTaskTool.description ?? "", "childThreadId is backing storage");
+    assert.include(
+      OrchestratorToolkit.tools.t3_thread_send.description ?? "",
+      "Do not use a delegated task's childThreadId to start another review round",
+    );
+    assert.include(
+      OrchestratorToolkit.tools.task_cancel.description ?? "",
+      "This includes later child-thread runs, even after the task is terminal",
+    );
   });
 
   it("documents wait timeout as a parent budget, not a child failure", () => {

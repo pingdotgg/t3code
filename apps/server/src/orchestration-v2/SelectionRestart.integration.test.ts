@@ -33,10 +33,10 @@ import {
   type ProviderAdapterV2Event,
   type ProviderAdapterV2Shape,
   type ProviderAdapterV2TurnInput,
-} from "./ProviderAdapter.ts";
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 const driver = ProviderDriverKind.make("codex");
 const providerInstanceId = ProviderInstanceId.make("codex-restart-test");
@@ -403,7 +403,7 @@ it.live("restarts selection as a new attempt and retries after old-session clean
         closedSessionCount: 0,
         failedReplacementOpen: false,
       });
-      const registry = ProviderAdapterRegistry.makeSingleLayer(makeRestartAdapter(state));
+      const layerRegistry = ProviderAdapterRegistry.layerSingle(makeRestartAdapter(state));
 
       const result = yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -480,9 +480,9 @@ it.live("restarts selection as a new attempt and retries after old-session clean
         return yield* Effect.die("selection restart did not complete");
       }).pipe(
         Effect.provide(
-          makeOrchestratorV2ReplayLayerWithRegistry(
+          ProviderReplayHarness.layerWithRegistry(
             { name: "selection-restart-lifecycle" },
-            registry,
+            layerRegistry,
           ),
         ),
       );
@@ -537,176 +537,174 @@ it.live("restarts selection as a new attempt and retries after old-session clean
   ),
 );
 
-for (const deadStatus of ["stopped", "error"] as const) {
-  it.live(
-    `restarts the live session on a model change when a newer ${deadStatus} session record exists`,
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const name = `selection-restart-dead-${deadStatus}`;
-          const cwd = yield* checkpointWorkspace(name);
-          const threadId = ThreadId.make(`thread:${name}`);
-          const state = yield* Ref.make<RestartAdapterState>({
-            activeTurn: null,
-            opened: [],
-            started: [],
-            closedSessionCount: 0,
-            // The dead record is seeded directly, so the adapter's one-shot
-            // simulated replacement-open failure is skipped.
-            failedReplacementOpen: true,
-          });
-          const registry = ProviderAdapterRegistry.makeSingleLayer(
-            makeRestartAdapter(state, exclusiveCapabilities),
-          );
+it.live.each(["stopped", "error"] as const)(
+  "restarts the live session on a model change when a newer %s session record exists",
+  (deadStatus) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const name = `selection-restart-dead-${deadStatus}`;
+        const cwd = yield* checkpointWorkspace(name);
+        const threadId = ThreadId.make(`thread:${name}`);
+        const state = yield* Ref.make<RestartAdapterState>({
+          activeTurn: null,
+          opened: [],
+          started: [],
+          closedSessionCount: 0,
+          // The dead record is seeded directly, so the adapter's one-shot
+          // simulated replacement-open failure is skipped.
+          failedReplacementOpen: true,
+        });
+        const layerRegistry = ProviderAdapterRegistry.layerSingle(
+          makeRestartAdapter(state, exclusiveCapabilities),
+        );
 
-          const result = yield* Effect.gen(function* () {
-            const orchestrator = yield* Orchestrator.OrchestratorV2;
-            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-            const eventSink = yield* EventSink.EventSinkV2;
-            const dispatch = (step: string, modelSelection: ModelSelection) =>
-              Effect.gen(function* () {
-                const terminal = yield* orchestrator.streamDomainEvents.pipe(
-                  Stream.filter(
-                    (event) => event.type === "run.updated" && event.payload.status === "completed",
-                  ),
-                  Stream.take(1),
-                  Stream.runDrain,
-                  Effect.forkScoped,
-                );
-                yield* orchestrator.dispatch({
-                  type: "message.dispatch",
-                  createdBy: "user",
-                  creationSource: "web",
-                  commandId: CommandId.make(`${name}:${step}`),
-                  threadId,
-                  messageId: MessageId.make(`${name}:${step}`),
-                  text: step,
-                  attachments: [],
-                  modelSelection,
-                  dispatchMode: { type: "start_immediately" },
-                });
-                yield* worker.drain();
-                yield* Fiber.join(terminal);
-                yield* worker.drain();
-                return yield* orchestrator.getThreadProjection(threadId);
+        const result = yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const eventSink = yield* EventSink.EventSinkV2;
+          const dispatch = (step: string, modelSelection: ModelSelection) =>
+            Effect.gen(function* () {
+              const terminal = yield* orchestrator.streamDomainEvents.pipe(
+                Stream.filter(
+                  (event) => event.type === "run.updated" && event.payload.status === "completed",
+                ),
+                Stream.take(1),
+                Stream.runDrain,
+                Effect.forkScoped,
+              );
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                createdBy: "user",
+                creationSource: "web",
+                commandId: CommandId.make(`${name}:${step}`),
+                threadId,
+                messageId: MessageId.make(`${name}:${step}`),
+                text: step,
+                attachments: [],
+                modelSelection,
+                dispatchMode: { type: "start_immediately" },
               });
-            yield* orchestrator.dispatch({
-              type: "thread.create",
-              createdBy: "user",
-              creationSource: "web",
-              commandId: CommandId.make(`${name}:create`),
-              threadId,
-              projectId: ProjectId.make(`project:${name}`),
-              title: name,
-              modelSelection: seedSelection,
-              runtimeMode: "full-access",
-              interactionMode: "default",
-              branch: null,
-              worktreePath: cwd,
+              yield* worker.drain();
+              yield* Fiber.join(terminal);
+              yield* worker.drain();
+              return yield* orchestrator.getThreadProjection(threadId);
             });
-            const first = yield* dispatch("first", seedSelection);
-            const liveSession = first.providerSessions.find(
-              (session) => session.status !== "stopped" && session.status !== "error",
-            );
-            assert.isDefined(liveSession);
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`${name}:create`),
+            threadId,
+            projectId: ProjectId.make(`project:${name}`),
+            title: name,
+            modelSelection: seedSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          const first = yield* dispatch("first", seedSelection);
+          const liveSession = first.providerSessions.find(
+            (session) => session.status !== "stopped" && session.status !== "error",
+          );
+          assert.isDefined(liveSession);
 
-            // Dead session records stay bound in the projection until
-            // detachment. A stale stopped/error record written after the
-            // live session attached must not hide it.
-            const deadAt = yield* DateTime.now;
-            const deadSession: OrchestrationV2ProviderSession = {
-              id: ProviderSessionId.make(`session:${name}:dead`),
-              driver,
-              providerInstanceId,
-              status: "ready",
-              cwd,
-              model: seedSelection.model,
-              capabilities: exclusiveCapabilities,
-              createdAt: deadAt,
-              updatedAt: deadAt,
-              lastError: null,
-            };
-            yield* eventSink.write({
-              events: [
-                {
-                  id: EventId.make(`event:${name}:dead-attached`),
-                  type: "provider-session.attached",
-                  threadId,
-                  driver,
-                  providerInstanceId,
-                  occurredAt: deadAt,
-                  payload: deadSession,
+          // Dead session records stay bound in the projection until
+          // detachment. A stale stopped/error record written after the
+          // live session attached must not hide it.
+          const deadAt = yield* DateTime.now;
+          const deadSession: OrchestrationV2ProviderSession = {
+            id: ProviderSessionId.make(`session:${name}:dead`),
+            driver,
+            providerInstanceId,
+            status: "ready",
+            cwd,
+            model: seedSelection.model,
+            capabilities: exclusiveCapabilities,
+            createdAt: deadAt,
+            updatedAt: deadAt,
+            lastError: null,
+          };
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make(`event:${name}:dead-attached`),
+                type: "provider-session.attached",
+                threadId,
+                driver,
+                providerInstanceId,
+                occurredAt: deadAt,
+                payload: deadSession,
+              },
+              {
+                id: EventId.make(`event:${name}:dead-updated`),
+                type: "provider-session.updated",
+                threadId,
+                driver,
+                providerInstanceId,
+                occurredAt: deadAt,
+                payload: {
+                  ...deadSession,
+                  status: deadStatus,
+                  updatedAt: deadAt,
+                  lastError: deadStatus === "error" ? "Simulated session failure." : null,
                 },
-                {
-                  id: EventId.make(`event:${name}:dead-updated`),
-                  type: "provider-session.updated",
-                  threadId,
-                  driver,
-                  providerInstanceId,
-                  occurredAt: deadAt,
-                  payload: {
-                    ...deadSession,
-                    status: deadStatus,
-                    updatedAt: deadAt,
-                    lastError: deadStatus === "error" ? "Simulated session failure." : null,
-                  },
-                },
-              ],
-            });
+              },
+            ],
+          });
 
-            const switchCommandId = CommandId.make(`${name}:switch`);
-            yield* orchestrator.dispatch({
-              type: "thread.model-selection.set",
-              commandId: switchCommandId,
-              threadId,
-              modelSelection: replacementSelection,
-            });
-            yield* worker.drain();
-            const storedSwitchEvents = yield* eventSink
-              .readByCommandId({ commandId: switchCommandId })
-              .pipe(Stream.runCollect);
-            const detachedSessionIds = [...storedSwitchEvents].flatMap((stored) =>
-              stored.event.type === "provider-session.detached"
-                ? [stored.event.payload.providerSessionId]
-                : [],
-            );
+          const switchCommandId = CommandId.make(`${name}:switch`);
+          yield* orchestrator.dispatch({
+            type: "thread.model-selection.set",
+            commandId: switchCommandId,
+            threadId,
+            modelSelection: replacementSelection,
+          });
+          yield* worker.drain();
+          const storedSwitchEvents = yield* eventSink
+            .readByCommandId({ commandId: switchCommandId })
+            .pipe(Stream.runCollect);
+          const detachedSessionIds = [...storedSwitchEvents].flatMap((stored) =>
+            stored.event.type === "provider-session.detached"
+              ? [stored.event.payload.providerSessionId]
+              : [],
+          );
 
-            const second = yield* dispatch("second", replacementSelection);
-            return {
-              projection: second,
-              captured: yield* Ref.get(state),
-              liveSessionId: liveSession.id,
-              detachedSessionIds,
-            };
-          }).pipe(Effect.provide(makeOrchestratorV2ReplayLayerWithRegistry({ name }, registry)));
+          const second = yield* dispatch("second", replacementSelection);
+          return {
+            projection: second,
+            captured: yield* Ref.get(state),
+            liveSessionId: liveSession.id,
+            detachedSessionIds,
+          };
+        }).pipe(Effect.provide(ProviderReplayHarness.layerWithRegistry({ name }, layerRegistry)));
 
-          const { projection, captured } = result;
-          assert.lengthOf(projection.runs, 2);
-          assert.equal(projection.runs[1]?.modelSelection.model, replacementSelection.model);
-          // The exact released session is the older live one, never the newer
-          // dead record.
-          assert.deepEqual(result.detachedSessionIds, [result.liveSessionId]);
-          assert.equal(captured.closedSessionCount, 1);
-          assert.deepEqual(
-            captured.opened.map((open) => open.model),
-            [seedSelection.model, replacementSelection.model],
-          );
-          assert.deepEqual(
-            captured.started.map((turn) => turn.model),
-            [seedSelection.model, replacementSelection.model],
-          );
-          const servingSession = projection.providerSessions.find(
-            (session) =>
-              session.id ===
-              projection.providerThreads.find(
-                (providerThread) => providerThread.id === projection.thread.activeProviderThreadId,
-              )?.providerSessionId,
-          );
-          assert.equal(servingSession?.model, replacementSelection.model);
-        }),
-      ),
-  );
-}
+        const { projection, captured } = result;
+        assert.lengthOf(projection.runs, 2);
+        assert.equal(projection.runs[1]?.modelSelection.model, replacementSelection.model);
+        // The exact released session is the older live one, never the newer
+        // dead record.
+        assert.deepEqual(result.detachedSessionIds, [result.liveSessionId]);
+        assert.equal(captured.closedSessionCount, 1);
+        assert.deepEqual(
+          captured.opened.map((open) => open.model),
+          [seedSelection.model, replacementSelection.model],
+        );
+        assert.deepEqual(
+          captured.started.map((turn) => turn.model),
+          [seedSelection.model, replacementSelection.model],
+        );
+        const servingSession = projection.providerSessions.find(
+          (session) =>
+            session.id ===
+            projection.providerThreads.find(
+              (providerThread) => providerThread.id === projection.thread.activeProviderThreadId,
+            )?.providerSessionId,
+        );
+        assert.equal(servingSession?.model, replacementSelection.model);
+      }),
+    ),
+);
 
 it.live("detaches the old provider session after an active provider handoff", () =>
   Effect.scoped(
@@ -721,7 +719,7 @@ it.live("detaches the old provider session after an active provider handoff", ()
         failedReplacementOpen: false,
       });
       const targetStartCount = yield* Ref.make(0);
-      const registry = ProviderAdapterRegistry.makeLayer([
+      const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
         makeRestartAdapter(state, exclusiveCapabilities),
         makeCompletingHandoffAdapter(targetStartCount),
       ]);
@@ -805,9 +803,9 @@ it.live("detaches the old provider session after an active provider handoff", ()
         return yield* Effect.die("active provider handoff did not complete");
       }).pipe(
         Effect.provide(
-          makeOrchestratorV2ReplayLayerWithRegistry(
+          ProviderReplayHarness.layerWithRegistry(
             { name: "selection-provider-handoff-lifecycle" },
-            registry,
+            layerRegistry,
           ),
         ),
       );
@@ -822,8 +820,9 @@ it.live("detaches the old provider session after an active provider handoff", ()
   ),
 );
 
-for (const mode of ["active", "idle", "selection-command", "pooled", "separate-home"] as const) {
-  it.live(`preserves native history only for compatible account switches (${mode})`, () =>
+it.live.each(["active", "idle", "selection-command", "pooled", "separate-home"] as const)(
+  "preserves native history only for compatible account switches (%s)",
+  (mode) =>
     Effect.scoped(
       Effect.gen(function* () {
         const name = `shared-home-${mode}`;
@@ -868,7 +867,7 @@ for (const mode of ["active", "idle", "selection-command", "pooled", "separate-h
               ),
           } satisfies ProviderAdapterV2Shape;
         });
-        const registry = Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistryV2, {
+        const layerRegistry = Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistryV2, {
           get: (instanceId) =>
             Effect.succeed(adapters.find((adapter) => adapter.instanceId === instanceId)!),
           list: () => Effect.succeed([providerInstanceId, targetId]),
@@ -991,8 +990,7 @@ for (const mode of ["active", "idle", "selection-command", "pooled", "separate-h
           assert.equal(returnedThread.providerInstanceId, providerInstanceId);
           assert.isEmpty(third.contextHandoffs);
           assert.deepEqual(messages, ["first", "second", "third"]);
-        }).pipe(Effect.provide(makeOrchestratorV2ReplayLayerWithRegistry({ name }, registry)));
+        }).pipe(Effect.provide(ProviderReplayHarness.layerWithRegistry({ name }, layerRegistry)));
       }),
     ),
-  );
-}
+);

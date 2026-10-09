@@ -39,104 +39,108 @@ const makeOAuthResolver = () => {
   return { resolve, count: () => resolutions };
 };
 
-describe("Cloudflare Credentials cacheUntilExpiry", () => {
-  it.effect("caches OAuth credentials while they are valid", () =>
-    Effect.gen(function* () {
-      const resolver = makeOAuthResolver();
-      const credentials = yield* cacheUntilExpiry(resolver.resolve);
-
-      const first = yield* credentials;
-      yield* TestClock.adjust(Duration.minutes(10));
-      const second = yield* credentials;
-
-      expect(resolver.count()).toBe(1);
-      expect(second).toBe(first);
-    }),
-  );
-
-  it.effect(
-    "re-resolves OAuth credentials once the refresh window is reached",
-    () =>
+describe(
+  "Cloudflare Credentials cacheUntilExpiry",
+  { tags: ["unit", "provider:cloudflare", "local"] },
+  () => {
+    it.effect("caches OAuth credentials while they are valid", () =>
       Effect.gen(function* () {
         const resolver = makeOAuthResolver();
         const credentials = yield* cacheUntilExpiry(resolver.resolve);
 
         const first = yield* credentials;
-        expect(first.type).toBe("oauth");
-
-        // 56 minutes in: inside the 5-minute refresh window of the 1h token.
-        yield* TestClock.adjust(Duration.minutes(56));
+        yield* TestClock.adjust(Duration.minutes(10));
         const second = yield* credentials;
 
-        expect(resolver.count()).toBe(2);
-        expect(second).not.toBe(first);
-
-        // The re-resolved token is cached again in turn.
-        yield* TestClock.adjust(Duration.minutes(10));
-        const third = yield* credentials;
-        expect(resolver.count()).toBe(2);
-        expect(third).toBe(second);
+        expect(resolver.count()).toBe(1);
+        expect(second).toBe(first);
       }),
-  );
+    );
 
-  it.effect(
-    "re-resolves OAuth credentials that are already fully expired",
-    () =>
-      Effect.gen(function* () {
-        const resolver = makeOAuthResolver();
-        const credentials = yield* cacheUntilExpiry(resolver.resolve);
+    it.effect(
+      "re-resolves OAuth credentials once the refresh window is reached",
+      () =>
+        Effect.gen(function* () {
+          const resolver = makeOAuthResolver();
+          const credentials = yield* cacheUntilExpiry(resolver.resolve);
 
-        yield* credentials;
-        // The machine slept through the token's entire lifetime.
-        yield* TestClock.adjust(Duration.hours(6));
-        yield* credentials;
+          const first = yield* credentials;
+          expect(first.type).toBe("oauth");
 
-        expect(resolver.count()).toBe(2);
-      }),
-  );
+          // 56 minutes in: inside the 5-minute refresh window of the 1h token.
+          yield* TestClock.adjust(Duration.minutes(56));
+          const second = yield* credentials;
 
-  it.effect("caches non-expiring credentials (api tokens) forever", () =>
-    Effect.gen(function* () {
-      let resolutions = 0;
-      const resolve = Effect.sync(() => {
-        resolutions++;
-        return apiTokenCredentials({
-          apiToken: "static",
-        }) as ResolvedCredentials;
-      });
-      const credentials = yield* cacheUntilExpiry(resolve);
+          expect(resolver.count()).toBe(2);
+          expect(second).not.toBe(first);
 
-      yield* credentials;
-      yield* TestClock.adjust(Duration.days(365));
-      yield* credentials;
-
-      expect(resolutions).toBe(1);
-    }),
-  );
-
-  it.live("concurrent cold-cache resolutions are single-flight", () =>
-    Effect.gen(function* () {
-      let resolutions = 0;
-      const resolve = Effect.sleep("20 millis").pipe(
-        Effect.map(() => {
-          resolutions++;
-          return oauthCredentials({
-            accessToken: `token-${resolutions}`,
-            expiresAt: Date.now() + 60 * MINUTE_MS,
-          }) as ResolvedCredentials;
+          // The re-resolved token is cached again in turn.
+          yield* TestClock.adjust(Duration.minutes(10));
+          const third = yield* credentials;
+          expect(resolver.count()).toBe(2);
+          expect(third).toBe(second);
         }),
-      );
-      const credentials = yield* cacheUntilExpiry(resolve);
+    );
 
-      const results = yield* Effect.all(
-        [credentials, credentials, credentials, credentials],
-        { concurrency: "unbounded" },
-      );
+    it.effect(
+      "re-resolves OAuth credentials that are already fully expired",
+      () =>
+        Effect.gen(function* () {
+          const resolver = makeOAuthResolver();
+          const credentials = yield* cacheUntilExpiry(resolver.resolve);
 
-      expect(resolutions).toBe(1);
-      for (const result of results) {
-        expect(result).toBe(results[0]);
-      }
-    }),
-  );
-});
+          yield* credentials;
+          // The machine slept through the token's entire lifetime.
+          yield* TestClock.adjust(Duration.hours(6));
+          yield* credentials;
+
+          expect(resolver.count()).toBe(2);
+        }),
+    );
+
+    it.effect("caches non-expiring credentials (api tokens) forever", () =>
+      Effect.gen(function* () {
+        let resolutions = 0;
+        const resolve = Effect.sync(() => {
+          resolutions++;
+          return apiTokenCredentials({
+            apiToken: "static",
+          }) as ResolvedCredentials;
+        });
+        const credentials = yield* cacheUntilExpiry(resolve);
+
+        yield* credentials;
+        yield* TestClock.adjust(Duration.days(365));
+        yield* credentials;
+
+        expect(resolutions).toBe(1);
+      }),
+    );
+
+    it.live("concurrent cold-cache resolutions are single-flight", () =>
+      Effect.gen(function* () {
+        let resolutions = 0;
+        const resolve = Effect.sleep("20 millis").pipe(
+          Effect.map(() => {
+            resolutions++;
+            return oauthCredentials({
+              accessToken: `token-${resolutions}`,
+              expiresAt: Date.now() + 60 * MINUTE_MS,
+            }) as ResolvedCredentials;
+          }),
+        );
+        const credentials = yield* cacheUntilExpiry(resolve);
+
+        const results = yield* Effect.all(
+          [credentials, credentials, credentials, credentials],
+          { concurrency: "unbounded" },
+        );
+
+        expect(resolutions).toBe(1);
+        for (const result of results) {
+          expect(result).toBe(results[0]);
+        }
+      }),
+    );
+  },
+);
