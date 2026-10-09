@@ -10,6 +10,11 @@ vi.mock("../hooks/useSettings", () => ({
   useClientSettings: () => "monospace",
 }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
+vi.mock("../state/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../state/session")>()),
+  readEnvironmentScope: () => true,
+  useEnvironmentScope: () => true,
+}));
 vi.mock("../editorPreferences", () => ({ useOpenInPreferredEditor: () => vi.fn() }));
 vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../state/terminalSessions", () => ({
