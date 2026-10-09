@@ -933,6 +933,15 @@ function replayQueryRunnerService(
     open: (input) => replay(() => queryRunner.open(input)),
     forkSession: (input) => replay(() => queryRunner.forkSession(input)),
     subagentLaunchToolUseId: (input) => replay(() => queryRunner.subagentLaunchToolUseId(input)),
+    // Fixtures never compact, so every recorded message stays resumable.
+    sessionMessageIds: () =>
+      Effect.succeed(
+        transcript.entries.flatMap((entry) => {
+          const frame = "frame" in entry ? entry.frame : undefined;
+          const uuid = isClaudeSdkReplayMessage(frame) ? Reflect.get(frame, "uuid") : undefined;
+          return typeof uuid === "string" ? [uuid] : [];
+        }),
+      ),
     assertComplete: replay(() => queryRunner.assertComplete()),
   });
 }
