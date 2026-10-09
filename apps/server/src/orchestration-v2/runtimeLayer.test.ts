@@ -4549,6 +4549,24 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
       assert.deepEqual(thread.updatedAt, firstUpdatedAt);
 
       yield* orchestrator.dispatch({
+        type: "thread.unsnooze",
+        commandId: CommandId.make("runtime-layer-snoozed-thread-wake"),
+        threadId,
+        reason: "user",
+      });
+      const projections = yield* ProjectionStore.ProjectionStoreV2.pipe(
+        Effect.provide(ProjectionStore.layer),
+      );
+      const [candidate] = yield* projections.getSettlementCandidates(threadId);
+      assert.deepEqual(candidate?.lastSnoozeWakeAt, yield* DateTime.now);
+      yield* orchestrator.dispatch({
+        type: "thread.snooze",
+        commandId: CommandId.make("runtime-layer-snoozed-thread-snooze-after-wake"),
+        threadId,
+        snoozedUntil,
+      });
+
+      yield* orchestrator.dispatch({
         type: "message.dispatch",
         createdBy: "user",
         creationSource: "web",
