@@ -383,8 +383,8 @@ describe("orchestrator replay fixtures", () => {
           const resultIndex = rest.findIndex(
             (entry) => entry.type === "emit_inbound" && entry.label === "result",
           );
-          if (bashFrames.length !== 4 || resultIndex < 0)
-            throw new Error("transcript shape changed");
+          assert.lengthOf(bashFrames, 4, "transcript shape changed");
+          assert.isAtLeast(resultIndex, 0, "transcript shape changed");
           return {
             ...transcript,
             entries: [...rest.slice(0, resultIndex), ...bashFrames, ...rest.slice(resultIndex)],
