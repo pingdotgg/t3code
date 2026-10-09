@@ -1,11 +1,29 @@
 // node:sqlite reads live OpenCode databases; Node fs walks legacy JSON history.
 // @effect-diagnostics nodeBuiltinImport:off
+/**
+ * Usage history for OpenCode, read from its SQLite databases and legacy JSON
+ * message store under each data directory.
+ *
+ * @module provider-opencode/server/usage
+ */
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 import * as NodeTimersPromises from "node:timers/promises";
 
-import { totalTokens, type UsageRecord } from "@t3tools/provider-core/server/usage";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import {
+  totalTokens,
+  type ProviderUsageReader,
+  type UsageRecord,
+} from "@t3tools/provider-core/server/usage";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+
+import type { OpenCodeSettings } from "../settings.ts";
 
 function object(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -186,3 +204,55 @@ export async function readOpenCodeUsage(
   }
   return { files, missing: !found && !error, error };
 }
+
+/**
+ * The data directories to read: `OPENCODE_DATA_DIR` (comma-separated) or the
+ * XDG default, canonicalized so aliases count once.
+ */
+const resolveOpenCodeDataDirs = Effect.fn("resolveOpenCodeDataDirs")(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const environment = yield* HostProcessEnvironment;
+  const roots = environment["OPENCODE_DATA_DIR"]
+    ?.split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const dataHome = environment["XDG_DATA_HOME"]?.trim();
+  const defaults = [
+    path.join(
+      dataHome && path.isAbsolute(dataHome)
+        ? dataHome
+        : path.join(NodeOS.homedir(), ".local", "share"),
+      "opencode",
+    ),
+  ];
+  const canonical = new Set<string>();
+  for (const root of roots?.length ? roots : defaults) {
+    const resolved = path.resolve(expandHomePath(root));
+    canonical.add(yield* fileSystem.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved)));
+  }
+  return [...canonical];
+});
+
+export type OpenCodeUsageReaderEnv = FileSystem.FileSystem | Path.Path;
+
+export const openCodeUsageReader: ProviderUsageReader<OpenCodeSettings, OpenCodeUsageReaderEnv> = {
+  kind: "scan",
+  provider: "opencode",
+  scan: Effect.fn("openCodeUsageReader.scan")(function* ({ windowStartMs }) {
+    const roots = yield* resolveOpenCodeDataDirs();
+    return yield* Effect.forEach(
+      roots,
+      (dir) =>
+        Effect.promise(() => readOpenCodeUsage(dir, windowStartMs)).pipe(
+          Effect.map((result) => ({
+            dir,
+            files: result.missing && !result.error ? null : result.files,
+            status: result.error ? ("partial" as const) : ("ok" as const),
+            ...(result.error ? { message: "Some OpenCode history could not be read." } : {}),
+          })),
+        ),
+      { concurrency: "unbounded" },
+    );
+  }),
+};

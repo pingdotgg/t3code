@@ -63,7 +63,6 @@ import type {
   TranscriptUsageFormat,
   UsageRecord,
 } from "@t3tools/provider-core/server/usage";
-import { readOpenCodeUsage } from "./opencodeUsageReader.ts";
 import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUsageReader.ts";
 import {
   CURSOR_ACCOUNT_CACHE_FILE_NAME,
@@ -125,6 +124,11 @@ const TRANSCRIPT_READ_CONCURRENCY = 4;
 /** The transcript readers, in driver order. */
 const transcriptReaders = BUILT_IN_USAGE_DRIVERS.flatMap((driver) =>
   driver.usage?.kind === "transcripts" ? [{ driver, reader: driver.usage }] : [],
+);
+
+/** The scan readers, in driver order. */
+const scanReaders = BUILT_IN_USAGE_DRIVERS.flatMap((driver) =>
+  driver.usage?.kind === "scan" ? [{ driver, reader: driver.usage }] : [],
 );
 
 /** Transcript formats by provider, for decoding the persisted scan cache. */
@@ -851,32 +855,36 @@ export const make = Effect.gen(function* () {
       }
       return [...canonical];
     });
-    const dataHome = hostEnvironment["XDG_DATA_HOME"]?.trim();
 
-    const openCode = Effect.gen(function* () {
-      const roots = yield* envRoots("OPENCODE_DATA_DIR", [
-        path.join(
-          dataHome && path.isAbsolute(dataHome) ? dataHome : path.join(home, ".local", "share"),
-          "opencode",
-        ),
-      ]);
-      return yield* Effect.forEach(
-        roots,
-        (dir) =>
-          Effect.gen(function* () {
-            const result = yield* Effect.promise(() => readOpenCodeUsage(dir, windowStartMs));
-            return {
-              provider: "opencode",
-              dir,
-              volumeId: yield* Effect.promise(() => readDirectoryVolumeId(dir)),
-              files: result.missing && !result.error ? null : result.files,
-              status: result.error ? "partial" : "ok",
-              ...(result.error ? { message: "Some OpenCode history could not be read." } : {}),
-            } satisfies ScannedDir;
-          }),
-        { concurrency: "unbounded" },
-      );
-    });
+    const scans = Effect.forEach(
+      scanReaders,
+      ({ driver, reader }) =>
+        reader
+          .scan({
+            instances: usageInstances(driver, settings),
+            windowStartMs,
+            retentionCutoffMs,
+            awaitRefresh,
+          })
+          .pipe(
+            Effect.flatMap((sources) =>
+              Effect.forEach(sources, ({ volumeId, ...source }) =>
+                Effect.map(
+                  volumeId === undefined
+                    ? Effect.promise(() => readDirectoryVolumeId(source.dir))
+                    : Effect.succeed(volumeId),
+                  (resolved): ScannedDir => ({
+                    ...source,
+                    provider: reader.provider,
+                    volumeId: resolved,
+                  }),
+                ),
+              ),
+            ),
+            Effect.provideContext(readerContext),
+          ),
+      { concurrency: "unbounded" },
+    ).pipe(Effect.map((sources) => sources.flat()));
 
     const antigravity = Effect.gen(function* () {
       const antigravityRoots = yield* envRoots("ANTIGRAVITY_DATA_DIR", [
@@ -999,10 +1007,10 @@ export const make = Effect.gen(function* () {
     // Independent sources scan together. Transcript directories go one at a
     // time, so open files stay at `TRANSCRIPT_READ_CONCURRENCY`. The result
     // keeps this order, since aggregation keeps the first copy of a duplicate.
-    const [transcripts, openCodeDirs, antigravityDirs, cursorDirs] = yield* Effect.all(
+    const [transcripts, scanDirs, antigravityDirs, cursorDirs] = yield* Effect.all(
       [
         Effect.forEach(dirs, (dir) => scanTranscriptDir(dir, windowStartMs)),
-        openCode,
+        scans,
         antigravity,
         cursor,
       ],
@@ -1010,7 +1018,7 @@ export const make = Effect.gen(function* () {
     );
     const scanned: readonly ScannedDir[] = [
       ...transcripts,
-      ...openCodeDirs,
+      ...scanDirs,
       ...antigravityDirs,
       ...cursorDirs,
     ];

@@ -129,7 +129,8 @@ export interface ProviderUsageInstance<Config> {
 /** One source a `scan` reader read. */
 export interface ProviderUsageScan {
   readonly dir: string;
-  readonly volumeId: string;
+  /** Identity of the source across hosts. Defaults to the filesystem identity of `dir`. */
+  readonly volumeId?: string;
   /** Overrides the server's host name in the source fingerprint, for account-wide sources. */
   readonly hostId?: string;
   readonly status?: UsageSource["status"];
