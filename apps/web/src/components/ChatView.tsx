@@ -2208,9 +2208,9 @@ export default function ChatView(props: ChatViewProps) {
     defaultRuntimeMode;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   // Names typed into a new thread's name field, by draft. The first send uses it as the title.
+  // It outlives the local draft so a retry after a partly failed launch keeps the name.
   const [threadNamesByDraftId, setThreadNamesByDraftId] = useState<Record<string, string>>({});
-  const draftThreadNameInput =
-    isLocalDraftThread && draftId ? (threadNamesByDraftId[draftId] ?? "") : "";
+  const draftThreadNameInput = draftId ? (threadNamesByDraftId[draftId] ?? "") : "";
   const draftThreadName = draftThreadNameInput.trim();
   const setDraftThreadName = (id: string, name: string) => {
     setThreadNamesByDraftId((names) => ({ ...names, [id]: name }));
@@ -9663,7 +9663,12 @@ export default function ChatView(props: ChatViewProps) {
         const restoreFailedDraft = () => {
           setMultipleModelSelections(failedSelections);
           if (clearedDraft) {
-            if (draftId) setDraftThreadName(draftId, draftThreadNameInput);
+            // A name typed while the batch was sending wins over the one it sent.
+            if (draftId && draftThreadNameInput) {
+              setThreadNamesByDraftId((names) =>
+                names[draftId] ? names : { ...names, [draftId]: draftThreadNameInput },
+              );
+            }
             setComposerDraftPrompt(composerDraftTarget, messageTextForSend);
             addComposerDraftImages(
               composerDraftTarget,

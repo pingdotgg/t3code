@@ -382,7 +382,7 @@ describe("V2 environment commands", () => {
         bootstrap: {
           createThread: {
             projectId: ProjectId.make("project-1"),
-            title: "ZA-123 invoice PDF",
+            title: "Draft title",
             modelSelection: v2Projection.thread.modelSelection,
             runtimeMode: "full-access",
             interactionMode: "default",
@@ -397,6 +397,32 @@ describe("V2 environment commands", () => {
         title: "ZA-123 invoice PDF",
         generateTitle: false,
       });
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  it.effect("skips the title seed when retrying a named thread that already exists", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
+
+      yield* startThreadTurn({
+        commandId: CommandId.make("retry-named-thread"),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("message-retry-named-thread"),
+          role: "user",
+          text: "Fix the invoice PDF",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        titleSeed: "Fix the invoice PDF",
+        title: "ZA-123 invoice PDF",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(commands).toHaveLength(1);
+      expect(commands[0]).toMatchObject({ type: "message.dispatch" });
+      expect(commands[0]).not.toHaveProperty("titleSeed");
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 
