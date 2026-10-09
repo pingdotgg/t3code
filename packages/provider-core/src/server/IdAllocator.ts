@@ -67,7 +67,7 @@ export class IdAllocatorV2AllocationError extends Schema.TaggedError<IdAllocator
 export const IdAllocatorV2Error = Schema.Union([IdAllocatorV2AllocationError]);
 export type IdAllocatorV2Error = typeof IdAllocatorV2Error.Type;
 
-export interface IdAllocatorV2AllocateShape {
+export interface IdAllocatorV2Allocate {
   readonly command: (input: {
     readonly fixtureName: string;
     readonly commandName: string;
@@ -126,7 +126,7 @@ export interface IdAllocatorV2AllocateShape {
   }) => Effect.Effect<PlanId, IdAllocatorV2Error>;
 }
 
-export interface IdAllocatorV2DeriveShape {
+export interface IdAllocatorV2Derive {
   readonly providerSession: (input: {
     readonly providerInstanceId: ProviderInstanceId;
   }) => ProviderSessionId;
@@ -180,14 +180,13 @@ export interface IdAllocatorV2DeriveShape {
   readonly approvalTurnItem: (input: { readonly requestId: RuntimeRequestId }) => TurnItemId;
 }
 
-export interface IdAllocatorV2Shape {
-  readonly allocate: IdAllocatorV2AllocateShape;
-  readonly derive: IdAllocatorV2DeriveShape;
-}
-
-export class IdAllocatorV2 extends Context.Service<IdAllocatorV2, IdAllocatorV2Shape>()(
-  "@t3tools/provider-core/server/IdAllocator/IdAllocatorV2",
-) {}
+export class IdAllocatorV2 extends Context.Service<
+  IdAllocatorV2,
+  {
+    readonly allocate: IdAllocatorV2Allocate;
+    readonly derive: IdAllocatorV2Derive;
+  }
+>()("@t3tools/provider-core/server/IdAllocator/IdAllocatorV2") {}
 
 const encodePart = (part: string | number): string => encodeURIComponent(String(part));
 
@@ -251,6 +250,49 @@ const randomId =
           }),
       ),
     );
+
+/** Deterministic id derivations; pure, so callers that only derive need no allocator. */
+export const derive: IdAllocatorV2Derive = {
+  providerSession: (input) =>
+    ProviderSessionId.make(
+      joinId("provider-session", "provider-instance", input.providerInstanceId, "shared"),
+    ),
+  delegatedTaskNode: (input) => NodeId.make(joinId("node", "delegated-task", input.commandId)),
+  delegatedTaskThread: (input) =>
+    ThreadId.make(joinId("thread", "delegated-task", input.commandId)),
+  delegatedTaskMessage: (input) =>
+    MessageId.make(joinId("message", "delegated-task", input.commandId)),
+  delegatedTaskTurnItem: (input) =>
+    TurnItemId.make(joinId("turn-item", "delegated-task", input.commandId)),
+  createdThreadTurnItem: (input) =>
+    TurnItemId.make(joinId("turn-item", "created-thread", input.commandId)),
+  threadFromProviderThread: deriveThreadFromProviderThread,
+  run: (input) => RunId.make(joinId("run", "thread", input.threadId, "ordinal", input.ordinal)),
+  runAttempt: (input) =>
+    RunAttemptId.make(joinId("run-attempt", "run", input.runId, "attempt", input.attemptOrdinal)),
+  rootNode: (input) => NodeId.make(joinId("node", "run", input.runId, "root")),
+  rootNodeAttempt: (input) =>
+    NodeId.make(joinId("node", "run", input.runId, "attempt", input.attemptOrdinal, "root")),
+  userTurnItem: (input) => TurnItemId.make(joinId("turn-item", "message", input.messageId)),
+  runSignalTurnItem: (input) =>
+    TurnItemId.make(joinId("turn-item", "run", input.runId, "signal", input.signal)),
+  providerThread: deriveProviderThread,
+  providerTurn: (input) =>
+    ProviderTurnId.make(
+      joinId("provider-turn", "provider", input.driver, "native-turn", input.nativeTurnId),
+    ),
+  nodeFromProviderItem: (input) =>
+    NodeId.make(joinId("node", "provider", input.driver, "native-item", input.nativeItemId)),
+  messageFromProviderItem: (input) =>
+    MessageId.make(joinId("message", "provider", input.driver, "native-item", input.nativeItemId)),
+  turnItemFromProviderItem: (input) =>
+    TurnItemId.make(
+      joinId("turn-item", "provider", input.driver, "native-item", input.nativeItemId),
+    ),
+  approvalNode: (input) => NodeId.make(joinId("node", "runtime-request", input.requestId)),
+  approvalTurnItem: (input) =>
+    TurnItemId.make(joinId("turn-item", "runtime-request", input.requestId)),
+};
 
 export const layer: Layer.Layer<IdAllocatorV2> = Layer.succeed(
   IdAllocatorV2,
@@ -386,50 +428,6 @@ export const layer: Layer.Layer<IdAllocatorV2> = Layer.succeed(
           make: PlanId.make,
         })(input),
     },
-    derive: {
-      providerSession: (input) =>
-        ProviderSessionId.make(
-          joinId("provider-session", "provider-instance", input.providerInstanceId, "shared"),
-        ),
-      delegatedTaskNode: (input) => NodeId.make(joinId("node", "delegated-task", input.commandId)),
-      delegatedTaskThread: (input) =>
-        ThreadId.make(joinId("thread", "delegated-task", input.commandId)),
-      delegatedTaskMessage: (input) =>
-        MessageId.make(joinId("message", "delegated-task", input.commandId)),
-      delegatedTaskTurnItem: (input) =>
-        TurnItemId.make(joinId("turn-item", "delegated-task", input.commandId)),
-      createdThreadTurnItem: (input) =>
-        TurnItemId.make(joinId("turn-item", "created-thread", input.commandId)),
-      threadFromProviderThread: deriveThreadFromProviderThread,
-      run: (input) => RunId.make(joinId("run", "thread", input.threadId, "ordinal", input.ordinal)),
-      runAttempt: (input) =>
-        RunAttemptId.make(
-          joinId("run-attempt", "run", input.runId, "attempt", input.attemptOrdinal),
-        ),
-      rootNode: (input) => NodeId.make(joinId("node", "run", input.runId, "root")),
-      rootNodeAttempt: (input) =>
-        NodeId.make(joinId("node", "run", input.runId, "attempt", input.attemptOrdinal, "root")),
-      userTurnItem: (input) => TurnItemId.make(joinId("turn-item", "message", input.messageId)),
-      runSignalTurnItem: (input) =>
-        TurnItemId.make(joinId("turn-item", "run", input.runId, "signal", input.signal)),
-      providerThread: deriveProviderThread,
-      providerTurn: (input) =>
-        ProviderTurnId.make(
-          joinId("provider-turn", "provider", input.driver, "native-turn", input.nativeTurnId),
-        ),
-      nodeFromProviderItem: (input) =>
-        NodeId.make(joinId("node", "provider", input.driver, "native-item", input.nativeItemId)),
-      messageFromProviderItem: (input) =>
-        MessageId.make(
-          joinId("message", "provider", input.driver, "native-item", input.nativeItemId),
-        ),
-      turnItemFromProviderItem: (input) =>
-        TurnItemId.make(
-          joinId("turn-item", "provider", input.driver, "native-item", input.nativeItemId),
-        ),
-      approvalNode: (input) => NodeId.make(joinId("node", "runtime-request", input.requestId)),
-      approvalTurnItem: (input) =>
-        TurnItemId.make(joinId("turn-item", "runtime-request", input.requestId)),
-    },
+    derive,
   }),
 );

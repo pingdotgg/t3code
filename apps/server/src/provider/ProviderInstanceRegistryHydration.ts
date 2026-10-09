@@ -40,7 +40,7 @@ import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMuta
 import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import * as ProviderHostLive from "./ProviderHostLive.ts";
-import type { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import type * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import type * as ServerConfig from "../config.ts";
 
@@ -49,10 +49,10 @@ type ProviderInstanceRegistryHydrationEnv =
       BuiltInDriversEnv,
       | ProviderOrchestrationAdapterInfrastructure.ProviderOrchestrationAdapterInfrastructure
       | AcpRegistrySupport.AcpRegistryCatalog
-      | ProviderHost
+      | ProviderHost.ProviderHost
     >
   | Settings.ServerSettingsService
-  // Requirements of the `ProviderHost` the drivers receive.
+  // Requirements of the `ProviderHost.ProviderHost` the drivers receive.
   | BackgroundPolicy.BackgroundPolicy
   | ServerConfig.ServerConfig;
 

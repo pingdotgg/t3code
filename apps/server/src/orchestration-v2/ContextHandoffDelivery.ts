@@ -2,7 +2,7 @@ import type {
   OrchestrationV2ContextHandoff,
   OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
-import type { ProviderAdapterV2HistoricalContext } from "@t3tools/provider-core/server/ProviderAdapter";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { ContextHandoffBudgetError } from "@t3tools/provider-core/server/failure";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -25,7 +25,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     readonly deferInline?: boolean;
     readonly alreadyDeliveredItemIds: ReadonlySet<string>;
     readonly inject?: (
-      history: ProviderAdapterV2HistoricalContext,
+      history: ProviderAdapter.ProviderAdapterV2HistoricalContext,
     ) => Effect.Effect<boolean, InjectError>;
     readonly persist: (handoff: OrchestrationV2ContextHandoff) => Effect.Effect<void, PersistError>;
   }) {

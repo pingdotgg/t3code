@@ -632,21 +632,20 @@ export interface ProviderAdapterV2SessionRuntime {
   ) => Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapterV2Error>;
 }
 
-export interface ProviderAdapterV2Shape {
-  readonly instanceId: ProviderInstanceId;
-  readonly driver: ProviderDriverKind;
-  readonly getCapabilities: () => Effect.Effect<
-    OrchestrationV2ProviderCapabilities,
-    ProviderAdapterV2Error
-  >;
-  readonly planSelectionTransition: (
-    input: ProviderSelectionTransitionInput,
-  ) => Effect.Effect<ProviderSelectionTransitionPlan, ProviderAdapterV2Error>;
-  readonly openSession: (
-    input: ProviderAdapterV2OpenSessionInput,
-  ) => Effect.Effect<ProviderAdapterV2SessionRuntime, ProviderAdapterV2Error, Scope.Scope>;
-}
-
-export class ProviderAdapterV2 extends Context.Service<ProviderAdapterV2, ProviderAdapterV2Shape>()(
-  "@t3tools/provider-core/server/ProviderAdapter/ProviderAdapterV2",
-) {}
+export class ProviderAdapterV2 extends Context.Service<
+  ProviderAdapterV2,
+  {
+    readonly instanceId: ProviderInstanceId;
+    readonly driver: ProviderDriverKind;
+    readonly getCapabilities: () => Effect.Effect<
+      OrchestrationV2ProviderCapabilities,
+      ProviderAdapterV2Error
+    >;
+    readonly planSelectionTransition: (
+      input: ProviderSelectionTransitionInput,
+    ) => Effect.Effect<ProviderSelectionTransitionPlan, ProviderAdapterV2Error>;
+    readonly openSession: (
+      input: ProviderAdapterV2OpenSessionInput,
+    ) => Effect.Effect<ProviderAdapterV2SessionRuntime, ProviderAdapterV2Error, Scope.Scope>;
+  }
+>()("@t3tools/provider-core/server/ProviderAdapter/ProviderAdapterV2") {}

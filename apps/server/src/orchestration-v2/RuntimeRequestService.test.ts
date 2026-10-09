@@ -12,7 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import type { ProviderAdapterV2RuntimeRequestResponseInput } from "@t3tools/provider-core/server/ProviderAdapter";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
@@ -69,7 +69,7 @@ it.effect("forwards orchestrator-resolved runtime requests to the live adapter",
   const providerSessionId = ProviderSessionId.make("provider-session-runtime-request-resolved");
   const requestId = RuntimeRequestId.make("request-resolved");
   const respondToRuntimeRequest = vi.fn(
-    (_input: ProviderAdapterV2RuntimeRequestResponseInput) => Effect.void,
+    (_input: ProviderAdapter.ProviderAdapterV2RuntimeRequestResponseInput) => Effect.void,
   );
   const getSession = vi.fn(() =>
     Effect.succeed(
@@ -133,7 +133,7 @@ it.effect("rejects expired runtime requests before invoking the live adapter", (
   const providerSessionId = ProviderSessionId.make("provider-session-runtime-request-expired");
   const requestId = RuntimeRequestId.make("request-expired");
   const respondToRuntimeRequest = vi.fn(
-    (_input: ProviderAdapterV2RuntimeRequestResponseInput) => Effect.void,
+    (_input: ProviderAdapter.ProviderAdapterV2RuntimeRequestResponseInput) => Effect.void,
   );
   const getSession = vi.fn(() =>
     Effect.succeed(

@@ -61,13 +61,9 @@ import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
-import type { EventNdjsonLogger } from "../../provider/EventNdjsonLogger.ts";
-import {
-  ProviderAdapterV2RuntimePolicy,
-  type ProviderAdapterV2Event,
-  type ProviderAdapterV2TurnInput,
-} from "@t3tools/provider-core/server/ProviderAdapter";
-import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/continuationRequests";
+import type * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -81,7 +77,7 @@ const CLAUDE_TEST_MODEL_SELECTION = {
   model: "claude-sonnet-4-6",
   options: [{ id: "effort", value: "ultrathink" }],
 } satisfies ModelSelection;
-const CLAUDE_TEST_RUNTIME_POLICY = ProviderAdapterV2RuntimePolicy.make({
+const CLAUDE_TEST_RUNTIME_POLICY = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
   runtimeMode: "full-access",
   interactionMode: "default",
   cwd: "/workspace",
@@ -127,14 +123,14 @@ function makeClaudeTestTurnInput(input: {
   readonly now: DateTime.Utc;
   readonly attemptId: RunAttemptId;
   readonly text: string;
-  readonly attachments: ProviderAdapterV2TurnInput["message"]["attachments"];
+  readonly attachments: ProviderAdapter.ProviderAdapterV2TurnInput["message"]["attachments"];
   readonly providerTurnOrdinal?: number;
   readonly nativeThreadHasTurns?: boolean;
-  readonly messageCreatedBy?: ProviderAdapterV2TurnInput["message"]["createdBy"];
-  readonly messageCreationSource?: ProviderAdapterV2TurnInput["message"]["creationSource"];
+  readonly messageCreatedBy?: ProviderAdapter.ProviderAdapterV2TurnInput["message"]["createdBy"];
+  readonly messageCreationSource?: ProviderAdapter.ProviderAdapterV2TurnInput["message"]["creationSource"];
   readonly modelSelection?: ModelSelection;
-  readonly runtimePolicy?: ProviderAdapterV2RuntimePolicy;
-}): ProviderAdapterV2TurnInput {
+  readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+}): ProviderAdapter.ProviderAdapterV2TurnInput {
   return {
     appThread: makeClaudeTestAppThread(input),
     threadId: input.threadId,
@@ -298,7 +294,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
 
   it("maps canonical read-only never policy to Claude dontAsk with read-only tools", () => {
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
-      ProviderAdapterV2RuntimePolicy.make({
+      ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
         interactionMode: "default",
         cwd: "/workspace",
@@ -321,7 +317,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
 
   it("maps canonical read-only on-request policy to Claude default with callbacks", () => {
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
-      ProviderAdapterV2RuntimePolicy.make({
+      ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
         interactionMode: "default",
         cwd: "/workspace",
@@ -344,7 +340,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
 
   it("does not auto-allow reads for canonical restricted read-only never policy", () => {
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
-      ProviderAdapterV2RuntimePolicy.make({
+      ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
         interactionMode: "default",
         cwd: "/workspace",
@@ -370,7 +366,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
 
   it("maps default full-access policy to Claude bypass permissions", () => {
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
-      ProviderAdapterV2RuntimePolicy.make({
+      ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
         interactionMode: "default",
         cwd: "/workspace",
@@ -386,7 +382,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
 
   it("maps Auto runtime mode to Claude's AI-reviewed permission mode", () => {
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
-      ProviderAdapterV2RuntimePolicy.make({
+      ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "auto",
         interactionMode: "default",
         cwd: "/workspace",
@@ -401,7 +397,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
 
   it("keeps approval-required mode interactive with danger-full-access sandboxing", () => {
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
-      ProviderAdapterV2RuntimePolicy.make({
+      ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "approval-required",
         interactionMode: "default",
         cwd: "/workspace",
@@ -419,7 +415,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
 
   it("installs the permission callback for approval-required plan mode", () => {
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
-      ProviderAdapterV2RuntimePolicy.make({
+      ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "approval-required",
         interactionMode: "plan",
         cwd: "/workspace",
@@ -434,7 +430,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
 
   it("honors never approvals for approval-required workspace-write policy", () => {
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
-      ProviderAdapterV2RuntimePolicy.make({
+      ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "approval-required",
         interactionMode: "default",
         cwd: "/workspace",
@@ -453,7 +449,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
 
   it("honors never approvals for externally sandboxed policy", () => {
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
-      ProviderAdapterV2RuntimePolicy.make({
+      ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "approval-required",
         interactionMode: "default",
         cwd: "/workspace",
@@ -595,7 +591,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     const threadId = ThreadId.make("thread-claude-mcp-query-key");
     withMcpSession(threadId, () => {
       const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
-        ProviderAdapterV2RuntimePolicy.make({
+        ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: "full-access",
           interactionMode: "default",
           cwd: "/workspace",
@@ -627,7 +623,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     const threadId = ThreadId.make("thread-claude-mcp-credential-rotation");
     withMcpSession(threadId, () => {
       const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
-        ProviderAdapterV2RuntimePolicy.make({
+        ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: "approval-required",
           interactionMode: "default",
           cwd: "/workspace",
@@ -750,7 +746,7 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
         readonly event: unknown;
         readonly threadId: ThreadId | null;
       }> = [];
-      const logger: EventNdjsonLogger = {
+      const logger: ProviderEventLoggers.EventNdjsonLogger = {
         filePath: "/tmp/events.log",
         write: (event, threadId) =>
           Effect.sync(() => {
@@ -993,7 +989,7 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
             assertComplete: Effect.void,
           },
         });
-        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: "auto-accept-edits",
           interactionMode: "default",
           cwd: "/workspace",
@@ -1701,7 +1697,7 @@ describe("ClaudeAdapterV2 native fork", () => {
             instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
             model: "claude-sonnet-4-6",
           },
-          runtimePolicy: ProviderAdapterV2RuntimePolicy.make({
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
             runtimeMode: "full-access",
             interactionMode: "default",
             cwd: "/workspace",
@@ -1713,7 +1709,7 @@ describe("ClaudeAdapterV2 native fork", () => {
             instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
             model: "claude-sonnet-4-6",
           },
-          runtimePolicy: ProviderAdapterV2RuntimePolicy.make({
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
             runtimeMode: "full-access",
             interactionMode: "default",
             cwd: "/workspace",
@@ -1808,7 +1804,7 @@ describe("ClaudeAdapterV2 native fork", () => {
             instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
             model: "claude-sonnet-4-6",
           },
-          runtimePolicy: ProviderAdapterV2RuntimePolicy.make({
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
             runtimeMode: "full-access",
             interactionMode: "default",
             cwd: "/workspace",
@@ -2120,11 +2116,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       });
       const offeredMessages: Array<SDKUserMessage> = [];
       const permissionModeChanges: Array<string> = [];
-      const continuationRequests: Array<ProviderContinuationRequest> = [];
+      const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
+        [];
       const terminalReceipts =
-        yield* Queue.unbounded<Extract<ProviderAdapterV2Event, { type: "turn.terminal" }>>();
+        yield* Queue.unbounded<
+          Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }>
+        >();
       const systemNoticeReceipts =
-        yield* Queue.unbounded<Extract<ProviderAdapterV2Event, { type: "turn_item.updated" }>>();
+        yield* Queue.unbounded<
+          Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn_item.updated" }>
+        >();
       let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
       const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
         instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
@@ -2210,7 +2211,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         modelSelection: CLAUDE_TEST_MODEL_SELECTION,
         runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
       });
-      const events: Array<ProviderAdapterV2Event> = [];
+      const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
       yield* runtime.events.pipe(
         Stream.runForEach((event) =>
           Effect.gen(function* () {
@@ -2231,7 +2232,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const hasPendingBackgroundWork = runtime.hasPendingBackgroundWork;
       const terminalEvents = () =>
         events.filter(
-          (event): event is Extract<ProviderAdapterV2Event, { type: "turn.terminal" }> =>
+          (
+            event,
+          ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }> =>
             event.type === "turn.terminal",
         );
       return {
@@ -2817,7 +2820,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           attemptId: RunAttemptId.make("attempt-claude-auth-failure"),
           text: "Continue.",
           attachments: [],
-          runtimePolicy: ProviderAdapterV2RuntimePolicy.make({
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
             runtimeMode: "full-access",
             interactionMode: "default",
             cwd,
@@ -3633,10 +3636,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  const providerThreadRosterEvents = (events: ReadonlyArray<ProviderAdapterV2Event>) =>
+  const providerThreadRosterEvents = (
+    events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
+  ) =>
     events.filter(
-      (event): event is Extract<ProviderAdapterV2Event, { type: "provider_thread.updated" }> =>
-        event.type === "provider_thread.updated",
+      (
+        event,
+      ): event is Extract<
+        ProviderAdapter.ProviderAdapterV2Event,
+        { type: "provider_thread.updated" }
+      > => event.type === "provider_thread.updated",
     );
 
   it.effect(
@@ -3932,8 +3941,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         });
         const processQueues: Array<Queue.Queue<SDKMessage>> = [];
         const firstCloseRequested = yield* Deferred.make<void>();
-        const events: Array<ProviderAdapterV2Event> = [];
-        const continuationRequests: Array<ProviderContinuationRequest> = [];
+        const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
+          [];
         const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
@@ -4179,7 +4189,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             readonly nativeThreadId: string;
             readonly queue: Queue.Queue<SDKMessage>;
           }> = [];
-          const events: Array<ProviderAdapterV2Event> = [];
+          const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
           const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
             instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
             settings: DEFAULT_CLAUDE_SETTINGS,
@@ -4430,7 +4440,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         Effect.gen(function* () {
           const harness = yield* makeWakeHarness;
           const now = yield* DateTime.now;
-          const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+          const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
             runtimeMode,
             interactionMode: "default",
             cwd: "/workspace",
@@ -4731,7 +4741,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
         const now = yield* DateTime.now;
-        const approvalPolicy = ProviderAdapterV2RuntimePolicy.make({
+        const approvalPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: "approval-required",
           interactionMode: "default",
           cwd: "/workspace",
@@ -5972,7 +5982,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       session_id: WAKE_NATIVE_SESSION,
     });
   const subagentRouting = (
-    events: ReadonlyArray<ProviderAdapterV2Event>,
+    events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
     nativeToolIds: ReadonlyArray<string>,
   ) => {
     const childThreadId =
@@ -6090,7 +6100,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const userTurn = (
           attempt: string,
           providerTurnOrdinal: number,
-          attachments: ProviderAdapterV2TurnInput["message"]["attachments"] = [],
+          attachments: ProviderAdapter.ProviderAdapterV2TurnInput["message"]["attachments"] = [],
         ) =>
           harness.runtime.startTurn(
             makeClaudeTestTurnInput({
@@ -7838,8 +7848,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const now = yield* DateTime.now;
         const subagentEvents = () =>
           harness.events.filter(
-            (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
-              event.type === "subagent.updated",
+            (
+              event,
+            ): event is Extract<
+              ProviderAdapter.ProviderAdapterV2Event,
+              { type: "subagent.updated" }
+            > => event.type === "subagent.updated",
           );
 
         yield* harness.runtime.startTurn(
@@ -7942,8 +7956,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const now = yield* DateTime.now;
         const subagentEvents = () =>
           harness.events.filter(
-            (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
-              event.type === "subagent.updated",
+            (
+              event,
+            ): event is Extract<
+              ProviderAdapter.ProviderAdapterV2Event,
+              { type: "subagent.updated" }
+            > => event.type === "subagent.updated",
           );
 
         yield* harness.runtime.startTurn(
@@ -8059,8 +8077,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const now = yield* DateTime.now;
         const subagentEvents = () =>
           harness.events.filter(
-            (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
-              event.type === "subagent.updated",
+            (
+              event,
+            ): event is Extract<
+              ProviderAdapter.ProviderAdapterV2Event,
+              { type: "subagent.updated" }
+            > => event.type === "subagent.updated",
           );
 
         yield* harness.runtime.startTurn(
@@ -8249,7 +8271,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         // already pre-opened by the wake buffer before the drain replay.
         const nodeStatuses = harness.events
           .filter(
-            (event): event is Extract<ProviderAdapterV2Event, { type: "node.updated" }> =>
+            (
+              event,
+            ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "node.updated" }> =>
               event.type === "node.updated" &&
               event.node.kind === "subagent" &&
               event.node.nativeItemRef?.nativeId === SUBAGENT_TASK_ID,
@@ -8288,8 +8312,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           prefix: "t3-claude-v2-process-reset-",
         });
         const processQueues: Array<Queue.Queue<SDKMessage>> = [];
-        const events: Array<ProviderAdapterV2Event> = [];
-        const continuationRequests: Array<ProviderContinuationRequest> = [];
+        const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
+          [];
         const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
@@ -8472,8 +8497,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             prefix: "t3-claude-v2-buffer-replace-",
           });
           const processQueues: Array<Queue.Queue<SDKMessage>> = [];
-          const events: Array<ProviderAdapterV2Event> = [];
-          const continuationRequests: Array<ProviderContinuationRequest> = [];
+          const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+          const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
+            [];
           const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
             instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
             settings: DEFAULT_CLAUDE_SETTINGS,
@@ -8708,8 +8734,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             prefix: "t3-claude-v2-subagent-buffer-replace-",
           });
           const processQueues: Array<Queue.Queue<SDKMessage>> = [];
-          const events: Array<ProviderAdapterV2Event> = [];
-          const continuationRequests: Array<ProviderContinuationRequest> = [];
+          const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+          const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
+            [];
           const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
             instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
             settings: DEFAULT_CLAUDE_SETTINGS,
@@ -8775,8 +8802,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const hasPendingBackgroundWork = runtime.hasPendingBackgroundWork;
           const subagentEvents = () =>
             events.filter(
-              (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
-                event.type === "subagent.updated",
+              (
+                event,
+              ): event is Extract<
+                ProviderAdapter.ProviderAdapterV2Event,
+                { type: "subagent.updated" }
+              > => event.type === "subagent.updated",
             );
           const now = yield* DateTime.now;
 
@@ -8880,7 +8911,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.equal(finalSubagent?.result, SUBAGENT_SUMMARY);
           assert.equal(finalSubagent?.runId, subagentEvents()[0]?.subagent.runId);
           const subagentNodeEvents = events.filter(
-            (event): event is Extract<ProviderAdapterV2Event, { type: "node.updated" }> =>
+            (
+              event,
+            ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "node.updated" }> =>
               event.type === "node.updated" &&
               event.node.kind === "subagent" &&
               event.node.nativeItemRef?.nativeId === SUBAGENT_TASK_ID,
@@ -8902,7 +8935,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           prefix: "t3-claude-v2-model-change-running-subagent-",
         });
         const processQueues: Array<Queue.Queue<SDKMessage>> = [];
-        const events: Array<ProviderAdapterV2Event> = [];
+        const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
         const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
@@ -9069,7 +9102,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           });
           let openCount = 0;
           const processQueues: Array<Queue.Queue<SDKMessage>> = [];
-          const events: Array<ProviderAdapterV2Event> = [];
+          const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
           const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
             instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
             settings: DEFAULT_CLAUDE_SETTINGS,
@@ -9198,8 +9231,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           });
           let openCount = 0;
           const processQueues: Array<Queue.Queue<SDKMessage>> = [];
-          const events: Array<ProviderAdapterV2Event> = [];
-          const continuationRequests: Array<ProviderContinuationRequest> = [];
+          const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+          const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
+            [];
           const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
             instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
             settings: DEFAULT_CLAUDE_SETTINGS,
@@ -9394,7 +9428,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-claude-v2-first-open-fail-",
         });
-        const events: Array<ProviderAdapterV2Event> = [];
+        const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
         const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
@@ -9496,7 +9530,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         uuid,
         session_id: WAKE_NATIVE_SESSION,
       });
-    const goalStatuses = (events: ReadonlyArray<ProviderAdapterV2Event>) =>
+    const goalStatuses = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
       events.flatMap((event) =>
         event.type === "provider_thread.updated" && event.providerThread.goal != null
           ? [event.providerThread.goal]

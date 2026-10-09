@@ -44,18 +44,11 @@ import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import {
-  ProviderAdapterEventStreamError,
-  type ProviderAdapterV2Event,
-  ProviderAdapterProtocolError,
-  type ProviderAdapterV2RuntimePolicy,
-  type ProviderAdapterV2SessionRuntime,
-  type ProviderAdapterV2Shape,
-} from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const layerTestDatabase = SqlitePersistence.layerMemory;
 const layerTestStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
@@ -167,7 +160,10 @@ interface TestProviderRuntimeState {
   readonly interruptCount: number;
   readonly resumeCount: number;
   readonly unloadedNativeThreadIds: ReadonlyArray<string>;
-  readonly eventQueues: ReadonlyMap<string, Queue.Queue<ProviderAdapterV2Event, Cause.Done>>;
+  readonly eventQueues: ReadonlyMap<
+    string,
+    Queue.Queue<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>
+  >;
 }
 
 const emptyState: TestProviderRuntimeState = {
@@ -189,7 +185,7 @@ const runtimePolicy = {
   runtimeMode: "full-access",
   interactionMode: "default",
   cwd: process.cwd(),
-} satisfies ProviderAdapterV2RuntimePolicy;
+} satisfies ProviderAdapter.ProviderAdapterV2RuntimePolicy;
 
 function makeProviderSession(input: {
   readonly providerSessionId: ProviderSessionId;
@@ -211,7 +207,7 @@ function makeProviderSession(input: {
 }
 
 function makeThreadCreatedEvent(input: {
-  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly threadId: ThreadId;
   readonly now: DateTime.Utc;
   readonly projectId?: ProjectId;
@@ -264,7 +260,7 @@ function makeThreadCreatedEvent(input: {
 }
 
 function makeProviderThread(input: {
-  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly threadId: ThreadId;
   readonly providerSessionId: ProviderSessionId;
   readonly now: DateTime.Utc;
@@ -299,7 +295,7 @@ function makeProviderThread(input: {
 
 function unimplemented(detail: string) {
   return Effect.fail(
-    new ProviderAdapterProtocolError({
+    new ProviderAdapter.ProviderAdapterProtocolError({
       driver: CODEX_DRIVER,
       detail,
     }),
@@ -328,7 +324,7 @@ function makeProviderAdapter(
     /** Completed when a hanging scope close reaches its wedged finalizer. */
     readonly scopeCloseReached?: Deferred.Deferred<void>;
   } = {},
-): ProviderAdapterV2Shape {
+): ProviderAdapter.ProviderAdapterV2["Service"] {
   const countClose = Effect.addFinalizer(() =>
     Ref.update(state, (current) => ({
       ...current,
@@ -371,7 +367,7 @@ function makeProviderAdapter(
           ]);
         }
         const now = yield* DateTime.now;
-        const events = yield* Queue.unbounded<ProviderAdapterV2Event, Cause.Done>();
+        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
         const session = makeProviderSession({
           providerSessionId: input.providerSessionId,
           now,
@@ -398,7 +394,7 @@ function makeProviderAdapter(
           providerSession: session,
           events: options.failEventStream
             ? Stream.fail(
-                new ProviderAdapterEventStreamError({
+                new ProviderAdapter.ProviderAdapterEventStreamError({
                   driver: CODEX_DRIVER,
                   providerSessionId: input.providerSessionId,
                   cause: "process exited",
@@ -442,7 +438,7 @@ function makeProviderAdapter(
           readThreadSnapshot: () => unimplemented("readThreadSnapshot unused in test"),
           rollbackThread: () => unimplemented("rollbackThread unused in test"),
           forkThread: () => unimplemented("forkThread unused in test"),
-        } satisfies ProviderAdapterV2SessionRuntime;
+        } satisfies ProviderAdapter.ProviderAdapterV2SessionRuntime;
       }),
   };
 }
@@ -674,7 +670,7 @@ function runBrowserAccessScenario(input: {
 }
 
 function makePendingRuntimeRequestEvents(input: {
-  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly threadId: ThreadId;
   readonly providerSessionId: ProviderSessionId;
   readonly providerThread: OrchestrationV2ProviderThread;
@@ -795,7 +791,7 @@ function makePendingRuntimeRequestEvents(input: {
         driver: CODEX_DRIVER,
         turnItem,
       },
-    ] satisfies ReadonlyArray<ProviderAdapterV2Event>;
+    ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>;
     return { events, providerEvents, requestId, nodeId };
   });
 }
