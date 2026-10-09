@@ -35,6 +35,7 @@ import {
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
 import * as Cause from "effect/Cause";
@@ -1532,8 +1533,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const { flavor, selfInvocation: self } = options;
   const resolveExecutable = yield* SpawnExecutableResolution;
+  const hostPlatform = yield* HostProcessPlatform;
+  const hostEnvironment = yield* HostProcessEnvironment;
   const resolveCommand = (command: string) =>
-    resolveExecutable(command, process.platform, process.env) ?? command;
+    resolveExecutable(command, hostPlatform, hostEnvironment) ?? command;
   const readMcpContext = (threadId: ThreadId | null) =>
     threadId === null
       ? Effect.succeed(acpMcpContext(undefined, self))
