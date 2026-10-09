@@ -1,4 +1,4 @@
-import { ORCHESTRATION_V2_WS_METHODS } from "@t3tools/contracts";
+import { ORCHESTRATION_V2_WS_METHODS, WS_METHODS } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import {
@@ -33,6 +33,11 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
         idleTtlMs: 0,
       }),
     },
+    promptSuggestion: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:orchestration:prompt-suggestion",
+      tag: WS_METHODS.subscribePromptSuggestion,
+      idleTtlMs: 0,
+    }),
     turnDiff: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:turn-diff",
       tag: ORCHESTRATION_V2_WS_METHODS.getTurnDiff,

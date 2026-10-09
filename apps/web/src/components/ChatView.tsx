@@ -403,6 +403,7 @@ import { useEnvironmentDisconnectDelay } from "../hooks/useEnvironmentDisconnect
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useEnvironmentQuery } from "../state/query";
+import { orchestrationEnvironment } from "../state/orchestration";
 import { useEnvironmentScope } from "~/state/session";
 import {
   environmentServerConfigsAtom,
@@ -3990,6 +3991,42 @@ export default function ChatView(props: ChatViewProps) {
       : null,
   );
   const latestWorktreeSetup = worktreeSetupQuery.data;
+  // Off unless the thread's provider instance turned prompt suggestions on.
+  const promptSuggestionInstanceId =
+    activeRuntime?.providerInstanceId ?? activeThread?.modelSelection.instanceId;
+  const promptSuggestionInstanceConfig =
+    promptSuggestionInstanceId === undefined
+      ? undefined
+      : settings.providerInstances[promptSuggestionInstanceId]?.config;
+  const promptSuggestionsEnabled =
+    promptSuggestionInstanceConfig !== null &&
+    typeof promptSuggestionInstanceConfig === "object" &&
+    (promptSuggestionInstanceConfig as Record<string, unknown>).promptSuggestions === true;
+  const promptSuggestionQuery = useEnvironmentQuery(
+    isServerThread && promptSuggestionsEnabled
+      ? orchestrationEnvironment.promptSuggestion({
+          environmentId: routeThreadRef.environmentId,
+          input: { threadId: routeThreadRef.threadId },
+        })
+      : null,
+  );
+  const [dismissedPromptSuggestionIds, setDismissedPromptSuggestionIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
+  const dismissPromptSuggestion = useCallback(
+    (id: string) => setDismissedPromptSuggestionIds((current) => new Set(current).add(id)),
+    [],
+  );
+  const latestPromptSuggestion = promptSuggestionQuery.data ?? null;
+  // Tied to the completed run it follows, so a rollback or a later run hides it.
+  const promptSuggestion =
+    latestRunSettled &&
+    activeLatestRun?.status === "completed" &&
+    latestPromptSuggestion !== null &&
+    latestPromptSuggestion.runId === activeLatestRun?.runId &&
+    !dismissedPromptSuggestionIds.has(latestPromptSuggestion.id)
+      ? latestPromptSuggestion
+      : null;
   useEffect(() => {
     if (!latestWorktreeSetup) return;
     setHeldWorktreeSetup((current) =>
@@ -11657,6 +11694,8 @@ export default function ChatView(props: ChatViewProps) {
                                 ) : null
                               }
                               bannerItems={composerBannerItems}
+                              promptSuggestion={promptSuggestion}
+                              onDismissPromptSuggestion={dismissPromptSuggestion}
                               resumeCompactionTokens={resumeCompactionTokens}
                               keepFullHistory={keepFullHistory}
                               onToggleKeepFullHistory={toggleKeepFullHistory}
