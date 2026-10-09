@@ -31,6 +31,20 @@ function readCommandLineSwitchValue(
   return value.length > 0 ? value : null;
 }
 
+// The dev launcher passes the same variable as a command-line flag; packaged
+// builds read it here so local DevTools clients survive relaunches.
+const REMOTE_DEBUGGING_PORT_ENV = "T3CODE_DESKTOP_REMOTE_DEBUGGING_PORT";
+
+function resolveRemoteDebuggingPort(value: string | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  if (!/^\d+$/.test(trimmed)) {
+    return null;
+  }
+
+  const port = Number(trimmed);
+  return port >= 1 && port <= 65535 ? String(port) : null;
+}
+
 export const resolveEarlyLinuxElectronOptionsFromProcess =
   (): DesktopEarlyElectronStartup.EarlyLinuxElectronOptions =>
     DesktopEarlyElectronStartup.resolveEarlyLinuxElectronOptions({
@@ -57,6 +71,14 @@ export const make = Effect.gen(function* () {
         ? readCommandLineSwitchValue(Electron.app.commandLine, "password-store")
         : null;
     const linux = platform === "linux" ? resolveEarlyLinuxElectronOptionsFromProcess() : null;
+
+    const remoteDebuggingPort = resolveRemoteDebuggingPort(process.env[REMOTE_DEBUGGING_PORT_ENV]);
+    if (
+      remoteDebuggingPort !== null &&
+      !Electron.app.commandLine.hasSwitch("remote-debugging-port")
+    ) {
+      Electron.app.commandLine.appendSwitch("remote-debugging-port", remoteDebuggingPort);
+    }
 
     if (linux !== null) {
       // The portal also requires a valid desktop entry. An AppImage update may

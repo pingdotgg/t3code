@@ -154,6 +154,51 @@ describe("DesktopPreReadyPlatform", () => {
     }).pipe(Effect.provideService(HostProcessPlatform, "linux"));
   });
 
+  it.effect.each(["9333", " 9333 "])(
+    "adds a remote debugging port from T3CODE_DESKTOP_REMOTE_DEBUGGING_PORT=%j",
+    (value) => {
+      vi.stubEnv("T3CODE_DESKTOP_REMOTE_DEBUGGING_PORT", value);
+      hasSwitchMock.mockReturnValue(false);
+
+      return DesktopPreReadyPlatform.make.pipe(
+        Effect.provideService(HostProcessPlatform, "darwin"),
+        Effect.map(() => {
+          assert.deepEqual(appendSwitchMock.mock.calls, [["remote-debugging-port", "9333"]]);
+        }),
+        Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+      );
+    },
+  );
+
+  it.effect.each(["", "abc", "0", "70000", "9333x", "-1"])(
+    "ignores T3CODE_DESKTOP_REMOTE_DEBUGGING_PORT=%j",
+    (value) => {
+      vi.stubEnv("T3CODE_DESKTOP_REMOTE_DEBUGGING_PORT", value);
+      hasSwitchMock.mockReturnValue(false);
+
+      return DesktopPreReadyPlatform.make.pipe(
+        Effect.provideService(HostProcessPlatform, "darwin"),
+        Effect.map(() => {
+          assert.equal(appendSwitchMock.mock.calls.length, 0);
+        }),
+        Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+      );
+    },
+  );
+
+  it.effect("keeps an explicit --remote-debugging-port over the env var", () => {
+    vi.stubEnv("T3CODE_DESKTOP_REMOTE_DEBUGGING_PORT", "9333");
+    hasSwitchMock.mockImplementation((switchName) => switchName === "remote-debugging-port");
+
+    return DesktopPreReadyPlatform.make.pipe(
+      Effect.provideService(HostProcessPlatform, "darwin"),
+      Effect.map(() => {
+        assert.equal(appendSwitchMock.mock.calls.length, 0);
+      }),
+      Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+    );
+  });
+
   it.effect(
     "acquires a synchronous pre-ready layer before an asynchronous Clerk-shaped layer",
     () =>
