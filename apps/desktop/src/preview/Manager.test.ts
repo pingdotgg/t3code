@@ -685,6 +685,83 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect(
+    "agent keyboard input does not run desktop shortcuts, while human input still does",
+    () =>
+      Effect.gen(function* () {
+        const manager = yield* PreviewManager.PreviewManager;
+        const preview = makeFaviconWebContents();
+        const frame = {
+          processId: 1,
+          frames: [],
+          detached: false,
+          executeJavaScript: async (source: string) =>
+            source.includes("indexOf(element.contentWindow)")
+              ? -1
+              : source.endsWith("?.promise")
+                ? { prevented: false }
+                : undefined,
+        };
+        const input = {
+          type: "keyDown",
+          key: "r",
+          code: "KeyR",
+          meta: true,
+          control: false,
+          shift: false,
+          alt: false,
+        };
+        Object.assign(preview.webContents, {
+          mainFrame: frame,
+          sendInputEvent: () =>
+            preview.listeners.get("before-input-event")!(
+              { preventDefault: vi.fn() } as never,
+              input as never,
+            ),
+        });
+        fromId.mockReturnValue(preview.webContents);
+        getFocusedWebContents.mockReturnValue(preview.webContents as never);
+        yield* manager.createTab("tab_agent_keys");
+        yield* manager.registerWebview("tab_agent_keys", 42);
+        const host = yield* DesktopBrowserHost.DesktopBrowserHost;
+        const key = { threadId: "thread-keys", tabId: "server-keys" };
+        const replies = yield* Queue.unbounded<string>();
+        yield* host.events.pipe(
+          Stream.runForEach((line) => Queue.offer(replies, new TextDecoder().decode(line))),
+          Effect.forkScoped,
+        );
+        host.attach(key, {
+          webContents: preview.webContents as Electron.WebContents,
+          debugger: (preview.webContents as Electron.WebContents).debugger,
+        });
+        expect(JSON.parse(yield* Queue.take(replies)).type).toBe("attached");
+        yield* host.handleCommandLine(
+          JSON.stringify({
+            type: "cdp",
+            ...key,
+            message: JSON.stringify({
+              id: 1,
+              method: "Input.dispatchKeyEvent",
+              params: { type: "rawKeyDown", key: "r", modifiers: 4 },
+              sessionId: "t3-preview-page",
+            }),
+          }),
+        );
+        let reply: string;
+        do {
+          reply = yield* Queue.take(replies);
+        } while (JSON.parse(reply).type !== "cdp");
+        expect(JSON.parse(JSON.parse(reply).message)).toMatchObject({ id: 1, result: {} });
+        expect(preview.reload).not.toHaveBeenCalled();
+        expect(host.isDispatchingKeyboard(preview.webContents as Electron.WebContents)).toBe(false);
+        const preventDefault = vi.fn();
+        preview.listeners.get("before-input-event")!({ preventDefault } as never, input as never);
+        expect(preventDefault).toHaveBeenCalledOnce();
+        yield* Effect.yieldNow;
+        expect(preview.reload).toHaveBeenCalledOnce();
+      }).pipe(Effect.provide(managerLayer()), Effect.scoped),
+  );
+
   effectIt.effect.each([
     ["mod+shift+t", "view.reopenClosed"],
     ["ctrl+alt+u", "sidebar.toggle"],
