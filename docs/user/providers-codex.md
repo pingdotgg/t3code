@@ -60,6 +60,13 @@ The shadow account needs its own `auth.json` file. If Codex uses an OS credentia
 store, configure file storage for this setup. See
 [OpenAI's credential storage guide](https://learn.chatgpt.com/docs/auth#credential-storage).
 
+On Windows, T3 Code can only share individual files such as `config.toml` when it
+is allowed to create symlinks, which normally means Developer Mode is on. A shadow
+home prepared without that still shares sessions, skills, and the other Codex
+folders, but each account reads and writes its own files, and that stays true if
+Developer Mode is turned on later. To share them, turn it on and use a fresh shadow
+directory.
+
 Use a completely separate **CODEX_HOME path**, with no shadow home, when you want
 separate Codex sessions and configuration. That instance cannot continue threads
 from the other home.
