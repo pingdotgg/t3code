@@ -154,7 +154,7 @@ patchedDependencies:
   '@pierre/diffs@1.5.2': b33a575eb1382270ed0df956307e4b6ffe4b8e4349cefeb43e14f648c0fdc3b0
   '@react-native-ai/apple@0.12.0': 2d09870c2848d185cb05b53ed823a46e12dba519324d8dd8e584e28731990f9d
   '@react-native-menu/menu@2.0.0': a4866ecfcd44f318043de839d20110c17e14909004900f002ffe12050376f2ba
-  '@react-navigation/native-stack@7.17.6': 3a53ec9b92f5db5f083f3ada585da75d62a13c82250c6ae47d92be91a828ad87
+  '@react-navigation/native-stack@7.17.6': d2d52f3776e30765519748fd5e177592dc3b9cc778c52fb00e02674dfa9042c5
   alchemy@2.0.0-beta.80: bea1b6c0c0b23157fd5f439a1d7feff430f28ac1621ba135d8a13eeec60ccacd
   dbus-next@0.10.2: cfff57561b0ee59b5addb3b2e6c6f20906e967507a530ab67e8db8108e520ba4
   effect@4.0.2: ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688
@@ -346,7 +346,7 @@ importers:
         version: 7.3.4(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)
       '@react-navigation/native-stack':
         specifier: 7.17.6
-        version: 7.17.6(patch_hash=3a53ec9b92f5db5f083f3ada585da75d62a13c82250c6ae47d92be91a828ad87)(141a742cd91f55378cde709a48a3af06)
+        version: 7.17.6(patch_hash=d2d52f3776e30765519748fd5e177592dc3b9cc778c52fb00e02674dfa9042c5)(cc0272b81e52c9a28f5defc327cee1b5)
       '@shikijs/core':
         specifier: 4.2.0
         version: 4.2.0
@@ -549,8 +549,8 @@ importers:
         specifier: ~5.9.1
         version: 5.9.1(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)
       react-native-screens:
-        specifier: file:deps/react-native-screens-5.0.0-t3.7.tgz
-        version: file:apps/mobile/deps/react-native-screens-5.0.0-t3.7.tgz(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)
+        specifier: file:deps/react-native-screens-5.0.0-t3.8.tgz
+        version: file:apps/mobile/deps/react-native-screens-5.0.0-t3.8.tgz(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)
       react-native-shiki-engine:
         specifier: ^0.3.12
         version: 0.3.12(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)
@@ -10798,9 +10798,9 @@ packages:
       react: '*'
       react-native: '*'
 
-  react-native-screens@file:apps/mobile/deps/react-native-screens-5.0.0-t3.7.tgz:
-    resolution: {integrity: sha512-Di1+YTCuhWpk9helKBxkvXAVAQTCSRo24tpFBGXdbTAT4vPm2vGPbtPe+lnIXcePjNHbTEaI1ha5n9PqQKl5lg==, tarball: file:apps/mobile/deps/react-native-screens-5.0.0-t3.7.tgz}
-    version: 5.0.0-t3.7
+  react-native-screens@file:apps/mobile/deps/react-native-screens-5.0.0-t3.8.tgz:
+    resolution: {integrity: sha512-sgvyU7L9I1iKfFF5p/oe84duBpA2rJmY/WTgHgKmSI2JGLhWBWQ5qWjo/7WRyZkt36sjOkdNGxwNGhx7dCPzJA==, tarball: file:apps/mobile/deps/react-native-screens-5.0.0-t3.8.tgz}
+    version: 5.0.0-t3.8
     peerDependencies:
       react: '*'
       react-native: '*'
@@ -15971,7 +15971,7 @@ snapshots:
     optionalDependencies:
       '@react-native-masked-view/masked-view': 0.3.2(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)
 
-  '@react-navigation/native-stack@7.17.6(patch_hash=3a53ec9b92f5db5f083f3ada585da75d62a13c82250c6ae47d92be91a828ad87)(141a742cd91f55378cde709a48a3af06)':
+  '@react-navigation/native-stack@7.17.6(patch_hash=d2d52f3776e30765519748fd5e177592dc3b9cc778c52fb00e02674dfa9042c5)(cc0272b81e52c9a28f5defc327cee1b5)':
     dependencies:
       '@react-navigation/elements': 2.9.26(83de68753219ecf7f3321e065bd378be)
       '@react-navigation/native': 7.3.4(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)
@@ -15979,7 +15979,7 @@ snapshots:
       react: 19.3.0
       react-native: 0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6)
       react-native-safe-area-context: 5.9.1(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)
-      react-native-screens: file:apps/mobile/deps/react-native-screens-5.0.0-t3.7.tgz(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)
+      react-native-screens: file:apps/mobile/deps/react-native-screens-5.0.0-t3.8.tgz(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)
       sf-symbols-typescript: 2.2.0
       warn-once: 0.1.1
     transitivePeerDependencies:
@@ -21967,7 +21967,7 @@ snapshots:
       react: 19.3.0
       react-native: 0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6)
 
-  react-native-screens@file:apps/mobile/deps/react-native-screens-5.0.0-t3.7.tgz(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0):
+  react-native-screens@file:apps/mobile/deps/react-native-screens-5.0.0-t3.8.tgz(react-native@0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0):
     dependencies:
       react: 19.3.0
       react-freeze: 1.0.4(react@19.3.0)

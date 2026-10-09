@@ -24,6 +24,7 @@ import { useCallback, useRef, useState, type ComponentProps } from "react";
 import { StyleSheet, View } from "react-native";
 import { FormSheet, Stack } from "react-native-screens";
 import { V5StackHeader } from "./V5StackHeader.ios";
+import type { AppNativeStackNavigationOptions } from "./StackHeader";
 import { NativeColumnContent } from "./NativeColumnContent.ios";
 import {
   nativeStackPopAction,
@@ -232,7 +233,14 @@ export function V5CardStackView(props: V5StackViewProps) {
                         : index > 0
                     }
                   />
-                  <NativeColumnContent>{descriptor.render()}</NativeColumnContent>
+                  <NativeColumnContent
+                    insetHorizontally={
+                      (descriptor.options as AppNativeStackNavigationOptions)
+                        .nativeContentInsetHorizontally
+                    }
+                  >
+                    {descriptor.render()}
+                  </NativeColumnContent>
                 </NavigationRouteContext>
               </NavigationContext>
             </Stack.Screen>
