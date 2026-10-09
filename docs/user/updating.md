@@ -85,9 +85,6 @@ Then it installs:
 
 Background services also wait for integrated terminal commands to finish.
 
-Desktop updates download in the background and install when you quit the app.
-The app stays open while you work, including when it hosts multiple backends.
-
 Servers started from a terminal or with `npx` are never replaced automatically.
 A failed provider update is retried after 6 hours or when a newer version is
 published. A failed or rolled-back T3 Code update is not retried until a newer
