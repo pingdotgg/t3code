@@ -15,6 +15,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
+import * as ProviderLatestVersions from "./ProviderLatestVersions.ts";
 import {
   createProviderVersionAdvisory,
   makeTargetedProviderUpdateAction,
@@ -26,7 +27,6 @@ import {
   normalizeCommandPath,
   npmGlobalPrefixFromCommandPath,
   parseHomebrewLatestVersion,
-  ProviderVersionCache,
   resolveLatestProviderVersion,
   resolvePackageManagedProviderMaintenance,
   resolveProviderMaintenanceCapabilitiesEffect,
@@ -124,19 +124,11 @@ function stdoutSpawner(onSpawn: (command: string, args: ReadonlyArray<string>) =
 }
 
 it.layer(NodeServices.layer)("providerMaintenance", (it) => {
-  it.effect("reads cached versions through the injectable cache reference", () =>
+  it.effect("reads cached versions through ProviderLatestVersions", () =>
     resolveLatestProviderVersion(manualPackageTool).pipe(
-      Effect.provideService(
-        ProviderVersionCache,
-        new Map([
-          [
-            "@example/package-tool",
-            {
-              expiresAt: Number.MAX_SAFE_INTEGER,
-              version: "9.9.9",
-            },
-          ],
-        ]),
+      Effect.provideServiceEffect(
+        ProviderLatestVersions.ProviderLatestVersions,
+        ProviderLatestVersions.make([["@example/package-tool", "9.9.9"]]),
       ),
       Effect.provideService(
         HttpClient.HttpClient,
@@ -152,7 +144,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
 
   it.effect("prefers the installer's own latest version over the npm registry", () =>
     resolveLatestProviderVersion({ ...manualPackageTool, latestVersion: "1.2.0" }).pipe(
-      Effect.provideService(ProviderVersionCache, new Map()),
+      Effect.provide(ProviderLatestVersions.layer),
       Effect.provideService(
         HttpClient.HttpClient,
         HttpClient.make(() =>
@@ -169,7 +161,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     enrichProviderSnapshotWithVersionAdvisory(installedPackageToolProvider, manualPackageTool, {
       enableProviderUpdateChecks: false,
     }).pipe(
-      Effect.provideService(ProviderVersionCache, new Map()),
+      Effect.provide(ProviderLatestVersions.layer),
       Effect.provideService(
         HttpClient.HttpClient,
         HttpClient.make(() =>

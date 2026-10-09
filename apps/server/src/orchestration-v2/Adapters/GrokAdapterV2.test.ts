@@ -26,7 +26,8 @@ import { buildInitialGrokProviderSnapshot } from "@t3tools/provider-grok/testing
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
 import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
 import {
@@ -68,7 +69,7 @@ function runtimePolicy(input: {
   readonly approvalPolicy?: unknown;
   readonly sandboxPolicy?: unknown;
 }) {
-  return ProviderAdapterV2RuntimePolicy.make({
+  return ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
     runtimeMode: input.runtimeMode,
     interactionMode: "default",
     cwd: "/workspace",
@@ -309,12 +310,17 @@ describe("Grok permission prompts", () => {
 
 describe("Grok launch permission mode", () => {
   const layerHost = layerTestProviderHost().pipe(Layer.provide(NodeServices.layer));
-  const layerTest = Layer.mergeAll(NodeServices.layer, IdAllocator.layer, layerHost);
+  const layerTest = Layer.mergeAll(
+    NodeServices.layer,
+    IdAllocator.layer,
+    McpProviderSessions.layer,
+    layerHost,
+  );
 
   // Opens a session through the adapter's own Grok runtime factory and returns
   // the argv it tried to launch. The spawn fails after recording, so no
   // process starts.
-  const launchArgs = (runtimePolicy: ProviderAdapterV2RuntimePolicy) =>
+  const launchArgs = (runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) =>
     Effect.gen(function* () {
       const launches: Array<ReadonlyArray<string>> = [];
       const childProcessSpawner = ChildProcessSpawner.make((command) => {
@@ -352,9 +358,9 @@ describe("Grok launch permission mode", () => {
 
   const policy = (
     runtimeMode: RuntimeMode,
-    override: Partial<ProviderAdapterV2RuntimePolicy> = {},
+    override: Partial<ProviderAdapter.ProviderAdapterV2RuntimePolicy> = {},
   ) =>
-    ProviderAdapterV2RuntimePolicy.make({
+    ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
       runtimeMode,
       interactionMode: "default",
       cwd: process.cwd(),

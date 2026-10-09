@@ -13,7 +13,9 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import type { PiSettings } from "../settings.ts";
 import { PiDriver } from "./driver.ts";
@@ -25,6 +27,8 @@ const layerTest = Layer.mergeAll(
     runBackgroundWork: false,
   }),
   IdAllocator.layer,
+  McpProviderSessions.layer,
+  ProviderLatestVersions.layer,
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make(() => Effect.die("Unexpected HTTP")),
