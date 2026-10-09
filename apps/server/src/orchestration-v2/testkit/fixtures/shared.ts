@@ -395,6 +395,12 @@ export const PI_MODEL_SELECTION = {
   model: "openrouter/deepseek/deepseek-v4-flash",
 } satisfies ModelSelection;
 
+// Flash keeps recordings off the account's default (and costlier) model.
+export const ZCODE_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make("zcode"),
+  model: "builtin:zai-coding-plan\\GLM-5.3-Flash",
+} satisfies ModelSelection;
+
 export const ACP_REGISTRY_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("acpRegistry"),
   model: "default",

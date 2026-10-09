@@ -26,6 +26,7 @@
     "record:cursor-replay": "node --env-file-if-exists=../../.env --experimental-strip-types scripts/record-cursor-agent-sdk-replay-fixture.ts",
     "record:pi-replay": "node scripts/record-pi-rpc-replay-fixture.ts",
     "record:grok-replay": "node scripts/record-grok-acp-replay-fixture.ts",
+    "record:zcode-replay": "node scripts/record-zcode-acp-replay-fixture.ts",
     "record:muse-replay": "node scripts/record-muse-msp-replay-fixture.ts"
   },
   "dependencies": {
@@ -45,6 +46,7 @@
     "@t3tools/provider-muse": "workspace:*",
     "@t3tools/provider-opencode": "workspace:*",
     "@t3tools/provider-pi": "workspace:*",
+    "@t3tools/provider-zcode": "workspace:*",
     "diff": "8.0.3",
     "effect": "catalog:",
     "jose": "catalog:",
