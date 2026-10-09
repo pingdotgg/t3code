@@ -3,7 +3,7 @@
  * scoped temp directory, settings are fixed, and background work always runs
  * unless the test says otherwise.
  *
- * @module provider-testing/host
+ * @module provider-testing/TestProviderHost
  */
 import { DEFAULT_SERVER_SETTINGS, type ServerSettings } from "@t3tools/contracts";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -25,13 +25,13 @@ export interface TestProviderHostOptions {
   readonly runBackgroundWork?: boolean;
 }
 
-/** Lets a test change the settings its `layerTestProviderHost` reports. */
+/** Lets a test change the settings its `layer` reports. */
 export class TestProviderHostSettings extends Context.Service<
   TestProviderHostSettings,
   { readonly set: (settings: ServerSettings) => Effect.Effect<void> }
->()("@t3tools/provider-testing/host/TestProviderHostSettings") {}
+>()("@t3tools/provider-testing/TestProviderHost/TestProviderHostSettings") {}
 
-export const layerTestProviderHost = (
+export const layer = (
   options: TestProviderHostOptions = {},
 ): Layer.Layer<
   ProviderHost.ProviderHost | TestProviderHostSettings,
