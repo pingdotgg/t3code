@@ -9,6 +9,7 @@ import type * as DateTime from "effect/DateTime";
 
 import {
   TrimmedNonEmptyString,
+  type SourceControlPreferredCloneProtocol,
   type SourceControlRepositoryVisibility,
   type VcsError,
 } from "@t3tools/contracts";
@@ -258,6 +259,7 @@ export interface GitLabRepositoryCloneUrls {
   readonly nameWithOwner: string;
   readonly url: string;
   readonly sshUrl: string;
+  readonly preferredCloneProtocol?: SourceControlPreferredCloneProtocol;
 }
 
 export class GitLabCli extends Context.Service<
@@ -349,6 +351,32 @@ function normalizeRepositoryCloneUrls(
     url: raw.web_url,
     sshUrl: raw.ssh_url_to_repo,
   };
+}
+
+function parseUrl(url: string): URL | null {
+  try {
+    return new URL(url);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Maps `glab config get git_protocol` output. An HTTPS preference selects the project's
+ * `web_url`, so it only counts when that URL is encrypted; glab's `http` never does.
+ */
+function parseGitProtocol(
+  stdout: string,
+  webUrl: URL | null,
+): SourceControlPreferredCloneProtocol | undefined {
+  switch (stdout.trim()) {
+    case "ssh":
+      return "ssh";
+    case "https":
+      return webUrl?.protocol === "https:" ? "https" : undefined;
+    default:
+      return undefined;
+  }
 }
 
 function stateArgs(state: "open" | "closed" | "merged" | "all"): ReadonlyArray<string> {
@@ -453,6 +481,21 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  // `--host` falls back to the global setting, matching the protocol glab itself
+  // would clone with. A missing or unreadable setting leaves the caller's default.
+  // The key keeps the port: glab writes and reads host entries as `host:port`.
+  const readGitProtocol = (input: { readonly cwd: string; readonly url: string }) => {
+    const webUrl = parseUrl(input.url);
+    const host = webUrl?.host || null;
+    return execute({
+      cwd: input.cwd,
+      args: ["config", "get", "git_protocol", ...(host === null ? [] : ["--host", host])],
+    }).pipe(
+      Effect.map((result) => parseGitProtocol(result.stdout, webUrl)),
+      Effect.orElseSucceed(() => undefined),
+    );
+  };
+
   return GitLabCli.of({
     execute,
     listMergeRequests: (input) =>
@@ -540,6 +583,13 @@ export const make = Effect.gen(function* () {
           ),
         ),
         Effect.map(normalizeRepositoryCloneUrls),
+        Effect.flatMap((urls) =>
+          readGitProtocol({ cwd: input.cwd, url: urls.url }).pipe(
+            Effect.map((preferredCloneProtocol) =>
+              preferredCloneProtocol === undefined ? urls : { ...urls, preferredCloneProtocol },
+            ),
+          ),
+        ),
       ),
     createRepository: (input) => {
       const { namespacePath, projectPath } = parseRepositoryPath(input.repository);

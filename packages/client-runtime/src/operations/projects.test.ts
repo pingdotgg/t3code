@@ -95,6 +95,25 @@ describe("add project shared logic", () => {
     ).toBe("git@gitlab.com:group/project.git");
   });
 
+  it("follows the protocol the provider CLI is configured for", () => {
+    expect(
+      getDefaultCloneUrl({
+        provider: "gitlab",
+        url: "https://gitlab.com/group/project",
+        sshUrl: "git@gitlab.com:group/project.git",
+        preferredCloneProtocol: "https",
+      }),
+    ).toBe("https://gitlab.com/group/project");
+    expect(
+      getDefaultCloneUrl({
+        provider: "gitlab",
+        url: "https://gitlab.com/group/project",
+        sshUrl: "git@gitlab.com:group/project.git",
+        preferredCloneProtocol: "ssh",
+      }),
+    ).toBe("git@gitlab.com:group/project.git");
+  });
+
   it("derives the clone folder name from any pasted clone URL", () => {
     expect(getCloneDirectoryName("https://github.com/owner/repo.git")).toBe("repo");
     expect(getCloneDirectoryName("https://github.com/owner/repo")).toBe("repo");

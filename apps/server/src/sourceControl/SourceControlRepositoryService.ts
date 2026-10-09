@@ -116,6 +116,9 @@ function toRepositoryInfo(
     nameWithOwner: urls.nameWithOwner,
     url: urls.url,
     sshUrl: urls.sshUrl,
+    ...(urls.preferredCloneProtocol === undefined
+      ? {}
+      : { preferredCloneProtocol: urls.preferredCloneProtocol }),
   };
 }
 
@@ -153,13 +156,10 @@ function selectRemoteUrl(
   urls: SourceControlRepositoryCloneUrls,
   protocol: SourceControlCloneProtocol | undefined,
 ): string {
-  switch (protocol ?? "auto") {
-    case "https":
-      return urls.url;
-    case "ssh":
-    case "auto":
-      return urls.sshUrl;
-  }
+  // "auto" follows the provider CLI's configured protocol, falling back to SSH.
+  const resolved =
+    protocol === undefined || protocol === "auto" ? urls.preferredCloneProtocol : protocol;
+  return resolved === "https" ? urls.url : urls.sshUrl;
 }
 
 /** @public Service construction is part of the canonical Effect module API. */

@@ -263,6 +263,48 @@ it.effect("keeps arbitrary Bitbucket request failures out of the repository mess
   }),
 );
 
+it.effect("clones over the provider's preferred protocol when none is requested", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs.makeTempDirectoryScoped({
+      prefix: "t3-source-control-clone-parent-",
+    });
+    const destinationPath = path.join(parent, "t3code");
+    const cloneUrls = { ...CLONE_URLS, preferredCloneProtocol: "https" as const };
+    const clonedUrls: Array<string | undefined> = [];
+
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const result = yield* service.cloneRepository({
+        provider: "gitlab",
+        repository: "octocat/t3code",
+        destinationPath,
+      });
+
+      assert.strictEqual(result.remoteUrl, CLONE_URLS.url);
+      assert.deepStrictEqual(result.repository, { provider: "gitlab", ...cloneUrls });
+      assert.deepStrictEqual(clonedUrls, [CLONE_URLS.url]);
+    }).pipe(
+      Effect.provide(
+        layer({
+          provider: makeProvider({
+            kind: "gitlab",
+            getRepositoryCloneUrls: () => Effect.succeed(cloneUrls),
+          }),
+          git: {
+            execute: (input) =>
+              Effect.sync(() => {
+                clonedUrls.push(input.args.at(-2));
+                return processOutput();
+              }),
+          },
+        }),
+      ),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("clones a looked-up repository into the requested destination", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

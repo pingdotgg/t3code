@@ -156,18 +156,78 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
-  it.effect("reads repository clone URLs", () =>
+  const projectJson = JSON.stringify({
+    path_with_namespace: "octocat/t3code",
+    web_url: "https://gitlab.com/octocat/t3code",
+    http_url_to_repo: "https://gitlab.com/octocat/t3code.git",
+    ssh_url_to_repo: "git@gitlab.com:octocat/t3code.git",
+  });
+
+  it.effect("reads repository clone URLs with the host's configured git protocol", () =>
     Effect.gen(function* () {
-      mockedRun.mockReturnValueOnce(
-        Effect.succeed(
-          processOutput(
-            JSON.stringify({
-              path_with_namespace: "octocat/t3code",
-              web_url: "https://gitlab.com/octocat/t3code",
-              http_url_to_repo: "https://gitlab.com/octocat/t3code.git",
-              ssh_url_to_repo: "git@gitlab.com:octocat/t3code.git",
-            }),
-          ),
+      mockedRun
+        .mockReturnValueOnce(Effect.succeed(processOutput(projectJson)))
+        .mockReturnValueOnce(Effect.succeed(processOutput("https\n")));
+
+      const result = yield* Effect.gen(function* () {
+        const glab = yield* GitLabCli.GitLabCli;
+        return yield* glab.getRepositoryCloneUrls({
+          cwd: "/repo",
+          repository: "octocat/t3code",
+        });
+      });
+
+      assert.deepStrictEqual(result, {
+        nameWithOwner: "octocat/t3code",
+        url: "https://gitlab.com/octocat/t3code",
+        sshUrl: "git@gitlab.com:octocat/t3code.git",
+        preferredCloneProtocol: "https",
+      });
+      expect(mockedRun).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          command: "glab",
+          args: ["config", "get", "git_protocol", "--host", "gitlab.com"],
+        }),
+      );
+    }),
+  );
+
+  it.effect("does not prefer HTTP transport when the project URL is plaintext", () =>
+    Effect.gen(function* () {
+      const plaintextProject = JSON.stringify({
+        path_with_namespace: "group/project",
+        web_url: "http://gitlab.internal/group/project",
+        http_url_to_repo: "http://gitlab.internal/group/project.git",
+        ssh_url_to_repo: "git@gitlab.internal:group/project.git",
+      });
+      const glab = yield* GitLabCli.GitLabCli;
+
+      for (const configured of ["https\n", "http\n"]) {
+        mockedRun
+          .mockReturnValueOnce(Effect.succeed(processOutput(plaintextProject)))
+          .mockReturnValueOnce(Effect.succeed(processOutput(configured)));
+
+        const result = yield* glab.getRepositoryCloneUrls({
+          cwd: "/repo",
+          repository: "group/project",
+        });
+
+        assert.strictEqual(result.preferredCloneProtocol, undefined);
+      }
+    }),
+  );
+
+  it.effect("leaves the clone protocol unset when glab config cannot be read", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(Effect.succeed(processOutput(projectJson))).mockReturnValueOnce(
+        Effect.fail(
+          new VcsProcessExitError({
+            operation: "GitLabCli.execute",
+            command: "glab",
+            cwd: "/repo",
+            exitCode: 1,
+            detail: "unknown command",
+          }),
         ),
       );
 

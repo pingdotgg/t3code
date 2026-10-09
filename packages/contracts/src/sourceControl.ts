@@ -43,10 +43,18 @@ export const ChangeRequest = Schema.Struct({
 });
 export type ChangeRequest = typeof ChangeRequest.Type;
 
+/**
+ * The transport the provider's CLI is configured to use for this host, such as
+ * `glab config get git_protocol`. Absent when the provider has no such setting.
+ */
+export const SourceControlPreferredCloneProtocol = Schema.Literals(["ssh", "https"]);
+export type SourceControlPreferredCloneProtocol = typeof SourceControlPreferredCloneProtocol.Type;
+
 export const SourceControlRepositoryCloneUrls = Schema.Struct({
   nameWithOwner: TrimmedNonEmptyString,
   url: TrimmedNonEmptyString,
   sshUrl: TrimmedNonEmptyString,
+  preferredCloneProtocol: Schema.optional(SourceControlPreferredCloneProtocol),
 });
 export type SourceControlRepositoryCloneUrls = typeof SourceControlRepositoryCloneUrls.Type;
 
@@ -61,6 +69,7 @@ export const SourceControlRepositoryInfo = Schema.Struct({
   nameWithOwner: TrimmedNonEmptyString,
   url: TrimmedNonEmptyString,
   sshUrl: TrimmedNonEmptyString,
+  preferredCloneProtocol: Schema.optional(SourceControlPreferredCloneProtocol),
 });
 export type SourceControlRepositoryInfo = typeof SourceControlRepositoryInfo.Type;
 
