@@ -11,3 +11,7 @@ export const RECORDING_POINTER_CHANNEL = "preview:recording-pointer";
 export const RECORDING_KEY_CHANNEL = "preview:recording-key";
 export const RECORDING_INPUT_CHANNEL = "preview:recording-input";
 export const RECORDING_CONTROLLER_CHANNEL = "preview:recording-controller";
+export const PASSKEY_CREATE_CHANNEL = "preview:passkey-create";
+export const PASSKEY_GET_CHANNEL = "preview:passkey-get";
+/** Renderer argument that turns on the guest passkey bridge; see Passkeys.ts. */
+export const PASSKEY_BRIDGE_ARGUMENT = "--t3code-preview-passkey-bridge";

@@ -553,6 +553,16 @@ Notes:
 - The workflow writes it to a temporary `AuthKey_<id>.p8` file at runtime.
 - The workflow decodes `MACOS_PROVISIONING_PROFILE`, validates it with `security cms`, and passes it
   to the desktop packager.
+- In-app browser passkeys depend on the same profile. The packager adds each entitlement only when
+  the profile grants it, because macOS will not launch an app that claims more than its profile
+  allows. The build log reports which ones it enabled.
+  - `keychain-access-groups` (`<TEAM_ID>.com.t3tools.t3code.webauthn`) enables Touch ID passkeys.
+    Profiles that grant the team's keychain groups (`<TEAM_ID>.*`) cover it.
+  - `com.apple.developer.web-browser.public-key-credential` lets the system passkey sheet (iCloud
+    Keychain, password managers, phones, security keys) serve any site. Apple grants it as a
+    managed capability: the Account Holder requests it through the
+    [macOS Browsers Passkeys form](https://developer.apple.com/contact/request/macos-browsers-passkeys/).
+    After approval, regenerate the profile and update `MACOS_PROVISIONING_PROFILE`.
 
 ## 3) Azure Trusted Signing setup (Windows)
 

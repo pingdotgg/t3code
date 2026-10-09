@@ -280,6 +280,27 @@
     },
     {
       "license": "MIT",
+      "repositoryUrl": "https://github.com/iamEvanYT/electron-webauthn",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2026 iamEvan"]
+      }
+    },
+    {
+      "license": "MIT",
+      "name": "@electron-webauthn/types",
+      "sourceUrl": "https://github.com/iamEvanYT/electron-webauthn",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2026 iamEvan"]
+      }
+    },
+    {
+      "license": "MIT",
+      "name": "objc-js"
+    },
+    {
+      "license": "MIT",
       "name": "map-stream",
       "generatedNotice": {
         "licenseId": "MIT",

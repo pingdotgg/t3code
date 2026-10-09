@@ -13,11 +13,13 @@
     "@t3tools/shared": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
     "effect": "catalog:",
+    "plist": "catalog:",
     "pngjs": "7.0.0",
     "sharp": "0.35.4"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@types/plist": "catalog:",
     "@types/pngjs": "6.0.5",
     "typescript": "catalog:",
     "typescript-legacy": "npm:typescript@~6.0.3",
