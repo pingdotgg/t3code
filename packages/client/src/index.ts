@@ -12,4 +12,4 @@ export {
   type T3Environment,
   type T3Negotiation,
 } from "./environment.ts";
-export { nodeRuntimeLayer } from "./runtime.ts";
+export { layerNodeRuntime } from "./runtime.ts";

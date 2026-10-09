@@ -38,6 +38,7 @@ import {
   MessageId,
   ORCHESTRATION_V2_WS_METHODS,
   type AuthEnvironmentScope,
+  type ClientGuardedRpcTag,
   type ExecutionEnvironmentDescriptor,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -50,7 +51,7 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 
 import { clientPresentation, type T3Credential } from "./credential.ts";
 
@@ -149,7 +150,7 @@ const catalogEntry = (credential: T3Credential): ConnectionCatalogEntry => {
  * Platform services for one credential. Nothing persists: the caller owns
  * credential storage, and a process has no foreground or network signals.
  */
-const platformLayer = (credential: T3Credential, options: ConnectOptions) => {
+const layerPlatform = (credential: T3Credential, options: ConnectOptions) => {
   const entry = catalogEntry(credential);
   const connectionId = `external:${credential.environmentId}`;
   const stored = new BearerConnectionCredential({ token: Redacted.value(credential.token) });
@@ -194,7 +195,7 @@ const platformLayer = (credential: T3Credential, options: ConnectOptions) => {
   ).pipe(Layer.provideMerge(presentation));
 };
 
-const signalsLayer = Layer.mergeAll(
+const layerSignals = Layer.mergeAll(
   Connectivity.layer({ status: Effect.succeed("online"), changes: Stream.never }),
   Wakeups.layer({ changes: Stream.never }),
 );
@@ -277,8 +278,11 @@ export const makeEnvironment = Effect.fn("T3Client.makeEnvironment")(function* (
     return { environment: config.environment, scopes: session.scopes } satisfies T3Negotiation;
   });
 
-  const call = <TTag extends EnvironmentUnaryRpcTag>(tag: TTag, input: EnvironmentRpcInput<TTag>) =>
-    ready.pipe(Effect.andThen(request(tag, input)), withSupervisor);
+  // Protected writes (source control, scheduled tasks) are not offered here, as in `request`.
+  const call = <TTag extends Exclude<EnvironmentUnaryRpcTag, ClientGuardedRpcTag>>(
+    tag: TTag,
+    input: EnvironmentRpcInput<TTag>,
+  ) => ready.pipe(Effect.andThen(request(tag, input)), withSupervisor);
 
   /** Follows replacement sessions after reconnects; it never ends on its own. */
   const watch = <TTag extends EnvironmentSubscriptionRpcTag>(
@@ -348,8 +352,8 @@ export const connect = Effect.fn("T3Client.connect")(function* (
 ) {
   const driver = ConnectionDriver.layer.pipe(
     Layer.provide(Layer.mergeAll(ConnectionResolver.layer, RpcSessionFactory.layer({}))),
-    Layer.provide(platformLayer(credential, options)),
+    Layer.provide(layerPlatform(credential, options)),
   );
-  const context = yield* Layer.build(Layer.merge(driver, signalsLayer));
+  const context = yield* Layer.build(Layer.merge(driver, layerSignals));
   return yield* makeEnvironment(credential).pipe(Effect.provideContext(context));
 });

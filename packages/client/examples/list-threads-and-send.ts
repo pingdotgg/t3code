@@ -14,7 +14,7 @@ import {
   connect,
   decodeCredential,
   encodeCredential,
-  nodeRuntimeLayer,
+  layerNodeRuntime,
   pair,
 } from "@t3tools/client";
 import { ThreadId } from "@t3tools/contracts";
@@ -87,6 +87,6 @@ const program = Effect.gen(function* () {
 
 program.pipe(
   Effect.scoped,
-  Effect.provide(Layer.merge(nodeRuntimeLayer, NodeServices.layer)),
+  Effect.provide(Layer.merge(layerNodeRuntime, NodeServices.layer)),
   NodeRuntime.runMain,
 );

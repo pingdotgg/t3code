@@ -1,24 +1,9 @@
 import { ConnectionOnboarding } from "@t3tools/client-runtime/connection";
 import { ClientCapabilities } from "@t3tools/client-runtime/platform";
-import {
-  AuthOrchestrationOperateScope,
-  AuthOrchestrationReadScope,
-  type AuthEnvironmentScope,
-  EnvironmentId,
-} from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-
-/**
- * Scopes an external client asks for unless told otherwise: read threads and
- * send messages. Terminal, review, access and relay authority must be requested
- * explicitly, and the pairing link still caps what the server grants.
- */
-const DEFAULT_EXTERNAL_CLIENT_SCOPES: ReadonlyArray<AuthEnvironmentScope> = [
-  AuthOrchestrationReadScope,
-  AuthOrchestrationOperateScope,
-];
 
 const DEFAULT_CLIENT_LABEL = "T3 external client";
 
@@ -45,22 +30,19 @@ export interface PairInput {
   /** Host and code, as an alternative to `pairingUrl`. */
   readonly host?: string;
   readonly pairingCode?: string;
-  /** Requested scopes; the server may grant fewer. */
-  readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
   /** Shown in the environment's connection list. */
   readonly label?: string;
 }
 
-export const clientPresentation = (input: {
-  readonly label?: string;
-  readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
-}) =>
+export const clientPresentation = (input: { readonly label?: string }) =>
   ClientCapabilities.ClientPresentation.of({
     metadata: { label: input.label ?? DEFAULT_CLIENT_LABEL, surface: "cli" },
-    scopes: input.scopes ?? DEFAULT_EXTERNAL_CLIENT_SCOPES,
   });
 
-/** Exchanges a one-time pairing credential for a scoped bearer session. */
+/**
+ * Exchanges a one-time pairing credential for a bearer session. The session gets
+ * the scopes the pairing link grants; create the link with `--scope` to narrow them.
+ */
 export const pair = Effect.fn("T3Client.pair")(function* (input: PairInput) {
   const registration = yield* ConnectionOnboarding.preparePairingRegistration({
     ...(input.pairingUrl === undefined ? {} : { pairingUrl: input.pairingUrl }),

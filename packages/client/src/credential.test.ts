@@ -1,4 +1,4 @@
-import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
+import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
 import { ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -40,17 +40,17 @@ function pairingFetch(tokenRequests: Array<URLSearchParams>, protocolVersion?: n
 }
 
 describe("pair", () => {
-  it.effect("asks for read and operate scopes only and keeps the token redacted", () =>
+  it.effect("leaves scopes to the pairing link and keeps the token redacted", () =>
     Effect.gen(function* () {
       const tokenRequests: Array<URLSearchParams> = [];
       const credential = yield* pair({
         host: "remote.example.test",
         pairingCode: "pairing-token",
         label: "Nightly triage",
-      }).pipe(Effect.provide(remoteHttpClientLayer(pairingFetch(tokenRequests))));
+      }).pipe(Effect.provide(layerRemoteHttpClient(pairingFetch(tokenRequests))));
 
       expect(tokenRequests).toHaveLength(1);
-      expect(tokenRequests[0]?.get("scope")).toBe("orchestration:read orchestration:operate");
+      expect(tokenRequests[0]?.has("scope")).toBe(false);
       expect(tokenRequests[0]?.get("client_label")).toBe("Nightly triage");
       expect(credential.environmentId).toBe("environment-paired");
       expect(credential.httpBaseUrl).toBe("https://remote.example.test/");
@@ -65,25 +65,12 @@ describe("pair", () => {
     }),
   );
 
-  it.effect("requests exactly the scopes the caller names", () =>
-    Effect.gen(function* () {
-      const tokenRequests: Array<URLSearchParams> = [];
-      yield* pair({
-        host: "remote.example.test",
-        pairingCode: "pairing-token",
-        scopes: ["orchestration:read"],
-      }).pipe(Effect.provide(remoteHttpClientLayer(pairingFetch(tokenRequests))));
-
-      expect(tokenRequests[0]?.get("scope")).toBe("orchestration:read");
-    }),
-  );
-
   it.effect("refuses a server that is newer than this client", () =>
     Effect.gen(function* () {
       const tokenRequests: Array<URLSearchParams> = [];
       const error = yield* pair({ host: "remote.example.test", pairingCode: "pairing-token" }).pipe(
         Effect.provide(
-          remoteHttpClientLayer(pairingFetch(tokenRequests, ORCHESTRATION_PROTOCOL_VERSION + 1)),
+          layerRemoteHttpClient(pairingFetch(tokenRequests, ORCHESTRATION_PROTOCOL_VERSION + 1)),
         ),
         Effect.flip,
       );

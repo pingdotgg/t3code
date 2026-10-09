@@ -8,7 +8,7 @@ import {
   Wakeups,
 } from "@t3tools/client-runtime/connection";
 import {
-  remoteHttpClientLayer,
+  layerRemoteHttpClient,
   type RpcSession,
   type WsRpcProtocolClient,
 } from "@t3tools/client-runtime/rpc";
@@ -82,8 +82,8 @@ const shellOf = (threadIds: ReadonlyArray<string>) => () =>
   });
 
 /** Serves `/api/auth/session`; omitting scopes mimics servers that do not report them. */
-const sessionHttpLayer = (scopes: ReadonlyArray<string> | undefined) =>
-  remoteHttpClientLayer(((input) =>
+const layerSessionHttp = (scopes: ReadonlyArray<string> | undefined) =>
+  layerRemoteHttpClient(((input) =>
     String(input).endsWith("/api/auth/session")
       ? Promise.resolve(
           Response.json({
@@ -99,7 +99,7 @@ const sessionHttpLayer = (scopes: ReadonlyArray<string> | undefined) =>
         )
       : Promise.reject(new Error(`Unexpected request: ${String(input)}`))) satisfies typeof fetch);
 
-const cryptoLayer = Layer.succeed(
+const layerCrypto = Layer.succeed(
   Crypto.Crypto,
   Crypto.make({
     randomBytes: (size) => globalThis.crypto.getRandomValues(new Uint8Array(size)),
@@ -149,8 +149,8 @@ const environmentWith = Effect.fn("TestEnvironment.make")(function* (
         Layer.succeed(ConnectionDriver.ConnectionDriver, driver),
         Connectivity.layer({ status: Effect.succeed("online"), changes: Stream.never }),
         Wakeups.layer({ changes: Stream.never }),
-        cryptoLayer,
-        sessionHttpLayer(scopes),
+        layerCrypto,
+        layerSessionHttp(scopes),
       ),
     ),
   );

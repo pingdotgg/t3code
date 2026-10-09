@@ -1,10 +1,10 @@
-import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
+import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Socket from "effect/unstable/socket/Socket";
+import * as Socket from "effect/socket/Socket";
 
-const webCryptoLayer = Layer.succeed(
+const layerWebCrypto = Layer.succeed(
   Crypto.Crypto,
   Crypto.make({
     randomBytes: (size) => globalThis.crypto.getRandomValues(new Uint8Array(size)),
@@ -18,8 +18,8 @@ const webCryptoLayer = Layer.succeed(
 );
 
 /** Services `pair` and `connect` need, from Node 22+ globals (fetch, WebSocket, Web Crypto). */
-export const nodeRuntimeLayer = Layer.mergeAll(
-  remoteHttpClientLayer(fetch),
+export const layerNodeRuntime = Layer.mergeAll(
+  layerRemoteHttpClient(fetch),
   Socket.layerWebSocketConstructorGlobal,
-  webCryptoLayer,
+  layerWebCrypto,
 );
