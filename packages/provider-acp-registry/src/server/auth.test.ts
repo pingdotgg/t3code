@@ -1,10 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import {
-  AcpRegistrySettings,
-  ProviderInstanceId,
-  type ProviderAuthState,
-} from "@t3tools/contracts";
+import { ProviderInstanceId, type ProviderAuthState } from "@t3tools/contracts";
+import { AcpRegistrySettings } from "../settings.ts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -13,8 +10,8 @@ import * as Stream from "effect/Stream";
 import type * as AcpSchema from "effect-acp/compat";
 import { AcpRequestError } from "effect-acp/errors";
 
-import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
-import { makeAcpRegistryAuth } from "./AcpRegistryAuth.ts";
+import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
+import { makeAcpRegistryAuth } from "./auth.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 

@@ -99,6 +99,10 @@
       "types": "./src/server/ProviderAdapter.ts",
       "import": "./src/server/ProviderAdapter.ts"
     },
+    "./server/ProviderAuthFlow": {
+      "types": "./src/server/ProviderAuthFlow.ts",
+      "import": "./src/server/ProviderAuthFlow.ts"
+    },
     "./server/ProviderEventLoggers": {
       "types": "./src/server/ProviderEventLoggers.ts",
       "import": "./src/server/ProviderEventLoggers.ts"

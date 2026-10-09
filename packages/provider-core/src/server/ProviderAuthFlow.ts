@@ -21,7 +21,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import type * as ProviderAuthService from "./ProviderAuthService.ts";
+import type * as ProviderAuth from "./auth.ts";
 
 export interface ProviderAuthFlowContext {
   readonly flowId: string;
@@ -61,9 +61,7 @@ interface Flow {
 /** Adapters do login and credential handling; this owns client consent and flow lifetime. */
 export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
   readonly instanceId: ProviderInstanceId;
-  readonly credentialBinding: NonNullable<
-    ProviderAuthService.ProviderAuthController["credentialBinding"]
-  >;
+  readonly credentialBinding: NonNullable<ProviderAuth.ProviderAuthController["credentialBinding"]>;
   readonly methods: Effect.Effect<ReadonlyArray<ProviderAuthMethod>, ProviderSetupError>;
   readonly defaultMethodId?: string;
   /** Stored account profiles can change the advertised methods after auth/logout. */
@@ -145,7 +143,7 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
   );
   yield* refreshMethods.pipe(Effect.forkIn(scope));
 
-  const controller: ProviderAuthService.ProviderAuthController = {
+  const controller: ProviderAuth.ProviderAuthController = {
     credentialBinding: options.credentialBinding,
     adoptCredentials: (update, stopSessions) =>
       Effect.gen(function* () {

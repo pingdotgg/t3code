@@ -105,10 +105,10 @@ export class OpenCodeRuntimeError extends Data.TaggedError(OPENCODE_RUNTIME_ERRO
   readonly operation: string;
   readonly cause?: unknown;
   readonly detail: string;
-}> {
-  static readonly is = (u: unknown): u is OpenCodeRuntimeError =>
-    P.isTagged(u, OPENCODE_RUNTIME_ERROR_TAG);
-}
+}> {}
+
+export const isOpenCodeRuntimeError = (u: unknown): u is OpenCodeRuntimeError =>
+  P.isTagged(u, OPENCODE_RUNTIME_ERROR_TAG);
 
 function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
   const result = encodeUnknownJsonStringExit(input);
@@ -116,7 +116,7 @@ function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
 }
 
 export function openCodeRuntimeErrorDetail(cause: unknown): string {
-  if (OpenCodeRuntimeError.is(cause)) return cause.detail;
+  if (isOpenCodeRuntimeError(cause)) return cause.detail;
   if (cause instanceof Error && cause.message.trim().length > 0) return cause.message.trim();
   if (cause && typeof cause === "object") {
     // SDK v2 throws { response, request, error? } shapes — extract what's useful
@@ -583,7 +583,7 @@ function ensureRuntimeError(
   detail: string,
   cause: unknown,
 ): OpenCodeRuntimeError {
-  return OpenCodeRuntimeError.is(cause)
+  return isOpenCodeRuntimeError(cause)
     ? cause
     : new OpenCodeRuntimeError({ operation, detail, cause });
 }

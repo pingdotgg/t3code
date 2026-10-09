@@ -18,7 +18,7 @@ import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import * as ProviderAuthFlow from "../provider/ProviderAuthFlow.ts";
+import * as ProviderAuthFlow from "@t3tools/provider-core/server/ProviderAuthFlow";
 import type { ProviderAuthController } from "../provider/ProviderAuthService.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";

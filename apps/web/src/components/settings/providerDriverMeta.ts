@@ -1,10 +1,10 @@
 import {
-  AcpRegistrySettings,
   AntigravitySettings,
   ClaudeSettings,
   CodexSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
+import { acpRegistryClient } from "@t3tools/provider-acp-registry/client";
 import { makeProviderClientRegistry } from "@t3tools/provider-core/client";
 import { cursorClient } from "@t3tools/provider-cursor/client";
 import { grokClient } from "@t3tools/provider-grok/client";
@@ -34,10 +34,5 @@ export const providerClients = makeProviderClientRegistry([
   },
   museClient,
   piClient,
-  {
-    driverKind: ProviderDriverKind.make("acpRegistry"),
-    label: "ACP Registry",
-    settingsSchema: AcpRegistrySettings,
-    hasDefaultInstance: false,
-  },
+  acpRegistryClient,
 ]);

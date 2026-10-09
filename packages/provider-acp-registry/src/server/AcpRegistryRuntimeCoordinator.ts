@@ -15,10 +15,7 @@ import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
-import type {
-  AcpRegistryAvailableCommands,
-  AcpRegistryLiveConfiguration,
-} from "./AcpRegistryProbe.ts";
+import type { AcpRegistryAvailableCommands, AcpRegistryLiveConfiguration } from "./probe.ts";
 
 interface AvailableCommandsUpdate {
   readonly instanceId: ProviderInstanceId;
@@ -99,11 +96,7 @@ export class AcpRegistryRuntimeCoordinator extends Context.Service<
       onUpdate: (action: AcpRegistryUrlAuthAction | null) => Effect.Effect<void>,
     ) => Effect.Effect<void>;
   }
->()("t3/provider/acp/AcpRegistryRuntimeCoordinator") {
-  static get layer() {
-    return layer;
-  }
-}
+>()("@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator") {}
 
 const make = Effect.gen(function* () {
   const foregroundStarts = yield* PubSub.unbounded<string>();
@@ -366,4 +359,4 @@ const make = Effect.gen(function* () {
   });
 });
 
-const layer = Layer.effect(AcpRegistryRuntimeCoordinator, make);
+export const layer = Layer.effect(AcpRegistryRuntimeCoordinator, make);
