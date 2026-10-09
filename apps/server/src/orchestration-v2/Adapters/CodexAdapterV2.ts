@@ -1335,12 +1335,12 @@ export function codexThreadRuntimeParams(input: {
       ...(mcpSession === undefined
         ? {}
         : {
-            mcp_servers: {
-              "t3-code": {
-                url: mcpSession.endpoint,
-                http_headers: {
-                  Authorization: mcpSession.authorizationHeader,
-                },
+            // Dotted key: thread config shares Codex's `-c` override layer, so a
+            // whole `mcp_servers` table would replace servers added by launch args.
+            "mcp_servers.t3-code": {
+              url: mcpSession.endpoint,
+              http_headers: {
+                Authorization: mcpSession.authorizationHeader,
               },
             },
           }),

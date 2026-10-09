@@ -674,12 +674,10 @@ describe("CodexAdapterV2 process spawning", () => {
           model: "gpt-5.4",
           config: {
             "tools.update_plan.enabled": true,
-            mcp_servers: {
-              "t3-code": {
-                url: "http://127.0.0.1:43123/mcp",
-                http_headers: {
-                  Authorization: "Bearer secret-codex-token",
-                },
+            "mcp_servers.t3-code": {
+              url: "http://127.0.0.1:43123/mcp",
+              http_headers: {
+                Authorization: "Bearer secret-codex-token",
               },
             },
           },
