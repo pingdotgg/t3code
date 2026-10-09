@@ -47,7 +47,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Tool } from "effect/ai";
 import { formatClaudeResumeCompactionQuestion } from "@t3tools/shared/claudeCompaction";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
@@ -62,7 +62,7 @@ import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
-import type * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -1820,6 +1820,90 @@ describe("ClaudeAdapterV2 native fork", () => {
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+});
+
+describe("ClaudeAdapterV2 subagent launch lookup", () => {
+  it.live("reads a subagent stored under the instance's own Claude home", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const claudeHome = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-v2-subagent-home-",
+        });
+        const workspace = yield* fileSystem.realPath(
+          yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-v2-subagent-workspace-" }),
+        );
+        const sessionId = yield* crypto.randomUUIDv4;
+        const agentId = "a0123456789abcdef";
+        const projectDir = path.join(
+          claudeHome,
+          "projects",
+          workspace.replace(/[^a-zA-Z0-9]/g, "-"),
+        );
+        const subagentsDir = path.join(projectDir, sessionId, "subagents");
+        const entry = {
+          type: "user",
+          parentUuid: null,
+          sessionId,
+          cwd: workspace,
+          timestamp: "2026-01-01T00:00:00.000Z",
+        };
+        yield* fileSystem.makeDirectory(subagentsDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(projectDir, `${sessionId}.jsonl`),
+          JSON.stringify({
+            ...entry,
+            uuid: yield* crypto.randomUUIDv4,
+            isSidechain: false,
+            message: { role: "user", content: "start a subagent" },
+          }),
+        );
+        yield* fileSystem.writeFileString(
+          path.join(subagentsDir, `agent-${agentId}.jsonl`),
+          JSON.stringify({
+            ...entry,
+            uuid: yield* crypto.randomUUIDv4,
+            isSidechain: true,
+            agentId,
+            message: { role: "user", content: "subagent prompt" },
+          }),
+        );
+        // The CLI records the launching tool call in the transcript's sidecar.
+        yield* fileSystem.writeFileString(
+          path.join(subagentsDir, `agent-${agentId}.meta.json`),
+          JSON.stringify({ agentType: "general-purpose", toolUseId: "toolu_launch" }),
+        );
+        const queryRunner = yield* ClaudeAdapterV2.ClaudeAgentSdkQueryRunner;
+
+        const toolUseId = yield* queryRunner.subagentLaunchToolUseId({
+          sessionId,
+          agentId,
+          dir: workspace,
+          threadId: ThreadId.make("thread-claude-subagent-instance-home"),
+          providerSessionId: ProviderSessionId.make(
+            "provider-session-claude-subagent-instance-home",
+          ),
+          environment: { ...(yield* HostProcessEnvironment), CLAUDE_CONFIG_DIR: claudeHome },
+        });
+
+        assert.equal(toolUseId, "toolu_launch");
+      }).pipe(
+        Effect.provide(
+          ClaudeAdapterV2.layerQueryRunner.pipe(
+            Layer.provideMerge(
+              Layer.succeed(
+                ProviderEventLoggers.ProviderEventLoggers,
+                ProviderEventLoggers.NoOpProviderEventLoggers,
+              ),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
         ),
       ),
     ),
