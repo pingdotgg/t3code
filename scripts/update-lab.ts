@@ -191,18 +191,40 @@ function requireState(): LabState {
   return state;
 }
 
-/** Fake installers and the CLI write concurrently, so writes are atomic renames. */
+/** Keep the descriptor open so the kernel releases the lock even if this process dies. */
+function acquireLock(name: "state" | "processes"): () => void {
+  NodeFS.mkdirSync(NodePath.dirname(LAB), { recursive: true });
+  // Keep lock files outside LAB so reset cannot unlink a lock another process holds.
+  const fd = NodeFS.openSync(`${LAB}.${name}.lock`, "a");
+  try {
+    NodeChildProcess.execFileSync("flock", ["-x", "3"], {
+      stdio: ["ignore", "ignore", "inherit", fd],
+    });
+  } catch (error) {
+    NodeFS.closeSync(fd);
+    throw error;
+  }
+  return () => NodeFS.closeSync(fd);
+}
+
+/** Atomic replacement keeps readers from observing a partially written state. */
 function writeState(state: LabState): void {
   const temp = `${STATE_PATH}.${process.pid}.tmp`;
   NodeFS.writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`);
   NodeFS.renameSync(temp, STATE_PATH);
 }
 
-function updateState(mutate: (state: LabState) => void): LabState {
-  const state = requireState();
-  mutate(state);
-  writeState(state);
-  return state;
+function updateState(mutate: (state: LabState) => void, initial?: LabState): LabState {
+  const release = acquireLock("state");
+  try {
+    const state = readState() ?? initial ?? requireState();
+    mutate(state);
+    NodeFS.mkdirSync(LAB, { recursive: true });
+    writeState(state);
+    return state;
+  } finally {
+    release();
+  }
 }
 
 function requireEnv(state: LabState, id: string | undefined): LabEnv {
@@ -725,11 +747,16 @@ async function freePort(host: string, taken: Set<number>): Promise<number> {
   fail("Could not find a free port.");
 }
 
-/** True only for a live process whose command line is still one the lab started. */
-function isLabProcess(pid: number | null, marker: string): pid is number {
+/** Check the recorded process's command and working directory before signaling it. */
+function isLabProcess(pid: number | null, marker: string, cwd = REPO): pid is number {
   if (!pid) return false;
   try {
-    return NodeFS.readFileSync(`/proc/${pid}/cmdline`, "utf8").includes(marker);
+    const args = NodeFS.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0");
+    return (
+      args.includes(marker) &&
+      args.includes(marker === "__feed" ? SELF : SERVER_BIN) &&
+      NodeFS.realpathSync(`/proc/${pid}/cwd`) === NodeFS.realpathSync(cwd)
+    );
   } catch {
     return false;
   }
@@ -827,7 +854,7 @@ async function waitForPairingUrl(env: LabEnv): Promise<string> {
     const log = NodeFS.readFileSync(logPath(env.id), "utf8");
     const url = /Pairing URL: (\S+)/.exec(log)?.[1];
     if (url) return url;
-    if (!isLabProcess(env.pid, serverMarker(env))) {
+    if (!isLabProcess(env.pid, serverMarker(env), projectDir(env.id))) {
       fail(`${env.id} exited during startup; see ${logPath(env.id)}\n${log.slice(-2000)}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -836,11 +863,11 @@ async function waitForPairingUrl(env: LabEnv): Promise<string> {
 }
 
 /** SIGTERM the process group we created, then SIGKILL it if it lingers. */
-async function stopGroup(pid: number, marker: string): Promise<void> {
-  if (!isLabProcess(pid, marker)) return;
+async function stopGroup(pid: number, marker: string, cwd = REPO): Promise<void> {
+  if (!isLabProcess(pid, marker, cwd)) return;
   process.kill(-pid, "SIGTERM");
   const deadline = Date.now() + 15_000;
-  while (Date.now() < deadline && isLabProcess(pid, marker)) {
+  while (Date.now() < deadline && isLabProcess(pid, marker, cwd)) {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   try {
@@ -950,7 +977,7 @@ async function up(args: string[]): Promise<void> {
   const envCount = Number(option(args, "envs") ?? previous?.envs.length ?? 3);
   const launcherCount = Number(option(args, "launcher") ?? 1);
   const [major, minor, patch] = REPO_VERSION.split(/[.-]/).map(Number);
-  const state: LabState = previous ?? {
+  const initial: LabState = {
     host,
     feedPort: 0,
     feedPid: null,
@@ -962,56 +989,76 @@ async function up(args: string[]): Promise<void> {
     ) as LabState["latest"],
     envs: [],
   };
-  state.host = host;
-  state.busySeconds = Number(option(args, "busy-seconds") ?? state.busySeconds);
-  state.fromVersion = option(args, "from-version") ?? state.fromVersion;
-  NodeFS.mkdirSync(LAB, { recursive: true });
+  let state = updateState((next) => {
+    next.host = host;
+    next.busySeconds = Number(option(args, "busy-seconds") ?? next.busySeconds);
+    next.fromVersion = option(args, "from-version") ?? next.fromVersion;
+    for (let index = next.envs.length; index < envCount; index++) {
+      const row = INSTALL_MATRIX[index % INSTALL_MATRIX.length]!;
+      next.envs.push({
+        id: `env${index + 1}`,
+        port: 0,
+        pid: null,
+        launcher: index >= envCount - launcherCount,
+        projectId: null,
+        installs: Object.fromEntries(
+          PROVIDER_KEYS.map((key) => [
+            key,
+            { method: row[key], version: PROVIDERS[key].installed, failing: false },
+          ]),
+        ) as LabEnv["installs"],
+      });
+    }
+  }, initial);
   const taken = new Set(state.envs.map((env) => env.port).concat(state.feedPort));
 
   if (!isLabProcess(state.feedPid, "__feed")) {
-    state.feedPort = await freePort("127.0.0.1", taken);
-    state.feedPid = spawnDetached(NODE, [SELF, "__feed", String(state.feedPort)], {
+    const feedPort =
+      state.feedPort > 0 && !listeningPorts().has(state.feedPort)
+        ? state.feedPort
+        : await freePort("127.0.0.1", taken);
+    // Running servers retain the old feed origin in their environment until restarted.
+    if (feedPort !== state.feedPort) {
+      for (const env of state.envs) {
+        if (env.pid) await stopGroup(env.pid, serverMarker(env), projectDir(env.id));
+        state = updateState((next) => {
+          requireEnv(next, env.id).pid = null;
+        });
+      }
+    }
+    const feedPid = spawnDetached(NODE, [SELF, "__feed", String(feedPort)], {
       env: { PATH: process.env.PATH },
       cwd: REPO,
       log: NodePath.join(LAB, "feed.log"),
+    });
+    state = updateState((next) => {
+      next.feedPort = feedPort;
+      next.feedPid = feedPid;
     });
   }
   // The feed always offers this checkout's version, the update a launcher env is behind on.
   if (!publishedRuntimes().includes(REPO_VERSION)) buildRuntime(REPO_VERSION, undefined);
 
-  for (let index = state.envs.length; index < envCount; index++) {
-    const row = INSTALL_MATRIX[index % INSTALL_MATRIX.length]!;
-    state.envs.push({
-      id: `env${index + 1}`,
-      port: 0,
-      pid: null,
-      launcher: index >= envCount - launcherCount,
-      projectId: null,
-      installs: Object.fromEntries(
-        PROVIDER_KEYS.map((key) => [
-          key,
-          { method: row[key], version: PROVIDERS[key].installed, failing: false },
-        ]),
-      ) as LabEnv["installs"],
-    });
-  }
-  writeState(state);
-
   const started: LabEnv[] = [];
   for (const env of state.envs) {
-    if (isLabProcess(env.pid, serverMarker(env))) continue;
+    if (isLabProcess(env.pid, serverMarker(env), projectDir(env.id))) continue;
     seedEnvFiles(state, env);
-    if (!env.port || listeningPorts().has(env.port)) env.port = await freePort(host, taken);
-    env.pid = startServer(state, env);
-    started.push(env);
-    writeState(state);
+    const port =
+      !env.port || listeningPorts().has(env.port) ? await freePort(host, taken) : env.port;
+    const pid = startServer(state, { ...env, port });
+    state = updateState((next) => {
+      const current = requireEnv(next, env.id);
+      current.port = port;
+      current.pid = pid;
+    });
+    started.push(requireEnv(state, env.id));
   }
   console.log(
     `feed      http://127.0.0.1:${state.feedPort} (npm registry /npm, releases /releases)`,
   );
   const urls = await Promise.all(started.map(waitForPairingUrl));
   for (const env of state.envs) {
-    const index = started.indexOf(env);
+    const index = started.findIndex((candidate) => candidate.id === env.id);
     console.log(`${env.id.padEnd(9)} ${originOf(state, env)} pid ${env.pid}${launcherLabel(env)}`);
     console.log(`          ${index >= 0 ? urls[index] : "(already running; `pair` mints a URL)"}`);
   }
@@ -1021,12 +1068,15 @@ async function down(): Promise<void> {
   const state = readState();
   if (!state) return;
   for (const env of state.envs) {
-    if (env.pid) await stopGroup(env.pid, serverMarker(env));
-    env.pid = null;
+    if (env.pid) await stopGroup(env.pid, serverMarker(env), projectDir(env.id));
+    updateState((next) => {
+      requireEnv(next, env.id).pid = null;
+    });
   }
   if (state.feedPid) await stopGroup(state.feedPid, "__feed");
-  state.feedPid = null;
-  writeState(state);
+  updateState((next) => {
+    next.feedPid = null;
+  });
   console.log("Lab stopped.");
 }
 
@@ -1037,7 +1087,7 @@ function status(): void {
     `feed http://127.0.0.1:${state.feedPort} ${feed}; delay ${state.delayMs}ms; runtimes ${publishedRuntimes().join(", ") || "-"}`,
   );
   for (const env of state.envs) {
-    const alive = isLabProcess(env.pid, serverMarker(env));
+    const alive = isLabProcess(env.pid, serverMarker(env), projectDir(env.id));
     console.log(
       `${env.id} ${originOf(state, env)} pid ${env.pid ?? "-"} ${alive ? "up" : "down"}${launcherLabel(env)}`,
     );
@@ -1182,11 +1232,16 @@ async function main(argv: string[]): Promise<void> {
       return void console.log(`Published ${buildRuntime(args[0], option(args, "archive"))}`);
     }
     case "reset": {
-      const state = readState();
-      if (state && [state.feedPid, ...state.envs.map((e) => e.pid)].some((pid) => pid !== null)) {
-        fail("Run `down` first.");
+      const release = acquireLock("state");
+      try {
+        const state = readState();
+        if (state && [state.feedPid, ...state.envs.map((e) => e.pid)].some((pid) => pid !== null)) {
+          fail("Run `down` first.");
+        }
+        NodeFS.rmSync(LAB, { recursive: true, force: true });
+      } finally {
+        release();
       }
-      NodeFS.rmSync(LAB, { recursive: true, force: true });
       return void console.log(`Removed ${LAB}.`);
     }
     default:
@@ -1195,4 +1250,10 @@ async function main(argv: string[]): Promise<void> {
   }
 }
 
-await main(process.argv.slice(2));
+const argv = process.argv.slice(2);
+const release = ["up", "down", "reset"].includes(argv[0] ?? "") ? acquireLock("processes") : null;
+try {
+  await main(argv);
+} finally {
+  release?.();
+}
