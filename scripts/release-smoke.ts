@@ -38,6 +38,8 @@ const workspaceFiles = [
   "packages/provider-muse/package.json",
   "packages/provider-opencode/package.json",
   "packages/source-control-core/package.json",
+  "packages/source-control-forgejo/package.json",
+  "packages/source-control-testing/package.json",
   "packages/effect-acp/package.json",
   "packages/effect-codex-app-server/package.json",
   "scripts/package.json",
