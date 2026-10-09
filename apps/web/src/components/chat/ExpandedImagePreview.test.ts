@@ -7,6 +7,7 @@ import {
   attachVideoThumbnail,
   buildAttachmentVideoPreview,
   buildExpandedImagePreview,
+  buildMessageMediaPreview,
   resolveMarkdownMediaPreview,
 } from "./ExpandedImagePreview";
 
@@ -42,6 +43,46 @@ describe("resolveMarkdownMediaPreview", () => {
       });
     },
   );
+});
+
+describe("buildMessageMediaPreview", () => {
+  const environmentId = EnvironmentId.make("environment-1");
+  const image = (id: string, previewUrl?: string) => ({
+    type: "image" as const,
+    id,
+    name: `${id}.png`,
+    mimeType: "image/png",
+    sizeBytes: 1,
+    ...(previewUrl ? { previewUrl } : {}),
+  });
+  const video = (id: string) => ({
+    type: "file" as const,
+    id,
+    name: `${id}.mp4`,
+    mimeType: "video/mp4",
+    sizeBytes: 1,
+  });
+
+  it("steps through a message's images and videos in thumbnail order", () => {
+    const preview = buildMessageMediaPreview(
+      environmentId,
+      [image("first", "blob:first"), image("unloaded"), image("second", "blob:second")],
+      [video("clip-a"), video("clip-b")],
+      "clip-a",
+    );
+
+    expect(preview?.images.map((item) => [item.name, item.type ?? "image"])).toEqual([
+      ["first.png", "image"],
+      ["second.png", "image"],
+      ["clip-a.mp4", "video"],
+      ["clip-b.mp4", "video"],
+    ]);
+    expect(preview?.index).toBe(2);
+  });
+
+  it("has nothing to open for media that cannot be shown", () => {
+    expect(buildMessageMediaPreview(environmentId, [image("unloaded")], [], "unloaded")).toBeNull();
+  });
 });
 
 describe("buildExpandedImagePreview", () => {

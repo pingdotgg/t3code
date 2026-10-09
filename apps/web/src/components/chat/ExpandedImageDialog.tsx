@@ -7,7 +7,13 @@ import {
   type ReactNode,
   type KeyboardEvent,
 } from "react";
-import { ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  Maximize2Icon,
+  PictureInPicture2Icon,
+  XIcon,
+} from "lucide-react";
 import { Image as ImageGlyph, Text as TextGlyph } from "lucide";
 import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -44,7 +50,28 @@ function ExpandedMediaFailure({ children }: { children: ReactNode }) {
   );
 }
 
-function ExpandedVideo({ item }: { readonly item: ExpandedImageItem }) {
+/** Where playback stood when the video moved between the viewer and the mini player. */
+interface VideoHandoff {
+  readonly startAt: number;
+  readonly playing: boolean;
+}
+
+function readVideoHandoff(container: HTMLElement | null): VideoHandoff | null {
+  const video = container?.querySelector("video");
+  return video ? { startAt: video.currentTime, playing: !video.paused && !video.ended } : null;
+}
+
+function ExpandedVideo({
+  item,
+  handoff,
+  className,
+  videoClassName,
+}: {
+  readonly item: ExpandedImageItem;
+  readonly handoff: VideoHandoff | null;
+  readonly className: string;
+  readonly videoClassName: string;
+}) {
   const asset = item.actionsSource?.asset;
   const assetUrl = useAssetUrlState(asset?.environmentId ?? null, asset?.resource ?? null);
   const refreshAssetUrl = useAssetUrlRefresh(asset?.environmentId ?? null, asset?.resource ?? null);
@@ -60,9 +87,10 @@ function ExpandedVideo({ item }: { readonly item: ExpandedImageItem }) {
       sourceFailed={assetUrl._tag === "Failure"}
       originalUrl={item.originalUrl}
       preload="metadata"
-      autoPlay={item.autoPlay ?? true}
-      className="block max-h-[var(--media-height)] max-w-[var(--media-width)] text-center"
-      videoClassName="aspect-auto max-h-[var(--media-height)] w-auto max-w-[var(--media-width)] rounded-lg border border-border/70 shadow-2xl"
+      autoPlay={handoff ? handoff.playing : (item.autoPlay ?? true)}
+      startAt={handoff?.startAt}
+      className={className}
+      videoClassName={videoClassName}
       stateClassName={EXPANDED_MEDIA_STATE_CLASS_NAME}
       onRetry={asset ? refreshAssetUrl : undefined}
     />
@@ -77,6 +105,10 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   const [failedImageSrc, setFailedImageSrc] = useState<string | null>(null);
   const [accessibilityDetailsSrc, setAccessibilityDetailsSrc] = useState<string | null>(null);
   const zoomableImageRef = useRef<ZoomableImageHandle>(null);
+  const mediaRef = useRef<HTMLDivElement>(null);
+  // A minimized video keeps playing in a corner while the thread stays usable.
+  const [minimized, setMinimized] = useState(false);
+  const [videoHandoff, setVideoHandoff] = useState<VideoHandoff | null>(null);
   const [returnFocusTarget] = useState(() =>
     document.activeElement instanceof HTMLElement ? document.activeElement : null,
   );
@@ -104,8 +136,13 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     : source;
 
   const navigateImage = useCallback((direction: -1 | 1) => {
+    setVideoHandoff(null);
     setImageOffset((current) => current + direction);
   }, []);
+  const toggleMinimized = () => {
+    setVideoHandoff(readVideoHandoff(mediaRef.current));
+    setMinimized((current) => !current);
+  };
 
   // The element that opened the preview gets focus back on close. Without
   // this a close button click leaves focus on the unmounted dialog, and the
@@ -143,6 +180,8 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   };
 
   useEffect(() => {
+    // The mini player is not modal, so Escape stays with whatever has focus.
+    if (minimized) return;
     const onEscape = (event: globalThis.KeyboardEvent) => {
       if (event.key !== "Escape" || isContextMenuOpen()) return;
       event.preventDefault();
@@ -151,9 +190,47 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     };
     window.addEventListener("keydown", onEscape, { capture: true });
     return () => window.removeEventListener("keydown", onEscape, { capture: true });
-  }, [onClose]);
+  }, [minimized, onClose]);
 
   if (!item) return null;
+  if (minimized && item.type === "video") {
+    return (
+      <div
+        ref={mediaRef}
+        role="region"
+        aria-label={`Mini player: ${item.name}`}
+        className="fixed right-4 bottom-4 z-50 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-border/70 bg-black shadow-2xl"
+      >
+        <ExpandedVideo
+          key={index}
+          item={item}
+          handoff={videoHandoff}
+          className="block w-full"
+          videoClassName="aspect-video w-full"
+        />
+        <div className="absolute top-2 right-2 flex gap-1">
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="media-close"
+            onClick={toggleMinimized}
+            aria-label="Expand video"
+          >
+            <Maximize2Icon />
+          </Button>
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="media-close"
+            onClick={onClose}
+            aria-label="Close mini player"
+          >
+            <XIcon />
+          </Button>
+        </div>
+      </div>
+    );
+  }
   const mediaLabel = item.type === "video" ? "video" : "image";
   const openOriginalLink =
     item.originalUrl && resolveExternalWebLinkHost(item.originalUrl) !== null ? (
@@ -202,7 +279,22 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
           </Button>
         )}
         <MediaActions source={actionsSource}>
-          <div className="relative isolate z-10 max-h-[92vh] max-w-[var(--media-width)]">
+          <div
+            ref={mediaRef}
+            className="relative isolate z-10 max-h-[92vh] max-w-[var(--media-width)]"
+          >
+            {item.type === "video" ? (
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="media-close"
+                className="absolute right-9 -top-10 z-20"
+                onClick={toggleMinimized}
+                aria-label="Open in mini player"
+              >
+                <PictureInPicture2Icon />
+              </Button>
+            ) : null}
             <Button
               type="button"
               ref={closeButtonRef}
@@ -215,7 +307,13 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
               <XIcon />
             </Button>
             {item.type === "video" ? (
-              <ExpandedVideo key={index} item={item} />
+              <ExpandedVideo
+                key={index}
+                item={item}
+                handoff={videoHandoff}
+                className="block max-h-[var(--media-height)] max-w-[var(--media-width)] text-center"
+                videoClassName="aspect-auto max-h-[var(--media-height)] w-auto max-w-[var(--media-width)] rounded-lg border border-border/70 shadow-2xl"
+              />
             ) : showingAccessibilityDetails ? (
               accessibilityDetails ? (
                 <SnapShotAccessibilityData

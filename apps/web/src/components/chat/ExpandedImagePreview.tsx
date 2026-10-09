@@ -153,6 +153,37 @@ export function buildAttachmentVideoPreview(
   };
 }
 
+/** One gallery over a message's image and video thumbnails, in the order they are shown. */
+export function buildMessageMediaPreview(
+  environmentId: EnvironmentId,
+  images: ReadonlyArray<ChatImageAttachment>,
+  videos: ReadonlyArray<ChatFileAttachment>,
+  selectedId: string,
+): ExpandedImagePreview | null {
+  const entries = [
+    ...images.flatMap((image) =>
+      image.previewUrl
+        ? [
+            {
+              id: image.id,
+              item: {
+                src: image.previewUrl,
+                name: image.name,
+                ...(image.source?.kind === "snap-shot" ? { source: image.source } : {}),
+              } satisfies ExpandedImageItem,
+            },
+          ]
+        : [],
+    ),
+    ...videos.flatMap((video) => {
+      const item = buildAttachmentVideoPreview(environmentId, video)?.images[0];
+      return item ? [{ id: video.id, item }] : [];
+    }),
+  ];
+  const index = entries.findIndex((entry) => entry.id === selectedId);
+  return index < 0 ? null : { images: entries.map((entry) => entry.item), index };
+}
+
 export function expandedImageKey(preview: ExpandedImagePreview): string {
   const item = preview.images[preview.index];
   const asset = item?.actionsSource?.asset;

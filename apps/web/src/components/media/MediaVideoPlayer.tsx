@@ -15,6 +15,8 @@ interface MediaVideoPlayerProps {
   readonly revision?: string | null | undefined;
   readonly preload?: "visible" | "metadata" | undefined;
   readonly autoPlay?: boolean | undefined;
+  /** Playhead in seconds to resume from, so moving a video between surfaces keeps its place. */
+  readonly startAt?: number | undefined;
   /** Presents a still thumbnail whose full surface opens the video in a viewer. */
   readonly onOpen?: (() => void) | undefined;
   readonly className?: string | undefined;
@@ -36,6 +38,7 @@ export function MediaVideoPlayer({
   revision = null,
   preload = "visible",
   autoPlay = false,
+  startAt = 0,
   onOpen,
   className,
   videoClassName,
@@ -181,7 +184,16 @@ export function MediaVideoPlayer({
             videoClassName,
           )}
           style={style}
-          onLoadedMetadata={(event) => prepareVideoFirstFrame(event.currentTarget)}
+          onLoadedMetadata={(event) => {
+            const video = event.currentTarget;
+            if (startAt <= 0) {
+              prepareVideoFirstFrame(video);
+              return;
+            }
+            video.currentTime = startAt;
+            // An early pause() (such as an effect replay) cancels the autoplay attribute.
+            if (autoPlay) void video.play().catch(() => {});
+          }}
           onPlay={() => setPlaybackSource({ src, revision: sourceRevision })}
           onPause={refreshPausedRevision}
           onEnded={refreshPausedRevision}
