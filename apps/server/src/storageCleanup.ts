@@ -1,4 +1,5 @@
 import {
+  isProviderNativeSubagentThread,
   OrchestrationV2AppThreadJson,
   OrchestrationV2ProviderSessionJson,
 } from "@t3tools/contracts";
@@ -10,6 +11,7 @@ import type {
   ServerSettings,
   ServerSettingsError,
   TerminalSummary,
+  ThreadId,
   WorktreeCleanupRules,
 } from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
@@ -80,22 +82,65 @@ function sameProjectWorktreePolicies(left: ServerSettings, right: ServerSettings
   );
 }
 
-/** Live sessions keep their cwd even when no turn is currently running. */
-export function storageCleanupThreadIdle(thread: OrchestrationV2ThreadShell, now: number): boolean {
+function storageCleanupThreadBusy(thread: OrchestrationV2ThreadShell, now: number): boolean {
   return (
-    thread.branch !== null &&
-    thread.worktreePath !== null &&
-    thread.activeRunId === null &&
-    (thread.status === "idle" ||
+    thread.activeRunId !== null ||
+    !(
+      thread.status === "idle" ||
       thread.status === "completed" ||
       thread.status === "interrupted" ||
       thread.status === "failed" ||
       thread.status === "cancelled" ||
-      thread.status === "rolled_back") &&
-    (thread.pendingBackgroundTasks?.length ?? 0) === 0 &&
-    thread.pendingRuntimeRequest === null &&
-    !threadHasQueuedTurnStart(thread, now)
+      thread.status === "rolled_back"
+    ) ||
+    (thread.pendingBackgroundTasks?.length ?? 0) > 0 ||
+    thread.pendingRuntimeRequest !== null ||
+    threadHasQueuedTurnStart(thread, now)
   );
+}
+
+/** Live sessions keep their cwd even when no turn is currently running. */
+export function storageCleanupThreadIdle(thread: OrchestrationV2ThreadShell, now: number): boolean {
+  return (
+    thread.branch !== null && thread.worktreePath !== null && !storageCleanupThreadBusy(thread, now)
+  );
+}
+
+/**
+ * The idle thread that owns a checkout, given every thread using it. Subagents
+ * run in their parent's checkout, so they count toward its owner when they are
+ * idle too. Any other sharing keeps the checkout.
+ */
+export function storageCleanupWorktreeOwner(
+  sharers: ReadonlyArray<OrchestrationV2ThreadShell>,
+  threadsById: ReadonlyMap<ThreadId, OrchestrationV2ThreadShell>,
+  now: number,
+): OrchestrationV2ThreadShell | null {
+  const owners = sharers.filter((thread) => thread.lineage.relationshipToParent !== "subagent");
+  const owner = owners.length === 1 ? owners[0]! : null;
+  if (owner === null || !storageCleanupThreadIdle(owner, now)) return null;
+  const ownedSubagent = (thread: OrchestrationV2ThreadShell) => {
+    // A delegated subagent takes messages and recreates a missing checkout from
+    // its own branch, so it must name the owner's.
+    if (!isProviderNativeSubagentThread(thread) && thread.branch !== owner.branch) return false;
+    const seen = new Set<ThreadId>();
+    let current: OrchestrationV2ThreadShell | undefined = thread;
+    while (current?.lineage.relationshipToParent === "subagent" && !seen.has(current.id)) {
+      seen.add(current.id);
+      if (current.lineage.parentThreadId === owner.id) return true;
+      current =
+        current.lineage.parentThreadId === null
+          ? undefined
+          : threadsById.get(current.lineage.parentThreadId);
+    }
+    return false;
+  };
+  return sharers.every(
+    (thread) =>
+      thread === owner || (ownedSubagent(thread) && !storageCleanupThreadBusy(thread, now)),
+  )
+    ? owner
+    : null;
 }
 
 /** PR metadata refreshes must not reset the inactivity clock. */
@@ -135,6 +180,13 @@ export function storageCleanupPullRequestMerged(
         pullRequest.baseRef === worktree.defaultBranch &&
         pullRequest.headSha === worktree.headSha))
   );
+}
+
+/** A subagent's turn in the shared checkout is activity for its owner too. */
+export function storageCleanupWorktreeActivityAt(
+  sharers: ReadonlyArray<OrchestrationV2ThreadShell>,
+): number {
+  return Math.max(...sharers.map(storageCleanupActivityAt));
 }
 
 export const make = Effect.gen(function* () {
@@ -247,8 +299,12 @@ export const make = Effect.gen(function* () {
       snapshot.threads.filter((thread) => thread.worktreePath !== null),
       (thread) => path.resolve(thread.worktreePath!),
     );
+    const threadsById = new Map(snapshot.threads.map((thread) => [thread.id, thread]));
     const candidates = [
-      ...[...groups.values()].flatMap((group) => (group.length === 1 ? [group[0]!] : [])),
+      ...[...groups.values()].flatMap((group) => {
+        const owner = storageCleanupWorktreeOwner(group, threadsById, now);
+        return owner === null ? [] : [owner];
+      }),
       ...deletedThreads.filter((thread) => !groups.has(path.resolve(thread.worktreePath!))),
     ];
     for (const thread of candidates) {
@@ -256,15 +312,11 @@ export const make = Effect.gen(function* () {
       if (!worktreeCleanupEnabled(settings)) continue;
       const worktreePath = path.resolve(thread.worktreePath!);
       const deleted = "workspaceRoot" in thread;
+      const sharers = deleted ? [] : (groups.get(worktreePath) ?? []);
       const project = deleted
         ? { workspaceRoot: thread.workspaceRoot }
         : snapshot.projects.find((entry) => entry.id === thread.projectId);
-      if (
-        project === undefined ||
-        (!deleted && !storageCleanupThreadIdle(thread, now)) ||
-        hasTerminal(worktreePath)
-      )
-        continue;
+      if (project === undefined || hasTerminal(worktreePath)) continue;
       yield* Effect.gen(function* () {
         if (!(yield* fs.exists(worktreePath))) return;
         // Roots are canonical, so compare canonical paths. A symlinked parent
@@ -298,7 +350,7 @@ export const make = Effect.gen(function* () {
         const old =
           !deleted &&
           settings.worktreeAfterDays !== null &&
-          storageCleanupActivityAt(thread) < now - settings.worktreeAfterDays * DAY_MS;
+          storageCleanupWorktreeActivityAt(sharers) < now - settings.worktreeAfterDays * DAY_MS;
         let eligible = deleted || old;
         if (!eligible && (settings.worktreeUnchanged || settings.worktreeOnMerge)) {
           const repositoryCwd = path.resolve(project.workspaceRoot);
@@ -366,10 +418,12 @@ export const make = Effect.gen(function* () {
           `;
           if (pendingCleanup.length > 0) return;
         } else if (
-          latest.length !== 1 ||
-          latest[0]!.id !== thread.id ||
-          !storageCleanupThreadIdle(latest[0]!, now) ||
-          storageCleanupActivityAt(latest[0]!) !== storageCleanupActivityAt(thread)
+          storageCleanupWorktreeOwner(
+            latest,
+            new Map(latestSnapshot.threads.map((entry) => [entry.id, entry])),
+            now,
+          )?.id !== thread.id ||
+          storageCleanupWorktreeActivityAt(latest) !== storageCleanupWorktreeActivityAt(sharers)
         )
           return;
         // Sessions can outlive their run and can be shared across app threads.

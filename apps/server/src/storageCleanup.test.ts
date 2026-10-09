@@ -12,6 +12,8 @@ import {
   storageCleanupActivityAt,
   storageCleanupPullRequestMerged,
   storageCleanupThreadIdle,
+  storageCleanupWorktreeActivityAt,
+  storageCleanupWorktreeOwner,
 } from "./storageCleanup.ts";
 
 const NOW_MS = Date.parse("2026-06-10T12:00:00.000Z");
@@ -194,5 +196,102 @@ describe("merged pull request cleanup", () => {
     expect(storageCleanupPullRequestMerged(null, squashed)).toBe(false);
     expect(storageCleanupPullRequestMerged(null, integrated)).toBe(false);
     expect(storageCleanupPullRequestMerged(pullRequest({ state: "open" }), integrated)).toBe(false);
+  });
+});
+
+describe("V2 storage cleanup worktree owner", () => {
+  const worktree = { branch: "feature", worktreePath: "/worktrees/feature" } as const;
+  const owner = shell({ ...worktree, id: ThreadId.make("owner") });
+  const subagent = (
+    id: string,
+    creationSource: "provider" | "mcp",
+    overrides: Partial<OrchestrationV2ThreadShell> = {},
+  ) =>
+    shell({
+      id: ThreadId.make(id),
+      worktreePath: worktree.worktreePath,
+      branch: creationSource === "mcp" ? worktree.branch : null,
+      createdBy: "agent",
+      creationSource,
+      lineage: {
+        rootThreadId: owner.id,
+        parentThreadId: owner.id,
+        relationshipToParent: "subagent",
+      },
+      ...overrides,
+    });
+  const ownerOf = (sharers: ReadonlyArray<OrchestrationV2ThreadShell>) =>
+    storageCleanupWorktreeOwner(
+      sharers,
+      new Map(sharers.map((thread) => [thread.id, thread])),
+      NOW_MS,
+    )?.id ?? null;
+
+  it("keeps the single-thread rules", () => {
+    expect(ownerOf([owner])).toBe(owner.id);
+    expect(ownerOf([{ ...owner, status: "running" }])).toBeNull();
+  });
+
+  it("counts the owner's idle subagents, including nested ones, toward the owner", () => {
+    const native = subagent("native", "provider");
+    const nested = subagent("nested", "provider", {
+      lineage: {
+        rootThreadId: owner.id,
+        parentThreadId: native.id,
+        relationshipToParent: "subagent",
+      },
+    });
+    expect(ownerOf([owner, native, nested, subagent("delegated", "mcp")])).toBe(owner.id);
+    expect(ownerOf([owner, subagent("finished", "provider", { status: "completed" })])).toBe(
+      owner.id,
+    );
+  });
+
+  it("retains the checkout while a subagent is busy", () => {
+    expect(ownerOf([owner, subagent("native", "provider", { status: "running" })])).toBeNull();
+    expect(
+      ownerOf([owner, subagent("delegated", "mcp", { activeRunId: RunId.make("run") })]),
+    ).toBeNull();
+  });
+
+  it("retains a delegated subagent that could not recreate the checkout", () => {
+    expect(ownerOf([owner, subagent("delegated", "mcp", { branch: null })])).toBeNull();
+    expect(ownerOf([owner, subagent("delegated", "mcp", { branch: "other" })])).toBeNull();
+  });
+
+  it("retains a subagent whose parent is unknown", () => {
+    const orphan = subagent("orphan", "provider", {
+      lineage: {
+        rootThreadId: owner.id,
+        parentThreadId: ThreadId.make("missing"),
+        relationshipToParent: "subagent",
+      },
+    });
+    expect(ownerOf([owner, orphan])).toBeNull();
+  });
+
+  it("measures inactivity from the latest subagent activity", () => {
+    const recent = at(-DAY_MS);
+    const native = subagent("native", "provider", { latestRunCompletedAt: recent });
+    expect(storageCleanupWorktreeActivityAt([owner, native])).toBe(DateTime.toEpochMillis(recent));
+  });
+
+  it("retains a checkout shared with another thread or its subagents", () => {
+    const other = shell({ ...worktree, id: ThreadId.make("other") });
+    expect(ownerOf([owner, other])).toBeNull();
+    const othersSubagent = subagent("native", "provider", {
+      lineage: {
+        rootThreadId: other.id,
+        parentThreadId: other.id,
+        relationshipToParent: "subagent",
+      },
+    });
+    expect(
+      storageCleanupWorktreeOwner(
+        [owner, othersSubagent],
+        new Map([owner, other, othersSubagent].map((thread) => [thread.id, thread])),
+        NOW_MS,
+      ),
+    ).toBeNull();
   });
 });
