@@ -489,6 +489,8 @@ export interface ProviderAdapterV2ForkThreadInput {
 export interface ProviderAdapterV2EventSubscription {
   readonly events: Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
   readonly close: Effect.Effect<void>;
+  /** Managed shutdown leaves unfinished runs for runtime recovery to cancel. */
+  readonly closedForShutdown?: Effect.Effect<boolean>;
 }
 
 export interface ProviderAdapterV2HistoricalContext {

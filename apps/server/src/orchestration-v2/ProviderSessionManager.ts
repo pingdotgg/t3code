@@ -1662,7 +1662,11 @@ export const layerWithOptions = (
             ),
             Stream.ensuring(close),
           );
-          return { events, close } satisfies ProviderAdapterV2EventSubscription;
+          return {
+            events,
+            close,
+            closedForShutdown: Effect.sync(() => shutdownSignal.received),
+          } satisfies ProviderAdapterV2EventSubscription;
         });
 
       const decorateRuntime = (
@@ -1991,6 +1995,7 @@ export const layerWithOptions = (
       // closing within the time box.
       const sessionScopes = yield* Scope.make("parallel");
       const shutdown = Effect.gen(function* () {
+        shutdownSignal.received = true;
         const activeSessions = [...(yield* Ref.get(sessions)).values()];
         yield* Effect.forEach(
           activeSessions,

@@ -1655,6 +1655,7 @@ it.effect("ProviderSessionManagerV2 closes event subscriptions normally on serve
       });
       const bufferedSubscription = yield* runtime.subscribeEvents!;
       const activeSubscription = yield* runtime.subscribeEvents!;
+      assert.isFalse(yield* bufferedSubscription.closedForShutdown!);
       const adapterQueue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
       assert.isDefined(adapterQueue);
       yield* Queue.offer(adapterQueue!, {
@@ -1666,6 +1667,7 @@ it.effect("ProviderSessionManagerV2 closes event subscriptions normally on serve
 
       yield* manager.shutdown;
 
+      assert.isTrue(yield* bufferedSubscription.closedForShutdown!);
       assert.isEmpty(yield* bufferedSubscription.events.pipe(Stream.runCollect));
     });
 

@@ -83,6 +83,35 @@ function isStreamingAssistantEvent(event: OrchestrationV2DomainEvent): boolean {
   }
 }
 
+// These are production Orchestrator admissions, not pre-seeded routing inputs.
+// Raw snapshot-before-terminal ordering is covered at the adapter boundary;
+// here a successful finalization proves the initially unknown root was learned.
+function assertRootIdentityLearnedFromSnapshot(events: ReadonlyArray<OrchestrationV2DomainEvent>) {
+  assert.isTrue(events.some((event) => event.type === "run-attempt.created"));
+  for (const [index, event] of events.entries()) {
+    if (event.type !== "run-attempt.created" && event.type !== "run-attempt.updated") continue;
+    const attempt = event.payload;
+    const admissionIndex = events.findIndex(
+      (candidate) =>
+        candidate.type === "run-attempt.created" && candidate.payload.id === attempt.id,
+    );
+    assert.isAtLeast(admissionIndex, 0, `${attempt.id} needs a production admission`);
+    if (index === admissionIndex) {
+      assert.isNull(attempt.providerTurnId, `${attempt.id} must enter with unknown root identity`);
+    }
+    if (attempt.status !== "completed" && attempt.status !== "interrupted") continue;
+    const snapshotIndex = events.findIndex(
+      (candidate) =>
+        candidate.type === "provider-turn.updated" &&
+        candidate.payload.runAttemptId === attempt.id &&
+        candidate.payload.nodeId === attempt.rootNodeId &&
+        candidate.payload.providerThreadId === attempt.providerThreadId,
+    );
+    assert.isAbove(snapshotIndex, admissionIndex, `${attempt.id} needs an admitted root snapshot`);
+    assert.isBelow(snapshotIndex, index, `${attempt.id} must learn its root before finalization`);
+  }
+}
+
 const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
   Transcript extends ProviderReplayTranscript,
   Error,
@@ -139,6 +168,7 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
     input.driver.runContinuationWorker === true ? { runContinuationWorker: true } : {},
   ).pipe(provideDeterministicTestRuntime);
   input.driver.assertOutput(result, transcript);
+  assertRootIdentityLearnedFromSnapshot(result.domainEvents);
   assertProviderNativeSubagentRootTurns(result);
   const expectedAbsentWorkspacePaths = input.driver.expectedAbsentWorkspacePaths;
   if (expectedAbsentWorkspacePaths !== undefined) {

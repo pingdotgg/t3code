@@ -16,8 +16,13 @@ export class RunFinalizationError extends Schema.TaggedError<RunFinalizationErro
     threadId: ThreadId,
     runId: RunId,
     scopeId: CheckpointScopeId,
-    operation: Schema.Literals(["capture-checkpoint", "refresh-workspace"]),
-    cause: Schema.Defect(),
+    operation: Schema.Literals([
+      "capture-checkpoint",
+      "read-checkpoint-context",
+      "missing-checkpoint-scope",
+      "refresh-workspace",
+    ]),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {}
 
@@ -67,20 +72,24 @@ const make = Effect.gen(function* () {
       .getCheckpointContext(input.threadId)
       .pipe(
         Effect.mapError(
-          (cause) => new RunFinalizationError({ ...input, operation: "refresh-workspace", cause }),
+          (cause) =>
+            new RunFinalizationError({ ...input, operation: "read-checkpoint-context", cause }),
         ),
       );
     const cwd = projection.checkpointScopes.find((scope) => scope.id === input.scopeId)?.cwd;
-    if (cwd !== undefined) {
-      yield* observer
-        .refresh({ cwd, threadId: input.threadId, runId: input.runId })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new RunFinalizationError({ ...input, operation: "refresh-workspace", cause }),
-          ),
-        );
+    if (cwd === undefined) {
+      return yield* new RunFinalizationError({
+        ...input,
+        operation: "missing-checkpoint-scope",
+      });
     }
+    yield* observer
+      .refresh({ cwd, threadId: input.threadId, runId: input.runId })
+      .pipe(
+        Effect.mapError(
+          (cause) => new RunFinalizationError({ ...input, operation: "refresh-workspace", cause }),
+        ),
+      );
   });
   return RunFinalizationService.of({ finalize });
 });
