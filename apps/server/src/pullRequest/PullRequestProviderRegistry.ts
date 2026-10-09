@@ -3,12 +3,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { SourceControlProviderKind } from "@t3tools/contracts";
 
-import * as AzureDevOpsCli from "../sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
 import * as GitHubApi from "../sourceControl/GitHubApi.ts";
 import * as GitLabCli from "../sourceControl/GitLabCli.ts";
-import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
-import * as AzureDevOpsPullRequestProvider from "./AzureDevOpsPullRequestProvider.ts";
 import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
 import * as BitbucketPullRequestProvider from "./BitbucketPullRequestProvider.ts";
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
@@ -49,7 +46,6 @@ export const make = Effect.gen(function* () {
     GitHubPullRequestProvider.make,
     GitLabPullRequestProvider.make,
     BitbucketPullRequestProvider.make,
-    AzureDevOpsPullRequestProvider.make,
   ]);
   const drivers = yield* Effect.forEach(BuiltInDrivers.BUILT_IN_SOURCE_CONTROL_DRIVERS, (driver) =>
     driver.make.pipe(Effect.map((instance) => instance.pullRequests)),
@@ -72,5 +68,4 @@ export const layer = Layer.effect(PullRequestProviderRegistry, make).pipe(
   Layer.provide(GitLabPullRequestCli.layer.pipe(Layer.provide(GitLabCli.layer))),
   Layer.provide(BuiltInDrivers.layer),
   Layer.provide(BitbucketPullRequestApi.layer.pipe(Layer.provide(BitbucketApi.layer))),
-  Layer.provide(AzureDevOpsPullRequestCli.layer.pipe(Layer.provide(AzureDevOpsCli.layer))),
 );

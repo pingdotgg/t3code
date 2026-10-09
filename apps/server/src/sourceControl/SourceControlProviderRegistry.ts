@@ -11,7 +11,6 @@ import {
 import type { SourceControlProviderKind } from "@t3tools/contracts";
 import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
 
-import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
 import * as BitbucketSourceControlProvider from "./BitbucketSourceControlProvider.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
@@ -310,7 +309,6 @@ export const make = Effect.gen(function* () {
   const gitlab = yield* GitLabSourceControlProvider.make;
   const bitbucket = yield* BitbucketSourceControlProvider.make;
   const bitbucketDiscovery = yield* BitbucketSourceControlProvider.makeDiscovery;
-  const azureDevOps = yield* AzureDevOpsSourceControlProvider.make;
   const drivers = yield* Effect.forEach(BuiltInDrivers.BUILT_IN_SOURCE_CONTROL_DRIVERS, (driver) =>
     driver.make.pipe(
       Effect.map((instance): SourceControlProviderRegistration => ({
@@ -320,7 +318,9 @@ export const make = Effect.gen(function* () {
       })),
     ),
   );
-  return yield* makeWithProviders([
+  // Discovery lists hosts in this order, so it is kept while hosts move into packages.
+  const order = ["github", "gitlab", "azure-devops", "bitbucket", "forgejo"];
+  const registrations: ReadonlyArray<SourceControlProviderRegistration> = [
     {
       kind: "github",
       provider: github,
@@ -332,17 +332,15 @@ export const make = Effect.gen(function* () {
       discovery: GitLabSourceControlProvider.discovery,
     },
     {
-      kind: "azure-devops",
-      provider: azureDevOps,
-      discovery: AzureDevOpsSourceControlProvider.discovery,
-    },
-    {
       kind: "bitbucket",
       provider: bitbucket,
       discovery: bitbucketDiscovery,
     },
     ...drivers,
-  ]);
+  ];
+  return yield* makeWithProviders(
+    registrations.toSorted((left, right) => order.indexOf(left.kind) - order.indexOf(right.kind)),
+  );
 });
 
 export const layer = Layer.effect(SourceControlProviderRegistry, make);

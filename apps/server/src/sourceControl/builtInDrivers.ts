@@ -7,14 +7,28 @@
  *
  * @module sourceControl/builtInDrivers
  */
+import * as AzureDevOpsCli from "@t3tools/source-control-azure-devops/server/AzureDevOpsCli";
+import * as AzureDevOpsPullRequestCli from "@t3tools/source-control-azure-devops/server/AzureDevOpsPullRequestCli";
+import * as AzureDevOpsDriver from "@t3tools/source-control-azure-devops/server/driver";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import * as ForgejoDriver from "@t3tools/source-control-forgejo/server/driver";
+import type { SourceControlDriver } from "@t3tools/source-control-core/server/driver";
 import * as Layer from "effect/Layer";
 
 import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
 
-/** Ordered as the hosts appear in discovery, after the ones still built in the server. */
-export const BUILT_IN_SOURCE_CONTROL_DRIVERS = [ForgejoDriver.driver] as const;
+const drivers = [AzureDevOpsDriver.driver, ForgejoDriver.driver];
+
+/** Every service a built-in driver's `make` needs; the server's layers must provide them all. */
+export type BuiltInSourceControlDriversEnv =
+  (typeof drivers)[number] extends SourceControlDriver<infer R> ? R : never;
+
+export const BUILT_IN_SOURCE_CONTROL_DRIVERS: ReadonlyArray<
+  SourceControlDriver<BuiltInSourceControlDriversEnv>
+> = drivers;
 
 /** The services the built-in drivers' packages own, plus the host port they all run against. */
-export const layer = ForgejoCli.layer.pipe(Layer.provideMerge(ServerSourceControlHost.layer));
+export const layer = Layer.mergeAll(
+  AzureDevOpsPullRequestCli.layer.pipe(Layer.provideMerge(AzureDevOpsCli.layer)),
+  ForgejoCli.layer,
+).pipe(Layer.provideMerge(ServerSourceControlHost.layer));

@@ -24,7 +24,7 @@ the provider never got to look at. Absence below the boundary does not survive i
 
 What "never got to look at" is belongs to the host, and the contract cannot know any of them:
 
-- [Azure DevOps](../../apps/server/src/pullRequest/AzureDevOpsPullRequestProvider.ts) reads every
+- [Azure DevOps](../../packages/source-control-azure-devops/src/server/AzureDevOpsPullRequestProvider.ts) reads every
   version off one iteration listing, so a change too long to follow to its end leaves the paths
   past that point out.
 - [Bitbucket](../../apps/server/src/pullRequest/BitbucketPullRequestApi.ts) reads them off the

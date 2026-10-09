@@ -8,10 +8,11 @@ import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/process";
 import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 
-import * as VcsProcess from "../vcs/VcsProcess.ts";
+import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 
-const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
+const processOutput = (stdout: string): SourceControlHost.SourceControlProcessOutput => ({
   exitCode: ChildProcessSpawner.ExitCode(0),
   stdout,
   stderr: "",
@@ -19,12 +20,10 @@ const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
   stderrTruncated: false,
 });
 
-const mockRun = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>();
+const mockRun = vi.fn<SourceControlHost.SourceControlHost["Service"]["process"]["run"]>();
 
 const layerSupport = Layer.mergeAll(
-  Layer.mock(VcsProcess.VcsProcess)({
-    run: mockRun,
-  }),
+  TestSourceControlHost.layer({ process: { run: mockRun } }),
   NodeServices.layer,
 );
 const layer = Layer.mergeAll(AzureDevOpsCli.layer.pipe(Layer.provide(layerSupport)), layerSupport);
