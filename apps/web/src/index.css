@@ -123,6 +123,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-controls-right: calc(env(safe-area-inset-right) + 0.75rem);
   --workspace-native-controls-inset: 0px;
   --workspace-titlebar-control-size: 1.75rem;
+  /* Right inset of the titlebar slot beside the fixed terminal and right panel toggles. */
+  --workspace-controls-cluster-inset: calc(
+    var(--workspace-controls-right) + 1px + 2 * (var(--workspace-titlebar-control-size) + 0.25rem)
+  );
   --workspace-titlebar-control-gap: 0.75rem;
   --workspace-titlebar-scroll-fade-height: 1.5rem;
   --chat-content-max-width: 46rem;

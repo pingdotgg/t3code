@@ -41,6 +41,8 @@ interface PreviewPanelShellProps {
   widthStorageKey?: string;
   /** Overrides the initial width (px) before the user has resized the panel. */
   defaultWidth?: number;
+  /** Pinned to the panel's top right, so it stays put while the content slides with the edge. */
+  corner?: ReactNode;
   children: ReactNode;
 }
 
@@ -145,7 +147,7 @@ function PreviewPanelShellFrame(
       data-preview-panel-maximized={maximized ? "true" : "false"}
     >
       {isInline && !maximized ? <RightPanelResizeHandle handlers={handlers} /> : null}
-      <div className={cn("h-full min-h-0 w-full", collapsible && "overflow-clip")}>
+      <div className={cn("relative h-full min-h-0 w-full", collapsible && "overflow-clip")}>
         <div
           className="flex h-full min-h-0 min-w-0 flex-col"
           style={
@@ -156,6 +158,14 @@ function PreviewPanelShellFrame(
         >
           {props.children}
         </div>
+        {props.corner ? (
+          <div
+            className="absolute top-[var(--workspace-controls-top)] right-0 z-10 h-[var(--workspace-topbar-height)]"
+            data-panel-titlebar-corner
+          >
+            {props.corner}
+          </div>
+        ) : null}
       </div>
     </div>
   );

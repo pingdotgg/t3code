@@ -15,10 +15,10 @@ import { useEnvironmentQuery } from "../state/query";
 import { useSupportsMultiplePullRequests } from "./useSupportsMultiplePullRequests";
 
 export function useOpenPanelPullRequestUrl(threadRef: ScopedThreadRef | null) {
-  const surface = useRightPanelStore((state) =>
-    selectActiveRightPanelSurface(state.byThreadKey, threadRef),
-  );
-  const requestedReference = surface?.kind === "pull-request" ? surface : null;
+  const requestedReference = useRightPanelStore((state) => {
+    const surface = selectActiveRightPanelSurface(state.byThreadKey, threadRef);
+    return surface?.kind === "pull-request" ? surface : null;
+  });
   const environmentId = requestedReference?.environmentId
     ? EnvironmentId.make(requestedReference.environmentId)
     : threadRef?.environmentId;

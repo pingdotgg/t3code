@@ -1165,6 +1165,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       {...(props.widthStorageKey !== undefined ? { widthStorageKey: props.widthStorageKey } : {})}
       {...(props.defaultWidth !== undefined ? { defaultWidth: props.defaultWidth } : {})}
       {...(props.inlineSize ? { inlineSize: props.inlineSize } : {})}
+      corner={
+        props.mode === "inline" && !props.layoutControls ? (
+          // The workspace's fixed titlebar controls float over this corner. Filling it keeps
+          // tabs sliding in with the panel from showing beneath them, and the panel edge
+          // reveals these controls rather than passing them over the chat header.
+          <div className="h-full w-[calc(var(--workspace-controls-cluster-inset)+var(--workspace-titlebar-control-size)+0.25rem)] bg-background" />
+        ) : undefined
+      }
     >
       <div
         className={cn(
