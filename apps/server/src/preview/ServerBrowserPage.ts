@@ -380,11 +380,16 @@ export const drag = async (
   const source = targetLocator(page, { locator: input.source })!;
   const target = targetLocator(page, { locator: input.target })!;
   await pointer(await targetPoint(page, source, {}, timeout), "move");
-  // The cursor travels with the drag; the page sees one continuous gesture.
-  const dropped = source.dragTo(target, { timeout });
+  // The cursor travels with the drag; the page sees one continuous gesture. Observe the drag's
+  // outcome as it starts: a rejection nobody handles while the cursor moves exits the server.
+  const dragFailure = source.dragTo(target, { timeout }).then(
+    () => null,
+    (error: unknown) => ({ error }),
+  );
   const end = await target.boundingBox({ timeout }).catch(() => null);
   if (end) await pointer({ x: end.x + end.width / 2, y: end.y + end.height / 2 }, "move");
-  await dropped;
+  const failure = await dragFailure;
+  if (failure) throw failure.error;
 };
 
 /** Sets files on one file input; false when no locator or selector names one. */
