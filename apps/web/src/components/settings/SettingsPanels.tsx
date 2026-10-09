@@ -1465,7 +1465,7 @@ export function AppearanceSettingsPanel() {
         {isElectron ? (
           <SettingsRow
             {...searchableSetting("setting-native-context-menus")}
-            description="In the desktop app, right-click menus can use the OS's native style or T3 Code styling."
+            description="In the desktop app, right click menus can use T3 Code styling instead of the OS's native"
             resetAction={
               settings.nativeContextMenus !== DEFAULT_UNIFIED_SETTINGS.nativeContextMenus ? (
                 <SettingResetButton

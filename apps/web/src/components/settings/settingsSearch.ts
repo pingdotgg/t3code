@@ -219,7 +219,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "setting-native-context-menus",
-    title: "Right click menus",
+    title: "Styled Right Click Menus",
     to: "/settings/appearance",
     searchTerms: ["context menu", "native", "right click", "menu styling"],
     desktopOnly: true,
