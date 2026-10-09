@@ -78,7 +78,7 @@ export class OrchestrationEffectExecutorV2 extends Context.Service<
   OrchestrationEffectExecutorV2Shape
 >()("t3/orchestration-v2/EffectWorker/OrchestrationEffectExecutorV2") {}
 
-export const executorLayer: Layer.Layer<
+export const layerExecutor: Layer.Layer<
   OrchestrationEffectExecutorV2,
   never,
   | ProviderSessionManager.ProviderSessionManagerV2
@@ -108,13 +108,17 @@ export const executorLayer: Layer.Layer<
       execute: (effect, options) => {
         const willRetry = options?.willRetry ?? false;
         switch (effect.request.type) {
-          case "provider-runtime.continue":
-            return continueRestartedRun({
-              threadId: effect.threadId,
-              sourceRunId: effect.request.sourceRunId,
-            }).pipe(
+          case "provider-runtime.continue": {
+            const sourceRunId = effect.request.sourceRunId;
+            return continueRestartedRun({ threadId: effect.threadId, sourceRunId }).pipe(
               Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
               Effect.provideService(ServerSettings.ServerSettingsService, settings),
+              // A continuation that will never run still owes a delegated parent a result.
+              Effect.tapError(() =>
+                willRetry
+                  ? Effect.void
+                  : threads.recoverDelegatedTask(effect.threadId, sourceRunId),
+              ),
               Effect.mapError(
                 (cause) =>
                   new OrchestrationEffectExecutionError({
@@ -124,6 +128,7 @@ export const executorLayer: Layer.Layer<
                   }),
               ),
             );
+          }
           case "provider-session.detach":
             return providerSessions
               .detach({
@@ -166,13 +171,23 @@ export const executorLayer: Layer.Layer<
                 providerTurnId: effect.request.providerTurnId,
               })
               .pipe(
+                Effect.catch((cause) =>
+                  isNonRetryableProviderTurnControlFailure(
+                    effect.request.type,
+                    Cause.pretty(Cause.fail(cause)),
+                  )
+                    ? Effect.void
+                    : Effect.fail(cause),
+                ),
                 // The provider has stopped what it still ran and reported it.
                 // Whatever the thread still shows on that provider thread is
                 // work no process will report on, so the Stop ends it too.
+                // One Stop can interrupt several provider threads, so the
+                // settle is keyed by effect, not by the Stop command.
                 Effect.andThen(
                   threads.dispatch({
                     type: "thread.background-work.settle",
-                    commandId: CommandId.make(`${effect.commandId}:background-work-settled`),
+                    commandId: CommandId.make(`${effect.id}:background-work-settled`),
                     threadId: effect.threadId,
                     providerThreadId: effect.request.providerThreadId,
                     providerTurnId: effect.request.providerTurnId,
@@ -424,6 +439,17 @@ export const executorLayer: Layer.Layer<
                   }),
               ),
             );
+          case "preview.cleanup":
+            return resourceCleanup.cleanupPreviews(effect.threadId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
           case "attachment.cleanup":
             return resourceCleanup.cleanupAttachments(effect.request.attachmentIds).pipe(
               Effect.mapError(
@@ -441,6 +467,23 @@ export const executorLayer: Layer.Layer<
                 threadId: effect.threadId,
                 requestId: effect.commandId,
                 kind: effect.request.kind,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              );
+          case "delegated-tasks.stop":
+            return threads
+              .stopDelegatedTasks({
+                threadId: effect.threadId,
+                commandId: effect.commandId,
+                reason: effect.request.reason,
               })
               .pipe(
                 Effect.mapError(
@@ -822,6 +865,6 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
 
 export const runDaemon = runDaemonWithOptions();
 
-const daemonLayer: Layer.Layer<never, never, OrchestrationEffectWorkerV2> = Layer.effectDiscard(
+const layerDaemon: Layer.Layer<never, never, OrchestrationEffectWorkerV2> = Layer.effectDiscard(
   runDaemon.pipe(Effect.forkScoped),
 );

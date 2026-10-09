@@ -11,14 +11,14 @@ import * as Queue from "effect/Queue";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as RelayClient from "@t3tools/shared/relayClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 
-const relayClientAvailableLayer = Layer.succeed(
+const layerRelayClientAvailable = Layer.succeed(
   RelayClient.RelayClient,
   RelayClient.RelayClient.of({
     resolve: Effect.succeed({
@@ -29,12 +29,13 @@ const relayClientAvailableLayer = Layer.succeed(
     }),
     install: Effect.die("unused"),
     installWithProgress: () => Effect.die("unused"),
+    pruneManagedVersions: Effect.void,
   }),
 );
 
 const runtimeDependencies = (
   spawner: ReturnType<typeof ChildProcessSpawner.make>,
-  relayClientLayer = relayClientAvailableLayer,
+  relayClientLayer = layerRelayClientAvailable,
 ) =>
   Layer.mergeAll(
     Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -46,7 +47,7 @@ const runtimeDependencies = (
 
 const buildCloudManagedEndpointRuntime = (
   spawner: ReturnType<typeof ChildProcessSpawner.make>,
-  relayClientLayer = relayClientAvailableLayer,
+  relayClientLayer = layerRelayClientAvailable,
 ) =>
   Effect.gen(function* () {
     const context = yield* Layer.build(
@@ -185,9 +186,25 @@ describe("CloudManagedEndpointRuntime", () => {
         '2026-06-17T02:00:00Z ERR Register tunnel error from server side error="Unauthorized: Invalid tunnel secret" connIndex=0',
       ),
     ).toBe(true);
+    // Seen in production on 2026-10-06 after the relay deleted an idle tunnel.
+    expect(
+      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+        '2026-10-06T12:00:00Z ERR Register tunnel error from server side error="Unauthorized: Tunnel not found" connIndex=0 event=0 ip=198.41.200.23',
+      ),
+    ).toBe(true);
+    expect(
+      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+        '2026-10-06T12:00:00Z ERR Register tunnel error from server side error="Tunnel not found" connIndex=0',
+      ),
+    ).toBe(true);
     expect(
       ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
         '2026-06-17T02:00:00Z ERR Register tunnel error from server side error="connection timed out" connIndex=0',
+      ),
+    ).toBe(false);
+    expect(
+      ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
+        '2026-06-17T02:00:00Z ERR Failed to serve tunnel connection error="Unauthorized: Tunnel not found" connIndex=0',
       ),
     ).toBe(false);
   });
@@ -206,6 +223,36 @@ describe("CloudManagedEndpointRuntime", () => {
       yield* runtime.requestRecovery(config);
 
       expect(Option.getOrNull(yield* Stream.runHead(runtime.recoveryRequests))).toEqual(config);
+    }),
+  );
+
+  it.effect("signals each registered tunnel connection", () =>
+    Effect.gen(function* () {
+      const output = yield* Queue.unbounded<Uint8Array>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          const handle = makeHandle({
+            pid: 700,
+            onKill: () => {},
+            output: Stream.fromQueue(output),
+          });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+      yield* runtime.applyConfig({
+        providerKind: "cloudflare_tunnel",
+        connectorToken: "token",
+        tunnelId: "tunnel-1",
+      });
+      yield* Queue.offer(
+        output,
+        new TextEncoder().encode(
+          "2026-10-04T06:30:43Z INF Registered tunnel connection connIndex=0 event=0\n",
+        ),
+      );
+      expect(Option.isSome(yield* Stream.runHead(runtime.tunnelConnected))).toBe(true);
     }),
   );
 
@@ -286,6 +333,81 @@ describe("CloudManagedEndpointRuntime", () => {
       expect(yield* Deferred.await(recoveryRetried)).toEqual(config);
       expect(spawned).toEqual([600]);
     }),
+  );
+
+  it.effect("requests recovery while the connector never registers a connection", () =>
+    Effect.gen(function* () {
+      const output = yield* Queue.unbounded<Uint8Array>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          const handle = makeHandle({
+            pid: 800,
+            onKill: () => {},
+            output: Stream.fromQueue(output),
+          });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+      const requests = yield* Queue.unbounded<RelayManagedEndpointRuntimeConfig>();
+      yield* runtime.recoveryRequests.pipe(
+        Stream.runForEach((config) => Queue.offer(requests, config)),
+        Effect.forkChild,
+      );
+      const config = {
+        providerKind: "cloudflare_tunnel" as const,
+        connectorToken: "token",
+        tunnelId: "silently-deleted",
+      };
+      yield* runtime.applyConfig(config);
+
+      yield* TestClock.adjust(Duration.minutes(2));
+      expect(yield* Queue.size(requests)).toBe(0);
+      yield* TestClock.adjust(Duration.minutes(1));
+      expect(yield* Queue.take(requests)).toEqual(config);
+      // Still unconnected, so it asks again.
+      yield* TestClock.adjust(Duration.minutes(3));
+      expect(yield* Queue.take(requests)).toEqual(config);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("does not request recovery once the connector has connected", () =>
+    Effect.gen(function* () {
+      const output = yield* Queue.unbounded<Uint8Array>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          const handle = makeHandle({
+            pid: 801,
+            onKill: () => {},
+            output: Stream.fromQueue(output),
+          });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+      const requests = yield* Queue.unbounded<RelayManagedEndpointRuntimeConfig>();
+      yield* runtime.recoveryRequests.pipe(
+        Stream.runForEach((config) => Queue.offer(requests, config)),
+        Effect.forkChild,
+      );
+      yield* runtime.applyConfig({
+        providerKind: "cloudflare_tunnel",
+        connectorToken: "token",
+        tunnelId: "tunnel-1",
+      });
+      yield* Queue.offer(
+        output,
+        new TextEncoder().encode(
+          "2026-10-06T00:00:00Z INF Registered tunnel connection connIndex=0\n",
+        ),
+      );
+      yield* Stream.runHead(runtime.tunnelConnected);
+
+      yield* TestClock.adjust(Duration.minutes(10));
+      expect(yield* Queue.size(requests)).toBe(0);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("starts, deduplicates, rotates, and stops the Cloudflare connector", () =>
@@ -708,6 +830,7 @@ describe("CloudManagedEndpointRuntime", () => {
             }),
             install: Effect.die("unused"),
             installWithProgress: () => Effect.die("unused"),
+            pruneManagedVersions: Effect.void,
           }),
         ),
       );
@@ -724,6 +847,559 @@ describe("CloudManagedEndpointRuntime", () => {
         reason: "The relay client is not installed.",
       });
       expect(spawn).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect(
+    "runs an older relay client while the pinned one installs, then restarts on it and prunes",
+    () =>
+      Effect.gen(function* () {
+        const olderClient = {
+          status: "available",
+          executablePath: "/managed/2025.9.0/cloudflared",
+          source: "managed",
+          version: "2025.9.0",
+        } as const;
+        const pinnedClient = {
+          status: "available",
+          executablePath: "/managed/pinned/cloudflared",
+          source: "managed",
+          version: RelayClient.CLOUDFLARED_VERSION,
+        } as const;
+        let installed = false;
+        const releaseInstall = yield* Deferred.make<void>();
+        const pruned = yield* Deferred.make<void>();
+        const spawned = yield* Queue.unbounded<string>();
+        const killed: Array<string> = [];
+        const output = yield* Queue.unbounded<Uint8Array>();
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            const executable = ChildProcess.isStandardCommand(command) ? command.command : "";
+            yield* Queue.offer(spawned, executable);
+            const handle = makeHandle({
+              pid: executable === pinnedClient.executablePath ? 2 : 1,
+              onKill: () => killed.push(executable),
+              ...(executable === pinnedClient.executablePath
+                ? { output: Stream.fromQueue(output) }
+                : {}),
+            });
+            yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+            return handle;
+          }),
+        );
+        const runtime = yield* buildCloudManagedEndpointRuntime(
+          spawner,
+          Layer.succeed(
+            RelayClient.RelayClient,
+            RelayClient.RelayClient.of({
+              resolve: Effect.sync(() => (installed ? pinnedClient : olderClient)),
+              install: Deferred.await(releaseInstall).pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    installed = true;
+                    return pinnedClient;
+                  }),
+                ),
+              ),
+              installWithProgress: () => Effect.die("unused"),
+              pruneManagedVersions: Deferred.succeed(pruned, undefined).pipe(Effect.asVoid),
+            }),
+          ),
+        );
+
+        const status = yield* runtime.applyConfig({
+          providerKind: "cloudflare_tunnel",
+          connectorToken: "token",
+        });
+        expect(status).toMatchObject({ status: "running", pid: 1 });
+        expect(yield* Queue.take(spawned)).toBe(olderClient.executablePath);
+
+        yield* Deferred.succeed(releaseInstall, undefined);
+        expect(yield* Queue.take(spawned)).toBe(pinnedClient.executablePath);
+        expect(killed).toEqual([olderClient.executablePath]);
+
+        yield* Queue.offer(
+          output,
+          new TextEncoder().encode(
+            "2026-10-08T00:00:00Z INF Registered tunnel connection connIndex=0\n",
+          ),
+        );
+        yield* Deferred.await(pruned);
+      }),
+  );
+
+  it.effect("installs a missing relay client in the background and then starts it", () =>
+    Effect.gen(function* () {
+      const pinnedClient = {
+        status: "available",
+        executablePath: "/managed/pinned/cloudflared",
+        source: "managed",
+        version: RelayClient.CLOUDFLARED_VERSION,
+      } as const;
+      let installed = false;
+      const spawned = yield* Deferred.make<string>();
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(
+            spawned,
+            ChildProcess.isStandardCommand(command) ? command.command : "",
+          );
+          const handle = makeHandle({ pid: 3, onKill: () => {} });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        spawner,
+        Layer.succeed(
+          RelayClient.RelayClient,
+          RelayClient.RelayClient.of({
+            resolve: Effect.sync(() =>
+              installed
+                ? pinnedClient
+                : { status: "missing" as const, version: RelayClient.CLOUDFLARED_VERSION },
+            ),
+            install: Effect.sync(() => {
+              installed = true;
+              return pinnedClient;
+            }),
+            installWithProgress: () => Effect.die("unused"),
+            pruneManagedVersions: Effect.void,
+          }),
+        ),
+      );
+
+      const status = yield* runtime.applyConfig({
+        providerKind: "cloudflare_tunnel",
+        connectorToken: "token",
+      });
+      // The first attempt reports the gap; the install then starts the connector itself.
+      expect(status).toMatchObject({ status: "failed", failure: "not-installed" });
+      expect(yield* Deferred.await(spawned)).toBe(pinnedClient.executablePath);
+    }),
+  );
+
+  it.effect("leaves a PATH relay client alone", () =>
+    Effect.gen(function* () {
+      const install = vi.fn(() => Effect.die("unexpected install"));
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          const handle = makeHandle({ pid: 8, onKill: () => {} });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        spawner,
+        Layer.succeed(
+          RelayClient.RelayClient,
+          RelayClient.RelayClient.of({
+            resolve: Effect.succeed({
+              status: "available",
+              executablePath: "/opt/homebrew/bin/cloudflared",
+              source: "path",
+              version: "2026.10.0",
+            }),
+            install: Effect.suspend(install),
+            installWithProgress: () => Effect.die("unused"),
+            pruneManagedVersions: Effect.void,
+          }),
+        ),
+      );
+      expect(
+        yield* runtime.applyConfig({ providerKind: "cloudflare_tunnel", connectorToken: "token" }),
+      ).toMatchObject({ status: "running", pid: 8 });
+      yield* TestClock.adjust(Duration.minutes(30));
+      expect(install).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("leaves an override relay client alone", () =>
+    Effect.gen(function* () {
+      const install = vi.fn(() => Effect.die("unexpected install"));
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          const handle = makeHandle({ pid: 4, onKill: () => {} });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        spawner,
+        Layer.succeed(
+          RelayClient.RelayClient,
+          RelayClient.RelayClient.of({
+            resolve: Effect.succeed({
+              status: "available",
+              executablePath: "/opt/cloudflared",
+              source: "override",
+              version: "2025.10.0",
+            }),
+            install: Effect.suspend(install),
+            installWithProgress: () => Effect.die("unused"),
+            pruneManagedVersions: Effect.void,
+          }),
+        ),
+      );
+      expect(
+        yield* runtime.applyConfig({ providerKind: "cloudflare_tunnel", connectorToken: "token" }),
+      ).toMatchObject({ status: "running", pid: 4 });
+      yield* Effect.yieldNow;
+      expect(install).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("retries a failed background install while the older connector keeps running", () =>
+    Effect.gen(function* () {
+      const olderClient = {
+        status: "available",
+        executablePath: "/managed/2025.9.0/cloudflared",
+        source: "managed",
+        version: "2025.9.0",
+      } as const;
+      const pinnedClient = {
+        status: "available",
+        executablePath: "/managed/pinned/cloudflared",
+        source: "managed",
+        version: RelayClient.CLOUDFLARED_VERSION,
+      } as const;
+      let installed = false;
+      let installAttempts = 0;
+      const spawned = yield* Queue.unbounded<string>();
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          yield* Queue.offer(
+            spawned,
+            ChildProcess.isStandardCommand(command) ? command.command : "",
+          );
+          const handle = makeHandle({ pid: 5, onKill: () => {} });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        spawner,
+        Layer.succeed(
+          RelayClient.RelayClient,
+          RelayClient.RelayClient.of({
+            resolve: Effect.sync(() => (installed ? pinnedClient : olderClient)),
+            install: Effect.suspend(() => {
+              installAttempts += 1;
+              if (installAttempts === 1) {
+                // A real download fails some time after it starts.
+                return Effect.sleep(Duration.seconds(30)).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new RelayClient.RelayClientInstallError({
+                        reason: "download_failed",
+                        message: "offline",
+                      }),
+                    ),
+                  ),
+                );
+              }
+              installed = true;
+              return Effect.succeed(pinnedClient);
+            }),
+            installWithProgress: () => Effect.die("unused"),
+            pruneManagedVersions: Effect.void,
+          }),
+        ),
+      );
+
+      yield* runtime.applyConfig({ providerKind: "cloudflare_tunnel", connectorToken: "token" });
+      expect(yield* Queue.take(spawned)).toBe(olderClient.executablePath);
+      yield* TestClock.adjust(Duration.seconds(30));
+      expect(installAttempts).toBe(1);
+
+      yield* TestClock.adjust(Duration.minutes(10));
+      expect(yield* Queue.take(spawned)).toBe(pinnedClient.executablePath);
+      expect(installAttempts).toBe(2);
+    }),
+  );
+
+  it.effect("requests recovery when the updated relay client fails to start", () =>
+    Effect.gen(function* () {
+      const olderClient = {
+        status: "available",
+        executablePath: "/managed/2025.9.0/cloudflared",
+        source: "managed",
+        version: "2025.9.0",
+      } as const;
+      const pinnedClient = {
+        status: "available",
+        executablePath: "/managed/pinned/cloudflared",
+        source: "managed",
+        version: RelayClient.CLOUDFLARED_VERSION,
+      } as const;
+      let installed = false;
+      const releaseInstall = yield* Deferred.make<void>();
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          const executable = ChildProcess.isStandardCommand(command) ? command.command : "";
+          if (executable === pinnedClient.executablePath) {
+            return yield* PlatformError.systemError({
+              _tag: "PermissionDenied",
+              module: "ChildProcess",
+              method: "spawn",
+            });
+          }
+          const handle = makeHandle({ pid: 6, onKill: () => {} });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        spawner,
+        Layer.succeed(
+          RelayClient.RelayClient,
+          RelayClient.RelayClient.of({
+            resolve: Effect.sync(() => (installed ? pinnedClient : olderClient)),
+            install: Deferred.await(releaseInstall).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  installed = true;
+                  return pinnedClient;
+                }),
+              ),
+            ),
+            installWithProgress: () => Effect.die("unused"),
+            pruneManagedVersions: Effect.void,
+          }),
+        ),
+      );
+      const config = { providerKind: "cloudflare_tunnel", connectorToken: "token" } as const;
+      expect(yield* runtime.applyConfig(config)).toMatchObject({ status: "running", pid: 6 });
+
+      yield* Deferred.succeed(releaseInstall, undefined);
+      expect(Option.getOrThrow(yield* Stream.runHead(runtime.recoveryRequests))).toEqual(config);
+    }),
+  );
+
+  it.effect("restarts a self-updated pinned-folder connector once the pin is reinstalled", () =>
+    Effect.gen(function* () {
+      const executablePath = "/managed/pinned/cloudflared";
+      let version = "2026.9.3";
+      const releaseInstall = yield* Deferred.make<void>();
+      const spawned = yield* Queue.unbounded<string>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          yield* Queue.offer(spawned, version);
+          const handle = makeHandle({ pid: 7, onKill: () => {} });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const current = () =>
+        ({ status: "available", executablePath, source: "managed", version }) as const;
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        spawner,
+        Layer.succeed(
+          RelayClient.RelayClient,
+          RelayClient.RelayClient.of({
+            resolve: Effect.sync(current),
+            install: Deferred.await(releaseInstall).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  version = RelayClient.CLOUDFLARED_VERSION;
+                  return current();
+                }),
+              ),
+            ),
+            installWithProgress: () => Effect.die("unused"),
+            pruneManagedVersions: Effect.void,
+          }),
+        ),
+      );
+
+      yield* runtime.applyConfig({ providerKind: "cloudflare_tunnel", connectorToken: "token" });
+      expect(yield* Queue.take(spawned)).toBe("2026.9.3");
+      yield* Deferred.succeed(releaseInstall, undefined);
+      expect(yield* Queue.take(spawned)).toBe(RelayClient.CLOUDFLARED_VERSION);
+    }),
+  );
+
+  it.effect("retries a failed install when no relay client is installed", () =>
+    Effect.gen(function* () {
+      const pinnedClient = {
+        status: "available",
+        executablePath: "/managed/pinned/cloudflared",
+        source: "managed",
+        version: RelayClient.CLOUDFLARED_VERSION,
+      } as const;
+      let installed = false;
+      let installAttempts = 0;
+      const spawned = yield* Deferred.make<string>();
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(
+            spawned,
+            ChildProcess.isStandardCommand(command) ? command.command : "",
+          );
+          const handle = makeHandle({ pid: 9, onKill: () => {} });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        spawner,
+        Layer.succeed(
+          RelayClient.RelayClient,
+          RelayClient.RelayClient.of({
+            resolve: Effect.sync(() =>
+              installed
+                ? pinnedClient
+                : { status: "missing" as const, version: RelayClient.CLOUDFLARED_VERSION },
+            ),
+            install: Effect.suspend(() => {
+              installAttempts += 1;
+              if (installAttempts === 1) {
+                return Effect.fail(
+                  new RelayClient.RelayClientInstallError({
+                    reason: "download_failed",
+                    message: "offline",
+                  }),
+                );
+              }
+              installed = true;
+              return Effect.succeed(pinnedClient);
+            }),
+            installWithProgress: () => Effect.die("unused"),
+            pruneManagedVersions: Effect.void,
+          }),
+        ),
+      );
+
+      expect(
+        yield* runtime.applyConfig({ providerKind: "cloudflare_tunnel", connectorToken: "token" }),
+      ).toMatchObject({ status: "failed", failure: "not-installed" });
+      yield* Effect.yieldNow;
+      expect(installAttempts).toBe(1);
+
+      yield* TestClock.adjust(Duration.minutes(10));
+      expect(yield* Deferred.await(spawned)).toBe(pinnedClient.executablePath);
+      expect(installAttempts).toBe(2);
+    }),
+  );
+
+  it.effect("restarts on the pin when the first post-install probe failed", () =>
+    Effect.gen(function* () {
+      const olderClient = {
+        status: "available",
+        executablePath: "/managed/2025.9.0/cloudflared",
+        source: "managed",
+        version: "2025.9.0",
+      } as const;
+      const pinnedClient = {
+        status: "available",
+        executablePath: "/managed/pinned/cloudflared",
+        source: "managed",
+        version: RelayClient.CLOUDFLARED_VERSION,
+      } as const;
+      let installed = false;
+      // The first resolve after the install misses the new binary, as when a
+      // scanner briefly holds it; later resolves see it.
+      let missedProbes = 0;
+      const spawned = yield* Queue.unbounded<string>();
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          yield* Queue.offer(
+            spawned,
+            ChildProcess.isStandardCommand(command) ? command.command : "",
+          );
+          const handle = makeHandle({ pid: 10, onKill: () => {} });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        spawner,
+        Layer.succeed(
+          RelayClient.RelayClient,
+          RelayClient.RelayClient.of({
+            resolve: Effect.sync(() => {
+              if (installed && missedProbes === 0) {
+                missedProbes += 1;
+                return olderClient;
+              }
+              return installed ? pinnedClient : olderClient;
+            }),
+            install: Effect.sync(() => {
+              installed = true;
+              return pinnedClient;
+            }),
+            installWithProgress: () => Effect.die("unused"),
+            pruneManagedVersions: Effect.void,
+          }),
+        ),
+      );
+
+      yield* runtime.applyConfig({ providerKind: "cloudflare_tunnel", connectorToken: "token" });
+      expect(yield* Queue.take(spawned)).toBe(olderClient.executablePath);
+      yield* Effect.yieldNow;
+      // The missed probe kept the older connector running.
+      expect(Option.isNone(yield* Queue.poll(spawned))).toBe(true);
+
+      yield* TestClock.adjust(Duration.minutes(10));
+      expect(yield* Queue.take(spawned)).toBe(pinnedClient.executablePath);
+    }),
+  );
+
+  it.effect("starts the connector when the pin landed but its first probe failed", () =>
+    Effect.gen(function* () {
+      const pinnedClient = {
+        status: "available",
+        executablePath: "/managed/pinned/cloudflared",
+        source: "managed",
+        version: RelayClient.CLOUDFLARED_VERSION,
+      } as const;
+      const missing = { status: "missing" as const, version: RelayClient.CLOUDFLARED_VERSION };
+      let installed = false;
+      // The resolve right after the install misses the new binary.
+      let missedProbes = 0;
+      const spawned = yield* Deferred.make<string>();
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(
+            spawned,
+            ChildProcess.isStandardCommand(command) ? command.command : "",
+          );
+          const handle = makeHandle({ pid: 11, onKill: () => {} });
+          yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        spawner,
+        Layer.succeed(
+          RelayClient.RelayClient,
+          RelayClient.RelayClient.of({
+            resolve: Effect.sync(() => {
+              if (!installed) return missing;
+              if (missedProbes === 0) {
+                missedProbes += 1;
+                return missing;
+              }
+              return pinnedClient;
+            }),
+            install: Effect.sync(() => {
+              installed = true;
+              return pinnedClient;
+            }),
+            installWithProgress: () => Effect.die("unused"),
+            pruneManagedVersions: Effect.void,
+          }),
+        ),
+      );
+
+      expect(
+        yield* runtime.applyConfig({ providerKind: "cloudflare_tunnel", connectorToken: "token" }),
+      ).toMatchObject({ status: "failed", failure: "not-installed" });
+      yield* Effect.yieldNow;
+      expect(Option.isNone(yield* Deferred.poll(spawned))).toBe(true);
+
+      yield* TestClock.adjust(Duration.minutes(10));
+      expect(yield* Deferred.await(spawned)).toBe(pinnedClient.executablePath);
     }),
   );
 });

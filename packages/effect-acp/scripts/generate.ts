@@ -9,9 +9,9 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { Command, Flag } from "effect/unstable/cli";
-import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Command, Flag } from "effect/cli";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 const V2_SCHEMA_RELEASE = "schema-v2.0.0-alpha.3";
 const V1_SCHEMA_RELEASE = "schema-v1.21.0";
@@ -514,7 +514,7 @@ const generateCommand = Command.make(
   ({ skipDownload }) => generateSchemas(skipDownload),
 ).pipe(Command.withDescription("Generate Effect ACP schemas from the pinned ACP release assets."));
 
-const runtimeLayer = Layer.mergeAll(
+const layerRuntime = Layer.mergeAll(
   Logger.layer([Logger.consolePretty()]),
   NodeServices.layer,
   FetchHttpClient.layer,
@@ -522,6 +522,6 @@ const runtimeLayer = Layer.mergeAll(
 
 Command.run(generateCommand, { version: "0.0.0" }).pipe(
   Effect.scoped,
-  Effect.provide(runtimeLayer),
+  Effect.provide(layerRuntime),
   NodeRuntime.runMain,
 );

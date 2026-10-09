@@ -1,28 +1,42 @@
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
+import { useAuth } from "@clerk/expo";
 import { CameraView, useCameraPermissions } from "expo-camera";
+import * as Haptics from "expo-haptics";
 import {
   StackActions,
+  useIsFocused,
   useNavigation,
   useRoute,
   type StaticScreenProps,
 } from "@react-navigation/native";
-import { AsyncResult } from "effect/unstable/reactivity";
+import type { EnvironmentId } from "@t3tools/contracts";
+import { AsyncResult } from "effect/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Linking, Platform, View } from "react-native";
+import { Alert, Linking, Pressable, StyleSheet, View } from "react-native";
+import Svg, { Defs, RadialGradient, Rect, Stop } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { cn } from "../../lib/cn";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
-import { AppText as Text } from "../../components/AppText";
-import { ErrorBanner } from "../../components/ErrorBanner";
-import { ConnectionFormField } from "./ConnectionFormField";
-import { ConnectionSheetButton } from "./ConnectionSheetButton";
+import { AppText as Text, AppTextInput, type AppTextInputProps } from "../../components/AppText";
+import { FrostedCutout } from "../../components/FrostedCutout";
 import { buildPairingUrl, extractPairingUrlFromQrPayload, parsePairingUrl } from "./pairing";
-import { useRemoteConnections } from "../../state/use-remote-environment-registry";
+import {
+  setPendingConnectionError,
+  useRemoteConnections,
+} from "../../state/use-remote-environment-registry";
+import { SymbolView } from "../../components/AppSymbol";
+import { hasCloudPublicConfig } from "../cloud/publicConfig";
+import { CloudEnvironmentRows } from "./CloudEnvironmentRows";
+import { splitEnvironmentSections } from "./environmentSections";
 
 type ConnectionsNewRouteParams = {
   readonly mode?: string;
   readonly pairingUrl?: string;
   readonly autoConnect?: string;
+  /** Adds a route to this saved machine instead of a new environment. */
+  readonly routeFor?: EnvironmentId;
 };
 
 export function ConnectionsNewRouteScreen({
@@ -48,9 +62,11 @@ export function ConnectionsNewRouteScreen({
   const [hostInput, setHostInput] = useState("");
   const [codeInput, setCodeInput] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showScanner, setShowScanner] = useState(params.mode === "scan_qr");
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const screenFocused = useIsFocused();
   const [scannerLocked, setScannerLocked] = useState(false);
+  // A good scan parks the camera so it can't re-read the code over later edits.
+  const [scanComplete, setScanComplete] = useState(false);
   const attemptedAutoConnectRef = useRef<string | null>(null);
 
   const headerIconColor = useUniwindTheme()["--color-icon"];
@@ -81,34 +97,25 @@ export function ConnectionsNewRouteScreen({
 
   const handleHostChange = useCallback((value: string) => {
     setHostInput(value);
+    setPendingConnectionError(null);
   }, []);
 
   const handleCodeChange = useCallback((value: string) => {
     setCodeInput(value);
+    setPendingConnectionError(null);
   }, []);
 
-  const openScanner = useCallback(async () => {
-    if (cameraPermission?.granted) {
-      setScannerLocked(false);
-      setShowScanner(true);
-      return;
-    }
+  // The error is shared app state; a stale failure must not greet the next visit.
+  useEffect(() => () => setPendingConnectionError(null), []);
 
+  // Opening the sheet never prompts; a tap on the scan card asks for the camera.
+  const handleScanPress = useCallback(async () => {
     const permission = await requestCameraPermission();
     if (permission.granted) {
-      setScannerLocked(false);
-      setShowScanner(true);
+      setScanComplete(false);
       return;
     }
-
-    if (permission.canAskAgain) {
-      Alert.alert(
-        "Camera access needed",
-        "Allow camera access to scan an environment pairing QR code.",
-      );
-      return;
-    }
-
+    if (permission.canAskAgain) return;
     Alert.alert(
       "Camera access needed",
       "Camera access was denied for this app. Open Settings to enable it.",
@@ -117,12 +124,7 @@ export function ConnectionsNewRouteScreen({
         { text: "Open Settings", onPress: () => void Linking.openSettings() },
       ],
     );
-  }, [cameraPermission?.granted, requestCameraPermission]);
-
-  const closeScanner = useCallback(() => {
-    setShowScanner(false);
-    setScannerLocked(false);
-  }, []);
+  }, [requestCameraPermission]);
 
   const handleQrScan = useCallback(
     ({ data }: { readonly data: string }) => {
@@ -138,13 +140,14 @@ export function ConnectionsNewRouteScreen({
         setHostInput(host);
         setCodeInput(code);
         onChangeConnectionPairingUrl(pairingUrl);
-        setShowScanner(false);
+        setScanComplete(true);
+        setScannerLocked(false);
       } catch (error) {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         Alert.alert(
           "Invalid QR code",
           error instanceof Error ? error.message : "Scanned QR code was not recognized.",
         );
-      } finally {
         setTimeout(() => {
           setScannerLocked(false);
         }, 600);
@@ -158,7 +161,12 @@ export function ConnectionsNewRouteScreen({
       setIsSubmitting(true);
       onChangeConnectionPairingUrl(pairingUrl);
       try {
-        const result = await onConnectPress(pairingUrl);
+        const result = await onConnectPress(pairingUrl, params.routeFor);
+        void Haptics.notificationAsync(
+          AsyncResult.isSuccess(result)
+            ? Haptics.NotificationFeedbackType.Success
+            : Haptics.NotificationFeedbackType.Error,
+        );
         if (AsyncResult.isSuccess(result)) {
           if (replaceWithHome || !navigation.canGoBack()) {
             navigation.dispatch(StackActions.replace("Home"));
@@ -170,7 +178,7 @@ export function ConnectionsNewRouteScreen({
         setIsSubmitting(false);
       }
     },
-    [navigation, onChangeConnectionPairingUrl, onConnectPress],
+    [navigation, onChangeConnectionPairingUrl, onConnectPress, params.routeFor],
   );
 
   const handleSubmit = useCallback(async () => {
@@ -189,96 +197,260 @@ export function ConnectionsNewRouteScreen({
   return (
     <SettingsScreen
       formSheet={routeName === "ConnectionsNew"}
-      title={showScanner ? "Scan QR Code" : "Add Environment"}
+      title="Add environment"
       actions={[
         {
-          accessibilityLabel: showScanner ? "Close scanner" : "Scan QR code",
-          icon: showScanner ? "xmark" : Platform.OS === "ios" ? "qrcode.viewfinder" : "camera",
+          accessibilityLabel: isSubmitting ? "Connecting" : "Add environment",
+          loading: isSubmitting,
+          icon: "checkmark",
           tintColor: headerIconColor,
+          disabled: connectDisabled,
           onPress: () => {
-            if (showScanner) {
-              closeScanner();
-            } else {
-              void openScanner();
-            }
+            void handleSubmit();
           },
         },
       ]}
     >
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
+        keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         className="flex-1"
         contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
         contentContainerStyle={{
-          paddingHorizontal: 20,
-          paddingTop: 16,
+          paddingHorizontal: 16,
+          paddingTop: 4,
         }}
       >
-        <View collapsable={false} className="gap-5">
-          {showScanner ? (
-            cameraPermission?.granted ? (
-              <View className="overflow-hidden rounded-[24px] border-continuous">
-                <CameraView
-                  barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
-                  onBarcodeScanned={handleQrScan}
-                  style={{ aspectRatio: 1, width: "100%" }}
-                />
-              </View>
-            ) : (
-              <View className="items-center gap-3 rounded-[24px] border-continuous bg-grouped-card px-5 py-8">
-                <Text className="text-center text-sm leading-normal text-foreground-muted">
-                  Camera permission is required to scan a QR code.
-                </Text>
-                <ConnectionSheetButton
-                  compact
-                  icon="camera"
-                  label="Allow camera"
-                  tone="secondary"
-                  onPress={() => {
-                    void openScanner();
-                  }}
-                />
-              </View>
-            )
-          ) : (
-            <View collapsable={false} className="gap-4 rounded-[24px] bg-grouped-card p-4">
-              <ConnectionFormField
-                label="Host"
-                autoCapitalize="none"
-                autoCorrect={false}
+        <View collapsable={false} className="gap-6.5">
+          <PairingScanCard
+            cameraActive={cameraPermission?.granted === true && screenFocused && !scanComplete}
+            onScan={handleQrScan}
+            onScanPress={() => {
+              void handleScanPress();
+            }}
+          />
+
+          <View collapsable={false} className="gap-2">
+            <Text className="px-4 text-sm font-t3-medium text-foreground-muted">Or enter it</Text>
+            <View
+              collapsable={false}
+              className={cn(
+                "overflow-hidden rounded-[26px] border-continuous border bg-grouped-card",
+                pairingConnectionError ? "border-danger-foreground" : "border-transparent",
+              )}
+            >
+              <PairingInputRow
+                label="Address"
                 keyboardType="url"
-                placeholder="192.168.1.100:8080"
+                placeholder="192.168.1.100:3773"
                 value={hostInput}
                 onChangeText={handleHostChange}
               />
-
-              <ConnectionFormField
-                label="Pairing code"
-                autoCapitalize="none"
-                autoCorrect={false}
-                placeholder="abc-123-xyz"
+              <View className="ml-4 border-t border-border-subtle" />
+              <PairingInputRow
+                label="Code"
+                placeholder="Pairing code"
+                returnKeyType="go"
                 value={codeInput}
                 onChangeText={handleCodeChange}
+                onSubmitEditing={() => {
+                  if (!connectDisabled) void handleSubmit();
+                }}
               />
-
-              {pairingConnectionError ? <ErrorBanner message={pairingConnectionError} /> : null}
-
-              <View className="android:flex-row android:justify-end">
-                <ConnectionSheetButton
-                  icon="plus"
-                  label={isSubmitting ? "Pairing..." : "Add environment"}
-                  disabled={connectDisabled}
-                  tone="primary"
-                  onPress={() => {
-                    void handleSubmit();
-                  }}
-                />
-              </View>
             </View>
-          )}
+            <Text
+              accessibilityLiveRegion="polite"
+              className={cn(
+                "px-4 text-sm leading-normal",
+                pairingConnectionError ? "text-danger-foreground" : "text-foreground-muted",
+              )}
+            >
+              {pairingConnectionError ??
+                "For machines on your local network or tailnet. The machine keeps its own provider credentials."}
+            </Text>
+          </View>
+
+          {hasCloudPublicConfig() ? <T3ConnectSection /> : null}
         </View>
       </ScrollView>
     </SettingsScreen>
+  );
+}
+
+const SCAN_CARD_HEIGHT = 250;
+const SCAN_RETICLE_SIZE = 150;
+const SCAN_RETICLE_TOP = 36;
+const SCAN_RETICLE_RADIUS = 28;
+
+/**
+ * Live QR scanner: the camera fills the card, blurred everywhere except the
+ * reticle so the code being aimed at stays sharp. Without a camera it shows the
+ * same frame over a dark gradient.
+ */
+function PairingScanCard(props: {
+  readonly cameraActive: boolean;
+  readonly onScan: (result: { readonly data: string }) => void;
+  readonly onScanPress: () => void;
+}) {
+  const light = useAppearancePreferences().themeAppearance === "light";
+  return (
+    <Pressable
+      accessibilityRole={props.cameraActive ? undefined : "button"}
+      accessibilityLabel={props.cameraActive ? undefined : "Scan QR code"}
+      disabled={props.cameraActive}
+      onPress={props.onScanPress}
+      className={cn(
+        "overflow-hidden rounded-[26px] border-continuous",
+        light ? "bg-white" : "bg-black",
+      )}
+      style={{ height: SCAN_CARD_HEIGHT }}
+    >
+      <Svg accessibilityElementsHidden height="100%" style={StyleSheet.absoluteFill} width="100%">
+        <Defs>
+          <RadialGradient id="pairing-scan-backdrop" cx="50%" cy="50%" r="50%">
+            <Stop offset="0%" stopColor={light ? "#f4f4f5" : "#2e2e2e"} />
+            <Stop offset="100%" stopColor={light ? "#d9d9dc" : "#0e0e0e"} />
+          </RadialGradient>
+        </Defs>
+        <Rect fill="url(#pairing-scan-backdrop)" height="100%" width="100%" />
+      </Svg>
+
+      {props.cameraActive ? (
+        <>
+          <CameraView
+            active
+            barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+            onBarcodeScanned={props.onScan}
+            style={StyleSheet.absoluteFill}
+          />
+          <FrostedCutout
+            cutoutTop={SCAN_RETICLE_TOP}
+            cutoutWidth={SCAN_RETICLE_SIZE}
+            cutoutHeight={SCAN_RETICLE_SIZE}
+            cutoutRadius={SCAN_RETICLE_RADIUS}
+            appearance={light ? "light" : "dark"}
+          />
+        </>
+      ) : null}
+
+      <View
+        pointerEvents="none"
+        className="absolute inset-x-0 items-center gap-3.5"
+        style={{ top: SCAN_RETICLE_TOP }}
+      >
+        <View
+          className={cn(
+            "items-center justify-center gap-2 border-continuous border-[3px]",
+            light ? "border-black/70" : "border-white/80",
+          )}
+          style={{
+            borderRadius: SCAN_RETICLE_RADIUS,
+            height: SCAN_RETICLE_SIZE,
+            width: SCAN_RETICLE_SIZE,
+          }}
+        >
+          {props.cameraActive ? null : (
+            <>
+              <SymbolView
+                name="qrcode.viewfinder"
+                size={44}
+                tintColorClassName={light ? "accent-black/60" : "accent-white/70"}
+                type="monochrome"
+                weight="light"
+              />
+              <Text
+                className={cn("font-t3-medium text-sm", light ? "text-black/70" : "text-white/80")}
+              >
+                Tap to scan
+              </Text>
+            </>
+          )}
+        </View>
+        <Text className={cn("text-center text-sm", light ? "text-black/70" : "text-white/80")}>
+          Scan the code from t3 pair or desktop Connections settings
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
+/**
+ * Managed-relay alternative to manual pairing: signed in, the account's
+ * published environments connect with a switch; signed out, one row opens the
+ * T3 Account sheet.
+ */
+function T3ConnectSection() {
+  const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
+  const navigation = useNavigation();
+  const { connectedEnvironments, onSetEnvironmentEnabled, onRemoveEnvironmentPress } =
+    useRemoteConnections();
+  const { connectedCloudEnvironments } = splitEnvironmentSections({
+    connectedEnvironments,
+    cloudEnvironments: null,
+  });
+
+  return (
+    <View collapsable={false} className="gap-2">
+      <Text className="px-4 text-sm font-t3-medium text-foreground-muted">
+        Or use the managed relay
+      </Text>
+      {isSignedIn ? (
+        <CloudEnvironmentRows
+          connectedCloudEnvironments={connectedCloudEnvironments}
+          onSetEnvironmentEnabled={onSetEnvironmentEnabled}
+          onRemoveEnvironment={onRemoveEnvironmentPress}
+          showHeader={false}
+        />
+      ) : (
+        <Pressable
+          accessibilityRole="button"
+          disabled={!isLoaded}
+          onPress={() => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" })}
+          className="min-h-13 flex-row items-center gap-3 rounded-[26px] border-continuous bg-grouped-card px-4 active:opacity-70"
+        >
+          <View className="min-w-0 flex-1 py-3">
+            <Text className="text-base text-foreground">Sign in to T3 Connect</Text>
+            <Text className="text-sm text-foreground-muted">
+              Reach your machines from anywhere, no network setup.
+            </Text>
+          </View>
+          <SymbolView
+            name="chevron.right"
+            size={14}
+            tintColorClassName="accent-chevron"
+            type="monochrome"
+            weight="semibold"
+          />
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
+/** Inline grouped-list field: fixed label column, input filling the rest. */
+function PairingInputRow({
+  label,
+  ...inputProps
+}: Omit<AppTextInputProps, "accessibilityLabel" | "className"> & {
+  readonly label: string;
+}) {
+  return (
+    <View collapsable={false} className="h-13 flex-row items-center gap-3 px-4">
+      <Text
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        className="w-20 text-base leading-[23px] text-foreground-muted"
+      >
+        {label}
+      </Text>
+      <AppTextInput
+        {...inputProps}
+        accessibilityLabel={label}
+        autoCapitalize="none"
+        autoCorrect={false}
+        className="min-h-0 flex-1 rounded-none border-0 bg-transparent p-0 text-base leading-[23px]"
+      />
+    </View>
   );
 }

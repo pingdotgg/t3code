@@ -1,6 +1,12 @@
 import { act, cloneElement, type ReactElement, type ReactNode } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
-import { EnvironmentId, ThreadId, type OrchestrationV2ContextTransfer } from "@t3tools/contracts";
+import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import {
+  EnvironmentId,
+  ThreadId,
+  type ModelSelection,
+  type ProviderOptionDescriptor,
+  type OrchestrationV2ContextTransfer,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
@@ -11,6 +17,7 @@ const state = vi.hoisted(() => ({
   projects: [] as unknown[],
   configs: new Map<string, unknown>(),
   showTooltips: false,
+  command: vi.fn().mockResolvedValue({ _tag: "Success" }),
 }));
 
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
@@ -23,7 +30,7 @@ vi.mock("../../state/entities", () => ({
 vi.mock("../../lib/archivedThreadsState", () => ({
   useArchivedThreadSnapshots: () => ({ snapshots: [] }),
 }));
-vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.command }));
 vi.mock("../ui/tooltip", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => children,
   TooltipTrigger: ({ render, children }: { render: ReactElement; children: ReactNode }) =>
@@ -42,7 +49,115 @@ afterEach(async () => {
   state.projects = [];
   state.configs.clear();
   state.showTooltips = false;
+  state.command.mockClear();
+  state.projection = null;
 });
+
+it.each(["codex", "claudeAgent"])(
+  "stops only active app-owned %s subagents without opening their thread",
+  async (driver) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const parent = {
+      id: "parent",
+      lineage: { relationshipToParent: null },
+      activeProviderThreadId: null,
+    };
+    const child = {
+      id: "child",
+      title: "Worker",
+      lineage: { parentThreadId: "parent", relationshipToParent: "subagent" },
+    };
+    const agent = {
+      id: "agent",
+      childThreadId: "child",
+      origin: "app_owned",
+      driver,
+      providerInstanceId: "codex",
+      title: "Worker",
+      prompt: "Check the change",
+      model: "gpt-5.4",
+      status: "running",
+      progress: null,
+      result: null,
+      startedAt: DateTime.makeUnsafe("2026-09-16T12:00:00Z"),
+      completedAt: null,
+      updatedAt: DateTime.makeUnsafe("2026-09-16T12:00:00Z"),
+    };
+    state.shells = [{ environmentId: "test", source: child }];
+    const projection = {
+      thread: parent,
+      runs: [],
+      providerThreads: [],
+      providerSessions: [],
+      contextTransfers: [],
+      subagents: [agent],
+    };
+    state.projection = projection;
+    const panel = (
+      <ThreadRelationshipsPanel
+        environmentId={EnvironmentId.make("test")}
+        threadId={ThreadId.make("parent")}
+      />
+    );
+    await act(async () => {
+      renderer = create(panel);
+    });
+    const stopButton = () => renderer.root.findByProps({ "aria-label": "Stop subagent Worker" });
+    await act(async () => stopButton().props.onClick());
+    expect(state.command).toHaveBeenCalledWith({
+      environmentId: "test",
+      input: { threadId: "child" },
+    });
+    expect(state.navigate).not.toHaveBeenCalled();
+
+    for (const status of ["starting", "running", "waiting"] as const) {
+      state.command.mockClear();
+      state.shells = [
+        {
+          environmentId: "test",
+          source: {
+            ...child,
+            activityRunStatus: status,
+            activityRunStartedAt: DateTime.makeUnsafe("2026-09-16T12:05:00Z"),
+          },
+        },
+      ];
+      state.projection = {
+        ...projection,
+        subagents: [{ ...agent, origin: "provider_native", status: "completed" }],
+      };
+      await act(async () => renderer.update(cloneElement(panel)));
+      expect(renderer.root.findAllByProps({ "aria-label": "Stop subagent Worker" })).toHaveLength(
+        0,
+      );
+      state.projection = { ...projection, subagents: [{ ...agent, status: "completed" }] };
+      await act(async () => renderer.update(cloneElement(panel)));
+      await act(async () => stopButton().props.onClick());
+      expect(state.command).toHaveBeenCalledTimes(1);
+      expect(state.command).toHaveBeenLastCalledWith({
+        environmentId: "test",
+        input: { threadId: "child" },
+      });
+    }
+    state.shells = [{ environmentId: "test", source: child }];
+    for (const status of ["completed", "failed", "interrupted"]) {
+      state.projection = { ...projection, subagents: [{ ...agent, status }] };
+      await act(async () => renderer.update(cloneElement(panel)));
+      expect(renderer.root.findAllByProps({ "aria-label": "Stop subagent Worker" })).toHaveLength(
+        0,
+      );
+    }
+    state.projection = { ...projection, subagents: [{ ...agent, startedAt: null }] };
+    await act(async () => renderer.update(cloneElement(panel)));
+    expect(renderer.root.findAllByProps({ "aria-label": "Stop subagent Worker" })).toHaveLength(0);
+    state.projection = {
+      ...projection,
+      subagents: [{ ...agent, origin: "provider_native", driver: "claudeAgent" }],
+    };
+    await act(async () => renderer.update(cloneElement(panel)));
+    expect(renderer.root.findAllByProps({ "aria-label": "Stop subagent Worker" })).toHaveLength(0);
+  },
+);
 
 it("shows the matching child agent details and refreshes them when the agent settles", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -123,9 +238,10 @@ it("shows the matching child agent details and refreshes them when the agent set
     renderer.root.findByProps({ type: "button", "aria-expanded": false }).props.onClick(),
   );
   expect(text()).toContain("Checker");
-  expect(text()).toContain("2m 15s");
+  // A started agent's row shows only its compact time; the icon carries the status.
+  expect(text()).toContain("Checker 2m");
   expect(text()).not.toContain("(1)");
-  expect(text()).toContain("Done");
+  expect(text()).not.toContain("Done");
   expect(text()).not.toContain("running");
   expect(text()).not.toContain("Worker");
   await act(async () =>
@@ -196,7 +312,11 @@ it("shows readable models and only differing workspace details in agent tooltips
     worktreePath: null as string | null,
     branch: null as string | null,
     title: "Worker",
-    modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+    modelSelection: {
+      instanceId: "codex",
+      model: "gpt-5.4",
+      options: [{ id: "reasoningEffort", value: "high" }] as ModelSelection["options"],
+    },
     lineage: { parentThreadId: "parent", relationshipToParent: "subagent" },
   };
   state.projects = [
@@ -231,6 +351,7 @@ it("shows readable models and only differing workspace details in agent tooltips
       {
         id: "agent",
         childThreadId: "child",
+        origin: "app_owned",
         driver: "codex",
         providerInstanceId: "codex",
         title: "Worker",
@@ -253,12 +374,24 @@ it("shows readable models and only differing workspace details in agent tooltips
   await act(async () => {
     renderer = create(panel);
   });
-  const text = () =>
-    renderer.root
-      .findAll((node) => typeof node.type === "string")
-      .flatMap((node) => node.children.filter((child) => typeof child === "string"))
-      .join("");
+  const text = (visibleOnly = false) => {
+    const read = (node: ReactTestInstance | string): string => {
+      if (typeof node === "string") return node;
+      if (visibleOnly && node.props.className === "sr-only") return "";
+      return node.children.map(read).join("");
+    };
+    return read(renderer.root);
+  };
+  expect(text()).toContain("My GPT · high");
+  state.projection = {
+    ...projection,
+    subagents: [{ ...projection.subagents[0], origin: "provider_native" }],
+  };
+  await act(async () => renderer.update(cloneElement(panel)));
   expect(text()).toContain("My GPT");
+  expect(text()).not.toContain("My GPT · high");
+  state.projection = projection;
+  await act(async () => renderer.update(cloneElement(panel)));
   expect(text()).not.toContain("Tokens");
   expect(text()).not.toContain("Open subagent");
   expect(text()).not.toContain("Project");
@@ -279,6 +412,11 @@ it("shows readable models and only differing workspace details in agent tooltips
     };
     await act(async () => renderer.update(cloneElement(panel)));
     expect(text()).toContain(expected);
+    if (!model?.trim() || model === "gpt-5.5" || model === "custom/model-v1") {
+      expect(text()).not.toContain(" · high");
+    } else {
+      expect(text()).toContain(`${expected} · high`);
+    }
     expect(text()).not.toContain("Unknown");
     if (!model?.trim()) expect(text()).not.toContain("My GPT");
   }
@@ -300,6 +438,212 @@ it("shows readable models and only differing workspace details in agent tooltips
     await act(async () => renderer.update(cloneElement(panel)));
     expect(text()).toContain("Not reported");
     expect(text()).not.toContain("My GPT");
+  }
+
+  state.projection = projection;
+  for (const [options, expected] of [
+    [[{ id: "effort", value: "max" }], " · max"],
+    [[{ id: "reasoning", value: "low" }], " · low"],
+    [[{ id: "variant", value: "high" }], " · high"],
+    [[{ id: "reasoningEffort", value: "none" }], " · none"],
+    [[{ id: "reasoningEffort", value: true }], ""],
+    [[{ id: "serviceTier", value: "fast" }], ""],
+    [[], ""],
+    [undefined, ""],
+  ] as const) {
+    child.modelSelection.options = options;
+    state.shells = [{ environmentId: "test", source: { ...child } }];
+    await act(async () => renderer.update(cloneElement(panel)));
+    expect(text()).toContain(`My GPT${expected}`);
+    if (!expected) expect(text()).not.toContain("My GPT ·");
+  }
+  const speedConfig = state.configs.get("test");
+  const serviceTier: ProviderOptionDescriptor = {
+    id: "serviceTier",
+    label: "Service Tier",
+    type: "select",
+    currentValue: "priority",
+    options: [
+      { id: "default", label: "Standard", isDefault: true },
+      { id: "priority", label: "Fast" },
+      { id: "ultrafast", label: "Ultrafast" },
+      { id: "flex", label: "Flex" },
+    ],
+  };
+  const fastMode: ProviderOptionDescriptor = {
+    id: "fastMode",
+    label: "Fast Mode",
+    type: "boolean",
+    currentValue: true,
+  };
+  for (const [driver, descriptor, value, iconLabel] of [
+    ["codex", serviceTier, "default", ""],
+    ["codex", serviceTier, "priority", "Fast mode on"],
+    ["codex", serviceTier, "ultrafast", "Ultrafast mode on"],
+    ["codex", serviceTier, "flex", ""],
+    ["codex", serviceTier, "unknown", ""],
+    [
+      "codex",
+      { ...serviceTier, options: serviceTier.options.filter(({ id }) => id !== "ultrafast") },
+      "ultrafast",
+      "",
+    ],
+    ["codex", serviceTier, true, ""],
+    ["codex", serviceTier, undefined, ""],
+    ["claudeAgent", fastMode, true, "Fast mode on"],
+    ["claudeAgent", fastMode, false, ""],
+    ["cursor", fastMode, true, "Fast mode on"],
+    ["cursor", fastMode, false, ""],
+    ["opencode", fastMode, true, "Fast mode on"],
+    ["cursor", fastMode, "true", ""],
+    ["cursor", serviceTier, "priority", ""],
+  ] as const) {
+    state.configs.set("test", {
+      providers: [
+        {
+          instanceId: "codex",
+          driver,
+          models: [
+            {
+              slug: "gpt-5.4",
+              name: "My GPT",
+              capabilities: { optionDescriptors: [descriptor] },
+            },
+          ],
+        },
+      ],
+    });
+    child.modelSelection.options = [
+      { id: "reasoningEffort", value: "high" },
+      ...(value === undefined ? [] : [{ id: descriptor.id, value }]),
+    ];
+    state.shells = [{ environmentId: "test", source: { ...child } }];
+    await act(async () => renderer.update(cloneElement(panel)));
+    expect(text(true)).toContain("My GPT · high");
+    expect(text(true)).not.toMatch(/Fast|Ultrafast|Normal|Standard|Flex/);
+    expect(text()).toContain(`My GPT · ${iconLabel}high`);
+    if (!iconLabel) expect(text()).not.toContain("mode on");
+    child.modelSelection.options = child.modelSelection.options.filter(
+      ({ id }) => id !== "reasoningEffort",
+    );
+    state.shells = [{ environmentId: "test", source: { ...child } }];
+    await act(async () => renderer.update(cloneElement(panel)));
+    expect(text()).not.toContain(" · high");
+    expect(text(true)).not.toMatch(/Fast|Ultrafast|Normal|Standard|Flex/);
+    if (iconLabel) expect(text()).toContain(iconLabel);
+    else expect(text()).not.toContain("mode on");
+    state.projection = {
+      ...projection,
+      subagents: [{ ...projection.subagents[0], origin: "provider_native" }],
+    };
+    await act(async () => renderer.update(cloneElement(panel)));
+    expect(text()).not.toMatch(/Fast|Ultrafast|Normal|Standard|Flex| · high/);
+    state.projection = projection;
+    for (const modelSelection of [
+      { ...child.modelSelection, instanceId: "other" },
+      { ...child.modelSelection, model: "gpt-5.5" },
+    ]) {
+      state.shells = [{ environmentId: "test", source: { ...child, modelSelection } }];
+      await act(async () => renderer.update(cloneElement(panel)));
+      expect(text()).not.toMatch(/Fast|Ultrafast|Normal|Standard|Flex| · high/);
+    }
+  }
+  state.configs.set("test", {
+    providers: [
+      {
+        instanceId: "codex",
+        driver: "codex",
+        displayName: "Work account",
+        models: [
+          {
+            slug: "gpt-5.4",
+            name: "My GPT",
+            capabilities: { optionDescriptors: [serviceTier] },
+          },
+        ],
+      },
+      {
+        instanceId: "codex_personal",
+        driver: "codex",
+        displayName: "Personal account",
+        models: [],
+      },
+    ],
+  });
+  child.modelSelection.options = [
+    { id: "reasoningEffort", value: "high" },
+    { id: "serviceTier", value: "priority" },
+  ];
+  state.shells = [{ environmentId: "test", source: { ...child } }];
+  await act(async () => renderer.update(cloneElement(panel)));
+  expect(text(true)).toContain("My GPT · Work account · high");
+  expect(text()).toContain("My GPT · Work account · Fast mode onhigh");
+  expect(text()).not.toContain("Personal account");
+  state.shells = [];
+  for (const status of ["running", "completed", "failed"] as const) {
+    state.projection = {
+      ...projection,
+      subagents: [
+        {
+          ...projection.subagents[0],
+          origin: "provider_native",
+          status,
+          modelSelection: {
+            instanceId: "codex",
+            model: "gpt-5.4",
+            options: [
+              { id: "reasoningEffort", value: "low" },
+              { id: "serviceTier", value: "ultrafast" },
+            ],
+          },
+        },
+      ],
+    };
+    await act(async () => renderer.update(cloneElement(panel)));
+    if (status === "completed") {
+      await act(async () =>
+        renderer.root.findByProps({ type: "button", "aria-expanded": false }).props.onClick(),
+      );
+    }
+    expect(text()).toContain("My GPT · Work account · Ultrafast mode onlow");
+    expect(text()).not.toContain(" · high");
+  }
+  await act(async () =>
+    renderer.root.findByProps({ type: "button", "aria-expanded": true }).props.onClick(),
+  );
+  state.projection = projection;
+  state.configs.set("test", speedConfig);
+  child.modelSelection.options = [{ id: "reasoningEffort", value: "high" }];
+  state.shells = [
+    {
+      environmentId: "test",
+      source: { ...child, modelSelection: { ...child.modelSelection, instanceId: "other" } },
+    },
+  ];
+  await act(async () => renderer.update(cloneElement(panel)));
+  expect(text()).not.toContain("My GPT ·");
+  const config = state.configs.get("test");
+  state.configs.clear();
+  await act(async () => renderer.update(cloneElement(panel)));
+  expect(text()).toContain("GPT-5.4");
+  expect(text()).not.toContain("GPT-5.4 ·");
+  state.shells = [{ environmentId: "test", source: { ...child } }];
+  await act(async () => renderer.update(cloneElement(panel)));
+  expect(text()).toContain("GPT-5.4 · high");
+  state.configs.set("test", config);
+  for (const model of ["custom/model-v1", "custom/model-v2"]) {
+    state.projection = {
+      ...projection,
+      subagents: [{ ...projection.subagents[0], model }],
+    };
+    state.shells = [
+      {
+        environmentId: "test",
+        source: { ...child, modelSelection: { ...child.modelSelection, model: "custom/model-v1" } },
+      },
+    ];
+    await act(async () => renderer.update(cloneElement(panel)));
+    expect(text().includes(`${model} · high`)).toBe(model === "custom/model-v1");
   }
 
   state.projection = {
@@ -364,6 +708,7 @@ it("shows readable models and only differing workspace details in agent tooltips
   state.configs.clear();
   await act(async () => renderer.update(cloneElement(panel)));
   expect(text()).toContain("GPT-5.4");
+  expect(text()).not.toContain("GPT-5.4 ·");
   expect(text()).not.toContain("gpt-5.4");
   expect(text()).not.toContain("Project");
   expect(text()).not.toContain("Workspace");

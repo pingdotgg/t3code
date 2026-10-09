@@ -16,7 +16,7 @@ import { CodexSettings, ProviderInstanceId, TextGenerationError } from "@t3tools
 import * as ServerConfig from "../config.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import { makeCodexTextGeneration } from "./CodexTextGeneration.ts";
-import { writeFakeCli } from "../testUtils/fakeCli.ts";
+import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DEFAULT_TEST_MODEL_SELECTION = createModelSelection(
@@ -24,7 +24,7 @@ const DEFAULT_TEST_MODEL_SELECTION = createModelSelection(
   "gpt-5.4-mini",
 );
 
-const CodexTextGenerationTestLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
+const layerCodexTextGenerationTest = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-codex-text-generation-test-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -169,7 +169,7 @@ function withFakeCodexEnv<A, E, R>(
   }).pipe(Effect.scoped);
 }
 
-it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
+it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
   it.effect.each(["gpt-5.6-luna", "openai.gpt-5.6-luna"])(
     "dispatches the qualified live model for %s",
     (selectedModel) =>

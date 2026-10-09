@@ -1,5 +1,5 @@
 import { ORCHESTRATION_V2_WS_METHODS } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import {
   createEnvironmentRpcCommand,
@@ -44,9 +44,28 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       staleTimeMs: 300_000,
       idleTtlMs: 300_000,
     }),
+    // Keyed by the item revision, so a live row refetches as its output grows.
+    turnItem: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:turn-item",
+      tag: ORCHESTRATION_V2_WS_METHODS.getTurnItem,
+      staleTimeMs: 60_000,
+      idleTtlMs: 60_000,
+    }),
     fullThreadDiff: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:full-thread-diff",
       tag: ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff,
+    }),
+    threadFind: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:thread-find",
+      tag: ORCHESTRATION_V2_WS_METHODS.searchThread,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
+    threadFindProgressive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:orchestration:thread-find-progressive",
+      tag: ORCHESTRATION_V2_WS_METHODS.searchThreadStream,
+      completeWhen: (result) => result.complete !== false,
+      idleTtlMs: 0,
     }),
     threadSearch: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:thread-search",

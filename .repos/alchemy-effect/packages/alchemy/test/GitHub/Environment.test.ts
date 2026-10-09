@@ -186,7 +186,10 @@ test.provider.skipIf(!owner)(
       const afterDestroy = yield* getEnvironment(name);
       expect(afterDestroy).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:github", "provider:github:repository", "live"],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!owner)(
@@ -263,5 +266,13 @@ test.provider.skipIf(!owner)(
       const afterDestroy = yield* readVariable;
       expect(afterDestroy).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:github",
+      "provider:github:repository",
+      "provider:github:variable",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

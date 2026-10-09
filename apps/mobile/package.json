@@ -69,6 +69,13 @@
     "@t3tools/mobile-markdown-text": "file:./modules/t3-markdown-text",
     "@t3tools/mobile-review-diff-native": "file:./modules/t3-review-diff",
     "@t3tools/mobile-terminal-native": "file:./modules/t3-terminal",
+    "@t3tools/provider-acp-registry": "workspace:*",
+    "@t3tools/provider-core": "workspace:*",
+    "@t3tools/provider-cursor": "workspace:*",
+    "@t3tools/provider-grok": "workspace:*",
+    "@t3tools/provider-muse": "workspace:*",
+    "@t3tools/provider-opencode": "workspace:*",
+    "@t3tools/provider-pi": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@tabler/icons-react-native": "^3.44.0",
     "clsx": "^2.1.1",
@@ -101,6 +108,7 @@
     "expo-paste-input": "^0.1.15",
     "expo-quick-actions": "^6.0.2",
     "expo-secure-store": "~58.0.2",
+    "expo-sensors": "~58.0.1",
     "expo-sharing": "58.0.13",
     "expo-splash-screen": "~58.0.4",
     "expo-sqlite": "~58.0.8",
@@ -114,26 +122,27 @@
     "react-native": "0.88.0-rc.3",
     "react-native-gesture-handler": "~3.2.1",
     "react-native-image-viewing": "^0.2.2",
-    "react-native-keyboard-controller": "1.22.4",
+    "react-native-keyboard-controller": "1.22.6",
     "react-native-nitro-markdown": "^0.5.0",
     "react-native-nitro-modules": "0.35.9",
     "react-native-reanimated": "4.7.0",
     "react-native-safe-area-context": "~5.9.1",
-    "react-native-screens": "~4.28.0",
+    "react-native-screens": "file:deps/react-native-screens-5.0.0-t3.7.tgz",
     "react-native-shiki-engine": "^0.3.12",
     "react-native-svg": "15.15.5",
     "react-native-webview": "14.0.1",
     "react-native-worklets": "0.13.0",
     "shiki": "4.2.0",
     "tailwind-merge": "^3.5.0",
-    "uniwind": "1.11.0"
+    "uniwind": "1.12.1"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "@pierre/trees": "1.0.0-beta.4",
+    "@pierre/trees": "1.0.0-beta.6",
     "@types/react": "~19.3.0",
     "@types/react-dom": "~19.2.3",
     "babel-preset-expo": "~58.0.8",
+    "jsdom": "^30.0.1",
     "tailwindcss": "^4.0.0",
     "typescript": "catalog:"
   },
@@ -141,7 +150,8 @@
     "install": {
       "exclude": [
         "react-native-keyboard-controller",
-        "typescript"
+        "typescript",
+        "react-native-screens"
       ]
     },
     "autolinking": {

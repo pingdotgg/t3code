@@ -7,6 +7,7 @@
  * enables only the signal types that have processors or readers configured.
  * `layerTracerProvider` creates a scoped `WebTracerProvider`.
  *
+ * @stability unstable
  * @since 4.0.0
  */
 import type * as Otel from "@opentelemetry/api"
@@ -27,6 +28,7 @@ import * as Resource from "./Resource.ts"
 /**
  * Configuration for the Web OpenTelemetry layer, including resource metadata and optional tracing, metrics, and logging settings.
  *
+ * @stability unstable
  * @category models
  * @since 4.0.0
  */
@@ -48,6 +50,7 @@ export interface Configuration {
 /**
  * Creates a scoped Web OpenTelemetry tracer provider from one or more span processors and shuts it down when the layer is released.
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */
@@ -97,6 +100,7 @@ export const layerTracerProvider = (
  * OpenTelemetry environment variables. Empty processor or reader arrays are
  * treated as not configured.
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */

@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import ApplicationEventSequenceIndexes from "./OrchestrationV2/ApplicationEventSequenceIndexes.ts";
 import ApplicationEventSource from "./OrchestrationV2/ApplicationEventSource.ts";

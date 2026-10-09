@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
+import type { ProjectId } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
   ClientSettingsSchema,
@@ -207,17 +208,6 @@ describe("custom model settings", () => {
       { slug: "named", name: "Named", capabilities },
     ]);
   });
-
-  it("accepts entries at the settings patch boundary", () => {
-    expect(
-      decodeServerSettingsPatch({
-        providers: { codex: { customModels: [{ slug: "x", capabilities }] } },
-      }).providers?.codex?.customModels,
-    ).toEqual([{ slug: "x", capabilities }]);
-    expect(() =>
-      decodeServerSettingsPatch({ providers: { codex: { customModels: [{ name: "no slug" }] } } }),
-    ).toThrow();
-  });
 });
 
 describe("ClaudeSettings auto-compaction", () => {
@@ -238,15 +228,6 @@ describe("ClaudeSettings auto-compaction", () => {
       expect(() => decodeClaudeSettings({ autoCompactWindow: value })).toThrow();
     },
   );
-
-  it("rejects an unsupported threshold at the settings patch boundary", () => {
-    expect(() =>
-      decodeServerSettingsPatch({ providers: { claudeAgent: { autoCompactWindow: "300k" } } }),
-    ).toThrow();
-    expect(
-      decodeServerSettingsPatch({ providers: { claudeAgent: { autoCompactWindow: "300000" } } }),
-    ).toBeDefined();
-  });
 });
 
 describe("ClientSettings notifications", () => {
@@ -751,9 +732,6 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("decodes a fully empty config (legacy on-disk shape) without complaint", () => {
     const decoded = decodeServerSettings({});
     expect(decoded.providerInstances).toEqual({});
-    // Legacy `providers` struct is still hydrated with its per-driver defaults
-    // so existing call sites keep working through the migration.
-    expect(decoded.providers.codex.enabled).toBe(true);
   });
 
   it("decodes a multi-instance map mixing first-party and fork drivers", () => {
@@ -800,27 +778,23 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
 });
 
 describe("provider enabled defaults", () => {
-  it("enables only the stable bindings by default", () => {
-    const decoded = decodeServerSettings({});
-    expect(decoded.providers.codex.enabled).toBe(true);
-    expect(decoded.providers.claudeAgent.enabled).toBe(true);
-    expect(decoded.providers.cursor.enabled).toBe(false);
-    expect(decoded.providers.grok.enabled).toBe(false);
-    expect(decoded.providers.opencode.enabled).toBe(false);
+  it("keeps Muse disabled until a configured instance opts in", () => {
+    const muse = ProviderDriverKind.make("muse");
+    expect(resolveProviderInstanceEnabled({ driver: muse, config: {} })).toBe(false);
+    expect(resolveProviderInstanceEnabled({ driver: muse, enabled: true, config: {} })).toBe(true);
+    expect(
+      resolveProviderInstanceEnabled({ driver: muse, enabled: true, config: { enabled: false } }),
+    ).toBe(false);
   });
 
-  it("keeps Cursor enabled when an existing user explicitly opted in", () => {
-    const cursor = ProviderDriverKind.make("cursor");
-    const cursorId = ProviderInstanceId.make("cursor");
-    const decoded = decodeServerSettings({
-      providers: { cursor: { enabled: true } },
-      providerInstances: {
-        [cursorId]: { driver: cursor, enabled: true, config: {} },
-      },
-    });
-
-    expect(decoded.providers.cursor.enabled).toBe(true);
-    expect(resolveProviderInstanceEnabled(decoded.providerInstances[cursorId]!)).toBe(true);
+  it("enables only the stable bindings by default", () => {
+    const enabledByDefault = (driver: string) =>
+      resolveProviderInstanceEnabled({ driver: ProviderDriverKind.make(driver), config: {} });
+    expect(enabledByDefault("codex")).toBe(true);
+    expect(enabledByDefault("claudeAgent")).toBe(true);
+    for (const driver of ["cursor", "grok", "muse", "pi", "opencode", "antigravity"]) {
+      expect(enabledByDefault(driver)).toBe(false);
+    }
   });
 
   it("resolves instance enabled state with explicit false winning", () => {
@@ -892,42 +866,6 @@ describe("ServerSettings worktree defaults", () => {
   });
 });
 
-describe("ServerSettings Cursor legacy settings", () => {
-  it("preserves V1 Cursor CLI settings when reading and writing shared settings", () => {
-    const decoded = decodeServerSettings({
-      providers: {
-        cursor: {
-          enabled: true,
-          binaryPath: "cursor-agent",
-          apiEndpoint: "http://127.0.0.1:3774",
-        },
-      },
-    });
-
-    expect(decoded.providers.cursor.enabled).toBe(true);
-    expect(encodeServerSettings(decoded).providers?.cursor).toMatchObject({
-      binaryPath: "cursor-agent",
-      apiEndpoint: "http://127.0.0.1:3774",
-    });
-  });
-
-  it("ignores obsolete Cursor CLI settings in patches", () => {
-    const patch = decodeServerSettingsPatch({
-      providers: {
-        cursor: {
-          enabled: true,
-          binaryPath: "cursor-agent",
-          apiEndpoint: "http://127.0.0.1:3774",
-        },
-      },
-    });
-
-    expect(patch.providers?.cursor?.enabled).toBe(true);
-    expect(patch.providers?.cursor).not.toHaveProperty("binaryPath");
-    expect(patch.providers?.cursor).not.toHaveProperty("apiEndpoint");
-  });
-});
-
 describe("ServerSettings.sourceControlWritingStyle", () => {
   it("defaults all style settings for legacy configs", () => {
     const settings = decodeServerSettings({});
@@ -986,19 +924,19 @@ describe("ServerSettingsPatch.providerInstances", () => {
 });
 
 describe("ServerSettingsPatch string normalization", () => {
+  it("lowercases GitHub hosts and defaults them to enabled", () => {
+    const patch = decodeServerSettingsPatch({
+      github: { hosts: { " GitHub.com ": { account: "  work  " } } },
+    });
+    expect(patch.github?.hosts).toEqual({ "github.com": { account: "work", enabled: true } });
+  });
+
   it("trims string settings while decoding patches", () => {
     const patch = decodeServerSettingsPatch({
       addProjectBaseDirectory: "  ~/Development  ",
       textGenerationModelSelection: { model: "  gpt-5.4-mini  " },
       observability: {
         otlpTracesUrl: "  http://localhost:4318/v1/traces  ",
-      },
-      providers: {
-        codex: {
-          binaryPath: "  /opt/homebrew/bin/codex  ",
-          homePath: "  ~/.codex  ",
-          launchArgs: "  --strict-config --enable foo  ",
-        },
       },
       providerInstances: {
         codex_personal: {
@@ -1012,9 +950,6 @@ describe("ServerSettingsPatch string normalization", () => {
     expect(patch.addProjectBaseDirectory).toBe("~/Development");
     expect(patch.textGenerationModelSelection?.model).toBe("gpt-5.4-mini");
     expect(patch.observability?.otlpTracesUrl).toBe("http://localhost:4318/v1/traces");
-    expect(patch.providers?.codex?.binaryPath).toBe("/opt/homebrew/bin/codex");
-    expect(patch.providers?.codex?.homePath).toBe("~/.codex");
-    expect(patch.providers?.codex?.launchArgs).toBe("--strict-config --enable foo");
     expect(patch.providerInstances?.[ProviderInstanceId.make("codex_personal")]?.driver).toBe(
       "codex",
     );
@@ -1031,19 +966,9 @@ describe("ServerSettingsPatch string normalization", () => {
     const encoded = encodeServerSettings({
       ...defaultSettings,
       addProjectBaseDirectory: "  ~/Development  ",
-      providers: {
-        ...defaultSettings.providers,
-        codex: {
-          ...defaultSettings.providers.codex,
-          binaryPath: "  /opt/homebrew/bin/codex  ",
-          launchArgs: "  --strict-config  ",
-        },
-      },
     });
 
     expect(encoded.addProjectBaseDirectory).toBe("~/Development");
-    expect(encoded.providers?.codex?.binaryPath).toBe("/opt/homebrew/bin/codex");
-    expect(encoded.providers?.codex?.launchArgs).toBe("--strict-config");
   });
 });
 
@@ -1084,10 +1009,10 @@ it("validates remote device hosts and rejects ambiguous host ids", () => {
 });
 
 describe("branch naming settings", () => {
-  it("defaults existing settings to the t3code static prefix", () => {
+  it("defaults existing settings to the t3 static prefix", () => {
     expect(decodeServerSettings({})).toMatchObject({
       branchNamingMode: "static",
-      branchNamePrefix: "t3code",
+      branchNamePrefix: "t3",
       branchNameInstructions: "",
     });
   });
@@ -1104,4 +1029,18 @@ describe("branch naming settings", () => {
       expect(decodeServerSettingsPatch(input)).toEqual(input);
     },
   );
+});
+
+describe("ServerSettings.removeAgentCreditsOnMerge", () => {
+  it("keeps agent credits by default and accepts opt-in patches", () => {
+    expect(decodeServerSettings({}).removeAgentCreditsOnMerge).toBe(false);
+    expect(
+      decodeServerSettingsPatch({ removeAgentCreditsOnMerge: true }).removeAgentCreditsOnMerge,
+    ).toBe(true);
+    expect(
+      decodeServerSettings({
+        projectSettingsOverrides: { project: { removeAgentCreditsOnMerge: true } },
+      }).projectSettingsOverrides["project" as ProjectId]?.removeAgentCreditsOnMerge,
+    ).toBe(true);
+  });
 });

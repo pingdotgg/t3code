@@ -5,9 +5,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import * as UrlParams from "effect/unstable/http/UrlParams";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as UrlParams from "effect/http/UrlParams";
 import { GroupName, PackageName, type Manifest } from "../src/Manifest.ts";
 import { manifestArtifactName, tarballUrl } from "../src/Protocol.ts";
 import { Policy } from "../src/Registry.ts";
@@ -17,6 +17,7 @@ import {
   tagsFor,
 } from "../src/Registry/Handler.ts";
 import {
+  selectPackages,
   dependencyLevels,
   expandBraces,
   Group,
@@ -41,6 +42,7 @@ describe("registry", () => {
       run.headSha,
       "abcdef0",
       "pr:7",
+      "pr:7:abcdef0",
       "branch:feat/x",
     ]);
     expect(tagsFor({ ...run, pr: null, headBranch: "main" })).toEqual([
@@ -48,21 +50,24 @@ describe("registry", () => {
       "abcdef0",
       "branch:main",
     ]);
-    expect(installTag(run)).toBe("abcdef0");
+    expect(installTag(run)).toBe("pr:7:abcdef0");
+    expect(installTag({ ...run, pr: null, headBranch: "main" })).toBe(
+      "abcdef0",
+    );
   });
 
-  test("runs from forks get only their pull request tag", () => {
+  test("runs from forks get only their pull request revision tag", () => {
     const fork = { ...run, headRepo: "someone/alchemy" };
-    expect(tagsFor(fork)).toEqual(["pr:7"]);
-    expect(installTag(fork)).toBe("pr:7");
+    expect(tagsFor(fork)).toEqual(["pr:7:abcdef0"]);
+    expect(installTag(fork)).toBe("pr:7:abcdef0");
     expect(tagsFor({ ...fork, pr: null })).toEqual([]);
   });
 
   test("install paths", () => {
-    expect(parseInstallPath("/alchemy/pr:7", undefined)).toEqual({
+    expect(parseInstallPath("/alchemy/pr:7:abcdef0", undefined)).toEqual({
       kind: "tag",
       name: "alchemy",
-      tag: "pr:7",
+      tag: "pr:7:abcdef0",
     });
     expect(
       parseInstallPath("/@alchemy.run/pkg/branch:feat/x", undefined),
@@ -396,3 +401,108 @@ for (const scenario of [
     }
   });
 }
+
+describe("partial publication", () => {
+  const packages = ["core", "aws", "cloudflare", "app", "unrelated"].map(
+    (name) => ({
+      name,
+      version: "1.0.0",
+      dir: `packages/${name}`,
+      absDir: `/workspace/packages/${name}`,
+      group: "SDKs",
+    }),
+  );
+  const deps = new Map([
+    ["core", new Set<string>()],
+    ["aws", new Set(["core"])],
+    ["cloudflare", new Set(["core"])],
+    ["app", new Set(["cloudflare"])],
+    ["unrelated", new Set<string>()],
+  ]);
+  const names = (files: string[], extra: string[] = []) =>
+    selectPackages(packages, deps, files, extra).map((pkg) => pkg.name);
+
+  test("includes transitive dependents and dependencies without unrelated siblings", () => {
+    expect(names(["packages/cloudflare/src/r2.ts"])).toEqual([
+      "core",
+      "cloudflare",
+      "app",
+    ]);
+    expect(
+      names(["packages/aws/src/s3.ts", "packages/cloudflare/src/r2.ts"]),
+    ).toEqual(["core", "aws", "cloudflare", "app"]);
+    expect(names(["packages/core/src/index.ts"])).toEqual([
+      "core",
+      "aws",
+      "cloudflare",
+      "app",
+    ]);
+  });
+
+  test("ignores unrelated paths and respects directory boundaries", () => {
+    expect(names(["README.md", "packages/aws-other/index.ts"])).toEqual([]);
+    expect(names([])).toEqual([]);
+  });
+
+  test("shared build inputs and configured prefixes select everything", () => {
+    for (const file of [
+      "pnpm-lock.yaml",
+      "package.json",
+      ".github/workflows/pkg.yml",
+      "scripts/build.ts",
+    ]) {
+      expect(names([file], ["scripts/**"])).toEqual(
+        packages.map((pkg) => pkg.name),
+      );
+    }
+    expect(names(["scripts-other/build.ts"], ["scripts/**"])).toEqual([]);
+  });
+
+  test("submodule gitlink changes select contained packages", () => {
+    expect(
+      selectPackages(
+        packages.map((pkg) => ({ ...pkg, dir: `submodules/sdk/${pkg.dir}` })),
+        deps,
+        ["submodules/sdk"],
+      ).length,
+    ).toBe(packages.length);
+  });
+
+  test("dependency cycles terminate selection and are rejected by packing order", async () => {
+    const cycle = new Map([
+      ["core", new Set(["aws"])],
+      ["aws", new Set(["core"])],
+    ]);
+    expect(
+      selectPackages(packages, cycle, ["packages/aws/index.ts"]).map(
+        (pkg) => pkg.name,
+      ),
+    ).toEqual(["core", "aws"]);
+    expect(
+      (await Effect.runPromise(Effect.result(dependencyLevels(cycle))))._tag,
+    ).toBe("Failure");
+  });
+
+  test("empty manifests do not contact the registry", async () => {
+    const result = await Effect.runPromise(
+      publish({
+        cwd: "/workspace",
+        dir: ".pkg",
+        registry: manifest.registry,
+      }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("Unexpected registry request")),
+        ),
+        Effect.provide(
+          FileSystem.layerNoop({
+            readFileString: () =>
+              Effect.succeed(JSON.stringify({ ...manifest, packages: [] })),
+          }),
+        ),
+        Effect.provide(Path.layer),
+      ),
+    );
+    expect(result).toEqual({ packages: [] });
+  });
+});

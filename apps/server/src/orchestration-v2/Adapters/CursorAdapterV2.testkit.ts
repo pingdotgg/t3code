@@ -1,6 +1,4 @@
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
-import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
-import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import type { InteractionUpdate, RunResult } from "@cursor/sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -15,24 +13,22 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
-import * as ServerConfig from "../../config.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
+import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
-import * as CursorAgentSdk from "./CursorAgentSdk.ts";
+import { CursorAdapterV2Driver } from "@t3tools/provider-cursor/server";
+import * as CursorAgentSdk from "@t3tools/provider-cursor/server/CursorAgentSdk";
 import {
   CURSOR_DEFAULT_INSTANCE_ID,
   CURSOR_DRIVER_KIND,
-  CursorAdapterV2Driver,
   cursorSdkModelSelection,
   makeCursorAgentOptions,
-} from "./CursorAdapterV2.ts";
-import type { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
+} from "@t3tools/provider-cursor/testing";
+import type { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { RuntimePolicyV2Override } from "../RuntimePolicy.ts";
 
 const CursorAgentSdkReplayTranscript = Schema.Struct({
@@ -492,7 +488,7 @@ export function makeCursorAgentSdkReplayRunner(
   };
 }
 
-function makeCursorAgentSdkReplayLayer(
+function layerCursorAgentSdkReplay(
   transcript: CursorAgentSdkReplayTranscript,
   options?: {
     readonly runner?: CursorAgentSdk.CursorAgentSdkRunnerShape;
@@ -513,105 +509,16 @@ function makeCursorAgentSdkReplayLayer(
   );
 }
 
-function makeReplayServerConfig(
-  scenario: string,
-): Effect.Effect<
-  ServerConfig.ServerConfig["Service"],
-  PlatformError.PlatformError,
-  FileSystem.FileSystem | Path.Path
-> {
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const baseDir = yield* fs.makeTempDirectory({
-      prefix: `t3-orchestration-v2-cursor-${scenario}-`,
-    });
-    const stateDir = path.join(baseDir, "userdata");
-    const logsDir = path.join(stateDir, "logs");
-    const providerLogsDir = path.join(logsDir, "provider");
-    const terminalLogsDir = path.join(logsDir, "terminals");
-    const attachmentsDir = path.join(stateDir, "attachments");
-    const environmentThemesDir = path.join(stateDir, "themes");
-    const worktreesDir = path.join(baseDir, "worktrees");
-    const providerStatusCacheDir = path.join(baseDir, "caches");
-    for (const directory of [
-      stateDir,
-      logsDir,
-      providerLogsDir,
-      terminalLogsDir,
-      attachmentsDir,
-      environmentThemesDir,
-      worktreesDir,
-      providerStatusCacheDir,
-    ]) {
-      yield* fs.makeDirectory(directory, { recursive: true });
-    }
-    return {
-      logLevel: "Error",
-      traceMinLevel: "Info",
-      traceTimingEnabled: true,
-      traceBatchWindowMs: 200,
-      traceMaxBytes: 10 * 1024 * 1024,
-      traceMaxFiles: 10,
-      otelEnvironment: OtelEnvironment.none,
-      otlpTracesUrl: undefined,
-      otlpMetricsUrl: undefined,
-      otlpLogsUrl: undefined,
-      otlpTracesExport: DEFAULT_SIGNAL_EXPORT,
-      otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
-      otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
-      mode: "web",
-      port: 0,
-      host: undefined,
-      cwd: process.cwd(),
-      baseDir,
-      staticDir: undefined,
-      devUrl: undefined,
-      devAllowedOrigins: [],
-      noBrowser: false,
-      startupPresentation: "browser",
-      tailscaleServeEnabled: false,
-      tailscaleServePort: 443,
-      desktopBootstrapToken: undefined,
-      autoBootstrapProjectFromCwd: false,
-      logWebSocketEvents: false,
-      stateDir,
-      dbPath: path.join(stateDir, "state.sqlite"),
-      keybindingsConfigPath: path.join(stateDir, "keybindings.json"),
-      settingsPath: path.join(stateDir, "settings.json"),
-      providerStatusCacheDir,
-      worktreesDir,
-      attachmentsDir,
-      browserArtifactsDir: path.join(stateDir, "browser-artifacts"),
-      environmentThemesDir,
-      logsDir,
-      serverLogPath: path.join(logsDir, "server.log"),
-      serverTracePath: path.join(logsDir, "server.trace.ndjson"),
-      providerLogsDir,
-      providerEventLogPath: path.join(providerLogsDir, "events.log"),
-      terminalLogsDir,
-      anonymousIdPath: path.join(stateDir, "anonymous-id"),
-      environmentIdPath: path.join(stateDir, "environment-id"),
-      serverRuntimeStatePath: path.join(stateDir, "server-runtime.json"),
-      secretsDir: path.join(stateDir, "secrets"),
-    };
-  });
-}
-
-export function makeCursorProviderAdapterRegistryReplayLayer(
+export function layer(
   transcript: CursorAgentSdkReplayTranscript,
   options?: {
     readonly runner?: CursorAgentSdk.CursorAgentSdkRunnerShape;
     readonly assertCompleteOnFinalize?: boolean;
   },
 ) {
-  const serverConfigLayer = Layer.effect(
-    ServerConfig.ServerConfig,
-    makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
-  ).pipe(Layer.provide(NodeServices.layer));
   // Skill discovery also scans user roots under HOME; an empty HOME keeps
   // replays from picking up the host's own skills.
-  const hostEnvironmentLayer = Layer.effect(
+  const layerHostEnvironment = Layer.effect(
     HostProcessEnvironment,
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -619,7 +526,7 @@ export function makeCursorProviderAdapterRegistryReplayLayer(
       return { HOME: home };
     }).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
-  return ProviderAdapterRegistry.makeDriverLayer({
+  return ProviderAdapterRegistry.layerFromDrivers({
     drivers: [CursorAdapterV2Driver],
     configMap: {
       [CURSOR_DEFAULT_INSTANCE_ID]: {
@@ -629,9 +536,9 @@ export function makeCursorProviderAdapterRegistryReplayLayer(
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
-        makeCursorAgentSdkReplayLayer(transcript, options),
-        serverConfigLayer,
-        hostEnvironmentLayer,
+        layerCursorAgentSdkReplay(transcript, options),
+        layerTestProviderHost().pipe(Layer.provide(NodeServices.layer)),
+        layerHostEnvironment,
         NodeServices.layer,
         IdAllocator.layer,
       ),
@@ -666,8 +573,7 @@ export const CursorOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarnes
           }),
       ),
     ),
-  makeProviderAdapterRegistryLayer: (transcript) =>
-    makeCursorProviderAdapterRegistryReplayLayer(transcript),
+  makeProviderAdapterRegistryLayer: (transcript) => layer(transcript),
 };
 
 function sanitizeReplayText(

@@ -1,6 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Cause, Context, Deferred, Effect, Exit, Layer, Option, Queue, Schema, Stream } from "effect"
-import { TestClock } from "effect/testing"
 import {
   ClusterError,
   ClusterSchema,
@@ -22,12 +21,13 @@ import {
   Sharding,
   ShardingConfig,
   Snowflake
-} from "effect/unstable/cluster"
-import { Headers, HttpClient, HttpClientResponse } from "effect/unstable/http"
-import { Rpc, RpcClient, RpcGroup, RpcMessage, RpcSerialization, RpcServer, RpcTest } from "effect/unstable/rpc"
-import { RpcClientError } from "effect/unstable/rpc/RpcClientError"
-import type { FromClientEncoded, FromServerEncoded } from "effect/unstable/rpc/RpcMessage"
-import { Socket } from "effect/unstable/socket"
+} from "effect/cluster"
+import { Headers, HttpClient, HttpClientResponse } from "effect/http"
+import { Rpc, RpcClient, RpcGroup, RpcMessage, RpcSerialization, RpcServer, RpcTest } from "effect/rpc"
+import { RpcClientError } from "effect/rpc/RpcClientError"
+import type { FromClientEncoded, FromServerEncoded } from "effect/rpc/RpcMessage"
+import { Socket } from "effect/socket"
+import { TestClock } from "effect/testing"
 
 // An entity whose replies cannot be serialized: the handlers return
 // non-integers for a `Schema.Int` success schema, so `Reply.serialize` fails

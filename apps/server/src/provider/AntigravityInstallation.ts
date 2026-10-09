@@ -23,14 +23,13 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
-import type * as NodeStream from "node:stream";
-import * as Yauzl from "yauzl";
 
 import * as ServerConfig from "../config.ts";
+import { openZipArchive } from "../zipArchive.ts";
 import { makeAntigravityAcpRuntime } from "./acp/AntigravityAcpSupport.ts";
 import {
   buildAntigravityAcpSpawnInput,
@@ -147,121 +146,6 @@ function isRunning(state: ProviderInstallState) {
     state.phase === "downloading" || state.phase === "extracting" || state.phase === "verifying"
   );
 }
-
-/** Open only a verified local archive. Entries stay lazy and extraction stays bounded. */
-const openArchive = Effect.fn("AntigravityInstallation.openArchive")(function* (
-  archivePath: string,
-) {
-  const opened = yield* Effect.acquireRelease(
-    Effect.callback<
-      {
-        readonly zip: Yauzl.ZipFile;
-        readonly error: () => AntigravityInstallationError | undefined;
-        readonly close: Effect.Effect<void>;
-      },
-      AntigravityInstallationError
-    >((resume) => {
-      Yauzl.open(
-        archivePath,
-        { lazyEntries: true, autoClose: false, validateEntrySizes: true, strictFileNames: true },
-        (error, zip) => {
-          if (error || !zip) {
-            resume(
-              Effect.fail(
-                installationError("extract", "Could not open the verified archive.", error),
-              ),
-            );
-            return;
-          }
-          let closed = false;
-          let archiveError: AntigravityInstallationError | undefined;
-          zip.on("close", () => {
-            closed = true;
-          });
-          zip.on("error", (cause: unknown) => {
-            archiveError = installationError("extract", "The archive could not be read.", cause);
-          });
-          resume(
-            Effect.succeed({
-              zip,
-              error: () => archiveError,
-              close: Effect.callback<void>((finish) => {
-                if (closed) {
-                  finish(Effect.void);
-                  return;
-                }
-                const onClose = () => {
-                  zip.removeListener("error", onError);
-                  finish(Effect.void);
-                };
-                const onError = (cause: unknown) => {
-                  zip.removeListener("close", onClose);
-                  finish(
-                    Effect.die(installationError("extract", "Could not close the archive.", cause)),
-                  );
-                };
-                zip.once("close", onClose);
-                zip.once("error", onError);
-                zip.close();
-              }),
-            }),
-          );
-        },
-      );
-    }),
-    (opened) => opened.close,
-  );
-
-  const next = Effect.callback<Yauzl.Entry | null, AntigravityInstallationError>((resume) => {
-    const existingError = opened.error();
-    if (existingError) {
-      resume(Effect.fail(existingError));
-      return;
-    }
-    const cleanup = () => {
-      opened.zip.removeListener("entry", onEntry);
-      opened.zip.removeListener("end", onEnd);
-      opened.zip.removeListener("error", onError);
-    };
-    const onEntry = (entry: Yauzl.Entry) => {
-      cleanup();
-      resume(Effect.succeed(entry));
-    };
-    const onEnd = () => {
-      cleanup();
-      resume(Effect.succeed(null));
-    };
-    const onError = (cause: unknown) => {
-      cleanup();
-      resume(Effect.fail(installationError("extract", "The archive could not be read.", cause)));
-    };
-    opened.zip.once("entry", onEntry);
-    opened.zip.once("end", onEnd);
-    opened.zip.once("error", onError);
-    opened.zip.readEntry();
-    return Effect.sync(cleanup);
-  });
-
-  const streamEntry = (entry: Yauzl.Entry) =>
-    Effect.acquireRelease(
-      Effect.callback<NodeStream.Readable, AntigravityInstallationError>((resume) => {
-        opened.zip.openReadStream(entry, (cause, readable) => {
-          resume(
-            cause || !readable
-              ? Effect.fail(
-                  installationError("extract", "Could not read an archive member.", cause),
-                )
-              : Effect.succeed(readable),
-          );
-        });
-      }),
-      (readable) =>
-        Effect.sync(() => {
-          readable.destroy();
-        }),
-    );
-  return { entryCount: opened.zip.entryCount, next, streamEntry };
-});
 
 export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.make")(function* (
   options: AntigravityInstallationOptions,
@@ -665,7 +549,9 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
 
       yield* report("extracting", "Extracting the verified runtime.");
       yield* Effect.gen(function* () {
-        const archive = yield* openArchive(archivePath);
+        const archive = yield* openZipArchive(archivePath, (detail, cause) =>
+          installationError("extract", detail, cause),
+        );
         if (archive.entryCount !== 2) {
           return yield* installationError(
             "extract",

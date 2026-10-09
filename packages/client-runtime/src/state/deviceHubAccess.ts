@@ -12,7 +12,7 @@
  * Callers fetch a fresh one each time they (re)connect a stream.
  */
 import * as Effect from "effect/Effect";
-import type { HttpClient } from "effect/unstable/http";
+import type { HttpClient } from "effect/http";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";

@@ -1,3 +1,4 @@
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -5,7 +6,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as RelayConfiguration from "../Config.ts";
-import { managedEndpointTunnelNamePrefix } from "../deploymentConfig.ts";
+import {
+  MANAGED_ENDPOINT_ZONE_OWNER_STAGE,
+  managedEndpointTunnelNamePrefix,
+} from "../deploymentConfig.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
 
@@ -16,16 +20,49 @@ export const MANAGED_ENDPOINT_INACTIVE_GRACE_PERIOD_MINUTES = 60;
 export const MANAGED_ENDPOINT_SWEEP_PAGE_SIZE = 100;
 export const MANAGED_ENDPOINT_SWEEP_ATTEMPT_LIMIT = 100;
 export const MANAGED_ENDPOINT_SWEEP_LIST_REQUEST_LIMIT = 10;
+// Age buckets for legacy candidates, in days since the tunnel went down (or
+// was created, for one that never connected).
+const MANAGED_ENDPOINT_LEGACY_AGE_BUCKET_DAYS = [7, 30, 90] as const;
+// A host that never registered recovery cannot replace a deleted tunnel on
+// its own build. Only delete its tunnel after it has been gone this long. A
+// returning host that has updated recovers the tunnel at the same hostname;
+// one that has not sees the client's "update T3 Code" message instead.
+const MANAGED_ENDPOINT_LEGACY_GRACE_PERIOD_DAYS = 7;
+// Deletions run a few at a time: each one is a row-locked database
+// transaction plus two Cloudflare calls, so one at a time cannot finish a
+// full attempt budget inside the cron's timeout. Each holds a Hyperdrive
+// connection while it runs; keep this well under the 20-connection origin
+// limit that request handlers share.
+export const MANAGED_ENDPOINT_SWEEP_DELETE_CONCURRENCY = 4;
+// Stop starting deletions this long after the sweep starts, leaving room under
+// the cron's two-minute timeout to finish in-flight ones and record the
+// counters. Counted from sweep start so slow listing eats into it.
+const MANAGED_ENDPOINT_SWEEP_DELETE_BUDGET_MS = 90_000;
 
 export interface ManagedEndpointSweepResult {
   readonly mode: RelayConfiguration.ManagedEndpointCleanupMode;
+  readonly legacyMode: RelayConfiguration.ManagedEndpointCleanupMode;
   readonly listRequests: number;
   readonly scanned: number;
   readonly attempted: number;
   readonly deleted: number;
   readonly wouldDelete: number;
+  /** Legacy tunnels past the legacy grace period, and how many were deleted. */
+  readonly wouldDeleteLegacy: number;
+  readonly deletedLegacy: number;
   readonly skippedLegacy: number;
+  /** Legacy candidates, by days since they went down: over 7, 30, and 90. */
+  readonly legacyOver7Days: number;
+  readonly legacyOver30Days: number;
+  readonly legacyOver90Days: number;
   readonly skippedOrphan: number;
+  /** The allocation row records a different tunnel under this name. */
+  readonly skippedReplaced: number;
+  /** The allocation row has not recorded a tunnel yet. */
+  readonly skippedUnrecorded: number;
+  /** Cloudflare's count of matching tunnels, before page limits. */
+  readonly totalDown: number | null;
+  readonly totalInactive: number | null;
   readonly failed: number;
   readonly truncated: boolean;
 }
@@ -70,6 +107,19 @@ function isExpiredManagedTunnel(input: {
   return Option.isSome(timestamp) && timestamp.value.epochMilliseconds <= cutoff.epochMilliseconds;
 }
 
+/** Days (fractional) since the tunnel went down, or was created if it never connected. */
+function inactiveDaysAt(
+  tunnel: ManagedEndpointProvider.ManagedEndpointTunnel,
+  status: "down" | "inactive",
+  now: DateTime.Utc,
+): number | null {
+  const since = status === "down" ? tunnel.connsInactiveAt : tunnel.createdAt;
+  if (typeof since !== "string") return null;
+  const timestamp = DateTime.make(since);
+  if (Option.isNone(timestamp)) return null;
+  return (now.epochMilliseconds - timestamp.value.epochMilliseconds) / 86_400_000;
+}
+
 function isRateLimited(cause: unknown): boolean {
   if (typeof cause !== "object" || cause === null) {
     return false;
@@ -104,15 +154,26 @@ function rotatedPages(input: {
 
 const emptyResult = (
   mode: RelayConfiguration.ManagedEndpointCleanupMode,
+  legacyMode: RelayConfiguration.ManagedEndpointCleanupMode,
 ): ManagedEndpointSweepResult => ({
   mode,
+  legacyMode,
   listRequests: 0,
   scanned: 0,
   attempted: 0,
   deleted: 0,
   wouldDelete: 0,
+  wouldDeleteLegacy: 0,
+  deletedLegacy: 0,
   skippedLegacy: 0,
+  legacyOver7Days: 0,
+  legacyOver30Days: 0,
+  legacyOver90Days: 0,
   skippedOrphan: 0,
+  skippedReplaced: 0,
+  skippedUnrecorded: 0,
+  totalDown: null,
+  totalInactive: null,
   failed: 0,
   truncated: false,
 });
@@ -125,8 +186,20 @@ export const make = Effect.gen(function* () {
 
   const sweep = Effect.gen(function* () {
     const mode = config.managedEndpointCleanupMode ?? "off";
+    const legacyMode = config.legacyManagedEndpointCleanupMode ?? "off";
     const namespace = config.managedEndpointNamespace;
-    if (mode === "off" || !namespace) return emptyResult(mode);
+    if ((mode === "off" && legacyMode === "off") || !namespace) {
+      return emptyResult(mode, legacyMode);
+    }
+    const sweepStartedAtMillis = yield* Clock.currentTimeMillis;
+    // The override exists for the disposable canary stage; prod always
+    // waits the full grace period.
+    const legacyGraceMinutes =
+      namespace !== MANAGED_ENDPOINT_ZONE_OWNER_STAGE &&
+      config.legacyTunnelGraceMinutes !== undefined
+        ? config.legacyTunnelGraceMinutes
+        : MANAGED_ENDPOINT_LEGACY_GRACE_PERIOD_DAYS * 24 * 60;
+    const legacyCutoff = DateTime.subtract(yield* DateTime.now, { minutes: legacyGraceMinutes });
 
     const now = yield* DateTime.now;
     const cutoffFor = (status: "down" | "inactive") =>
@@ -142,6 +215,7 @@ export const make = Effect.gen(function* () {
     );
     let listRequests = 0;
     let truncated = false;
+    const totals: Record<"down" | "inactive", number | null> = { down: null, inactive: null };
     const expired: Array<{
       readonly tunnel: ManagedEndpointProvider.ManagedEndpointTunnel & {
         readonly id: string;
@@ -169,6 +243,7 @@ export const make = Effect.gen(function* () {
       const first = yield* listPage(1);
       const totalCount =
         typeof first.resultInfo?.totalCount === "number" ? first.resultInfo.totalCount : undefined;
+      totals[status] = totalCount ?? null;
       const pages = rotatedPages({
         totalCount,
         slot,
@@ -212,26 +287,42 @@ export const make = Effect.gen(function* () {
     let attempted = 0;
     let deleted = 0;
     let wouldDelete = 0;
+    const candidates: Array<{
+      readonly owner: ManagedEndpointAllocations.ManagedEndpointTunnelAllocation;
+      readonly tunnel: ManagedEndpointProvider.ManagedEndpointTunnel & {
+        readonly id: string;
+        readonly name: string;
+      };
+      readonly status: "down" | "inactive";
+      readonly legacy: boolean;
+      readonly inactiveBefore: string;
+    }> = [];
+    let wouldDeleteLegacy = 0;
+    let deletedLegacy = 0;
     let skippedLegacy = 0;
+    const legacyOverDays = new Map<number, number>(
+      MANAGED_ENDPOINT_LEGACY_AGE_BUCKET_DAYS.map((days) => [days, 0]),
+    );
     let skippedOrphan = 0;
+    let skippedReplaced = 0;
+    let skippedUnrecorded = 0;
     let failed = 0;
 
     for (const { tunnel, status, cutoff } of uniqueExpired) {
-      const cutoffIso = DateTime.formatIso(cutoff);
       const allocation = recordedByTunnelName.get(tunnel.name);
       if (
         allocation !== undefined &&
         allocation.tunnelId !== null &&
         allocation.tunnelId !== tunnel.id
       ) {
+        skippedReplaced += 1;
         continue;
       }
       const owner = allocation?.tunnelId === tunnel.id ? allocation : undefined;
-      if (owner !== undefined && !owner.recoveryEnabled) {
-        skippedLegacy += 1;
+      if (allocation !== undefined && owner === undefined) {
+        skippedUnrecorded += 1;
         continue;
       }
-      if (allocation !== undefined && owner === undefined) continue;
       // A tunnel with no allocation row cannot be claimed, so a relink that
       // adopts it by name races any delete here. Count it and leave it for a
       // manual sweep instead.
@@ -239,52 +330,111 @@ export const make = Effect.gen(function* () {
         skippedOrphan += 1;
         continue;
       }
-      wouldDelete += 1;
-      if (mode === "dry-run") continue;
-      if (attempted >= MANAGED_ENDPOINT_SWEEP_ATTEMPT_LIMIT) {
+      const legacy = !owner.recoveryEnabled;
+      if (legacy) {
+        skippedLegacy += 1;
+        const inactiveDays = inactiveDaysAt(tunnel, status, now);
+        for (const days of MANAGED_ENDPOINT_LEGACY_AGE_BUCKET_DAYS) {
+          if (inactiveDays !== null && inactiveDays > days) {
+            legacyOverDays.set(days, (legacyOverDays.get(days) ?? 0) + 1);
+          }
+        }
+        if (
+          legacyMode === "off" ||
+          !isExpiredManagedTunnel({ tunnel, status, prefix, cutoff: legacyCutoff })
+        ) {
+          continue;
+        }
+        wouldDeleteLegacy += 1;
+        if (legacyMode === "dry-run") continue;
+      } else {
+        if (mode === "off") continue;
+        wouldDelete += 1;
+        if (mode === "dry-run") continue;
+      }
+      if (candidates.length >= MANAGED_ENDPOINT_SWEEP_ATTEMPT_LIMIT) {
         truncated = true;
         break;
       }
-      attempted += 1;
-      const result = yield* provider
-        .release({
-          userId: owner.userId,
-          environmentId: owner.environmentId,
-          expectedTunnelId: tunnel.id,
-          expectedInactiveBefore: cutoffIso,
-          expectedStatus: status,
-        })
-        .pipe(Effect.result);
-      if (result._tag === "Failure") {
-        failed += 1;
-        yield* Effect.logWarning("Failed to delete an inactive managed tunnel", {
-          tunnelId: tunnel.id,
-          tunnelName: tunnel.name,
-          cause: result.failure,
-        });
-        if (isRateLimited(result.failure)) {
-          truncated = true;
-          break;
-        }
-      } else if (result.success) {
-        deleted += 1;
-        yield* Effect.logInfo("Deleted an inactive managed tunnel", {
-          tunnelId: tunnel.id,
-          tunnelName: tunnel.name,
-          status,
-        });
-      }
+      candidates.push({
+        owner,
+        tunnel,
+        status,
+        legacy,
+        // The release re-reads the tunnel and deletes only if it is still in
+        // this status and inactive since before this cutoff.
+        inactiveBefore: DateTime.formatIso(legacy ? legacyCutoff : cutoff),
+      });
     }
+
+    const deleteDeadline = sweepStartedAtMillis + MANAGED_ENDPOINT_SWEEP_DELETE_BUDGET_MS;
+    let stopDeleting = false;
+    yield* Effect.forEach(
+      candidates,
+      (candidate) =>
+        Effect.gen(function* () {
+          if (stopDeleting || (yield* Clock.currentTimeMillis) >= deleteDeadline) {
+            stopDeleting = true;
+            truncated = true;
+            return;
+          }
+          attempted += 1;
+          const result = yield* provider
+            .release({
+              userId: candidate.owner.userId,
+              environmentId: candidate.owner.environmentId,
+              expectedTunnelId: candidate.tunnel.id,
+              expectedInactiveBefore: candidate.inactiveBefore,
+              expectedStatus: candidate.status,
+              // Only a legacy host needs an update to recover; tell its user so.
+              ...(candidate.legacy ? { markReleased: true } : {}),
+            })
+            .pipe(Effect.result);
+          if (result._tag === "Failure") {
+            failed += 1;
+            yield* Effect.logWarning("Failed to delete an inactive managed tunnel", {
+              tunnelId: candidate.tunnel.id,
+              tunnelName: candidate.tunnel.name,
+              legacy: candidate.legacy,
+              cause: result.failure,
+            });
+            if (isRateLimited(result.failure)) {
+              stopDeleting = true;
+              truncated = true;
+            }
+          } else if (result.success) {
+            deleted += 1;
+            if (candidate.legacy) deletedLegacy += 1;
+            yield* Effect.logInfo("Deleted an inactive managed tunnel", {
+              tunnelId: candidate.tunnel.id,
+              tunnelName: candidate.tunnel.name,
+              status: candidate.status,
+              legacy: candidate.legacy,
+            });
+          }
+        }),
+      { concurrency: MANAGED_ENDPOINT_SWEEP_DELETE_CONCURRENCY, discard: true },
+    );
 
     return {
       mode,
+      legacyMode,
       listRequests,
       scanned: uniqueExpired.length,
       attempted,
       deleted,
       wouldDelete,
+      wouldDeleteLegacy,
+      deletedLegacy,
       skippedLegacy,
+      legacyOver7Days: legacyOverDays.get(7) ?? 0,
+      legacyOver30Days: legacyOverDays.get(30) ?? 0,
+      legacyOver90Days: legacyOverDays.get(90) ?? 0,
       skippedOrphan,
+      skippedReplaced,
+      skippedUnrecorded,
+      totalDown: totals.down,
+      totalInactive: totals.inactive,
       failed,
       truncated,
     };

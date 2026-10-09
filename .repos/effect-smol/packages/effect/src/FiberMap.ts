@@ -10,7 +10,6 @@
  * @since 2.0.0
  */
 import * as Cause from "./Cause.ts"
-import type { Context } from "./Context.ts"
 import * as Deferred from "./Deferred.ts"
 import * as Effect from "./Effect.ts"
 import * as Exit from "./Exit.ts"
@@ -19,6 +18,7 @@ import * as Filter from "./Filter.ts"
 import { constVoid, dual } from "./Function.ts"
 import type * as Inspectable from "./Inspectable.ts"
 import { PipeInspectableProto } from "./internal/core.ts"
+import * as internalEffect from "./internal/effect.ts"
 import * as Iterable from "./Iterable.ts"
 import * as MutableHashMap from "./MutableHashMap.ts"
 import * as Option from "./Option.ts"
@@ -733,6 +733,8 @@ const constInterruptedFiber = (function() {
  *
  * When the fiber completes, it is removed from the map. If the key already has
  * a fiber, the previous fiber is interrupted unless `onlyIfMissing` is set.
+ * Set `startImmediately: false` to defer startup. By default, the effect starts
+ * immediately.
  *
  * **Example** (Forking effects into a map)
  *
@@ -796,17 +798,23 @@ const runImpl = <K, A, E, R, XE extends E, XA extends A>(
   key: K,
   effect: Effect.Effect<XA, XE, R>,
   options?: {
+    readonly startImmediately?: boolean | undefined
     readonly onlyIfMissing?: boolean
     readonly propagateInterruption?: boolean | undefined
   }
-) =>
+): Effect.Effect<Fiber.Fiber<XA, XE>, never, R> =>
   Effect.withFiber((parent) => {
     if (self.state._tag === "Closed") {
       return Effect.interrupt
     } else if (options?.onlyIfMissing === true && hasUnsafe(self, key)) {
       return Effect.sync(constInterruptedFiber)
     }
-    const fiber = Effect.runForkWith(parent.context as Context<R>)(effect)
+    const fiber: Fiber.Fiber<XA, XE> = internalEffect.forkUnsafe(
+      parent,
+      effect,
+      options?.startImmediately ?? true,
+      true
+    )
     setUnsafe(self, key, fiber, options)
     return Effect.succeed(fiber)
   })

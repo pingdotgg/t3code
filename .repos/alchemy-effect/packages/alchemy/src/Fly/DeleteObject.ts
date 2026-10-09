@@ -25,6 +25,7 @@ export interface DeleteObjectRequest extends Omit<
  * ```
  *
  * @binding
+ * @product Bucket
  */
 export interface DeleteObject extends Binding.Service<
   DeleteObject,

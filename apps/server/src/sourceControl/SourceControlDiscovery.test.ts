@@ -7,16 +7,18 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { ChildProcessSpawner } from "effect/process";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import { VcsProcessSpawnError } from "@t3tools/contracts";
 
+import * as ServerSettings from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as BitbucketApi from "./BitbucketApi.ts";
-import * as GitHubCli from "./GitHubCli.ts";
+import * as GitHubApi from "./GitHubApi.ts";
 import * as GitLabCli from "./GitLabCli.ts";
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as ForgejoSourceControlProvider from "./ForgejoSourceControlProvider.ts";
@@ -25,7 +27,7 @@ import * as SourceControlDiscovery from "./SourceControlDiscovery.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import { firstNonEmptyLine } from "./SourceControlProviderDiscovery.ts";
 
-const sourceControlProviderRegistryTestLayer = (input: {
+const layerSourceControlProviderRegistryTest = (input: {
   readonly bitbucket: Partial<BitbucketApi.BitbucketApi["Service"]>;
   readonly process: Partial<VcsProcess.VcsProcess["Service"]>;
 }) =>
@@ -37,7 +39,9 @@ const sourceControlProviderRegistryTestLayer = (input: {
         }).pipe(Layer.provide(NodeServices.layer)),
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
         Layer.mock(BitbucketApi.BitbucketApi)(input.bitbucket),
-        Layer.mock(GitHubCli.GitHubCli)({}),
+        ServerSettings.ServerSettingsService.layerTest(),
+        Layer.mock(GitHubApi.GitHubApi)({}),
+        Layer.mock(GitVcsDriver.GitVcsDriver)({}),
         Layer.mock(GitLabCli.GitLabCli)({}),
         Layer.mock(ForgejoCli.ForgejoCli)({ listLogins: () => Effect.succeed([]) }),
         Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({}),
@@ -198,6 +202,87 @@ it.effect("reads Forgejo checks without repository or viewer requests", () => {
     ),
   );
 });
+
+it.effect.each([
+  ["Ready", false, true, false, "mergeable"],
+  ["Draft", true, false, true, "unknown"],
+  ["Blocked", false, false, false, "unknown"],
+  ["Unchecked", false, undefined, false, "unknown"],
+  ["WIP: Legacy draft", undefined, false, true, "unknown"],
+  ["[WIP] Legacy draft", undefined, false, true, "unknown"],
+  ["WIP: Explicitly ready", false, false, false, "unknown"],
+] as const)(
+  "reads Forgejo mergeability for %s (draft=%s, mergeable=%s) across list, summary and detail",
+  ([title, draft, mergeable, isDraft, mergeability]) => {
+    const pr = {
+      number: 42,
+      title,
+      body: "",
+      html_url: "https://forgejo.test/maria/project/pulls/42",
+      user: { login: "maria" },
+      state: "open",
+      merged: false,
+      ...(draft === undefined ? {} : { draft }),
+      ...(mergeable === undefined ? {} : { mergeable }),
+      head: { ref: "feature", sha: "head", repo: null },
+      base: { ref: "main", sha: "base", repo: null },
+      created_at: "2026-09-16T00:00:00Z",
+      updated_at: "2026-09-16T00:00:00Z",
+      closed_at: null,
+      merged_at: null,
+      labels: [],
+    };
+    return Effect.gen(function* () {
+      const provider = yield* ForgejoPullRequestProvider.make;
+      const readSummary = provider.getChangeRequestSummary;
+      if (readSummary === undefined) return yield* Effect.die("summary read missing");
+      const input = { cwd: "/repo", repository: "maria/project", host: "forgejo.test", number: 42 };
+      const list = yield* provider.listChangeRequests({
+        ...input,
+        state: "open",
+        involvement: "all",
+        viewer: "maria",
+        limit: 10,
+      });
+      const summary = yield* readSummary(input);
+      const detail = yield* provider.getChangeRequest(input);
+      assert.strictEqual(list.items.length, 1);
+      for (const result of [list.items[0]!, summary, detail]) {
+        assert.strictEqual(result.mergeability, mergeability);
+        assert.strictEqual(result.isDraft, isDraft);
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          api: (input) => {
+            const [path, query] = input.path.split("?");
+            let response: unknown;
+            switch (path) {
+              case "repos/maria/project/pulls":
+                response = new URLSearchParams(query).get("page") === "1" ? [pr] : [];
+                break;
+              case "repos/maria/project/pulls/42":
+                response = pr;
+                break;
+              case "repos/maria/project":
+                response = { full_name: "maria/project", permissions: { push: true, admin: true } };
+                break;
+              case "user":
+                response = pr.user;
+                break;
+              case "repos/maria/project/statuses/head":
+                response = [];
+                break;
+              default:
+                return Effect.die(`Unexpected Forgejo request: ${input.path}`);
+            }
+            return encodeJsonEffect(response).pipe(Effect.orDie, Effect.map(processOutput));
+          },
+        }),
+      ),
+    );
+  },
+);
 
 it.effect("loads Forgejo pull request references from files and commits views", () =>
   Effect.gen(function* () {
@@ -449,7 +534,7 @@ it.effect("reports implemented tools separately from locally available executabl
       );
     },
   } satisfies Partial<VcsProcess.VcsProcess["Service"]>;
-  const testLayer = SourceControlDiscovery.layer.pipe(
+  const layerTest = SourceControlDiscovery.layer.pipe(
     Layer.provide(
       ServerConfig.layerTest(process.cwd(), {
         prefix: "t3-source-control-discovery-",
@@ -457,7 +542,7 @@ it.effect("reports implemented tools separately from locally available executabl
     ),
     Layer.provide(Layer.mock(VcsProcess.VcsProcess)(processMock)),
     Layer.provide(
-      sourceControlProviderRegistryTestLayer({
+      layerSourceControlProviderRegistryTest({
         process: processMock,
         bitbucket: {
           probeAuth: Effect.succeed({
@@ -532,7 +617,7 @@ it.effect("reports implemented tools separately from locally available executabl
     const bitbucket = result.sourceControlProviders.find((item) => item.kind === "bitbucket");
     assert.ok(bitbucket);
     assert.strictEqual(bitbucket.executable, undefined);
-  }).pipe(Effect.provide(testLayer));
+  }).pipe(Effect.provide(layerTest));
 });
 
 it.effect("probes provider authentication without exposing token details", () => {
@@ -600,7 +685,7 @@ Logged in to gitlab.com as gitlab-user
       );
     },
   } satisfies Partial<VcsProcess.VcsProcess["Service"]>;
-  const testLayer = SourceControlDiscovery.layer.pipe(
+  const layerTest = SourceControlDiscovery.layer.pipe(
     Layer.provide(
       ServerConfig.layerTest(process.cwd(), {
         prefix: "t3-source-control-auth-discovery-",
@@ -608,7 +693,7 @@ Logged in to gitlab.com as gitlab-user
     ),
     Layer.provide(Layer.mock(VcsProcess.VcsProcess)(processMock)),
     Layer.provide(
-      sourceControlProviderRegistryTestLayer({
+      layerSourceControlProviderRegistryTest({
         process: processMock,
         bitbucket: {
           probeAuth: Effect.succeed({
@@ -667,7 +752,7 @@ Logged in to gitlab.com as gitlab-user
         },
       ],
     );
-  }).pipe(Effect.provide(testLayer));
+  }).pipe(Effect.provide(layerTest));
 });
 
 it.effect("discovers Forgejo accounts and retains the server port", () =>

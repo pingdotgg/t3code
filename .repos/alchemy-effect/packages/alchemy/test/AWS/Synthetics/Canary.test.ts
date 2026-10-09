@@ -55,138 +55,151 @@ const assertGroupGone = (groupName: string) =>
     }),
   );
 
-describe.sequential("AWS.Synthetics.Canary", () => {
-  test.provider(
-    "creates a stopped canary + group, updates the schedule, and deletes",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+describe.sequential(
+  "AWS.Synthetics.Canary",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:s3",
+      "provider:aws:synthetics",
+      "live",
+    ],
+  },
+  () => {
+    test.provider(
+      "creates a stopped canary + group, updates the schedule, and deletes",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        const deployCanary = (scheduleExpression: string, groupTag: string) =>
-          stack.deploy(
+          const deployCanary = (scheduleExpression: string, groupTag: string) =>
+            stack.deploy(
+              Effect.gen(function* () {
+                const bucket = yield* Bucket("CanaryArtifacts", {
+                  forceDestroy: true,
+                });
+                const canary = yield* Canary("Heartbeat", {
+                  script: HEARTBEAT_SCRIPT,
+                  artifactS3Location: Output.interpolate`s3://${bucket.bucketName}/heartbeat`,
+                  schedule: { expression: scheduleExpression },
+                });
+                const group = yield* Group("HeartbeatGroup", {
+                  members: [canary.canaryArn],
+                  tags: { alchemyTest: groupTag },
+                });
+                return {
+                  canaryName: canary.canaryName,
+                  canaryArn: canary.canaryArn,
+                  executionRoleArn: canary.executionRoleArn,
+                  groupName: group.groupName,
+                  groupArn: group.groupArn,
+                };
+              }),
+            );
+
+          const created = yield* deployCanary("rate(5 minutes)", "one");
+
+          // Out-of-band verification via distilled.
+          const observed = yield* synthetics.getCanary({
+            Name: created.canaryName,
+          });
+          // Never started → READY (a stopped-after-running canary is STOPPED).
+          expect(["READY", "STOPPED"]).toContain(
+            observed.Canary?.Status?.State,
+          );
+          expect(observed.Canary?.RuntimeVersion).toBe(
+            "syn-nodejs-puppeteer-16.1",
+          );
+          expect(observed.Canary?.Schedule?.Expression).toBe("rate(5 minutes)");
+          expect(observed.Canary?.ExecutionRoleArn).toBe(
+            created.executionRoleArn,
+          );
+          expect(observed.Canary?.Tags?.["alchemy::id"]).toBe("Heartbeat");
+
+          // The group exists, is tagged, and holds the canary as its member.
+          const observedGroup = yield* synthetics.getGroup({
+            GroupIdentifier: created.groupName,
+          });
+          expect(observedGroup.Group?.Name).toBe(created.groupName);
+          expect(observedGroup.Group?.Arn).toBe(created.groupArn);
+          expect(observedGroup.Group?.Tags?.["alchemy::id"]).toBe(
+            "HeartbeatGroup",
+          );
+          expect(observedGroup.Group?.Tags?.alchemyTest).toBe("one");
+          const members = yield* synthetics.listGroupResources({
+            GroupIdentifier: created.groupName,
+          });
+          expect(members.Resources).toContain(created.canaryArn);
+
+          // Update the schedule + group tags in place (same physical names).
+          const updated = yield* deployCanary("rate(10 minutes)", "two");
+          expect(updated.canaryName).toBe(created.canaryName);
+          expect(updated.groupName).toBe(created.groupName);
+          const observedUpdated = yield* synthetics.getCanary({
+            Name: created.canaryName,
+          });
+          expect(observedUpdated.Canary?.Schedule?.Expression).toBe(
+            "rate(10 minutes)",
+          );
+          const updatedGroup = yield* synthetics.getGroup({
+            GroupIdentifier: created.groupName,
+          });
+          expect(updatedGroup.Group?.Tags?.alchemyTest).toBe("two");
+
+          yield* stack.destroy();
+          yield* assertCanaryGone(created.canaryName);
+          yield* assertGroupGone(created.groupName);
+        }),
+      { timeout: 420_000 },
+    );
+
+    // A live canary run takes ~1-2 minutes end to end — gated behind
+    // AWS_TEST_SLOW=1.
+    test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
+      "starts the canary and records a successful run",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
+
+          const { canaryName } = yield* stack.deploy(
             Effect.gen(function* () {
-              const bucket = yield* Bucket("CanaryArtifacts", {
+              const bucket = yield* Bucket("RunArtifacts", {
                 forceDestroy: true,
               });
-              const canary = yield* Canary("Heartbeat", {
+              const canary = yield* Canary("HeartbeatRun", {
                 script: HEARTBEAT_SCRIPT,
-                artifactS3Location: Output.interpolate`s3://${bucket.bucketName}/heartbeat`,
-                schedule: { expression: scheduleExpression },
+                artifactS3Location: Output.interpolate`s3://${bucket.bucketName}/run`,
+                schedule: { expression: "rate(1 minute)" },
+                start: true,
               });
-              const group = yield* Group("HeartbeatGroup", {
-                members: [canary.canaryArn],
-                tags: { alchemyTest: groupTag },
-              });
-              return {
-                canaryName: canary.canaryName,
-                canaryArn: canary.canaryArn,
-                executionRoleArn: canary.executionRoleArn,
-                groupName: group.groupName,
-                groupArn: group.groupArn,
-              };
+              return { canaryName: canary.canaryName };
             }),
           );
 
-        const created = yield* deployCanary("rate(5 minutes)", "one");
+          const running = yield* synthetics.getCanary({ Name: canaryName });
+          expect(running.Canary?.Status?.State).toBe("RUNNING");
 
-        // Out-of-band verification via distilled.
-        const observed = yield* synthetics.getCanary({
-          Name: created.canaryName,
-        });
-        // Never started → READY (a stopped-after-running canary is STOPPED).
-        expect(["READY", "STOPPED"]).toContain(observed.Canary?.Status?.State);
-        expect(observed.Canary?.RuntimeVersion).toBe(
-          "syn-nodejs-puppeteer-16.1",
-        );
-        expect(observed.Canary?.Schedule?.Expression).toBe("rate(5 minutes)");
-        expect(observed.Canary?.ExecutionRoleArn).toBe(
-          created.executionRoleArn,
-        );
-        expect(observed.Canary?.Tags?.["alchemy::id"]).toBe("Heartbeat");
-
-        // The group exists, is tagged, and holds the canary as its member.
-        const observedGroup = yield* synthetics.getGroup({
-          GroupIdentifier: created.groupName,
-        });
-        expect(observedGroup.Group?.Name).toBe(created.groupName);
-        expect(observedGroup.Group?.Arn).toBe(created.groupArn);
-        expect(observedGroup.Group?.Tags?.["alchemy::id"]).toBe(
-          "HeartbeatGroup",
-        );
-        expect(observedGroup.Group?.Tags?.alchemyTest).toBe("one");
-        const members = yield* synthetics.listGroupResources({
-          GroupIdentifier: created.groupName,
-        });
-        expect(members.Resources).toContain(created.canaryArn);
-
-        // Update the schedule + group tags in place (same physical names).
-        const updated = yield* deployCanary("rate(10 minutes)", "two");
-        expect(updated.canaryName).toBe(created.canaryName);
-        expect(updated.groupName).toBe(created.groupName);
-        const observedUpdated = yield* synthetics.getCanary({
-          Name: created.canaryName,
-        });
-        expect(observedUpdated.Canary?.Schedule?.Expression).toBe(
-          "rate(10 minutes)",
-        );
-        const updatedGroup = yield* synthetics.getGroup({
-          GroupIdentifier: created.groupName,
-        });
-        expect(updatedGroup.Group?.Tags?.alchemyTest).toBe("two");
-
-        yield* stack.destroy();
-        yield* assertCanaryGone(created.canaryName);
-        yield* assertGroupGone(created.groupName);
-      }),
-    { timeout: 420_000 },
-  );
-
-  // A live canary run takes ~1-2 minutes end to end — gated behind
-  // AWS_TEST_SLOW=1.
-  test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
-    "starts the canary and records a successful run",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
-
-        const { canaryName } = yield* stack.deploy(
-          Effect.gen(function* () {
-            const bucket = yield* Bucket("RunArtifacts", {
-              forceDestroy: true,
-            });
-            const canary = yield* Canary("HeartbeatRun", {
-              script: HEARTBEAT_SCRIPT,
-              artifactS3Location: Output.interpolate`s3://${bucket.bucketName}/run`,
-              schedule: { expression: "rate(1 minute)" },
-              start: true,
-            });
-            return { canaryName: canary.canaryName };
-          }),
-        );
-
-        const running = yield* synthetics.getCanary({ Name: canaryName });
-        expect(running.Canary?.Status?.State).toBe("RUNNING");
-
-        // Poll for the first completed successful run.
-        const passedRun = yield* synthetics
-          .getCanaryRuns({ Name: canaryName })
-          .pipe(
-            Effect.map((r) =>
-              (r.CanaryRuns ?? []).find(
-                (run) => run.Status?.State === "PASSED",
+          // Poll for the first completed successful run.
+          const passedRun = yield* synthetics
+            .getCanaryRuns({ Name: canaryName })
+            .pipe(
+              Effect.map((r) =>
+                (r.CanaryRuns ?? []).find(
+                  (run) => run.Status?.State === "PASSED",
+                ),
               ),
-            ),
-            Effect.repeat({
-              schedule: Schedule.spaced("10 seconds"),
-              until: (run) => run !== undefined,
-              times: 24,
-            }),
-          );
-        expect(passedRun?.Status?.State).toBe("PASSED");
+              Effect.repeat({
+                schedule: Schedule.spaced("10 seconds"),
+                until: (run) => run !== undefined,
+                times: 24,
+              }),
+            );
+          expect(passedRun?.Status?.State).toBe("PASSED");
 
-        yield* stack.destroy();
-        yield* assertCanaryGone(canaryName);
-      }),
-    { timeout: 600_000 },
-  );
-});
+          yield* stack.destroy();
+          yield* assertCanaryGone(canaryName);
+        }),
+      { timeout: 600_000 },
+    );
+  },
+);

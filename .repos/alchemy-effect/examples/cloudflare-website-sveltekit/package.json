@@ -21,7 +21,7 @@
     "@types/node": "catalog:node24",
     "svelte": "catalog:",
     "tailwindcss": "catalog:",
-    "typescript": "catalog:",
+    "typescript": "catalog:typescript-classic",
     "vite": "catalog:"
   },
   "repository": {

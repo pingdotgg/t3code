@@ -18,6 +18,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 import {
   presentPendingBackgroundWork,
+  presentProviderGoal,
   deriveReportedModelSelection,
   deriveLatestThreadRun,
   deriveProviderSubagentStatus,
@@ -520,6 +521,7 @@ describe("presentPendingBackgroundWork", () => {
     expect(presentation).toEqual({
       title: "Waiting on subagent Luna Window Properties",
       items: [{ taskId: "luna", kind: "subagent", label: "Luna Window Properties", childThreadId }],
+      waiting: true,
     });
   });
 
@@ -544,10 +546,35 @@ describe("presentPendingBackgroundWork", () => {
         { taskId: "a", kind: "subagent", description: "Review src/math.ts" },
       ])?.title,
     ).toBe("Waiting on subagent Review src/math.ts");
-    expect(presentPendingBackgroundWork([{ taskId: "a", kind: "command" }])?.title).toBe(
-      "Waiting on a command",
+    expect(presentPendingBackgroundWork([{ taskId: "a", kind: "monitor" }])?.title).toBe(
+      "Waiting on a monitor",
     );
     expect(presentPendingBackgroundWork([])).toBeNull();
+  });
+
+  // A command left running, such as a dev server, does not wake the agent.
+  it("says only commands are running, not waited on", () => {
+    expect(
+      presentPendingBackgroundWork([
+        { taskId: "dev", kind: "command", description: "Start the shared dev server" },
+      ]),
+    ).toMatchObject({ title: "Running: Start the shared dev server", waiting: false });
+    expect(presentPendingBackgroundWork([{ taskId: "a", kind: "command" }])).toMatchObject({
+      title: "Running a command",
+      waiting: false,
+    });
+    expect(
+      presentPendingBackgroundWork([
+        { taskId: "a", kind: "command", description: "vp run dev" },
+        { taskId: "b", kind: "command", description: "tailscale serve" },
+      ]),
+    ).toMatchObject({ title: "Running 2 commands", waiting: false });
+    expect(
+      presentPendingBackgroundWork([
+        { taskId: "a", kind: "command", description: "vp run dev" },
+        { taskId: "b", kind: "monitor", description: "Watch PR checks" },
+      ]),
+    ).toMatchObject({ title: "Waiting on 1 command and 1 monitor", waiting: true });
   });
 
   it("groups work by kind, subagents first, and keeps each name", () => {
@@ -649,5 +676,45 @@ describe("provider-reported model selection", () => {
     const variantReport = { ...selected, options: [{ id: "variant", value: "default" }] };
     expect(formatModelSelectionEffort(selected, models, variantReport)).toBe("Default");
     expect(formatModelSelectionEffort(selected, models)).toBe("Unknown");
+  });
+});
+
+describe("presentProviderGoal", () => {
+  it("summarizes Codex accounting and offers resume once the goal stops short", () => {
+    expect(
+      presentProviderGoal(
+        {
+          objective: "Ship the feature",
+          status: "paused",
+          tokensUsed: 12_400,
+          tokenBudget: 50_000,
+          timeUsedSeconds: 245,
+        },
+        false,
+      ),
+    ).toEqual({
+      title: "Goal paused",
+      objective: "Ship the feature",
+      usage: "12k / 50k tokens · 4m 5s",
+      canResume: true,
+    });
+  });
+
+  it("counts Claude evaluator checks and never offers resume", () => {
+    expect(
+      presentProviderGoal({ objective: "All tests pass", status: "active", checks: 1 }, true),
+    ).toEqual({
+      title: "Pursuing goal",
+      objective: "All tests pass",
+      usage: "1 check",
+      canResume: false,
+    });
+    expect(
+      presentProviderGoal({ objective: "All tests pass", status: "complete", checks: 0 }, false)
+        .usage,
+    ).toBeNull();
+    expect(
+      presentProviderGoal({ objective: "All tests pass", status: "active" }, false).title,
+    ).toBe("Goal set");
   });
 });

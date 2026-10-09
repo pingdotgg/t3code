@@ -17,7 +17,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import type * as RpcMessage from "effect/unstable/rpc/RpcMessage";
+import type * as RpcMessage from "effect/rpc/RpcMessage";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -146,7 +146,7 @@ const TARGET = new PrimaryConnectionTarget({
   wsBaseUrl: "wss://environment.example.test",
 });
 
-const TEST_CRYPTO_LAYER = Layer.succeed(
+const layerTestCrypto = Layer.succeed(
   Crypto.Crypto,
   Crypto.make({
     randomBytes: (size) => new Uint8Array(size),
@@ -280,6 +280,6 @@ describe("routine command transport budget", () => {
       });
       expect(currentRpcJsonBytes).toBeLessThanOrEqual(MAX_CURRENT_SEND_RPC_JSON_BYTES);
       expect(currentRpcJsonBytes / formerRpcJsonBytes).toBeLessThanOrEqual(0.000_06);
-    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+    }).pipe(Effect.provide(layerTestCrypto)),
   );
 });

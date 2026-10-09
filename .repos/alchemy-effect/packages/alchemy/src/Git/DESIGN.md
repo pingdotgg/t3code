@@ -317,18 +317,18 @@ The cut list with upgrade paths is consolidated in §10.
 
 ## 5. The Effect HttpApi REST surface
 
-Contract lives in `src/Api.ts`, following `packages/alchemy/src/Cloudflare/StateStore/Api.ts` / `State/HttpStateApi.ts` conventions (effect `4.0.0-beta.105`, `effect/unstable/httpapi`). Abbreviated only where repetitive:
+Contract lives in `src/Api.ts`, following `packages/alchemy/src/Cloudflare/StateStore/Api.ts` / `State/HttpStateApi.ts` conventions (effect `4.0.0-beta.105`, `effect/httpapi`). Abbreviated only where repetitive:
 
 ```ts
 import * as Context from "effect/Context";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
-import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
-import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
-import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
-import * as HttpApiSecurity from "effect/unstable/httpapi/HttpApiSecurity";
-import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
+import * as HttpApi from "effect/httpapi/HttpApi";
+import * as HttpApiGroup from "effect/httpapi/HttpApiGroup";
+import * as HttpApiEndpoint from "effect/httpapi/HttpApiEndpoint";
+import * as HttpApiMiddleware from "effect/httpapi/HttpApiMiddleware";
+import * as HttpApiSecurity from "effect/httpapi/HttpApiSecurity";
+import * as HttpApiSchema from "effect/httpapi/HttpApiSchema";
 
 // ── primitives ────────────────────────────────────────────────────────────
 export const Oid = Schema.String.pipe(Schema.pattern(/^[0-9a-f]{40}$/), Schema.brand("Oid"));

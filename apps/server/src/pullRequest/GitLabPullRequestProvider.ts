@@ -102,6 +102,7 @@ export function gitLabProviderFailure(
   if (error._tag === "GitLabCliUnavailableError") return { reason: "missing-tool" };
   if (error._tag === "GitLabCliAuthenticationError") return { reason: "unauthenticated" };
   if (error._tag === "GitLabCliRateLimitError") return { reason: "rate-limited" };
+  if (error._tag === "GitLabMergeRequestNotFoundError") return { reason: "not-found" };
   return { reason: "failed" };
 }
 

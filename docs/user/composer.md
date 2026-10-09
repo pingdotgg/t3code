@@ -12,6 +12,23 @@ becomes an attachment when inserting it would exceed the message limit. On a
 hardware keyboard, use `Cmd+Shift+V` on Apple devices or `Ctrl+Shift+V` elsewhere
 to keep a large paste editable in the composer instead.
 
+## Formatting
+
+The composer writes Markdown and shows it styled as you type. Markers such as
+`**` stay in the text and show beside the styled words when your cursor is on
+them. Lines starting with `- `, `1. `, `- [ ] `, `> `, `# ` or `---` become lists,
+task lists, quotes, headings and rules; ` ``` ` followed by Enter opens a code
+block. What you typed is what the agent receives, markers and numbering
+included, and `#1234` without a space still looks up a pull request.
+
+Enter sends. In a list or quote, **Shift+Enter** continues it, and Shift+Enter
+on an empty line leaves it; **Tab** nests a list item. In a code block, Enter
+starts a new line at the current indentation, **Tab** and **Shift+Tab** indent
+the selected lines, and a closing ` ``` ` followed by Enter, or two blank lines
+at the end, leave the block. **Backspace** at the start of a code block turns it
+back into plain lines. Choose the language in a code block's corner to change
+it. Very large code blocks are shown without syntax highlighting.
+
 ## Attach files
 
 Attach up to 100 files per message. Each image can be up to 10 MiB, with at most
@@ -193,6 +210,19 @@ Provider commands must start the message to run. T3 Code commands such as
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it. Web and desktop also offer compaction from the context meter.
 
+## Goals
+
+With Codex and Claude, send `/goal` followed by what "done" means, for example
+`/goal all tests in packages/api pass`. The agent keeps working across turns
+until it judges the goal met. The thread shows **Goal** while it works, and a
+row above the composer shows the goal and its progress.
+
+- `/goal` alone shows the current goal. `/goal clear` removes it.
+- Codex also supports `/goal pause` and `/goal resume`. Stopping a Codex goal
+  pauses it.
+- Stopping Claude ends the current turn, but the goal stays set. Claude checks it
+  again at the end of your next message.
+
 ## Context in your message
 
 Context you attach lands where your cursor is, as a chip inside your text: a terminal excerpt,
@@ -273,6 +303,9 @@ styles, or images from neighboring files.
 On web and desktop, HTML and PDF files open as rendered pages. Switch an HTML
 file to source view to read its markup; a link to a specific line opens source
 automatically. HTML previews cannot access your T3 Code session.
+
+The file viewer recognizes images, HTML, and PDF files by their filename extension,
+including filenames or folders containing `#` or `?`.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens a compatible installed file viewer.

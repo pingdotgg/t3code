@@ -15,7 +15,7 @@ import {
   type SourceControlRepositoryCloneUrls,
   type SourceControlRepositoryVisibility,
 } from "@t3tools/contracts";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { sanitizeBranchFragment } from "@t3tools/shared/git";
 import {
   detectSourceControlProviderFromRemoteUrl,
@@ -28,7 +28,7 @@ import {
   normalizeBitbucketPullRequestRecord,
   type NormalizedBitbucketPullRequestRecord,
 } from "./bitbucketPullRequests.ts";
-import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
+import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -72,12 +72,14 @@ export class BitbucketRepositoryLocatorError extends Schema.TaggedError<Bitbucke
     repository: Schema.String,
   },
 ) {
+  static readonly detail = "Bitbucket repositories must be specified as workspace/repository.";
+
   get detail(): string {
-    return "Bitbucket repositories must be specified as workspace/repository.";
+    return BitbucketRepositoryLocatorError.detail;
   }
 
   override get message(): string {
-    return `Bitbucket API failed in createRepository: ${this.detail}`;
+    return `Bitbucket API failed: ${this.detail}`;
   }
 }
 
@@ -727,9 +729,9 @@ export const make = Effect.gen(function* () {
     readonly context?: SourceControlProvider.SourceControlProviderContext;
     readonly repository?: string;
   }) {
-    const fromRepository =
-      input.repository !== undefined ? parseBitbucketRepositorySlug(input.repository) : null;
-    if (fromRepository) return fromRepository;
+    if (input.repository !== undefined) {
+      return yield* requireRepositoryLocator(input.repository);
+    }
 
     const fromContext =
       input.context?.provider.kind === "bitbucket"

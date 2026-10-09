@@ -5,7 +5,7 @@
  * decode and encode streams of structured data.
  */
 import { DateTime, Schema, Stream } from "effect"
-import { Ndjson, SchemaBinary } from "effect/unstable/encoding"
+import { Ndjson, SchemaBinary } from "effect/encoding"
 
 // SchemaBinary derives a framed binary decoder directly from a schema.
 export const schemaBinaryDecoder = SchemaBinary.decode(Schema.Struct({

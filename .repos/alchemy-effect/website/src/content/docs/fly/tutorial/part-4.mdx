@@ -1,6 +1,6 @@
 ---
 title: "Part 4: Secrets and Cleanup"
-description: Store an App secret, read it from the Service at runtime, and destroy the stack.
+description: Read a secret from .env in the Service with Config.Redacted, guard a route with it, and destroy the stack.
 sidebar:
   order: 4
 ---
@@ -8,51 +8,34 @@ sidebar:
 import Terminal from "../../../../components/Terminal.astro";
 import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
 
-A secret only this Service needs from `.env` is
-`Config.Redacted`. See [Secrets](/fly/data/secrets).
+In this part the Service reads an API token from your `.env` with
+`Config.Redacted` and uses it to guard a route. Then you tear the
+stack down so billing stops.
 
-This part is for a value Fly should own: an App **Secret** Fly
-injects into every Machine. You will read it with `GetSecret`, then
-tear the stack down so billing stops.
+## Add the secret to `.env`
 
-## Declare a Secret
+Create a `.env` file next to `alchemy.run.ts`:
 
-Add a Secret next to the App. Wrap the value with `Redacted.make` so
-it is never logged:
-
-```diff lang="typescript"
-// src/app.ts
-import * as Fly from "alchemy/Fly";
-+import * as Redacted from "effect/Redacted";
-
-export const Site = Fly.App("Site");
-
-export const PublicIp = Fly.IpAssignment("Shared", { /* ... */ });
-+
-+export const ApiToken = Fly.Secret("ApiToken", {
-+  app: Site,
-+  name: "API_TOKEN",
-+  value: Redacted.make("not-a-real-token"),
-+});
+```sh
+# .env
+API_TOKEN=not-a-real-token
 ```
 
-`name` is the env-var Fly injects into Machines (`API_TOKEN`). Omit
-it and Alchemy generates an ownership-stamped name instead.
+Alchemy reads Config values from the env of whoever runs the deploy,
+which includes `.env`. Keep `.env` out of version control.
 
-## Bind `GetSecret`
+## Read it in the constructor
 
-Inside the Service's constructor, bind the Secret — pass the declaration
-directly, no yielding required:
+Yield `Config.Redacted` in the Service's constructor Effect:
 
 ```diff lang="typescript"
 // src/api.ts
--import { Site } from "./app.ts";
-+import { ApiToken, Site } from "./app.ts";
-
++import * as Config from "effect/Config";
+// ...
   Effect.gen(function* () {
     const mount = yield* Fly.MountVolume({ path: "/data", sizeGb: 1 });
     const fs = yield* FileSystem.FileSystem;
-+    const get = yield* Fly.GetSecret(ApiToken);
++    const apiToken = yield* Config.Redacted("API_TOKEN");
 
     return {
       fetch: /* ... */,
@@ -60,56 +43,33 @@ directly, no yielding required:
   }).pipe(Effect.provide(Fly.MountVolumeLive)),
 ```
 
-`GetSecret` is a **binding**: at deploy time it can mint an App
-deploy token for the Machine, and at runtime it hands you a
-`get()` for this Secret. Listing every secret on the App is
-`ListSecrets(Site)` — Fly's list API is app-scoped.
+At deploy time Alchemy reads `API_TOKEN` and writes it onto the
+Machine as a secret. At runtime the same line resolves from that env
+var. `apiToken` is `Redacted<string>`, so it is never logged.
 
-## Provide the binding layer
+## Guard a route with the token
 
-Bindings declare a capability; layers implement it. Provide
-`GetSecretHttp` next to `MountVolumeLive`:
+Add a `/secret` route that answers only when the request carries the
+token:
 
-```typescript
-  }).pipe(
-    Effect.provide(Fly.MountVolumeLive),
-    Effect.provide(Fly.GetSecretHttp),
-  ),
-```
-
-## Serve the secret's name
-
-Add a `/secret` route that returns the secret's **name**, never the
-plaintext:
-
-```typescript
+```diff lang="typescript"
+// src/api.ts
++import * as Redacted from "effect/Redacted";
+// ...
 if (url.pathname === "/health") {
   return HttpServerResponse.json({ ok: true });
 }
-if (url.pathname === "/secret") {
-  const got = yield* get().pipe(Effect.orDie);
-  return HttpServerResponse.json({ name: got.name });
-}
++if (url.pathname === "/secret") {
++  const expected = `Bearer ${Redacted.value(apiToken)}`;
++  return request.headers["authorization"] === expected
++    ? HttpServerResponse.text("authorized")
++    : HttpServerResponse.text("unauthorized", { status: 401 });
++}
 const file = `${mount.path}${url.pathname}`;
 ```
 
-`secrets.get()` defaults to the bound Secret. Fly only returns
-plaintext from a Machine in the same App; from an Action you get
-metadata.
-
-## Yield the Secret from the Stack
-
-```diff lang="typescript"
-// alchemy.run.ts
--import { PublicIp, Site } from "./src/app.ts";
-+import { ApiToken, PublicIp, Site } from "./src/app.ts";
-
-  Effect.gen(function* () {
-    const site = yield* Site;
-    yield* PublicIp;
-+    yield* ApiToken;
-    const api = yield* Api;
-```
+`Redacted.value` unwraps the token only where the comparison needs
+the raw string.
 
 ## Deploy
 
@@ -128,29 +88,32 @@ metadata.
   </TabItem>
 </Tabs>
 
-<Terminal content={`[u]Plan[/u]: [g]1 to create[/g], [y]1 to update[/y]
+<Terminal content={`[u]Plan[/u]: [y]1 to update[/y]
 
-[g]+[/g] [b]ApiToken[/b] [d](Fly.Secret)[/d]
 [y]~[/y] [b]Api[/b] [d](Fly.Service)[/d]
 
 Proceed?
 ◉ Yes ○ No
-[g]✓[/g] [b]ApiToken[/b] [d](Fly.Secret)[/d] [g]created[/g]
 [g]✓[/g] [b]Api[/b] [d](Fly.Service)[/d] [y]updated[/y]`} />
 
 ## Try it out
 
 ```sh
-curl https://myapp-site-dev-a1b2c3d4.fly.dev/secret
-# → {"name":"API_TOKEN"}
+curl https://myapp-api-dev-a1b2c3d4.fly.dev/secret
+# → unauthorized
+
+curl -H "Authorization: Bearer not-a-real-token" \
+  https://myapp-api-dev-a1b2c3d4.fly.dev/secret
+# → authorized
 ```
 
-:::tip[Your own domain?]
-Declare a [`Fly.Certificate`](/fly/networking#use-your-own-hostname) for a
-hostname you control (`kind: "acme"`) and point DNS at the App —
-the ACME challenge records live on `cert.dnsRequirements`. Dedicated
-IPv4 (`IpAssignment` `type: "v4"`) is billed and quota-gated —
-prefer `shared_v4` or `v6` unless you need one.
+:::tip[Sharing a secret or adding your own domain?]
+A value several Services share belongs in a
+[`Fly.Secret`](/fly/data/secrets#when-fly-should-own-the-secret), and
+a custom domain needs a
+[`Fly.Certificate`](/fly/networking#use-your-own-hostname). Both
+attach to a `Fly.App`, so the Services that use them join that App
+with [`app`](/fly/compute/services#group-services-in-one-app).
 :::
 
 ## Clean up
@@ -173,27 +136,30 @@ stops:
   </TabItem>
 </Tabs>
 
-Alchemy deletes everything in reverse dependency order — Service,
-Secret, Volume, IP, App.
+Deleting the Service deletes its Machine, its Volume, and the App it
+created, along with the App's addresses.
 
 ## Recap
 
 Over four parts you built a complete Fly deployment:
 
-- An App with a generated globally unique name
-- An HTTP Service bundled into a Machine, updated only when its
-  code hash changes
+- An HTTP Service in its own App with a generated globally unique
+  name and a public `fly.dev` URL
+- Machines updated only when the code hash changes
 - A Volume mounted at `/data` whose contents outlive deploys
-- An App Secret readable from the Service, never logged
+- A secret from `.env` readable from the Service, never logged
 
 ## Where next
 
-- [Services](/fly/compute/services) — background workers, env,
-  multiple Services per App.
+- [Services](/fly/compute/services) — private Services, background
+  workers, and grouping Services in one App.
+- [IPs & certificates](/fly/networking) — public and private
+  Services, and your own hostname.
 - [Machines](/fly/compute/machines) — raw images without a bundle.
 - [Volumes](/fly/data/volumes) — snapshots, extend, region rules.
-- [Secrets](/fly/data/secrets) — `GetSecret` / `ListSecrets` / `WriteSecret`, plus
-  KMS `SecretKey` with `Encrypt` / `Decrypt` / `Sign` / `Verify`.
+- [Secrets](/fly/data/secrets) — `Fly.Secret`, `GetSecret` /
+  `ListSecrets` / `WriteSecret`, plus KMS `SecretKey` with
+  `Encrypt` / `Decrypt` / `Sign` / `Verify`.
 - [Testing](/testing) — deploy this stack from an integration test
   and drive it over HTTP.
 - [CI](/environments/ci) — run `alchemy deploy` from GitHub Actions

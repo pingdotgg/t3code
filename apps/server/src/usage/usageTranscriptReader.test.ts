@@ -11,7 +11,7 @@ import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
 import { readTranscriptRecords } from "./usageTranscriptReader.ts";
 import { readOpenCodeUsage } from "./opencodeUsageReader.ts";
 import { readCursorAccountUsage } from "./cursorUsageReader.ts";
-import { readAntigravityUsage } from "./antigravityUsageReader.ts";
+import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUsageReader.ts";
 
 let dir: string;
 
@@ -76,6 +76,14 @@ function codexModelLine(model: string): string {
   })}\n`;
 }
 
+function codexTierLine(serviceTier: string): string {
+  return `${JSON.stringify({
+    type: "event_msg",
+    timestamp: "2026-08-01T10:00:01Z",
+    payload: { type: "thread_settings_applied", thread_settings: { service_tier: serviceTier } },
+  })}\n`;
+}
+
 function codexUsageLine(outputTokens: number, secondsOffset: number): string {
   return `${JSON.stringify({
     type: "event_msg",
@@ -111,19 +119,24 @@ describe("readTranscriptRecords resume", () => {
 
   it("carries the Codex reducer state across the resume boundary", async () => {
     const path = NodePath.join(dir, "rollout.jsonl");
-    await NodeFSP.writeFile(path, codexMetaLine() + codexModelLine("gpt-5.2-codex"));
+    await NodeFSP.writeFile(
+      path,
+      codexMetaLine() + codexModelLine("gpt-5.2-codex") + codexTierLine("ultrafast"),
+    );
     const first = await readTranscriptRecords(path, "codex");
     assert.isNotNull(first);
     assert.strictEqual(first.records.length, 0);
 
-    // The appended usage event has no turn_context or session_meta of its own;
-    // model and session must come from the state captured before the boundary.
+    // The appended usage event has no turn_context, thread settings, or
+    // session_meta of its own; model, tier, and session must come from the
+    // state captured before the boundary.
     await NodeFSP.appendFile(path, codexUsageLine(9, 5));
     const second = await readTranscriptRecords(path, "codex", first.position);
     assert.isNotNull(second);
     assert.isTrue(second.resumed);
     assert.strictEqual(second.records.length, 1);
     assert.strictEqual(second.records[0]?.model, "gpt-5.2-codex");
+    assert.strictEqual(second.records[0]?.speed, "ultrafast");
     assert.strictEqual(second.records[0]?.sessionId, "codex-session-1");
   });
 
@@ -723,6 +736,105 @@ describe("SQLite usage readers", () => {
       records.map((record) => record.timestampMs),
       [1780000200000, 1780000200000],
     );
+  });
+
+  const antigravityGeneration = (responseId: string) =>
+    new Uint8Array(
+      protoBytes(1, [
+        ...protoBytes(4, [
+          ...protoNumber(2, 100),
+          ...protoNumber(3, 40),
+          ...protoText(11, responseId),
+        ]),
+        ...protoText(19, "Gemini 3 Pro"),
+        ...protoBytes(9, protoBytes(4, protoNumber(1, 1780000000))),
+      ]),
+    );
+
+  it("reuses an unchanged Antigravity database instead of decoding it again", async () => {
+    const path = NodePath.join(dir, "session-1.db");
+    const db = new NodeSqlite.DatabaseSync(path);
+    try {
+      db.exec("CREATE TABLE gen_metadata (idx INTEGER, data BLOB)");
+      db.prepare("INSERT INTO gen_metadata VALUES (?, ?)").run(0, antigravityGeneration("r-1"));
+      const cache = makeAntigravityUsageCache();
+      assert.deepStrictEqual((await readAntigravityUsage(dir, 0, cache)).errors, []);
+
+      // An exclusive lock makes a fresh read fail without touching the file, so
+      // only a cache hit can still return the earlier records.
+      db.exec("BEGIN EXCLUSIVE");
+      assert.strictEqual((await readAntigravityUsage(dir, 0)).errors.length, 1);
+      const cached = await readAntigravityUsage(dir, 0, cache);
+      assert.deepStrictEqual(cached.errors, []);
+      assert.deepStrictEqual(
+        cached.files.flatMap((file) => file.records).map((record) => record.dedupeKey),
+        ["antigravity:11:r-1"],
+      );
+      db.exec("ROLLBACK");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("rereads an Antigravity database rewritten with its size and mtime restored", async () => {
+    const path = NodePath.join(dir, "session-1.db");
+    const db = new NodeSqlite.DatabaseSync(path);
+    try {
+      db.exec("CREATE TABLE gen_metadata (idx INTEGER, data BLOB)");
+      db.prepare("INSERT INTO gen_metadata VALUES (?, ?)").run(0, antigravityGeneration("r-1"));
+    } finally {
+      db.close();
+    }
+    await NodeFSP.utimes(path, 1780000000, 1780000000);
+    const cache = makeAntigravityUsageCache();
+    assert.deepStrictEqual((await readAntigravityUsage(dir, 0, cache)).errors, []);
+
+    // ctime has the kernel's timestamp granularity, which can be a few
+    // milliseconds, so repeat the forged rewrite until it lands on a later tick
+    // than the cached read, as any real rewrite does.
+    const cached = await NodeFSP.stat(path);
+    do {
+      await NodeFSP.writeFile(path, Buffer.alloc(cached.size));
+      await NodeFSP.utimes(path, 1780000000, 1780000000);
+    } while ((await NodeFSP.stat(path)).ctimeMs === cached.ctimeMs);
+    const restored = await NodeFSP.stat(path);
+    assert.strictEqual(restored.size, cached.size);
+    assert.strictEqual(restored.mtimeMs, cached.mtimeMs);
+    const next = await readAntigravityUsage(dir, 0, cache);
+    assert.deepStrictEqual(next.errors, [path]);
+    assert.deepStrictEqual(
+      next.files.flatMap((file) => file.records),
+      [],
+    );
+  });
+
+  it("rereads an Antigravity database when only its WAL changed", async () => {
+    const path = NodePath.join(dir, "session-1.db");
+    const db = new NodeSqlite.DatabaseSync(path);
+    try {
+      db.exec(
+        "PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; CREATE TABLE gen_metadata (idx INTEGER, data BLOB)",
+      );
+      const insert = db.prepare("INSERT INTO gen_metadata VALUES (?, ?)");
+      insert.run(0, antigravityGeneration("r-1"));
+      const cache = makeAntigravityUsageCache();
+      const first = await readAntigravityUsage(dir, 0, cache);
+      assert.strictEqual(first.files.flatMap((file) => file.records).length, 1);
+
+      const before = await NodeFSP.stat(path);
+      insert.run(1, antigravityGeneration("r-2"));
+      const after = await NodeFSP.stat(path);
+      assert.strictEqual(after.size, before.size);
+      assert.strictEqual(after.mtimeMs, before.mtimeMs);
+
+      const next = await readAntigravityUsage(dir, 0, cache);
+      assert.deepStrictEqual(
+        next.files.flatMap((file) => file.records).map((record) => record.dedupeKey),
+        ["antigravity:11:r-1", "antigravity:11:r-2"],
+      );
+    } finally {
+      db.close();
+    }
   });
 
   it("reads Antigravity step-only stores and reports malformed databases", async () => {

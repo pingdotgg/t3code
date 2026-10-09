@@ -8,6 +8,8 @@ export interface ScreenHeaderAction {
   readonly icon: AppSymbolName;
   readonly onPress: () => void;
   readonly disabled?: boolean;
+  /** Shows a spinner in place of the icon while the action's work is pending. */
+  readonly loading?: boolean;
   readonly selected?: boolean;
   readonly tintColor?: ColorValue;
 }

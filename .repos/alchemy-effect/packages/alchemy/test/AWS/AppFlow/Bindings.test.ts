@@ -8,8 +8,8 @@ import { expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import {
   AppFlowApiFunction,
   AppFlowApiFunctionLive,
@@ -266,5 +266,18 @@ test.provider(
   // Observed pass baseline is 104–117s under full-suite load with the old
   // ~50s execution poll; the poll is now ~90s, so 210s + the 40s poll delta.
   // Every constituent readiness poll remains independently bounded.
-  { timeout: 250_000, retry: 0 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:appflow",
+      "provider:aws:eventbridge",
+      "provider:aws:iam",
+      "provider:aws:lambda",
+      "provider:aws:s3",
+      "provider:aws:sqs",
+      "live",
+    ],
+    timeout: 250_000,
+    retry: 0,
+  },
 );

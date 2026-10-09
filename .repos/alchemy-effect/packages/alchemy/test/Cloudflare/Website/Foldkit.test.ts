@@ -61,224 +61,243 @@ const htmlPage = (marker: string) => `<!doctype html>
 </html>
 `;
 
-describe.concurrent("Foldkit", () => {
-  // The resource's reason to exist: a Foldkit app routes on the client, so
-  // `notFoundHandling` defaults to `single-page-application` and deep links
-  // boot the app without the caller configuring anything. The same project
-  // through `Website.Vite` 404s on `/counter/42` unless `assets` is passed
-  // by hand.
-  test.provider(
-    "Foldkit: deploys with SPA fallback by default",
-    (stack) =>
-      Effect.gen(function* () {
-        const { accountId } = yield* yield* CloudflareEnvironment;
+describe.concurrent(
+  "Foldkit",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:website",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+  },
+  () => {
+    // The resource's reason to exist: a Foldkit app routes on the client, so
+    // `notFoundHandling` defaults to `single-page-application` and deep links
+    // boot the app without the caller configuring anything. The same project
+    // through `Website.Vite` 404s on `/counter/42` unless `assets` is passed
+    // by hand.
+    test.provider(
+      "Foldkit: deploys with SPA fallback by default",
+      (stack) =>
+        Effect.gen(function* () {
+          const { accountId } = yield* yield* CloudflareEnvironment;
 
-        yield* stack.destroy();
+          yield* stack.destroy();
 
-        const rootDir = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-foldkit-default-",
-          tempRoot,
-          entries: fixtureEntries,
-        });
+          const rootDir = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-foldkit-default-",
+            tempRoot,
+            entries: fixtureEntries,
+          });
 
-        const site = yield* stack.deploy(
-          Effect.gen(function* () {
-            // Deliberately no `assets` — the default is what's under test.
-            return yield* Cloudflare.Website.Foldkit(
-              "FixFoldkitDefault",
-              foldkitProps(rootDir),
-            );
-          }),
-        );
+          const site = yield* stack.deploy(
+            Effect.gen(function* () {
+              // Deliberately no `assets` — the default is what's under test.
+              return yield* Cloudflare.Website.Foldkit(
+                "FixFoldkitDefault",
+                foldkitProps(rootDir),
+              );
+            }),
+          );
 
-        expect(site.url).toBeDefined();
-        expect(site.hash?.input).toBeDefined();
-        yield* expectWorkerExists(site.workerName, accountId);
+          expect(site.url).toBeDefined();
+          expect(site.hash?.input).toBeDefined();
+          yield* expectWorkerExists(site.workerName, accountId);
 
-        yield* expectUrlContains(`${site.url!}/`, "Foldkit Fixture", {
-          timeout: "120 seconds",
-          label: "foldkit index",
-        });
-        // Deep link falls back to index.html so client-side routing can boot.
-        yield* expectUrlContains(`${site.url!}/counter/42`, "Foldkit Fixture", {
-          timeout: "60 seconds",
-          label: "foldkit spa fallback",
-        });
+          yield* expectUrlContains(`${site.url!}/`, "Foldkit Fixture", {
+            timeout: "120 seconds",
+            label: "foldkit index",
+          });
+          // Deep link falls back to index.html so client-side routing can boot.
+          yield* expectUrlContains(
+            `${site.url!}/counter/42`,
+            "Foldkit Fixture",
+            {
+              timeout: "60 seconds",
+              label: "foldkit spa fallback",
+            },
+          );
 
-        yield* stack.destroy();
-        yield* waitForWorkerToBeDeleted(site.workerName, accountId);
-      }).pipe(logLevel),
-    { timeout: 360_000 },
-  );
+          yield* stack.destroy();
+          yield* waitForWorkerToBeDeleted(site.workerName, accountId);
+        }).pipe(logLevel),
+      { timeout: 360_000 },
+    );
 
-  // An explicit `assets` must win over the built-in default rather than be
-  // overridden by it — a spread in the wrong order would silently ignore
-  // whatever the caller passed.
-  test.provider(
-    "Foldkit: an explicit assets config overrides the SPA default",
-    (stack) =>
-      Effect.gen(function* () {
-        const { accountId } = yield* yield* CloudflareEnvironment;
+    // An explicit `assets` must win over the built-in default rather than be
+    // overridden by it — a spread in the wrong order would silently ignore
+    // whatever the caller passed.
+    test.provider(
+      "Foldkit: an explicit assets config overrides the SPA default",
+      (stack) =>
+        Effect.gen(function* () {
+          const { accountId } = yield* yield* CloudflareEnvironment;
 
-        yield* stack.destroy();
+          yield* stack.destroy();
 
-        const rootDir = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-foldkit-override-",
-          tempRoot,
-          entries: fixtureEntries,
-        });
+          const rootDir = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-foldkit-override-",
+            tempRoot,
+            entries: fixtureEntries,
+          });
 
-        const site = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.Website.Foldkit("FixFoldkitOverride", {
-              ...foldkitProps(rootDir),
-              assets: {
-                notFoundHandling: "none",
-              },
-            });
-          }),
-        );
+          const site = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.Website.Foldkit("FixFoldkitOverride", {
+                ...foldkitProps(rootDir),
+                assets: {
+                  notFoundHandling: "none",
+                },
+              });
+            }),
+          );
 
-        expect(site.url).toBeDefined();
-        yield* expectWorkerExists(site.workerName, accountId);
+          expect(site.url).toBeDefined();
+          yield* expectWorkerExists(site.workerName, accountId);
 
-        // The app itself still serves...
-        yield* expectUrlContains(`${site.url!}/`, "Foldkit Fixture", {
-          timeout: "120 seconds",
-          label: "foldkit override index",
-        });
-        // ...but with `notFoundHandling: "none"` the deep link is a miss
-        // rather than an index.html fallback.
-        yield* expectDirectStatus(`${site.url!}/counter/42`, 404, {
-          timeout: "60 seconds",
-          label: "foldkit override deep link",
-        });
+          // The app itself still serves...
+          yield* expectUrlContains(`${site.url!}/`, "Foldkit Fixture", {
+            timeout: "120 seconds",
+            label: "foldkit override index",
+          });
+          // ...but with `notFoundHandling: "none"` the deep link is a miss
+          // rather than an index.html fallback.
+          yield* expectDirectStatus(`${site.url!}/counter/42`, 404, {
+            timeout: "60 seconds",
+            label: "foldkit override deep link",
+          });
 
-        yield* stack.destroy();
-        yield* waitForWorkerToBeDeleted(site.workerName, accountId);
-      }).pipe(logLevel),
-    { timeout: 360_000 },
-  );
+          yield* stack.destroy();
+          yield* waitForWorkerToBeDeleted(site.workerName, accountId);
+        }).pipe(logLevel),
+      { timeout: 360_000 },
+    );
 
-  // A Foldkit deployment may carry a Worker entry in front of the assets
-  // (API routes, error reporting, Durable Objects). The client build still
-  // serves through the ASSETS binding, and the SPA fallback still applies
-  // behind it.
-  test.provider(
-    "Foldkit: a custom main entry serves API routes alongside the app",
-    (stack) =>
-      Effect.gen(function* () {
-        const { accountId } = yield* yield* CloudflareEnvironment;
+    // A Foldkit deployment may carry a Worker entry in front of the assets
+    // (API routes, error reporting, Durable Objects). The client build still
+    // serves through the ASSETS binding, and the SPA fallback still applies
+    // behind it.
+    test.provider(
+      "Foldkit: a custom main entry serves API routes alongside the app",
+      (stack) =>
+        Effect.gen(function* () {
+          const { accountId } = yield* yield* CloudflareEnvironment;
 
-        yield* stack.destroy();
+          yield* stack.destroy();
 
-        const rootDir = yield* cloneFixture(workerFixtureDir, {
-          prefix: "alchemy-foldkit-worker-",
-          tempRoot,
-          entries: fixtureEntries,
-        });
+          const rootDir = yield* cloneFixture(workerFixtureDir, {
+            prefix: "alchemy-foldkit-worker-",
+            tempRoot,
+            entries: fixtureEntries,
+          });
 
-        const site = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.Website.Foldkit("FixFoldkitWorker", {
-              ...foldkitProps(rootDir),
-              main: "src/worker.ts",
-              assets: {
-                runWorkerFirst: ["/api/*"],
-              },
-              env: {
-                GREETING: "foldkit-worker-fixture",
-              },
-            });
-          }),
-        );
+          const site = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.Website.Foldkit("FixFoldkitWorker", {
+                ...foldkitProps(rootDir),
+                main: "src/worker.ts",
+                assets: {
+                  runWorkerFirst: ["/api/*"],
+                },
+                env: {
+                  GREETING: "foldkit-worker-fixture",
+                },
+              });
+            }),
+          );
 
-        expect(site.url).toBeDefined();
-        yield* expectWorkerExists(site.workerName, accountId);
+          expect(site.url).toBeDefined();
+          yield* expectWorkerExists(site.workerName, accountId);
 
-        // The Worker entry answers its own route from the binding.
-        yield* expectUrlContains(
-          `${site.url!}/api/hello`,
-          "foldkit-worker-fixture",
-          { timeout: "120 seconds", label: "foldkit worker api" },
-        );
-        // Everything else passes through to the assets binding.
-        yield* expectUrlContains(`${site.url!}/`, "Foldkit Fixture", {
-          timeout: "60 seconds",
-          label: "foldkit worker index",
-        });
-        // `runWorkerFirst` is merged over the SPA default, not instead of
-        // it — the deep link still falls back through `env.ASSETS.fetch`.
-        yield* expectUrlContains(`${site.url!}/counter/42`, "Foldkit Fixture", {
-          timeout: "60 seconds",
-          label: "foldkit worker spa fallback",
-        });
+          // The Worker entry answers its own route from the binding.
+          yield* expectUrlContains(
+            `${site.url!}/api/hello`,
+            "foldkit-worker-fixture",
+            { timeout: "120 seconds", label: "foldkit worker api" },
+          );
+          // Everything else passes through to the assets binding.
+          yield* expectUrlContains(`${site.url!}/`, "Foldkit Fixture", {
+            timeout: "60 seconds",
+            label: "foldkit worker index",
+          });
+          // `runWorkerFirst` is merged over the SPA default, not instead of
+          // it — the deep link still falls back through `env.ASSETS.fetch`.
+          yield* expectUrlContains(
+            `${site.url!}/counter/42`,
+            "Foldkit Fixture",
+            {
+              timeout: "60 seconds",
+              label: "foldkit worker spa fallback",
+            },
+          );
 
-        yield* stack.destroy();
-        yield* waitForWorkerToBeDeleted(site.workerName, accountId);
-      }).pipe(logLevel),
-    { timeout: 360_000 },
-  );
+          yield* stack.destroy();
+          yield* waitForWorkerToBeDeleted(site.workerName, accountId);
+        }).pipe(logLevel),
+      { timeout: 360_000 },
+    );
 
-  // Editing a source file must change the input hash so the next deploy
-  // rebuilds — the memo is keyed on the project tree, not on wall time.
-  test.provider(
-    "Foldkit: editing a source file republishes the assets",
-    (stack) =>
-      Effect.gen(function* () {
-        const { accountId } = yield* yield* CloudflareEnvironment;
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
+    // Editing a source file must change the input hash so the next deploy
+    // rebuilds — the memo is keyed on the project tree, not on wall time.
+    test.provider(
+      "Foldkit: editing a source file republishes the assets",
+      (stack) =>
+        Effect.gen(function* () {
+          const { accountId } = yield* yield* CloudflareEnvironment;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
 
-        yield* stack.destroy();
+          yield* stack.destroy();
 
-        const rootDir = yield* cloneFixture(fixtureDir, {
-          prefix: "alchemy-foldkit-edit-",
-          tempRoot,
-          entries: fixtureEntries,
-        });
-        const indexPath = path.join(rootDir, "index.html");
+          const rootDir = yield* cloneFixture(fixtureDir, {
+            prefix: "alchemy-foldkit-edit-",
+            tempRoot,
+            entries: fixtureEntries,
+          });
+          const indexPath = path.join(rootDir, "index.html");
 
-        const v1Marker = "foldkit-v1-marker";
-        yield* fs.writeFileString(indexPath, htmlPage(v1Marker));
+          const v1Marker = "foldkit-v1-marker";
+          yield* fs.writeFileString(indexPath, htmlPage(v1Marker));
 
-        const site1 = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.Website.Foldkit(
-              "FixFoldkitEdit",
-              foldkitProps(rootDir),
-            );
-          }),
-        );
+          const site1 = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.Website.Foldkit(
+                "FixFoldkitEdit",
+                foldkitProps(rootDir),
+              );
+            }),
+          );
 
-        expect(site1.hash?.input).toBeDefined();
-        yield* expectUrlContains(`${site1.url!}/`, v1Marker, {
-          timeout: "120 seconds",
-          label: "foldkit edit v1",
-        });
+          expect(site1.hash?.input).toBeDefined();
+          yield* expectUrlContains(`${site1.url!}/`, v1Marker, {
+            timeout: "120 seconds",
+            label: "foldkit edit v1",
+          });
 
-        const v2Marker = "foldkit-v2-marker";
-        yield* fs.writeFileString(indexPath, htmlPage(v2Marker));
+          const v2Marker = "foldkit-v2-marker";
+          yield* fs.writeFileString(indexPath, htmlPage(v2Marker));
 
-        const site2 = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.Website.Foldkit(
-              "FixFoldkitEdit",
-              foldkitProps(rootDir),
-            );
-          }),
-        );
+          const site2 = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.Website.Foldkit(
+                "FixFoldkitEdit",
+                foldkitProps(rootDir),
+              );
+            }),
+          );
 
-        expect(site2.hash?.input).toBeDefined();
-        expect(site2.hash?.input).not.toEqual(site1.hash?.input);
-        yield* expectUrlContains(`${site2.url!}/`, v2Marker, {
-          timeout: "60 seconds",
-          label: "foldkit edit v2",
-        });
+          expect(site2.hash?.input).toBeDefined();
+          expect(site2.hash?.input).not.toEqual(site1.hash?.input);
+          yield* expectUrlContains(`${site2.url!}/`, v2Marker, {
+            timeout: "60 seconds",
+            label: "foldkit edit v2",
+          });
 
-        yield* stack.destroy();
-        yield* waitForWorkerToBeDeleted(site1.workerName, accountId);
-      }).pipe(logLevel),
-    { timeout: 360_000 },
-  );
-});
+          yield* stack.destroy();
+          yield* waitForWorkerToBeDeleted(site1.workerName, accountId);
+        }).pipe(logLevel),
+      { timeout: 360_000 },
+    );
+  },
+);

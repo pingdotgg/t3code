@@ -2,14 +2,14 @@ import * as OpenApiGenerator from "@effect/openapi-generator/OpenApiGenerator"
 import { assert, describe, it } from "@effect/vitest"
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
+import * as Sse from "effect/encoding/Sse"
+import type { OpenAPISpec } from "effect/http-api/OpenApi"
+import * as HttpClient from "effect/http/HttpClient"
+import * as HttpClientError from "effect/http/HttpClientError"
+import * as HttpClientRequest from "effect/http/HttpClientRequest"
+import * as HttpClientResponse from "effect/http/HttpClientResponse"
 import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
-import * as Sse from "effect/unstable/encoding/Sse"
-import * as HttpClient from "effect/unstable/http/HttpClient"
-import * as HttpClientError from "effect/unstable/http/HttpClientError"
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse"
-import type { OpenAPISpec } from "effect/unstable/httpapi/OpenApi"
 import { rolldown } from "rolldown"
 
 const modules = {
@@ -17,11 +17,11 @@ const modules = {
   "effect/Effect": Effect,
   "effect/Schema": Schema,
   "effect/Stream": Stream,
-  "effect/unstable/encoding/Sse": Sse,
-  "effect/unstable/http/HttpClient": HttpClient,
-  "effect/unstable/http/HttpClientError": HttpClientError,
-  "effect/unstable/http/HttpClientRequest": HttpClientRequest,
-  "effect/unstable/http/HttpClientResponse": HttpClientResponse
+  "effect/encoding/Sse": Sse,
+  "effect/http/HttpClient": HttpClient,
+  "effect/http/HttpClientError": HttpClientError,
+  "effect/http/HttpClientRequest": HttpClientRequest,
+  "effect/http/HttpClientResponse": HttpClientResponse
 }
 
 type TransformClient = (client: HttpClient.HttpClient) => Effect.Effect<HttpClient.HttpClient>
@@ -70,6 +70,61 @@ const paths = [
 ] as const
 
 describe("OpenApiTransformer", () => {
+  it.effect("returns only the body when a nullable response config is undefined", () =>
+    Effect.gen(function*() {
+      const spec: OpenAPISpec = {
+        openapi: "3.1.0",
+        info: { title: "Nullable include response", version: "1.0.0" },
+        components: { schemas: {}, securitySchemes: {} },
+        security: [],
+        tags: [],
+        paths: {
+          "/value": {
+            get: {
+              operationId: "getValue",
+              parameters: [],
+              tags: ["Value"],
+              security: [],
+              responses: {
+                "200": {
+                  description: "Value",
+                  content: { "application/json": { schema: { type: "string" } } }
+                }
+              }
+            }
+          }
+        }
+      }
+      for (const format of ["httpclient", "httpclient-type-only"] as const) {
+        const source = yield* Effect.gen(function*() {
+          const generator = yield* OpenApiGenerator.OpenApiGenerator
+          return yield* generator.generate(spec, { name: "TestClient", format })
+        }).pipe(Effect.provide(
+          format === "httpclient"
+            ? OpenApiGenerator.layerTransformerSchema
+            : OpenApiGenerator.layerTransformerTs
+        ))
+        const make = yield* Effect.promise(() =>
+          loadClient<{
+            getValue: (options?: { config?: { includeResponse?: boolean } | undefined }) => Effect.Effect<unknown>
+          }>(source)
+        )
+        const client = make(
+          HttpClient.make((request) =>
+            Effect.succeed(HttpClientResponse.fromWeb(request, new Response(JSON.stringify("hello"))))
+          ).pipe(HttpClient.mapRequest(HttpClientRequest.prependUrl("https://example.com")))
+        )
+
+        const body = yield* client.getValue({ config: undefined })
+        assert.strictEqual(body, "hello")
+
+        const withResponse = yield* client.getValue({ config: { includeResponse: true } })
+        if (!Array.isArray(withResponse)) throw new Error("Expected response tuple")
+        assert.strictEqual(withResponse[0], "hello")
+        assert.strictEqual((withResponse[1] as HttpClientResponse.HttpClientResponse).status, 200)
+      }
+    }))
+
   describe("path parameters", () => {
     const generate = Effect.gen(function*() {
       const generator = yield* OpenApiGenerator.OpenApiGenerator
@@ -210,7 +265,7 @@ describe("OpenApiTransformer", () => {
                           encoding: "sse",
                           errorSchema: {},
                           causeSchema: {},
-                          failureEvent: "effect/httpapi/stream/failure"
+                          failureEvent: "effect/http-api/stream/failure"
                         }
                       }
                       : {})
