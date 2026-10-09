@@ -48,6 +48,8 @@ export const layer = Layer.effectDiscard(
     const attempts = new Map<string, number>();
 
     const pass = Effect.gen(function* () {
+      const settings = yield* serverSettings.getSettings;
+      if (!settings.automaticUpdates || !settings.enableProviderUpdateChecks) return;
       for (const { instanceId } of yield* providers.getProviders) {
         const install = Effect.gen(function* () {
           const settings = yield* serverSettings.getSettings;

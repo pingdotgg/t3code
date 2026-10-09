@@ -77,10 +77,11 @@ update can roll back to the previous version. If the update still fails:
 **Settings → General → Update automatically** is on by default. Each environment
 waits until no thread is running or waiting for you, no background work is pending,
 no client has been used for 15 minutes, and no scheduled task or usage-limit resume
-is due within 5 minutes.
-Then it installs:
+is due within 5 minutes. Tasks that repeat more often than every 15 minutes only
+hold updates back while they run. Then it installs:
 
-- provider CLI updates that have a one-click update;
+- provider CLI updates that have a one-click update, when **Provider update
+  checks** is also on;
 - the newest T3 Code release on its channel, when it runs as a background service
   (`t3 service install`). It downloads first and restarts only inside that window.
 
@@ -95,8 +96,9 @@ update channels.
 
 Servers started from a terminal or with `npx` are never replaced automatically.
 A failed provider update is retried after 6 hours or when a newer version is
-published. A failed or rolled-back T3 Code update is not retried until a newer
-version is published. An update that needs newer clients waits for you to install it.
+published. A T3 Code release that fails to download is retried at the next hourly
+check. One that rolls back is skipped until a newer version is published. An
+update that needs newer clients waits for you to install it.
 
 ## Update providers
 
