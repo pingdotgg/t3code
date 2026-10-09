@@ -166,6 +166,43 @@ export function repositoryNameFromRemoteUrl(url: string): string | null {
     : path.split("/").slice(-2).join("/");
 }
 
+/**
+ * A Forgejo remote's URL can't say which server it belongs to (an SSH alias, an installation
+ * mount), so the identity's browser URL comes from the login that serves it.
+ */
+const refineRepositoryIdentity: NonNullable<
+  SourceControlProvider.SourceControlProvider["Service"]["refineRepositoryIdentity"]
+> = Effect.fn("ForgejoSourceControlProvider.refineRepositoryIdentity")(function* ({
+  identity,
+  resolveContext,
+}) {
+  const remote = ForgejoCli.parseForgejoRemote(identity.locator.remoteUrl);
+  if (
+    !remote ||
+    !identity.rootPath ||
+    (identity.provider !== undefined &&
+      identity.provider !== "unknown" &&
+      identity.provider !== "forgejo")
+  )
+    return identity;
+  const context = yield* resolveContext({
+    cwd: identity.rootPath,
+    context: {
+      provider: { kind: "unknown", name: "Unknown", baseUrl: "" },
+      remoteName: identity.locator.remoteName,
+      remoteUrl: identity.locator.remoteUrl,
+    },
+  });
+  if (context?.provider.kind !== "forgejo") return identity;
+  const baseUrl = context.provider.baseUrl.replace(/\/+$/, "");
+  const basePath = new URL(baseUrl).pathname.replace(/^\/+|\/+$/g, "");
+  const path =
+    !remote.ssh && basePath && remote.path.startsWith(`${basePath}/`)
+      ? remote.path.slice(basePath.length + 1)
+      : remote.path;
+  return { ...identity, provider: "forgejo", webUrl: `${baseUrl}/${path}` };
+});
+
 const RepositorySchema = Schema.Struct({
   full_name: Schema.String,
   clone_url: Schema.String,
@@ -237,6 +274,7 @@ export const make = Effect.gen(function* () {
   return SourceControlProvider.SourceControlProvider.of({
     kind: "forgejo",
     repositoryNameFromRemoteUrl,
+    refineRepositoryIdentity,
     listChangeRequests: (input) =>
       Effect.gen(function* () {
         const repo = yield* cli.resolveRepository(input);

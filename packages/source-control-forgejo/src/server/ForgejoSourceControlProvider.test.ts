@@ -245,6 +245,66 @@ it.effect.each([
   },
 );
 
+it.effect("gives Forgejo identities the browser URL of the login that serves them", () =>
+  Effect.gen(function* () {
+    const provider = yield* ForgejoSourceControlProvider.make;
+    const refine = provider.refineRepositoryIdentity;
+    assert.isDefined(refine);
+    const identity = (remoteUrl: string, provider?: string) => ({
+      canonicalKey: "forge.test/team/repo",
+      locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl },
+      rootPath: "/repo",
+      ...(provider === undefined ? {} : { provider }),
+    });
+    const served = (baseUrl: string) => () =>
+      Effect.succeed({
+        provider: { kind: "forgejo" as const, name: "Forgejo / Gitea", baseUrl },
+        remoteName: "origin",
+        remoteUrl: "",
+      });
+
+    // An installation mount in the HTTP path is the login's, not the repository's.
+    assert.deepStrictEqual(
+      yield* refine!({
+        identity: identity("http://forge.test:3000/git/team/repo.git"),
+        resolveContext: served("http://forge.test:3000/git/"),
+      }),
+      {
+        ...identity("http://forge.test:3000/git/team/repo.git"),
+        provider: "forgejo",
+        webUrl: "http://forge.test:3000/git/team/repo",
+      },
+    );
+    // An SSH alias keeps its whole path.
+    assert.strictEqual(
+      (yield* refine!({
+        identity: identity("ssh://git@ssh.forge.test/team/repo.git"),
+        resolveContext: served("http://forge.test:3000/git"),
+      })).webUrl,
+      "http://forge.test:3000/git/team/repo",
+    );
+    // Another host's identity, or a remote no Forgejo login serves, is left alone.
+    const github = identity("https://github.com/team/repo.git", "github");
+    assert.strictEqual(
+      yield* refine!({ identity: github, resolveContext: () => Effect.die("not asked") }),
+      github,
+    );
+    const unserved = identity("http://forge.test:3000/team/repo.git");
+    assert.strictEqual(
+      yield* refine!({ identity: unserved, resolveContext: () => Effect.succeed(null) }),
+      unserved,
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
+        TestSourceControlHost.layer(),
+        Layer.mock(ForgejoCli.ForgejoCli)({}),
+      ),
+    ),
+  ),
+);
+
 it.effect("loads Forgejo pull request references from files and commits views", () =>
   Effect.gen(function* () {
     const provider = yield* ForgejoSourceControlProvider.make;
