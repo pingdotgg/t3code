@@ -53,10 +53,9 @@ import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import { ProviderHost, type ProviderHostShape } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
-import type { EventNdjsonLogger } from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
   structuralProtocolMethod,
@@ -441,8 +440,8 @@ export interface OpenCodeAdapterV2Options {
   readonly environment: NodeJS.ProcessEnv;
   readonly runtime: OpenCodeRuntime.OpenCodeRuntimeShape;
   readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
-  readonly host: ProviderHostShape;
-  readonly nativeEventLogger?: EventNdjsonLogger;
+  readonly host: ProviderHost.ProviderHostShape;
+  readonly nativeEventLogger?: ProviderEventLoggers.EventNdjsonLogger;
 }
 
 export interface OpenCodeProtocolLogEvent {
@@ -462,7 +461,7 @@ function formatOpenCodeProtocolLogPayload(event: OpenCodeProtocolLogEvent) {
 }
 
 export function makeOpenCodeProtocolLogger(input: {
-  readonly nativeEventLogger: EventNdjsonLogger | undefined;
+  readonly nativeEventLogger: ProviderEventLoggers.EventNdjsonLogger | undefined;
   readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
   readonly providerInstanceId: ProviderInstanceId;
   readonly providerSessionId: ProviderSessionId;
@@ -3731,7 +3730,7 @@ export type OpenCodeAdapterV2DriverEnv =
   | OpenCodeRuntime.OpenCodeRuntime
   | IdAllocator.IdAllocatorV2
   | ProviderEventLoggers.ProviderEventLoggers
-  | ProviderHost;
+  | ProviderHost.ProviderHost;
 
 export const OpenCodeAdapterV2Driver: ProviderAdapterDriver<
   OpenCodeSettings,
@@ -3746,7 +3745,7 @@ export const OpenCodeAdapterV2Driver: ProviderAdapterDriver<
       const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       return makeOpenCodeAdapterV2({
         instanceId: input.instanceId,
         settings: { ...input.config, enabled: input.enabled },
@@ -3782,7 +3781,7 @@ const layer: Layer.Layer<ProviderAdapter.ProviderAdapterV2, never, OpenCodeAdapt
       const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       return makeOpenCodeAdapterV2({
         instanceId: OPENCODE_DEFAULT_INSTANCE_ID,
         settings: DEFAULT_OPENCODE_SETTINGS,

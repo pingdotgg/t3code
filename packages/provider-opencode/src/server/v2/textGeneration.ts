@@ -14,10 +14,9 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { ProviderHost, type ProviderHostShape } from "@t3tools/provider-core/server/ProviderHost";
-import type { OpenCode2Connection } from "./OpenCode2Server.ts";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as OpenCode2Server from "./OpenCode2Server.ts";
-import { parseOpenCodeModelSlug } from "../OpenCodeRuntime.ts";
+import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 
 const isTextGenerationError = Schema.is(TextGenerationError);
@@ -39,13 +38,13 @@ type Outcome =
   | { readonly _tag: "failed"; readonly detail: string; readonly cause?: unknown };
 
 const runOnServer = (
-  connection: OpenCode2Connection,
+  connection: OpenCode2Server.OpenCode2Connection,
   input: TextGenerationOperations.Request<Schema.Top>,
-  resolveAttachmentPath: ProviderHostShape["resolveAttachmentPath"],
+  resolveAttachmentPath: ProviderHost.ProviderHostShape["resolveAttachmentPath"],
 ) =>
   Effect.gen(function* () {
     const { client } = connection;
-    const parsed = parseOpenCodeModelSlug(input.modelSelection.model);
+    const parsed = OpenCodeRuntime.parseOpenCodeModelSlug(input.modelSelection.model);
     if (parsed === null) {
       return yield* new TextGenerationError({
         operation: input.operation,
@@ -185,7 +184,7 @@ const runOnServer = (
 /** Text generation for an instance whose server is OpenCode 2. */
 export const make = Effect.fn("OpenCode2TextGeneration.make")(function* () {
   const server = yield* OpenCode2Server.OpenCode2Server;
-  const { resolveAttachmentPath } = yield* ProviderHost;
+  const { resolveAttachmentPath } = yield* ProviderHost.ProviderHost;
   const run: TextGenerationOperations.Runner = (input) =>
     server
       .withConnection((connection) => runOnServer(connection, input, resolveAttachmentPath))

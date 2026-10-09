@@ -27,10 +27,10 @@ import { ChildProcessSpawner } from "effect/process";
 
 import * as OpenCode2TextGeneration from "./v2/textGeneration.ts";
 import { makeOpenCodeTextGeneration } from "./textGeneration.ts";
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as OpenCodeAdapterV2 from "./adapter.ts";
 import * as OpenCode2AdapterV2 from "./v2/adapter.ts";
-import type { ProviderAdapterV2Shape } from "@t3tools/provider-core/server/ProviderAdapter";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { readOpenCodeGoUsageLimits } from "./usageLimits.ts";
@@ -123,9 +123,9 @@ function byOpenCodeRuntime<A, E, R, PE>(
  */
 function selectOpenCodeRuntimeAdapter(input: {
   readonly probe: OpenCodeRuntimeProbe;
-  readonly v1: ProviderAdapterV2Shape;
-  readonly v2: ProviderAdapterV2Shape;
-}): ProviderAdapterV2Shape {
+  readonly v1: ProviderAdapter.ProviderAdapterV2Shape;
+  readonly v2: ProviderAdapter.ProviderAdapterV2Shape;
+}): ProviderAdapter.ProviderAdapterV2Shape {
   const pick = <PE>(probed: Effect.Effect<ProbedOpenCode | undefined, PE>) =>
     byOpenCodeRuntime(probed, { v1: Effect.succeed(input.v1), v2: Effect.succeed(input.v2) });
   const hot = pick(Effect.map(input.probe.lastSuccess, Option.getOrUndefined));
@@ -172,7 +172,7 @@ function selectOpenCodeRuntimeTextGeneration(
 
 export type OpenCodeDriverEnv =
   | OpenCodeAdapterV2.OpenCodeAdapterV2DriverEnv
-  | ProviderHost
+  | ProviderHost.ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
@@ -196,7 +196,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
       const httpClient = yield* HttpClient.HttpClient;
       const crypto = yield* Crypto.Crypto;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,

@@ -70,10 +70,10 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
-import { paginate, type OpenCode2StreamEvent } from "./OpenCode2Client.ts";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import * as OpenCode2Client from "./OpenCode2Client.ts";
 import * as OpenCode2Server from "./OpenCode2Server.ts";
-import { parseOpenCodeModelSlug, type OpenCodeRuntimeError } from "../OpenCodeRuntime.ts";
+import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
@@ -303,7 +303,7 @@ interface SubagentCall {
  * the continuation turn T3 opens for it takes them.
  */
 interface Wake {
-  readonly events: Array<OpenCode2StreamEvent>;
+  readonly events: Array<OpenCode2Client.OpenCode2StreamEvent>;
   running: boolean;
   /** The background subagents whose end it answers, as its turn's notification names them. */
   readonly reports: Array<BackgroundWorkReport>;
@@ -763,7 +763,7 @@ const isProviderAdapterError = Schema.is(ProviderAdapter.ProviderAdapterV2Error)
  * default while T3 records the requested model.
  */
 const modelRef = (selection: ProviderAdapter.ProviderAdapterV2TurnInput["modelSelection"]) => {
-  const parsed = parseOpenCodeModelSlug(selection.model);
+  const parsed = OpenCodeRuntime.parseOpenCodeModelSlug(selection.model);
   if (parsed === null) return undefined;
   const variant = getModelSelectionStringOptionValue(selection, "variant");
   return Model.Ref.make({
@@ -830,7 +830,7 @@ const turnTokenUsage = (turn: ActiveTurn, status: OrchestrationV2ProviderTurn["s
 export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: ProviderInstanceId) {
   const server = yield* OpenCode2Server.OpenCode2Server;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
-  const host = yield* ProviderHost;
+  const host = yield* ProviderHost.ProviderHost;
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
   const crypto = yield* Crypto.Crypto;
   const driver = OPENCODE_PROVIDER;
@@ -842,7 +842,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
    * server that died is started again on the next borrow.
    */
   const borrow = Effect.gen(function* () {
-    const lent = yield* Deferred.make<OpenCode2Server.OpenCode2Connection, OpenCodeRuntimeError>();
+    const lent = yield* Deferred.make<
+      OpenCode2Server.OpenCode2Connection,
+      OpenCodeRuntime.OpenCodeRuntimeError
+    >();
     yield* server
       .withConnection((connection) =>
         Deferred.succeed(lent, connection).pipe(Effect.andThen(Effect.never)),
@@ -2141,7 +2144,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
     });
 
-    const sessionOfEvent = (event: OpenCode2StreamEvent) =>
+    const sessionOfEvent = (event: OpenCode2Client.OpenCode2StreamEvent) =>
       event.type === "unreadable.execution.ended" || event.type === "unreadable.execution.started"
         ? event.sessionID
         : "sessionID" in event.data && typeof event.data.sessionID === "string"
@@ -2189,7 +2192,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const onTurnEvent = Effect.fnUntraced(function* (
       state: ThreadState,
       turn: ActiveTurn,
-      event: OpenCode2StreamEvent,
+      event: OpenCode2Client.OpenCode2StreamEvent,
     ) {
       switch (event.type) {
         case "session.text.started":
@@ -2440,7 +2443,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ? finishTurn(state, turn.heldEnd)
         : Effect.void;
 
-    const handleEvent = Effect.fnUntraced(function* (event: OpenCode2StreamEvent) {
+    const handleEvent = Effect.fnUntraced(function* (event: OpenCode2Client.OpenCode2StreamEvent) {
       const sessionId = sessionOfEvent(event);
       // `revert.clear` wakes the session into an empty execution of its own
       // (2.0.18's `Session.revert.clear` ends with a wake). It is no run of
@@ -2495,7 +2498,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     /** Handles one event for its session, as the turn running there sees it. */
     const route = Effect.fnUntraced(function* (
-      event: OpenCode2StreamEvent,
+      event: OpenCode2Client.OpenCode2StreamEvent,
       sessionId: string | undefined,
     ) {
       // The end of the run a timed-out Stop left behind; no turn is its own.
@@ -2674,7 +2677,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const { before } = turn;
       if (promptId === undefined && before === undefined) return undefined;
       const start = before !== undefined ? before : promptId;
-      const read = yield* paginate(
+      const read = yield* OpenCode2Client.paginate(
         { sessionID: Session.ID.make(sessionId), order: "desc" as const, limit: 50 },
         client.message.list,
       ).pipe(
@@ -2852,7 +2855,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     // The borrow in use when the session closes is returned with it, so a
     // spawned server can still reach its idle shutdown.
     yield* Effect.addFinalizer(() => Scope.close(currentScope, Exit.void));
-    const follow = (stream: Stream.Stream<OpenCode2StreamEvent, unknown>): Effect.Effect<void> =>
+    const follow = (
+      stream: Stream.Stream<OpenCode2Client.OpenCode2StreamEvent, unknown>,
+    ): Effect.Effect<void> =>
       stream.pipe(
         Stream.runForEach((event) => lock.withPermit(handleEvent(event))),
         Effect.exit,
@@ -3139,7 +3144,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
      * reports continuations answer. The list takes one type, so it reads all.
      */
     const userMessages = (sessionId: string) =>
-      paginate({ sessionID: Session.ID.make(sessionId), limit: 100 }, client.message.list).pipe(
+      OpenCode2Client.paginate(
+        { sessionID: Session.ID.make(sessionId), limit: 100 },
+        client.message.list,
+      ).pipe(
         Stream.runCollect,
         Effect.map(
           (messages) =>
@@ -3156,7 +3164,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       providerThread: OrchestrationV2ProviderThread,
       sessionId: string,
     ) {
-      const history = yield* paginate(
+      const history = yield* OpenCode2Client.paginate(
         { sessionID: Session.ID.make(sessionId), order: "asc" as const, limit: 100 },
         client.message.list,
       ).pipe(Stream.runCollect);

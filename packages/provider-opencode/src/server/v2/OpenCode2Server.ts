@@ -15,7 +15,7 @@ import * as P from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as HttpClientError from "effect/http/HttpClientError";
 
-import { OpenCodeRuntimeError } from "../OpenCodeRuntime.ts";
+import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
 import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
 import * as OpenCode2Client from "./OpenCode2Client.ts";
 
@@ -33,7 +33,7 @@ export class OpenCode2Server extends Context.Service<
     /** Runs `use` against the instance's server, spawning it first when T3 owns it. */
     readonly withConnection: <A, E, R>(
       use: (connection: OpenCode2Connection) => Effect.Effect<A, E, R>,
-    ) => Effect.Effect<A, E | OpenCodeRuntimeError, R>;
+    ) => Effect.Effect<A, E | OpenCodeRuntime.OpenCodeRuntimeError, R>;
   }
 >()("@t3tools/provider-opencode/server/v2/OpenCode2Server") {}
 
@@ -106,7 +106,7 @@ export const verifyServer = (client: OpenCodeClient) =>
       duration: INFO_TIMEOUT,
       orElse: () =>
         Effect.fail(
-          new OpenCodeRuntimeError({
+          new OpenCodeRuntime.OpenCodeRuntimeError({
             operation: "server.info",
             detail: "Timed out waiting for the OpenCode server.",
           }),
@@ -115,7 +115,7 @@ export const verifyServer = (client: OpenCodeClient) =>
     Effect.catchTags({
       UnauthorizedError: (cause) =>
         Effect.fail(
-          new OpenCodeRuntimeError({
+          new OpenCodeRuntime.OpenCodeRuntimeError({
             operation: "server.info",
             detail: "The OpenCode server rejected the server password.",
             cause,
@@ -123,9 +123,9 @@ export const verifyServer = (client: OpenCodeClient) =>
         ),
     }),
     Effect.mapError((cause) =>
-      OpenCodeRuntimeError.is(cause)
+      OpenCodeRuntime.OpenCodeRuntimeError.is(cause)
         ? cause
-        : new OpenCodeRuntimeError({
+        : new OpenCodeRuntime.OpenCodeRuntimeError({
             operation: "server.info",
             detail: describeInfoFailure(cause),
             cause,

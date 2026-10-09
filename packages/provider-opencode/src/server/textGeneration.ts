@@ -5,7 +5,7 @@ import { NonNegativeInt, TextGenerationError } from "@t3tools/contracts";
 import type { OpenCodeSettings } from "../settings.ts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
@@ -152,7 +152,7 @@ function getOpenCodeTextResponse(parts: ReadonlyArray<unknown> | undefined): str
 export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration")(function* (
   openCodeSettings: OpenCodeSettings,
 ) {
-  const host = yield* ProviderHost;
+  const host = yield* ProviderHost.ProviderHost;
   const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
   const serverOwner = yield* OpenCodeServerOwner.OpenCodeServerOwner;
 
