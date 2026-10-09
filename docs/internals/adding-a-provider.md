@@ -26,7 +26,7 @@ capabilities, never the driver kind.
   falls back, for example to portable context handoff for forks. A capability left on that fails
   at runtime is a bug.
 - **Permission modes.** Offer only modes the provider enforces natively, through
-  `supportedRuntimeModes` in the provider presentation ([Grok](../../apps/server/src/provider/GrokProvider.ts)
+  `supportedRuntimeModes` in the provider presentation ([Grok](../../packages/provider-grok/src/server/status.ts)
   and [Pi](../../packages/provider-pi/src/server/status.ts) are examples). Do not imitate a missing
   mode by answering approvals in T3: T3's check is weaker than the agent's own enforcement. The
   server runs an unoffered stored mode as Supervised

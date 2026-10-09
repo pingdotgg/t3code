@@ -10,7 +10,7 @@ import {
   grokAcpSpawnArgs,
   isValidGrokReasoningEffortToken,
   resolveGrokAcpBaseModelId,
-} from "./GrokAcpSupport.ts";
+} from "./acpSupport.ts";
 
 describe("grokAcpRuntimeProcessOwnership", () => {
   it("opts Grok into detached process-tree ownership on the injected host platform", () => {

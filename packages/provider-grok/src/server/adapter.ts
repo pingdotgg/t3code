@@ -3,16 +3,16 @@ import {
   XAiPromptFailureText,
   isXAiTaskCompletedWakeNotification,
   xAiRateLimitedErrorCode,
-} from "../../provider/acp/XAiAcpExtension.ts";
+} from "./xaiAcpExtension.ts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import {
   defaultInstanceIdForDriver,
-  GrokSettings,
   ProviderDriverKind,
   type OrchestrationV2ProviderCapabilities,
   type RuntimeMode,
 } from "@t3tools/contracts";
+import { GrokSettings } from "../settings.ts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -31,7 +31,7 @@ import {
   grokApprovalOptions,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
-} from "../../provider/acp/GrokAcpSupport.ts";
+} from "./acpSupport.ts";
 import {
   extractGrokPlanMarkdownFromToolCallData,
   extractXAiAcpBackgroundToolMutation,
@@ -52,11 +52,11 @@ import {
   registerXAiBackgroundTaskTracking,
   XAiAskUserQuestionRequest,
   XAiExitPlanModeRequest,
-} from "../../provider/acp/XAiAcpExtension.ts";
+} from "./xaiAcpExtension.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
-import * as ProviderEventLoggers from "../../provider/ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";

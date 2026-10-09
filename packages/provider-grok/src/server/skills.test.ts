@@ -4,7 +4,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 
-import { discoverGrokSkills } from "./GrokSkills.ts";
+import { discoverGrokSkills } from "./skills.ts";
 
 const inspectPayload = (skills: ReadonlyArray<unknown>) => JSON.stringify({ skills });
 

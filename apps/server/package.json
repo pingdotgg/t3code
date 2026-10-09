@@ -41,6 +41,7 @@
     "@t3tools/provider-acp": "workspace:*",
     "@t3tools/provider-core": "workspace:*",
     "@t3tools/provider-cursor": "workspace:*",
+    "@t3tools/provider-grok": "workspace:*",
     "@t3tools/provider-muse": "workspace:*",
     "@t3tools/provider-opencode": "workspace:*",
     "@t3tools/provider-pi": "workspace:*",

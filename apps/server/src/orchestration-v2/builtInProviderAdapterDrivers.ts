@@ -13,7 +13,7 @@ import {
   CursorAdapterV2Driver,
   type CursorAdapterV2DriverEnv,
 } from "@t3tools/provider-cursor/server";
-import { GrokAdapterV2Driver, type GrokAdapterV2DriverEnv } from "./Adapters/GrokAdapterV2.ts";
+import { GrokAdapterV2Driver, type GrokAdapterV2DriverEnv } from "@t3tools/provider-grok/server";
 import {
   OpenCodeAdapterV2Driver,
   type OpenCodeAdapterV2DriverEnv,
