@@ -18,7 +18,7 @@ import * as NodePath from "node:path";
 
 import { OrchestrationGetWorkflowScriptError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { HostProcessHomeDirectory } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const SCRIPT_BYTE_CAP = 256 * 1024;
 
@@ -38,7 +38,7 @@ export const readWorkflowScript = Effect.fn("orchestration.readWorkflowScript")(
     });
   }
 
-  const home = yield* HostProcessHomeDirectory;
+  const home = yield* HostProcess.HomeDirectory;
   const root = yield* Effect.tryPromise({
     try: () => NodeFSP.realpath(scriptsRoot(home)),
     catch: (cause) =>

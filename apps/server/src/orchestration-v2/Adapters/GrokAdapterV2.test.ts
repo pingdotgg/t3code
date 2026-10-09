@@ -7,7 +7,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { GrokSettings } from "@t3tools/provider-grok/settings";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as EffectAcpErrors from "effect-acp/errors";
 import { xAiRateLimitedErrorCode } from "@t3tools/provider-grok/testing";
@@ -364,7 +364,7 @@ describe("Grok launch permission mode", () => {
       return launches;
     }).pipe(
       // Keep the launch argv unwrapped by the Linux cgroup shim.
-      Effect.provideService(HostProcessPlatform, "darwin"),
+      Effect.provideService(HostProcess.Platform, "darwin"),
       Effect.provide(layerTest),
     );
 

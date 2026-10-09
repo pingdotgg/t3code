@@ -219,7 +219,7 @@ export default defineConfig({
       },
       {
         // The one place that reads the host platform to seed the injected references.
-        files: ["packages/shared/src/hostProcess.ts"],
+        files: ["packages/shared/src/HostProcess.ts"],
         rules: { "t3code/no-global-process-runtime": "off" },
       },
       {

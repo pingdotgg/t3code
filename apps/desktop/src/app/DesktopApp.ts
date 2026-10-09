@@ -35,7 +35,7 @@ import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
-import { HostProcessHomeDirectory } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
 const MAX_TCP_PORT = 65_535;
@@ -286,7 +286,7 @@ const startup = Effect.gen(function* () {
   const linuxElectronOptions =
     environment.platform === "linux" && !hasCommandLinePasswordStore
       ? DesktopPreReadyPlatform.resolveEarlyLinuxElectronOptionsFromProcess(
-          yield* HostProcessHomeDirectory,
+          yield* HostProcess.HomeDirectory,
         )
       : preReadyElectronOptions.linux;
   if (linuxElectronOptions !== null && !hasCommandLinePasswordStore) {

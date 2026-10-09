@@ -17,7 +17,7 @@ import {
   type TranscriptUsageFormat,
   type UsageRecord,
 } from "@t3tools/provider-core/server/usage";
-import { HostProcessHomeDirectory } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 /**
  * Parses one line of a Claude Code transcript.
@@ -111,7 +111,7 @@ export const claudeUsageReader: ProviderUsageReader<ClaudeSettings, Path.Path> =
     // An undecodable config has no trustworthy home to read.
     if (config === undefined) return [];
     const path = yield* Path.Path;
-    const homeDirectory = yield* HostProcessHomeDirectory;
+    const homeDirectory = yield* HostProcess.HomeDirectory;
     const configured = config.homePath.trim();
     const home = configured
       ? expandHomePath(configured, homeDirectory)

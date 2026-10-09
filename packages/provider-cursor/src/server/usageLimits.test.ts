@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { NodeServices } from "@effect/platform-node";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -106,7 +106,7 @@ describe("Cursor usage limits", () => {
               { apiEndpoint: "https://cursor.example/" },
               { XDG_CONFIG_HOME: directory, HOME: directory, AGENT_CLI_CREDENTIAL_STORE: "file" },
             ).pipe(
-              Effect.provideService(HostProcessPlatform, platform),
+              Effect.provideService(HostProcess.Platform, platform),
               Effect.provideService(HttpClient.HttpClient, client),
             );
             expect(limits.windows[0]?.usedPercent).toBe(42);
@@ -131,7 +131,7 @@ describe("Cursor usage limits", () => {
                 },
                 false,
               ).pipe(
-                Effect.provideService(HostProcessPlatform, platform),
+                Effect.provideService(HostProcess.Platform, platform),
                 Effect.provideService(
                   FileSystem.FileSystem,
                   FileSystem.makeNoop({
@@ -202,7 +202,7 @@ describe("Cursor usage limits", () => {
     Effect.gen(function* () {
       const limits = yield* withNodeServices(
         readCursorUsageLimits({ apiEndpoint: "" }, {}, true).pipe(
-          Effect.provideService(HostProcessPlatform, "darwin"),
+          Effect.provideService(HostProcess.Platform, "darwin"),
           Effect.provideService(
             FileSystem.FileSystem,
             FileSystem.makeNoop({
@@ -232,7 +232,7 @@ describe("Cursor usage limits", () => {
     Effect.gen(function* () {
       const limits = yield* withNodeServices(
         readCursorUsageLimits({ apiEndpoint: "" }, {}, true).pipe(
-          Effect.provideService(HostProcessPlatform, "darwin"),
+          Effect.provideService(HostProcess.Platform, "darwin"),
           Effect.provideService(
             HttpClient.HttpClient,
             HttpClient.make(() => Effect.die("must not request limits without a login")),
@@ -258,7 +258,7 @@ describe("Cursor usage limits", () => {
       ] as const) {
         const limits = yield* withNodeServices(
           readCursorUsageLimits({ apiEndpoint }, environment, true).pipe(
-            Effect.provideService(HostProcessPlatform, "darwin"),
+            Effect.provideService(HostProcess.Platform, "darwin"),
             Effect.provideService(
               HttpClient.HttpClient,
               HttpClient.make(() => Effect.die("must not send a Keychain credential to a proxy")),
