@@ -98,6 +98,13 @@ export function storageCleanupThreadIdle(thread: OrchestrationV2ThreadShell, now
   );
 }
 
+/** Archived threads keep their checkouts, so cleanup reads them with the active ones. */
+export function readStorageCleanupThreads(projections: ProjectionStore.ProjectionStoreV2Shape) {
+  return projections
+    .getShellSnapshot()
+    .pipe(Effect.map((snapshot) => [...snapshot.threads, ...snapshot.archivedThreads]));
+}
+
 /** PR metadata refreshes must not reset the inactivity clock. */
 export function storageCleanupActivityAt(thread: OrchestrationV2ThreadShell): number {
   return Math.max(
@@ -181,10 +188,9 @@ export const make = Effect.gen(function* () {
       });
 
   const readThreads = Effect.fn("StorageCleanup.readThreads")(function* () {
-    const active = yield* projections.getShellSnapshot();
-    const archived = yield* projections.getShellSnapshot({ location: "archive" });
+    const threads = yield* readStorageCleanupThreads(projections);
     const projects = yield* projectStore.listShells();
-    return { projects, threads: [...active.threads, ...archived.threads] };
+    return { projects, threads };
   });
 
   // Local threads under another project need not have a worktreePath of their own.

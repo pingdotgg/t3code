@@ -1,14 +1,22 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  EventId,
   ProjectId,
   ProviderInstanceId,
   RunId,
   RuntimeRequestId,
   ThreadId,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+import * as SqlitePersistence from "./persistence/Sqlite.ts";
+import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import {
+  readStorageCleanupThreads,
   storageCleanupActivityAt,
   storageCleanupPullRequestMerged,
   storageCleanupThreadIdle,
@@ -194,5 +202,59 @@ describe("merged pull request cleanup", () => {
     expect(storageCleanupPullRequestMerged(null, squashed)).toBe(false);
     expect(storageCleanupPullRequestMerged(null, integrated)).toBe(false);
     expect(storageCleanupPullRequestMerged(pullRequest({ state: "open" }), integrated)).toBe(false);
+  });
+});
+
+describe("V2 storage cleanup thread reads", () => {
+  const created = (
+    threadId: ThreadId,
+    archivedAt: DateTime.Utc | null,
+  ): OrchestrationV2DomainEvent => {
+    const thread = shell();
+    return {
+      id: EventId.make(`created:${threadId}`),
+      type: "thread.created",
+      threadId,
+      providerInstanceId: thread.providerInstanceId,
+      occurredAt: thread.createdAt,
+      payload: {
+        id: threadId,
+        projectId: thread.projectId,
+        title: thread.title,
+        providerInstanceId: thread.providerInstanceId,
+        modelSelection: thread.modelSelection,
+        runtimeMode: thread.runtimeMode,
+        interactionMode: thread.interactionMode,
+        branch: `branch/${threadId}`,
+        worktreePath: `/worktrees/${threadId}`,
+        activeProviderThreadId: null,
+        lineage: { rootThreadId: threadId, parentThreadId: null, relationshipToParent: null },
+        forkedFrom: null,
+        createdBy: thread.createdBy,
+        creationSource: thread.creationSource,
+        createdAt: thread.createdAt,
+        updatedAt: thread.updatedAt,
+        archivedAt,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      },
+    };
+  };
+
+  it("includes archived threads, whose checkouts archiving keeps", async () => {
+    const active = ThreadId.make("thread-active");
+    const archived = ThreadId.make("thread-archived");
+    const threadIds = await Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      yield* projections.apply(created(active, null));
+      yield* projections.apply(created(archived, at(-DAY_MS)));
+      return (yield* readStorageCleanupThreads(projections)).map((thread) => thread.id);
+    }).pipe(
+      Effect.provide(ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+      Effect.runPromise,
+    );
+    expect(threadIds.toSorted()).toEqual([active, archived]);
   });
 });
