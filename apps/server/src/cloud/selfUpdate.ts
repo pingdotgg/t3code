@@ -15,7 +15,6 @@ import * as Effect from "effect/Effect";
 import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import * as Semaphore from "effect/Semaphore";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -62,7 +61,7 @@ export class ServerSelfUpdate extends Context.Service<
     ) => Effect.Effect<never, ServerSelfUpdateError>;
     /** How this server can update itself, or null when it cannot. */
     readonly capability: ServerSelfUpdateCapability | null;
-    /** Downloads and preflights a boot-service runtime without restarting. */
+    /** Downloads and preflights a runtime without restarting. Only for `capability === "boot-service"`. */
     readonly stage: (
       targetVersion: string,
     ) => Effect.Effect<
@@ -196,8 +195,6 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     yield* Config.String(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option),
   );
   const inFlight = yield* Ref.make(false);
-  // A background stage and a manual update may target the same version.
-  const stageLock = yield* Semaphore.make(1);
 
   const capability: ServerSelfUpdateCapability | null =
     serverConfig.mode === "desktop" ? "desktop-managed" : launcher.managed ? "boot-service" : null;
@@ -209,11 +206,6 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   /** Downloads and preflights a runtime without handing off, so a background
       update can stage first and restart later. */
   const stageRuntime = Effect.fn("cloud.server_self_update.stage")(function* (
-    targetVersion: string,
-  ) {
-    return yield* stageLock.withPermits(1)(stageRuntimeUnlocked(targetVersion));
-  });
-  const stageRuntimeUnlocked = Effect.fn("cloud.server_self_update.stageUnlocked")(function* (
     targetVersion: string,
   ) {
     let orchestrationProtocol: number | undefined;
@@ -371,11 +363,9 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
       desktopAppUpdate.commit(requestId, onHandoffAccepted),
     capability,
     stage: (targetVersion) =>
-      capability === "boot-service"
-        ? stageRuntime(targetVersion).pipe(
-            Effect.map(({ orchestrationProtocol }) => ({ orchestrationProtocol })),
-          )
-        : Effect.fail(failWith("Only background service installs can stage an update.")),
+      stageRuntime(targetVersion).pipe(
+        Effect.map(({ orchestrationProtocol }) => ({ orchestrationProtocol })),
+      ),
   });
 });
 

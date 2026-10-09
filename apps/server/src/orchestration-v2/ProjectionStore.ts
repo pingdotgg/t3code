@@ -577,16 +577,8 @@ function needsRecovery(
             ["preparing", "starting", "running", "waiting"].includes(run.status) ||
             (run.status === "queued" && run.queueHeld !== true),
         ) ||
-        projection.runtimeRequests.some((request) => request.status === "pending") ||
         projection.providerThreads.some(
-          (thread) =>
-            thread.status === "active" || (thread.pendingBackgroundTasks?.length ?? 0) > 0,
-        ) ||
-        projection.turnItems.some(
-          (item) =>
-            ["command_execution", "dynamic_tool", "subagent"].includes(item.type) &&
-            ["pending", "running", "waiting"].includes(item.status) &&
-            !projection.runs.some((run) => run.id === item.runId && run.status === "rolled_back"),
+          (thread) => (thread.pendingBackgroundTasks?.length ?? 0) > 0,
         )
       );
     case "runtime":
@@ -3628,22 +3620,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     THEN json_extract(payload_json, '$.queueHeld') IS NOT 1
                     ELSE 1 END
                 UNION
-                SELECT thread_id FROM orchestration_v2_projection_runtime_requests
-                WHERE status = 'pending'
-                UNION
                 SELECT thread_id FROM orchestration_v2_projection_provider_threads
-                WHERE status = 'active'
-                  OR CASE WHEN json_valid(payload_json)
-                    THEN json_array_length(payload_json, '$.pendingBackgroundTasks') > 0
-                    ELSE 0 END
-                UNION
-                SELECT item.thread_id FROM orchestration_v2_projection_turn_items AS item
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM orchestration_v2_projection_runs AS run
-                    WHERE run.run_id = item.run_id AND run.status = 'rolled_back'
-                  )
-                  AND type IN ('command_execution', 'dynamic_tool', 'subagent')
-                  AND status IN ('pending', 'running', 'waiting')
+                WHERE CASE WHEN json_valid(payload_json)
+                  THEN json_array_length(payload_json, '$.pendingBackgroundTasks') > 0
+                  ELSE 0 END
               `;
             case "runtime":
               return sql`

@@ -205,7 +205,7 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("downloads newer releases found after an update has been downloaded", () => {
+  it.effect("checks for newer releases after an update has been downloaded", () => {
     const harness = makeHarness();
 
     return Effect.scoped(
@@ -241,74 +241,70 @@ describe("DesktopUpdates", () => {
         harness.emit("update-available", { version: "1.2.5" });
         yield* flushCallbacks;
 
-        // A release the background poller finds starts downloading on its own.
         const state = yield* updates.getState;
-        assert.equal(state.status, "downloading");
+        assert.equal(state.status, "available");
         assert.equal(state.availableVersion, "1.2.5");
         assert.isNull(state.downloadedVersion);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("keeps slow background downloads active after waiting for a check", () =>
-    Effect.gen(function* () {
-      const checkStarted = yield* Deferred.make<void>();
-      const releaseCheck = yield* Deferred.make<void>();
-      const downloadStarted = yield* Deferred.make<void>();
-      const releaseDownload = yield* Deferred.make<void>();
-      const harness = makeHarness({
-        checkForUpdates: Deferred.succeed(checkStarted, undefined).pipe(
-          Effect.andThen(Deferred.await(releaseCheck)),
-        ),
-        downloadUpdate: Deferred.succeed(downloadStarted, undefined).pipe(
-          Effect.andThen(Deferred.await(releaseDownload)),
-        ),
-      });
+  it.effect("downloads releases the pollers find and leaves manual checks alone", () => {
+    const harness = makeHarness({
+      checkForUpdates: Effect.sync(() => {
+        harness.emit("update-available", { version: "1.2.4" });
+      }),
+    });
 
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const updates = yield* DesktopUpdates.DesktopUpdates;
-          yield* updates.configure;
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
 
-          const checkFiber = yield* updates.check("poll").pipe(Effect.forkScoped);
-          yield* Deferred.await(checkStarted);
-          harness.emit("update-available", { version: "1.2.4" });
-          yield* flushCallbacks;
+        assert.isTrue((yield* updates.check("manual")).checked);
+        assert.equal((yield* updates.getState).status, "available");
+        assert.equal(harness.downloadCount(), 0);
 
-          yield* TestClock.adjust(Duration.minutes(1));
-          assert.equal(harness.downloadCount(), 0);
+        yield* TestClock.adjust(Duration.seconds(15));
+        assert.equal((yield* updates.getState).status, "downloading");
+        assert.equal(harness.downloadCount(), 1);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
 
-          yield* Deferred.succeed(releaseCheck, undefined);
-          yield* Fiber.join(checkFiber);
-          yield* Deferred.await(downloadStarted);
-          yield* TestClock.adjust(Duration.minutes(3));
+  it.effect("retries a failed background download only for a newer release", () => {
+    let offeredVersion = "1.2.4";
+    let downloadSetups = 0;
+    const harness = makeHarness({
+      checkForUpdates: Effect.sync(() => {
+        harness.emit("update-available", { version: offeredVersion });
+      }),
+      // configure makes the first call; the first download makes the second.
+      setDisableDifferentialDownload: Effect.suspend(() => {
+        downloadSetups += 1;
+        return downloadSetups === 2 ? Effect.die(new Error("download failed")) : Effect.void;
+      }),
+    });
 
-          assert.equal((yield* updates.getState).status, "downloading");
-          assert.isTrue(yield* updates.isActionActive);
-          assert.isFalse((yield* updates.check("manual")).checked);
-          assert.isFalse((yield* updates.download).accepted);
-          const channelError = yield* updates.setChannel("nightly").pipe(Effect.flip);
-          assert.equal(channelError._tag, "DesktopUpdateActionInProgressError");
-          if (channelError._tag === "DesktopUpdateActionInProgressError") {
-            assert.equal(channelError.action, "download");
-          }
-          assert.equal(harness.downloadCount(), 1);
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
 
-          harness.emit("update-downloaded", { version: "1.2.4" });
-          yield* Deferred.succeed(releaseDownload, undefined);
-          yield* flushCallbacks;
+        yield* TestClock.adjust(Duration.seconds(15));
+        assert.equal((yield* updates.getState).errorContext, "download");
 
-          const state = yield* updates.getState;
-          assert.equal(state.status, "downloaded");
-          assert.equal(state.downloadedVersion, "1.2.4");
-          assert.isFalse(yield* updates.isActionActive);
-        }),
-      ).pipe(
-        Effect.ensuring(Deferred.succeed(releaseDownload, undefined)),
-        Effect.provide(Layer.merge(TestClock.layer(), harness.layer)),
-      );
-    }),
-  );
+        yield* TestClock.adjust(Duration.minutes(4));
+        assert.equal(harness.checkCount(), 2);
+        assert.equal(downloadSetups, 2);
+
+        offeredVersion = "1.2.5";
+        yield* TestClock.adjust(Duration.minutes(4));
+        assert.equal(harness.checkCount(), 3);
+        assert.equal(harness.downloadCount(), 1);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
 
   it.effect("preserves a queued installer when the feed has no update", () => {
     const harness = makeHarness();
@@ -891,8 +887,8 @@ describe("DesktopUpdates", () => {
     },
   );
 
-  it.effect("refuses a stale payload through both automatic and explicit install paths", () => {
-    const harness = makeHarness();
+  it.effect("never installs .deb updates on quit because dpkg asks for a password", () => {
+    const harness = makeHarness({ platform: "linux", packageType: "deb" });
 
     return Effect.scoped(
       Effect.gen(function* () {
@@ -900,17 +896,9 @@ describe("DesktopUpdates", () => {
         yield* updates.configure;
         harness.emit("update-downloaded", { version: "1.2.4" });
         yield* flushCallbacks;
-        const beforeStaleDownload = yield* updates.getState;
 
-        harness.emit("update-downloaded", { version: "1.2.5-nightly.20260710.1" });
+        assert.equal((yield* updates.getState).status, "downloaded");
         assert.isFalse(harness.autoInstallOnAppQuit());
-        yield* flushCallbacks;
-        assert.deepEqual(yield* updates.getState, beforeStaleDownload);
-        assert.isFalse((yield* updates.install).accepted);
-        assert.isFalse((yield* updates.installPrepared("1.2.4")).accepted);
-        assert.equal(harness.quitAndInstalls(), 0);
-        const error = yield* updates.setChannel("nightly").pipe(Effect.flip);
-        assert.equal(error._tag, "DesktopUpdateChannelStagedError");
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
