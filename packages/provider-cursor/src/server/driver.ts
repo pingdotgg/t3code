@@ -223,7 +223,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         Effect.provide(CursorSdkCatalog.layer),
       );
 
-      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, host.settings);
+      const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<CursorSettings>>({
         resolveMaintenance: () => Effect.succeed(MAINTENANCE_CAPABILITIES),
         getSettings: snapshotSettings.getSettings,

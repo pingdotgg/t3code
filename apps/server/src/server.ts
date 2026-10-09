@@ -42,7 +42,7 @@ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ProviderEventIngestor from "./orchestration-v2/ProviderEventIngestor.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as ResetCreditCoordinator from "./provider/resetCreditCoordinator.ts";
-import * as ProviderEventLoggers from "./provider/ProviderEventLoggers.ts";
+import * as ProviderEventLoggersLive from "./provider/ProviderEventLoggersLive.ts";
 import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
 import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCodeServerLedger";
 import * as ProviderHostLive from "./provider/ProviderHostLive.ts";
@@ -609,7 +609,7 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   // `ModelCatalog` port it provides.
   Layer.provideMerge(
     Layer.mergeAll(
-      ProviderEventLoggers.layer,
+      ProviderEventLoggersLive.layer,
       ModelManifest.layerModelCatalog.pipe(Layer.provideMerge(ModelManifest.layer)),
       ResetCreditCoordinator.layer,
     ),

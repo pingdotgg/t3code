@@ -160,7 +160,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
 
-      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, host.settings);
+      const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<GrokSettings>>({
         resolveMaintenance,
         getSettings: snapshotSettings.getSettings,

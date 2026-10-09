@@ -26,7 +26,7 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
-import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ModelManifest from "../ModelManifest.ts";
 import {
   createProviderVersionAdvisory,
@@ -36,7 +36,7 @@ import {
 import { CodexDriver } from "./CodexDriver.ts";
 import * as CodexAdapterV2 from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderCredentialStore from "../ProviderCredentialStore.ts";
 import * as ProviderHostLive from "../ProviderHostLive.ts";
 
@@ -214,7 +214,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
             threadId,
             providerSessionId: ProviderSessionId.make("managed-account-session"),
             modelSelection: { instanceId, model: "gpt-5.4" },
-            runtimePolicy: ProviderAdapterV2RuntimePolicy.make({
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
               runtimeMode: "full-access",
               interactionMode: "default",
               cwd: serverConfig.stateDir,

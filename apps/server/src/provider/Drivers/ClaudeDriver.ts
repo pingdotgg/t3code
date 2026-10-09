@@ -24,10 +24,10 @@ import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
 import { makeClaudeTextGeneration } from "../../textGeneration/ClaudeTextGeneration.ts";
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as ServerConfig from "../../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
-import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
   createClaudeAdapterV2,
   type ClaudeAdapterV2DriverEnv,
@@ -94,7 +94,7 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
 
 export type ClaudeDriverEnv =
   | ClaudeAdapterV2DriverEnv
-  | ProviderHost
+  | ProviderHost.ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
   | ResetCreditCoordinator.ResetCreditCoordinator
   | Crypto.Crypto
@@ -121,7 +121,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const { cwd } = yield* ServerConfig.ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
       const resetCreditCoordinator = yield* ResetCreditCoordinator.ResetCreditCoordinator;
-      const host = yield* ProviderHost;
       const catalogService = yield* ModelCatalog.ModelCatalog;
       const modelCatalog = catalogService
         .current(DRIVER_KIND)
@@ -237,7 +236,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         Effect.provideService(Path.Path, path),
       );
 
-      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, host.settings);
+      const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<ClaudeSettings>>({
         resolveMaintenance,
         getSettings: snapshotSettings.getSettings,

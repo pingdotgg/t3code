@@ -459,7 +459,7 @@ function formatOpenCodeProtocolLogPayload(event: OpenCodeProtocolLogEvent) {
 
 export function makeOpenCodeProtocolLogger(input: {
   readonly nativeEventLogger: ProviderEventLoggers.EventNdjsonLogger | undefined;
-  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly providerInstanceId: ProviderInstanceId;
   readonly providerSessionId: ProviderSessionId;
   readonly threadId: ThreadId;
@@ -830,7 +830,7 @@ function taskSessionId(part: ToolPart): string | null {
 }
 
 function makeProviderThread(input: {
-  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly providerInstanceId: ProviderInstanceId;
   readonly providerSessionId: OrchestrationV2ProviderThread["providerSessionId"];
   readonly appThreadId: OrchestrationV2ProviderThread["appThreadId"];

@@ -1,5 +1,5 @@
 /**
- * ProviderEventLoggers — single observability service that owns the shared
+ * ProviderEventLoggers.ProviderEventLoggers — single observability service that owns the shared
  * provider event log store and exposes its two runtime views:
  *
  *   - `native`    — provider-protocol events as the SDK emits them, written
@@ -17,25 +17,20 @@
  *     same rotating file would race the rotation logic. Owning the loggers on
  *     a single tag keeps that invariant intact.
  *   - Tests can swap one (or both) loggers with in-memory recorders by
- *     `Layer.succeed(ProviderEventLoggers, { native, canonical })` instead of
+ *     `Layer.succeed(ProviderEventLoggers.ProviderEventLoggers, { native, canonical })` instead of
  *     juggling per-Layer option threading.
  *
  * Both fields are optional because observability must not prevent startup.
  *
- * @module provider/ProviderEventLoggers
+ * @module provider/ProviderEventLoggersLive
  */
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
 import * as ResourceAttribution from "../resourceTelemetry/ResourceAttribution.ts";
-import {
-  NoOpProviderEventLoggers,
-  ProviderEventLoggers,
-} from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as EventNdjsonLogger from "./EventNdjsonLogger.ts";
-
-export { NoOpProviderEventLoggers, ProviderEventLoggers };
 
 /**
  * Builds both stream views over one shared store. Setup failures are logged
@@ -58,14 +53,16 @@ export const make = Effect.gen(function* () {
   );
 
   if (!store) {
-    return ProviderEventLoggers.of(NoOpProviderEventLoggers);
+    return ProviderEventLoggers.ProviderEventLoggers.of(
+      ProviderEventLoggers.NoOpProviderEventLoggers,
+    );
   }
 
   yield* Effect.addFinalizer(() => store.close());
-  return ProviderEventLoggers.of({
+  return ProviderEventLoggers.ProviderEventLoggers.of({
     native: store.logger("native"),
     canonical: store.logger("canonical"),
   });
 });
 
-export const layer = Layer.effect(ProviderEventLoggers, make);
+export const layer = Layer.effect(ProviderEventLoggers.ProviderEventLoggers, make);

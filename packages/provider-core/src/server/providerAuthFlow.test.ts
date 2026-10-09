@@ -16,7 +16,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import * as ProviderAuthFlow from "./ProviderAuthFlow.ts";
+import * as ProviderAuthFlow from "./providerAuthFlow.ts";
 
 const instanceId = ProviderInstanceId.make("auth-flow-test");
 const method = { id: "browser", name: "Browser", description: null, type: "agent" as const };

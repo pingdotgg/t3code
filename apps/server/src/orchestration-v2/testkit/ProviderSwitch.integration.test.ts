@@ -52,14 +52,6 @@ import * as EffectWorker from "../EffectWorker.ts";
 import * as EffectOutbox from "../EffectOutbox.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
-import {
-  type ProviderAdapterV2Event,
-  type ProviderAdapterV2HistoricalContext,
-  ProviderAdapterProtocolError,
-  ProviderAdapterTurnStartError,
-  type ProviderAdapterV2Shape,
-  type ProviderAdapterV2SessionRuntime,
-} from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
@@ -70,6 +62,7 @@ import {
 } from "./fixtures/shared.ts";
 import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -95,7 +88,7 @@ interface CapturedTurn {
 }
 
 function unimplemented(driver: ProviderDriverKind, detail: string) {
-  return Effect.fail(new ProviderAdapterProtocolError({ driver, detail }));
+  return Effect.fail(new ProviderAdapter.ProviderAdapterProtocolError({ driver, detail }));
 }
 
 function makeTestAdapter(input: {
@@ -116,7 +109,7 @@ function makeTestAdapter(input: {
   readonly failResumeOnce?: Ref.Ref<boolean>;
   readonly initialContextUsage?: OrchestrationV2ProviderThread["contextUsage"];
   readonly getModelContextWindow?: (selection: ModelSelection) => number | undefined;
-  readonly canReuseContextUsage?: ProviderAdapterV2SessionRuntime["canReuseContextUsage"];
+  readonly canReuseContextUsage?: ProviderAdapter.ProviderAdapterV2SessionRuntime["canReuseContextUsage"];
   readonly tokenUsageByRunOrdinal?: Readonly<
     Record<number, Omit<OrchestrationV2ProviderTurnTokenUsage, "updatedAt">>
   >;
@@ -125,7 +118,7 @@ function makeTestAdapter(input: {
   readonly holdRunOrdinal?: number;
   readonly holdFirstTurn?: Deferred.Deferred<void>;
   readonly releaseFirstTurn?: Deferred.Deferred<void>;
-}): ProviderAdapterV2Shape {
+}): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: input.instanceId,
     driver: input.driver,
@@ -133,7 +126,7 @@ function makeTestAdapter(input: {
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (sessionInput) =>
       Effect.gen(function* () {
-        const events = yield* PubSub.unbounded<ProviderAdapterV2Event>();
+        const events = yield* PubSub.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const now = yield* DateTime.now;
         const providerSession: OrchestrationV2ProviderSession = {
           id: sessionInput.providerSessionId,
@@ -148,7 +141,7 @@ function makeTestAdapter(input: {
           lastError: null,
         };
 
-        const runtime: ProviderAdapterV2SessionRuntime = {
+        const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: input.instanceId,
           driver: input.driver,
           providerSessionId: sessionInput.providerSessionId,
@@ -204,7 +197,7 @@ function makeTestAdapter(input: {
           ...(input.injectedHistory === undefined
             ? {}
             : {
-                injectHistory: (history: ProviderAdapterV2HistoricalContext) =>
+                injectHistory: (history: ProviderAdapter.ProviderAdapterV2HistoricalContext) =>
                   Ref.update(input.injectedHistory!, (current) => [
                     ...current,
                     ...historyResponseItems(history.messages, history.context),
@@ -236,7 +229,7 @@ function makeTestAdapter(input: {
                 input.refuseStarts !== undefined &&
                 (yield* Ref.getAndUpdate(input.refuseStarts, (left) => Math.max(0, left - 1))) > 0
               )
-                return yield* new ProviderAdapterTurnStartError({
+                return yield* new ProviderAdapter.ProviderAdapterTurnStartError({
                   driver: input.driver,
                   threadId: turnInput.threadId,
                   providerThreadId: turnInput.providerThread.id,
@@ -280,7 +273,7 @@ function makeTestAdapter(input: {
                 input.responseByThreadId?.[turnInput.threadId]?.[turnInput.runOrdinal] ??
                 input.responseByRunOrdinal[turnInput.runOrdinal] ??
                 `${input.driver} response for run ${turnInput.runOrdinal}`;
-              const providerEvents: ReadonlyArray<ProviderAdapterV2Event> = [
+              const providerEvents: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event> = [
                 {
                   type: "provider_turn.updated",
                   driver: input.driver,

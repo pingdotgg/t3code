@@ -27,7 +27,7 @@ import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   makeAntigravityAcpAdapterFlavor,
   makeAntigravityAdapterV2,
@@ -74,7 +74,7 @@ describe("AntigravityAdapterV2 flavor", () => {
   it("maps runtime modes to the agent's native permission modes", () => {
     const mode = (runtimeMode: "approval-required" | "auto-accept-edits" | "full-access") =>
       flavor.sessionModeForPolicy?.(
-        ProviderAdapterV2RuntimePolicy.make({
+        ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode,
           interactionMode: "default",
           cwd: "/workspace",
@@ -190,7 +190,7 @@ describe("AntigravityAdapterV2 client file system", () => {
       yield* fileSystem.writeFileString(attachment, "pasted");
 
       const threadId = ThreadId.make("thread-antigravity-containment");
-      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
         interactionMode: "default",
         cwd: workspace,
@@ -325,7 +325,7 @@ describe("AntigravityAdapterV2 workspace changes", () => {
       yield* fileSystem.writeFileString(path.join(workspaceA, "a.txt"), "from a");
       yield* fileSystem.writeFileString(path.join(workspaceB, "b.txt"), "from b");
       const policyFor = (cwd: string) =>
-        ProviderAdapterV2RuntimePolicy.make({
+        ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: "full-access",
           interactionMode: "default",
           cwd,
@@ -476,7 +476,7 @@ describe("AntigravityAdapterV2 client file system under restrictive policies", (
         });
         yield* fileSystem.writeFileString(path.join(workspace, "existing.ts"), "existing");
         const threadId = ThreadId.make(`thread-antigravity-restrictive-${policy.runtimeMode}`);
-        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           ...policy,
           interactionMode: "default",
           cwd: workspace,

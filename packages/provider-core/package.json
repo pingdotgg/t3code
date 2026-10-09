@@ -23,10 +23,6 @@
       "types": "./src/server/collectStreamText.ts",
       "import": "./src/server/collectStreamText.ts"
     },
-    "./server/continuationRequests": {
-      "types": "./src/server/continuationRequests.ts",
-      "import": "./src/server/continuationRequests.ts"
-    },
     "./server/driver": {
       "types": "./src/server/driver.ts",
       "import": "./src/server/driver.ts"
@@ -103,9 +99,13 @@
       "types": "./src/server/ProviderAdapter.ts",
       "import": "./src/server/ProviderAdapter.ts"
     },
-    "./server/ProviderAuthFlow": {
-      "types": "./src/server/ProviderAuthFlow.ts",
-      "import": "./src/server/ProviderAuthFlow.ts"
+    "./server/providerAuthFlow": {
+      "types": "./src/server/providerAuthFlow.ts",
+      "import": "./src/server/providerAuthFlow.ts"
+    },
+    "./server/ProviderContinuationRequests": {
+      "types": "./src/server/ProviderContinuationRequests.ts",
+      "import": "./src/server/ProviderContinuationRequests.ts"
     },
     "./server/ProviderEventLoggers": {
       "types": "./src/server/ProviderEventLoggers.ts",

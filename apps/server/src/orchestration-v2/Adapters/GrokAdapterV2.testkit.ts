@@ -13,7 +13,7 @@ import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import { GROK_ACP_CANCEL_META, GROK_ACP_INITIALIZE_META } from "@t3tools/provider-grok/testing";
 import { makeXAiPromptCompletionRuntime } from "@t3tools/provider-grok/testing";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";

@@ -38,14 +38,10 @@ import * as Exit from "effect/Exit";
 import { TestClock } from "effect/testing";
 import { describe } from "vite-plus/test";
 
-import type {
-  ProviderAdapterV2Event,
-  ProviderAdapterV2SessionRuntime,
-} from "@t3tools/provider-core/server/ProviderAdapter";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/continuationRequests";
-import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
   OPENCODE_2_STILL_STOPPING,
   OPENCODE_PROVIDER,
@@ -347,21 +343,27 @@ const resumed = (
     return { runtime, thread };
   });
 
-const requestOf = (runtime: ProviderAdapterV2SessionRuntime) =>
+const requestOf = (runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime) =>
   runtime.events.pipe(
     Stream.filter(
-      (event): event is Extract<ProviderAdapterV2Event, { type: "runtime_request.updated" }> =>
-        event.type === "runtime_request.updated",
+      (
+        event,
+      ): event is Extract<
+        ProviderAdapter.ProviderAdapterV2Event,
+        { type: "runtime_request.updated" }
+      > => event.type === "runtime_request.updated",
     ),
     Stream.map((event) => event.runtimeRequest),
     Stream.runHead,
     Effect.map(Option.getOrUndefined),
   );
 
-const terminalOf = (runtime: ProviderAdapterV2SessionRuntime) =>
+const terminalOf = (runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime) =>
   runtime.events.pipe(
     Stream.filter(
-      (event): event is Extract<ProviderAdapterV2Event, { type: "turn.terminal" }> =>
+      (
+        event,
+      ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }> =>
         event.type === "turn.terminal",
     ),
     Stream.runHead,
@@ -637,7 +639,7 @@ describe("OpenCode2 adapter", () => {
    * The single reader of the runtime's events: resolves `attached` once the
    * running background child has its thread, then returns the turn's terminal.
    */
-  const watchBackgroundTurn = (runtime: ProviderAdapterV2SessionRuntime) =>
+  const watchBackgroundTurn = (runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime) =>
     Effect.gen(function* () {
       const attached = yield* Deferred.make<void>();
       const terminal = yield* runtime.events.pipe(
@@ -647,7 +649,9 @@ describe("OpenCode2 adapter", () => {
             : Effect.void,
         ),
         Stream.filter(
-          (event): event is Extract<ProviderAdapterV2Event, { type: "turn.terminal" }> =>
+          (
+            event,
+          ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }> =>
             event.type === "turn.terminal",
         ),
         Stream.runHead,
@@ -767,7 +771,9 @@ describe("OpenCode2 adapter", () => {
             : Effect.void,
         ),
         Stream.filter(
-          (event): event is Extract<ProviderAdapterV2Event, { type: "turn.terminal" }> =>
+          (
+            event,
+          ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }> =>
             event.type === "turn.terminal",
         ),
         Stream.runHead,
@@ -809,7 +815,9 @@ describe("OpenCode2 adapter", () => {
       const firstEnded = yield* Deferred.make<void>();
       const ended = yield* runtime.events.pipe(
         Stream.filter(
-          (event): event is Extract<ProviderAdapterV2Event, { type: "turn.terminal" }> =>
+          (
+            event,
+          ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }> =>
             event.type === "turn.terminal",
         ),
         Stream.tap(() => Deferred.succeed(firstEnded, undefined)),
@@ -1110,7 +1118,7 @@ describe("OpenCode2 adapter", () => {
     event("session.execution.succeeded", { sessionID: SESSION }),
   ];
   /** The runtime's events, with the background subagent's statuses and the middle session's turns. */
-  const watchNested = (runtime: ProviderAdapterV2SessionRuntime) =>
+  const watchNested = (runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime) =>
     Effect.gen(function* () {
       const deep: Array<string> = [];
       const middleTurns = new Map<string, string>();
@@ -1325,7 +1333,7 @@ describe("OpenCode2 adapter", () => {
     attemptId: RunAttemptId.make("attempt:opencode2-adapter:2"),
   });
   const stopFirstTurn = (
-    runtime: ProviderAdapterV2SessionRuntime,
+    runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
     thread: OrchestrationV2ProviderThread,
   ) =>
     Effect.gen(function* () {
@@ -1336,10 +1344,12 @@ describe("OpenCode2 adapter", () => {
       yield* TestClock.adjust("11 seconds");
       yield* Fiber.join(interrupt);
     });
-  const terminals = (runtime: ProviderAdapterV2SessionRuntime, count: number) =>
+  const terminals = (runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime, count: number) =>
     runtime.events.pipe(
       Stream.filter(
-        (event): event is Extract<ProviderAdapterV2Event, { type: "turn.terminal" }> =>
+        (
+          event,
+        ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }> =>
           event.type === "turn.terminal",
       ),
       Stream.take(count),
@@ -2113,7 +2123,9 @@ describe("OpenCode2 adapter", () => {
           }),
         ),
         Stream.filter(
-          (event): event is Extract<ProviderAdapterV2Event, { type: "turn.terminal" }> =>
+          (
+            event,
+          ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }> =>
             event.type === "turn.terminal",
         ),
         Stream.tap(() => Deferred.succeed(firstEnded, undefined)),
@@ -2331,7 +2343,7 @@ describe("OpenCode2 adapter", () => {
     replyData("session.form.list", forms),
   ];
 
-  const turnItems = (collected: ReadonlyArray<ProviderAdapterV2Event>) =>
+  const turnItems = (collected: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
     collected.flatMap((event) =>
       event.type === "turn_item.updated" ? [`${event.turnItem.type}:${event.turnItem.status}`] : [],
     );
@@ -3043,7 +3055,7 @@ describe("OpenCode2 adapter", () => {
     Effect.gen(function* () {
       const kept = "msg_t3_turn_run-attempt:kept:1";
       const dropped = "msg_t3_turn_run-attempt:dropped:1";
-      const offers: Array<ProviderContinuationRequest> = [];
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
       const { runtime, thread } = yield* resumed([
         out("message.list", "<any>"),
         reply("message.list", {
@@ -3727,7 +3739,7 @@ describe("OpenCode2 adapter", () => {
    */
   const continued = (after: ReadonlyArray<ProviderReplayEntry>) =>
     Effect.gen(function* () {
-      const offers: Array<ProviderContinuationRequest> = [];
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
       const { runtime, thread } = yield* resumed([
         ...backgroundLaunch(CHILD),
         event("session.execution.succeeded", { sessionID: SESSION }),
@@ -3867,7 +3879,7 @@ describe("OpenCode2 adapter", () => {
     Effect.gen(function* () {
       const reportText = `<subagent sessionID="${CHILD}" state="completed" description="Sleep">\nCHILD_OK\n</subagent>`;
       const steerId = `msg_t3_steer_${SESSION}:message:opencode2-adapter:steer`;
-      const offers: Array<ProviderContinuationRequest> = [];
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
       const { runtime, thread } = yield* resumed([
         ...backgroundLaunch(CHILD),
         event("session.execution.succeeded", { sessionID: SESSION }),

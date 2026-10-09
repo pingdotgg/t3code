@@ -18,7 +18,7 @@ import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type { AcpError } from "effect-acp/errors";
 
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import {
   isAntigravityTextGenerationAvailable,
   makeAntigravityTextGeneration,
@@ -46,12 +46,12 @@ import {
   removeAntigravitySessionFiles,
 } from "../acp/AntigravitySessionFiles.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeAntigravityAdapterV2 } from "../../orchestration-v2/Adapters/AntigravityAdapterV2.ts";
 import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeLogging";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeAntigravityProvider } from "../AntigravityProvider.ts";
-import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
 import {
   defaultProviderContinuationIdentity,
@@ -68,7 +68,7 @@ const isNodeRuntimeUnavailableError = Schema.is(NodeRuntimeUnavailableError);
 
 export type AntigravityDriverEnv =
   | AntigravityInstallation.AntigravityInstallation
-  | ProviderHost
+  | ProviderHost.ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
@@ -89,7 +89,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const selfInvocation = yield* resolveSelfInvocation();
       const installation = yield* AntigravityInstallation.AntigravityInstallation;
       const loggers = yield* ProviderEventLoggers.ProviderEventLoggers;

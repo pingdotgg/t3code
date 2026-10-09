@@ -123,9 +123,9 @@ function byOpenCodeRuntime<A, E, R, PE>(
  */
 function selectOpenCodeRuntimeAdapter(input: {
   readonly probe: OpenCodeRuntimeProbe;
-  readonly v1: ProviderAdapter.ProviderAdapterV2Shape;
-  readonly v2: ProviderAdapter.ProviderAdapterV2Shape;
-}): ProviderAdapter.ProviderAdapterV2Shape {
+  readonly v1: ProviderAdapter.ProviderAdapterV2["Service"];
+  readonly v2: ProviderAdapter.ProviderAdapterV2["Service"];
+}): ProviderAdapter.ProviderAdapterV2["Service"] {
   const pick = <PE>(probed: Effect.Effect<ProbedOpenCode | undefined, PE>) =>
     byOpenCodeRuntime(probed, { v1: Effect.succeed(input.v1), v2: Effect.succeed(input.v2) });
   const hot = pick(Effect.map(input.probe.lastSuccess, Option.getOrUndefined));
@@ -445,7 +445,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
               ),
             );
 
-      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, host.settings);
+      const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<OpenCodeSettings>>(
         {
           resolveMaintenance,

@@ -239,7 +239,7 @@ function providerSession(input: {
 }
 
 function makeProviderThread(input: {
-  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly providerInstanceId: ProviderInstanceId;
   readonly appThreadId: OrchestrationV2ProviderThread["appThreadId"];
   readonly providerSessionId: OrchestrationV2ProviderThread["providerSessionId"];

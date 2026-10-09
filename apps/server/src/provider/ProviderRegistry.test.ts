@@ -47,7 +47,7 @@ import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
 import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCodeServerLedger";
-import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderInstanceRegistryHydration from "./ProviderInstanceRegistryHydration.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettingsModule from "../serverSettings.ts";

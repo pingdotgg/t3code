@@ -58,7 +58,7 @@ import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPol
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   ProviderAdapterDriverCreateError,

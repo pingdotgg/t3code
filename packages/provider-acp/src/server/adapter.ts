@@ -95,7 +95,7 @@ import {
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { type ProviderContinuationRequest } from "@t3tools/provider-core/server/continuationRequests";
+import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
   type BackgroundWork,
   type BackgroundWorkReport,
@@ -499,7 +499,9 @@ export interface AcpAdapterV2Options {
    * / history-only behavior for null-activeTurn updates.
    */
   readonly continuationRequests?: {
-    readonly offer: (request: ProviderContinuationRequest) => Effect.Effect<void>;
+    readonly offer: (
+      request: ProviderContinuationRequests.ProviderContinuationRequest,
+    ) => Effect.Effect<void>;
   };
   readonly testHooks?: {
     /**
@@ -743,7 +745,7 @@ function nativeThreadId(
 function makeProviderThread(input: {
   readonly driver: ProviderDriverKind;
   readonly providerInstanceId: ProviderInstanceId;
-  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly appThreadId: OrchestrationV2ProviderThread["appThreadId"];
   readonly providerSessionId: OrchestrationV2ProviderThread["providerSessionId"];
   readonly nativeThreadId: string;
@@ -2226,7 +2228,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             type: "turn_item.updated",
             driver,
             turnItem: makeProviderRetryTurnItem({
-              idAllocator,
               driver,
               threadId: context.input.threadId,
               runId: context.input.runId,
