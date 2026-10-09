@@ -15,6 +15,8 @@ import * as UpdateWindow from "./UpdateWindow.ts";
 
 /** A failed install is retried for the same version only after this long. */
 const RETRY_AFTER = Duration.hours(6);
+const FIRST_PASS_DELAY = Duration.minutes(2);
+const PASS_INTERVAL = Duration.minutes(10);
 
 function isAutoUpdatable(provider: ServerProvider): boolean {
   const advisory = provider.versionAdvisory;
@@ -42,62 +44,40 @@ export const layer = Layer.effectDiscard(
     const runner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
     const updateWindow = yield* UpdateWindow.UpdateWindow;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
-    const timings = yield* UpdateWindow.updateTimings;
     // Keyed by instance and target version, so a newer release retries at once.
     const attempts = new Map<string, number>();
 
     const pass = Effect.gen(function* () {
-      const settings = yield* serverSettings.getSettings;
-      if (!settings.automaticUpdates || !settings.enableProviderUpdateChecks) return;
-      const nowMs = yield* Clock.currentTimeMillis;
-      const candidates = (yield* providers.getProviders).filter((provider) => {
-        if (!isAutoUpdatable(provider)) return false;
-        const attemptedAt = attempts.get(
-          `${provider.instanceId}@${provider.versionAdvisory?.latestVersion}`,
-        );
-        return attemptedAt === undefined || nowMs - attemptedAt >= Duration.toMillis(RETRY_AFTER);
-      });
-      for (const provider of candidates) {
+      for (const { instanceId } of yield* providers.getProviders) {
         const install = Effect.gen(function* () {
-          const currentSettings = yield* serverSettings.getSettings;
-          if (!currentSettings.automaticUpdates || !currentSettings.enableProviderUpdateChecks)
-            return;
+          const settings = yield* serverSettings.getSettings;
+          if (!settings.automaticUpdates || !settings.enableProviderUpdateChecks) return;
           const current = (yield* providers.getProviders).find(
-            (candidate) => candidate.instanceId === provider.instanceId,
+            (candidate) => candidate.instanceId === instanceId,
           );
           if (!current || !isAutoUpdatable(current)) return;
           const targetVersion = current.versionAdvisory?.latestVersion;
-          const attemptKey = `${current.instanceId}@${targetVersion}`;
+          const attemptKey = `${instanceId}@${targetVersion}`;
           const nowMs = yield* Clock.currentTimeMillis;
           const attemptedAt = attempts.get(attemptKey);
           if (attemptedAt !== undefined && nowMs - attemptedAt < Duration.toMillis(RETRY_AFTER))
             return;
           attempts.set(attemptKey, nowMs);
           yield* Effect.logInfo("Updating provider in the background", {
-            instanceId: provider.instanceId,
+            instanceId,
             fromVersion: current.version,
             targetVersion,
           });
           yield* runner
-            .updateProviderWhileAdmitted({
-              provider: current.driver,
-              instanceId: current.instanceId,
-            })
+            .updateProvider({ provider: current.driver, instanceId })
             .pipe(
               Effect.catchCause((cause) =>
-                Effect.logWarning("Background provider update failed", {
-                  instanceId: provider.instanceId,
-                  cause,
-                }),
+                Effect.logWarning("Background provider update failed", { instanceId, cause }),
               ),
             );
         });
         // Rechecked per install: the previous one may have run for minutes.
-        const installed = yield* updateWindow.runIfOpen({ closesWindows: false }, install);
-        if (Option.isNone(installed)) {
-          yield* Effect.logDebug("Provider auto-update waiting for the update window");
-          return;
-        }
+        if (Option.isNone(yield* updateWindow.runIfOpen(install))) return;
       }
     }).pipe(
       Effect.catchCause((cause) =>
@@ -107,8 +87,8 @@ export const layer = Layer.effectDiscard(
     );
 
     yield* forkParked(
-      Effect.sleep(timings.firstPassDelay).pipe(
-        Effect.andThen(pass.pipe(Effect.repeat(Schedule.spaced(timings.passInterval)))),
+      Effect.sleep(FIRST_PASS_DELAY).pipe(
+        Effect.andThen(pass.pipe(Effect.repeat(Schedule.spaced(PASS_INTERVAL)))),
       ),
     );
   }),
