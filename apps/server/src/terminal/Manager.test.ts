@@ -227,6 +227,7 @@ interface CreateManagerOptions {
     readonly hasRunningSubprocess: boolean;
     readonly childCommand: string | null;
     readonly processIds: ReadonlyArray<number>;
+    readonly terminalCommand?: string | null;
   }>;
   processTable?: Effect.Effect<
     ReadonlyArray<{ readonly pid: number; readonly ppid: number; readonly name: string }>,
@@ -1279,6 +1280,7 @@ it.layer(
     Effect.gen(function* () {
       // FakePtyAdapter assigns pids from 9000 in open order.
       const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => "/bin/zsh",
         processTable: Effect.succeed([
           { pid: 9000, ppid: 1, name: "zsh" },
           // An async prompt worker: a copy of the shell with no children.
@@ -1360,6 +1362,7 @@ it.layer(
       ];
       let processes = shells;
       const { manager, ptyAdapter, getEvents } = yield* createManager(5, {
+        shellResolver: () => "/bin/zsh",
         subprocessPollIntervalMs: 60_000,
         processTable: Effect.sync(() => {
           snapshotCalls += 1;
@@ -1382,6 +1385,15 @@ it.layer(
         { pid: 200, ppid: 9001, name: "zsh" },
         { pid: 201, ppid: 200, name: "sleep" },
       ];
+      assert.equal(yield* manager.hasBusyTerminals, true);
+      // `exec` replaces the shell at its PID and leaves no child to inspect.
+      processes = shells.map((entry) =>
+        entry.pid === 9001 ? { ...entry, name: "/usr/bin/sleep" } : entry,
+      );
+      assert.equal(yield* manager.hasBusyTerminals, true);
+      processes = shells.map((entry) => (entry.pid === 9001 ? { ...entry, name: "node" } : entry));
+      assert.equal(yield* manager.hasBusyTerminals, true);
+      processes = shells.map((entry) => (entry.pid === 9001 ? { ...entry, name: "" } : entry));
       assert.equal(yield* manager.hasBusyTerminals, true);
       processes = shells;
       assert.equal(yield* manager.hasBusyTerminals, false);
@@ -1410,6 +1422,7 @@ it.layer(
           })),
       };
       const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => "/bin/zsh",
         subprocessPollIntervalMs: 60_000,
       }).pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
@@ -1438,10 +1451,16 @@ it.layer(
     Effect.gen(function* () {
       let duringCheck: Effect.Effect<void> = Effect.void;
       const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => "/bin/zsh",
         subprocessPollIntervalMs: 60_000,
         subprocessInspector: () =>
           duringCheck.pipe(
-            Effect.as({ hasRunningSubprocess: false, childCommand: null, processIds: [] }),
+            Effect.as({
+              hasRunningSubprocess: false,
+              childCommand: null,
+              processIds: [],
+              terminalCommand: "zsh",
+            }),
           ),
       });
       yield* manager.open(openInput());
@@ -1463,9 +1482,15 @@ it.layer(
   it.effect("holds terminal launches and writes behind a server restart permit", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => "/bin/zsh",
         subprocessPollIntervalMs: 60_000,
         subprocessInspector: () =>
-          Effect.succeed({ hasRunningSubprocess: false, childCommand: null, processIds: [] }),
+          Effect.succeed({
+            hasRunningSubprocess: false,
+            childCommand: null,
+            processIds: [],
+            terminalCommand: "zsh",
+          }),
       });
       yield* manager.open(openInput());
       const held = yield* Deferred.make<void>();

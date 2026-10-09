@@ -253,8 +253,8 @@ interface TerminalSubprocessInspectResult {
   readonly hasRunningSubprocess: boolean;
   readonly childCommand: string | null;
   readonly processIds: ReadonlyArray<number>;
-  /** False when an otherwise successful process snapshot omitted the shell. */
-  readonly terminalExists?: boolean;
+  /** The normalized command currently running at the terminal's root PID. */
+  readonly terminalCommand?: string | null;
 }
 
 interface TerminalSubprocessInspector {
@@ -318,6 +318,8 @@ interface TerminalSessionState {
   hasRunningSubprocess: boolean;
   /** Normalized child command name when `hasRunningSubprocess`; cleared when idle. */
   childCommandLabel: string | null;
+  /** The shell originally spawned, so `exec` at its PID still counts as work. */
+  launchedShellCommand?: string | null;
   runtimeEnv: Record<string, string> | null;
 }
 
@@ -730,6 +732,7 @@ function deriveSubprocessInspectResult(
   const commandName = (pid: number) =>
     normalizeChildCommandName(snapshot.commandById.get(pid) ?? "", platform);
   const shellName = commandName(terminalPid);
+  const terminalCommand = platform === "win32" ? (shellName?.toLowerCase() ?? null) : shellName;
   // Async prompt themes fork the shell into a helper that waits with no
   // children of its own. That copy is not a command the user started.
   const childPid = (snapshot.childrenByParent.get(terminalPid) ?? []).find(
@@ -743,7 +746,7 @@ function deriveSubprocessInspectResult(
       hasRunningSubprocess: false,
       childCommand: null,
       processIds: [],
-      terminalExists: snapshot.commandById.has(terminalPid),
+      terminalCommand,
     };
   }
   const processIds = new Set<number>([terminalPid]);
@@ -762,7 +765,7 @@ function deriveSubprocessInspectResult(
     hasRunningSubprocess: true,
     childCommand: normalized ? truncateTerminalWireLabel(normalized) : null,
     processIds: [...processIds],
-    terminalExists: snapshot.commandById.has(terminalPid),
+    terminalCommand,
   };
 }
 
@@ -2211,6 +2214,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
 
     if (attempt._tag === "Success") {
+      const shellCommand = normalizeChildCommandName(
+        basenameForPlatform(candidate.shell, platform),
+        platform,
+      );
+      session.launchedShellCommand =
+        platform === "win32" ? (shellCommand?.toLowerCase() ?? null) : shellCommand;
       return {
         process: attempt.success,
         shellLabel: formatShellCandidate(candidate),
@@ -3215,6 +3224,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                 status: session.status,
                 pid: session.pid,
                 process: session.process,
+                launchedShellCommand: session.launchedShellCommand,
                 activityMark: session.eventSequence + session.inputCount,
               },
             ] as const,
@@ -3226,7 +3236,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     for (const session of running.values()) {
       if (session.pid === null || !Number.isInteger(session.pid) || session.pid <= 0) return true;
       const result = yield* inspector(session.pid);
-      if (result.hasRunningSubprocess || result.terminalExists === false) return true;
+      if (
+        result.hasRunningSubprocess ||
+        !result.terminalCommand ||
+        !session.launchedShellCommand ||
+        result.terminalCommand !== session.launchedShellCommand
+      ) {
+        return true;
+      }
     }
     // Input, output, or a new process can arrive after the shared snapshot.
     const latest = yield* readManagerState;
