@@ -16,6 +16,13 @@ const decodeRpcRequest = Schema.decodeSync(
   Schema.fromJsonString(Schema.Struct({ id: Schema.String, type: Schema.String })),
 );
 const encodeJsonLine = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const STARTUP_DIALOG = `${encodeJsonLine({
+  type: "extension_ui_request",
+  id: "ui-1",
+  method: "select",
+  title: "Allow project MCP server “github”?",
+  options: ["Don't allow", "Allow"],
+})}\n`;
 
 function processHandle(input: {
   readonly stdout?: string;
@@ -59,6 +66,8 @@ const piDiscoverySpawner = (
     readonly version?: string;
     readonly state?: unknown;
     readonly authCheck?: string | undefined;
+    /** Without `--no-approve`, print a project-trust dialog and exit 0 as Pi 1.x does. */
+    readonly startupDialog?: boolean;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -101,6 +110,9 @@ const piDiscoverySpawner = (
         return options.authCheck === undefined || args.join(" ") !== expected.join(" ")
           ? Effect.die(`Unexpected pi ${args.join(" ")}`)
           : Effect.succeed(processHandle({ stdout: options.authCheck, exitCode: 1 }));
+      }
+      if (options.startupDialog === true && !args.includes("--no-approve")) {
+        return Effect.succeed(processHandle({ stdout: STARTUP_DIALOG }));
       }
       return Effect.succeed(
         ChildProcessSpawner.makeHandle({
@@ -226,6 +238,26 @@ describe("PiProvider", () => {
       assert.equal(snapshot.auth.status, "authenticated");
       if (row.message === undefined) assert.isUndefined(snapshot.message);
       else assert.include(snapshot.message ?? "", row.message);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each([
+    { launchArgs: "", models: ["default", "anthropic/claude-opus"] },
+    { launchArgs: "--approve", models: ["default"] },
+  ])("probes past a project startup dialog with launch args '$launchArgs'", (row) =>
+    Effect.gen(function* () {
+      const spawner = yield* piDiscoverySpawner(
+        { models: [{ provider: "anthropic", id: "claude-opus" }] },
+        { startupDialog: true },
+      );
+      const snapshot = yield* checkPiProviderStatus({
+        ...settings,
+        launchArgs: row.launchArgs,
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      assert.deepEqual(
+        snapshot.models.map((model) => model.slug),
+        row.models,
+      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
