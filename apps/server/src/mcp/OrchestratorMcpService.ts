@@ -698,6 +698,10 @@ function threadDetail(
     pendingRequestCount: projection.runtimeRequests.filter(
       (request) => request.status === "pending",
     ).length,
+    queuedRunCount: projection.runs.filter((run) => run.status === "queued").length,
+    heldQueuedRunCount: projection.runs.filter(
+      (run) => run.status === "queued" && run.queueHeld === true,
+    ).length,
     archived: projection.thread.archivedAt !== null,
     ...threadSettlement(projection.thread),
     // From the shell, like the list, so read and list agree on snooze state.
@@ -1241,6 +1245,10 @@ const make = Effect.gen(function* () {
       const childRun = delegatedTaskRun(childControls, task);
       const terminalRun = latestTerminalResultRun(childControls, childRun);
       const progress = delegatedTaskProgress(childControls);
+      const pendingRuns = childControls.runs
+        .filter((run) => !ThreadManagementService.isTerminalRunStatus(run.status))
+        .toSorted((a, b) => b.ordinal - a.ordinal);
+      const pendingRun = pendingRuns.find((run) => run.status !== "queued") ?? pendingRuns[0];
       const resultRunIds = [
         ...new Set(
           [progress.resultRun?.id, terminalRun?.id].filter((id): id is RunId => id !== undefined),
@@ -1281,9 +1289,11 @@ const make = Effect.gen(function* () {
             )
           : workState === "result_available"
             ? taskStatusForRun(progress.resultRun ?? childRun)
-            : taskStatusForRun(childRun) === "queued"
-              ? "queued"
-              : "running";
+            : pendingRun !== undefined
+              ? taskStatusForRun(pendingRun)
+              : taskStatusForRun(childRun) === "queued"
+                ? "queued"
+                : "running";
       const derivedResult =
         task.result !== null
           ? task.result
@@ -2069,11 +2079,12 @@ const make = Effect.gen(function* () {
         const child = yield* loadProjection(current.childThreadId);
         if (
           current.workState !== "waiting_for_children" &&
-          ThreadManagementService.latestActiveRun(child) === undefined
+          ThreadManagementService.latestActiveRun(child) === undefined &&
+          !child.runs.some((run) => run.status === "queued")
         ) {
           return yield* failure(
             "task_not_cancellable",
-            `Delegated task ${input.taskId} has no interruptible child run.`,
+            `Delegated task ${input.taskId} has no interruptible or queued child run.`,
           );
         }
         yield* stopWithinLimit;
