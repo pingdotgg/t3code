@@ -8,7 +8,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeGrokTextGeneration } from "./textGeneration.ts";
 import { GrokAdapterV2Driver, type GrokAdapterV2DriverEnv } from "./adapter.ts";
@@ -72,7 +72,7 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
 
 export type GrokDriverEnv =
   | GrokAdapterV2DriverEnv
-  | ProviderHost
+  | ProviderHost.ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
@@ -95,7 +95,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
       const httpClient = yield* HttpClient.HttpClient;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const { cwd } = host.paths;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
