@@ -275,6 +275,16 @@ const cleanupFixture = Effect.gen(function* () {
     Effect.provideService(ProjectionStore.ProjectionStoreV2, {
       getShellSnapshot: (input?: { location?: string }) =>
         Effect.sync(() => ({ threads: input?.location === "archive" ? [] : threads })),
+      getThreadWorktreePaths: () =>
+        Effect.sync(() =>
+          threads.flatMap((thread) =>
+            thread.worktreePath === null
+              ? []
+              : [{ threadId: thread.id, worktreePath: thread.worktreePath }],
+          ),
+        ),
+      getThreadShell: (threadId: ThreadId) =>
+        Effect.sync(() => threads.find((thread) => thread.id === threadId) ?? null),
     } as unknown as ProjectionStore.ProjectionStoreV2["Service"]),
     Effect.provideService(Orchestrator.OrchestratorV2, {
       streamDomainEvents: Stream.empty,
