@@ -5,7 +5,6 @@ import * as NodeReadline from "node:readline";
 import type * as NodeStream from "node:stream";
 
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -63,11 +62,31 @@ export class BootstrapEnvelopeDecodeError extends Schema.TaggedError<BootstrapEn
   }
 }
 
+export class BootstrapEnvelopeMissingError extends Schema.TaggedError<BootstrapEnvelopeMissingError>()(
+  "BootstrapEnvelopeMissingError",
+  { fd: Schema.Number },
+) {
+  override get message(): string {
+    return `Bootstrap input on file descriptor ${this.fd} closed without an envelope.`;
+  }
+}
+
+export class BootstrapEnvelopeTimeoutError extends Schema.TaggedError<BootstrapEnvelopeTimeoutError>()(
+  "BootstrapEnvelopeTimeoutError",
+  { fd: Schema.Number, timeoutMs: Schema.Number },
+) {
+  override get message(): string {
+    return `Timed out waiting for bootstrap envelope from file descriptor ${this.fd} after ${this.timeoutMs} ms.`;
+  }
+}
+
 export const BootstrapError = Schema.Union([
   BootstrapFdStatError,
   BootstrapInputStreamOpenError,
   BootstrapEnvelopeReadError,
   BootstrapEnvelopeDecodeError,
+  BootstrapEnvelopeMissingError,
+  BootstrapEnvelopeTimeoutError,
 ]);
 export type BootstrapError = typeof BootstrapError.Type;
 
@@ -77,17 +96,21 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
   options?: {
     timeoutMs?: number;
   },
-): Effect.fn.Return<Option.Option<A>, BootstrapError> {
-  const fdReady = yield* isFdReady(fd);
-  if (!fdReady) return Option.none();
+): Effect.fn.Return<A, BootstrapError> {
+  yield* Effect.try({
+    try: () => NodeFS.fstatSync(fd),
+    catch: (cause) => new BootstrapFdStatError({ fd, cause }),
+  });
 
   const stream = yield* makeBootstrapInputStream(fd);
 
-  const timeoutMs = options?.timeoutMs ?? 1000;
+  // An explicit bootstrap fd is required startup input. Allow cold reads time
+  // to complete, but fail before the desktop's one-minute readiness deadline.
+  const timeoutMs = options?.timeoutMs ?? 30_000;
 
   return yield* Effect.callback<
-    Option.Option<A>,
-    BootstrapEnvelopeReadError | BootstrapEnvelopeDecodeError
+    A,
+    BootstrapEnvelopeReadError | BootstrapEnvelopeDecodeError | BootstrapEnvelopeMissingError
   >((resume) => {
     const input = NodeReadline.createInterface({
       input: stream,
@@ -95,19 +118,18 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
     });
 
     const cleanup = () => {
-      stream.removeListener("error", handleError);
+      input.removeListener("error", handleError);
       input.removeListener("line", handleLine);
       input.removeListener("close", handleClose);
       input.close();
       stream.destroy();
     };
 
+    const finish = (result: Parameters<typeof resume>[0]) =>
+      resume(result.pipe(Effect.ensuring(Effect.sync(cleanup))));
+
     const handleError = (error: Error) => {
-      if (isUnavailableBootstrapFdError(error)) {
-        resume(Effect.succeedNone);
-        return;
-      }
-      resume(
+      finish(
         Effect.fail(
           new BootstrapEnvelopeReadError({
             fd,
@@ -120,9 +142,9 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
     const handleLine = (line: string) => {
       const parsed = decodeJsonResult(schema)(line);
       if (Result.isSuccess(parsed)) {
-        resume(Effect.succeedSome(parsed.success));
+        finish(Effect.succeed(parsed.success));
       } else {
-        resume(
+        finish(
           Effect.fail(
             new BootstrapEnvelopeDecodeError({
               fd,
@@ -134,37 +156,21 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
     };
 
     const handleClose = () => {
-      resume(Effect.succeedNone);
+      finish(Effect.fail(new BootstrapEnvelopeMissingError({ fd })));
     };
 
-    stream.once("error", handleError);
+    input.once("error", handleError);
     input.once("line", handleLine);
     input.once("close", handleClose);
 
     return Effect.sync(cleanup);
-  }).pipe(Effect.timeoutOption(timeoutMs), Effect.map(Option.flatten));
-});
-
-const isUnavailableBootstrapFdError = Predicate.compose(
-  Predicate.hasProperty("code"),
-  (_) => _.code === "EBADF" || _.code === "ENOENT",
-);
-
-const isFdReady = (fd: number) =>
-  Effect.try({
-    try: () => NodeFS.fstatSync(fd),
-    catch: (error) =>
-      new BootstrapFdStatError({
-        fd,
-        cause: error,
-      }),
   }).pipe(
-    Effect.as(true),
-    Effect.catchTags({
-      BootstrapFdStatError: (error) =>
-        isUnavailableBootstrapFdError(error.cause) ? Effect.succeed(false) : Effect.fail(error),
+    Effect.timeoutOrElse({
+      duration: timeoutMs,
+      orElse: () => Effect.fail(new BootstrapEnvelopeTimeoutError({ fd, timeoutMs })),
     }),
   );
+});
 
 const makeBootstrapInputStream = (fd: number) =>
   Effect.gen(function* () {
