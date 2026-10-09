@@ -1,6 +1,25 @@
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
+
+/** Shares background install admission with provider startup, before either touches a CLI. */
+export class ProviderMaintenanceAdmission extends Context.Service<
+  ProviderMaintenanceAdmission,
+  {
+    readonly withPermit: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+  }
+>()("t3/provider/ProviderMaintenanceAdmission") {}
+
+// Keep one layer reference so the update window and turn startup share its permit.
+export const admissionLayer = Layer.effect(
+  ProviderMaintenanceAdmission,
+  Effect.map(Semaphore.make(1), (permit) =>
+    ProviderMaintenanceAdmission.of({ withPermit: permit.withPermits(1) }),
+  ),
+);
 
 export interface ProviderMaintenanceCommandCoordinatorShape<E> {
   readonly withCommandLock: <A, R>(input: {
