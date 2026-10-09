@@ -23,7 +23,6 @@ import {
 } from "@t3tools/provider-core/server/threadTitleContext";
 import * as ThreadTitleLinks from "../src/textGeneration/ThreadTitleLinks.ts";
 import * as SourceControlProviderRegistry from "../src/sourceControl/SourceControlProviderRegistry.ts";
-import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
 import * as SourceControlBuiltInDrivers from "../src/sourceControl/builtInDrivers.ts";
 import * as ServerSettings from "../src/serverSettings.ts";
 import * as VcsProcess from "../src/vcs/VcsProcess.ts";
