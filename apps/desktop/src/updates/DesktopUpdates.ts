@@ -520,19 +520,22 @@ export const make = Effect.gen(function* () {
   }).pipe(Effect.withSpan("desktop.updates.downloadAvailableUpdate"));
 
   // update-available fires inside the check that found it, so the download
-  // waits for that check to release the updater. Installing stays gated: the
-  // app's server relaunches into it when idle, and quitting installs it.
+  // waits for that check to release the updater. Quitting installs the download.
   const downloadInBackground = Effect.scoped(
     Effect.gen(function* () {
       const completions = yield* PubSub.subscribe(finishedUpdateActions);
       while (Option.isSome(yield* activeUpdateAction)) {
         yield* PubSub.take(completions);
       }
-      if (yield* Ref.get(desktopState.quitting)) return;
-      yield* downloadAvailableUpdate;
     }),
   ).pipe(
     Effect.timeout(BACKGROUND_DOWNLOAD_START_WAIT),
+    Effect.andThen(
+      Effect.gen(function* () {
+        if (yield* Ref.get(desktopState.quitting)) return;
+        yield* downloadAvailableUpdate;
+      }),
+    ),
     Effect.catchCause((cause) =>
       Cause.hasInterruptsOnly(cause)
         ? Effect.void
