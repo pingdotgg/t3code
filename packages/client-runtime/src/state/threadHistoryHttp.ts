@@ -30,7 +30,10 @@ export const fetchEnvironmentThreadHistoryPage = Effect.fn(
     group: "orchestration",
     method: "GET",
     url: (httpBaseUrl) =>
-      environmentEndpointUrl(httpBaseUrl, `/api/orchestration/threads/${input.threadId}/history`),
+      environmentEndpointUrl(
+        httpBaseUrl,
+        `/api/orchestration/threads/${encodeURIComponent(input.threadId)}/history`,
+      ),
     timeoutMs: input.timeoutMs ?? DEFAULT_THREAD_HISTORY_TIMEOUT_MS,
     request: ({ client, headers }) =>
       client.threadHistoryPage({
