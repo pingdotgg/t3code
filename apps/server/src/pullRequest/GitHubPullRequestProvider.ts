@@ -16,7 +16,7 @@ import {
   type ProviderChangeRequestDetail,
   type PullRequestProviderApi,
   type ProviderRepositoryRef,
-} from "./PullRequestProvider.ts";
+} from "@t3tools/source-control-core/server/PullRequestProvider";
 import type { GitHubViewerAccess, GitHubWorkflowRunApproval } from "./gitHubPullRequestJson.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {

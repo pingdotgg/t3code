@@ -17,7 +17,7 @@ import {
   decodeAzureDevOpsPullRequestListJson,
   type NormalizedAzureDevOpsPullRequestRecord,
 } from "./azureDevOpsPullRequests.ts";
-import * as SourceControlProvider from "./SourceControlProvider.ts";
+import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 

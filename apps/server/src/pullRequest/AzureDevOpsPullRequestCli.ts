@@ -26,7 +26,7 @@ import {
   type AzureDevOpsPullRequest,
   type AzureDevOpsRepositoryLocation,
 } from "./azureDevOpsPullRequestJson.ts";
-import type { ProviderListCursor } from "./PullRequestProvider.ts";
+import type { ProviderListCursor } from "@t3tools/source-control-core/server/PullRequestProvider";
 
 /**
  * Names the read that produced unusable output, so a failure reports the call it came from

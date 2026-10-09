@@ -10,7 +10,7 @@ import {
   type ProviderChangeRequestDetail,
   type ProviderRepositoryRef,
   type PullRequestProviderApi,
-} from "./PullRequestProvider.ts";
+} from "@t3tools/source-control-core/server/PullRequestProvider";
 import {
   ForgejoPullRequest,
   ForgejoRepository,

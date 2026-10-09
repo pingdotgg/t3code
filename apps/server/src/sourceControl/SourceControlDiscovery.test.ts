@@ -25,7 +25,8 @@ import * as ForgejoSourceControlProvider from "./ForgejoSourceControlProvider.ts
 import * as ForgejoPullRequestProvider from "../pullRequest/ForgejoPullRequestProvider.ts";
 import * as SourceControlDiscovery from "./SourceControlDiscovery.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
-import { firstNonEmptyLine } from "./SourceControlProviderDiscovery.ts";
+import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
+import { firstNonEmptyLine } from "@t3tools/source-control-core/server/discovery";
 
 const layerSourceControlProviderRegistryTest = (input: {
   readonly bitbucket: Partial<BitbucketApi.BitbucketApi["Service"]>;
@@ -46,6 +47,14 @@ const layerSourceControlProviderRegistryTest = (input: {
         Layer.mock(ForgejoCli.ForgejoCli)({ listLogins: () => Effect.succeed([]) }),
         Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({}),
         Layer.mock(VcsProcess.VcsProcess)(input.process),
+        ServerSourceControlHost.layer.pipe(
+          Layer.provide(
+            Layer.merge(
+              Layer.mock(VcsProcess.VcsProcess)(input.process),
+              ServerSettings.ServerSettingsService.layerTest(),
+            ),
+          ),
+        ),
       ),
     ),
   );

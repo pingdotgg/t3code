@@ -24,7 +24,7 @@ import {
   type ProviderChangeRequestSummary,
   type ProviderDiffSlice,
   type PullRequestProviderApi,
-} from "./PullRequestProvider.ts";
+} from "@t3tools/source-control-core/server/PullRequestProvider";
 import type {
   AzureDevOpsChangeEntry,
   AzureDevOpsItemContent,

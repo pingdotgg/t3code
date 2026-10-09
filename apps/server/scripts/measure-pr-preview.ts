@@ -16,7 +16,7 @@ import * as GitHubApi from "../src/sourceControl/GitHubApi.ts";
 import * as GitHubCredentials from "../src/sourceControl/GitHubCredentials.ts";
 import * as ServerSettings from "../src/serverSettings.ts";
 import * as GitHubQuota from "../src/sourceControl/githubQuota.ts";
-import * as SourceControlRateLimit from "../src/sourceControl/SourceControlRateLimit.ts";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as VcsProcess from "../src/vcs/VcsProcess.ts";
 
 const [repository, ...numbers] = process.argv.slice(2);

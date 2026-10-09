@@ -1,3 +1,8 @@
+/**
+ * Discovery specs: how each provider reports its CLI or API, and the shared probe that runs them.
+ *
+ * @module source-control-core/server/discovery
+ */
 import * as NodeUtil from "node:util";
 import type {
   SourceControlProviderAuth,
@@ -9,12 +14,12 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import type * as SourceControlProvider from "./SourceControlProvider.ts";
-import type * as VcsProcess from "../vcs/VcsProcess.ts";
+import type * as SourceControlHost from "./SourceControlHost.ts";
 
 export interface SourceControlAuthProbeInput {
   readonly stdout: string;
   readonly stderr: string;
-  readonly exitCode: VcsProcess.VcsProcessOutput["exitCode"];
+  readonly exitCode: SourceControlHost.SourceControlProcessOutput["exitCode"];
 }
 
 export interface SourceControlUnknownRemoteRefinementInput {
@@ -179,7 +184,7 @@ function isCliRemoteRefinementSpec(
 
 function probeCli(input: {
   readonly spec: SourceControlCliDiscoverySpec;
-  readonly process: VcsProcess.VcsProcess["Service"];
+  readonly process: SourceControlHost.SourceControlHost["Service"]["process"];
   readonly cwd: string;
 }): Effect.Effect<DiscoveryProbeResult> {
   return input.process
@@ -223,7 +228,7 @@ function probeCli(input: {
 
 export function probeSourceControlProvider(input: {
   readonly spec: SourceControlProviderDiscoverySpec;
-  readonly process: VcsProcess.VcsProcess["Service"];
+  readonly process: SourceControlHost.SourceControlHost["Service"]["process"];
   readonly cwd: string;
 }): Effect.Effect<SourceControlProviderDiscoveryItem> {
   if (input.spec.type === "managed-cli") return input.spec.probe(input.cwd);
@@ -292,7 +297,7 @@ export function probeSourceControlProvider(input: {
 export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvider")(
   function* (input: {
     readonly specs: ReadonlyArray<SourceControlProviderDiscoverySpec>;
-    readonly process: VcsProcess.VcsProcess["Service"];
+    readonly process: SourceControlHost.SourceControlHost["Service"]["process"];
     readonly cwd: string;
     readonly context: SourceControlProvider.SourceControlProviderContext | null;
   }): Effect.fn.Return<SourceControlProvider.SourceControlProviderContext | null> {

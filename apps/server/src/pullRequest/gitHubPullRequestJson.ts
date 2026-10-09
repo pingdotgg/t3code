@@ -36,7 +36,7 @@ import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
 import { aliasedGraphQlDocument, type GraphQlDocument } from "../sourceControl/githubGraphQl.ts";
-import { dedupeChecks } from "./pullRequestChecks.ts";
+import { dedupeChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
 
 /**
  * Enum-ish GitHub CLI fields are decoded as plain strings and normalized here: a `gh`

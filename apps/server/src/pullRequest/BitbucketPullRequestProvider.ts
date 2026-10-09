@@ -9,7 +9,7 @@ import {
   type ProviderChangeRequestActivity,
   type ProviderChangeRequestDetail,
   type PullRequestProviderApi,
-} from "./PullRequestProvider.ts";
+} from "@t3tools/source-control-core/server/PullRequestProvider";
 import type { BitbucketPullRequest } from "./bitbucketPullRequestJson.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {

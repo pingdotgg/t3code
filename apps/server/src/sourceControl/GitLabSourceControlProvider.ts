@@ -4,7 +4,7 @@ import * as Option from "effect/Option";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
 
 import * as GitLabCli from "./GitLabCli.ts";
-import * as SourceControlProvider from "./SourceControlProvider.ts";
+import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import {
   combinedAuthOutput,
   firstSafeAuthLine,
@@ -14,7 +14,7 @@ import {
   type SourceControlAuthProbeInput,
   type SourceControlCliDiscoverySpec,
   type SourceControlUnknownRemoteRefinementInput,
-} from "./SourceControlProviderDiscovery.ts";
+} from "@t3tools/source-control-core/server/discovery";
 import { findAuthenticatedGitLabHost, parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
 
 const decodeLinkSubject = Schema.decodeUnknownEffect(

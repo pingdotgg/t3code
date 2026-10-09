@@ -17,7 +17,7 @@ a project the token cannot see.
 
 Below the boundary, in a patch parser or a response decoder, a missing path means this revision
 does not carry that file. Above it, in
-[`ProviderFileRevisions`](../../apps/server/src/pullRequest/PullRequestProvider.ts), a missing path
+[`ProviderFileRevisions`](../../packages/source-control-core/src/server/PullRequestProvider.ts), a missing path
 means the read could not say. A provider's `getFileRevisions` converts on the way up: a path its
 host looked at and has no version for arrives as the empty string, and absence is kept for what
 the provider never got to look at. Absence below the boundary does not survive it.
