@@ -18,7 +18,8 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as AzureDevOpsCli from "@t3tools/source-control-azure-devops/server/AzureDevOpsCli";
 import * as AzureDevOpsPullRequestCli from "@t3tools/source-control-azure-devops/server/AzureDevOpsPullRequestCli";
-import * as BitbucketApi from "./BitbucketApi.ts";
+import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
+import * as BitbucketPullRequestApi from "@t3tools/source-control-bitbucket/server/BitbucketPullRequestApi";
 import * as GitHubApi from "./GitHubApi.ts";
 import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
 import * as GitLabPullRequestCli from "@t3tools/source-control-gitlab/server/GitLabPullRequestCli";
@@ -43,6 +44,7 @@ const layerSourceControlProviderRegistryTest = (input: {
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
         Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({}),
         Layer.mock(BitbucketApi.BitbucketApi)(input.bitbucket),
+        Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({}),
         ServerSettings.ServerSettingsService.layerTest(),
         Layer.mock(GitHubApi.GitHubApi)({}),
         Layer.mock(GitVcsDriver.GitVcsDriver)({}),
@@ -53,9 +55,11 @@ const layerSourceControlProviderRegistryTest = (input: {
         Layer.mock(VcsProcess.VcsProcess)(input.process),
         ServerSourceControlHost.layer.pipe(
           Layer.provide(
-            Layer.merge(
+            Layer.mergeAll(
               Layer.mock(VcsProcess.VcsProcess)(input.process),
               ServerSettings.ServerSettingsService.layerTest(),
+              Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+              Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({}),
             ),
           ),
         ),
@@ -395,6 +399,7 @@ it.effect(
           SourceControlHost.SourceControlHost,
           SourceControlHost.SourceControlHost.of({
             settings: host.settings,
+            git: host.git,
             process: {
               run: (input) => {
                 if (input.args[0] !== "fetch") return git.run(input);
@@ -529,6 +534,8 @@ it.effect(
         ServerSourceControlHost.layer.pipe(
           Layer.provideMerge(VcsProcess.layer),
           Layer.provideMerge(ServerSettings.ServerSettingsService.layerTest()),
+          Layer.provideMerge(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+          Layer.provideMerge(Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({})),
           Layer.provideMerge(NodeServices.layer),
         ),
       ),

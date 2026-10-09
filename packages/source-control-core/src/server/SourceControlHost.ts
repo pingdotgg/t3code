@@ -7,9 +7,20 @@
  * its own API and CLI code. HTTP, the filesystem, and paths come from Effect's platform
  * services directly.
  *
+ * `git` is the subset of the server's git driver that checking out a change request needs; it
+ * grows only when a provider needs another operation.
+ *
  * @module source-control-core/server/SourceControlHost
  */
-import type { ServerSettings, ServerSettingsError, VcsError } from "@t3tools/contracts";
+import type {
+  GitCommandError,
+  ServerSettings,
+  ServerSettingsError,
+  VcsError,
+  VcsListRemotesResult,
+  VcsSwitchRefInput,
+  VcsSwitchRefResult,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -43,6 +54,12 @@ export interface SourceControlProcessOutput {
   readonly stderrInvalidUtf8?: boolean;
 }
 
+export interface SourceControlGitRemoteBranch {
+  readonly cwd: string;
+  readonly remoteName: string;
+  readonly remoteBranch: string;
+}
+
 export class SourceControlHost extends Context.Service<
   SourceControlHost,
   {
@@ -54,6 +71,39 @@ export class SourceControlHost extends Context.Service<
       readonly run: (
         input: SourceControlProcessInput,
       ) => Effect.Effect<SourceControlProcessOutput, VcsError>;
+    };
+    readonly git: {
+      /**
+       * Lists the remotes of the repository at `cwd`. The outer effect resolves the repository
+       * and fails when the server cannot drive one there; the inner one lists its remotes.
+       */
+      readonly remotes: (
+        cwd: string,
+      ) => Effect.Effect<Effect.Effect<VcsListRemotesResult, VcsError>, VcsError>;
+      readonly readConfigValue: (
+        cwd: string,
+        key: string,
+      ) => Effect.Effect<string | null, GitCommandError>;
+      readonly resolvePrimaryRemoteName: (cwd: string) => Effect.Effect<string, GitCommandError>;
+      /** Adds a remote for `url` unless one exists, and returns the name it is under. */
+      readonly ensureRemote: (input: {
+        readonly cwd: string;
+        readonly preferredName: string;
+        readonly url: string;
+      }) => Effect.Effect<string, GitCommandError>;
+      readonly listLocalBranchNames: (cwd: string) => Effect.Effect<string[], GitCommandError>;
+      readonly fetchRemoteBranch: (
+        input: SourceControlGitRemoteBranch & { readonly localBranch: string },
+      ) => Effect.Effect<void, GitCommandError>;
+      readonly fetchRemoteTrackingBranch: (
+        input: SourceControlGitRemoteBranch,
+      ) => Effect.Effect<void, GitCommandError>;
+      readonly setBranchUpstream: (
+        input: SourceControlGitRemoteBranch & { readonly branch: string },
+      ) => Effect.Effect<void, GitCommandError>;
+      readonly switchRef: (
+        input: VcsSwitchRefInput,
+      ) => Effect.Effect<VcsSwitchRefResult, GitCommandError>;
     };
   }
 >()("@t3tools/source-control-core/server/SourceControlHost") {}

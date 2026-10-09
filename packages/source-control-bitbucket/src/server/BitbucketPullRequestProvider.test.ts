@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 
-import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
+import * as BitbucketApi from "./BitbucketApi.ts";
 import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
 import { decodePullRequestJson } from "./bitbucketPullRequestJson.ts";
 import {

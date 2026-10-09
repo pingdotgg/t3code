@@ -11,11 +11,13 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import { GitCommandError } from "@t3tools/contracts";
-import * as BitbucketApi from "./BitbucketApi.ts";
+import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import type * as VcsDriver from "../vcs/VcsDriver.ts";
+import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 
 const isBitbucketRepositoryLocatorError = Schema.is(BitbucketApi.BitbucketRepositoryLocatorError);
 
@@ -139,6 +141,8 @@ function makeLayer(input: {
   );
 
   const layer = BitbucketApi.layer.pipe(
+    Layer.provide(ServerSourceControlHost.layer),
+    Layer.provide(Layer.mock(VcsProcess.VcsProcess)({})),
     Layer.provide(
       Layer.succeed(
         HttpClient.HttpClient,

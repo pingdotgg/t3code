@@ -15,7 +15,8 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as AzureDevOpsCli from "@t3tools/source-control-azure-devops/server/AzureDevOpsCli";
 import * as AzureDevOpsPullRequestCli from "@t3tools/source-control-azure-devops/server/AzureDevOpsPullRequestCli";
-import * as BitbucketApi from "./BitbucketApi.ts";
+import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
+import * as BitbucketPullRequestApi from "@t3tools/source-control-bitbucket/server/BitbucketPullRequestApi";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as GitHubApi from "./GitHubApi.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
@@ -101,12 +102,18 @@ function makeRegistry(input: {
         layerProcess,
         ServerSourceControlHost.layer.pipe(
           Layer.provide(
-            Layer.merge(layerProcess, ServerSettings.ServerSettingsService.layerTest()),
+            Layer.mergeAll(
+              layerProcess,
+              layerRegistry,
+              ServerSettings.ServerSettingsService.layerTest(),
+              Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+            ),
           ),
         ),
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
         Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({}),
         Layer.mock(BitbucketApi.BitbucketApi)({}),
+        Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({}),
         ServerSettings.ServerSettingsService.layerTest(),
         Layer.mock(GitHubApi.GitHubApi)({
           // No GitHub credential unless a test supplies one, so custom hosts stay unclaimed.

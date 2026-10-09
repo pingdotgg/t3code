@@ -10,6 +10,9 @@
 import * as AzureDevOpsCli from "@t3tools/source-control-azure-devops/server/AzureDevOpsCli";
 import * as AzureDevOpsPullRequestCli from "@t3tools/source-control-azure-devops/server/AzureDevOpsPullRequestCli";
 import * as AzureDevOpsDriver from "@t3tools/source-control-azure-devops/server/driver";
+import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
+import * as BitbucketPullRequestApi from "@t3tools/source-control-bitbucket/server/BitbucketPullRequestApi";
+import * as BitbucketDriver from "@t3tools/source-control-bitbucket/server/driver";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import * as ForgejoDriver from "@t3tools/source-control-forgejo/server/driver";
 import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
@@ -20,7 +23,12 @@ import * as Layer from "effect/Layer";
 
 import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
 
-const drivers = [GitLabDriver.driver, AzureDevOpsDriver.driver, ForgejoDriver.driver];
+const drivers = [
+  GitLabDriver.driver,
+  AzureDevOpsDriver.driver,
+  BitbucketDriver.driver,
+  ForgejoDriver.driver,
+];
 
 /** Every service a built-in driver's `make` needs; the server's layers must provide them all. */
 export type BuiltInSourceControlDriversEnv =
@@ -33,6 +41,7 @@ export const BUILT_IN_SOURCE_CONTROL_DRIVERS: ReadonlyArray<
 /** The services the built-in drivers' packages own, plus the host port they all run against. */
 export const layer = Layer.mergeAll(
   AzureDevOpsPullRequestCli.layer.pipe(Layer.provideMerge(AzureDevOpsCli.layer)),
+  BitbucketPullRequestApi.layer.pipe(Layer.provideMerge(BitbucketApi.layer)),
   ForgejoCli.layer,
   GitLabPullRequestCli.layer.pipe(Layer.provideMerge(GitLabCli.layer)),
 ).pipe(Layer.provideMerge(ServerSourceControlHost.layer));

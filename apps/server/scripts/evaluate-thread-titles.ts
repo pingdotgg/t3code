@@ -25,7 +25,6 @@ import * as ThreadTitleLinks from "../src/textGeneration/ThreadTitleLinks.ts";
 import * as SourceControlProviderRegistry from "../src/sourceControl/SourceControlProviderRegistry.ts";
 import * as GitHubApi from "../src/sourceControl/GitHubApi.ts";
 import * as SourceControlBuiltInDrivers from "../src/sourceControl/builtInDrivers.ts";
-import * as BitbucketApi from "../src/sourceControl/BitbucketApi.ts";
 import * as ServerSettings from "../src/serverSettings.ts";
 import * as VcsProcess from "../src/vcs/VcsProcess.ts";
 import * as VcsDriverRegistry from "../src/vcs/VcsDriverRegistry.ts";
@@ -149,12 +148,7 @@ await Effect.runPromise(
         ProcessRunner.layer,
         SourceControlProviderRegistry.layer.pipe(
           Layer.provide(
-            Layer.mergeAll(
-              GitHubApi.layerWithDependencies,
-              SourceControlBuiltInDrivers.layer,
-              // No saved credentials here; Bitbucket falls back to T3CODE_BITBUCKET_* variables.
-              BitbucketApi.layer,
-            ),
+            Layer.mergeAll(GitHubApi.layerWithDependencies, SourceControlBuiltInDrivers.layer),
           ),
           // Default settings: no saved Bitbucket token, gh's own GitHub account choice.
           Layer.provide(ServerSettings.layerTest()),
