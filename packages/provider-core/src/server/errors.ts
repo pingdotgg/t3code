@@ -25,7 +25,7 @@ export class ProviderCredentialError extends Schema.TaggedError<ProviderCredenti
   "ProviderCredentialError",
   {
     operation: Schema.Literals(["get", "set", "remove"]),
-    cause: Schema.optional(Schema.Defect()),
+    cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
