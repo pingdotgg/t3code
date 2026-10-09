@@ -52,7 +52,7 @@ export interface ServerBrowserHandle {
   readonly canvas: () => HTMLCanvasElement | null;
 }
 
-const RESIZE_DEBOUNCE_MS = 150;
+const RESIZE_THROTTLE_MS = 150;
 const ACCESS_RETRY_MS = 10_000;
 // A recent probe answer near a new tap stands in for that tap's own answer,
 // which on a slow link arrives after the tap ends.
@@ -356,9 +356,11 @@ export function ServerBrowserSurface(props: {
       );
     };
     const stopObserving = observeResize(element, () => {
-      if (timer !== null) clearTimeout(timer);
-      // The first size connects right away; later ones settle before resizing the page.
-      timer = setTimeout(measure, sizeRef.current === null ? 0 : RESIZE_DEBOUNCE_MS);
+      // A pending measure reads the latest size when it fires, so a drag resizes
+      // the page at most every RESIZE_THROTTLE_MS and still ends on the final size.
+      if (timer !== null) return;
+      // The first size connects right away.
+      timer = setTimeout(measure, sizeRef.current === null ? 0 : RESIZE_THROTTLE_MS);
     });
     return () => {
       stopObserving();
