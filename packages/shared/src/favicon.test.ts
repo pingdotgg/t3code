@@ -23,13 +23,18 @@ describe("faviconUrlForOrigin", () => {
     "http://service.test",
     "http://private.onion",
     "http://127.1..",
+    "https://grafana.corp",
+    "https://build.lan",
+    "https://wiki.intranet",
+    "https://grafana.internal.acme-corp.com",
+    "https://jira.corp.acme-corp.com:8443",
   ])("does not disclose %s to the favicon provider", (origin) => {
     expect(faviconUrlForOrigin(origin)).toBeNull();
   });
 
-  it("keeps the public origin, port and requested size", () => {
+  it("sends only the public hostname and requested size, never the port", () => {
     expect(faviconUrlForOrigin("https://github.com:8443/pingdotgg/t3code?private=query", 64)).toBe(
-      "https://www.google.com/s2/favicons?domain=github.com%3A8443&sz=64",
+      "https://www.google.com/s2/favicons?domain=github.com&sz=64",
     );
   });
 

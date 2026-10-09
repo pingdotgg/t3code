@@ -8,6 +8,8 @@ import {
   MessageId,
   type OrchestrationV2ThreadProjection,
   ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Console from "effect/Console";
@@ -28,8 +30,8 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ModelManifest from "../provider/ModelManifest.ts";
 import * as ProviderInstanceRegistryHydration from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as ProviderEventLoggers from "../provider/ProviderEventLoggers.ts";
-import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
-import * as OpenCodeServerLedger from "../provider/OpenCodeServerLedger.ts";
+import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
+import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCodeServerLedger";
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -59,8 +61,11 @@ const layerVcsDriverRegistry = VcsDriverRegistry.layer.pipe(
 const layerCheckpointStore = CheckpointStore.layer.pipe(Layer.provide(layerVcsDriverRegistry));
 
 const layerServerSettings = ServerSettings.layerTest({
-  providers: {
-    grok: { enabled: true },
+  providerInstances: {
+    [ProviderInstanceId.make("grok")]: {
+      driver: ProviderDriverKind.make("grok"),
+      enabled: true,
+    },
   },
 });
 const layerBackgroundPolicy = BackgroundPolicy.layer.pipe(

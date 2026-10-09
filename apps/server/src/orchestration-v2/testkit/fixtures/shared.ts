@@ -27,7 +27,7 @@ import type {
   OrchestratorV2ScenarioResult,
   OrchestratorV2ScenarioStep,
 } from "../OrchestratorScenario.ts";
-import * as IdAllocator from "../../IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type { RuntimePolicyV2Override } from "../../RuntimePolicy.ts";
 
 export const SIMPLE_PROMPT = "Respond with the following text: fixture simple ok";
@@ -363,6 +363,12 @@ export const CLAUDE_MODEL_SELECTION = {
 export const CURSOR_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("cursor"),
   model: "composer-2.5",
+} satisfies ModelSelection;
+
+/** Muse fixtures are recorded against this model; the account's listed models may differ. */
+export const MUSE_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make("muse"),
+  model: "muse-spark-1.3-contributor",
 } satisfies ModelSelection;
 
 export const GROK_MODEL_SELECTION = {
