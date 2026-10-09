@@ -7,7 +7,7 @@ one. No type distinguishes those meanings and no single file states the whole pa
 this page is for.
 
 The failure is on record rather than hypothetical. The interface doc above
-[GitLab's `getFileRevisions`](../../apps/server/src/pullRequest/GitLabPullRequestCli.ts) once said
+[GitLab's `getFileRevisions`](../../packages/source-control-gitlab/src/server/GitLabPullRequestCli.ts) once said
 the opposite of the code beneath it, because it described a missing path the way the layer below
 means it. Anything written against that reading would treat a version the host declined to give as
 a file the change request deleted, which reports every file a reader has cleared as changed across
@@ -30,7 +30,7 @@ What "never got to look at" is belongs to the host, and the contract cannot know
 - [Bitbucket](../../apps/server/src/pullRequest/BitbucketPullRequestApi.ts) reads them off the
   pull request's own patch, the only place it states a file's version, so a patch cut short at the
   byte ceiling leaves the paths past the cut out.
-- [GitLab](../../apps/server/src/pullRequest/GitLabPullRequestCli.ts) asks in batches, so a batch
+- [GitLab](../../packages/source-control-gitlab/src/server/GitLabPullRequestCli.ts) asks in batches, so a batch
   it could not read leaves that batch's paths out.
 
 Those three facts stay with their providers. The contract states only that absence means the read
