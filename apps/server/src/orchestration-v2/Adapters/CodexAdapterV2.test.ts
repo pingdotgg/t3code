@@ -1580,11 +1580,30 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       yield* makeCodexReplayHarness(
         makeCodexReplayTranscript({
           scenario,
+          // The thread's skill switches are owned config, which replay checks.
           entries: codexReplayPreamble({
             nativeThreadId: "user-mcp-thread",
             nativeTurnId: "unused",
             prompt: "unused",
-          }).slice(0, 5),
+          })
+            .slice(0, 5)
+            .map((entry) =>
+              entry.type === "expect_outbound" && entry.label === "thread/start"
+                ? {
+                    ...entry,
+                    frame: {
+                      id: 2,
+                      method: "thread/start",
+                      params: {
+                        config: {
+                          ...CodexAdapterV2.CODEX_THREAD_CONFIG,
+                          skills: { config: [{ name: "grill-me", enabled: false }] },
+                        },
+                      },
+                    },
+                  }
+                : entry,
+            ),
         }),
         () => Effect.void,
         (method, params) =>

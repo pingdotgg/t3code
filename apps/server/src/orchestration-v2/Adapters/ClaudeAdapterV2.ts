@@ -1734,7 +1734,6 @@ export function claudeMcpQueryOverrides(input: {
   readonly allowedTools?: ReadonlyArray<string>;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   readonly sdkSettings?: ClaudeSdkSettings;
-  readonly mcpEnvironment?: Readonly<Record<string, string>>;
 } {
   const session = input.mcpSession;
   if (session === undefined) {
@@ -1777,7 +1776,6 @@ export function claudeMcpQueryOverrides(input: {
             ),
           },
         }),
-    mcpEnvironment: { [CLAUDE_T3_MCP_AUTHORIZATION_ENV]: session.authorizationHeader },
   };
 }
 
@@ -2780,7 +2778,6 @@ export function claudeEffectiveQueryPolicyKey(
     readonly allowedTools?: ReadonlyArray<string>;
     readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
     readonly sdkSettings?: ClaudeSdkSettings;
-    readonly mcpEnvironment?: Readonly<Record<string, string>>;
   },
 ): string {
   return JSON.stringify({
@@ -2793,7 +2790,6 @@ export function claudeEffectiveQueryPolicyKey(
     mcpServers: mcpOverrides.mcpServers,
     // Skill switches load at process start, so a change reopens the query.
     sdkSettings: mcpOverrides.sdkSettings,
-    mcpEnvironment: mcpOverrides.mcpEnvironment,
   });
 }
 
@@ -10430,6 +10426,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? {}
               : { mcpServers: mcpOverrides.mcpServers }),
             deviceToolsAvailable: mcpSession?.capabilities?.has("device") === true,
+            ...(mcpOverrides.sdkSettings === undefined
+              ? {}
+              : { sdkSettings: mcpOverrides.sdkSettings }),
             permissionMode: queryPolicy.permissionMode,
             ...(queryPolicy.allowDangerouslySkipPermissions === undefined
               ? {}

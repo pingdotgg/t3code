@@ -610,7 +610,6 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
         ...T3_MCP_SERVERS,
       },
       sdkSettings: { skillOverrides: { "grill-me": "off" } },
-      mcpEnvironment: T3_MCP_ENVIRONMENT,
     });
     // Read-only sandboxes keep the user's servers behind the permission prompt.
     assert.deepEqual(
@@ -1250,6 +1249,107 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
           makeProviderFailure({ cause: exit.cause, class: "provider_error" }).message,
           expectedMessage(cwd),
         );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+});
+
+describe("ClaudeAdapterV2 user tools", () => {
+  it.effect("opens the turn's query with the user's servers and skill switches", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-user-tools-",
+        });
+        let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir,
+          fileSystem,
+          path: yield* Path.Path,
+          crypto: yield* Crypto.Crypto,
+          idAllocator,
+          queryRunner: {
+            allocateSessionId: Effect.succeed("native-thread-claude-user-tools"),
+            open: (input) =>
+              Effect.sync(() => {
+                openedOptions = input.options;
+                return {
+                  messages: Stream.never,
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  backgroundTasks: () => Effect.succeed(false),
+                  stopTask: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Effect.void,
+                };
+              }),
+            forkSession: () => Effect.die("unused"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const threadId = ThreadId.make("thread-claude-user-tools-turn");
+        yield* mcpSessions.set({
+          environmentId: EnvironmentId.make("environment-claude-user-tools"),
+          threadId,
+          providerSessionId: "mcp-session-claude-user-tools",
+          providerInstanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer secret-claude-token",
+          browserToolsAvailable: true,
+          tools: {
+            servers: [
+              {
+                name: "context7",
+                transport: { type: "stdio", command: "npx", args: ["context7"], env: [] },
+              },
+            ],
+            disabledSkills: ["grill-me"],
+            fingerprint: "a",
+          },
+        });
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-user-tools"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-user-tools"),
+            text: "Hello.",
+            attachments: [],
+            runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+          }),
+        );
+
+        assert.deepInclude(openedOptions?.mcpServers ?? {}, {
+          context7: { type: "stdio", command: "npx", args: ["context7"], env: {} },
+        });
+        const settings = openedOptions?.settings;
+        assert.deepEqual(typeof settings === "object" ? settings.skillOverrides : undefined, {
+          "grill-me": "off",
+        });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
