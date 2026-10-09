@@ -10,6 +10,7 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
+import { resolveServiceEnvironment } from "./cloud/serviceEnvironment.ts";
 import type {
   PendingServiceUpdate,
   ServiceLauncherChildMessage,
@@ -413,6 +414,7 @@ export class Launcher {
     }
   }
 
+  /** Spawns a server runtime with the service environment merged in and the launcher IPC channel. */
   async #startChild(version: string, role: ChildRole, update?: ServiceUpdateRecord): Promise<void> {
     if (this.#stopping) return;
     if (!(await runtimeExists(this.#baseDir, version))) {
@@ -427,7 +429,10 @@ export class Launcher {
     };
     const spawnArguments = runtimeSpawnArguments(paths);
     const child = NodeChildProcess.spawn(spawnArguments.command, spawnArguments.args, {
-      env: { ...process.env, [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context) },
+      env: {
+        ...resolveServiceEnvironment(process.env),
+        [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context),
+      },
       stdio: ["inherit", "inherit", "inherit", "ipc"],
     });
     await new Promise<void>((resolve, reject) => {

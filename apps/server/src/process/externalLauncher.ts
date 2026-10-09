@@ -19,14 +19,13 @@ import {
   type LaunchEditorInput,
 } from "@t3tools/contracts";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   isCommandAvailable,
   resolveSpawnCommand,
   withPathDirectoryListings,
 } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
-import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -90,43 +89,13 @@ const DETACHED_IGNORE_STDIO_OPTIONS = {
   stderr: "ignore",
 } as const satisfies ChildProcess.CommandOptions;
 
-const compactEnv = (input: Record<string, Option.Option<string>>): NodeJS.ProcessEnv =>
+// ConfigProvider captures process.env before startup restores the login-shell
+// PATH. Discovery and launch must read the same live environment as subprocesses.
+const readLaunchEnv = Effect.map(HostProcessEnvironment, (env) =>
   Object.fromEntries(
-    Object.entries(input).flatMap(([key, value]) =>
-      Option.match(value, {
-        onNone: () => [],
-        onSome: (resolved) => [[key, resolved]],
-      }),
-    ),
-  );
-
-const BrowserLaunchEnvConfig = Config.all({
-  SYSTEMROOT: Config.String("SYSTEMROOT").pipe(Config.option),
-  windir: Config.String("windir").pipe(Config.option),
-  WSL_DISTRO_NAME: Config.String("WSL_DISTRO_NAME").pipe(Config.option),
-  WSL_INTEROP: Config.String("WSL_INTEROP").pipe(Config.option),
-  SSH_CONNECTION: Config.String("SSH_CONNECTION").pipe(Config.option),
-  SSH_TTY: Config.String("SSH_TTY").pipe(Config.option),
-  container: Config.String("container").pipe(Config.option),
-  DISPLAY: Config.String("DISPLAY").pipe(Config.option),
-  WAYLAND_DISPLAY: Config.String("WAYLAND_DISPLAY").pipe(Config.option),
-}).pipe(Config.map(compactEnv));
-
-const CommandLookupEnvConfig = Config.all({
-  PATH: Config.String("PATH").pipe(Config.option),
-  Path: Config.String("Path").pipe(Config.option),
-  path: Config.String("path").pipe(Config.option),
-  PATHEXT: Config.String("PATHEXT").pipe(Config.option),
-  HOME: Config.String("HOME").pipe(Config.option),
-  LOCALAPPDATA: Config.String("LOCALAPPDATA").pipe(Config.option),
-  ProgramFiles: Config.String("ProgramFiles").pipe(Config.option),
-  ProgramW6432: Config.String("ProgramW6432").pipe(Config.option),
-  XDG_DATA_HOME: Config.String("XDG_DATA_HOME").pipe(Config.option),
-  "ProgramFiles(x86)": Config.String("ProgramFiles(x86)").pipe(Config.option),
-}).pipe(Config.map(compactEnv));
-
-const readBrowserLaunchEnv = BrowserLaunchEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
-const readCommandLookupEnv = CommandLookupEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
+    Object.entries(env).filter(([, value]) => value !== undefined && value.length > 0),
+  ),
+);
 
 function parseTargetPathAndPosition(target: string): Option.Option<TargetPathAndPosition> {
   const match = TARGET_WITH_POSITION_PATTERN.exec(target);
@@ -438,24 +407,27 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
   return available;
 });
 
+/** Plans how to open a URL or path in the host's default browser. */
 const resolveBrowserLaunch = Effect.fn("externalLauncher.resolveBrowserLaunch")(function* (
   target: string,
 ) {
   const platform = yield* HostProcessPlatform;
-  const env = yield* readBrowserLaunchEnv;
+  const env = yield* readLaunchEnv;
   return buildBrowserLaunch(target, platform, env);
 });
 
+/** Lists the editors whose launchers resolve on the live PATH. */
 const resolveAvailableEditors = Effect.fn("externalLauncher.resolveAvailableEditors")(function* () {
   const platform = yield* HostProcessPlatform;
-  const env = { ...(yield* readBrowserLaunchEnv), ...(yield* readCommandLookupEnv) };
+  const env = yield* readLaunchEnv;
   return yield* buildAvailableEditors(platform, env).pipe(withPathDirectoryListings);
 });
 
+/** Picks how this host reveals a path in its file manager. */
 const resolveFileManagerRevealKind = Effect.fn("externalLauncher.resolveFileManagerRevealKind")(
   function* () {
     const platform = yield* HostProcessPlatform;
-    const env = { ...(yield* readBrowserLaunchEnv), ...(yield* readCommandLookupEnv) };
+    const env = yield* readLaunchEnv;
     return yield* fileManagerRevealKindForPlatform(platform, env);
   },
 );
@@ -512,6 +484,7 @@ export class ExternalLauncher extends Context.Service<
 // Implementations
 // ==============================
 
+/** Resolves the command and arguments that open `input` in the chosen editor. */
 const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   input: LaunchEditorInput,
 ): Effect.fn.Return<
@@ -520,7 +493,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
 > {
   const platform = yield* HostProcessPlatform;
-  const env = { ...(yield* readBrowserLaunchEnv), ...(yield* readCommandLookupEnv) };
+  const env = yield* readLaunchEnv;
   yield* Effect.annotateCurrentSpan({
     "externalLauncher.editor": input.editor,
     "externalLauncher.cwd": input.cwd,
@@ -710,6 +683,7 @@ const launchBrowser = Effect.fn("externalLauncher.launchBrowser")(function* (
   );
 });
 
+/** Spawns a resolved editor launch detached, failing when its command is not on PATH. */
 const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(function* (
   launch: EditorLaunch,
 ): Effect.fn.Return<
@@ -717,7 +691,7 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
   ExternalLauncherError,
   ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
 > {
-  const env = yield* readCommandLookupEnv;
+  const env = yield* readLaunchEnv;
   if (!(yield* isCommandAvailable(launch.command, { env }))) {
     return yield* new ExternalLauncherCommandNotFoundError({
       editor: launch.editor,

@@ -16,6 +16,14 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as BootService from "./bootService.ts";
+import {
+  resolveServiceEnvironment,
+  SERVICE_PATH_ENV,
+  SERVICE_WSL_DISTRO_ENV,
+} from "./serviceEnvironment.ts";
+import { EDITORS } from "@t3tools/contracts";
+import { resolveEditorCommand } from "@t3tools/shared/editor";
+import * as Option from "effect/Option";
 import { pinnedRuntimePaths } from "./pinnedRuntime.ts";
 import {
   parseServiceState,
@@ -31,9 +39,29 @@ const linuxPlan = {
   logPath: "/home/theo/.t3/userdata/logs/boot-service.log",
   unitPath: "/home/theo/.config/systemd/user/t3code.service",
 };
+const linuxRenderOptions = { environmentPath: "/usr/local/bin:/usr/bin:/bin" };
+
+it.each(["\n", "\r", "\t", "\0", "\u007f", "\u0085", "\u2028", "\u2029"])(
+  "omits WSL identities containing the control or line separator %j",
+  (separator) => {
+    const withoutDistro = BootService.renderBootServiceUnit(linuxPlan, linuxRenderOptions);
+    expect(
+      BootService.renderBootServiceUnit(linuxPlan, {
+        ...linuxRenderOptions,
+        wslDistroName: `Ubuntu${separator}RestartSec=999`,
+      }),
+    ).toBe(withoutDistro);
+    expect(
+      BootService.renderBootServiceUnit(linuxPlan, {
+        ...linuxRenderOptions,
+        wslDistroName: `Ubuntu${separator}`,
+      }),
+    ).toBe(withoutDistro);
+  },
+);
 
 it("runs the pinned runtime's own executable as the systemd launcher", () => {
-  const unit = BootService.renderBootServiceUnit(linuxPlan);
+  const unit = BootService.renderBootServiceUnit(linuxPlan, linuxRenderOptions);
 
   expect(unit).toContain(`ExecStart=${linuxRuntime} __service-launcher`);
   expect(unit).toContain("KillMode=mixed");
@@ -49,12 +77,14 @@ it("reads the served T3 home back out of a rendered unit or plist", () => {
   });
 
   expect(
-    BootService.bootServiceBaseDirOf(BootService.renderBootServiceUnit(plan("/home/theo/.t3"))),
+    BootService.bootServiceBaseDirOf(
+      BootService.renderBootServiceUnit(plan("/home/theo/.t3"), linuxRenderOptions),
+    ),
   ).toBe("/home/theo/.t3");
   // Spaces and specifiers are quoted and escaped on the way in.
   expect(
     BootService.bootServiceBaseDirOf(
-      BootService.renderBootServiceUnit(plan("/home/theo/T3 Data/100%")),
+      BootService.renderBootServiceUnit(plan("/home/theo/T3 Data/100%"), linuxRenderOptions),
     ),
   ).toBe("/home/theo/T3 Data/100%");
   expect(
@@ -69,7 +99,7 @@ it("reads the served T3 home back out of a rendered unit or plist", () => {
 });
 
 it("survives the kernel OOM-killing a greedy agent child", () => {
-  const unit = BootService.renderBootServiceUnit(linuxPlan);
+  const unit = BootService.renderBootServiceUnit(linuxPlan, linuxRenderOptions);
 
   expect(unit).toContain("OOMPolicy=continue");
 });
@@ -133,6 +163,7 @@ it("escapes XML in host paths", () => {
 const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   platform: NodeJS.Platform = "linux",
   installerPath = macInstallerPath,
+  installerEnv: Record<string, string> = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -208,6 +239,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     environmentPath: string | undefined = installerPath,
     cliVersion = "1.2.3",
     serviceBaseDir = baseDir,
+    environment = installerEnv,
   ) =>
     Effect.gen(function* () {
       // Every version the tests install is present and verified on disk, so
@@ -236,6 +268,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
           ConfigProvider.layer(
             ConfigProvider.fromEnv({
               env: {
+                ...environment,
                 HOME: home,
                 ...(environmentPath === undefined || environmentPath === ""
                   ? {}
@@ -251,6 +284,173 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
 });
 
 it.layer(NodeServices.layer)("boot service install", (it) => {
+  it.effect("omits an installer WSL identity containing unit directives", () =>
+    Effect.gen(function* () {
+      const { service, fs } = yield* makeHarness("linux", "/usr/bin:/bin", {
+        WSL_DISTRO_NAME: "Ubuntu\nRestartSec=999\n#",
+      });
+      const plan = yield* service.install();
+      const unit = yield* fs.readFileString(plan.unitPath);
+
+      expect(unit).not.toContain("WSL_DISTRO_NAME");
+      expect(unit).not.toContain("RestartSec=999");
+      expect((yield* service.status).current).toBe(true);
+    }),
+  );
+
+  it.effect("repairs a saved WSL identity containing control characters from an SSH shell", () =>
+    Effect.gen(function* () {
+      const { service, makeService, fs } = yield* makeHarness("linux", "/usr/bin:/bin", {
+        WSL_DISTRO_NAME: "Ubuntu-24.04",
+      });
+      const plan = yield* service.install();
+      const unit = yield* fs.readFileString(plan.unitPath);
+      yield* fs.writeFileString(plan.unitPath, unit.replace("Ubuntu-24.04", "Ubuntu\t24.04"));
+
+      const sshService = yield* makeService("/usr/bin:/bin", undefined, undefined, {});
+      expect((yield* sshService.status).current).toBe(false);
+      yield* sshService.install();
+      expect(yield* fs.readFileString(plan.unitPath)).not.toContain("WSL_DISTRO_NAME");
+      expect((yield* sshService.status).current).toBe(true);
+    }),
+  );
+
+  it.effect("preserves Windows editor paths and the WSL distro in the systemd service", () =>
+    Effect.gen(function* () {
+      const windowsBin = '/mnt/d/Users/100% "Dev"/Microsoft VS Code/bin';
+      const { service, fs } = yield* makeHarness("linux", `${windowsBin}:/usr/bin:/bin`, {
+        WSL_DISTRO_NAME: "Ubuntu-24.04",
+        WSL_INTEROP: "/run/WSL/123_interop",
+      });
+      const plan = yield* service.install();
+      const unit = yield* fs.readFileString(plan.unitPath);
+
+      expect(unit).toContain(
+        'Environment=T3_SERVICE_PATH="/mnt/d/Users/100%% \\"Dev\\"/Microsoft VS Code/bin:/usr/bin:/bin:/usr/local/bin:/usr/sbin:/sbin"',
+      );
+      expect(unit).toContain("Environment=T3_SERVICE_WSL_DISTRO_NAME=Ubuntu-24.04");
+      expect(unit).not.toContain("WSL_INTEROP");
+      expect(BootService.bootServiceEnvironmentOf(unit)).toMatchObject({
+        [SERVICE_PATH_ENV]: `${windowsBin}:/usr/bin:/bin:/usr/local/bin:/usr/sbin:/sbin`,
+        [SERVICE_WSL_DISTRO_ENV]: "Ubuntu-24.04",
+      });
+      expect(BootService.bootServiceEnvironmentOf(unit).PATH).toBeUndefined();
+      expect((yield* service.status).current).toBe(true);
+    }),
+  );
+
+  it.effect("preserves the installer PATH on native Linux without adding WSL identity", () =>
+    Effect.gen(function* () {
+      const { service, fs } = yield* makeHarness("linux", "/home/theo/.local/bin:/usr/bin:/bin");
+      const plan = yield* service.install();
+      const unit = yield* fs.readFileString(plan.unitPath);
+
+      expect(unit).toContain(
+        "Environment=T3_SERVICE_PATH=/home/theo/.local/bin:/usr/bin:/bin:/usr/local/bin:/usr/sbin:/sbin",
+      );
+      expect(unit).not.toContain("WSL_DISTRO_NAME");
+    }),
+  );
+
+  it.effect("drops saved PATH entries that no longer exist when reinstalling", () =>
+    Effect.gen(function* () {
+      const { makeService, fs } = yield* makeHarness("linux", "/usr/bin:/bin");
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-saved-path-" });
+      const kept = path.join(root, "kept");
+      const gone = path.join(root, "fnm_multishells", "123_456", "bin");
+      yield* fs.makeDirectory(kept);
+      yield* fs.makeDirectory(gone, { recursive: true });
+      const plan = yield* (yield* makeService(`${gone}:${kept}:/usr/bin`)).install();
+      yield* fs.remove(path.join(root, "fnm_multishells"), { recursive: true });
+
+      const service = yield* makeService("/usr/bin:/bin");
+      yield* service.install();
+      const saved = BootService.bootServiceEnvironmentOf(yield* fs.readFileString(plan.unitPath));
+
+      expect(saved[SERVICE_PATH_ENV]?.split(":")).toContain(kept);
+      expect(saved[SERVICE_PATH_ENV]).not.toContain("fnm_multishells");
+      expect((yield* service.status).current).toBe(true);
+    }),
+  );
+
+  it.effect("keeps a systemd service current when checked from a different shell", () =>
+    Effect.gen(function* () {
+      const { service, makeService } = yield* makeHarness("linux", "/mnt/c/VS Code/bin:/usr/bin", {
+        WSL_DISTRO_NAME: "Ubuntu-24.04",
+      });
+      yield* service.install();
+
+      const sshService = yield* makeService("/usr/bin:/bin", undefined, undefined, {});
+      expect((yield* sshService.status).current).toBe(true);
+    }),
+  );
+
+  it.effect.each([
+    { missing: "the saved PATH and WSL identity", lines: /^Environment=T3_SERVICE_\w+=.*\n/gm },
+    { missing: "the WSL identity", lines: /^Environment=T3_SERVICE_WSL_DISTRO_NAME=.*\n/m },
+  ])("repairs systemd services installed without $missing", ({ lines }) =>
+    Effect.gen(function* () {
+      const { service, fs } = yield* makeHarness("linux", "/mnt/c/VS Code/bin:/usr/bin", {
+        WSL_DISTRO_NAME: "Ubuntu-24.04",
+      });
+      const plan = yield* service.install();
+      const unit = yield* fs.readFileString(plan.unitPath);
+      yield* fs.writeFileString(plan.unitPath, unit.replace(lines, ""));
+      expect((yield* service.status).current).toBe(false);
+
+      yield* service.install();
+      expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
+      expect((yield* service.status).current).toBe(true);
+    }),
+  );
+
+  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "keeps Windows editors discoverable after repair and update from a minimal SSH environment",
+    () =>
+      Effect.gen(function* () {
+        const { service, makeService, fs } = yield* makeHarness("linux", "/usr/bin:/bin");
+        const path = yield* Path.Path;
+        const bin = yield* fs.makeTempDirectoryScoped({ prefix: 't3-wsl 100% "drive"-' });
+        yield* fs.writeFileString(path.join(bin, "code"), "#!/bin/sh\n");
+        yield* fs.chmod(path.join(bin, "code"), 0o755);
+        const wslService = yield* makeService(`${bin}:/usr/bin:/bin`, undefined, undefined, {
+          WSL_DISTRO_NAME: "Ubuntu-24.04",
+        });
+        const plan = yield* wslService.install();
+        const editor = EDITORS.find((editor) => editor.id === "vscode")!;
+
+        for (const version of ["1.2.3", "1.2.4"]) {
+          const sshService = yield* makeService("/usr/bin:/bin", version, undefined, {});
+          yield* sshService.install({ start: false });
+          const saved = BootService.bootServiceEnvironmentOf(
+            yield* fs.readFileString(plan.unitPath),
+          );
+          const env = resolveServiceEnvironment({ PATH: "/opt/company/bin:/usr/bin", ...saved });
+          expect(env.PATH?.split(":")).toContain(bin);
+          expect(env.PATH?.split(":")[0]).toBe("/opt/company/bin");
+          expect(env.WSL_DISTRO_NAME).toBe("Ubuntu-24.04");
+          expect(Option.isSome(yield* resolveEditorCommand(editor, env))).toBe(true);
+          yield* sshService.restart;
+          expect((yield* sshService.status).current).toBe(true);
+        }
+        expect((yield* service.status).installed).toBe(true);
+      }).pipe(Effect.provideService(HostProcessPlatform, "linux")),
+  );
+
+  it.effect("drops PATH entries with control characters from systemd units", () =>
+    Effect.gen(function* () {
+      const { service, fs } = yield* makeHarness("linux", "/bad\npath:/bad\tpath:/usr/bin");
+      const plan = yield* service.install();
+      const unit = yield* fs.readFileString(plan.unitPath);
+
+      expect(unit).toContain(
+        "Environment=T3_SERVICE_PATH=/usr/bin:/usr/local/bin:/bin:/usr/sbin:/sbin",
+      );
+      expect(unit).not.toContain("/bad");
+    }),
+  );
+
   it.effect(
     "fails before installing files or validating a runtime when lingering needs an administrator",
     () =>
