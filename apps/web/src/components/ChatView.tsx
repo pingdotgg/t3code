@@ -11393,7 +11393,7 @@ export default function ChatView(props: ChatViewProps) {
               </div>
             ) : null}
             {/* Banners overlay the timeline without changing its content height. */}
-            <div className="chat-banner-lane pointer-events-none absolute top-0 z-20 flex flex-col">
+            <div className="chat-banner-lane pointer-events-none absolute top-0 z-(--z-chat-banner) flex flex-col">
               <ProviderStatusBanner
                 status={visibleProviderStatus}
                 onDismiss={() => setDismissedProviderStatusBannerKey(providerStatusBannerKey)}
