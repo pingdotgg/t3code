@@ -14,6 +14,7 @@ import {
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { McpAttachmentInput } from "./attachment/input.ts";
@@ -726,6 +727,15 @@ it.effect("only the caller that prepared a pending upload can discard it", () =>
 
     const refused = yield* call("t3_attachment_discard", { attachmentId }, otherThread);
     expect(declaredFailure(refused)).toMatchObject({ code: "invalid_request" });
+
+    // Another prepare a day later keeps it: the file outlives its URL's 24 hours
+    // by as long as the upload took, up to the URL's own lifetime.
+    yield* TestClock.adjust(24 * 60 * 60 * 1000 + 5 * 60_000);
+    yield* call(
+      "t3_attachment_prepare_upload",
+      { upload: { name: "later.png", mimeType: "image/png", sizeBytes: 4 } },
+      scope,
+    );
 
     // A new provider session of the same thread still owns the upload.
     const discarded = yield* call(

@@ -1,4 +1,9 @@
-import { type ChatAttachment, MessageId, OrchestratorMcpFailure } from "@t3tools/contracts";
+import {
+  ATTACHMENT_UPLOAD_URL_TTL_MS,
+  type ChatAttachment,
+  MessageId,
+  OrchestratorMcpFailure,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -29,8 +34,11 @@ export function resolveAttachmentReferences(
   });
 }
 
-/** Pending uploads outlive this record only until the attachment sweep removes them. */
-const UPLOAD_OWNER_TTL_MS = 24 * 60 * 60 * 1000;
+/**
+ * As long as the pending file can live. The sweep counts its 24 hours from when
+ * the upload finishes, which can be up to the upload URL's lifetime after issue.
+ */
+const UPLOAD_OWNER_TTL_MS = 24 * 60 * 60 * 1000 + ATTACHMENT_UPLOAD_URL_TTL_MS;
 
 /** A thread owns its uploads across provider sessions; an outside client per MCP session. */
 const uploadOwner = McpInvocationContext.McpInvocationContext.pipe(
