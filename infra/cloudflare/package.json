@@ -1,0 +1,15 @@
+{
+  "name": "t3code-cloudflare",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm dlx wrangler@4.149.0 dev",
+    "deploy": "pnpm run db:migrate && pnpm dlx wrangler@4.149.0 deploy",
+    "deploy:check": "pnpm dlx wrangler@4.149.0 deploy --dry-run",
+    "db:create": "pnpm dlx wrangler@4.149.0 d1 create t3code-gateway",
+    "db:migrate": "pnpm dlx wrangler@4.149.0 d1 migrations apply DB --remote",
+    "db:migrate:local": "pnpm dlx wrangler@4.149.0 d1 migrations apply DB --local",
+    "configure": "node scripts/configure.mjs",
+    "test": "node --test src/*.test.mjs"
+  }
+}

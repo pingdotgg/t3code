@@ -102,6 +102,9 @@ Full docs live in [docs/](./docs). There's no docs site yet.
 
 Building from source? Start at [docs/internals/overview.md](./docs/internals/overview.md).
 
+Self-hosting behind Cloudflare? See [Workers + D1 deployment](./infra/cloudflare/README.md)
+for a Worker gateway backed by D1, with agent execution on your own T3 server.
+
 ## If you REALLY want to contribute still.... read this first
 
 ### Install `vp`
