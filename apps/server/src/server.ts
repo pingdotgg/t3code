@@ -604,11 +604,15 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   // the rewritten telemetry pipeline can account for logical NDJSON writes.
   // Provided once at the runtime level so every consumer sees the same
   // logger instances.
-  // `ModelManifest.layer` is the legacy-model classification data, refreshed
-  // from the repo's `model-manifest.json` on `main` and applied by the
-  // Codex/Claude drivers.
+  // `ModelManifest.layer` is the model manifest, refreshed from the repo's
+  // `model-manifest.json` on `main`. Drivers read their entry through the
+  // `ModelCatalog` port it provides.
   Layer.provideMerge(
-    Layer.mergeAll(ProviderEventLoggers.layer, ModelManifest.layer, ResetCreditCoordinator.layer),
+    Layer.mergeAll(
+      ProviderEventLoggers.layer,
+      ModelManifest.layerModelCatalog.pipe(Layer.provideMerge(ModelManifest.layer)),
+      ResetCreditCoordinator.layer,
+    ),
   ),
   // `OpenCodeDriver.create()` yields `OpenCodeRuntime`; previously the old
   // `ProviderRegistry.layer` pulled `OpenCodeRuntimeLive` in for itself, but

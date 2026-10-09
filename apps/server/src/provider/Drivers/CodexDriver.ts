@@ -49,7 +49,8 @@ import {
 } from "../CodexProvider.ts";
 import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
-import * as ModelManifest from "../ModelManifest.ts";
+import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
+import { applyCodexModelCatalog } from "../codexModelCatalog.ts";
 import type { ProviderDriver, ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
@@ -114,7 +115,7 @@ export type CodexDriverEnv =
   | Crypto.Crypto
   | FileSystem.FileSystem
   | HttpClient.HttpClient
-  | ModelManifest.ModelManifest
+  | ModelCatalog.ModelCatalog
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers
   | ServerConfig.ServerConfig
@@ -147,7 +148,8 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       const pathService = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
       const host = yield* ProviderHost;
-      const modelManifest = yield* ModelManifest.ModelManifest;
+      const modelCatalog = yield* ModelCatalog.ModelCatalog;
+      const currentCatalog = modelCatalog.current(DRIVER_KIND);
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const homeLayout = yield* resolveCodexHomeLayout(config);
       const continuationIdentity = codexContinuationIdentity(homeLayout);
@@ -218,13 +220,12 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       // Kick the TTL-gated manifest refresh in the background and classify
       // with the in-memory manifest, so a slow or hung fetch never delays the
       // provider check. A refresh that lands mid-probe applies on the next one.
-      const checkProvider = modelManifest.refreshInBackground.pipe(
+      const checkProvider = modelCatalog.refreshInBackground.pipe(
         Effect.andThen(
           Effect.zipWith(
             checkCodexProviderStatus(effectiveConfig, undefined, processEnv),
-            modelManifest.current,
-            (draft, manifest) =>
-              stampIdentity(ModelManifest.applyModelManifest(draft, manifest, DRIVER_KIND)),
+            currentCatalog,
+            (draft, catalog) => stampIdentity(applyCodexModelCatalog(draft, catalog)),
             { concurrent: true },
           ),
         ),
@@ -239,9 +240,8 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         initialSnapshot: (settings) =>
           Effect.zipWith(
             makePendingCodexProvider(settings.provider),
-            modelManifest.current,
-            (draft, manifest) =>
-              stampIdentity(ModelManifest.applyModelManifest(draft, manifest, DRIVER_KIND)),
+            currentCatalog,
+            (draft, catalog) => stampIdentity(applyCodexModelCatalog(draft, catalog)),
           ),
         checkProvider,
         enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
