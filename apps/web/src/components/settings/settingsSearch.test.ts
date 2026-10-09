@@ -45,6 +45,13 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 describe("searchSettings", () => {
+  it.each(["usage left", "usage used", "remaining quota"])(
+    "finds Limit display for %s",
+    (query) => {
+      expect(searchSettings(query)[0]?.id).toBe("usage-limit-display-mode");
+    },
+  );
+
   it.each(["send shortcut", "multiline", "new line"])("finds Send shortcut for %s", (query) => {
     expect(searchSettings(query).map((item) => item.id)).toContain("send-shortcut");
   });

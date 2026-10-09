@@ -21,6 +21,18 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("usage limit display preference", () => {
+  it("keeps remaining as the default for existing clients", () => {
+    expect(decodeClientSettings({}).usageLimitDisplayMode).toBe("remaining");
+  });
+
+  it.each(["remaining", "used"])("persists and patches %s", (usageLimitDisplayMode) => {
+    const preference = { usageLimitDisplayMode };
+    expect(decodeClientSettingsPatch(preference)).toEqual(preference);
+    expect(encodeClientSettings(decodeClientSettings(preference))).toMatchObject(preference);
+  });
+});
+
 describe("ServerSettings response streaming", () => {
   it("defaults to paragraph buffering", () => {
     expect(decodeServerSettings({}).responseStreamingMode).toBe("paragraph");
