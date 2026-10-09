@@ -75,6 +75,10 @@
       "types": "./src/server/mcpToolPresentation.ts",
       "import": "./src/server/mcpToolPresentation.ts"
     },
+    "./server/ModelCatalog": {
+      "types": "./src/server/ModelCatalog.ts",
+      "import": "./src/server/ModelCatalog.ts"
+    },
     "./server/nativeProtocolLogging": {
       "types": "./src/server/nativeProtocolLogging.ts",
       "import": "./src/server/nativeProtocolLogging.ts"

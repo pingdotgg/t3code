@@ -52,7 +52,7 @@ import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeL
 import { ProviderDriverError } from "../Errors.ts";
 import { makeAntigravityProvider } from "../AntigravityProvider.ts";
 import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
-import * as ModelManifest from "../ModelManifest.ts";
+import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -73,7 +73,7 @@ export type AntigravityDriverEnv =
   | Crypto.Crypto
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
-  | ModelManifest.ModelManifest
+  | ModelCatalog.ModelCatalog
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers;
 
@@ -93,7 +93,8 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       const selfInvocation = yield* resolveSelfInvocation();
       const installation = yield* AntigravityInstallation.AntigravityInstallation;
       const loggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-      const modelManifest = yield* ModelManifest.ModelManifest;
+      const modelCatalog = yield* ModelCatalog.ModelCatalog;
+      const currentCatalog = modelCatalog.current(DRIVER);
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
       const settings = { ...config, enabled } satisfies AntigravitySettings;
@@ -146,10 +147,8 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const classifyModels = (draft: ServerProviderDraft) =>
-        modelManifest.current.pipe(
-          Effect.map((manifest) =>
-            stampIdentity(ModelManifest.applyModelManifest(draft, manifest, DRIVER)),
-          ),
+        currentCatalog.pipe(
+          Effect.map((catalog) => stampIdentity(ModelCatalog.applyModelCatalog(draft, catalog))),
         );
 
       const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
@@ -336,7 +335,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       // and version. The response below is synthetic: only agentInfo.version
       // is read from it. Sessions and manual refreshes still spawn.
       const probe = Effect.gen(function* () {
-        yield* modelManifest.refreshInBackground;
+        yield* modelCatalog.refreshInBackground;
         if (authConfigIssue !== null) {
           return yield* new ProviderSetupError({
             instanceId,
@@ -393,9 +392,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
             }),
         ),
       );
-      const defaultModel = modelManifest.current.pipe(
-        Effect.map((manifest) => ModelManifest.manifestDefaultModel(manifest, DRIVER)),
-      );
+      const defaultModel = currentCatalog.pipe(Effect.map((catalog) => catalog?.defaultChatModel));
       const orchestrationAdapter = yield* makeAntigravityAdapterV2({
         instanceId,
         selfInvocation,
