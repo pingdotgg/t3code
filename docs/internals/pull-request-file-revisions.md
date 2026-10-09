@@ -27,7 +27,7 @@ What "never got to look at" is belongs to the host, and the contract cannot know
 - [Azure DevOps](../../packages/source-control-azure-devops/src/server/AzureDevOpsPullRequestProvider.ts) reads every
   version off one iteration listing, so a change too long to follow to its end leaves the paths
   past that point out.
-- [Bitbucket](../../apps/server/src/pullRequest/BitbucketPullRequestApi.ts) reads them off the
+- [Bitbucket](../../packages/source-control-bitbucket/src/server/BitbucketPullRequestApi.ts) reads them off the
   pull request's own patch, the only place it states a file's version, so a patch cut short at the
   byte ceiling leaves the paths past the cut out.
 - [GitLab](../../packages/source-control-gitlab/src/server/GitLabPullRequestCli.ts) asks in batches, so a batch
