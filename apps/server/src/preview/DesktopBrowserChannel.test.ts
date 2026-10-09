@@ -11,6 +11,7 @@ it("receives desktop messages and exits while the parent keeps both input pipes 
     { stdio: ["ignore", "pipe", "pipe", "pipe", "pipe", "pipe", "pipe"] },
   );
   // A failed exit must not leave a test process running. This never fires on success.
+  // @effect-diagnostics-next-line globalTimers:off -- Bounds the native subprocess on failure; success waits for process exit.
   const watchdog = setTimeout(() => child.kill("SIGKILL"), 8_000);
   let output = "";
   let errors = "";
