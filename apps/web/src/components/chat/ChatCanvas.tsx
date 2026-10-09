@@ -41,7 +41,7 @@ export function ChatCanvas({
   const [measurements, setMeasurements] = useState({
     width: 0,
     height: 0,
-    padding: 20,
+    padding: 48,
     maxChatWidth: 768,
     minChatWidth: 640,
     composerHeight: 0,
@@ -139,7 +139,7 @@ export function ChatCanvas({
         <div
           ref={widthProbeRef}
           aria-hidden
-          className="pointer-events-none invisible absolute h-0 w-(--chat-content-max-width) min-w-[40rem] box-content ps-3 sm:ps-5"
+          className="pointer-events-none invisible absolute h-0 w-(--chat-content-max-width) min-w-[40rem] box-content ps-3 sm:ps-12"
         />
         {children}
       </div>
