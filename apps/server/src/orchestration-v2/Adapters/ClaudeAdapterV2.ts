@@ -5217,7 +5217,7 @@ export function makeClaudeAdapterV2(
                     input.context.input.runOrdinal,
                   lastRunOrdinal: input.context.input.runOrdinal,
                   pendingBackgroundTasks: claudePendingBackgroundTasksFromRoster(roster),
-                  status: input.status === "completed" ? "active" : "idle",
+                  status: input.status === "completed" && roster.size > 0 ? "active" : "idle",
                   updatedAt: input.completedAt,
                 };
                 yield* rememberProviderThread(providerThread);
