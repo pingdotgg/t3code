@@ -412,9 +412,13 @@ export const layerAssetRoute = HttpRouter.add(
     const asset = yield* resolveAsset(
       suffix.slice(0, separatorIndex),
       suffix.slice(separatorIndex + 1),
+      { htmlSelection: url.value.searchParams.get("t3-html-selection") === "1" },
     );
     if (!asset) {
       return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+    if (asset.kind === "html") {
+      return HttpServerResponse.text(asset.html, { headers: assetResponseHeaders("inline.html") });
     }
     if (asset.kind === "bytes") {
       return HttpServerResponse.uint8Array(asset.bytes, {

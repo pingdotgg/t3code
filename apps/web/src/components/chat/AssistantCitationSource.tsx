@@ -6,6 +6,12 @@ import {
   type AssistantCitationSourceAnchor,
 } from "~/lib/assistantTextSelection";
 import { toastManager } from "../ui/toast";
+import {
+  htmlSelectionCommand,
+  htmlSelectionParams,
+  readHtmlSelectionRect,
+} from "~/lib/htmlRenderSelection";
+import { observeHtmlRenderCitationSource } from "./htmlRenderCitationSource";
 
 const CITATION_PULSE_DURATION_MS = 650;
 // The second pulse settles into a held highlight so late glances still find the quote.
@@ -23,11 +29,59 @@ export function observeAssistantCitationCommentSource({
   anchor,
   citation,
   onUnavailable,
+  onPositionChange,
 }: {
   anchor: AssistantCitationSourceAnchor;
   citation: AssistantCitation;
   onUnavailable: () => void;
+  onPositionChange?: () => void;
 }): () => void {
+  if (anchor.htmlRender) {
+    const frame = anchor.htmlRender;
+    let stopped = false;
+    const timeout = setTimeout(() => unavailable(), 5000);
+    const unavailable = () => {
+      if (stopped) return;
+      dispose();
+      onUnavailable();
+    };
+    const validate = () => {
+      if (!anchor.source.isConnected || !anchor.viewport.contains(frame)) unavailable();
+    };
+    const receive = (event: MessageEvent) => {
+      if (stopped || event.source !== frame.contentWindow) return;
+      const params = htmlSelectionParams(event.data);
+      if (!params || params.action !== "mark") return;
+      const selector = params.selector as Partial<AssistantCitation> | undefined;
+      if (
+        !selector ||
+        selector.text !== citation.text ||
+        selector.start !== citation.start ||
+        selector.end !== citation.end ||
+        selector.prefix !== citation.prefix ||
+        selector.suffix !== citation.suffix
+      )
+        return;
+      clearTimeout(timeout);
+      const rect = readHtmlSelectionRect(params.target);
+      if (!rect) unavailable();
+      else if (anchor.updateRange(rect)) onPositionChange?.();
+    };
+    const observer = new MutationObserver(validate);
+    const dispose = () => {
+      if (stopped) return;
+      stopped = true;
+      clearTimeout(timeout);
+      observer.disconnect();
+      window.removeEventListener("message", receive);
+      htmlSelectionCommand(frame, "unmark");
+    };
+    observer.observe(anchor.viewport, { childList: true, subtree: true });
+    window.addEventListener("message", receive);
+    htmlSelectionCommand(frame, "mark", citation);
+    validate();
+    return dispose;
+  }
   const { source, range, viewport } = anchor;
   const registry = typeof CSS !== "undefined" ? CSS.highlights : undefined;
   let highlight: Highlight | null = null;
@@ -113,6 +167,9 @@ export function observeAssistantCitationSource({
   request: AssistantCitationTarget;
   list: LegendListRef;
 }) {
+  if (root.dataset.htmlCitationSource === "true") {
+    return observeHtmlRenderCitationSource({ root, itemKey, request, list });
+  }
   const activation = request.activationRef.current;
   if (activation.dismissed) return;
   const scrollNode = list.getScrollableNode();
@@ -349,6 +406,7 @@ export function AssistantCitationSource({
   request,
   listRef,
   children,
+  htmlRender = false,
 }: {
   messageId: MessageId;
   threadRef?: ScopedThreadRef;
@@ -356,6 +414,7 @@ export function AssistantCitationSource({
   request: AssistantCitationTarget | null;
   listRef: RefObject<LegendListRef | null>;
   children: ReactNode;
+  htmlRender?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -369,6 +428,7 @@ export function AssistantCitationSource({
     <div
       ref={rootRef}
       data-assistant-citation-source={messageId}
+      data-html-citation-source={htmlRender || undefined}
       data-assistant-citation-environment={threadRef?.environmentId}
       data-assistant-citation-thread={threadRef?.threadId}
     >

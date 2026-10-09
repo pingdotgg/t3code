@@ -30,7 +30,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
-import { assetFileResponse } from "../http.ts";
+import { assetFileResponse, assetResponseHeaders } from "../http.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { openMediaFile } from "./MediaFile.ts";
@@ -1013,6 +1013,60 @@ describe("AssetAccess", () => {
         mimeType: "application/pdf",
       });
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect(
+    "serves selection-enabled saved HTML at its signed URL with its own sandbox policy",
+    () =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const attachmentId = "thread-1-00000000-0000-4000-8000-000000000004-html";
+        const filePath = path.join(config.attachmentsDir, `${attachmentId}.html`);
+        const html =
+          '<html><head><script src="//cdn.example/library.js"></script><link rel="stylesheet" href="style.css"></head><body><p>Saved quote</p></body></html>';
+        yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
+        yield* fs.writeFileString(filePath, html);
+        const urls = [];
+        for (const disposition of ["inline", "attachment"] as const) {
+          const result = yield* issueAssetUrl({
+            resource: {
+              _tag: "attachment",
+              attachmentId,
+              fileName: "saved.html",
+              mimeType: "text/html",
+              disposition,
+            },
+          });
+          urls.push(result.relativeUrl);
+        }
+        const resolve = (url: string, htmlSelection: boolean) => {
+          const suffix = url.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+          const separator = suffix.indexOf("/");
+          return resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1), {
+            htmlSelection,
+          });
+        };
+        const asset = yield* resolve(urls[0]!, true);
+        expect(asset?.kind).toBe("html");
+        if (asset?.kind !== "html") return;
+        const bridged = asset.html;
+        expect(bridged).toContain('method = "t3/selection"');
+        expect(bridged).toContain('src="//cdn.example/library.js"');
+        expect(bridged).toContain('href="style.css"');
+        expect(bridged).not.toContain("<base");
+        expect(assetResponseHeaders(filePath)["Content-Security-Policy"]).toBe(
+          "sandbox allow-scripts allow-forms allow-popups allow-downloads",
+        );
+        expect(yield* resolve(urls[0]!, false)).toMatchObject({ kind: "file", path: filePath });
+        expect(yield* resolve(urls[1]!, true)).toMatchObject({
+          kind: "file",
+          path: filePath,
+          download: true,
+        });
+        expect(yield* fs.readFileString(filePath)).toBe(html);
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("serves audio previews with their stored format and keeps saving explicit", () =>

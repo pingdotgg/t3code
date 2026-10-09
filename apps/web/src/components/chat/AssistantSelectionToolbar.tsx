@@ -17,6 +17,13 @@ import {
   type SelectionActionPoint,
 } from "~/lib/selectionActions";
 import { Button } from "../ui/button";
+import {
+  htmlSelectionClientRect,
+  htmlSelectionCommand,
+  htmlSelectionParams,
+  readHtmlSelection,
+  readHtmlSelectionRect,
+} from "~/lib/htmlRenderSelection";
 
 export function AssistantSelectionToolbar({
   viewport,
@@ -31,6 +38,7 @@ export function AssistantSelectionToolbar({
     citation: AssistantCitation;
     position: SelectionActionPoint;
     sourceAnchor: AssistantCitationSourceAnchor;
+    tooLong?: boolean;
   } | null>(null);
   const toolbarRef = useRef<HTMLButtonElement>(null);
   const actionsRef = useRef<ReturnType<typeof observeSelectionActions> | null>(null);
@@ -106,7 +114,86 @@ export function AssistantSelectionToolbar({
     };
     document.addEventListener("keydown", focusActions, true);
     document.addEventListener("selectionchange", actions.selectionChanged);
+    const htmlSelection = (event: MessageEvent) => {
+      const params = htmlSelectionParams(event.data);
+      if (params === undefined) return;
+      const frame = [
+        ...viewport.querySelectorAll<HTMLIFrameElement>("iframe[data-html-selection-bridge]"),
+      ].find((frame) => frame.contentWindow === event.source);
+      const source = frame?.closest<HTMLElement>("[data-assistant-citation-source]");
+      const messageId = source?.dataset.assistantCitationSource;
+      if (!frame || !source || !messageId) return;
+      if (params === null) {
+        setSelection((previous) =>
+          document.activeElement === frame || previous?.sourceAnchor.htmlRender === frame
+            ? null
+            : previous,
+        );
+        return;
+      }
+      if (params.focus === true) {
+        if (document.activeElement === frame) toolbarRef.current?.focus({ preventScroll: true });
+        return;
+      }
+      if ("target" in params) return;
+      if (document.activeElement !== frame) return;
+      const captured = readHtmlSelection(event.data);
+      const localRect =
+        captured?.rect ?? (params.tooLong === true ? readHtmlSelectionRect(params.rect) : null);
+      if (!localRect) {
+        clear();
+        return;
+      }
+      const rect = htmlSelectionClientRect(frame, localRect);
+      const bounds = viewport.getBoundingClientRect();
+      const frameBounds = frame.getBoundingClientRect();
+      if (
+        rect.bottom < bounds.top ||
+        rect.top > bounds.bottom ||
+        rect.bottom < frameBounds.top ||
+        rect.top > frameBounds.bottom
+      ) {
+        clear();
+        return;
+      }
+      const selector = captured?.selector ?? { text: "", start: 0, end: 1, prefix: "", suffix: "" };
+      let currentRect = localRect;
+      const sourceRect = () => htmlSelectionClientRect(frame, currentRect);
+      setSelection({
+        tooLong: params.tooLong === true,
+        citation: { version: 1, ...threadRef, messageId: MessageId.make(messageId), ...selector },
+        sourceAnchor: {
+          source,
+          viewport,
+          htmlRender: frame,
+          updateRange: (next) => {
+            const changed = (["left", "top", "width", "height"] as const).some(
+              (key) => next[key] !== currentRect[key],
+            );
+            currentRect = next;
+            return changed;
+          },
+          range: {
+            getBoundingClientRect: sourceRect,
+            getClientRects: () =>
+              Object.assign([sourceRect()], {
+                item: (index: number) => (index === 0 ? sourceRect() : null),
+              }),
+          },
+        },
+        position: resolveSelectionActionPosition({
+          bounds,
+          selectionRect: rect,
+          pointer: captured?.pointer
+            ? { x: frameBounds.left + captured.pointer.x, y: frameBounds.top + captured.pointer.y }
+            : null,
+          viewport: { width: window.innerWidth, height: window.innerHeight },
+        }),
+      });
+    };
+    window.addEventListener("message", htmlSelection);
     return () => {
+      window.removeEventListener("message", htmlSelection);
       document.removeEventListener("keydown", focusActions, true);
       document.removeEventListener("selectionchange", actions.selectionChanged);
       actions.dispose();
@@ -115,14 +202,17 @@ export function AssistantSelectionToolbar({
   }, [threadRef, viewport]);
 
   if (!selection) return null;
-  const tooLong = selection.citation.text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH;
+  const tooLong =
+    selection.tooLong || selection.citation.text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH;
   const dismiss = () => {
     actionsRef.current?.cancel();
     setSelection(null);
   };
   const cite = () => {
     if (tooLong || !onCite(selection.citation, selection.sourceAnchor)) return false;
-    window.getSelection()?.removeAllRanges();
+    if (selection.sourceAnchor.htmlRender) {
+      htmlSelectionCommand(selection.sourceAnchor.htmlRender, "clear");
+    } else window.getSelection()?.removeAllRanges();
     dismiss();
     return true;
   };
@@ -142,6 +232,8 @@ export function AssistantSelectionToolbar({
         event.stopPropagation();
         if (event.key === "Escape" && !event.nativeEvent.isComposing) {
           event.preventDefault();
+          if (selection.sourceAnchor.htmlRender)
+            htmlSelectionCommand(selection.sourceAnchor.htmlRender, "dismiss");
           dismiss();
         }
       }}

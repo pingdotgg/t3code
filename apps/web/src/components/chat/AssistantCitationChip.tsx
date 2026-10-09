@@ -8,6 +8,7 @@ import { ArrowUpRightIcon, PencilIcon, QuoteIcon } from "lucide-react";
 import {
   useEffect,
   useEffectEvent,
+  useMemo,
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
@@ -58,6 +59,7 @@ export function AssistantCitationChip({
   const commentOpen = commentEditor?.open ?? false;
   const sourceAnchor = commentEditor?.sourceAnchor;
   const activeSourceAnchor = sourceAnchor === unavailableSourceAnchor ? undefined : sourceAnchor;
+  const [sourcePositionRevision, setSourcePositionRevision] = useState(0);
   useEffect(() => {
     if (!commentOpen) draftCommentRef.current = null;
   }, [commentOpen]);
@@ -87,19 +89,27 @@ export function AssistantCitationChip({
       anchor,
       citation,
       onUnavailable: onSourceUnavailable,
+      onPositionChange: () => setSourcePositionRevision((revision) => revision + 1),
     });
   }, [citation, commentOpen, sourceAnchor, unavailableSourceAnchor]);
   // A multi-line selection's bounding box spans the full message width; anchor
   // the bubble to the selection's last line, where the pointer released.
-  const popupAnchor = activeSourceAnchor
-    ? {
-        contextElement: activeSourceAnchor.source,
-        getBoundingClientRect: () => {
-          const rects = activeSourceAnchor.range.getClientRects();
-          return rects.item(rects.length - 1) ?? activeSourceAnchor.range.getBoundingClientRect();
-        },
-      }
-    : undefined;
+  const popupAnchor = useMemo(
+    () =>
+      activeSourceAnchor
+        ? {
+            contextElement: activeSourceAnchor.source,
+            getBoundingClientRect: () => {
+              const rects = activeSourceAnchor.range.getClientRects();
+              return (
+                rects.item(rects.length - 1) ?? activeSourceAnchor.range.getBoundingClientRect()
+              );
+            },
+          }
+        : undefined,
+    // oxlint-disable-next-line react/memo-dependencies -- Bridge range updates need a new virtual anchor even when its source object is unchanged.
+    [activeSourceAnchor, sourcePositionRevision],
+  );
   const label = assistantCitationLabel(citation);
   const sourceLinkProps = {
     to: "/$environmentId/$threadId" as const,

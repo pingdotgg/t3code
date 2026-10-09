@@ -72,10 +72,15 @@ export function HtmlRenderDocument(props: {
   readonly className?: string;
   /** Receives the page's content height whenever it changes, so an inline frame can fit it. */
   readonly onContentHeight?: (height: number) => void;
+  readonly selectionBridge?: boolean;
 }) {
   const theme = useHtmlRenderTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
-  const [src] = useState(() => `${props.src.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}`);
+  const [src] = useState(() => {
+    const url = new URL(props.src, window.location.href);
+    if (props.selectionBridge) url.searchParams.set("t3-html-selection", "1");
+    return `${url.href.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}`;
+  });
   const [loaded, setLoaded] = useState(false);
   const postTheme = () => {
     frameRef.current?.contentWindow?.postMessage(htmlRenderThemeMessage(theme), "*");
@@ -123,14 +128,20 @@ export function HtmlRenderDocument(props: {
     <iframe
       ref={frameRef}
       src={src}
+      data-html-selection-bridge={props.selectionBridge || undefined}
       title={props.title}
       // Never allow-same-origin: the opaque origin keeps the page out of the app's session.
       sandbox="allow-scripts allow-forms"
-      loading="lazy"
+      // Citation navigation mounts distant rows before it can resolve their text.
+      loading={props.selectionBridge ? "eager" : "lazy"}
       onLoad={() => {
         setLoaded(true);
         // Covers a theme change that landed while the page was loading.
         postTheme();
+        if (props.selectionBridge) {
+          frameRef.current?.setAttribute("data-html-selection-ready", "true");
+          frameRef.current?.dispatchEvent(new Event("t3-html-selection-ready", { bubbles: true }));
+        }
       }}
       // A frame whose color scheme differs from its document's paints an opaque
       // canvas, so the blank document a frame starts with would flash white in
