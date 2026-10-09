@@ -40,7 +40,7 @@ type Outcome =
 const runOnServer = (
   connection: OpenCode2Server.OpenCode2Connection,
   input: TextGenerationOperations.Request<Schema.Top>,
-  resolveAttachmentPath: ProviderHost.ProviderHostShape["resolveAttachmentPath"],
+  resolveAttachmentPath: ProviderHost.ProviderHost["Service"]["resolveAttachmentPath"],
 ) =>
   Effect.gen(function* () {
     const { client } = connection;

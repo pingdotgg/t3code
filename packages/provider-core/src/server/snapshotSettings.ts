@@ -29,7 +29,7 @@ export function haveProviderSnapshotSettingsChanged<Settings>(
 
 export function makeProviderSnapshotSettingsSource<Settings>(
   provider: Settings,
-  settings: ProviderHost.ProviderHostShape["settings"],
+  settings: ProviderHost.ProviderHost["Service"]["settings"],
 ): {
   readonly getSettings: Effect.Effect<ProviderSnapshotSettings<Settings>, ServerSettingsError>;
   readonly streamSettings: Stream.Stream<ProviderSnapshotSettings<Settings>>;

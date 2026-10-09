@@ -24,14 +24,12 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as Exit from "effect/Exit";
-import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import type { MuseItem } from "./protocol.ts";
@@ -195,13 +193,10 @@ const makeHarness = Effect.fnUntraced(function* (
   > = {},
 ) {
   let hostCount = 0;
-  const adapter = makeMuseAdapterV2({
+  const adapter = yield* makeMuseAdapterV2({
     instanceId,
     settings: museSettings,
     environment: { PATH: "/fake/bin" },
-    idAllocator: yield* IdAllocator.IdAllocatorV2,
-    host: yield* ProviderHost.ProviderHost,
-    fileSystem: yield* FileSystem.FileSystem,
     createHost: async () => (hostCount++ === 0 ? fake.host : (replacement ?? fake).host),
     ...overrides,
   });
@@ -434,13 +429,10 @@ describe("MuseAdapterV2", () => {
       for (const kind of ["sessionNotFound", "notFound"] as const) {
         const fake = yield* makeFakeMuse();
         const allocated = yield* preallocatedProviderThread();
-        const adapter = makeMuseAdapterV2({
+        const adapter = yield* makeMuseAdapterV2({
           instanceId: INSTANCE_ID,
           settings: museSettings,
           environment: { PATH: "/fake/bin" },
-          idAllocator: yield* IdAllocator.IdAllocatorV2,
-          host: yield* ProviderHost.ProviderHost,
-          fileSystem: yield* FileSystem.FileSystem,
           createHost: async () => fake.host,
         });
         const runtime = yield* adapter.openSession({

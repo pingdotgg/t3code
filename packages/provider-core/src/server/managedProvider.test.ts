@@ -99,7 +99,7 @@ const refreshedSnapshotSecond: ServerProvider = {
 /** A host whose settings never change and whose background demand is fixed. */
 function layerProviderHost(input: {
   readonly runBackgroundWork: boolean;
-  readonly settings?: Pick<ProviderHost.ProviderHostShape, "settings">["settings"];
+  readonly settings?: Pick<ProviderHost.ProviderHost["Service"], "settings">["settings"];
 }) {
   return Layer.succeed(
     ProviderHost.ProviderHost,
@@ -283,7 +283,7 @@ describe("makeManagedServerProvider", () => {
         };
         const serverSettingsRef = yield* Ref.make(initialServerSettings);
         const serverSettingsChanges = yield* PubSub.unbounded<typeof initialServerSettings>();
-        const hostSettings: ProviderHost.ProviderHostShape["settings"] = {
+        const hostSettings: ProviderHost.ProviderHost["Service"]["settings"] = {
           get: Ref.get(serverSettingsRef),
           changes: Stream.empty,
           subscribe: PubSub.subscribe(serverSettingsChanges).pipe(

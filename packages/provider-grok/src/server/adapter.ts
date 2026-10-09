@@ -112,12 +112,7 @@ export interface GrokAdapterV2Options {
   readonly settings: GrokSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly hostPlatform: NodeJS.Platform;
-  readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
-  readonly crypto: Crypto.Crypto;
   readonly selfInvocation: SelfInvocation;
-  readonly fileSystem: FileSystem.FileSystem;
-  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
-  readonly host: ProviderHost.ProviderHostShape;
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   readonly testHooks?: Parameters<typeof makeAcpAdapterV2>[0]["testHooks"];
@@ -229,7 +224,12 @@ export function grokLaunchRuntimeMode(
     : "approval-required";
 }
 
-export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdapterV2Flavor {
+/** The flavor runs Grok's launcher through the adapter's spawner. */
+export function makeGrokAcpAdapterFlavor(
+  options: GrokAdapterV2Options & {
+    readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  },
+): AcpAdapterV2Flavor {
   return {
     driver: GROK_PROVIDER,
     runtimeHarness: "Grok",
@@ -329,15 +329,14 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
   };
 }
 
-export function makeGrokAdapterV2(options: GrokAdapterV2Options) {
-  const flavor = makeGrokAcpAdapterFlavor(options);
-  return makeAcpAdapterV2({
+export const makeGrokAdapterV2 = Effect.fn("makeGrokAdapterV2")(function* (
+  options: GrokAdapterV2Options,
+) {
+  const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const flavor = makeGrokAcpAdapterFlavor({ ...options, childProcessSpawner });
+  return yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
     flavor,
-    crypto: options.crypto,
-    fileSystem: options.fileSystem,
-    idAllocator: options.idAllocator,
-    host: options.host,
     selfInvocation: options.selfInvocation,
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
     ...(options.continuationRequests === undefined
@@ -345,7 +344,7 @@ export function makeGrokAdapterV2(options: GrokAdapterV2Options) {
       : { continuationRequests: options.continuationRequests }),
     ...(options.testHooks === undefined ? {} : { testHooks: options.testHooks }),
   });
-}
+});
 
 export type GrokAdapterV2DriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
@@ -365,24 +364,14 @@ export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapte
       const hostEnvironment = yield* HostProcessEnvironment;
       const hostPlatform = yield* HostProcessPlatform;
       const selfInvocation = yield* resolveSelfInvocation();
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-      const host = yield* ProviderHost.ProviderHost;
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
-      return makeGrokAdapterV2({
+      return yield* makeGrokAdapterV2({
         instanceId: input.instanceId,
         settings: { ...input.config, enabled: input.enabled },
         environment: mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
         hostPlatform,
-        childProcessSpawner,
-        crypto,
-        fileSystem,
-        idAllocator,
-        host,
         selfInvocation,
         continuationRequests,
         nativeLogging: (threadId) =>
@@ -424,24 +413,14 @@ const layer: Layer.Layer<
     const hostEnvironment = yield* HostProcessEnvironment;
     const hostPlatform = yield* HostProcessPlatform;
     const selfInvocation = yield* resolveSelfInvocation();
-    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const crypto = yield* Crypto.Crypto;
-    const fileSystem = yield* FileSystem.FileSystem;
-    const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-    const host = yield* ProviderHost.ProviderHost;
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
-    return makeGrokAdapterV2({
+    return yield* makeGrokAdapterV2({
       instanceId: GROK_DEFAULT_INSTANCE_ID,
       settings: DEFAULT_GROK_SETTINGS,
       environment: hostEnvironment,
       hostPlatform,
-      childProcessSpawner,
-      crypto,
-      fileSystem,
-      idAllocator,
-      host,
       selfInvocation,
       continuationRequests,
       nativeLogging: (threadId) =>

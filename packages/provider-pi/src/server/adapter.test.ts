@@ -22,7 +22,6 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
@@ -31,21 +30,14 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 
-import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
-import {
-  makePiAdapterV2,
-  PiAdapterV2Driver,
-  PI_PROVIDER,
-  type PiAdapterV2Options,
-} from "./adapter.ts";
+import { makePiAdapterV2, PI_PROVIDER, type PiAdapterV2Options } from "./adapter.ts";
 import { makePiRpcConnection, type PiRpcRecord } from "./rpc.ts";
 
 const layerTest = Layer.mergeAll(
@@ -326,9 +318,6 @@ const makeAdapter = Effect.fnUntraced(function* (
   forkFake?: FakePi,
   continuationRequests?: PiAdapterV2Options["continuationRequests"],
 ) {
-  const idAllocator = yield* IdAllocator.IdAllocatorV2;
-  const host = yield* ProviderHost.ProviderHost;
-  const fileSystem = yield* FileSystem.FileSystem;
   const spawner =
     forkFake === undefined
       ? fake.spawner
@@ -337,31 +326,12 @@ const makeAdapter = Effect.fnUntraced(function* (
             ? forkFake.spawner.spawn(command)
             : fake.spawner.spawn(command),
         );
-  if (continuationRequests !== undefined) {
-    return yield* PiAdapterV2Driver.create({
-      instanceId: PI_INSTANCE_ID,
-      displayName: undefined,
-      enabled: true,
-      environment: [],
-      config: { enabled: true, binaryPath: "pi", launchArgs, customModels: [] },
-    }).pipe(
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      Effect.provideService(HostProcessEnvironment, {}),
-      Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
-        ...continuationRequests,
-        take: Effect.never,
-      }),
-    );
-  }
-  return makePiAdapterV2({
+  return yield* makePiAdapterV2({
     instanceId: PI_INSTANCE_ID,
     settings: { enabled: true, binaryPath: "pi", launchArgs, customModels: [] },
     environment: {},
-    spawner,
-    fileSystem,
-    idAllocator,
-    host,
-  });
+    ...(continuationRequests === undefined ? {} : { continuationRequests }),
+  }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
 });
 
 const openRuntime = Effect.fnUntraced(function* (

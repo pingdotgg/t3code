@@ -4,7 +4,6 @@ import { ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contra
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -188,8 +187,7 @@ describe("AcpRegistryAdapterV2", () => {
         ACP_REGISTRY_PROVIDER,
       );
       const instanceId = ProviderInstanceId.make("acp-registry-mode-pick");
-      const adapter = makeAcpRegistryAdapterV2({
-        crypto: yield* Crypto.Crypto,
+      const adapter = yield* makeAcpRegistryAdapterV2({
         selfInvocation: yield* resolveSelfInvocation(),
         instanceId,
         settings: yield* decodeAcpRegistryAdapterSettings({
@@ -198,10 +196,7 @@ describe("AcpRegistryAdapterV2", () => {
         }),
         environment: {},
         childProcessSpawner,
-        fileSystem,
-        idAllocator: yield* IdAllocator.IdAllocatorV2,
         resolver: { resolve: () => Effect.die("the runtime is injected") },
-        host: yield* ProviderHost.ProviderHost,
         makeRuntime: makeAcpReplayRuntime({
           transcript,
           statusPath,
@@ -268,10 +263,7 @@ describe("AcpRegistryAdapterV2", () => {
   it.effect("offers client terminals to Devin only and client fs to no registry agent", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost.ProviderHost;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
@@ -280,17 +272,13 @@ describe("AcpRegistryAdapterV2", () => {
       ) {
         let clientCapabilities: unknown;
         const instanceId = ProviderInstanceId.make(`acp-registry-capabilities-${agentId}`);
-        const adapter = makeAcpRegistryAdapterV2({
-          crypto: yield* Crypto.Crypto,
+        const adapter = yield* makeAcpRegistryAdapterV2({
           selfInvocation: yield* resolveSelfInvocation(),
           instanceId,
           settings: yield* decodeAcpRegistryAdapterSettings({ agentId, authMethodId: "test" }),
           environment: {},
           childProcessSpawner,
-          fileSystem,
-          idAllocator,
           resolver: { resolve: () => Effect.die("the runtime is injected") },
-          host,
           makeRuntime: (input) =>
             Effect.gen(function* () {
               clientCapabilities = input.clientCapabilities;
@@ -344,8 +332,6 @@ describe("AcpRegistryAdapterV2", () => {
   it.effect("opens a real ACP child process resolved from registry configuration", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
       const host = yield* ProviderHost.ProviderHost;
       const mockAgentPath = yield* path.fromFileUrl(
@@ -369,8 +355,7 @@ describe("AcpRegistryAdapterV2", () => {
         readonly commands: AcpRegistryAvailableCommands;
       }>();
       const configurationPublished = yield* Deferred.make<AcpRegistryLiveConfiguration>();
-      const adapter = makeAcpRegistryAdapterV2({
-        crypto: yield* Crypto.Crypto,
+      const adapter = yield* makeAcpRegistryAdapterV2({
         selfInvocation: yield* resolveSelfInvocation(),
         instanceId,
         settings,
@@ -379,8 +364,6 @@ describe("AcpRegistryAdapterV2", () => {
           T3_ACP_COMMAND_ADVERTISEMENT_DELAY_MS: "750",
         },
         childProcessSpawner,
-        fileSystem,
-        idAllocator,
         runtimeCoordinator: {
           withForegroundStartup: (agentId, effect) =>
             Effect.acquireUseRelease(
@@ -428,7 +411,6 @@ describe("AcpRegistryAdapterV2", () => {
               })),
             ),
         },
-        host,
       });
       const threadId = ThreadId.make("thread-acp-registry-fixture");
       const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({

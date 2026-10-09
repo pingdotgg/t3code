@@ -22,7 +22,6 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -51,7 +50,6 @@ describe("CursorAdapterV2", () => {
     ({ status, model, lateModel }) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
         const workspace = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "cursor-v2-lifecycle-",
         });
@@ -63,17 +61,12 @@ describe("CursorAdapterV2", () => {
           interactionMode: "default",
           cwd: workspace,
         });
-        const adapter = makeCursorAdapterV2({
+        const adapter = yield* makeCursorAdapterV2({
           instanceId,
           settings: yield* decodeCursorSettings({}),
           environment: { HOME: workspace },
-          fileSystem,
-          path,
-          idAllocator: yield* IdAllocator.IdAllocatorV2,
-          host: yield* ProviderHost.ProviderHost.pipe(
-            Effect.provide(layerTestProviderHost({ cwd: workspace })),
-          ),
-          runner: {
+        }).pipe(
+          Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
             assertComplete: Effect.void,
             open: () =>
               Effect.succeed({
@@ -131,8 +124,9 @@ describe("CursorAdapterV2", () => {
                     };
                   }),
               }),
-          },
-        });
+          }),
+          Effect.provide(layerTestProviderHost({ cwd: workspace })),
+        );
         const runtime = yield* adapter.openSession({
           threadId,
           providerSessionId: ProviderSessionId.make("cursor-lifecycle-session"),
@@ -211,7 +205,6 @@ describe("CursorAdapterV2", () => {
   it.effect("fails standalone SDK transport diagnostics and sends compaction as /compress", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-errors-" });
       const sentMessages: Array<string> = [];
       let sendCalls = 0;
@@ -223,17 +216,12 @@ describe("CursorAdapterV2", () => {
         interactionMode: "default",
         cwd: workspace,
       });
-      const adapter = makeCursorAdapterV2({
+      const adapter = yield* makeCursorAdapterV2({
         instanceId,
         settings: yield* decodeCursorSettings({}),
         environment: { HOME: workspace },
-        fileSystem,
-        path,
-        idAllocator: yield* IdAllocator.IdAllocatorV2,
-        host: yield* ProviderHost.ProviderHost.pipe(
-          Effect.provide(layerTestProviderHost({ cwd: workspace })),
-        ),
-        runner: {
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
           assertComplete: Effect.void,
           open: () =>
             Effect.succeed({
@@ -264,8 +252,9 @@ describe("CursorAdapterV2", () => {
                   };
                 }),
             }),
-        },
-      });
+        }),
+        Effect.provide(layerTestProviderHost({ cwd: workspace })),
+      );
       const runtime = yield* adapter.openSession({
         threadId,
         providerSessionId: ProviderSessionId.make("cursor-error-session"),
@@ -564,17 +553,12 @@ describe("CursorAdapterV2", () => {
           },
         },
       ];
-      const adapter = makeCursorAdapterV2({
+      const adapter = yield* makeCursorAdapterV2({
         instanceId,
         settings: yield* decodeCursorSettings({}),
         environment: { HOME: workspace },
-        fileSystem,
-        path,
-        idAllocator: yield* IdAllocator.IdAllocatorV2,
-        host: yield* ProviderHost.ProviderHost.pipe(
-          Effect.provide(layerTestProviderHost({ cwd: workspace })),
-        ),
-        runner: {
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
           assertComplete: Effect.void,
           open: () =>
             Effect.succeed({
@@ -602,8 +586,9 @@ describe("CursorAdapterV2", () => {
                   };
                 }),
             }),
-        },
-      });
+        }),
+        Effect.provide(layerTestProviderHost({ cwd: workspace })),
+      );
       const runtime = yield* adapter.openSession({
         threadId,
         providerSessionId: ProviderSessionId.make("cursor-search-session"),

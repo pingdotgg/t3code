@@ -38,7 +38,6 @@ const flavor = makeAntigravityAcpAdapterFlavor({
   crypto: undefined as never,
   fileSystem: undefined as never,
   path: undefined as never,
-  idAllocator: undefined as never,
   host: undefined as never,
   selfInvocation: undefined as never,
   makeRuntime: () => Effect.die("not spawned in this test"),
@@ -149,14 +148,9 @@ describe("AntigravityAdapterV2 client file system", () => {
       let writeTextFile: Parameters<RuntimeService["handleWriteTextFile"]>[0] | undefined;
       const crypto = yield* Crypto.Crypto;
       const instanceId = ProviderInstanceId.make("antigravity-containment-test");
-      const adapter = makeAntigravityAdapterV2({
+      const adapter = yield* makeAntigravityAdapterV2({
         instanceId,
-        crypto,
         selfInvocation: yield* resolveSelfInvocation(),
-        fileSystem,
-        path,
-        idAllocator: yield* IdAllocator.IdAllocatorV2,
-        host,
         makeRuntime: (input) =>
           makeAntigravityAcpRuntime({
             ...input,
@@ -293,7 +287,6 @@ describe("AntigravityAdapterV2 workspace changes", () => {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost.ProviderHost;
       const crypto = yield* Crypto.Crypto;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -301,14 +294,9 @@ describe("AntigravityAdapterV2 workspace changes", () => {
       type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
       let readTextFile: Parameters<RuntimeService["handleReadTextFile"]>[0] | undefined;
       const instanceId = ProviderInstanceId.make("antigravity-workspace-change-test");
-      const adapter = makeAntigravityAdapterV2({
+      const adapter = yield* makeAntigravityAdapterV2({
         instanceId,
-        crypto,
         selfInvocation: yield* resolveSelfInvocation(),
-        fileSystem,
-        path,
-        idAllocator: yield* IdAllocator.IdAllocatorV2,
-        host,
         makeRuntime: (input) =>
           makeAntigravityAcpRuntime({
             ...input,
@@ -430,7 +418,6 @@ describe("AntigravityAdapterV2 client file system under restrictive policies", (
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost.ProviderHost;
       const crypto = yield* Crypto.Crypto;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -451,14 +438,9 @@ describe("AntigravityAdapterV2 client file system under restrictive policies", (
         let readTextFile: Parameters<RuntimeService["handleReadTextFile"]>[0] | undefined;
         let writeTextFile: Parameters<RuntimeService["handleWriteTextFile"]>[0] | undefined;
         const instanceId = ProviderInstanceId.make(`antigravity-restrictive-${policy.runtimeMode}`);
-        const adapter = makeAntigravityAdapterV2({
+        const adapter = yield* makeAntigravityAdapterV2({
           instanceId,
-          crypto,
           selfInvocation: yield* resolveSelfInvocation(),
-          fileSystem,
-          path,
-          idAllocator: yield* IdAllocator.IdAllocatorV2,
-          host,
           makeRuntime: (input) =>
             makeAntigravityAcpRuntime({
               ...input,

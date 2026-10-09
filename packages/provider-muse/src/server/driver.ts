@@ -63,7 +63,6 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
       const host = yield* ProviderHost.ProviderHost;
       const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
       const { cwd } = host.paths;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       const hostEnvironment = yield* HostProcessEnvironment;
       // Drop an inherited META_API_KEY so Muse uses its login; an instance value still wins.
@@ -148,13 +147,10 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
         ),
       );
       const modelCatalog = snapshot.getSnapshot.pipe(Effect.map((current) => current.models));
-      const orchestrationAdapter = makeMuseAdapterV2({
+      const orchestrationAdapter = yield* makeMuseAdapterV2({
         instanceId,
         settings: effectiveConfig,
         environment: processEnvironment,
-        idAllocator,
-        host,
-        fileSystem,
         modelCatalog,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         continuationRequests,

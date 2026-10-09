@@ -24,11 +24,9 @@ import {
 } from "@t3tools/contracts";
 import { MuseSettings } from "@t3tools/provider-muse/settings";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import {
   museInitializeParams,
@@ -449,13 +447,10 @@ export function layer(input: {
   return ProviderAdapterRegistry.layerFromAdaptersEffect(
     Effect.gen(function* () {
       return [
-        makeMuseAdapterV2({
+        yield* makeMuseAdapterV2({
           instanceId: ProviderInstanceId.make(MUSE_PROVIDER_KIND),
           settings: DEFAULT_MUSE_SETTINGS,
           environment: input.environment ?? {},
-          idAllocator: yield* IdAllocator.IdAllocatorV2,
-          host: yield* ProviderHost,
-          fileSystem: yield* FileSystem.FileSystem,
           createHost: input.createHost,
           // Same queue the continuation worker drains when the fixture runs it.
           continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
