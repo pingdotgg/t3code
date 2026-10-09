@@ -69,6 +69,7 @@ import {
 } from "@t3tools/provider-testing/replayTranscript";
 import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -687,11 +688,12 @@ describe("orchestrator MCP toolkit", () => {
                 getById: (id) =>
                   Effect.succeed(
                     id === projectId
-                      ? Option.some({ id, defaultModelSelection: null } as never)
+                      ? Option.some({ id, defaultModelSelection: null, scripts: [] } as never)
                       : Option.none(),
                   ),
               }),
             ),
+            Layer.provide(ServerSettings.layerTest()),
             Layer.provideMerge(
               SecretRequests.layer.pipe(
                 Layer.provide(layerMemorySecretStore),
@@ -3820,6 +3822,7 @@ describe("orchestrator MCP toolkit", () => {
           Layer.provide(layerProviderRegistry),
           Layer.provide(layerUnusedScheduledTaskStub),
           Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+          Layer.provide(ServerSettings.layerTest()),
           Layer.provideMerge(
             SecretRequests.layer.pipe(
               Layer.provide(layerMemorySecretStore),

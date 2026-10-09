@@ -29,6 +29,7 @@ import * as ThreadManagementService from "../../../orchestration-v2/ThreadManage
 import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as ProjectSettingsService from "../../../project/ProjectSettingsService.ts";
 
 const shared = {
   success: Project,
@@ -41,10 +42,14 @@ const shared = {
     Crypto.Crypto,
   ],
 };
+// The project's model, env mode, auto-pull and scripts live in the
+// environment's per-project settings, not on the project record.
+const withSettings = [...shared.dependencies, ProjectSettingsService.ProjectSettingsService];
 const ProjectListTool = Tool.make("t3_project_list", {
   ...shared,
   description:
     "List registered projects in this environment. Pages use the current project snapshot and may shift between calls.",
+  dependencies: withSettings,
   parameters: Schema.Struct({
     cursor: Schema.optional(NonNegativeInt),
     limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
@@ -59,8 +64,9 @@ const ProjectListTool = Tool.make("t3_project_list", {
 const ProjectReadTool = Tool.make("t3_project_read", {
   ...shared,
   description:
-    "Read a registered project in this environment, including its workspace and saved scripts.",
+    "Read a registered project in this environment, including its workspace and the default model, thread env mode, auto-pull and scripts new threads in it get.",
   parameters: Schema.Struct({ projectId: ProjectId }),
+  dependencies: withSettings,
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
@@ -73,13 +79,14 @@ const ProjectCreateTool = Tool.make("t3_project_create", {
     workspaceRoot: Schema.optional(ProjectCreatePayload.fields.workspaceRoot),
   }),
   success: Schema.Struct({ ...Project.fields, commitError: Schema.optional(Schema.String) }),
-  dependencies: [...shared.dependencies, ManagedProjectFolders.ManagedProjectFolders],
+  dependencies: [...withSettings, ManagedProjectFolders.ManagedProjectFolders],
 }).annotate(Tool.Destructive, true);
 const ProjectUpdateTool = Tool.make("t3_project_update", {
   ...shared,
   description:
-    "Update a registered project's settings. Omitted fields are preserved. Uses the same project service as the app.",
+    "Update a registered project's settings. Omitted fields are preserved. Model, thread env mode, auto-pull and scripts are saved as this project's settings, the same ones the app's project settings edit; null or an empty script list clears the project's value so the environment default applies. Returns the values new threads in the project get.",
   parameters: Schema.Struct({ projectId: ProjectId, ...ProjectUpdatePayload.fields }),
+  dependencies: withSettings,
 }).annotate(Tool.Destructive, true);
 const ProjectDeleteTool = Tool.make("t3_project_delete", {
   ...shared,
@@ -138,7 +145,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     status: Schema.NullOr(OrchestrationV2RunStatus),
   }),
   dependencies: [
-    ...shared.dependencies,
+    ...withSettings,
     ThreadLaunchService.ThreadLaunchService,
     ManagedProjectFolders.ManagedProjectFolders,
     GitVcsDriver.GitVcsDriver,

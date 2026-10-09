@@ -6,7 +6,11 @@ import {
   ThreadId,
   type OrchestrationV2ThreadShell,
   type Project as ProjectRecord,
+  type ProjectScript,
+  type ServerSettingsPatch,
 } from "@t3tools/contracts";
+import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -18,9 +22,11 @@ import * as Stream from "effect/Stream";
 
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as Settings from "../../../serverSettings.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
+import * as ProjectSettingsService from "../../../project/ProjectSettingsService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../../../vcs/VcsProcess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -77,6 +83,7 @@ it.effect("attributes a launched thread's first message to the calling thread", 
         },
       }),
       Layer.mock(Project.ProjectService)({}),
+      Layer.mock(ProjectSettingsService.ProjectSettingsService)({}),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
       NodeServices.layer,
@@ -148,6 +155,7 @@ it.effect("launches a scratch thread into the Scratch project", () =>
         },
       }),
       Layer.mock(Project.ProjectService)({}),
+      Layer.mock(ProjectSettingsService.ProjectSettingsService)({}),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
         ensureScratchProject: Effect.succeed({ projectId: scratchProjectId }),
@@ -216,6 +224,7 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
     };
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
+      Settings.layerTest(),
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
         environmentId: EnvironmentId.make("environment"),
         requestNamespace: "session",
@@ -260,7 +269,7 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-named-project-" }).pipe(
         Layer.provide(NodeServices.layer),
       ),
-    );
+    ).pipe((layer) => ProjectSettingsService.layer.pipe(Layer.provideMerge(layer)));
     const toolkit = yield* ProjectToolkit.pipe(
       Effect.provide(
         McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
@@ -297,13 +306,420 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
   }),
 );
 
+const settingsProjectId = ProjectId.make("project:settings");
+const settingsModel = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" };
+const setupScript = {
+  id: "setup",
+  name: "Setup",
+  command: "pnpm install",
+  icon: "configure",
+  runOnWorktreeCreate: true,
+} satisfies ProjectScript;
+const projectSettingsInput = {
+  scripts: [setupScript],
+  defaultModelSelection: settingsModel,
+  defaultThreadEnvMode: "worktree" as const,
+  autoPull: true,
+};
+
+const makeProjectSettingsHarness = Effect.fn("makeProjectSettingsHarness")(function* (
+  settingsOverrides: Parameters<typeof Settings.layerTest>[0] = {},
+) {
+  let project: ProjectRecord = {
+    id: settingsProjectId,
+    title: "Settings project",
+    workspaceRoot: "/work/settings",
+    defaultModelSelection: null,
+    defaultThreadEnvMode: null,
+    autoPull: false,
+    scripts: [],
+    createdAt: "2026-10-01T00:00:00.000Z",
+    updatedAt: "2026-10-01T00:00:00.000Z",
+    deletedAt: null,
+  };
+  const updates: Project.ProjectUpdateInput[] = [];
+  const creates: Project.ProjectCreateInput[] = [];
+  const writes: ServerSettingsPatch[] = [];
+  const settingsContext = yield* Layer.build(
+    Settings.layerTest({ projectSettingsFolded: true, ...settingsOverrides }),
+  );
+  const settings = yield* Settings.ServerSettingsService.pipe(Effect.provide(settingsContext));
+  const caller = {
+    id: ThreadId.make("source-thread"),
+    projectId: settingsProjectId,
+    providerInstanceId: settingsModel.instanceId,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    archivedAt: null,
+    deletedAt: null,
+    activeRunId: "active-run",
+  } as OrchestrationV2ThreadShell;
+  const layer = Layer.mergeAll(
+    NodeCrypto.layer,
+    Layer.succeed(Settings.ServerSettingsService, {
+      ...settings,
+      updateSettings: (patch) => {
+        writes.push(patch);
+        return settings.updateSettings(patch);
+      },
+    }),
+    Layer.succeed(McpInvocationContext.McpInvocationContext, {
+      environmentId: EnvironmentId.make("environment"),
+      requestNamespace: "session",
+      thread: {
+        threadId: caller.id,
+        providerSessionId: "session",
+        providerInstanceId: settingsModel.instanceId,
+      },
+      client: undefined,
+      issuedAt: 0,
+      capabilities: new Set(["orchestration" as const]),
+    }),
+    Layer.mock(ThreadManagement.ThreadManagementService)({
+      getThreadShell: () => Effect.succeed(caller),
+    }),
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+    Layer.mock(Project.ProjectService)({
+      update: (input) =>
+        Effect.gen(function* () {
+          updates.push(input);
+          if (input.projectId !== project.id) {
+            return yield* new Project.ProjectNotFoundError({ projectId: input.projectId });
+          }
+          const { commandId: _commandId, projectId: _projectId, ...fields } = input;
+          project = {
+            ...project,
+            ...fields,
+            title: fields.title ?? project.title,
+            workspaceRoot: fields.workspaceRoot ?? project.workspaceRoot,
+            defaultModelSelection:
+              fields.defaultModelSelection === undefined
+                ? project.defaultModelSelection
+                : fields.defaultModelSelection,
+            scripts: fields.scripts ?? project.scripts,
+          };
+          return project;
+        }),
+      create: (input) =>
+        Effect.sync(() => {
+          creates.push(input);
+          project = {
+            ...project,
+            id: input.projectId,
+            title: input.title,
+            workspaceRoot: input.workspaceRoot,
+            scripts: input.scripts ?? [],
+          };
+          return project;
+        }),
+      getById: (id) =>
+        Effect.sync(() => (id === project.id ? Option.some(project) : Option.none())),
+      snapshot: Effect.sync(() => ({ projects: [project], updatedAt: project.updatedAt })),
+    }),
+  );
+  // handle provides dependencies on every call; retain one built settings instance.
+  const dependencies = Layer.succeedContext(
+    yield* Layer.build(ProjectSettingsService.layer.pipe(Layer.provideMerge(layer))),
+  );
+  const toolkit = yield* ProjectToolkit.pipe(
+    Effect.provide(
+      McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+    ),
+  );
+  const handle = <
+    Name extends "t3_project_update" | "t3_project_read" | "t3_project_list" | "t3_project_create",
+  >(
+    name: Name,
+    params: Parameters<typeof toolkit.handle<Name>>[1],
+  ) =>
+    toolkit.handle(name, params).pipe(
+      Stream.unwrap,
+      Stream.runCollect,
+      Effect.map((results) => results.at(-1)?.result),
+      Effect.provide(dependencies),
+    );
+  return { handle, settings, updates, creates, writes, getProject: () => project };
+});
+
+it.effect.each([true, false])(
+  "saves project settings in overrides when projectSettingsFolded is %s",
+  (projectSettingsFolded) =>
+    Effect.gen(function* () {
+      const harness = yield* makeProjectSettingsHarness({ projectSettingsFolded });
+      const result = yield* harness.handle("t3_project_update", {
+        projectId: settingsProjectId,
+        title: "Updated title",
+        ...projectSettingsInput,
+      });
+      const settings = yield* harness.settings.getSettings;
+      expect(settings.projectSettingsOverrides[settingsProjectId]).toEqual({
+        defaultProjectScripts: [setupScript],
+        defaultModelSelection: settingsModel,
+        defaultThreadEnvMode: "worktree",
+        defaultAutoPull: true,
+      });
+      expect(harness.updates).toEqual([
+        { projectId: settingsProjectId, title: "Updated title", commandId: expect.any(String) },
+      ]);
+      expect(resolveProjectScripts(settings, harness.getProject())).toEqual([setupScript]);
+      expect(
+        resolveProjectSettings(settings, settingsProjectId, harness.getProject()),
+      ).toMatchObject({
+        settings: {
+          defaultModelSelection: settingsModel,
+          defaultThreadEnvMode: "worktree",
+          defaultAutoPull: true,
+        },
+        sources: { defaultModelSelection: "project", defaultThreadEnvMode: "project" },
+      });
+      expect(result).toMatchObject({ title: "Updated title", ...projectSettingsInput });
+      expect(yield* harness.handle("t3_project_read", { projectId: settingsProjectId })).toEqual(
+        result,
+      );
+      expect(yield* harness.handle("t3_project_list", {})).toEqual({
+        projects: [result],
+        nextCursor: null,
+      });
+    }),
+);
+
+it.effect("returns environment defaults without writing overrides for a metadata-only update", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeProjectSettingsHarness({
+      defaultProjectScripts: [setupScript],
+      defaultModelSelection: settingsModel,
+      defaultThreadEnvMode: "worktree",
+      defaultAutoPull: true,
+    });
+    const result = yield* harness.handle("t3_project_update", {
+      projectId: settingsProjectId,
+      title: "Renamed",
+    });
+    expect(result).toMatchObject({ title: "Renamed", ...projectSettingsInput });
+    expect(yield* harness.handle("t3_project_read", { projectId: settingsProjectId })).toEqual(
+      result,
+    );
+    expect(yield* harness.handle("t3_project_list", {})).toEqual({
+      projects: [result],
+      nextCursor: null,
+    });
+    expect(harness.writes).toEqual([]);
+    expect((yield* harness.settings.getSettings).projectSettingsOverrides).toEqual({});
+  }),
+);
+
+it.effect(
+  "clears model, env mode and scripts while preserving auto-pull and inheriting defaults",
+  () =>
+    Effect.gen(function* () {
+      const environmentModel = { ...settingsModel, model: "gpt-5-mini" };
+      const environmentScript = { ...setupScript, command: "npm install" };
+      const harness = yield* makeProjectSettingsHarness({
+        defaultModelSelection: environmentModel,
+        defaultThreadEnvMode: "local",
+        defaultProjectScripts: [environmentScript],
+        projectSettingsOverrides: {
+          [settingsProjectId]: {
+            defaultModelSelection: settingsModel,
+            defaultThreadEnvMode: "worktree",
+            defaultProjectScripts: [setupScript],
+            defaultAutoPull: true,
+          },
+        },
+      });
+      const result = yield* harness.handle("t3_project_update", {
+        projectId: settingsProjectId,
+        defaultModelSelection: null,
+        defaultThreadEnvMode: null,
+        scripts: [],
+      });
+      expect(
+        (yield* harness.settings.getSettings).projectSettingsOverrides[settingsProjectId],
+      ).toEqual({
+        defaultAutoPull: true,
+      });
+      expect(result).toMatchObject({
+        defaultModelSelection: environmentModel,
+        defaultThreadEnvMode: "local",
+        scripts: [environmentScript],
+        autoPull: true,
+      });
+      expect(yield* harness.handle("t3_project_read", { projectId: settingsProjectId })).toEqual(
+        result,
+      );
+      const disabled = yield* harness.handle("t3_project_update", {
+        projectId: settingsProjectId,
+        autoPull: false,
+      });
+      expect(
+        (yield* harness.settings.getSettings).projectSettingsOverrides[settingsProjectId],
+      ).toEqual({
+        defaultAutoPull: false,
+      });
+      expect(disabled).toMatchObject({ autoPull: false });
+    }),
+);
+
+it.effect("clears stale project record settings before the settings fold", () =>
+  Effect.gen(function* () {
+    const environmentModel = { ...settingsModel, model: "gpt-5-mini" };
+    const environmentScript = { ...setupScript, command: "npm install" };
+    const harness = yield* makeProjectSettingsHarness({
+      projectSettingsFolded: false,
+      defaultModelSelection: environmentModel,
+      defaultThreadEnvMode: "local",
+      defaultProjectScripts: [environmentScript],
+      projectSettingsOverrides: {
+        [settingsProjectId]: {
+          defaultModelSelection: settingsModel,
+          defaultThreadEnvMode: "worktree",
+          defaultProjectScripts: [setupScript],
+        },
+      },
+    });
+    Object.assign(harness.getProject(), {
+      defaultModelSelection: settingsModel,
+      defaultThreadEnvMode: "worktree",
+      scripts: [setupScript],
+    });
+
+    const result = yield* harness.handle("t3_project_update", {
+      projectId: settingsProjectId,
+      defaultModelSelection: null,
+      defaultThreadEnvMode: null,
+      scripts: [],
+    });
+    const settings = yield* harness.settings.getSettings;
+    // The update mock replaces the record; resolve against its current copy.
+    const project = harness.getProject();
+    expect(settings.projectSettingsFolded).toBe(false);
+    expect(settings.projectSettingsOverrides).not.toHaveProperty(settingsProjectId);
+    expect(resolveProjectScripts(settings, project)).toEqual([environmentScript]);
+    expect(resolveProjectSettings(settings, settingsProjectId, project)).toMatchObject({
+      settings: {
+        defaultModelSelection: environmentModel,
+        defaultThreadEnvMode: "local",
+      },
+      sources: { defaultModelSelection: "environment", defaultThreadEnvMode: "environment" },
+    });
+    expect(harness.updates).toEqual([
+      {
+        projectId: settingsProjectId,
+        commandId: expect.any(String),
+        defaultModelSelection: null,
+        defaultThreadEnvMode: null,
+        scripts: [],
+      },
+    ]);
+    expect(result).toMatchObject({
+      defaultModelSelection: environmentModel,
+      defaultThreadEnvMode: "local",
+      scripts: [environmentScript],
+    });
+  }),
+);
+
+it.effect("writes null to remove an empty project settings entry", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeProjectSettingsHarness({
+      projectSettingsOverrides: { [settingsProjectId]: { defaultProjectScripts: [setupScript] } },
+    });
+    yield* harness.handle("t3_project_update", { projectId: settingsProjectId, scripts: [] });
+    expect(harness.writes).toEqual([{ projectSettingsOverrides: { [settingsProjectId]: null } }]);
+    expect((yield* harness.settings.getSettings).projectSettingsOverrides).not.toHaveProperty(
+      settingsProjectId,
+    );
+  }),
+);
+
+it.effect("preserves unrelated keys in an existing project settings entry", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeProjectSettingsHarness({
+      projectSettingsOverrides: { [settingsProjectId]: { enableAgentBrowserAccess: false } },
+    });
+    yield* harness.handle("t3_project_update", {
+      projectId: settingsProjectId,
+      scripts: [setupScript],
+    });
+    expect(
+      (yield* harness.settings.getSettings).projectSettingsOverrides[settingsProjectId],
+    ).toEqual({
+      enableAgentBrowserAccess: false,
+      defaultProjectScripts: [setupScript],
+    });
+  }),
+);
+
+it.effect("creates a workspace project with scripts and model in its settings overrides", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeProjectSettingsHarness();
+    const result = yield* harness.handle("t3_project_create", {
+      title: "Created",
+      workspaceRoot: "/work/created",
+      scripts: [setupScript],
+      defaultModelSelection: settingsModel,
+    });
+    const projectId = harness.getProject().id;
+    expect(harness.creates).toEqual([
+      {
+        projectId,
+        commandId: expect.any(String),
+        title: "Created",
+        workspaceRoot: "/work/created",
+      },
+    ]);
+    expect((yield* harness.settings.getSettings).projectSettingsOverrides[projectId]).toEqual({
+      defaultProjectScripts: [setupScript],
+      defaultModelSelection: settingsModel,
+    });
+    expect(result).toMatchObject({
+      id: projectId,
+      scripts: [setupScript],
+      defaultModelSelection: settingsModel,
+    });
+    expect(yield* harness.handle("t3_project_read", { projectId })).toEqual(result);
+  }),
+);
+
+it.effect("rejects an unknown project before writing settings overrides", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeProjectSettingsHarness();
+    const result = yield* harness.handle("t3_project_update", {
+      projectId: ProjectId.make("project:missing"),
+      ...projectSettingsInput,
+    });
+    expect(result).toMatchObject({ code: "invalid_request" });
+    expect(harness.writes).toEqual([]);
+    expect((yield* harness.settings.getSettings).projectSettingsOverrides).toEqual({});
+  }),
+);
+
 const clientLaunchHarness = (input: {
   readonly runtimeModeCeiling: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
   readonly launched: Array<ThreadLaunch.ThreadLaunchInput>;
   readonly workspaceRoot?: string;
+  /** The model on the project record; omitted means the harness's model. */
+  readonly recordModelSelection?: ProjectRecord["defaultModelSelection"];
+  readonly settings?: Parameters<typeof Settings.layerTest>[0];
 }) => {
   const projectId = ProjectId.make("project:client-target");
-  const modelSelection = { instanceId: ProviderInstanceId.make("claude"), model: "claude-opus" };
+  const modelSelection = {
+    instanceId: ProviderInstanceId.make("claudeAgent"),
+    model: "claude-opus",
+  };
+  let project: ProjectRecord = {
+    id: projectId,
+    title: "Client target",
+    workspaceRoot: input.workspaceRoot ?? "/projects/client-target",
+    defaultModelSelection:
+      input.recordModelSelection === undefined ? modelSelection : input.recordModelSelection,
+    defaultThreadEnvMode: null,
+    autoPull: false,
+    scripts: [],
+    createdAt: "2026-10-01T00:00:00.000Z",
+    updatedAt: "2026-10-01T00:00:00.000Z",
+    deletedAt: null,
+  };
   const layerDependencies = Layer.mergeAll(
     NodeCrypto.layer,
     Layer.succeed(McpInvocationContext.McpInvocationContext, {
@@ -337,20 +753,28 @@ const clientLaunchHarness = (input: {
       },
     }),
     Layer.mock(Project.ProjectService)({
-      getById: (id) =>
-        Effect.succeed(
-          id === projectId
-            ? Option.some({
-                id,
-                workspaceRoot: input.workspaceRoot ?? "/projects/client-target",
-                defaultModelSelection: modelSelection,
-              } as unknown as ProjectRecord)
-            : Option.none(),
-        ),
+      getById: (id) => Effect.succeed(id === projectId ? Option.some(project) : Option.none()),
+      update: ({ commandId: _commandId, projectId: _projectId, ...fields }) =>
+        Effect.sync(() => {
+          project = {
+            ...project,
+            ...fields,
+            title: fields.title ?? project.title,
+            workspaceRoot: fields.workspaceRoot ?? project.workspaceRoot,
+            defaultModelSelection:
+              fields.defaultModelSelection === undefined
+                ? project.defaultModelSelection
+                : fields.defaultModelSelection,
+            scripts: fields.scripts ?? project.scripts,
+          };
+          return project;
+        }),
     }),
+    Settings.layerTest(input.settings),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
     NodeServices.layer,
   ).pipe(
+    (layer) => ProjectSettingsService.layer.pipe(Layer.provideMerge(layer)),
     Layer.provideMerge(GitVcsDriver.layer),
     Layer.provideMerge(VcsProcess.layer),
     Layer.provideMerge(
@@ -392,6 +816,50 @@ it.effect("a client launches at its ceiling with the project's default model", (
     expect(untargeted.at(-1)?.result).toMatchObject({ code: "target_required" });
     expect(launched).toHaveLength(1);
   }),
+);
+
+it.effect("a client launch without a model uses the default t3_project_update saved", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const harness = clientLaunchHarness({
+      runtimeModeCeiling: "full-access",
+      launched,
+      recordModelSelection: null,
+      settings: { projectSettingsFolded: true },
+    });
+    // handle provides dependencies on every call; keep one settings instance across calls.
+    const dependencies = Layer.succeedContext(yield* Layer.build(harness.dependencies));
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const launch = toolkit
+      .handle("t3_thread_launch", { title: "Fix", projectId: harness.projectId })
+      .pipe(
+        Stream.unwrap,
+        Stream.runCollect,
+        Effect.map((results) => results.at(-1)?.result),
+        Effect.provide(dependencies),
+      );
+
+    expect(yield* launch).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining("Pass modelSelection"),
+    });
+    const savedModel = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" };
+    yield* toolkit
+      .handle("t3_project_update", {
+        projectId: harness.projectId,
+        defaultModelSelection: savedModel,
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(yield* launch).toMatchObject({
+      projectId: harness.projectId,
+      modelSelection: savedModel,
+    });
+    expect(launched.map((entry) => entry.modelSelection)).toEqual([savedModel]);
+  }).pipe(Effect.scoped),
 );
 
 it.effect("a launch binds only an existing checkout that is one of the project's worktrees", () =>
