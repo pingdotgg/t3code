@@ -6,7 +6,7 @@ import * as Result from "effect/Result";
 import type { PullRequestReaction } from "@t3tools/contracts";
 
 import { decodePullRequestDetailJson } from "./gitHubPullRequestJson.ts";
-import * as GitHubApi from "../sourceControl/GitHubApi.ts";
+import * as GitHubApi from "./GitHubApi.ts";
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
 import type { GitHubPullRequestCore } from "./gitHubPullRequestJson.ts";
 import { gitHubViewerPermissions, loginAvatarUrl, make } from "./GitHubPullRequestProvider.ts";

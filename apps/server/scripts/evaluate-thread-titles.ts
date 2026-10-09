@@ -23,7 +23,7 @@ import {
 } from "@t3tools/provider-core/server/threadTitleContext";
 import * as ThreadTitleLinks from "../src/textGeneration/ThreadTitleLinks.ts";
 import * as SourceControlProviderRegistry from "../src/sourceControl/SourceControlProviderRegistry.ts";
-import * as GitHubApi from "../src/sourceControl/GitHubApi.ts";
+import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
 import * as SourceControlBuiltInDrivers from "../src/sourceControl/builtInDrivers.ts";
 import * as ServerSettings from "../src/serverSettings.ts";
 import * as VcsProcess from "../src/vcs/VcsProcess.ts";
@@ -147,9 +147,7 @@ await Effect.runPromise(
       Layer.mergeAll(
         ProcessRunner.layer,
         SourceControlProviderRegistry.layer.pipe(
-          Layer.provide(
-            Layer.mergeAll(GitHubApi.layerWithDependencies, SourceControlBuiltInDrivers.layer),
-          ),
+          Layer.provide(SourceControlBuiltInDrivers.layer),
           // Default settings: no saved Bitbucket token, gh's own GitHub account choice.
           Layer.provide(ServerSettings.layerTest()),
           Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),

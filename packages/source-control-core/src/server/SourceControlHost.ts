@@ -54,6 +54,11 @@ export interface SourceControlProcessOutput {
   readonly stderrInvalidUtf8?: boolean;
 }
 
+export type SourceControlGitOutput = Omit<
+  SourceControlProcessOutput,
+  "stdoutInvalidUtf8" | "stderrInvalidUtf8"
+>;
+
 export interface SourceControlGitRemoteBranch {
   readonly cwd: string;
   readonly remoteName: string;
@@ -73,6 +78,16 @@ export class SourceControlHost extends Context.Service<
       ) => Effect.Effect<SourceControlProcessOutput, VcsError>;
     };
     readonly git: {
+      /** Runs `git -C cwd …args` through the server's git driver, with its limits and metrics. */
+      readonly execute: (input: {
+        readonly operation: string;
+        readonly cwd: string;
+        readonly args: ReadonlyArray<string>;
+      }) => Effect.Effect<SourceControlGitOutput, GitCommandError>;
+      readonly resolveCommit: (input: {
+        readonly cwd: string;
+        readonly revision: string;
+      }) => Effect.Effect<{ readonly commitSha: string }, GitCommandError>;
       /**
        * Lists the remotes of the repository at `cwd`. The outer effect resolves the repository
        * and fails when the server cannot drive one there; the inner one lists its remotes.

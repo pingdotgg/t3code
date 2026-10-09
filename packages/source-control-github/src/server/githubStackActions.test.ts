@@ -7,8 +7,8 @@ import * as TestClock from "effect/testing/TestClock";
 import * as FileSystem from "effect/FileSystem";
 import * as Redacted from "effect/Redacted";
 import { ChildProcessSpawner } from "effect/process";
-import * as GitHubApi from "../sourceControl/GitHubApi.ts";
-import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as GitHubApi from "./GitHubApi.ts";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import { runGitHubStackAction as runStackAction } from "./githubStackActions.ts";
 
 /**
@@ -24,20 +24,22 @@ type Send = (
 /** Every git command the cascade ran, in order; none actually runs. */
 let gitCalls: Array<ReadonlyArray<string>> = [];
 const fakeGit = Layer.mergeAll(
-  Layer.mock(VcsProcess.VcsProcess)({
-    run: (input) =>
-      Effect.sync(() => {
-        gitCalls.push(input.args);
-        const stdout =
-          input.args[0] === "rev-parse" || input.args[0] === "merge-base" ? "new-sha\n" : "";
-        return {
-          exitCode: ChildProcessSpawner.ExitCode(0),
-          stdout,
-          stderr: "",
-          stdoutTruncated: false,
-          stderrTruncated: false,
-        };
-      }),
+  TestSourceControlHost.layer({
+    process: {
+      run: (input) =>
+        Effect.sync(() => {
+          gitCalls.push(input.args);
+          const stdout =
+            input.args[0] === "rev-parse" || input.args[0] === "merge-base" ? "new-sha\n" : "";
+          return {
+            exitCode: ChildProcessSpawner.ExitCode(0),
+            stdout,
+            stderr: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          };
+        }),
+    },
   }),
   FileSystem.layerNoop({ makeTempDirectoryScoped: () => Effect.succeed("/tmp/scratch") }),
 );

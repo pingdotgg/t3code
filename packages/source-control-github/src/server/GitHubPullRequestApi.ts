@@ -42,9 +42,9 @@ import {
   type PullRequestPreview,
 } from "@t3tools/contracts";
 
-import * as GitHubApi from "../sourceControl/GitHubApi.ts";
-import { readGraphQlPages } from "../sourceControl/githubGraphQl.ts";
-import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as GitHubApi from "./GitHubApi.ts";
+import { readGraphQlPages } from "./githubGraphQl.ts";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
   ACTOR_AVATARS_GRAPHQL_QUERY,
@@ -793,7 +793,7 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly body: string;
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
   }
->()("t3/pullRequest/GitHubPullRequestApi") {}
+>()("@t3tools/source-control-github/server/GitHubPullRequestApi") {}
 
 /**
  * The GraphQL API takes owner and name as separate arguments, so `owner/repo` is split here.
@@ -1105,7 +1105,7 @@ const SIMPLE_ACTION_MUTATIONS = {
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const api = yield* GitHubApi.GitHubApi;
-  const vcsProcess = yield* VcsProcess.VcsProcess;
+  const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const fileSystem = yield* FileSystem.FileSystem;
   const revalidateChecks = yield* makeChecksRevalidator;
   const routingIdentities = new Map<
@@ -2497,7 +2497,7 @@ export const make = Effect.gen(function* () {
       if (input.stackNumber !== undefined)
         return runGitHubStackAction({ ...input, stackNumber: input.stackNumber }).pipe(
           Effect.provideService(GitHubApi.GitHubApi, api),
-          Effect.provideService(VcsProcess.VcsProcess, vcsProcess),
+          Effect.provideService(SourceControlHost.SourceControlHost, sourceControlHost),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
         );
       if (input.action === "revert") {

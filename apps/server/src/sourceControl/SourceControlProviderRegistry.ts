@@ -11,7 +11,6 @@ import {
 import type { SourceControlProviderKind } from "@t3tools/contracts";
 import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
 
-import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 import * as BuiltInDrivers from "./builtInDrivers.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import {
@@ -302,8 +301,6 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
 );
 
 export const make = Effect.gen(function* () {
-  const github = yield* GitHubSourceControlProvider.make;
-  const githubDiscovery = yield* GitHubSourceControlProvider.makeDiscovery;
   const drivers = yield* Effect.forEach(BuiltInDrivers.BUILT_IN_SOURCE_CONTROL_DRIVERS, (driver) =>
     driver.make.pipe(
       Effect.map((instance): SourceControlProviderRegistration => ({
@@ -313,19 +310,7 @@ export const make = Effect.gen(function* () {
       })),
     ),
   );
-  // Discovery lists hosts in this order, so it is kept while hosts move into packages.
-  const order = ["github", "gitlab", "azure-devops", "bitbucket", "forgejo"];
-  const registrations: ReadonlyArray<SourceControlProviderRegistration> = [
-    {
-      kind: "github",
-      provider: github,
-      discovery: githubDiscovery,
-    },
-    ...drivers,
-  ];
-  return yield* makeWithProviders(
-    registrations.toSorted((left, right) => order.indexOf(left.kind) - order.indexOf(right.kind)),
-  );
+  return yield* makeWithProviders(drivers);
 });
 
 export const layer = Layer.effect(SourceControlProviderRegistry, make);

@@ -24,6 +24,8 @@ export const layer = Layer.effect(
       settings: { get: serverSettings.getSettings },
       process: { run: process.run },
       git: {
+        execute: git.execute,
+        resolveCommit: git.resolveCommit,
         remotes: (cwd) =>
           vcsRegistry.resolve({ cwd }).pipe(Effect.map((handle) => handle.driver.listRemotes(cwd))),
         readConfigValue: git.readConfigValue,

@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { PositiveInt, type PullRequestChecks } from "@t3tools/contracts";
 
-import * as GitHubApi from "../sourceControl/GitHubApi.ts";
+import * as GitHubApi from "./GitHubApi.ts";
 import type { GitHubPullRequestDetail } from "./gitHubPullRequestJson.ts";
 import type { GitHubPullRequestApiError } from "./GitHubPullRequestApi.ts";
 import type { ProviderRepositoryRef } from "@t3tools/source-control-core/server/PullRequestProvider";
@@ -43,7 +43,9 @@ export type KnownWorkflowRun = typeof WorkflowRunSchema.Type;
 export const KnownWorkflowRuns = Context.Reference<{
   readonly headSha: string;
   readonly runs: ReadonlyArray<KnownWorkflowRun>;
-} | null>("t3/pullRequest/KnownWorkflowRuns", { defaultValue: () => null });
+} | null>("@t3tools/source-control-github/server/gitHubConditionalChecks/KnownWorkflowRuns", {
+  defaultValue: () => null,
+});
 
 type Validator = { etag: string | undefined; next: boolean; body: string };
 

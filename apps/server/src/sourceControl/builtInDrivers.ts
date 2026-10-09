@@ -15,6 +15,9 @@ import * as BitbucketPullRequestApi from "@t3tools/source-control-bitbucket/serv
 import * as BitbucketDriver from "@t3tools/source-control-bitbucket/server/driver";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import * as ForgejoDriver from "@t3tools/source-control-forgejo/server/driver";
+import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
+import * as GitHubDriver from "@t3tools/source-control-github/server/driver";
 import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
 import * as GitLabPullRequestCli from "@t3tools/source-control-gitlab/server/GitLabPullRequestCli";
 import * as GitLabDriver from "@t3tools/source-control-gitlab/server/driver";
@@ -24,6 +27,7 @@ import * as Layer from "effect/Layer";
 import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
 
 const drivers = [
+  GitHubDriver.driver,
   GitLabDriver.driver,
   AzureDevOpsDriver.driver,
   BitbucketDriver.driver,
@@ -34,12 +38,16 @@ const drivers = [
 export type BuiltInSourceControlDriversEnv =
   (typeof drivers)[number] extends SourceControlDriver<infer R> ? R : never;
 
+/** Ordered as the hosts appear in discovery. */
 export const BUILT_IN_SOURCE_CONTROL_DRIVERS: ReadonlyArray<
   SourceControlDriver<BuiltInSourceControlDriversEnv>
 > = drivers;
 
 /** The services the built-in drivers' packages own, plus the host port they all run against. */
 export const layer = Layer.mergeAll(
+  // `GitHubApi.layerWithDependencies` carries the quota reserve and rate-limit pause every GitHub
+  // reader shares, so the server builds it once, here.
+  GitHubPullRequestApi.layer.pipe(Layer.provideMerge(GitHubApi.layerWithDependencies)),
   AzureDevOpsPullRequestCli.layer.pipe(Layer.provideMerge(AzureDevOpsCli.layer)),
   BitbucketPullRequestApi.layer.pipe(Layer.provideMerge(BitbucketApi.layer)),
   ForgejoCli.layer,

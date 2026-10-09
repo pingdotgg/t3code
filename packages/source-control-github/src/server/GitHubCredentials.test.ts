@@ -1,12 +1,14 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { ChildProcessSpawner } from "effect/process";
 
-import * as ServerSettings from "../serverSettings.ts";
-import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 
 const TOKEN_VARIABLES = [
@@ -16,41 +18,51 @@ const TOKEN_VARIABLES = [
   "GITHUB_ENTERPRISE_TOKEN",
 ] as const;
 
+/** Settings keep `enabled` explicit; a host the test leaves it off is enabled. */
+const hostSettings = (
+  hosts: Record<string, { readonly account?: string; readonly enabled?: boolean }>,
+) =>
+  Object.fromEntries(
+    Object.entries(hosts).map(([host, choice]) => [host, { enabled: true, ...choice }]),
+  );
+
 function harness(
   hosts: Record<string, { readonly account?: string; readonly enabled?: boolean }> = {},
   signedOut: ReadonlyArray<string> = [],
   tokens: Record<string, string> = {},
 ) {
   const calls: Array<ReadonlyArray<string>> = [];
-  const process = Layer.mock(VcsProcess.VcsProcess)({
-    run: (input) =>
-      Effect.sync(() => {
-        calls.push(input.args);
-        const user = input.args[input.args.indexOf("--user") + 1];
-        if (input.args.includes("--user") && user !== undefined && signedOut.includes(user)) {
-          return {
-            exitCode: ChildProcessSpawner.ExitCode(0),
-            stdout: "",
-            stderr: "",
-            stdoutTruncated: false,
-            stderrTruncated: false,
-          };
-        }
+  const run: SourceControlHost.SourceControlHost["Service"]["process"]["run"] = (input) =>
+    Effect.sync(() => {
+      calls.push(input.args);
+      const user = input.args[input.args.indexOf("--user") + 1];
+      if (input.args.includes("--user") && user !== undefined && signedOut.includes(user)) {
         return {
           exitCode: ChildProcessSpawner.ExitCode(0),
-          stdout: input.args.includes("--user") ? `token-for-${user}\n` : "active-token\n",
+          stdout: "",
           stderr: "",
           stdoutTruncated: false,
           stderrTruncated: false,
         };
-      }),
-  });
+      }
+      return {
+        exitCode: ChildProcessSpawner.ExitCode(0),
+        stdout: input.args.includes("--user") ? `token-for-${user}\n` : "active-token\n",
+        stderr: "",
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      };
+    });
   const layer = GitHubCredentials.layer.pipe(
     Layer.provideMerge(
-      ServerSettings.ServerSettingsService.layerTest({ github: { hosts, tokens } }),
+      TestSourceControlHost.layer({
+        settings: applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+          github: { hosts: hostSettings(hosts), tokens },
+        }),
+        process: { run },
+      }),
     ),
-    Layer.provide(process),
-    Layer.provide(NodeServices.layer),
+    Layer.provide(NodeCrypto.layer),
   );
   return { layer, calls };
 }
@@ -112,20 +124,20 @@ describe("GitHubCredentials", () => {
     const { layer, calls } = harness();
     return Effect.gen(function* () {
       const credentials = yield* GitHubCredentials.GitHubCredentials;
-      const settings = yield* ServerSettings.ServerSettingsService;
+      const settings = yield* TestSourceControlHost.TestSourceControlHostSettings;
       expect(Redacted.value((yield* credentials.get("github.com")).token)).toBe("active-token");
 
-      yield* settings.updateSettings({
+      yield* settings.update({
         github: { hosts: { "github.com": { account: "work", enabled: true } } },
       });
       expect(Redacted.value((yield* credentials.get("github.com")).token)).toBe("token-for-work");
 
-      yield* settings.updateSettings({ github: { hosts: { "github.com": { enabled: false } } } });
+      yield* settings.update({ github: { hosts: { "github.com": { enabled: false } } } });
       expect((yield* Effect.flip(credentials.get("github.com")))._tag).toBe(
         "GitHubHostDisabledError",
       );
 
-      yield* settings.updateSettings({ github: { hosts: {} } });
+      yield* settings.update({ github: { hosts: {} } });
       expect(Redacted.value((yield* credentials.get("github.com")).token)).toBe("active-token");
       // The unpinned token stayed cached; only the newly pinned account cost a gh call.
       expect(calls).toHaveLength(2);

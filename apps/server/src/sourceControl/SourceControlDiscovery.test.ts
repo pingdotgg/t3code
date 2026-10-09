@@ -20,7 +20,8 @@ import * as AzureDevOpsCli from "@t3tools/source-control-azure-devops/server/Azu
 import * as AzureDevOpsPullRequestCli from "@t3tools/source-control-azure-devops/server/AzureDevOpsPullRequestCli";
 import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
 import * as BitbucketPullRequestApi from "@t3tools/source-control-bitbucket/server/BitbucketPullRequestApi";
-import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
 import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
 import * as GitLabPullRequestCli from "@t3tools/source-control-gitlab/server/GitLabPullRequestCli";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
@@ -46,6 +47,7 @@ const layerSourceControlProviderRegistryTest = (input: {
         Layer.mock(BitbucketApi.BitbucketApi)(input.bitbucket),
         Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({}),
         ServerSettings.ServerSettingsService.layerTest(),
+        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({}),
         Layer.mock(GitHubApi.GitHubApi)({}),
         Layer.mock(GitVcsDriver.GitVcsDriver)({}),
         Layer.mock(GitLabCli.GitLabCli)({}),

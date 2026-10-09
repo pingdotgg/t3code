@@ -12,12 +12,12 @@ import * as Redacted from "effect/Redacted";
 
 import { HttpClient, HttpClientResponse } from "effect/http";
 
-import { AllowGitHubReserve } from "../sourceControl/GitHubApi.ts";
-import * as GitHubApi from "../sourceControl/GitHubApi.ts";
-import * as GitHubCredentials from "../sourceControl/GitHubCredentials.ts";
-import * as GitHubQuota from "../sourceControl/githubQuota.ts";
+import { AllowGitHubReserve } from "./GitHubApi.ts";
+import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubCredentials from "./GitHubCredentials.ts";
+import * as GitHubQuota from "./GitHubQuota.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
-import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
 import { KnownWorkflowRuns } from "./gitHubConditionalChecks.ts";
 
@@ -103,7 +103,8 @@ const layer = it.layer(
     Layer.provideMerge(mockApi),
     Layer.provideMerge(GitHubQuota.layer),
     Layer.provide(NodeCrypto.layer),
-    Layer.provide(VcsProcess.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+    Layer.provide(TestSourceControlHost.layer()),
+    Layer.provide(NodeServices.layer),
   ),
 );
 
@@ -509,7 +510,7 @@ it.effect(
             Layer.provide(Layer.mergeAll(credentials, http)),
             Layer.provide(GitHubQuota.layer),
             Layer.provide(SourceControlRateLimit.layer),
-            Layer.merge(VcsProcess.layer),
+            Layer.merge(TestSourceControlHost.layer()),
             Layer.provideMerge(NodeServices.layer),
           ),
         ),

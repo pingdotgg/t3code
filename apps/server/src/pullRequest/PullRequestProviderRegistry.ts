@@ -3,9 +3,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { SourceControlProviderKind } from "@t3tools/contracts";
 
-import * as GitHubApi from "../sourceControl/GitHubApi.ts";
-import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
-import * as GitHubPullRequestProvider from "./GitHubPullRequestProvider.ts";
 import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
 import type { PullRequestProviderApi } from "@t3tools/source-control-core/server/PullRequestProvider";
 
@@ -36,24 +33,14 @@ export function fromProviders(
  * @public Service construction is part of the canonical Effect module API.
  */
 export const make = Effect.gen(function* () {
-  const providers = yield* Effect.all([GitHubPullRequestProvider.make]);
   const drivers = yield* Effect.forEach(BuiltInDrivers.BUILT_IN_SOURCE_CONTROL_DRIVERS, (driver) =>
     driver.make.pipe(Effect.map((instance) => instance.pullRequests)),
   );
-  return fromProviders([
-    ...providers,
-    ...drivers.filter((provider): provider is PullRequestProviderApi => provider !== null),
-  ]);
+  return fromProviders(
+    drivers.filter((provider): provider is PullRequestProviderApi => provider !== null),
+  );
 });
 
 export const layer = Layer.effect(PullRequestProviderRegistry, make).pipe(
-  Layer.provide(
-    GitHubPullRequestApi.layer.pipe(
-      Layer.provide(
-        // Built here too, so a registry built alone still has one budget and pause per host.
-        GitHubApi.layerWithDependencies,
-      ),
-    ),
-  ),
   Layer.provide(BuiltInDrivers.layer),
 );
