@@ -372,6 +372,12 @@ describe("buildBreakdownRows", () => {
       "codex\u001fgpt-6-sol",
     ]);
   });
+  it("keeps a provider whose projects or threads match the search", () => {
+    const rows = buildBreakdownRows(
+      input({ dimension: "provider", query: "explore", nameOf: (_: string, key: string) => key }),
+    );
+    expect(rows.filter((row) => row.kind === "item").map((row) => row.key)[0]).toBe("claude");
+  });
   it("finds a model used only outside threads", () => {
     // Cursor's "auto" usage has no thread; its project opens to Not in a thread.
     const rows = buildBreakdownRows(input({ query: "auto" }));

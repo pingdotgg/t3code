@@ -180,32 +180,32 @@ export function buildBreakdownRows(input: BreakdownInput): readonly BreakdownRow
 
   /**
    * Whether something an item lists under it matches the search: a project's
-   * threads, a provider's accounts and models, an account's models, a model's
-   * or an environment's projects and their threads. Such an item stays and opens, so the match is reachable.
+   * threads, a provider's accounts and models, and the projects and threads
+   * under a provider, account, model or environment. Such an item stays and
+   * opens, so the match is reachable.
    */
   const childMatches = (dim: BreakdownDimension, key: string, scope: readonly UsageFact[]) =>
     scope.some((fact) => {
       if (keyFor(dim, fact, tree) !== key) return false;
+      const threadOrUnthreaded =
+        (fact.thread !== null && threadMatches(tree.rootOf(fact.thread))) ||
+        unthreadedMatches(fact);
+      const projectOrBelow =
+        matchesQuery(nameOf("project", fact.project), search) || threadOrUnthreaded;
       switch (dim) {
         case "project":
-          return (
-            (fact.thread !== null && threadMatches(tree.rootOf(fact.thread))) ||
-            unthreadedMatches(fact)
-          );
+          return threadOrUnthreaded;
         case "provider":
           return (
             matchesQuery(fact.model, search) ||
-            matchesQuery(nameOf("account", fact.account), search)
+            matchesQuery(nameOf("account", fact.account), search) ||
+            projectOrBelow
           );
         case "account":
-          return matchesQuery(fact.model, search);
+          return matchesQuery(fact.model, search) || projectOrBelow;
         case "model":
         case "environment":
-          return (
-            matchesQuery(nameOf("project", fact.project), search) ||
-            (fact.thread !== null && threadMatches(tree.rootOf(fact.thread))) ||
-            unthreadedMatches(fact)
-          );
+          return projectOrBelow;
         case "thread":
           return false;
       }

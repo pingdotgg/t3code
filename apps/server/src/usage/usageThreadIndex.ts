@@ -119,6 +119,17 @@ export class UsageThreadIndex {
     readonly threads: readonly UsageThread[];
     readonly projects: readonly UsageProject[];
   } {
+    // A sub-agent read before its session's transcript takes the session's
+    // folder now. Parents always come before their children.
+    for (const [index, thread] of this.#threads.entries()) {
+      const parent = thread.parent === undefined ? undefined : this.#threads[thread.parent];
+      if (!thread.subagent || thread.located === true || parent?.located !== true) continue;
+      this.#threads[index] = {
+        ...thread,
+        ...(parent.projectId === undefined ? {} : { projectId: parent.projectId }),
+        located: true,
+      };
+    }
     const referenced = new Set(this.#threads.flatMap((thread) => thread.projectId ?? []));
     const projects = this.#attribution.projects
       .filter((project) => referenced.has(project.projectId))
@@ -212,7 +223,15 @@ export class UsageThreadIndex {
 
   #add(key: string, thread: Omit<UsageThread, "key">): number {
     const existing = this.#indexByKey.get(key);
-    if (existing !== undefined) return existing;
+    if (existing !== undefined) {
+      // A sub-agent can name its session before the session's own transcript
+      // says where it ran; the located entry replaces that guess.
+      const current = this.#threads[existing];
+      if (current !== undefined && thread.located === true && current.located !== true) {
+        this.#threads[existing] = { ...current, ...thread, key };
+      }
+      return existing;
+    }
     const index = this.#threads.length;
     this.#threads.push({ key, ...thread });
     this.#indexByKey.set(key, index);

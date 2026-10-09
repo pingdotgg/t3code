@@ -82,6 +82,17 @@ describe("UsageThreadIndex", () => {
     expect(unknown.instanceId).toBe("claude-work");
   });
 
+  it("gives a sub-agent read first its session's folder once the session is read", () => {
+    const index = new UsageThreadIndex(attribution);
+    const agent = index.groupFor(source({ sessionId: "cli-9", agentId: "agent-3" }));
+    const session = index.groupFor(source({ sessionId: "cli-9", cwd: "/work/app" }));
+    const { threads } = index.finish();
+
+    expect(session.thread).toBe(threads[agent.thread!]?.parent);
+    expect(threads[session.thread!]).toMatchObject({ projectId: app, located: true });
+    expect(threads[agent.thread!]).toMatchObject({ projectId: app, located: true });
+  });
+
   it("places sessions from outside T3 by folder, deepest project first", () => {
     const index = new UsageThreadIndex(attribution);
     const docs = index.groupFor(source({ sessionId: "cli-1", cwd: "/work/app/docs/guide" }));
