@@ -1165,10 +1165,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           const onMessage: BrowserControlSession["onMessage"] = (_event, method, params) => {
             runFork(handleDebuggerMessage(method, params));
           };
+          // Chromium can drop the debugger on its own, e.g. when the guest's
+          // renderer dies. The cached session would then fail every command until
+          // the webview is replaced, so release it and attach again.
+          const onDetach = () => {
+            runFork(recoverDetachedControlSession(wc, control));
+          };
           yield* Scope.addFinalizer(
             scope,
             attempt({ operation: "detachControlSession", webContentsId: wc.id }, () => {
               wcDebugger.off("message", onMessage);
+              wcDebugger.off("detach", onDetach);
               if (wcDebugger.isAttached()) wcDebugger.detach();
             }).pipe(Effect.ignore),
           );
@@ -1182,6 +1189,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           const initialize = Effect.fn("PreviewManager.initializeControlSession")(function* () {
             yield* attempt({ operation: "attachDebuggerListeners", webContentsId: wc.id }, () => {
               wcDebugger.on("message", onMessage);
+              wcDebugger.on("detach", onDetach);
               wcDebugger.attach("1.3");
             });
             // Electron gives `<webview>` guests a transparent base background, and
@@ -2391,6 +2399,20 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           }),
         );
       }
+    }).pipe(Effect.ignore);
+
+  // Handles a debugger detach this manager did not request. Only the session
+  // that saw the detach is replaced, so a newer session for the guest stays.
+  const recoverDetachedControlSession = (
+    wc: Electron.WebContents,
+    detached: BrowserControlSession,
+  ) =>
+    Effect.gen(function* () {
+      if ((yield* SynchronizedRef.get(controlSessionsRef)).get(wc.id) !== detached) return;
+      yield* detachControlSession(wc.id);
+      if (wc.isDestroyed()) return;
+      const tabId = yield* tabIdForWebContents(wc.id);
+      if (tabId !== null) yield* restoreControlSession(tabId, wc);
     }).pipe(Effect.ignore);
 
   const setColorScheme = Effect.fn("PreviewManager.setColorScheme")(function* (
