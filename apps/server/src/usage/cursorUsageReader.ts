@@ -8,7 +8,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import type { UsageRecord } from "./usageTranscripts.ts";
+import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 import {
   CursorKeychainTimeoutError,
   readMacCursorAccessToken,

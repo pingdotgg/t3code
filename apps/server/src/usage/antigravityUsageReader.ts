@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 import * as NodeTimersPromises from "node:timers/promises";
 
-import type { UsageRecord } from "./usageTranscripts.ts";
+import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 
 type FieldValue = number | bigint | Uint8Array;
 type Fields = Map<number, FieldValue[]>;

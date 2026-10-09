@@ -13,7 +13,7 @@
  * @module cursorAccountCache
  */
 import { cursorRateModel } from "./cursorUsageReader.ts";
-import type { UsageRecord } from "./usageTranscripts.ts";
+import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 
 export type CursorCredentialSource = string | { readonly kind: "keychain" };
 

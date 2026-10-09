@@ -21,8 +21,6 @@
 import * as NodeOS from "node:os";
 
 import {
-  ClaudeSettings,
-  CodexSettings,
   type ProviderInstanceConfig,
   ProviderInstanceId,
   USAGE_CONTRACT_VERSION,
@@ -56,9 +54,15 @@ import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ServerSettings from "../serverSettings.ts";
-import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { resolveAntigravityInstanceDirectories } from "../provider/antigravityAuthSupport.ts";
+import { BUILT_IN_USAGE_DRIVERS, type BuiltInUsageReadersEnv } from "../provider/builtInDrivers.ts";
+import type { ProviderDriver } from "@t3tools/provider-core/server/driver";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import type {
+  ProviderUsageInstance,
+  TranscriptUsageFormat,
+  UsageRecord,
+} from "@t3tools/provider-core/server/usage";
 import { readOpenCodeUsage } from "./opencodeUsageReader.ts";
 import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUsageReader.ts";
 import {
@@ -90,7 +94,6 @@ import {
   type CachedFile,
   type ScanCache,
 } from "./usageScanCache.ts";
-import type { UsageRecord } from "./usageTranscripts.ts";
 
 const LITELLM_RATES_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
@@ -119,8 +122,24 @@ const CURSOR_ACCOUNT_READ_ERROR = "Cursor account usage could not be read.";
 /** Transcripts parsed at once. More gains little once the disk stays busy. */
 const TRANSCRIPT_READ_CONCURRENCY = 4;
 
-const decodeCodexSettings = Schema.decodeOption(CodexSettings);
-const decodeClaudeSettings = Schema.decodeOption(ClaudeSettings);
+/** The transcript readers, in driver order. */
+const transcriptReaders = BUILT_IN_USAGE_DRIVERS.flatMap((driver) =>
+  driver.usage?.kind === "transcripts" ? [{ driver, reader: driver.usage }] : [],
+);
+
+/** Transcript formats by provider, for decoding the persisted scan cache. */
+const transcriptFormats = new Map(
+  transcriptReaders.map(({ reader }) => [reader.provider, reader.format] as const),
+);
+
+/** One transcript directory to scan. */
+interface TranscriptSource {
+  readonly provider: UsageProviderKind;
+  readonly format: TranscriptUsageFormat<unknown>;
+  readonly dir: string;
+  readonly volumeId: string;
+  readonly fileName?: string;
+}
 
 /** On-disk shape of the rate snapshot. */
 const RatesCacheFile = Schema.Struct({
@@ -145,13 +164,21 @@ function isLaterRead(a: CachedFile, b: CachedFile): boolean {
   return a.mtimeMs > b.mtimeMs || (a.mtimeMs === b.mtimeMs && a.size > b.size);
 }
 
+/** Providers whose format lets one session's records appear in several files. */
+const sharedSessionProviders: ReadonlySet<UsageProviderKind> = new Set(
+  transcriptReaders.flatMap(({ reader }) =>
+    reader.format.sharedSessionsAcrossFiles ? [reader.provider] : [],
+  ),
+);
+
 /**
- * Codex sessions with records in more than one file, such as a rollout that
- * moved after it was read. Only these need cross-file dedupe keys: within one
- * file the occurrence count already keeps every key unique, so keying the rest
- * would only build and hash a string for each of their records.
+ * Sessions of `sharedSessionProviders` with records in more than one file,
+ * such as a rollout that moved after it was read. Only these need cross-file
+ * dedupe keys: within one file the occurrence count already keeps every key
+ * unique, so keying the rest would only build and hash a string for each of
+ * their records.
  */
-function sharedCodexSessions(
+function sharedSessions(
   files: readonly { readonly records: readonly UsageRecord[] }[],
 ): ReadonlySet<string> {
   const firstFile = new Map<string, number>();
@@ -159,7 +186,8 @@ function sharedCodexSessions(
   for (const [index, file] of files.entries()) {
     let previous = "";
     for (const { provider, sessionId } of file.records) {
-      if (provider !== "codex" || sessionId === previous || sessionId.length === 0) continue;
+      if (!sharedSessionProviders.has(provider) || sessionId === previous || sessionId.length === 0)
+        continue;
       previous = sessionId;
       const first = firstFile.get(sessionId);
       if (first === undefined) firstFile.set(sessionId, index);
@@ -218,6 +246,8 @@ export const make = Effect.gen(function* () {
   const hostEnvironment = yield* HostProcessEnvironment;
   const platform = yield* HostProcessPlatform;
   const cursorAccountReader = yield* CursorUsageReader.CursorAccountReader;
+  // The readers yield their own services; scans run them against this context.
+  const readerContext = yield* Effect.context<BuiltInUsageReadersEnv>();
 
   const fileCache: ScanCache = new Map();
   const antigravityCache = makeAntigravityUsageCache();
@@ -338,60 +368,45 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  /** Resolves the transcript directory for each provider. */
+  /**
+   * Every instance of `driver` with its decoded config, or none when it does
+   * not decode. Disabled accounts still have history. An unconfigured default
+   * slot runs with default config, just as it does in the provider registry.
+   */
+  const usageInstances = <Config>(
+    driver: ProviderDriver<Config, unknown, unknown>,
+    settings: ServerSettingsValue,
+  ): Array<ProviderUsageInstance<Config>> => {
+    const entries: Array<
+      readonly [ProviderInstanceId, Pick<ProviderInstanceConfig, "config" | "environment">, boolean]
+    > = Object.entries(settings.providerInstances)
+      .filter(([, instance]) => instance.driver === driver.driverKind)
+      .map(([id, instance]) => [ProviderInstanceId.make(id), instance, true] as const);
+    if (!Object.hasOwn(settings.providerInstances, driver.driverKind)) {
+      entries.push([ProviderInstanceId.make(driver.driverKind), {}, false]);
+    }
+    const decodeConfig = Schema.decodeUnknownOption(driver.configSchema);
+    return entries.map(([instanceId, instance, configured]) => ({
+      instanceId,
+      config: Option.getOrUndefined(decodeConfig(instance.config ?? {})),
+      environment: mergeProviderInstanceEnvironment(instance.environment, hostEnvironment),
+      configured,
+    }));
+  };
+
+  /** Resolves every transcript directory the usage readers point at. */
   const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* (
     settings: ServerSettingsValue,
     retentionCutoffMs: number,
   ) {
-    const dirs: Array<{
-      provider: UsageProviderKind;
-      dir: string;
-      volumeId: string;
-      fileName?: string;
-    }> = [];
+    const dirs: Array<TranscriptSource> = [];
     const seen = new Set<string>();
-    for (const driver of ["claudeAgent", "codex", "grok"] as const) {
-      // Disabled accounts still have history. An unconfigured default slot
-      // runs with default config, just as it does in the provider registry.
-      const instances: Array<
-        Pick<ProviderInstanceConfig, "config" | "environment"> & { instanceId: ProviderInstanceId }
-      > = Object.entries(settings.providerInstances)
-        .filter(([, instance]) => instance.driver === driver)
-        .map(([id, instance]) => ({ ...instance, instanceId: ProviderInstanceId.make(id) }));
-      if (!Object.hasOwn(settings.providerInstances, driver)) {
-        instances.push({ instanceId: ProviderInstanceId.make(driver) });
-      }
-      for (const instance of instances) {
-        const environment = mergeProviderInstanceEnvironment(instance.environment, hostEnvironment);
-        const provider = driver === "claudeAgent" ? "claude" : driver;
-        let home: string;
-        if (driver === "codex") {
-          const decoded = decodeCodexSettings(instance.config ?? {});
-          if (Option.isNone(decoded)) continue;
-          const codexConfig = decoded.value;
-          const environmentHome = environment.CODEX_HOME?.trim();
-          const layout = yield* resolveCodexHomeLayout(
-            codexConfig.setupMode !== "managed" &&
-              !codexConfig.homePath.trim() &&
-              !codexConfig.shadowHomePath.trim() &&
-              environmentHome
-              ? { ...codexConfig, homePath: environmentHome }
-              : codexConfig,
-          );
-          home = layout.sharedHomePath;
-        } else if (driver === "claudeAgent") {
-          const decoded = decodeClaudeSettings(instance.config ?? {});
-          if (Option.isNone(decoded)) continue;
-          const configured = decoded.value.homePath.trim();
-          home = configured
-            ? expandHomePath(configured)
-            : environment.CLAUDE_CONFIG_DIR?.trim() || path.join(NodeOS.homedir(), ".claude");
-        } else {
-          home = expandHomePath(
-            environment.GROK_HOME?.trim() || path.join(NodeOS.homedir(), ".grok"),
-          );
-        }
-        const directory = path.resolve(home, provider === "claude" ? "projects" : "sessions");
+    for (const { driver, reader } of transcriptReaders) {
+      const { provider, format } = reader;
+      const directories = yield* Effect.forEach(usageInstances(driver, settings), (instance) =>
+        reader.directories(instance),
+      );
+      for (const { dir: directory, fileName } of directories.flat()) {
         const sourceKey = provider + "\0" + directory;
         const previous = sourceCache.get(sourceKey);
         // Keep canonical paths and source fingerprints stable after root cleanup,
@@ -423,9 +438,10 @@ export const make = Effect.gen(function* () {
         seen.add(key);
         dirs.push({
           provider,
+          format,
           dir,
           volumeId,
-          ...(provider === "grok" ? { fileName: "updates.jsonl" } : {}),
+          ...(fileName === undefined ? {} : { fileName }),
         });
       }
     }
@@ -456,7 +472,9 @@ export const make = Effect.gen(function* () {
         cacheDirty = document !== null;
       }
       if (document === null) return;
-      for (const [path, entry] of decodeScanCache(document)) fileCache.set(path, entry);
+      for (const [path, entry] of decodeScanCache(document, transcriptFormats)) {
+        fileCache.set(path, entry);
+      }
       const sources = decodeCachedSources(document);
       if (Option.isSome(sources)) {
         for (const [key, source] of Object.entries(sources.value.sources))
@@ -536,6 +554,7 @@ export const make = Effect.gen(function* () {
     size: number,
     mtimeMs: number,
     provider: UsageProviderKind,
+    format: TranscriptUsageFormat<unknown>,
   ): Effect.Effect<{
     readonly records: readonly UsageRecord[];
     readonly update?: { readonly entry: CachedFile; readonly replaces: CachedFile | undefined };
@@ -566,7 +585,7 @@ export const make = Effect.gen(function* () {
           : undefined;
 
       const parsed = yield* Effect.promise(() =>
-        readTranscriptRecords(filePath, provider, resumeFrom),
+        readTranscriptRecords(filePath, format, resumeFrom),
       );
       // A read failure is not an empty transcript: caching it under this
       // (size, mtime) would silently drop the file's usage until it changes.
@@ -611,15 +630,10 @@ export const make = Effect.gen(function* () {
   }
 
   const scanTranscriptDir = Effect.fn("UsageService.scanTranscriptDir")(function* (
-    source: {
-      readonly provider: UsageProviderKind;
-      readonly dir: string;
-      readonly volumeId: string;
-      readonly fileName?: string;
-    },
+    source: TranscriptSource,
     windowStartMs: number,
   ) {
-    const { provider, dir, volumeId, fileName } = source;
+    const { provider, format, dir, volumeId, fileName } = source;
     const exists = yield* fileSystem
       .exists(dir)
       .pipe(Effect.catchCause(() => Effect.succeed(false)));
@@ -632,7 +646,7 @@ export const make = Effect.gen(function* () {
     const read = yield* Effect.forEach(
       files,
       (file) =>
-        readFileRecords(file.path, file.size, file.mtimeMs, provider).pipe(
+        readFileRecords(file.path, file.size, file.mtimeMs, provider, format).pipe(
           Effect.map((result) => ({ path: file.path, ...result })),
         ),
       { concurrency: TRANSCRIPT_READ_CONCURRENCY },
@@ -818,10 +832,8 @@ export const make = Effect.gen(function* () {
     retentionCutoffMs: number,
     awaitRefresh: boolean,
   ) {
-    // The home resolvers ask for `Path` themselves; satisfy them from the
-    // instance we already hold so the scan stays context-free.
     const dirs = yield* resolveTranscriptDirs(settings, retentionCutoffMs).pipe(
-      Effect.provideService(Path.Path, path),
+      Effect.provideContext(readerContext),
     );
 
     const home = NodeOS.homedir();
@@ -1100,7 +1112,7 @@ export const make = Effect.gen(function* () {
       }
       return retainedFiles;
     });
-    const sharedSessions = sharedCodexSessions(filesByDir.flat());
+    const crossFileSessions = sharedSessions(filesByDir.flat());
 
     for (const [
       index,
@@ -1118,12 +1130,15 @@ export const make = Effect.gen(function* () {
           continue;
         }
         scannedFiles += 1;
-        const codexEventOccurrences = new Map<string, number>();
+        const eventOccurrences = new Map<string, number>();
         for (const record of file.records) {
           let usageRecord = record;
-          if (record.provider === "codex" && sharedSessions.has(record.sessionId)) {
-            // Match moved rollout copies without collapsing repeated equal events
-            // within one rollout (timestamps can have only second precision).
+          if (
+            sharedSessionProviders.has(record.provider) &&
+            crossFileSessions.has(record.sessionId)
+          ) {
+            // Match moved copies without collapsing repeated equal events
+            // within one file (timestamps can have only second precision).
             // Only sessions seen in several files can have a copy to match.
             const key = encodeUsageRecordKey([
               record.provider,
@@ -1132,8 +1147,8 @@ export const make = Effect.gen(function* () {
               record.model,
               record.totals,
             ]);
-            const occurrence = (codexEventOccurrences.get(key) ?? 0) + 1;
-            codexEventOccurrences.set(key, occurrence);
+            const occurrence = (eventOccurrences.get(key) ?? 0) + 1;
+            eventOccurrences.set(key, occurrence);
             usageRecord = { ...record, dedupeKey: key + ":" + occurrence };
           }
           // Only sessions contributing in-window count; the mtime slack can
