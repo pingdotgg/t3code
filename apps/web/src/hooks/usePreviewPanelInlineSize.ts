@@ -4,6 +4,7 @@ import { type ResizableWidthHandlers, useResizableWidth } from "./useResizableWi
 
 export interface PreviewPanelInlineSize {
   readonly width: number;
+  readonly resizeEpoch: number;
   readonly handlers: ResizableWidthHandlers;
 }
 

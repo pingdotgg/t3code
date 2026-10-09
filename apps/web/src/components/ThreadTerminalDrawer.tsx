@@ -35,6 +35,7 @@ import {
   type ReactNode,
   type SetStateAction,
   useCallback,
+  useContext,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
@@ -88,6 +89,7 @@ import { readEnvironmentScope } from "../state/session";
 import { terminalEnvironment } from "../state/terminal";
 import { useEnvironmentScope } from "../state/session";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
+import { PreviewPanelResizeEpochContext } from "./preview/PreviewPanelShell";
 import { useAtomCommand } from "../state/use-atom-command";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import {
@@ -381,6 +383,7 @@ export function TerminalViewport({
   drawerHeight,
   keybindings,
 }: TerminalViewportProps) {
+  const panelResizeEpoch = useContext(PreviewPanelResizeEpochContext);
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<GhosttyTerminalSurface | null>(null);
   const visibleRef = useRef(visible);
@@ -1060,6 +1063,14 @@ export function TerminalViewport({
       window.cancelAnimationFrame(frame);
     };
   }, [drawerHeight, environmentId, resizeEpoch, terminalId, threadId]);
+
+  useLayoutEffect(() => {
+    if (panelResizeEpoch === 0) return;
+    const terminal = terminalRef.current;
+    if (!terminal || !visibleRef.current) return;
+    // Drag end: send the final grid to the PTY now instead of after the debounce.
+    if (terminal.fit()) terminal.flushResize();
+  }, [panelResizeEpoch]);
   return (
     <div
       ref={containerRef}

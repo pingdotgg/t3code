@@ -250,6 +250,33 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.restoreAllMocks();
   });
 
+  it("debounces changing columns and flushes the final narrowed or widened grid at drag end", async () => {
+    const harness = createHarness();
+    const onResize = vi.fn();
+    const surface = await harness.create({ onResize });
+    vi.advanceTimersByTime(150);
+    expect(onResize).toHaveBeenLastCalledWith(20, 6);
+    onResize.mockClear();
+
+    for (const [width, cols] of [
+      [88, 10],
+      [248, 30],
+    ] as const) {
+      harness.mount.clientWidth = width;
+      harness.resize();
+      expect(surface.cols).toBe(cols);
+      expect(onResize).not.toHaveBeenCalled();
+      // The observer may already have fitted this exact grid before release.
+      surface.fit();
+      surface.flushResize();
+      expect(onResize).toHaveBeenCalledExactlyOnceWith(cols, 6);
+      surface.flushResize();
+      vi.advanceTimersByTime(150);
+      expect(onResize).toHaveBeenCalledTimes(1);
+      onResize.mockClear();
+    }
+  });
+
   it.each([
     { platform: "Linux x86_64", primary: { ctrlKey: true } },
     { platform: "MacIntel", primary: { metaKey: true } },

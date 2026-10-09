@@ -45,6 +45,8 @@ export interface ResizableWidthHandlers {
  */
 export function useResizableWidth(options: UseResizableWidthOptions): {
   readonly width: number;
+  /** Advances after a committed drag, including pointer cancellation and blur. */
+  readonly resizeEpoch: number;
   readonly handlers: ResizableWidthHandlers;
 } {
   const { storageKey, defaultWidth, minWidth, maxWidth, edge } = options;
@@ -69,6 +71,7 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     }
   };
   const [widthState, setWidthState] = useState(() => ({ storageKey, width: readWidth() }));
+  const [resizeEpoch, setResizeEpoch] = useState(0);
   // Panels stay mounted across threads; restore the destination width before paint.
   if (widthState.storageKey !== storageKey) {
     setWidthState({ storageKey, width: readWidth() });
@@ -90,6 +93,7 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
         return nextWidth;
       },
       finish(finalWidth) {
+        setResizeEpoch((epoch) => epoch + 1);
         // Commit once at drag-end to avoid 60Hz localStorage writes.
         try {
           setLocalStorageItem(latestOptions.current.storageKey, finalWidth, WidthSchema);
@@ -101,5 +105,5 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     storageKey,
   );
 
-  return { width: clampedWidth, handlers };
+  return { width: clampedWidth, resizeEpoch, handlers };
 }

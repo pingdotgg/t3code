@@ -1,4 +1,11 @@
-import { type ReactNode, type RefObject, useLayoutEffect, useRef, useState } from "react";
+import {
+  createContext,
+  type ReactNode,
+  type RefObject,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { isElectron } from "~/env";
 import {
@@ -13,6 +20,9 @@ import { cn } from "~/lib/utils";
 import { RightPanelResizeHandle } from "./RightPanelResizeHandle";
 
 export type PreviewPanelMode = "inline" | "sheet" | "sidebar" | "embedded";
+
+/** Lets nested terminals settle their PTY size after the panel's final width commits. */
+export const PreviewPanelResizeEpochContext = createContext(0);
 
 /**
  * Shell for the preview panel. In inline mode the panel is user-resizable
@@ -67,7 +77,7 @@ function PreviewPanelShellFrame(
   const maximized = props.maximized ?? false;
   const localHostRef = useRef<HTMLDivElement | null>(null);
   const hostRef = props.hostRef ?? localHostRef;
-  const { width, handlers } = props.inlineSize;
+  const { width, resizeEpoch, handlers } = props.inlineSize;
   // Derive suppression before the layout commits so the browser never creates
   // a width transition for resize or maximize changes.
   const [layoutTransition, setLayoutTransition] = useState(() => ({
@@ -137,7 +147,9 @@ function PreviewPanelShellFrame(
           className="flex h-full min-h-0 min-w-0 flex-col"
           style={collapsible && !maximized ? { width: `calc(${width}px - 1px)` } : undefined}
         >
-          {props.children}
+          <PreviewPanelResizeEpochContext value={resizeEpoch}>
+            {props.children}
+          </PreviewPanelResizeEpochContext>
         </div>
       </div>
     </div>
