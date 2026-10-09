@@ -14,6 +14,7 @@ import { ChildProcessSpawner } from "effect/process";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import * as ServerSettings from "../../serverSettings.ts";
 import type {
@@ -84,6 +85,7 @@ const layerRegistry = Layer.succeed(
 const layerTest = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
+  McpProviderSessions.layer,
   layerHost,
   layerRegistry,
   ServerSettings.layerTest(),

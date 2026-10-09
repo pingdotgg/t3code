@@ -31,7 +31,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
-import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import type { MuseItem } from "./protocol.ts";
 import type { MuseSdkHost } from "./sdk.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -42,6 +42,7 @@ import { makeMuseAdapterV2, type MuseAdapterV2Options } from "./adapter.ts";
 const testLayer = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
+  McpProviderSessions.layer,
   layerTestProviderHost().pipe(Layer.provide(NodeServices.layer)),
 );
 const MUSE_PROVIDER = ProviderDriverKind.make("muse");
@@ -351,10 +352,7 @@ const approval = (turnId: string) => ({
 describe("MuseAdapterV2", () => {
   it.effect("connects the thread's MCP credential on native start and resume", () =>
     Effect.gen(function* () {
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => McpProviderSession.clearMcpProviderSession(THREAD_ID)),
-      );
-      McpProviderSession.setMcpProviderSession({
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
         environmentId: EnvironmentId.make("test-environment"),
         threadId: THREAD_ID,
         providerSessionId: "test-session",
@@ -384,10 +382,7 @@ describe("MuseAdapterV2", () => {
 
   it.effect("rejects a host without session MCP support before opening a native session", () =>
     Effect.gen(function* () {
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => McpProviderSession.clearMcpProviderSession(THREAD_ID)),
-      );
-      McpProviderSession.setMcpProviderSession({
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
         environmentId: EnvironmentId.make("test-environment"),
         threadId: THREAD_ID,
         providerSessionId: "test-session",

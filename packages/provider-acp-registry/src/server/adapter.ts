@@ -18,6 +18,7 @@ import type * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/process";
 import * as EffectAcpErrors from "effect-acp/errors";
 
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import {
   normalizeAcpRegistryCommands,
@@ -259,6 +260,7 @@ export type AcpRegistryAdapterV2DriverEnv =
   | AcpRegistrySupport.AcpRegistryCatalog
   | IdAllocator.IdAllocatorV2
   | Path.Path
+  | McpProviderSessions.McpProviderSessions
   | ProviderEventLoggers.ProviderEventLoggers
   | ProviderHost.ProviderHost;
 

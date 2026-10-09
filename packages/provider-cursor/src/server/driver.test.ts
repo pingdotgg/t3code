@@ -15,12 +15,14 @@ import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import { CursorDriver } from "./driver.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { Cursor } from "./sdk.ts";
 
 const layerTest = layerTestProviderHost({ runBackgroundWork: false }).pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(IdAllocator.layer),
+  Layer.provideMerge(McpProviderSessions.layer),
   Layer.provideMerge(
     Layer.mock(CursorAgentSdk.CursorAgentSdkRunner)({
       open: () => Effect.die("Maintenance resolution must not open a Cursor session"),

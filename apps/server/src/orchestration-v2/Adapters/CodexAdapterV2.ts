@@ -108,6 +108,7 @@ import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEve
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "../../provider/codexLaunchArgs.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
   MCP_APP_EXTENSION_ID,
   MCP_APP_MIME_TYPE,
@@ -1296,7 +1297,7 @@ export class CodexAppServerClientFactory extends Context.Service<
 export const CODEX_THREAD_CONFIG = { "tools.update_plan.enabled": true } as const;
 
 export function codexThreadRuntimeParams(input: {
-  readonly threadId: ThreadId | null;
+  readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly modelSelection?: { readonly model: string };
   readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
 }): {
@@ -1304,8 +1305,7 @@ export function codexThreadRuntimeParams(input: {
   readonly model?: string;
   readonly config: Readonly<Record<string, Schema.Json>>;
 } {
-  const mcpSession =
-    input.threadId === null ? undefined : McpProviderSession.readMcpProviderSession(input.threadId);
+  const { mcpSession } = input;
   return {
     ...(input.runtimePolicy?.cwd == null ? {} : { cwd: input.runtimePolicy.cwd }),
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
@@ -1549,6 +1549,7 @@ export type CodexAdapterV2DriverEnv =
   | Crypto.Crypto
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
+  | McpProviderSessions.McpProviderSessions
   | Path.Path
   | ServerConfig;
 
@@ -1585,7 +1586,7 @@ export const createCodexAdapterV2 = (
       homePath: homeLayout.effectiveHomePath ?? "",
     } satisfies CodexSettings;
 
-    return makeCodexAdapterV2({
+    return yield* makeCodexAdapterV2({
       instanceId,
       settings,
       environment: mergeProviderInstanceEnvironment(environment, hostEnvironment),
@@ -1613,6 +1614,7 @@ const layer: Layer.Layer<
   | Crypto.Crypto
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
+  | McpProviderSessions.McpProviderSessions
   | ServerConfig
 > = Layer.effect(
   ProviderAdapter.ProviderAdapterV2,
@@ -1625,7 +1627,7 @@ const layer: Layer.Layer<
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const serverConfig = yield* ServerConfig;
 
-    return makeCodexAdapterV2({
+    return yield* makeCodexAdapterV2({
       instanceId: CODEX_DEFAULT_INSTANCE_ID,
       settings: DEFAULT_CODEX_SETTINGS,
       environment: hostEnvironment,
@@ -1667,9 +1669,12 @@ export interface CodexAdapterV2Options {
   };
 }
 
-export function makeCodexAdapterV2(
+export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
   adapterOptions: CodexAdapterV2Options,
-): ProviderAdapter.ProviderAdapterV2["Service"] {
+) {
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const readMcpSession = (threadId: ThreadId | null) =>
+    threadId === null ? Effect.succeed(undefined) : mcpSessions.read(threadId);
   const { clientFactory, crypto, fileSystem, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
 
@@ -6166,7 +6171,7 @@ export function makeCodexAdapterV2(
         ) =>
           Effect.gen(function* () {
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
-            const mcpSession = McpProviderSession.readMcpProviderSession(turnInput.threadId);
+            const mcpSession = yield* mcpSessions.read(turnInput.threadId);
             const turnStartParams = yield* buildCodexTurnStartParams({
               nativeThreadId: threadId,
               codexInput,
@@ -6445,11 +6450,12 @@ export function makeCodexAdapterV2(
             }),
           ensureThread: (threadInput) =>
             ensureInitialized.pipe(
-              Effect.andThen(
+              Effect.andThen(mcpSessions.read(threadInput.threadId)),
+              Effect.flatMap((mcpSession) =>
                 client.request(
                   "thread/start",
                   codexThreadRuntimeParams({
-                    threadId: threadInput.threadId,
+                    mcpSession,
                     modelSelection: threadInput.modelSelection,
                     runtimePolicy: threadInput.runtimePolicy,
                   }),
@@ -6482,7 +6488,9 @@ export function makeCodexAdapterV2(
                 threadId: nativeThreadId,
                 excludeTurns: true,
                 ...codexThreadRuntimeParams({
-                  threadId: threadInput.threadId ?? threadInput.providerThread.appThreadId,
+                  mcpSession: yield* readMcpSession(
+                    threadInput.threadId ?? threadInput.providerThread.appThreadId,
+                  ),
                   ...(threadInput.modelSelection === undefined
                     ? {}
                     : { modelSelection: threadInput.modelSelection }),
@@ -7210,7 +7218,7 @@ export function makeCodexAdapterV2(
                   threadId,
                   excludeTurns: true,
                   ...codexThreadRuntimeParams({
-                    threadId: threadInput.providerThread.appThreadId,
+                    mcpSession: yield* readMcpSession(threadInput.providerThread.appThreadId),
                     modelSelection: input.modelSelection,
                     runtimePolicy: input.runtimePolicy,
                   }),
@@ -7259,7 +7267,7 @@ export function makeCodexAdapterV2(
                       ? {}
                       : { lastTurnId: boundary.lastTurnId }),
                     ...codexThreadRuntimeParams({
-                      threadId: threadInput.targetThreadId,
+                      mcpSession: yield* mcpSessions.read(threadInput.targetThreadId),
                       ...(threadInput.modelSelection === undefined
                         ? {}
                         : { modelSelection: threadInput.modelSelection }),
@@ -7344,4 +7352,4 @@ export function makeCodexAdapterV2(
         ),
       ),
   });
-}
+});

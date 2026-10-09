@@ -59,6 +59,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import {
@@ -3810,7 +3811,9 @@ describe("orchestrator MCP toolkit", () => {
           Layer.provideMerge(McpServer.McpServer.layer),
           Layer.provideMerge(layerOrchestration),
           Layer.provide(
-            CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(transcript),
+            CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(transcript).pipe(
+              Layer.provide(McpProviderSessions.layer),
+            ),
           ),
           Layer.provide(layerProviderRegistry),
           Layer.provide(layerUnusedScheduledTaskStub),

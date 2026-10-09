@@ -15,10 +15,12 @@ import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import { GrokDriver } from "./driver.ts";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
 const layerTest = layerTestProviderHost({ runBackgroundWork: false }).pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(IdAllocator.layer),
+  Layer.provideMerge(McpProviderSessions.layer),
   Layer.provideMerge(ProviderLatestVersions.layer),
   Layer.provideMerge(
     Layer.succeed(

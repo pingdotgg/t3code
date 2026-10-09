@@ -17,6 +17,7 @@ import { ChildProcessSpawner } from "effect/process";
 
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderMaintenance from "@t3tools/provider-core/server/maintenanceResolver";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
@@ -49,6 +50,7 @@ const openCode2Runtime = {
 
 const layer = Layer.mergeAll(
   IdAllocator.layer,
+  McpProviderSessions.layer,
   ProviderLatestVersions.layer,
   layerTestProviderHost(),
   Layer.succeed(
@@ -212,6 +214,7 @@ const changingRuntime = {
 } as unknown as OpenCodeRuntime.OpenCodeRuntimeShape;
 const layerUpdate = Layer.mergeAll(
   IdAllocator.layer,
+  McpProviderSessions.layer,
   ProviderLatestVersions.layer,
   layerTestProviderHost(),
   Layer.succeed(

@@ -26,6 +26,7 @@ import { buildInitialGrokProviderSnapshot } from "@t3tools/provider-grok/testing
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
 import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
@@ -309,7 +310,12 @@ describe("Grok permission prompts", () => {
 
 describe("Grok launch permission mode", () => {
   const layerHost = layerTestProviderHost().pipe(Layer.provide(NodeServices.layer));
-  const layerTest = Layer.mergeAll(NodeServices.layer, IdAllocator.layer, layerHost);
+  const layerTest = Layer.mergeAll(
+    NodeServices.layer,
+    IdAllocator.layer,
+    McpProviderSessions.layer,
+    layerHost,
+  );
 
   // Opens a session through the adapter's own Grok runtime factory and returns
   // the argv it tried to launch. The spawn fails after recording, so no
