@@ -308,6 +308,15 @@ export interface ProjectionTimelinePage {
   readonly hasMore: boolean;
 }
 
+export interface ShellSnapshotOptions {
+  readonly location?: "active" | "archive";
+  /**
+   * For background sweeps, not clients: skips settled threads before any of
+   * their run, item or session rows are read.
+   */
+  readonly unsettledOnly?: boolean;
+}
+
 export interface ProjectionStoreV2Shape {
   readonly getThreadAttachmentIds: (
     threadId: ThreadId,
@@ -334,14 +343,21 @@ export interface ProjectionStoreV2Shape {
   readonly apply: (
     event: OrchestrationV2DomainEvent,
   ) => Effect.Effect<void, ProjectionStoreV2Error>;
+  readonly getShellSnapshot: (
+    options?: ShellSnapshotOptions,
+  ) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, ProjectionStoreV2Error>;
   /**
-   * `unsettledOnly` is for background sweeps, not clients: it skips settled
-   * threads before any of their run, item or session rows are read.
+   * Runs the shell snapshot's SQL reads and returns the step that decodes them.
+   * Callers that combine the shell with other reads run this inside their own
+   * transaction and the returned decode after it commits, so the shared
+   * connection is not held while thousands of rows are converted.
    */
-  readonly getShellSnapshot: (options?: {
-    readonly location?: "active" | "archive";
-    readonly unsettledOnly?: boolean;
-  }) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, ProjectionStoreV2Error>;
+  readonly readShellSnapshot: (
+    options?: ShellSnapshotOptions,
+  ) => Effect.Effect<
+    Effect.Effect<OrchestrationV2ThreadShellSnapshot, ProjectionStoreV2Error>,
+    ProjectionStoreV2Error
+  >;
   readonly getThreadShell: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadShell | null, ProjectionStoreV2Error>;
@@ -5516,103 +5532,125 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         } satisfies ShellThreadState;
       });
 
+    const shellSnapshotReadError = (cause: unknown) =>
+      new ProjectionStoreReadError({ threadId: ThreadId.make("thread:shell"), cause });
+
+    const readShellSnapshotRows = (options: ShellSnapshotOptions | undefined) =>
+      Effect.gen(function* () {
+        const targetThreadRows = yield* selectShellThreadRows(
+          undefined,
+          options?.location,
+          options?.unsettledOnly ?? false,
+        );
+        const targetThreadIds = new Set(
+          targetThreadRows.map((row) => ThreadId.make(row.thread_id)),
+        );
+        const rowsByThreadId = new Map(
+          targetThreadRows.map((row) => [ThreadId.make(row.thread_id), row] as const),
+        );
+        const pendingSourceIds = targetThreadRows.flatMap((row) =>
+          row.forked_from_run_source_thread_id === null
+            ? []
+            : [ThreadId.make(row.forked_from_run_source_thread_id)],
+        );
+        while (pendingSourceIds.length > 0) {
+          const sourceId = pendingSourceIds.pop();
+          if (sourceId === undefined || rowsByThreadId.has(sourceId)) continue;
+          const source = (yield* selectShellThreadRows(sourceId))[0];
+          if (source === undefined) continue;
+          rowsByThreadId.set(sourceId, source);
+          if (source.forked_from_run_source_thread_id !== null) {
+            pendingSourceIds.push(ThreadId.make(source.forked_from_run_source_thread_id));
+          }
+        }
+        const threadRows = [...rowsByThreadId.values()];
+        const threadIds = [...rowsByThreadId.keys()];
+        const forkSourceIds = shellForkSourceIds(threadRows);
+        const readForThreadIds = <A>(
+          read: (ids: ReadonlyArray<ThreadId>) => Effect.Effect<ReadonlyArray<A>, unknown>,
+          ids: ReadonlyArray<ThreadId> = threadIds,
+        ) => (ids.length === 0 ? Effect.succeed([] as ReadonlyArray<A>) : read(ids));
+        const [runRows, itemCountRows, sequenceRows, providerThreadRows, pendingTurnItemRows] =
+          yield* Effect.all([
+            readForThreadIds(selectShellRunRows, forkSourceIds),
+            readForThreadIds(selectShellRunItemCounts, forkSourceIds),
+            sql<{ readonly snapshot_sequence: number | null }>`
+        SELECT MAX(sequence) AS snapshot_sequence
+        FROM orchestration_events
+        WHERE application_event_version = 2
+          AND aggregate_kind = 'thread'
+      `,
+            readForThreadIds(selectShellProviderThreadRows),
+            readForThreadIds(selectShellPendingTurnItemRows),
+          ]);
+        return {
+          targetThreadIds,
+          threadRows,
+          runRows,
+          itemCountRows,
+          sequenceRows,
+          providerThreadRows,
+          pendingTurnItemRows,
+        };
+      });
+
+    const decodeShellSnapshot = ({
+      targetThreadIds,
+      threadRows,
+      runRows,
+      itemCountRows,
+      sequenceRows,
+      providerThreadRows,
+      pendingTurnItemRows,
+    }: Effect.Success<ReturnType<typeof readShellSnapshotRows>>) =>
+      Effect.gen(function* () {
+        const { runOrdinalsByThreadId, itemCountsByThreadId } = runMapsByThreadId({
+          runRows,
+          itemCountRows,
+        });
+        const { providerThreadsByThreadId, pendingTurnItemsByThreadId } =
+          yield* pendingBackgroundDataByThreadId({ providerThreadRows, pendingTurnItemRows });
+        const states = yield* Effect.forEach(threadRows, (row) =>
+          shellThreadStateFromRow({
+            row,
+            runOrdinalsByThreadId,
+            itemCountsByThreadId,
+            providerThreadsByThreadId,
+            pendingTurnItemsByThreadId,
+          }),
+        );
+        const statesByThreadId = new Map(states.map((state) => [state.thread.id, state]));
+
+        const shells = states
+          .filter((state) => targetThreadIds.has(state.thread.id))
+          .map((state) =>
+            shellFromState({
+              state,
+              visibleItemCount: visibleItemCountForShell({
+                threadId: state.thread.id,
+                statesByThreadId,
+              }),
+            }),
+          );
+
+        return {
+          schemaVersion: ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
+          snapshotSequence: sequenceRows[0]?.snapshot_sequence ?? 0,
+          threads: shells.filter((thread) => thread.archivedAt === null),
+          archivedThreads: shells.filter((thread) => thread.archivedAt !== null),
+        };
+      }).pipe(Effect.mapError(shellSnapshotReadError));
+
+    const readShellSnapshot: ProjectionStoreV2Shape["readShellSnapshot"] = (options) =>
+      readShellSnapshotRows(options).pipe(
+        Effect.mapError(shellSnapshotReadError),
+        Effect.map(decodeShellSnapshot),
+      );
+
     const getShellSnapshot: ProjectionStoreV2Shape["getShellSnapshot"] = (options) =>
       sql
-        .withTransaction(
-          Effect.gen(function* () {
-            const targetThreadRows = yield* selectShellThreadRows(
-              undefined,
-              options?.location,
-              options?.unsettledOnly ?? false,
-            );
-            const targetThreadIds = new Set(
-              targetThreadRows.map((row) => ThreadId.make(row.thread_id)),
-            );
-            const rowsByThreadId = new Map(
-              targetThreadRows.map((row) => [ThreadId.make(row.thread_id), row] as const),
-            );
-            const pendingSourceIds = targetThreadRows.flatMap((row) =>
-              row.forked_from_run_source_thread_id === null
-                ? []
-                : [ThreadId.make(row.forked_from_run_source_thread_id)],
-            );
-            while (pendingSourceIds.length > 0) {
-              const sourceId = pendingSourceIds.pop();
-              if (sourceId === undefined || rowsByThreadId.has(sourceId)) continue;
-              const source = (yield* selectShellThreadRows(sourceId))[0];
-              if (source === undefined) continue;
-              rowsByThreadId.set(sourceId, source);
-              if (source.forked_from_run_source_thread_id !== null) {
-                pendingSourceIds.push(ThreadId.make(source.forked_from_run_source_thread_id));
-              }
-            }
-            const threadRows = [...rowsByThreadId.values()];
-            const threadIds = [...rowsByThreadId.keys()];
-            const forkSourceIds = shellForkSourceIds(threadRows);
-            const readForThreadIds = <A>(
-              read: (ids: ReadonlyArray<ThreadId>) => Effect.Effect<ReadonlyArray<A>, unknown>,
-              ids: ReadonlyArray<ThreadId> = threadIds,
-            ) => (ids.length === 0 ? Effect.succeed([] as ReadonlyArray<A>) : read(ids));
-            const [runRows, itemCountRows, sequenceRows, providerThreadRows, pendingTurnItemRows] =
-              yield* Effect.all([
-                readForThreadIds(selectShellRunRows, forkSourceIds),
-                readForThreadIds(selectShellRunItemCounts, forkSourceIds),
-                sql<{ readonly snapshot_sequence: number | null }>`
-            SELECT MAX(sequence) AS snapshot_sequence
-            FROM orchestration_events
-            WHERE application_event_version = 2
-              AND aggregate_kind = 'thread'
-          `,
-                readForThreadIds(selectShellProviderThreadRows),
-                readForThreadIds(selectShellPendingTurnItemRows),
-              ]);
-
-            const { runOrdinalsByThreadId, itemCountsByThreadId } = runMapsByThreadId({
-              runRows,
-              itemCountRows,
-            });
-            const { providerThreadsByThreadId, pendingTurnItemsByThreadId } =
-              yield* pendingBackgroundDataByThreadId({ providerThreadRows, pendingTurnItemRows });
-            const states = yield* Effect.forEach(threadRows, (row) =>
-              shellThreadStateFromRow({
-                row,
-                runOrdinalsByThreadId,
-                itemCountsByThreadId,
-                providerThreadsByThreadId,
-                pendingTurnItemsByThreadId,
-              }),
-            );
-            const statesByThreadId = new Map(states.map((state) => [state.thread.id, state]));
-
-            const shells = states
-              .filter((state) => targetThreadIds.has(state.thread.id))
-              .map((state) =>
-                shellFromState({
-                  state,
-                  visibleItemCount: visibleItemCountForShell({
-                    threadId: state.thread.id,
-                    statesByThreadId,
-                  }),
-                }),
-              );
-
-            return {
-              schemaVersion: ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
-              snapshotSequence: sequenceRows[0]?.snapshot_sequence ?? 0,
-              threads: shells.filter((thread) => thread.archivedAt === null),
-              archivedThreads: shells.filter((thread) => thread.archivedAt !== null),
-            };
-          }),
-        )
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProjectionStoreReadError({
-                threadId: ThreadId.make("thread:shell"),
-                cause,
-              }),
-          ),
-        );
+        .withTransaction(readShellSnapshotRows(options))
+        .pipe(Effect.mapError(shellSnapshotReadError), Effect.flatMap(decodeShellSnapshot));
 
     // Per-thread shell for the live shell streams: reads only the target thread
     // plus its fork-source chain instead of materializing every thread. Returns
@@ -5687,6 +5725,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     return {
       apply,
       getShellSnapshot,
+      readShellSnapshot,
       getThreadShell,
       getThread,
       getSettlementCandidates,
@@ -5780,6 +5819,8 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             archivedThreads: visible.filter((thread) => thread.archivedAt !== null),
           };
         }),
+      readShellSnapshot: (options) =>
+        service.getShellSnapshot(options).pipe(Effect.map(Effect.succeed)),
       getThreadShell: (threadId) =>
         Effect.gen(function* () {
           const existing = (yield* Ref.get(replayState)).projections;

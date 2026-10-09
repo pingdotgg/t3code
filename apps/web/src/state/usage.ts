@@ -14,6 +14,7 @@ import {
   type EnvironmentId,
   type UsageBucket,
   type UsageSummary,
+  type UsageProviderKind,
   type UsageSummaryInput,
   UsageReadError,
 } from "@t3tools/contracts";
@@ -25,7 +26,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   isCompatibleUsageContractVersion,
@@ -50,6 +51,7 @@ export interface EnvironmentUsageStatus {
   readonly label: string;
   readonly isPending: boolean;
   readonly canReadDiagnostics: boolean;
+  readonly isConnected: boolean;
   readonly error: string | null;
   readonly summary: UsageSummary | null;
   readonly needsCursorKeychainAccess: boolean;
@@ -164,6 +166,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
     for (const [index, [environmentId, presentation]] of [...presentations].entries()) {
       const label = labels[index] ?? presentation.entry.target.label;
       const offline = UNREACHABLE.has(presentation.connection.phase);
+      const isConnected = presentation.connection.phase === "connected";
       const sessionResult = get(environmentSession.sessionStateAtom(environmentId));
       const session = Option.getOrNull(AsyncResult.value(sessionResult));
       const access = resolveUsageAccess({
@@ -180,6 +183,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         statuses.push({
           environmentId,
           label,
+          isConnected,
           ...access,
           readByDay: false,
           offline: false,
@@ -221,6 +225,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         label,
         isPending: !offline && result.waiting,
         canReadDiagnostics: true,
+        isConnected,
         error:
           !offline && result._tag === "Failure" ? "This environment could not report usage." : null,
         readByDay,
@@ -244,6 +249,12 @@ export interface UsageView {
   readonly selectedEnvironments: readonly EnvironmentUsageStatus[];
   /** True until at least one selected environment has answered. */
   readonly isPending: boolean;
+  /**
+   * The usage to draw: this window's once a selected environment answers,
+   * until then the last window answered for the same selection. Null while
+   * nothing has answered and something still could.
+   */
+  readonly shown: { readonly window: UsageSummaryInput; readonly merged: MergedUsage } | null;
   /**
    * True while environments that have not failed are still answering. Failed
    * environments are reported through their own error rows: totals will not
@@ -273,6 +284,35 @@ export function mergeAnsweredUsage(
     }),
   );
   return mergeUsage(answered, USAGE_CONTRACT_VERSION, keepBucket);
+}
+
+const NO_HIDDEN_PROVIDERS: ReadonlySet<UsageProviderKind> = new Set();
+
+/**
+ * Drops hidden providers' buckets and sources before merging, so totals,
+ * shares, and session counts all describe only the visible providers.
+ */
+function withoutProviders(
+  environments: readonly EnvironmentUsageStatus[],
+  hiddenProviders: ReadonlySet<UsageProviderKind>,
+): readonly EnvironmentUsageStatus[] {
+  if (hiddenProviders.size === 0) return environments;
+  return environments.map((environment) =>
+    environment.summary === null
+      ? environment
+      : {
+          ...environment,
+          summary: {
+            ...environment.summary,
+            buckets: environment.summary.buckets.filter(
+              (bucket) => !hiddenProviders.has(bucket.provider),
+            ),
+            sources: environment.summary.sources.filter(
+              (source) => !hiddenProviders.has(source.fingerprint.provider),
+            ),
+          },
+        },
+  );
 }
 
 /**
@@ -323,6 +363,7 @@ function answeredSummaries(
 export function useUsage(
   input: UsageSummaryInput | null,
   selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
+  hiddenProviders: ReadonlySet<UsageProviderKind> = NO_HIDDEN_PROVIDERS,
 ): UsageView {
   // A string key, so a fresh but equal window object reuses the same query.
   const windowKey =
@@ -383,7 +424,10 @@ export function useUsage(
     }
   }, [environments]);
 
-  const merged = useMemo(() => mergeAnsweredUsage(selectedEnvironments), [selectedEnvironments]);
+  const merged = useMemo(
+    () => mergeAnsweredUsage(withoutProviders(selectedEnvironments, hiddenProviders)),
+    [selectedEnvironments, hiddenProviders],
+  );
 
   const answeredCount = selectedEnvironments.filter(
     (environment) => environment.summary !== null,
@@ -392,12 +436,52 @@ export function useUsage(
     (environment) =>
       environment.summary === null && environment.error === null && !environment.offline,
   ).length;
+  const isPending = answeredCount === 0 && stillReporting > 0;
+
+  // Stored during render, as React recommends for state that follows props, so
+  // the kept usage is on screen in the same frame the new window starts pending.
+  const [lastAnswered, setLastAnswered] = useState<
+    | (NonNullable<UsageView["shown"]> & {
+        readonly selection: typeof selectedEnvironmentIds;
+        readonly hidden: typeof hiddenProviders;
+      })
+    | null
+  >(null);
+  if (
+    input !== null &&
+    answeredCount > 0 &&
+    (lastAnswered?.merged !== merged ||
+      lastAnswered.window !== input ||
+      lastAnswered.selection !== selectedEnvironmentIds ||
+      lastAnswered.hidden !== hiddenProviders)
+  ) {
+    setLastAnswered({
+      window: input,
+      merged,
+      selection: selectedEnvironmentIds,
+      hidden: hiddenProviders,
+    });
+  }
+  // Kept usage only stands in for the same environments and provider filter.
+  const kept =
+    lastAnswered?.selection === selectedEnvironmentIds && lastAnswered.hidden === hiddenProviders
+      ? lastAnswered
+      : null;
+  // With no answers, even failed ones keep the last answered usage on screen.
+  // A null window reads nothing, so there is nothing to show.
+  const shown =
+    input === null
+      ? null
+      : answeredCount > 0
+        ? { window: input, merged }
+        : (kept ?? (isPending ? null : { window: input, merged }));
 
   return {
     merged,
     environments,
     selectedEnvironments,
-    isPending: answeredCount === 0 && stillReporting > 0,
+    isPending,
+    shown,
     isPartial: answeredCount > 0 && stillReporting > 0,
     refresh,
   };

@@ -136,6 +136,14 @@ export interface UsageExplorerProps {
   readonly onResetZoom: () => void;
   readonly onOpenModel: (provider: UsageProviderKind, model: string) => void;
   readonly onSetPrice: (model: string) => void;
+  /**
+   * Figures still coming in: every provider while an older period stands in,
+   * or just the providers refreshing a slow source. Those figures are muted.
+   */
+  readonly updating?: {
+    readonly everyProvider: boolean;
+    readonly providers: ReadonlySet<UsageProviderKind>;
+  };
   /** Rows below the provider list, such as Cursor's enable prompt. */
   readonly providerExtras?: ReactNode;
   /**
@@ -789,17 +797,24 @@ export function UsageExplorer(props: UsageExplorerProps) {
 
   if (props.loading) return props.loading;
 
+  const updating = props.updating;
+  const partial = updating !== undefined && (updating.everyProvider || updating.providers.size > 0);
+  const providerUpdating = (provider: UsageProviderKind) =>
+    updating !== undefined && (updating.everyProvider || updating.providers.has(provider));
+
   return (
     <>
       <section className="grid gap-6 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
         <div className="flex min-w-0 flex-col gap-5">
           <Headline
+            updating={partial}
             metric={metric}
             total={total}
             hiddenCount={hiddenCount}
             previous={previousVisible === null ? null : sumFacts(previousVisible)}
           />
           <ProviderList
+            updating={providerUpdating}
             facts={providerScope}
             allAccounts={allAccounts}
             metric={metric}
@@ -878,35 +893,39 @@ export function UsageExplorer(props: UsageExplorerProps) {
               </span>
             ) : null}
           </div>
-          <UsageStackedChart
-            columns={columns}
-            series={series.map((entry) => ({
-              key: entry.key,
-              color: entry.color,
-              label:
-                entry.key === OTHER_SERIES
-                  ? `Other (${entry.members.length})`
-                  : nameOf(dimension, entry.key),
-            }))}
-            format={format}
-            formatAxis={formatAxis}
-            formatBin={(bin) => formatBin(bin, timeZone)}
-            running={preferences.running}
-            // A hidden series has no band to bring forward.
-            highlightKey={highlight !== null && hiddenNow.has(highlight) ? null : highlight}
-            onHoverSeries={setHighlight}
-            onZoom={(firstBin, lastBin) =>
-              props.onZoom(
-                binStartMs(firstBin, timeZone),
-                binEndMs(lastBin, timeline.binMinutes, timeZone),
-              )
-            }
-            ariaLabel={`${preferences.running ? "Running " : ""}${metric === "cost" ? "cost" : "tokens"} by ${DIMENSIONS.find((entry) => entry.value === dimension)?.one ?? dimension}`}
-          />
+          <div aria-busy={partial} className={figureClass(partial)}>
+            <UsageStackedChart
+              columns={columns}
+              series={series.map((entry) => ({
+                key: entry.key,
+                color: entry.color,
+                label:
+                  entry.key === OTHER_SERIES
+                    ? `Other (${entry.members.length})`
+                    : nameOf(dimension, entry.key),
+              }))}
+              format={format}
+              formatAxis={formatAxis}
+              formatBin={(bin) => formatBin(bin, timeZone)}
+              running={preferences.running}
+              // A hidden series has no band to bring forward.
+              highlightKey={highlight !== null && hiddenNow.has(highlight) ? null : highlight}
+              onHoverSeries={setHighlight}
+              onZoom={(firstBin, lastBin) =>
+                props.onZoom(
+                  binStartMs(firstBin, timeZone),
+                  binEndMs(lastBin, timeline.binMinutes, timeZone),
+                )
+              }
+              ariaLabel={`${preferences.running ? "Running " : ""}${metric === "cost" ? "cost" : "tokens"} by ${DIMENSIONS.find((entry) => entry.value === dimension)?.one ?? dimension}`}
+            />
+          </div>
         </div>
       </section>
 
-      <UsageTypeBreakdown total={total} metric={metric} perActive={perActive} />
+      <div className={figureClass(partial)}>
+        <UsageTypeBreakdown total={total} metric={metric} perActive={perActive} />
+      </div>
       {metric === "cost" && total.fastUsd + total.ultrafastUsd > 0 ? (
         <UsageShareBar
           label="Cost by speed"
@@ -1016,40 +1035,42 @@ export function UsageExplorer(props: UsageExplorerProps) {
             ) : null}
           </div>
         )}
-        <BreakdownTable
-          rows={rows}
-          dimension={dimension}
-          columns={visibleColumns}
-          hasPrevious={previousByKey !== undefined}
-          metric={metric}
-          sort={sort}
-          onSort={(column) =>
-            setSort((current) =>
-              current?.column === column
-                ? current.descending
-                  ? { column, descending: false }
-                  : null
-                : { column, descending: column !== "name" },
-            )
-          }
-          rowName={rowName}
-          environmentNote={props.environmentNote}
-          threads={data}
-          favorites={favorites}
-          onToggleOpen={toggleOpen}
-          onToggleShowAll={toggleShowAll}
-          onToggleHidden={toggleHidden}
-          onFocus={focus}
-          onMenu={(row, position) => void showMenu(row, position)}
-          onOpenThread={openThread}
-          onOpenModel={(key) => {
-            const { provider, model } = splitModelKey(key);
-            props.onOpenModel(provider as UsageProviderKind, model);
-          }}
-          onHoverRow={setHighlight}
-          highlight={highlight}
-          seriesOf={seriesOf}
-        />
+        <div className={figureClass(partial)}>
+          <BreakdownTable
+            rows={rows}
+            dimension={dimension}
+            columns={visibleColumns}
+            hasPrevious={previousByKey !== undefined}
+            metric={metric}
+            sort={sort}
+            onSort={(column) =>
+              setSort((current) =>
+                current?.column === column
+                  ? current.descending
+                    ? { column, descending: false }
+                    : null
+                  : { column, descending: column !== "name" },
+              )
+            }
+            rowName={rowName}
+            environmentNote={props.environmentNote}
+            threads={data}
+            favorites={favorites}
+            onToggleOpen={toggleOpen}
+            onToggleShowAll={toggleShowAll}
+            onToggleHidden={toggleHidden}
+            onFocus={focus}
+            onMenu={(row, position) => void showMenu(row, position)}
+            onOpenThread={openThread}
+            onOpenModel={(key) => {
+              const { provider, model } = splitModelKey(key);
+              props.onOpenModel(provider as UsageProviderKind, model);
+            }}
+            onHoverRow={setHighlight}
+            highlight={highlight}
+            seriesOf={seriesOf}
+          />
+        </div>
       </section>
 
       <details className="text-xs text-muted-foreground">
@@ -1131,11 +1152,13 @@ function describeAccounts(
 /* -------------------------------------------------------------------------- */
 
 function Headline({
+  updating,
   metric,
   total,
   hiddenCount,
   previous,
 }: {
+  readonly updating: boolean;
   readonly metric: UsageExplorerMetric;
   readonly total: UsageTotals;
   readonly hiddenCount: number;
@@ -1155,7 +1178,14 @@ function Headline({
             : "Processed tokens"}
       </span>
       <span className="flex items-baseline gap-2">
-        <span className="text-4xl font-semibold text-foreground tabular-nums">{format(value)}</span>
+        <span
+          className={cn(
+            "text-4xl font-semibold text-foreground tabular-nums",
+            figureClass(updating),
+          )}
+        >
+          {format(value)}
+        </span>
         <Popover>
           <PopoverTrigger
             openOnHover
@@ -1193,6 +1223,7 @@ function Headline({
 }
 
 function ProviderList({
+  updating,
   facts,
   allAccounts,
   metric,
@@ -1200,6 +1231,8 @@ function ProviderList({
   accountName,
   onAccountsChange,
 }: {
+  /** Whether a provider's figures are still coming in. */
+  readonly updating: (provider: UsageProviderKind) => boolean;
   readonly facts: readonly UsageFact[];
   /** Every account on the page, so a change here keeps accounts outside `facts`. */
   readonly allAccounts: readonly string[];
@@ -1305,7 +1338,10 @@ function ProviderList({
         const shareValue = whole === 0 ? 0 : metricOf(totals, metric) / whole;
         const isExpanded = expanded.has(provider);
         return (
-          <div key={provider} className="flex flex-col gap-1.5">
+          <div
+            key={provider}
+            className={cn("flex flex-col gap-1.5", figureClass(updating(provider)))}
+          >
             {row(
               keys,
               presentation.label,
@@ -1994,4 +2030,9 @@ function Hint({ text, children }: { readonly text: string | null; readonly child
       <TooltipPopup className="max-w-72">{text}</TooltipPopup>
     </Tooltip>
   );
+}
+
+/** Mutes a figure that is still coming in. The delay keeps a quick answer from flashing. */
+function figureClass(loading: boolean) {
+  return cn("transition-opacity", loading && "opacity-40 delay-150");
 }

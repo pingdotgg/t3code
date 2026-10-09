@@ -167,6 +167,26 @@ describe("provider compatibility", () => {
     );
   });
 
+  it("compares Muse versions by their release, ignoring the revision suffix", () => {
+    const muse = ProviderDriverKind.make("muse");
+    for (const [version, expected] of [
+      ["1.4.3-R5018.1", "supported"],
+      ["1.4.2-R4684", "supported"],
+      ["1.4.1-R4100.2", "unknown"],
+      ["1.4.3-beta.1", "unknown"],
+    ] as const) {
+      assert.strictEqual(
+        resolveProviderCompatibility(
+          ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+          muse,
+          version,
+          V2_RELEASE,
+        )?.status,
+        expected,
+      );
+    }
+  });
+
   it("recognizes Antigravity semver release tags while keeping dated candidates unknown", () => {
     const antigravity = ProviderDriverKind.make("antigravity");
     const taggedPolicy = {

@@ -3051,12 +3051,16 @@ it.layer(
               "codex",
               "cursor",
               "grok",
+              "muse",
               "opencode",
               "pi",
             ]);
             assert.strictEqual(cursorProvider?.enabled, false);
             assert.strictEqual(cursorProvider?.status, "disabled");
             assert.strictEqual(cursorProvider?.message, "Cursor is disabled in T3 Code settings.");
+            const museProvider = providers.find((provider) => provider.driver === "muse");
+            assert.strictEqual(museProvider?.enabled, false);
+            assert.strictEqual(museProvider?.status, "disabled");
             assert.strictEqual(cursorSpawned, false);
           }).pipe(Effect.provide(runtimeServices));
         }),

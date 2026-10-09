@@ -13,7 +13,6 @@ import {
   CalendarDaysIcon,
   CircleAlertIcon,
   ChevronDownIcon,
-  CircleDashedIcon,
   SlidersHorizontalIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
@@ -21,6 +20,11 @@ import {
   cursorKeychainAccessEnvironments,
   refreshUsageLimits,
 } from "@t3tools/client-runtime/state/usage";
+import {
+  updatingProvidersLabel,
+  usageEnvironmentProgress,
+  usageLoadingState,
+} from "@t3tools/client-runtime/state/usage-progress";
 
 import { isCompatibleUsageContractVersion, type MergedUsage } from "@t3tools/shared/usageMerge";
 
@@ -101,6 +105,8 @@ function isUsageWindowDays(value: number): value is UsagePagePreferences["window
   return WINDOW_OPTIONS.some((option) => option.days === value);
 }
 
+const providerLabel = (provider: UsageProviderKind) => PROVIDER_PRESENTATION[provider].label;
+
 export function UsagePage() {
   const [preferences, setPreferences] = useState(readUsagePagePreferences);
   const [explorerPreferences, setExplorerPreferences] = useState(readUsageExplorerPreferences);
@@ -149,10 +155,38 @@ export function UsagePage() {
     [...neededNow].some((id) => selectedEnvironmentIds === null || selectedEnvironmentIds.has(id))
       ? byDay
       : requested;
-  const { merged, environments, selectedEnvironments, isPending, isPartial, refresh } = useUsage(
-    window,
-    selectedEnvironmentIds,
+  const hiddenProviders = useMemo(
+    () => new Set(preferences.hiddenProviders),
+    [preferences.hiddenProviders],
   );
+  const {
+    merged: answeredUsage,
+    environments,
+    selectedEnvironments,
+    shown,
+    isPending,
+    isPartial,
+    refresh,
+  } = useUsage(window, selectedEnvironmentIds, hiddenProviders);
+  // Until a new window's first answer, the previous one stays on screen, muted.
+  const merged = shown?.merged ?? answeredUsage;
+  const shownWindow = shown?.window ?? window;
+  const refreshingUsage = isRefreshing && !showingLimits;
+  // Usage kept from another window is all old, so every figure stays muted.
+  const showingKept = shown !== null && shown.window !== window;
+  const loading = useMemo(() => {
+    if (showingKept) {
+      return { partial: true, everyProvider: true, providers: new Set<UsageProviderKind>() };
+    }
+    const state = usageLoadingState(selectedEnvironments, refreshingUsage);
+    // A hidden provider still refreshing must not add its row or mute the totals.
+    const providers = new Set([...state.providers].filter((p) => !hiddenProviders.has(p)));
+    return {
+      partial: state.everyProvider || providers.size > 0,
+      everyProvider: state.everyProvider,
+      providers,
+    };
+  }, [showingKept, refreshingUsage, selectedEnvironments, hiddenProviders]);
   const fellBack =
     byDay !== null && window === requested
       ? selectedEnvironments
@@ -167,7 +201,11 @@ export function UsagePage() {
   }
   // The Change column compares with the same span just before; read it only then.
   const wantsPrevious = !showingLimits && explorerPreferences.columns.includes("change");
-  const previous = useUsage(wantsPrevious ? previousWindow(window) : null, selectedEnvironmentIds);
+  const previous = useUsage(
+    wantsPrevious ? previousWindow(window) : null,
+    selectedEnvironmentIds,
+    hiddenProviders,
+  );
   // Change compares like for like only when every environment that counts now,
   // even with no usage, also answered for the span before.
   const previousCoversCurrent = environmentsNeedingBaseline(selectedEnvironments).every(
@@ -181,7 +219,9 @@ export function UsagePage() {
     () => selectedEnvironments.map((environment) => environment.environmentId),
     [selectedEnvironments],
   );
-  const cursorAccessEnvironments = cursorKeychainAccessEnvironments(selectedEnvironments);
+  const cursorAccessEnvironments = hiddenProviders.has("cursor")
+    ? []
+    : cursorKeychainAccessEnvironments(selectedEnvironments);
   const environmentNote = useCallback(
     (environmentId: string) => {
       const environment = selectedEnvironments.find(
@@ -198,6 +238,7 @@ export function UsagePage() {
           environment.summary?.sources.flatMap((source) =>
             source.message &&
             !source.action &&
+            !hiddenProviders.has(source.fingerprint.provider) &&
             (source.status === "partial" ||
               source.status === "failed" ||
               source.fingerprint.provider === "cursor")
@@ -211,7 +252,7 @@ export function UsagePage() {
     reportFailure: false,
   });
 
-  const timeline = useMemo(() => timelineFor(window), [window]);
+  const timeline = useMemo(() => timelineFor(shownWindow), [shownWindow]);
   const canReadDiagnostics = selectedEnvironments.some(
     (environment) => environment.canReadDiagnostics,
   );
@@ -247,18 +288,19 @@ export function UsagePage() {
 
   const setRange = (next: UsageRange) =>
     setWindowSelection({ range: next, window: windowFor(next) });
-  const selectWindow = (days: number) => {
-    if (!isUsageWindowDays(days)) return;
-    const nextPreferences = { metric, windowDays: days };
+  const updatePreferences = (patch: Partial<UsagePagePreferences>) => {
+    const nextPreferences = { ...preferences, ...patch };
     setPreferences(nextPreferences);
     saveUsagePagePreferences(nextPreferences);
+  };
+  const selectWindow = (days: number) => {
+    if (!isUsageWindowDays(days)) return;
+    updatePreferences({ windowDays: days });
     setRange({ kind: "period", days });
   };
   const selectMetric = (nextMetric: UsageMetric) => {
     if (nextMetric === "limits") setLimitsNow(Date.now());
-    const nextPreferences = { metric: nextMetric, windowDays: preferences.windowDays };
-    setPreferences(nextPreferences);
-    saveUsagePagePreferences(nextPreferences);
+    updatePreferences({ metric: nextMetric });
   };
   const changeExplorerPreferences = (next: UsageExplorerPreferences) => {
     setExplorerPreferences(next);
@@ -365,17 +407,25 @@ export function UsagePage() {
           <h1>Usage</h1>
         </WorkspaceBreadcrumbItem>
         <WorkspaceBreadcrumbSeparator />
-        <WorkspaceBreadcrumbItem current className="min-w-10">
+        <WorkspaceBreadcrumbItem className="min-w-10 shrink">
           <UsageEnvironmentFilter
             environments={environments}
             selectedEnvironments={selectedEnvironments}
             selectedEnvironmentIds={selectedEnvironmentIds}
             onSelectionChange={setSelectedEnvironmentIds}
             showUsageStatus={!showingLimits}
+            refreshing={refreshingUsage}
             isPartial={isPartial}
             duplicateSources={merged.duplicateSources}
             contractMismatches={merged.contractMismatches}
             onOpenModelPrices={() => setPriceDialog({})}
+          />
+        </WorkspaceBreadcrumbItem>
+        <WorkspaceBreadcrumbSeparator />
+        <WorkspaceBreadcrumbItem current className="min-w-10">
+          <UsageProviderFilter
+            hiddenProviders={hiddenProviders}
+            onChange={(next) => updatePreferences({ hiddenProviders: next })}
           />
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
@@ -549,6 +599,7 @@ export function UsagePage() {
             ) : showingLimits ? (
               <UsageLimitsSection
                 selectedEnvironmentIds={selectedEnvironmentIds}
+                hiddenProviders={hiddenProviders}
                 now={limitsNow}
                 cursorPrompt={
                   cursorAccessEnvironments.length > 0 ? (
@@ -562,7 +613,9 @@ export function UsagePage() {
                   ) : null
                 }
               />
-            ) : !isPending && !canReadDiagnostics ? (
+            ) : shown === null ? (
+              <UsageSkeleton />
+            ) : !canReadDiagnostics ? (
               <div className="space-y-2 py-12 text-center text-sm text-muted-foreground">
                 {selectedEnvironments.map((environment) => (
                   <p key={environment.environmentId}>
@@ -596,7 +649,7 @@ export function UsagePage() {
                   }
                   metric={metric}
                   timeline={timeline}
-                  timeZone={window.timeZone}
+                  timeZone={shownWindow.timeZone}
                   preferences={explorerPreferences}
                   onPreferencesChange={changeExplorerPreferences}
                   environmentIds={selectedEnvironmentIdList}
@@ -618,7 +671,7 @@ export function UsagePage() {
                   onOpenModel={(provider, model) => setSelectedModelKey(`${provider}:${model}`)}
                   onSetPrice={(model) => setPriceDialog({ model })}
                   providerExtras={providerExtras}
-                  loading={isPending ? <UsageSkeleton /> : null}
+                  updating={loading}
                 />
               </>
             )}
@@ -948,13 +1001,14 @@ function UsageCoverageNotice({
   );
 }
 
-/** Environment selection and scan progress share a permanent header control. */
+/** Environment selection, with each environment's scan status in the menu. */
 function UsageEnvironmentFilter({
   environments,
   selectedEnvironments,
   selectedEnvironmentIds,
   onSelectionChange,
   showUsageStatus,
+  refreshing,
   isPartial,
   duplicateSources,
   contractMismatches,
@@ -965,6 +1019,7 @@ function UsageEnvironmentFilter({
   readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
   readonly onSelectionChange: (ids: ReadonlySet<EnvironmentId> | null) => void;
   readonly showUsageStatus: boolean;
+  readonly refreshing: boolean;
   readonly isPartial: boolean;
   readonly duplicateSources: readonly string[];
   readonly contractMismatches: MergedUsage["contractMismatches"];
@@ -976,12 +1031,6 @@ function UsageEnvironmentFilter({
     : selectedEnvironments.length === 1
       ? selectedEnvironments[0]!.label
       : `${selectedEnvironments.length} environments`;
-  const pendingCount = selectedEnvironments.filter(
-    (environment) =>
-      environment.error === null &&
-      !environment.offline &&
-      (environment.isPending || environment.summary === null),
-  ).length;
   const hasIssue =
     selectedEnvironments.some((environment) => environment.error !== null || environment.offline) ||
     contractMismatches.length > 0;
@@ -991,15 +1040,7 @@ function UsageEnvironmentFilter({
       <MenuTrigger render={<InlineButton />} className="group/usage-environment min-w-0 max-w-full">
         <span className="min-w-0 truncate">{label}</span>
         <span className="flex size-3.5 shrink-0 items-center justify-center text-muted-foreground">
-          {showUsageStatus && pendingCount > 0 ? (
-            <>
-              <CircleDashedIcon className="size-3.5" aria-hidden />
-              <span className="sr-only">
-                {pendingCount} {pendingCount === 1 ? "environment" : "environments"} still scanning
-                {isPartial ? "; totals are partial" : ""}
-              </span>
-            </>
-          ) : showUsageStatus && hasIssue ? (
+          {showUsageStatus && hasIssue ? (
             <CircleAlertIcon
               className="size-3.5 text-warning-foreground"
               aria-label="Some environments are offline or could not report usage"
@@ -1025,6 +1066,7 @@ function UsageEnvironmentFilter({
           const checked =
             selectedEnvironmentIds === null ||
             selectedEnvironmentIds.has(environment.environmentId);
+          const progress = usageEnvironmentProgress(environment, refreshing);
           const status = environment.offline
             ? environment.savedAt === null
               ? "Offline"
@@ -1037,11 +1079,15 @@ function UsageEnvironmentFilter({
                     USAGE_CONTRACT_VERSION,
                   )
                 ? "Update required"
-                : environment.summary === null
-                  ? "Scanning…"
-                  : environment.isPending
-                    ? "Refreshing…"
-                    : "Ready";
+                : !environment.isConnected
+                  ? "Connecting…"
+                  : progress.phase === "loading"
+                    ? "Scanning…"
+                    : progress.phase === "stale"
+                      ? "Refreshing…"
+                      : progress.phase === "partway"
+                        ? updatingProvidersLabel(progress.providers, providerLabel)
+                        : "Ready";
           return (
             <MenuCheckboxItem
               key={environment.environmentId}
@@ -1090,6 +1136,66 @@ function UsageEnvironmentFilter({
           <SlidersHorizontalIcon aria-hidden />
           Model prices
         </MenuItem>
+      </MenuPopup>
+    </Menu>
+  );
+}
+
+/** Provider visibility shared by every tab. Stored as the hidden set. */
+function UsageProviderFilter({
+  hiddenProviders,
+  onChange,
+}: {
+  readonly hiddenProviders: ReadonlySet<UsageProviderKind>;
+  readonly onChange: (hiddenProviders: readonly UsageProviderKind[]) => void;
+}) {
+  const visible = PROVIDER_ORDER.filter((provider) => !hiddenProviders.has(provider));
+  const label =
+    visible.length === PROVIDER_ORDER.length
+      ? "All providers"
+      : visible.length === 0
+        ? "No providers"
+        : visible.length === 1
+          ? PROVIDER_PRESENTATION[visible[0]!].label
+          : `${visible.length} providers`;
+
+  return (
+    <Menu>
+      <MenuTrigger render={<InlineButton />} className="group/usage-provider min-w-0 max-w-full">
+        <span className="min-w-0 truncate">{label}</span>
+        <ChevronDownIcon
+          className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/usage-provider:opacity-100 group-focus-visible/usage-provider:opacity-100 group-data-popup-open/usage-provider:opacity-100"
+          aria-hidden
+        />
+      </MenuTrigger>
+      <MenuPopup align="start">
+        <MenuCheckboxItem
+          checked={hiddenProviders.size === 0}
+          closeOnClick={false}
+          onCheckedChange={(checked) => onChange(checked ? [] : PROVIDER_ORDER)}
+        >
+          All providers
+        </MenuCheckboxItem>
+        <MenuSeparator />
+        {PROVIDER_ORDER.map((provider) => (
+          <MenuCheckboxItem
+            key={provider}
+            checked={!hiddenProviders.has(provider)}
+            closeOnClick={false}
+            onCheckedChange={(checked) =>
+              onChange(
+                PROVIDER_ORDER.filter((entry) =>
+                  entry === provider ? !checked : hiddenProviders.has(entry),
+                ),
+              )
+            }
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              <ProviderMark provider={provider} className="size-3.5" />
+              <span className="truncate">{PROVIDER_PRESENTATION[provider].label}</span>
+            </span>
+          </MenuCheckboxItem>
+        ))}
       </MenuPopup>
     </Menu>
   );

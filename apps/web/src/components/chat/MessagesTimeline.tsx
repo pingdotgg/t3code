@@ -2700,9 +2700,6 @@ function AssistantMessageMeta({
         className,
       )}
     >
-      {projectedItem?.item.type === "assistant_message" ? (
-        <AssistantForkButton projectedItem={projectedItem} />
-      ) : null}
       {projectedItem && projectedItem.item.status !== "completed" ? (
         <span className="rounded-full border border-border/70 px-1.5 py-0.5 font-mono text-3xs text-muted-foreground">
           {projectedItem.item.status}
@@ -2713,6 +2710,9 @@ function AssistantMessageMeta({
         showCopyButton={showCopyButton}
         streaming={copyStreaming}
       />
+      {projectedItem?.item.type === "assistant_message" ? (
+        <AssistantForkButton projectedItem={projectedItem} />
+      ) : null}
       {!message.streaming && (
         <Tooltip>
           <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
