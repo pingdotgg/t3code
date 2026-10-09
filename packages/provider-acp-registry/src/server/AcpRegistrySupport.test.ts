@@ -19,9 +19,11 @@ import * as Path from "effect/Path";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
@@ -1713,8 +1715,6 @@ describe("acpRegistryManagedBinaryDirectories", () => {
       );
 
       const directories = yield* AcpRegistrySupport.acpRegistryManagedBinaryDirectories({
-        fileSystem,
-        path,
         cacheDir,
         toolsDir: path.join(cacheDir, "tools"),
         platform: "linux",
@@ -1727,8 +1727,6 @@ describe("acpRegistryManagedBinaryDirectories", () => {
       ]);
 
       const missing = yield* AcpRegistrySupport.acpRegistryManagedBinaryDirectories({
-        fileSystem,
-        path,
         cacheDir: path.join(cacheDir, "does-not-exist"),
         toolsDir: path.join(cacheDir, "does-not-exist", "tools"),
         platform: "linux",

@@ -6,7 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { ChildProcessSpawner } from "effect/process";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -25,6 +25,7 @@ import {
   ACP_REGISTRY_PROVIDER,
   makeAcpRegistryAdapterV2,
 } from "@t3tools/provider-acp-registry/testing";
+import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 
 const REPLAY_SETTINGS = Schema.decodeUnknownSync(AcpRegistrySettings)({
   agentId: "replay-agent",
@@ -56,10 +57,6 @@ function layerAcpRegistryProviderAdapterRegistryReplay(
         instanceId: ACP_REGISTRY_DEFAULT_INSTANCE_ID,
         settings: REPLAY_SETTINGS,
         environment: {},
-        childProcessSpawner,
-        resolver: {
-          resolve: () => Effect.die("ACP registry resolver must not run during replay"),
-        },
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: makeAcpReplayRuntime({
           transcript,
@@ -74,7 +71,16 @@ function layerAcpRegistryProviderAdapterRegistryReplay(
       return [adapter];
     }),
   ).pipe(
-    Layer.provide(Layer.mergeAll(layerHost, NodeServices.layer, IdAllocator.layer)),
+    Layer.provide(
+      Layer.mergeAll(
+        layerHost,
+        NodeServices.layer,
+        IdAllocator.layer,
+        Layer.mock(AcpRegistrySupport.AcpRegistryCatalog)({
+          resolve: () => Effect.die("ACP registry resolver must not run during replay"),
+        }),
+      ),
+    ),
     // Held inbound lines must not outlive the scenario and wedge teardown.
     Layer.merge(
       Layer.effectDiscard(

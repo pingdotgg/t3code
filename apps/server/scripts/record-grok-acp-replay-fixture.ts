@@ -21,7 +21,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { ChildProcessSpawner } from "effect/process";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
@@ -443,7 +442,6 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
   const settings = { ...DEFAULT_GROK_SETTINGS, binaryPath: process.env.T3_GROK_BIN ?? "grok" };
   const layerRegistry = ProviderAdapterRegistry.layerFromAdaptersEffect(
     Effect.gen(function* () {
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const environment = yield* HostProcessEnvironment;
       const adapter = yield* makeGrokAdapterV2({
         instanceId: GROK_DEFAULT_INSTANCE_ID,
@@ -460,7 +458,6 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
             interruptPromptOnCancel: input.interruptPromptOnCancel ?? false,
             grokSettings: settings,
             environment,
-            childProcessSpawner,
             runtimeMode: grokLaunchRuntimeMode(runtimePolicy),
           }),
       });
