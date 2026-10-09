@@ -651,6 +651,7 @@ it.effect.each([" /COMPACT ", "/logout"])(
         assert.isUndefined(
           (yield* threads.getThreadProjection(launched.threadId)).thread.titleRegeneration,
         );
+        assert.isNull((yield* threads.getThreadProjection(launched.threadId)).thread.lastVisitedAt);
         assert.isFalse(
           (yield* outbox.listByCommandId(CommandId.make("compact-title:initial-message"))).some(
             (effect) => effect.request.type === "thread-title.generate",
@@ -673,6 +674,9 @@ it.effect.each([" /COMPACT ", "/logout"])(
           (yield* threads.getThreadProjection(launched.threadId)).thread.titleRegeneration
             ?.requestId,
           commandId,
+        );
+        assert.isNotNull(
+          (yield* threads.getThreadProjection(launched.threadId)).thread.lastVisitedAt,
         );
         assert.deepEqual(
           (yield* outbox.listByCommandId(commandId))
