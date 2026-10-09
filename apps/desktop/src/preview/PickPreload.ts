@@ -519,7 +519,8 @@ function startAnnotation(sendEnabled: boolean): void {
   let finished = false;
   const host = document.createElement("div");
   host.setAttribute(OVERLAY_ATTRIBUTE, "");
-  host.style.cssText = `position:fixed;inset:0;z-index:${Z_INDEX_OVERLAY};pointer-events:none`;
+  host.popover = "manual";
+  host.style.cssText = `position:fixed;inset:0;width:100%;height:100%;margin:0;padding:0;border:0;background:transparent;overflow:visible;z-index:${Z_INDEX_OVERLAY};pointer-events:none`;
   applyAnnotationTheme(host, annotationTheme);
   const shadowRoot = host.attachShadow({ mode: "closed" });
   const themeStyle = document.createElement("style");
@@ -1327,6 +1328,7 @@ function startAnnotation(sendEnabled: boolean): void {
     if (editorLayoutFrame !== null) window.cancelAnimationFrame(editorLayoutFrame);
     ipcRenderer.off(CANCEL_PICK_CHANNEL, onCancel);
     ipcRenderer.off(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
+    modalObserver.disconnect();
     document.documentElement.removeAttribute("data-t3code-annotation-tool");
     cursorStyle.remove();
     host.remove();
@@ -1444,7 +1446,31 @@ function startAnnotation(sendEnabled: boolean): void {
   window.addEventListener("resize", repaint, { passive: true });
   ipcRenderer.on(CANCEL_PICK_CHANNEL, onCancel);
   ipcRenderer.on(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
-  document.documentElement.appendChild(host);
+  const syncOverlay = (): void => {
+    // A modal makes the rest of the document inert. Keep the top-layer overlay
+    // inside it so the editor stays interactive, including when dialogs change.
+    const modal = document.elementFromPoint(0, 0)?.closest("dialog:modal");
+    const parent = modal ?? document.documentElement;
+    if (host.parentElement === parent) return;
+    parent.appendChild(host);
+    host.showPopover();
+  };
+  const modalObserver = new MutationObserver((records) => {
+    if (
+      !host.isConnected ||
+      records.some(
+        (record) => record.type === "attributes" && record.target instanceof HTMLDialogElement,
+      )
+    )
+      syncOverlay();
+  });
+  syncOverlay();
+  modalObserver.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["open"],
+    childList: true,
+    subtree: true,
+  });
   refreshToolButtons();
   updateStatus();
   activeSession = {
