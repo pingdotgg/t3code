@@ -6,29 +6,22 @@
  *
  * @module provider/Drivers/CursorDriver
  */
-import { CursorSettings, ProviderDriverKind, ProviderSetupError } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderSetupError } from "@t3tools/contracts";
+import { CursorSettings } from "../settings.ts";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
-import { readCursorUsageLimits } from "../cursorUsageLimits.ts";
+import { readCursorUsageLimits } from "./usageLimits.ts";
 
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
-import * as ServerConfig from "../../config.ts";
-import * as ServerSettings from "../../serverSettings.ts";
-import { makeCursorTextGeneration } from "../../textGeneration/CursorTextGeneration.ts";
-import {
-  CursorAdapterV2Driver,
-  type CursorAdapterV2DriverEnv,
-} from "../../orchestration-v2/Adapters/CursorAdapterV2.ts";
-import { ProviderDriverError } from "../Errors.ts";
-import {
-  buildInitialCursorProviderSnapshot,
-  checkCursorProviderStatus,
-} from "../CursorProvider.ts";
-import * as CursorSdkCatalog from "../CursorSdkCatalog.ts";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { makeCursorTextGeneration } from "./textGeneration.ts";
+import { CursorAdapterV2Driver, type CursorAdapterV2DriverEnv } from "./adapter.ts";
+import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
+import { buildInitialCursorProviderSnapshot, checkCursorProviderStatus } from "./status.ts";
+import * as CursorSdkCatalog from "./CursorSdkCatalog.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import {
   defaultProviderContinuationIdentity,
@@ -43,11 +36,10 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "@t3tools/provider-core/server/snapshotSettings";
-import { probeCursorSkills } from "./CursorSkills.ts";
-import { makeCursorAuth } from "../CursorAuth.ts";
-import * as CursorCredentialStore from "../CursorCredentialStore.ts";
-import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
-import * as CursorAgentSdk from "../../orchestration-v2/Adapters/CursorAgentSdk.ts";
+import { probeCursorSkills } from "./skills.ts";
+import { makeCursorAuth } from "./auth.ts";
+import * as CursorCredentialStore from "./credentialStore.ts";
+import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 const isSdkRunnerError = Schema.is(CursorAgentSdk.CursorAgentSdkRunnerError);
 
@@ -63,10 +55,7 @@ export type CursorDriverEnv =
   | FileSystem.FileSystem
   | Path.Path
   | HttpClient.HttpClient
-  | ProviderHost
-  | ServerConfig.ServerConfig
-  | ServerSecretStore.ServerSecretStore
-  | ServerSettings.ServerSettingsService;
+  | ProviderHost.ProviderHost;
 
 export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
   driverKind: DRIVER_KIND,
@@ -78,8 +67,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
   defaultConfig: (): CursorSettings => decodeCursorSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
-      const serverSettings = yield* ServerSettings.ServerSettingsService;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
@@ -100,7 +88,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const credentials = yield* CursorCredentialStore.makeCursorCredentialStore(
         instanceId,
         path.join(
-          (yield* ServerConfig.ServerConfig).stateDir,
+          host.paths.stateDir,
           "provider-auth",
           encodeURIComponent(instanceId),
           "cursor.json",
@@ -214,7 +202,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
               effectiveConfig.enabled &&
               snapshot.installed &&
               snapshot.auth.status === "authenticated"
-                ? serverSettings.getSettings.pipe(
+                ? host.settings.get.pipe(
                     Effect.flatMap((settings) =>
                       readCursorUsageLimits(
                         effectiveConfig,

@@ -115,7 +115,7 @@ A provider lives in its own `packages/provider-<name>` package, with
   Settings live in `providerInstances`; new providers are off by default.
 - **Package boundaries.** Server code imports only `@t3tools/provider-core/server/*`, contracts,
   and shared. It reaches the server through `ProviderHost` (paths, settings, background demand,
-  attachments), never through `apps/server`. Tests use `@t3tools/provider-testing`.
+  attachments, stored credentials), never through `apps/server`. Tests use `@t3tools/provider-testing`.
 - **Server registration:** the driver's entry in
   [`builtInDrivers.ts`](../../apps/server/src/provider/builtInDrivers.ts) and the adapter driver's in
   [`builtInProviderAdapterDrivers.ts`](../../apps/server/src/orchestration-v2/builtInProviderAdapterDrivers.ts).

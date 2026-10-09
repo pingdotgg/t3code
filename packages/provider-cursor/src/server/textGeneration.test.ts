@@ -1,5 +1,6 @@
 import type { RunResult } from "@cursor/sdk";
-import { CursorSettings, ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
+import { ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
+import { CursorSettings } from "../settings.ts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -9,7 +10,7 @@ import * as Schema from "effect/Schema";
 import { createModelSelection } from "@t3tools/shared/model";
 import { beforeEach, vi } from "vite-plus/test";
 
-import { makeCursorTextGeneration } from "./CursorTextGeneration.ts";
+import { makeCursorTextGeneration } from "./textGeneration.ts";
 
 const cursorSdkMock = vi.hoisted(() => ({
   create: vi.fn<(options: unknown) => Promise<unknown>>(),
@@ -24,7 +25,7 @@ const cursorSdkMock = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock("../provider/cursorSdk.ts", () => ({ Agent: { create: cursorSdkMock.create } }));
+vi.mock("./sdk.ts", () => ({ Agent: { create: cursorSdkMock.create } }));
 
 let hasCustomPolicy = false;
 const layerFs = FileSystem.layerNoop({

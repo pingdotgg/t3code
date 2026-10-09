@@ -6,28 +6,12 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { makeCursorCredentialStore } from "./CursorCredentialStore.ts";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as Layer from "effect/Layer";
+import { makeCursorCredentialStore } from "./credentialStore.ts";
 
-const makeSecrets = () => {
-  const data = new Map<string, Uint8Array>();
-  return {
-    data,
-    secrets: ServerSecretStore.ServerSecretStore.of({
-      get: (key) => Effect.sync(() => Option.fromUndefinedOr(data.get(key))),
-      set: (key, bytes) =>
-        Effect.sync(() => {
-          data.set(key, bytes);
-        }),
-      remove: (key) =>
-        Effect.sync(() => {
-          data.delete(key);
-        }),
-      create: () => Effect.die("unused"),
-      getOrCreateRandom: () => Effect.die("unused"),
-    }),
-  };
-};
+const layerHost = Layer.provideMerge(layerTestProviderHost(), NodeServices.layer);
 
 const legacyCredentials = {
   version: 1 as const,
@@ -74,44 +58,23 @@ it.effect.each([
     const path = yield* Path.Path;
     const legacyFile = path.join(yield* fileSystem.makeTempDirectoryScoped(), "cursor.json");
     yield* fileSystem.writeFileString(legacyFile, legacy);
-    const { secrets } = makeSecrets();
+    const host = yield* ProviderHost.ProviderHost;
     const instanceId = ProviderInstanceId.make("personal");
     if (stored !== undefined) {
-      const current = yield* makeCursorCredentialStore(instanceId).pipe(
-        Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
-      );
-      yield* secrets.set(current.binding.key, new TextEncoder().encode(stored));
+      yield* (yield* host.credentials("cursor", instanceId)).set(new TextEncoder().encode(stored));
     }
-    const migrated = yield* makeCursorCredentialStore(instanceId, legacyFile).pipe(
-      Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
-    );
+    const migrated = yield* makeCursorCredentialStore(instanceId, legacyFile);
     assert.strictEqual((yield* Effect.tryPromise(() => migrated.store.load()))?.apiKey, expected);
     assert.isFalse(yield* fileSystem.exists(legacyFile));
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(layerHost)),
 );
 
 it.effect(
   "restores SDK credentials in a new controller and keeps another account when signing out",
   () =>
     Effect.gen(function* () {
-      const data = new Map<string, Uint8Array>();
-      const secrets = ServerSecretStore.ServerSecretStore.of({
-        get: (key) => Effect.sync(() => Option.fromUndefinedOr(data.get(key))),
-        set: (key, bytes) =>
-          Effect.sync(() => {
-            data.set(key, bytes);
-          }),
-        remove: (key) =>
-          Effect.sync(() => {
-            data.delete(key);
-          }),
-        create: () => Effect.die("unused"),
-        getOrCreateRandom: () => Effect.die("unused"),
-      });
-      const makeStore = (id: string) =>
-        makeCursorCredentialStore(ProviderInstanceId.make(id)).pipe(
-          Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
-        );
+      const host = yield* ProviderHost.ProviderHost;
+      const makeStore = (id: string) => makeCursorCredentialStore(ProviderInstanceId.make(id));
       const personal = yield* makeStore("personal");
       const work = yield* makeStore("work");
       const credentials = {
@@ -128,7 +91,9 @@ it.effect(
       );
       const restored = yield* makeStore("personal");
       assert.deepEqual(yield* Effect.tryPromise(() => restored.store.load()), credentials);
-      data.set(personal.binding.key, new TextEncoder().encode("damaged credential"));
+      yield* (yield* host.credentials("cursor", "personal")).set(
+        new TextEncoder().encode("damaged credential"),
+      );
       assert.isUndefined(yield* Effect.tryPromise(() => restored.store.load()));
       yield* Effect.tryPromise(() => restored.store.save(credentials));
       yield* Effect.tryPromise(() => restored.store.clear());
@@ -137,5 +102,5 @@ it.effect(
         (yield* Effect.tryPromise(() => work.store.load()))?.apiKey,
         "test-only-work-key",
       );
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(layerHost)),
 );

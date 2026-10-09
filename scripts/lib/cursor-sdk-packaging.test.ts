@@ -79,7 +79,7 @@ it("loads packaged Cursor catalog chunks without credentials or checkout depende
       entry,
       `
       import assert from 'node:assert/strict';
-      import { Cursor } from ${JSON.stringify(NodePath.join(repoRoot, "apps/server/src/provider/cursorSdk.ts"))};
+      import { Cursor } from ${JSON.stringify(NodePath.join(repoRoot, "packages/provider-cursor/src/server/sdk.ts"))};
       for (const [operation, request] of [
         ['Cursor.models.list', () => Cursor.models.list({ apiKey: '' })],
         ['Cursor.me', () => Cursor.me({ apiKey: '' })],

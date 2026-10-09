@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 
-import * as ProviderEventLoggers from "../../provider/ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 
 const cursorSdkMock = vi.hoisted(() => {
@@ -92,7 +92,7 @@ const cursorSdkMock = vi.hoisted(() => {
   };
 });
 
-vi.mock("../../provider/cursorSdk.ts", () => ({
+vi.mock("./sdk.ts", () => ({
   Agent: {
     create: cursorSdkMock.create,
     resume: cursorSdkMock.resume,

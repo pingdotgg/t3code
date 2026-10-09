@@ -12,7 +12,7 @@ import type { UsageRecord } from "./usageTranscripts.ts";
 import {
   CursorKeychainTimeoutError,
   readMacCursorAccessToken,
-} from "../provider/cursorKeychainToken.ts";
+} from "@t3tools/provider-cursor/server";
 
 function object(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)

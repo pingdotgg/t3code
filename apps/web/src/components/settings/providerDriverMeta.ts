@@ -3,11 +3,11 @@ import {
   AntigravitySettings,
   ClaudeSettings,
   CodexSettings,
-  CursorSettings,
   GrokSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import { makeProviderClientRegistry } from "@t3tools/provider-core/client";
+import { cursorClient } from "@t3tools/provider-cursor/client";
 import { museClient } from "@t3tools/provider-muse/client";
 import { openCodeClient } from "@t3tools/provider-opencode/client";
 import { piClient } from "@t3tools/provider-pi/client";
@@ -24,20 +24,7 @@ export const providerClients = makeProviderClientRegistry([
     label: "Claude",
     settingsSchema: ClaudeSettings,
   },
-  {
-    driverKind: ProviderDriverKind.make("cursor"),
-    label: "Cursor",
-    settingsSchema: CursorSettings,
-    environmentFields: [
-      {
-        name: "CURSOR_API_KEY",
-        label: "Cursor API key",
-        description: "Optional. Overrides browser sign-in for this provider.",
-        placeholder: "Paste API key",
-        sensitive: true,
-      },
-    ],
-  },
+  cursorClient,
   {
     driverKind: ProviderDriverKind.make("grok"),
     label: "Grok",

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { CursorTransportFailure } from "./CursorTransportFailure.ts";
+import { CursorTransportFailure } from "./transportFailure.ts";
 
 const diagnostic = "Error: RetriableError: WritableIterable is closed";
 

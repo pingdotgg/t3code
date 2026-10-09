@@ -12,8 +12,8 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { makeCursorAuth, type CursorAuthOptions } from "./CursorAuth.ts";
-import { InMemoryCredentialStore } from "./cursorSdk.ts";
+import { makeCursorAuth, type CursorAuthOptions } from "./auth.ts";
+import { InMemoryCredentialStore } from "./sdk.ts";
 
 const instanceId = ProviderInstanceId.make("cursor-personal");
 const owner = "owner-client";

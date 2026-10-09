@@ -2,9 +2,9 @@
 import * as NodeChildProcess from "node:child_process";
 import { describe, expect, it } from "vite-plus/test";
 
-const cursorSdkUrl = new URL("./cursorSdk.ts", import.meta.url).href;
+const cursorSdkUrl = new URL("./sdk.ts", import.meta.url).href;
 
-// Loads cursorSdk.ts in a fresh process. @cursor/sdk is stubbed so the guard
+// Loads sdk.ts in a fresh process. @cursor/sdk is stubbed so the guard
 // can be tested without the real package. The vitest worker already has its
 // own unhandledRejection listener, which would hide the process-exit behavior.
 const probeProgram = `
