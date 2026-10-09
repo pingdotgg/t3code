@@ -29,6 +29,7 @@ import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
 const threadId = ThreadId.make("thread:effect-worker-restart");
@@ -836,4 +837,95 @@ it.effect("settles a delegated child once its restart continuation fails for goo
       assert.deepEqual(yield* Ref.get(recovered), [threadId]);
     }).pipe(Effect.provide(layer));
   }),
+);
+
+it.effect("frees a worker from an effect that outlives its lease", () =>
+  Effect.gen(function* () {
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    const wedgedThreadIds = [1, 2, 3, 4].map((index) =>
+      ThreadId.make(`thread:effect-worker-wedged-${index}`),
+    );
+    const otherThreadId = ThreadId.make("thread:effect-worker-other-provider");
+    // Sorted ahead of the other thread's start, so the wedged starts take every worker first.
+    const wedgedEffectIds = wedgedThreadIds.map((_, index) => `effect:a-wedged-start-${index}`);
+    const followUpEffectId = "effect:c-wedged-follow-up";
+    yield* outbox.enqueue([
+      ...wedgedThreadIds.map((wedgedThreadId, index) => ({
+        id: wedgedEffectIds[index]!,
+        commandId: CommandId.make(`command:effect-worker-wedged-${index}`),
+        threadId: wedgedThreadId,
+        request: {
+          type: "provider-turn.start" as const,
+          runId: RunId.make(`run:effect-worker-wedged-${index}`),
+        },
+      })),
+      {
+        id: "effect:b-other-start",
+        commandId: CommandId.make("command:effect-worker-other-provider"),
+        threadId: otherThreadId,
+        request: { type: "provider-turn.start", runId: RunId.make("run:effect-worker-other") },
+      },
+      {
+        id: followUpEffectId,
+        commandId: CommandId.make("command:effect-worker-wedged-follow-up"),
+        threadId: wedgedThreadIds[0]!,
+        request: { type: "terminal.cleanup" },
+      },
+    ]);
+
+    const providerAnswers = yield* Deferred.make<void>();
+    const wedgedStarts = yield* Ref.make(0);
+    const executed = yield* Ref.make<ReadonlyArray<string>>([]);
+    const layerExecutor = Layer.succeed(
+      EffectWorker.OrchestrationEffectExecutorV2,
+      EffectWorker.OrchestrationEffectExecutorV2.of({
+        execute: (effect) =>
+          (wedgedEffectIds.includes(effect.id)
+            ? Ref.update(wedgedStarts, (count) => count + 1).pipe(
+                Effect.andThen(Deferred.await(providerAnswers)),
+              )
+            : Effect.void
+          ).pipe(Effect.andThen(Ref.update(executed, (ids) => [...ids, effect.id]))),
+      }),
+    );
+    const layerWorker = EffectWorker.layerWithOptions({ workerId: "wedged-provider-worker" }).pipe(
+      Layer.provide(Layer.merge(Layer.succeed(EffectOutbox.EffectOutboxV2, outbox), layerExecutor)),
+    );
+    yield* EffectWorker.runDaemonWithOptions({ concurrency: 4 }).pipe(
+      Effect.provide(layerWorker),
+      Effect.forkScoped,
+    );
+    const awaitCondition = Effect.fnUntraced(function* (condition: Effect.Effect<boolean>) {
+      while (!(yield* condition)) yield* Effect.yieldNow;
+    });
+    const statusOf = (effectId: string) =>
+      outbox.get(effectId).pipe(Effect.map(Option.map((effect) => effect.status)));
+
+    yield* awaitCondition(Ref.get(wedgedStarts).pipe(Effect.map((count) => count === 4)));
+    assert.deepEqual(yield* Ref.get(executed), []);
+
+    yield* TestClock.adjust("30 seconds");
+    yield* awaitCondition(
+      Ref.get(executed).pipe(Effect.map((ids) => ids.includes("effect:b-other-start"))),
+    );
+    // The wedged threads keep their order: nothing runs behind a start still in flight.
+    assert.deepEqual(yield* statusOf(wedgedEffectIds[0]!), Option.some("running"));
+    assert.deepEqual(yield* statusOf(followUpEffectId), Option.some("pending"));
+
+    yield* Deferred.succeed(providerAnswers, undefined);
+    yield* outbox.notifyAvailable();
+    yield* awaitCondition(
+      Ref.get(executed).pipe(Effect.map((ids) => ids.includes(followUpEffectId))),
+    );
+    for (const effectId of wedgedEffectIds) {
+      assert.deepEqual(yield* statusOf(effectId), Option.some("succeeded"));
+    }
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        EffectOutbox.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+        TestClock.layer(),
+      ),
+    ),
+  ),
 );

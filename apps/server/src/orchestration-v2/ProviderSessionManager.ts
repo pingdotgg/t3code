@@ -48,6 +48,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import {
   ProviderAdapterEventStreamError,
+  ProviderAdapterProtocolError,
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2Error,
   type ProviderAdapterV2Event,
@@ -60,6 +61,11 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
 const RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 * 1000;
+/**
+ * How long a provider may take to accept a control request. Turn starts
+ * normally take seconds, and well under a minute at worst.
+ */
+const PROVIDER_REQUEST_TIMEOUT_MS = 2 * 60 * 1000;
 
 const busyTurnPrefix = (providerThreadId: ProviderThreadId) => `${providerThreadId}#`;
 /** The identity a turn's start and its `turn.terminal` share. */
@@ -1685,6 +1691,26 @@ export const layerWithOptions = (
               modelFamily: normalizeModelMetricLabel(model),
             },
           });
+        // A provider that stops answering fails its own requests instead of
+        // holding the effect that sent them. Every adapter returns once the
+        // provider accepts the request and streams the turn as events, so this
+        // bounds the acceptance, never a running turn.
+        const withinDeadline =
+          (request: string) =>
+          <A>(effect: Effect.Effect<A, ProviderAdapterV2Error>) =>
+            effect.pipe(
+              Effect.timeoutOrElse({
+                duration: Duration.millis(PROVIDER_REQUEST_TIMEOUT_MS),
+                orElse: () =>
+                  Effect.fail(
+                    new ProviderAdapterProtocolError({
+                      driver: runtime.driver,
+                      detail: `the provider did not answer the ${request} within 2 minutes`,
+                    }),
+                  ),
+              }),
+            );
+        const compactThread = runtime.compactThread;
         return {
           ...runtime,
           subscribeEvents,
@@ -1700,7 +1726,7 @@ export const layerWithOptions = (
                 providerInstanceId: runtime.instanceId,
               }),
             ).pipe(
-              Effect.andThen(runtime.ensureThread(input)),
+              Effect.andThen(runtime.ensureThread(input).pipe(withinDeadline("thread start"))),
               Effect.tap((providerThread) =>
                 markProviderThreadLoaded({
                   providerSessionId,
@@ -1715,8 +1741,9 @@ export const layerWithOptions = (
             ),
           resumeThread: (input) => {
             const threadId = input.threadId ?? input.providerThread.appThreadId;
+            const resume = () => runtime.resumeThread(input).pipe(withinDeadline("thread resume"));
             if (threadId === null || threadId === undefined) {
-              return runtime.resumeThread(input);
+              return resume();
             }
             const providerThreadKey = providerThreadLoadKey({
               providerThread: input.providerThread,
@@ -1744,7 +1771,7 @@ export const layerWithOptions = (
                 isProviderThreadLoaded({ providerSessionId, threadId, providerThreadKey }),
               ),
               Effect.flatMap((loaded) =>
-                loaded ? Effect.succeed(input.providerThread) : runtime.resumeThread(input),
+                loaded ? Effect.succeed(input.providerThread) : resume(),
               ),
               Effect.tap((providerThread) =>
                 markProviderThreadLoaded({
@@ -1772,7 +1799,7 @@ export const layerWithOptions = (
                 providerInstanceId: runtime.instanceId,
               }),
             ).pipe(
-              Effect.andThen(runtime.forkThread(input)),
+              Effect.andThen(runtime.forkThread(input).pipe(withinDeadline("thread fork"))),
               Effect.tap((providerThread) =>
                 markProviderThreadLoaded({
                   providerSessionId,
@@ -1820,7 +1847,12 @@ export const layerWithOptions = (
                     ),
                   ),
                   () =>
-                    runtime.startTurn(input).pipe(turnMetrics("send", input.modelSelection.model)),
+                    runtime
+                      .startTurn(input)
+                      .pipe(
+                        withinDeadline("turn start"),
+                        turnMetrics("send", input.modelSelection.model),
+                      ),
                   (_, exit) =>
                     Exit.isFailure(exit)
                       ? observeActivity(
@@ -1831,20 +1863,34 @@ export const layerWithOptions = (
                 ),
               ),
             ),
+          ...(compactThread === undefined
+            ? {}
+            : {
+                compactThread: (input) => compactThread(input).pipe(withinDeadline("compaction")),
+              }),
           steerTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
-              Effect.andThen(runtime.steerTurn(input).pipe(turnMetrics("steer"))),
+              Effect.andThen(
+                runtime.steerTurn(input).pipe(withinDeadline("steer"), turnMetrics("steer")),
+              ),
             ),
           interruptTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
-              Effect.andThen(runtime.interruptTurn(input).pipe(turnMetrics("interrupt"))),
+              Effect.andThen(
+                runtime
+                  .interruptTurn(input)
+                  .pipe(withinDeadline("interrupt"), turnMetrics("interrupt")),
+              ),
             ),
           respondToRuntimeRequest: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
               Effect.andThen(
                 runtime
                   .respondToRuntimeRequest(input)
-                  .pipe(turnMetrics("runtime-request-response")),
+                  .pipe(
+                    withinDeadline("request response"),
+                    turnMetrics("runtime-request-response"),
+                  ),
               ),
             ),
         };
