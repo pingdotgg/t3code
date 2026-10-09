@@ -38,7 +38,12 @@ import {
 } from "lucide-react";
 
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
-import { getProviderInstanceEntry } from "../../providerInstances";
+import {
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+  shouldShowInstanceBadge,
+} from "../../providerInstances";
+import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { formatShortTimestamp } from "../../timestampFormat";
 import { getTriggerDisplayModelName } from "./providerIconUtils";
 import { ProviderInstanceIcon, providerTextColor } from "./ProviderInstanceIcon";
@@ -138,6 +143,7 @@ export function V2LifecycleRow(props: {
                   </span>
                 ) : null}
                 <HandoffEndpoint
+                  environmentId={props.environmentId}
                   providers={props.providerStatuses}
                   instanceId={endpoint.instanceId}
                   model={endpoint.model}
@@ -148,6 +154,7 @@ export function V2LifecycleRow(props: {
               <ArrowRightIcon aria-hidden="true" className="size-3 shrink-0" />
             ) : null}
             <HandoffEndpoint
+              environmentId={props.environmentId}
               providers={props.providerStatuses}
               instanceId={item.toProviderInstanceId}
               model={to.model}
@@ -571,11 +578,20 @@ function SubagentTimelineTooltip(
 }
 
 function HandoffEndpoint(props: {
+  readonly environmentId: EnvironmentId;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly instanceId: ProviderInstanceId;
   readonly model?: string | undefined;
 }) {
-  const entry = getProviderInstanceEntry(props.providers, props.instanceId);
+  // Settings carry each ACP instance's agent, which tells its glyph apart.
+  const entries = applyProviderInstanceSettings(
+    deriveProviderInstanceEntries(props.providers),
+    useEnvironmentSettings(props.environmentId),
+  );
+  const entry = entries.find((candidate) => candidate.instanceId === props.instanceId);
+  // Same account badge as the sidebar: a handoff between two accounts of one
+  // provider would otherwise show the same glyph on both sides.
+  const showBadge = entry !== undefined && shouldShowInstanceBadge(entry, entries);
   const model = props.model?.trim();
   const providerModel =
     model === undefined || model.length === 0
@@ -596,14 +612,19 @@ function HandoffEndpoint(props: {
         render={
           <span
             tabIndex={0}
-            className="inline-flex min-w-0 items-center gap-1 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="inline-flex min-w-0 items-center gap-1.5 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <ProviderInstanceIcon
               driverKind={entry?.driverKind ?? ProviderDriverKind.make(props.instanceId)}
               displayName={entry?.displayName ?? props.instanceId}
+              accentColor={entry?.accentColor}
               acpRegistryAgentId={entry?.acpRegistryAgentId}
               acpRegistryIconUrl={entry?.acpRegistryIconUrl}
-              iconClassName="size-3"
+              showBadge={showBadge}
+              // Glyph dims, badge stays saturated; sized like the sidebar row.
+              iconClassName={cn("size-3.5", showBadge && "opacity-60")}
+              badgeClassName="right-[-0.1875rem] bottom-[-0.1875rem] h-3 min-w-3 px-0.5 text-5xs"
+              indicatorBackground="var(--background)"
             />
             <span
               className={cn("truncate font-medium", labelColor.className)}
