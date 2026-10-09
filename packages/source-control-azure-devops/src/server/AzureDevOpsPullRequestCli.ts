@@ -11,7 +11,7 @@ import type {
   PullRequestMergeMethod,
 } from "@t3tools/contracts";
 
-import * as AzureDevOpsCli from "../sourceControl/AzureDevOpsCli.ts";
+import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import {
   decodeItemContentJson,
   decodeIterationChangesJson,
@@ -258,7 +258,7 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly requested: boolean;
     }) => Effect.Effect<void, AzureDevOpsPullRequestCliError>;
   }
->()("t3/pullRequest/AzureDevOpsPullRequestCli") {}
+>()("@t3tools/source-control-azure-devops/server/AzureDevOpsPullRequestCli") {}
 
 function statusArgs(state: PullRequestListState): ReadonlyArray<string> {
   switch (state) {

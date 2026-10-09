@@ -26,7 +26,6 @@ import * as SourceControlProviderRegistry from "../src/sourceControl/SourceContr
 import * as GitHubApi from "../src/sourceControl/GitHubApi.ts";
 import * as GitLabCli from "../src/sourceControl/GitLabCli.ts";
 import * as SourceControlBuiltInDrivers from "../src/sourceControl/builtInDrivers.ts";
-import * as AzureDevOpsCli from "../src/sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "../src/sourceControl/BitbucketApi.ts";
 import * as ServerSettings from "../src/serverSettings.ts";
 import * as VcsProcess from "../src/vcs/VcsProcess.ts";
@@ -155,7 +154,6 @@ await Effect.runPromise(
               GitHubApi.layerWithDependencies,
               GitLabCli.layer,
               SourceControlBuiltInDrivers.layer,
-              AzureDevOpsCli.layer,
               // No saved credentials here; Bitbucket falls back to T3CODE_BITBUCKET_* variables.
               BitbucketApi.layer,
             ),

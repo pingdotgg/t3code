@@ -11,7 +11,7 @@ import {
   type VcsError,
 } from "@t3tools/contracts";
 
-import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import {
   decodeAzureDevOpsPullRequestJson,
   decodeAzureDevOpsPullRequestListJson,
@@ -217,7 +217,7 @@ export class AzureDevOpsCli extends Context.Service<
       readonly args: ReadonlyArray<string>;
       readonly timeoutMs?: number;
       readonly maxOutputBytes?: number;
-    }) => Effect.Effect<VcsProcess.VcsProcessOutput, AzureDevOpsCliError>;
+    }) => Effect.Effect<SourceControlHost.SourceControlProcessOutput, AzureDevOpsCliError>;
 
     readonly listPullRequests: (input: {
       readonly cwd: string;
@@ -263,7 +263,7 @@ export class AzureDevOpsCli extends Context.Service<
       readonly remoteName?: string;
     }) => Effect.Effect<void, AzureDevOpsCliError>;
   }
->()("t3/sourceControl/AzureDevOpsCli") {}
+>()("@t3tools/source-control-azure-devops/server/AzureDevOpsCli") {}
 
 function normalizeChangeRequestId(reference: string): string {
   const trimmed = reference.trim().replace(/^#/, "");
@@ -352,7 +352,7 @@ function decodeAzureDevOpsJson<S extends Schema.Top>(
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
-  const process = yield* VcsProcess.VcsProcess;
+  const { process } = yield* SourceControlHost.SourceControlHost;
 
   const execute: AzureDevOpsCli["Service"]["execute"] = (input) =>
     process

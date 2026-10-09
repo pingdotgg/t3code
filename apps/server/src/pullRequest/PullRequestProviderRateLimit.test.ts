@@ -1,11 +1,11 @@
 import { assert, it } from "@effect/vitest";
 
-import * as AzureDevOpsCli from "../sourceControl/AzureDevOpsCli.ts";
+import * as AzureDevOpsCli from "@t3tools/source-control-azure-devops/server/AzureDevOpsCli";
 import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
 import * as GitHubApi from "../sourceControl/GitHubApi.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as GitLabCli from "../sourceControl/GitLabCli.ts";
-import { azureDevOpsProviderFailure } from "./AzureDevOpsPullRequestProvider.ts";
+import { azureDevOpsProviderFailure } from "@t3tools/source-control-azure-devops/server/AzureDevOpsPullRequestProvider";
 import { bitbucketProviderFailure } from "./BitbucketPullRequestProvider.ts";
 import { gitHubProviderFailure } from "./GitHubPullRequestProvider.ts";
 import { gitLabProviderFailure } from "./GitLabPullRequestProvider.ts";

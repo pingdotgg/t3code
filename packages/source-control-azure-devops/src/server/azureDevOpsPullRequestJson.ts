@@ -12,7 +12,7 @@ import type {
 import { TrimmedNonEmptyString } from "@t3tools/contracts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
-import { azureDevOpsPullRequestWebUrl } from "../sourceControl/azureDevOpsPullRequests.ts";
+import { azureDevOpsPullRequestWebUrl } from "./azureDevOpsPullRequests.ts";
 
 /**
  * Azure's enums are decoded as plain strings and normalized here, in the same tolerant style as

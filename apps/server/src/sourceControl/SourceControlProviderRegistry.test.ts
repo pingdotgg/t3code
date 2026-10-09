@@ -13,7 +13,8 @@ import * as ServerConfig from "../config.ts";
 import type * as VcsDriver from "../vcs/VcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
+import * as AzureDevOpsCli from "@t3tools/source-control-azure-devops/server/AzureDevOpsCli";
+import * as AzureDevOpsPullRequestCli from "@t3tools/source-control-azure-devops/server/AzureDevOpsPullRequestCli";
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as GitHubApi from "./GitHubApi.ts";
@@ -103,6 +104,7 @@ function makeRegistry(input: {
           ),
         ),
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
+        Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({}),
         Layer.mock(BitbucketApi.BitbucketApi)({}),
         ServerSettings.ServerSettingsService.layerTest(),
         Layer.mock(GitHubApi.GitHubApi)({

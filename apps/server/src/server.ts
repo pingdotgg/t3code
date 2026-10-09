@@ -52,7 +52,6 @@ import * as ProviderHostLive from "./provider/ProviderHostLive.ts";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
-import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubApi from "./sourceControl/GitHubApi.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
@@ -301,7 +300,6 @@ const layerVcsDriverRegistry = VcsDriverRegistry.layer.pipe(Layer.provide(VcsPro
 const layerSourceControlProviderRegistry = SourceControlProviderRegistry.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
-      AzureDevOpsCli.layer,
       BitbucketApi.layer,
       GitHubApi.layerWithDependencies,
       GitLabCli.layer,
