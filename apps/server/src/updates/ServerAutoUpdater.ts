@@ -102,6 +102,9 @@ export const layer = Layer.effectDiscard(
           skippedTargets.add(targetVersion);
           yield* Effect.logInfo("Installing a background server update", { targetVersion });
           yield* selfUpdate.update({ targetVersion });
+          // The launcher stops us after accepting the handoff. Keep new provider
+          // starts behind the install permit until this runtime is shut down.
+          yield* Effect.never;
         }),
       );
     }).pipe(
