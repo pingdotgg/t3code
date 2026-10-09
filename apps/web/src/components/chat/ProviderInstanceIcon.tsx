@@ -56,6 +56,7 @@ export function resolveProviderInstanceAcpRegistryIconUrl(input: {
 
 export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   driverKind: ProviderDriverKind;
+  model?: string | undefined;
   displayName: string;
   accentColor?: string | undefined;
   acpRegistryAgentId?: string | undefined;
@@ -68,8 +69,10 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   statusDotClassName?: string;
   indicatorBackground?: string;
 }) {
-  const Icon = PROVIDER_ICON_BY_PROVIDER[props.driverKind] ?? null;
-  const packageIcon = providerClients.get(props.driverKind)?.icon;
+  const claudeModel =
+    props.driverKind === "antigravity" && /^claude-(opus|sonnet)-/.test(props.model ?? "");
+  const Icon = claudeModel ? ClaudeAI : (PROVIDER_ICON_BY_PROVIDER[props.driverKind] ?? null);
+  const packageIcon = claudeModel ? undefined : providerClients.get(props.driverKind)?.icon;
   const indicatorBackground = props.indicatorBackground ?? "var(--card)";
   const accentStyle = props.accentColor
     ? ({ "--provider-accent": props.accentColor } as CSSProperties)

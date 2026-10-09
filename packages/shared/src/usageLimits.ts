@@ -356,6 +356,17 @@ export interface LimitPool {
 
 /** Show Cursor's two usable pools instead of a combined percentage when both are available. */
 export function displayLimitWindows(pool: LimitPool) {
+  if (pool.driver === "antigravity") {
+    // Keep each model group's five-hour and weekly buckets next to one another.
+    return [...pool.windows].sort(
+      (left, right) =>
+        Number(!left.id.startsWith("gemini-")) - Number(!right.id.startsWith("gemini-")) ||
+        left.id
+          .replace(/-(5h|weekly|quota)$/, "")
+          .localeCompare(right.id.replace(/-(5h|weekly|quota)$/, "")) ||
+        WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind],
+    );
+  }
   if (pool.driver !== "cursor") return pool.windows;
   const hasAuto = pool.windows.some((window) => window.id === "autoPercentUsed");
   const hasApi = pool.windows.some((window) => window.id === "apiPercentUsed");
@@ -726,4 +737,22 @@ export function collectProviderUsageLimits(
     }
   }
   return { createdAt: DateTime.formatIso(DateTime.makeUnsafe(now)), accounts, notices };
+}
+
+/** Native bucket IDs identify shared allowances, independently of the model catalog. */
+export function groupAntigravityLimitWindows(windows: readonly LimitPoolWindow[]) {
+  const groups = [
+    { id: "gemini", label: "Gemini", windows: windows.filter((w) => w.id.startsWith("gemini-")) },
+    {
+      id: "third-party",
+      label: "Claude & GPT",
+      windows: windows.filter((w) => w.id.startsWith("3p-")),
+    },
+    {
+      id: "other",
+      label: "Other models",
+      windows: windows.filter((w) => !w.id.startsWith("gemini-") && !w.id.startsWith("3p-")),
+    },
+  ];
+  return groups.filter((group) => group.windows.length > 0);
 }

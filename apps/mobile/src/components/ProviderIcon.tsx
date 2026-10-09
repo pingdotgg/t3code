@@ -10,6 +10,7 @@ import { getProviderClient } from "../lib/providerClients";
 
 type ProviderIconProps = {
   readonly provider: string | null | undefined;
+  readonly model?: string | undefined;
   readonly iconUrl?: string | null | undefined;
   readonly size?: number;
 };
@@ -69,7 +70,10 @@ export function ProviderIcon(props: ProviderIconProps) {
   const size = props.size ?? 16;
   const mono = isDarkMode ? "#e5e5e5" : "#171717";
 
-  if (props.provider?.trim().toLowerCase() === "antigravity") {
+  if (
+    props.provider?.trim().toLowerCase() === "antigravity" &&
+    !/^claude-(opus|sonnet)-/.test(props.model ?? "")
+  ) {
     return (
       <Image
         source={require("../../assets/antigravity.png")}
@@ -82,7 +86,10 @@ export function ProviderIcon(props: ProviderIconProps) {
     return <AcpRegistryProviderIcon color={mono} iconUrl={props.iconUrl} size={size} />;
   }
 
-  if (props.provider === "claudeAgent") {
+  if (
+    props.provider === "claudeAgent" ||
+    (props.provider === "antigravity" && /^claude-(opus|sonnet)-/.test(props.model ?? ""))
+  ) {
     return (
       <Svg width={size} height={size} viewBox="0 0 256 257" fill="none">
         <Path

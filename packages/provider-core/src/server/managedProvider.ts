@@ -50,6 +50,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     readonly getSnapshot: Effect.Effect<ServerProvider>;
     readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   }) => Effect.Effect<void>;
+  /** Account quota APIs own limits through enrichment rather than runtime notifications. */
+  readonly enrichmentOwnsUsageLimits?: boolean;
   readonly refreshInterval?: Duration.Input;
   readonly refreshOnInterval?: boolean;
   readonly checkProviderOnSettingsChange?: (previous: Settings, next: Settings) => boolean;
@@ -84,7 +86,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       }
       // Enrichment derives from the snapshot it was handed; a runtime usage
       // update that landed since must not be reverted by it.
-      const merged = withUsageLimits(nextSnapshot, state.snapshot.usageLimits);
+      const merged = input.enrichmentOwnsUsageLimits
+        ? nextSnapshot
+        : withUsageLimits(nextSnapshot, state.snapshot.usageLimits);
       if (Equal.equals(state.snapshot, merged)) {
         return [null, state] as const;
       }
@@ -155,13 +159,15 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         const generation = input.enrichSnapshot
           ? state.enrichmentGeneration + 1
           : state.enrichmentGeneration;
-        const snapshot = withUsageLimits(
-          probedSnapshot,
-          resolveUsageLimitsAfterProbe({
-            published: state.snapshot.usageLimits,
-            probed: probedSnapshot.usageLimits,
-          }),
-        );
+        const snapshot = input.enrichmentOwnsUsageLimits
+          ? probedSnapshot
+          : withUsageLimits(
+              probedSnapshot,
+              resolveUsageLimitsAfterProbe({
+                published: state.snapshot.usageLimits,
+                probed: probedSnapshot.usageLimits,
+              }),
+            );
         return [
           { snapshot, generation },
           { snapshot, enrichmentGeneration: generation },

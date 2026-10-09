@@ -125,6 +125,12 @@ is refused while the runtime is in use.
 
 ## Check access and troubleshoot
 
+Open **Usage > Limits** to see the remaining Gemini and shared Claude/GPT allowances
+for personal Google sign-ins. Each group has separate five-hour and weekly limits
+and reset times. Limits refresh with provider status and include usage outside
+T3 Code. The Antigravity desktop app does not need to be running. API-key, Vertex
+AI and enterprise billing limits are not reported here.
+
 A server restart keeps your Google sign-in. The provider shows the saved account
 until a session, a refresh, or a sign-out reports something new.
 

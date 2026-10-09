@@ -6,6 +6,7 @@ import {
   collectLimitPools,
   cursorUsageWindowDetails,
   displayLimitWindows,
+  groupAntigravityLimitWindows,
   formatResetsIn,
   type LimitAccount,
   type LimitPool,
@@ -14,6 +15,7 @@ import {
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
+import { ProviderDriverKind } from "@t3tools/contracts";
 import { Fragment, type ReactNode, useState } from "react";
 
 import { ensureLocalApi } from "../../localApi";
@@ -24,7 +26,7 @@ import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { providerClients } from "../settings/providerDriverMeta";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { Button } from "../ui/button";
-import { OpenAI } from "../Icons";
+import { OpenAI, ClaudeAI, GeminiIcon } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
@@ -536,7 +538,12 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
   const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
   const windows = displayLimitWindows(pool);
   return (
-    <section className="flex flex-col gap-3">
+    <section
+      className={cn(
+        "flex flex-col gap-3",
+        pool.driver === "antigravity" && "rounded-xl border border-border/60 bg-card/30 p-4",
+      )}
+    >
       <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
         <ProviderInstanceIcon
           driverKind={pool.driver}
@@ -547,19 +554,53 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
         />
         {label}
       </h2>
-      {windows.map((window) => {
-        const details = pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined;
-        return (
-          <PoolWindowCard
-            key={`${window.kind}:${window.id}`}
-            pool={window}
-            color={color}
-            now={now}
-            label={details?.label}
-            description={details?.description}
-          />
-        );
-      })}
+      {pool.driver === "antigravity"
+        ? groupAntigravityLimitWindows(windows).map((group) => (
+            <section key={group.id} className="flex flex-col gap-3 border-t border-border/60 pt-4">
+              <h3 className="flex items-center gap-2 text-sm font-medium">
+                {group.id === "gemini" ? (
+                  <GeminiIcon className="size-4" aria-hidden />
+                ) : group.id === "third-party" ? (
+                  <ClaudeAI className="size-4" aria-hidden />
+                ) : null}
+                {group.label}
+                <span className="text-xs font-normal text-muted-foreground">via Antigravity</span>
+              </h3>
+              {group.windows.map((window) => (
+                <PoolWindowCard
+                  key={window.id}
+                  pool={window}
+                  now={now}
+                  color={
+                    group.id === "third-party"
+                      ? barColor(ProviderDriverKind.make("claudeAgent"))
+                      : color
+                  }
+                  label={
+                    window.kind === "session"
+                      ? "Five-hour"
+                      : window.kind === "weekly"
+                        ? "Weekly"
+                        : window.label
+                  }
+                />
+              ))}
+            </section>
+          ))
+        : windows.map((window) => {
+            const details =
+              pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined;
+            return (
+              <PoolWindowCard
+                key={`${window.kind}:${window.id}`}
+                pool={window}
+                color={color}
+                now={now}
+                label={details?.label}
+                description={details?.description}
+              />
+            );
+          })}
     </section>
   );
 }

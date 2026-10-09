@@ -231,6 +231,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                     <ProviderInstanceIcon
                       key={`${selection.instanceId}:${selection.model}`}
                       driverKind={selection.entry.driverKind}
+                      model={selection.model}
                       displayName={selection.entry.displayName}
                       accentColor={selection.entry.accentColor}
                       className="size-4 rounded-full bg-(--chat-composer-glass-surface,var(--background)) ring-2 ring-(--chat-composer-glass-surface,var(--background))"
@@ -247,6 +248,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           ) : activeEntry && props.triggerLabel === undefined ? (
             <ProviderInstanceIcon
               driverKind={activeEntry.driverKind}
+              model={props.model}
               displayName={activeEntry.displayName}
               accentColor={activeEntry.accentColor}
               acpRegistryAgentId={activeEntry.acpRegistryAgentId}

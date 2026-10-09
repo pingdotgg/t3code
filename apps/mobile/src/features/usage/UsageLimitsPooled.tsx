@@ -8,6 +8,7 @@ import {
   collectLimitPools,
   cursorUsageWindowDetails,
   displayLimitWindows,
+  groupAntigravityLimitWindows,
   formatDuration,
   formatResetsIn,
   remainingPercent,
@@ -27,7 +28,13 @@ import { environmentPresentations } from "../../state/presentation";
 import { ResetCredits } from "./UsageLimitsSection";
 import { useProviderColors } from "./usageProviders";
 
-const DRIVER_LABEL: Partial<Record<string, string>> = { codex: "Codex", claudeAgent: "Claude" };
+import { GeminiIcon } from "../../components/GeminiIcon";
+
+const DRIVER_LABEL: Partial<Record<string, string>> = {
+  codex: "Codex",
+  claudeAgent: "Claude",
+  antigravity: "Antigravity",
+};
 const PACE_LABEL = { ahead: "Ahead of pace", on: "On pace", under: "Under pace" } as const;
 
 function accountName(account: LimitAccount) {
@@ -243,30 +250,74 @@ export function UsageLimitsSection({
         return (
           <Fragment key={pool.driver}>
             {index === cursorPromptAt ? cursorPrompt : null}
-            <View className="gap-3">
+            <View
+              className={
+                pool.driver === "antigravity"
+                  ? "gap-3 rounded-xl border border-border-subtle p-4"
+                  : "gap-3"
+              }
+            >
               <View className="flex-row items-center gap-2 px-1">
                 <ProviderIcon provider={pool.driver} size={18} />
                 <Text className="text-base font-t3-medium text-foreground">
                   {DRIVER_LABEL[pool.driver] ?? pool.driver}
                 </Text>
               </View>
-              {windows.map((window) => {
-                const details =
-                  pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined;
-                return (
-                  <PoolWindowCard
-                    key={`${window.kind}:${window.id}`}
-                    pool={window}
-                    color={pool.driver === "claudeAgent" ? colors.claude : colors.codex}
-                    now={now}
-                    environmentIds={
-                      selectedEnvironmentIds === null ? null : [...selectedEnvironmentIds]
-                    }
-                    label={details?.label}
-                    description={details?.description}
-                  />
-                );
-              })}
+              {pool.driver === "antigravity"
+                ? groupAntigravityLimitWindows(windows).map((group) => (
+                    <View key={group.id} className="gap-3 border-t border-border-subtle pt-4">
+                      <View className="flex-row items-center gap-2">
+                        {group.id === "gemini" ? (
+                          <GeminiIcon />
+                        ) : group.id === "third-party" ? (
+                          <ProviderIcon provider="claudeAgent" />
+                        ) : null}
+                        <Text className="font-t3-medium text-foreground">{group.label}</Text>
+                        <Text className="text-xs text-foreground-muted">via Antigravity</Text>
+                      </View>
+                      {group.windows.map((window) => (
+                        <PoolWindowCard
+                          key={window.id}
+                          pool={window}
+                          color={group.id === "third-party" ? colors.claude : colors.antigravity}
+                          now={now}
+                          environmentIds={
+                            selectedEnvironmentIds === null ? null : [...selectedEnvironmentIds]
+                          }
+                          label={
+                            window.kind === "session"
+                              ? "Five-hour"
+                              : window.kind === "weekly"
+                                ? "Weekly"
+                                : window.label
+                          }
+                        />
+                      ))}
+                    </View>
+                  ))
+                : windows.map((window) => {
+                    const details =
+                      pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined;
+                    return (
+                      <PoolWindowCard
+                        key={`${window.kind}:${window.id}`}
+                        pool={window}
+                        color={
+                          pool.driver === "claudeAgent"
+                            ? colors.claude
+                            : pool.driver === "antigravity"
+                              ? colors.antigravity
+                              : colors.codex
+                        }
+                        now={now}
+                        environmentIds={
+                          selectedEnvironmentIds === null ? null : [...selectedEnvironmentIds]
+                        }
+                        label={details?.label}
+                        description={details?.description}
+                      />
+                    );
+                  })}
             </View>
           </Fragment>
         );

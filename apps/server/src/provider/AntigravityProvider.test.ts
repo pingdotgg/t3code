@@ -6,6 +6,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSetupError,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -128,7 +129,11 @@ const layerTest = ProviderHostLive.layer.pipe(
 type ProbeError = EffectAcpErrors.AcpError | ProviderSetupError;
 
 const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
-  options: { readonly enabled?: boolean; readonly safe?: boolean } = {},
+  options: {
+    readonly enabled?: boolean;
+    readonly safe?: boolean;
+    readonly probeUsage?: Effect.Effect<ServerProviderUsageLimits>;
+  } = {},
 ) {
   const initialProbe = yield* Deferred.make<EffectAcpSchema.InitializeResponse, ProbeError>();
   const probeCalls = yield* Ref.make(0);
@@ -141,6 +146,7 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
     decodeSettings({ enabled: options.enabled ?? true, customModels: ["do-not-seed-me"] }),
     {
       stampIdentity: (snapshot) => Effect.succeed({ ...snapshot, instanceId, driver }),
+      ...(options.probeUsage ? { probeUsage: options.probeUsage } : {}),
       probe: Ref.update(probeCalls, (count) => count + 1).pipe(
         Effect.andThen(Ref.get(probe)),
         Effect.flatten,
@@ -173,6 +179,31 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
 });
 
 describe("Antigravity model catalog", () => {
+  it("preserves native Opus and Sonnet thinking levels without inventing access", () => {
+    const options = ["opus", "sonnet"].flatMap((family) =>
+      ["low", "medium", "high"].map((level) => ({
+        value: `claude-${family}-5-5-${level}`,
+        name: `Claude ${family} 5.5 (${level})`,
+      })),
+    );
+    const models = buildAntigravityModelsFromSession({
+      configOptions: [
+        {
+          ...modelConfig,
+          currentValue: "claude-opus-5-5-medium",
+          options: [{ groupId: "claude", name: "Claude", options }],
+        },
+      ],
+    });
+    expect(models.map((model) => model.slug)).toEqual(options.map((option) => option.value));
+    expect(models.find((model) => model.isDefault)?.slug).toBe("claude-opus-5-5-medium");
+    expect(models.find((model) => model.isDefault)?.aliases).toEqual([ANTIGRAVITY_DEFAULT_MODEL]);
+    expect(
+      buildAntigravityModelsFromSession(sessionSetupResult).some((model) =>
+        model.slug.startsWith("claude-"),
+      ),
+    ).toBe(false);
+  });
   it("keeps the captured personal catalog's IDs, labels, order, and selected default", () => {
     const models = buildAntigravityModelsFromSession(sessionSetupResult);
     expect(models.map((model) => [model.slug, model.name])).toEqual(
@@ -667,6 +698,151 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         expect(snapshot.workspaceSnapshots?.[0]?.cwd).toBe("/workspace-3");
         expect(snapshot.slashCommands).toEqual(expectedCommands);
         expect(yield* Ref.get(harness.probeCalls)).toBe(1);
+      }),
+    ),
+  );
+
+  it.effect(
+    "publishes limits, retains a successful read on failure, and clears them on sign-out",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const limits: ServerProviderUsageLimits = {
+            checkedAt: "2026-10-09T12:00:00.000Z",
+            windows: [
+              {
+                id: "3p-weekly",
+                kind: "weekly",
+                label: "Claude & GPT (shared) · Weekly",
+                usedPercent: 75,
+              },
+            ],
+          };
+          const usage = yield* Ref.make(limits);
+          const harness = yield* makeHarness({ probeUsage: Ref.get(usage) });
+          const nextLimits = yield* Stream.toPull(
+            harness.provider.snapshot.streamChanges.pipe(
+              Stream.filter((s) => s.usageLimits?.windows.length === 1),
+            ),
+          );
+          yield* harness.initialize;
+          yield* nextLimits;
+          expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual(limits);
+          yield* Ref.set(harness.probe, Effect.succeed(initializeResult));
+          yield* Ref.set(usage, {
+            checkedAt: "2026-10-09T12:01:00.000Z",
+            windows: [],
+            unavailable: { reason: "probeFailed" },
+          });
+          expect((yield* harness.provider.snapshot.refresh).usageLimits).toEqual(limits);
+          const signedOut = yield* Stream.toPull(
+            harness.provider.snapshot.streamChanges.pipe(
+              Stream.filter(
+                (snapshot) =>
+                  snapshot.auth.status === "unauthenticated" && snapshot.usageLimits === undefined,
+              ),
+            ),
+          );
+          yield* harness.provider.onSignedOut;
+          yield* signedOut;
+          expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
+          yield* Ref.set(usage, {
+            checkedAt: "2026-10-09T12:02:00.000Z",
+            windows: [],
+            unavailable: { reason: "unsupported" },
+          });
+          expect((yield* harness.provider.snapshot.refresh).usageLimits).toBeUndefined();
+        }),
+      ),
+  );
+
+  it.effect(
+    "a failed read for a different credential cannot retain the previous account's limits",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const first: ServerProviderUsageLimits = {
+            checkedAt: "2026-10-09T12:00:00.000Z",
+            credentialFingerprint: "account-a",
+            windows: [
+              { id: "gemini-5h", kind: "session", label: "Gemini · 5-hour", usedPercent: 10 },
+            ],
+          };
+          const usage = yield* Ref.make(first);
+          const harness = yield* makeHarness({ probeUsage: Ref.get(usage) });
+          const firstRead = yield* Stream.toPull(
+            harness.provider.snapshot.streamChanges.pipe(
+              Stream.filter(
+                (snapshot) => snapshot.usageLimits?.credentialFingerprint === "account-a",
+              ),
+            ),
+          );
+          yield* harness.initialize;
+          yield* firstRead;
+          yield* Ref.set(harness.probe, Effect.succeed(initializeResult));
+          yield* Ref.set(usage, {
+            checkedAt: "2026-10-09T12:01:00.000Z",
+            credentialFingerprint: "account-b",
+            windows: [],
+            unavailable: { reason: "probeFailed" },
+          });
+          const changed = yield* Stream.toPull(
+            harness.provider.snapshot.streamChanges.pipe(
+              Stream.filter(
+                (snapshot) => snapshot.usageLimits?.credentialFingerprint === "account-b",
+              ),
+            ),
+          );
+          yield* harness.provider.snapshot.refresh;
+          expect((yield* changed)[0]?.usageLimits?.windows).toEqual([]);
+        }),
+      ),
+  );
+
+  it.effect("a quota read finishing after sign-out cannot restore account limits", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const readStarted = yield* Deferred.make<void>();
+        const readResult = yield* Deferred.make<ServerProviderUsageLimits>();
+        const usage = yield* Ref.make<Effect.Effect<ServerProviderUsageLimits>>(
+          Effect.succeed({ checkedAt: "2026-10-09T12:00:00.000Z", windows: [] }),
+        );
+        const harness = yield* makeHarness({ probeUsage: Ref.get(usage).pipe(Effect.flatten) });
+        yield* harness.initialize;
+        yield* Ref.set(harness.probe, Effect.succeed(initializeResult));
+        yield* Ref.set(
+          usage,
+          Deferred.succeed(readStarted, undefined).pipe(Effect.andThen(Deferred.await(readResult))),
+        );
+        const refresh = yield* harness.provider.snapshot.refresh.pipe(Effect.forkChild);
+        yield* Deferred.await(readStarted);
+        // Health refresh finishes even while the quota HTTP response is held.
+        yield* Fiber.join(refresh);
+        yield* harness.provider.onSignedOut;
+        const nextAccountLimits: ServerProviderUsageLimits = {
+          checkedAt: "2026-10-09T12:02:00.000Z",
+          credentialFingerprint: "new-account",
+          windows: [],
+        };
+        yield* Ref.set(usage, Effect.succeed(nextAccountLimits));
+        const nextAccount = yield* Stream.toPull(
+          harness.provider.snapshot.streamChanges.pipe(
+            Stream.filter(
+              (snapshot) => snapshot.usageLimits?.credentialFingerprint === "new-account",
+            ),
+          ),
+        );
+        yield* harness.provider.onSessionStarted(started);
+        yield* Deferred.succeed(readResult, {
+          checkedAt: "2026-10-09T12:01:00.000Z",
+          windows: [
+            { id: "gemini-5h", kind: "session", label: "Gemini · 5-hour", usedPercent: 10 },
+          ],
+        });
+        yield* nextAccount;
+        expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual(
+          nextAccountLimits,
+        );
       }),
     ),
   );

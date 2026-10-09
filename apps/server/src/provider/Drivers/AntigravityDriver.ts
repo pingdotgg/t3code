@@ -16,6 +16,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import { HttpClient } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type { AcpError } from "effect-acp/errors";
 
@@ -52,6 +53,7 @@ import { makeAntigravityAdapterV2 } from "../../orchestration-v2/Adapters/Antigr
 import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeLogging";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeAntigravityProvider } from "../AntigravityProvider.ts";
+import { makeAntigravityUsageProbe } from "../antigravityUsageLimits.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
 import {
@@ -73,6 +75,7 @@ export type AntigravityDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
+  | HttpClient.HttpClient
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
   | ModelCatalog.ModelCatalog
@@ -126,6 +129,10 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         ),
       );
       const profileDirectory = directories.profile;
+      const usage = yield* makeAntigravityUsageProbe({
+        profileDirectory,
+        authMethod: auth.authMethod,
+      });
       // No process of this instance exists yet, so every runtime temp
       // directory it owns is an orphan from a killed server. Older builds
       // unpacked inside the profile.
@@ -377,6 +384,8 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       const provider = yield* makeAntigravityProvider(settings, {
         stampIdentity: classifyModels,
         probe,
+        probeUsage: usage.probe,
+        clearUsage: usage.clear,
         auth: { type: auth.authMethod, label: antigravityAuthLabel(auth.authMethod) },
         supportsTextGeneration: isAntigravityTextGenerationAvailable(profileDirectory).pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
