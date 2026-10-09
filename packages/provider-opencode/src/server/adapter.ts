@@ -48,6 +48,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Random from "effect/Random";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
@@ -55,7 +56,7 @@ import * as Stream from "effect/Stream";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
-import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
   structuralProtocolMethod,
@@ -88,20 +89,15 @@ export const OPENCODE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(OPENCODE_
 export const OPENCODE_SDK_PROTOCOL = "opencode-sdk.sse" as const;
 const DEFAULT_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettings)({});
 
-let openCodeMessageIdEpochMillis = -1;
-let openCodeMessageIdCounter = 0;
-
-const makeOpenCodeMessageId = Effect.fnUntraced(function* () {
+const makeOpenCodeMessageId = Effect.fnUntraced(function* (
+  clock: Ref.Ref<{ readonly epochMillis: number; readonly counter: number }>,
+) {
   const epochMillis = DateTime.toEpochMillis(yield* DateTime.now);
-  if (epochMillis !== openCodeMessageIdEpochMillis) {
-    openCodeMessageIdEpochMillis = epochMillis;
-    openCodeMessageIdCounter = 0;
-  }
-  openCodeMessageIdCounter += 1;
-  const encodedTime = BigInt.asUintN(
-    48,
-    BigInt(epochMillis) * 0x1000n + BigInt(openCodeMessageIdCounter),
-  )
+  const counter = yield* Ref.modify(clock, (previous) => {
+    const next = previous.epochMillis === epochMillis ? previous.counter + 1 : 1;
+    return [next, { epochMillis, counter: next }] as const;
+  });
+  const encodedTime = BigInt.asUintN(48, BigInt(epochMillis) * 0x1000n + BigInt(counter))
     .toString(16)
     .padStart(12, "0");
   const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
@@ -459,7 +455,7 @@ function formatOpenCodeProtocolLogPayload(event: OpenCodeProtocolLogEvent) {
 
 export function makeOpenCodeProtocolLogger(input: {
   readonly nativeEventLogger: ProviderEventLoggers.EventNdjsonLogger | undefined;
-  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly providerInstanceId: ProviderInstanceId;
   readonly providerSessionId: ProviderSessionId;
   readonly threadId: ThreadId;
@@ -830,7 +826,7 @@ function taskSessionId(part: ToolPart): string | null {
 }
 
 function makeProviderThread(input: {
-  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly providerInstanceId: ProviderInstanceId;
   readonly providerSessionId: OrchestrationV2ProviderThread["providerSessionId"];
   readonly appThreadId: OrchestrationV2ProviderThread["appThreadId"];
@@ -947,6 +943,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
   const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const messageIdClock = yield* Ref.make({ epochMillis: -1, counter: 0 });
 
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: options.instanceId,
@@ -971,7 +969,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             : {}),
         });
 
-        const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+        const mcpSession = yield* mcpSessions.read(input.threadId);
         const hasT3Mcp = mcpSession !== undefined && !connection.external;
         const orchestrationSystemPrompt = t3OrchestrationSystemPrompt(hasT3Mcp);
         if (hasT3Mcp) {
@@ -3169,7 +3167,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 startedAt,
                 completedAt: null,
               };
-              const admissionMessageId = yield* makeOpenCodeMessageId();
+              const admissionMessageId = yield* makeOpenCodeMessageId(messageIdClock);
               // No Effect may be yielded between this check and installing the
               // turn. If the event stream ended while IDs were being prepared,
               // registering afterward would leave a running turn that the EOF
@@ -3368,7 +3366,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 ...files,
               ];
               turn.admissionGeneration = state.nextAdmissionGeneration++;
-              turn.admissionMessageId = yield* makeOpenCodeMessageId();
+              turn.admissionMessageId = yield* makeOpenCodeMessageId(messageIdClock);
               turn.admissionPending = true;
               turn.admissionAccepted = false;
               turn.admissionMessageObserved = false;
@@ -3728,6 +3726,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
 export type OpenCodeAdapterV2DriverEnv =
   | OpenCodeRuntime.OpenCodeRuntime
   | IdAllocator.IdAllocatorV2
+  | McpProviderSessions.McpProviderSessions
   | ProviderEventLoggers.ProviderEventLoggers
   | ProviderHost.ProviderHost;
 

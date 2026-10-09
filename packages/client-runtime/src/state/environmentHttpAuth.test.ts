@@ -4,6 +4,7 @@ import {
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
   ProjectId,
+  ThreadId,
   type AuthSessionState,
   type OrchestrationV2ShellSnapshot,
   OrchestrationV2ThreadDetailSnapshot,
@@ -305,6 +306,50 @@ describe("authenticated environment HTTP requests", () => {
       }
       expect(PREPARED.httpAuthorization).toMatchObject({ accessToken: "expired-token" });
     }),
+  );
+
+  // MCP-created thread ids contain ":", which the request path percent-encodes.
+  // The DPoP proof must sign the URL that is actually sent, or the environment
+  // rejects it as a URL mismatch.
+  const MCP_THREAD_ID = ThreadId.make("mcp:3534bc83-1c17-4a1e-9118-601c2766d355");
+  const MCP_THREAD_LOADERS: ReadonlyArray<
+    Pick<(typeof LOADERS)[number], "name" | "response" | "load">
+  > = [
+    {
+      name: "thread snapshot",
+      response: encodeThreadSnapshot(THREAD),
+      load: (input: HttpInput) =>
+        ThreadSnapshotLoader.fetchEnvironmentThreadSnapshot({ ...input, threadId: MCP_THREAD_ID }),
+    },
+    {
+      name: "bounded thread snapshot",
+      response: encodeBoundedSnapshot(BOUNDED_THREAD),
+      load: (input: HttpInput) =>
+        fetchEnvironmentBoundedThreadSnapshot({ ...input, threadId: MCP_THREAD_ID }),
+    },
+    {
+      name: "older thread history",
+      response: THREAD_HISTORY,
+      load: (input: HttpInput) =>
+        fetchEnvironmentThreadHistoryPage({
+          ...input,
+          threadId: MCP_THREAD_ID,
+          cursor: "older-page",
+        }),
+    },
+  ];
+  it.effect.each(MCP_THREAD_LOADERS)(
+    "signs the sent URL for a $name of a thread id that needs encoding",
+    (loader) =>
+      Effect.gen(function* () {
+        const harness = makeHarness(() => Response.json(loader.response));
+        yield* loader.load(harness.input).pipe(Effect.provide(harness.httpLayer));
+
+        const sent = new URL(harness.calls[0]!.url);
+        expect(sent.pathname).toContain("/mcp%3A3534bc83-");
+        sent.search = "";
+        expect(harness.proofs.map((proof) => proof.url)).toEqual([sent.toString()]);
+      }),
   );
 
   it.effect("retries a rejected diff once with a new token, endpoint, and proof", () =>

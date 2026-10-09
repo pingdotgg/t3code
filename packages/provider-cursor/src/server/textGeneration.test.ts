@@ -5,12 +5,14 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 import * as Schema from "effect/Schema";
 import { createModelSelection } from "@t3tools/shared/model";
 import { beforeEach, vi } from "vite-plus/test";
 
 import { makeCursorTextGeneration } from "./textGeneration.ts";
+import * as CursorSdk from "./CursorSdk.ts";
 
 const cursorSdkMock = vi.hoisted(() => ({
   create: vi.fn<(options: unknown) => Promise<unknown>>(),
@@ -25,13 +27,17 @@ const cursorSdkMock = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock("./sdk.ts", () => ({ Agent: { create: cursorSdkMock.create } }));
+vi.mock("./sdk.ts", () => ({
+  Agent: { create: cursorSdkMock.create },
+  createAgentPlatform: vi.fn(),
+}));
 
 let hasCustomPolicy = false;
 const layerFs = FileSystem.layerNoop({
   exists: () => Effect.succeed(hasCustomPolicy),
   makeTempDirectoryScoped: () => Effect.succeed("/isolated-text-generation"),
 });
+const layerTest = Layer.merge(layerFs, CursorSdk.layer);
 
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 const cursorSettings = decodeCursorSettings({ enabled: true });
@@ -90,7 +96,7 @@ describe("CursorTextGeneration", () => {
       expect(cursorSdkMock.create).toHaveBeenLastCalledWith(
         expect.objectContaining({ apiKey: "second-browser-key" }),
       );
-    }).pipe(Effect.provide(layerFs)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("uses the Cursor SDK prompt API with model parameters and API key", () =>
@@ -139,7 +145,7 @@ describe("CursorTextGeneration", () => {
           enableAgentRetries: true,
         },
       });
-    }).pipe(Effect.provide(layerFs)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("continues in the temp directory when the SDK cannot sandbox", () =>
@@ -175,7 +181,7 @@ describe("CursorTextGeneration", () => {
           enableAgentRetries: true,
         },
       });
-    }).pipe(Effect.provide(layerFs)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("does not retry Agent.create for errors other than an unsupported sandbox", () =>
@@ -199,7 +205,7 @@ describe("CursorTextGeneration", () => {
 
       expect(error.detail).toBe("Cursor SDK text generation failed.");
       expect(cursorSdkMock.create).toHaveBeenCalledTimes(1);
-    }).pipe(Effect.provide(layerFs)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("accepts json objects with extra assistant text around them", () =>
@@ -227,7 +233,7 @@ describe("CursorTextGeneration", () => {
 
       expect(generated.subject).toBe("Update README dummy comment with attribution and date");
       expect(generated.body).toBe("");
-    }).pipe(Effect.provide(layerFs)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("generates thread titles through Cursor SDK text generation", () =>
@@ -251,7 +257,7 @@ describe("CursorTextGeneration", () => {
       });
 
       expect(generated.title).toBe("Trim reconnect spinner status after resume.");
-    }).pipe(Effect.provide(layerFs)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.each(["error", "cancelled"] as const)(
@@ -285,7 +291,7 @@ describe("CursorTextGeneration", () => {
             : "Cursor SDK request finished with an error.",
         );
         expect(cursorSdkMock.close).toHaveBeenCalledOnce();
-      }).pipe(Effect.provide(layerFs)),
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("fails closed when ambient sandbox policy can expand write access", () =>
@@ -301,7 +307,7 @@ describe("CursorTextGeneration", () => {
       );
       expect(failure.detail).toContain("custom ~/.cursor/sandbox.json");
       expect(cursorSdkMock.prompt).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(layerFs)),
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("cancels the native run when text generation times out", () =>
@@ -327,7 +333,7 @@ describe("CursorTextGeneration", () => {
       expect((yield* Fiber.join(result)).detail).toContain("timed out");
       expect(cursorSdkMock.cancel).toHaveBeenCalledOnce();
       expect(cursorSdkMock.close).toHaveBeenCalledOnce();
-    }).pipe(Effect.provide(layerFs), Effect.scoped),
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect.each(["create", "send"] as const)(
@@ -389,7 +395,7 @@ describe("CursorTextGeneration", () => {
         expect(cursorSdkMock.close).toHaveBeenCalledOnce();
         expect(wait).not.toHaveBeenCalled();
         if (phase === "send") expect(cursorSdkMock.cancel).toHaveBeenCalledOnce();
-      }).pipe(Effect.provide(layerFs), Effect.scoped),
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("requires CURSOR_API_KEY before calling the SDK", () =>
@@ -411,6 +417,6 @@ describe("CursorTextGeneration", () => {
 
       expect(error.detail).toBe("Sign in with Cursor or add CURSOR_API_KEY in provider settings.");
       expect(cursorSdkMock.prompt).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(layerFs)),
+    }).pipe(Effect.provide(layerTest)),
   );
 });

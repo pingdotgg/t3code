@@ -19,12 +19,14 @@ import * as Path from "effect/Path";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
-import { layerTestProviderHost, TestProviderHostSettings } from "@t3tools/provider-testing/host";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 
 const registryUrl = "https://registry.test/registry.json";
 const archiveUrl = "https://registry.test/example-agent.bin";
@@ -60,7 +62,7 @@ function layerResolver(
 ) {
   return Layer.mergeAll(
     NodeServices.layer,
-    layerTestProviderHost().pipe(Layer.provide(NodeServices.layer)),
+    TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
     Layer.succeed(HostProcessPlatform, "linux"),
     Layer.succeed(HostProcessArchitecture, "x64"),
     Layer.succeed(HostProcessEnvironment, environment),
@@ -776,7 +778,7 @@ describe("AcpRegistrySupport", () => {
       Effect.provide(
         Layer.mergeAll(
           NodeServices.layer,
-          layerTestProviderHost().pipe(Layer.provide(NodeServices.layer)),
+          TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
         ),
       ),
       Effect.provideService(HostProcessPlatform, "linux"),
@@ -1374,7 +1376,7 @@ describe("AcpRegistrySupport", () => {
           toolsDir: `${cacheDir}/tools`,
           registryUrl,
         });
-        const hostSettings = yield* TestProviderHostSettings;
+        const hostSettings = yield* TestProviderHost.TestProviderHostSettings;
         const instanceId = ProviderInstanceId.make("uninstall-reference");
         yield* hostSettings.set({
           ...DEFAULT_SERVER_SETTINGS,
@@ -1492,7 +1494,7 @@ describe("AcpRegistrySupport", () => {
         const agentRoot = `${cacheDir}/tools/${agent.id}`;
         expect(yield* fileSystem.exists(agentRoot)).toBe(true);
 
-        const hostSettings = yield* TestProviderHostSettings;
+        const hostSettings = yield* TestProviderHost.TestProviderHostSettings;
         const instanceId = ProviderInstanceId.make("registry-reference");
         yield* hostSettings.set({
           ...DEFAULT_SERVER_SETTINGS,
@@ -1713,8 +1715,6 @@ describe("acpRegistryManagedBinaryDirectories", () => {
       );
 
       const directories = yield* AcpRegistrySupport.acpRegistryManagedBinaryDirectories({
-        fileSystem,
-        path,
         cacheDir,
         toolsDir: path.join(cacheDir, "tools"),
         platform: "linux",
@@ -1727,8 +1727,6 @@ describe("acpRegistryManagedBinaryDirectories", () => {
       ]);
 
       const missing = yield* AcpRegistrySupport.acpRegistryManagedBinaryDirectories({
-        fileSystem,
-        path,
         cacheDir: path.join(cacheDir, "does-not-exist"),
         toolsDir: path.join(cacheDir, "does-not-exist", "tools"),
         platform: "linux",
