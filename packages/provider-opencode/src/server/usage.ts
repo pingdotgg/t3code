@@ -17,6 +17,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -93,12 +94,12 @@ export interface OpenCodeUsageReadResult {
 
 const isNotFound = (cause: PlatformError.PlatformError) => cause.reason._tag === "NotFound";
 
-/** A regular file or directory, never a symlink to one. */
-const entryType = Effect.fn("entryType")(function* (path: string) {
+/** Stat of a regular file or directory; a symlink reports as itself and is never followed. */
+const entryInfo = Effect.fn("entryInfo")(function* (path: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   const link = yield* Effect.exit(fileSystem.readLink(path));
-  if (Exit.isSuccess(link)) return "SymbolicLink" as const;
-  return (yield* fileSystem.stat(path)).type;
+  if (Exit.isSuccess(link)) return { type: "SymbolicLink" as const, mtime: Option.none<Date>() };
+  return yield* fileSystem.stat(path);
 });
 
 /** Reads current SQLite and pre-migration JSON stores without modifying either. */
@@ -127,8 +128,8 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
         names.filter((name) => /^opencode(?:-[a-zA-Z0-9_-]+)?\.db$/.test(name)),
         // One database removed between listing and stat must not hide the rest.
         (name) =>
-          entryType(path.join(root, name)).pipe(
-            Effect.map((type) => type === "File"),
+          entryInfo(path.join(root, name)).pipe(
+            Effect.map((info) => info.type === "File"),
             Effect.catchTags({
               PlatformError: (cause) =>
                 isNotFound(cause) ? Effect.succeed(false) : Effect.fail(cause),
@@ -214,18 +215,21 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
     yield* Effect.gen(function* () {
       for (const name of yield* fileSystem.readDirectory(directory)) {
         const entry = path.join(directory, name);
-        const type = yield* entryType(entry).pipe(
+        const info = yield* entryInfo(entry).pipe(
           Effect.catchTags({
             PlatformError: (cause) =>
               isNotFound(cause) ? Effect.succeed(null) : Effect.fail(cause),
           }),
         );
-        if (type === "Directory") {
+        if (info?.type === "Directory") {
           directories.push(entry);
-        } else if (type === "File" && name.endsWith(".json")) {
+        } else if (info?.type === "File" && name.endsWith(".json")) {
           found = true;
           const id = name.slice(0, -5);
           if (seen.has(`opencode:${id}`)) continue;
+          // A message cannot be created after its file was last written, so a
+          // file untouched since the window opened holds nothing in range.
+          if (Option.exists(info.mtime, (mtime) => mtime.getTime() < sinceMs)) continue;
           const file = { path: entry, records: [] as UsageRecord[] };
           files.push(file);
           yield* fileSystem.readFileString(entry).pipe(

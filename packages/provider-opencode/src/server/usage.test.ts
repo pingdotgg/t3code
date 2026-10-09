@@ -67,4 +67,49 @@ describe("readOpenCodeUsage", () => {
       assert.isAbove(Number((yield* fileSystem.stat(path.join(dir, "opencode.db-wal"))).size), 0);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("reads only legacy OpenCode messages written since the window opened", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-test-" });
+      const sinceMs = 1780000000000;
+      const legacy = path.join(dir, "storage", "message", "session-1");
+      yield* fileSystem.makeDirectory(legacy, { recursive: true });
+      const write = Effect.fn(function* (id: string, mtimeMs: number) {
+        const file = path.join(legacy, `${id}.json`);
+        yield* fileSystem.writeFileString(
+          file,
+          JSON.stringify({
+            id,
+            sessionID: "session-1",
+            role: "assistant",
+            modelID: "claude-sonnet-4-5",
+            // In range, so an old file that was read would produce a record.
+            time: { created: sinceMs + 1000 },
+            tokens: { input: 100, output: 20 },
+          }),
+        );
+        yield* fileSystem.utimes(file, mtimeMs / 1000, mtimeMs / 1000);
+        return file;
+      });
+      yield* write("msg-old", sinceMs - 60_000);
+
+      const stale = yield* readOpenCodeUsage(dir, sinceMs);
+      assert.deepStrictEqual(stale, { files: [], missing: false, error: false });
+
+      const recent = yield* write("msg-new", sinceMs + 60_000);
+      const result = yield* readOpenCodeUsage(dir, sinceMs);
+      assert.isFalse(result.missing);
+      assert.isFalse(result.error);
+      assert.deepStrictEqual(
+        result.files.map((file) => file.path),
+        [recent],
+      );
+      assert.deepStrictEqual(
+        result.files.flatMap((file) => file.records).map((record) => record.dedupeKey),
+        ["opencode:msg-new"],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
