@@ -1,12 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off - Exercises the real inherited descriptor lifecycle in a subprocess.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeURL from "node:url";
 
 import { expect, it } from "vite-plus/test";
 
 it("receives desktop messages and exits while the parent keeps both input pipes open", async () => {
   const child = NodeChildProcess.spawn(
     process.execPath,
-    [new URL("./testing/DesktopPipeLifecycle.fixture.ts", import.meta.url).pathname],
+    [NodeURL.fileURLToPath(new URL("./testing/DesktopPipeLifecycle.fixture.ts", import.meta.url))],
     { stdio: ["ignore", "pipe", "pipe", "pipe", "pipe", "pipe", "pipe"] },
   );
   // A failed exit must not leave a test process running. This never fires on success.
