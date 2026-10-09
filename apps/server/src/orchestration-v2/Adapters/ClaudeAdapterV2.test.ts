@@ -3132,6 +3132,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             cacheCreationTokens: 0,
           });
         }
+        const settledThread = harness.events.findLast(
+          (event) => event.type === "provider_thread.updated",
+        );
+        assert.equal(settledThread?.type, "provider_thread.updated");
+        if (settledThread?.type === "provider_thread.updated") {
+          assert.equal(settledThread.providerThread.status, "idle");
+          assert.isEmpty(settledThread.providerThread.pendingBackgroundTasks ?? []);
+        }
       }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
   );
 

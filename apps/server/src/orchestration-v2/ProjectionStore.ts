@@ -578,6 +578,12 @@ function needsRecovery(
         projection.providerThreads.some(
           (thread) =>
             thread.status === "active" || (thread.pendingBackgroundTasks?.length ?? 0) > 0,
+        ) ||
+        projection.turnItems.some(
+          (item) =>
+            ["command_execution", "dynamic_tool", "subagent"].includes(item.type) &&
+            ["pending", "running", "waiting"].includes(item.status) &&
+            !projection.runs.some((run) => run.id === item.runId && run.status === "rolled_back"),
         )
       );
     case "runtime":
@@ -3627,6 +3633,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   OR CASE WHEN json_valid(payload_json)
                     THEN json_array_length(payload_json, '$.pendingBackgroundTasks') > 0
                     ELSE 0 END
+                UNION
+                SELECT item.thread_id FROM orchestration_v2_projection_turn_items AS item
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_runs AS run
+                    WHERE run.run_id = item.run_id AND run.status = 'rolled_back'
+                  )
+                  AND type IN ('command_execution', 'dynamic_tool', 'subagent')
+                  AND status IN ('pending', 'running', 'waiting')
               `;
             case "runtime":
               return sql`

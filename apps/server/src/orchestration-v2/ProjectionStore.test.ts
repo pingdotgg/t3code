@@ -337,6 +337,7 @@ it.effect("memory recovery selection ignores unfinished items from rolled-back r
     const threadId = yield* addRolledBackRecoveryCandidate("memory-recovery-candidates");
 
     assert.notInclude(yield* projectionStore.getRecoveryThreadIds("runtime"), threadId);
+    assert.notInclude(yield* projectionStore.getRecoveryThreadIds("active-work"), threadId);
   }).pipe(Effect.provide(ProjectionStore.layerMemory)),
 );
 
@@ -346,6 +347,7 @@ it.effect("memory recovery selection includes unfinished items from missing runs
     const threadId = yield* addOrphanedRecoveryCandidate("memory-recovery-candidates");
 
     assert.include(yield* projectionStore.getRecoveryThreadIds("runtime"), threadId);
+    assert.include(yield* projectionStore.getRecoveryThreadIds("active-work"), threadId);
   }).pipe(Effect.provide(ProjectionStore.layerMemory)),
 );
 
@@ -2416,6 +2418,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.include(recoveryThreadIds, orphanedThreadId);
       assert.notInclude(recoveryThreadIds, settledThreadId);
       assert.notInclude(recoveryThreadIds, rolledBackThreadId);
+      const activeThreadIds = yield* projectionStore.getRecoveryThreadIds("active-work");
+      assert.include(activeThreadIds, runningThreadId);
+      assert.include(activeThreadIds, orphanedThreadId);
+      assert.notInclude(activeThreadIds, settledThreadId);
+      assert.notInclude(activeThreadIds, rolledBackThreadId);
     }),
   );
 

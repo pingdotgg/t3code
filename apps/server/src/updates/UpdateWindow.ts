@@ -16,11 +16,6 @@ import * as ServerSettings from "../serverSettings.ts";
 
 /** Work due this soon keeps the window closed, so it does not start late. */
 const UPDATE_LOOKAHEAD = Duration.minutes(5);
-/**
- * Tasks repeating at least this often always have a run due soon. Missed runs
- * catch up after a restart, so they only block while running.
- */
-const FREQUENT_TASK_INTERVAL = Duration.minutes(15);
 
 /**
  * Background update pacing. `T3CODE_UPDATE_LAB=1` (scripts/update-lab.ts)
@@ -93,7 +88,7 @@ export class UpdateWindow extends Context.Service<
   }
 >()("t3/updates/UpdateWindow") {}
 
-export const make = Effect.fn("updates.UpdateWindow.make")(function* () {
+const make = Effect.fn("updates.UpdateWindow.make")(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
@@ -171,12 +166,6 @@ export const make = Effect.fn("updates.UpdateWindow.make")(function* () {
           continue;
         }
         if (!task.enabled || task.nextRunAt === null) continue;
-        if (
-          task.schedule.type === "interval" &&
-          task.schedule.everyMs < Duration.toMillis(FREQUENT_TASK_INTERVAL)
-        ) {
-          continue;
-        }
         const runsAt = DateTime.make(task.nextRunAt);
         if (Option.isSome(runsAt) && !DateTime.isGreaterThan(runsAt.value, horizon)) {
           blockers.push({
@@ -188,12 +177,26 @@ export const make = Effect.fn("updates.UpdateWindow.make")(function* () {
         }
       }
 
-      const settings = yield* serverSettings.getSettings.pipe(Effect.option);
-      if (Option.isSome(settings) && settings.value.autoResumeLimitedThreads) {
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("Update window could not read settings", { cause }),
+        ),
+        Effect.option,
+      );
+      if (Option.isNone(settings) || !settings.value.automaticUpdates) {
+        return { open: false, blockers };
+      }
+      if (settings.value.autoResumeLimitedThreads) {
         const limited = yield* projections
           .getLimitRecoveryCandidates({ now: horizon, autoResume: true, snooze: false })
-          .pipe(Effect.orElseSucceed(() => []));
-        for (const thread of limited) {
+          .pipe(
+            Effect.tapError((cause) =>
+              Effect.logWarning("Update window could not read usage-limit resumes", { cause }),
+            ),
+            Effect.option,
+          );
+        if (Option.isNone(limited)) return { open: false, blockers };
+        for (const thread of limited.value) {
           if (thread.limitRecovery?.autoResume !== true) continue;
           const resumesAt = DateTime.make(thread.limitRecovery.resetAt);
           if (Option.isSome(resumesAt)) {
