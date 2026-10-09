@@ -90,6 +90,12 @@ const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> =
     className: "text-adaptive-sky-600-400",
     iconTintClassName: "accent-adaptive-sky-600-400",
   },
+  waiting: {
+    label: "Waiting",
+    icon: "clock",
+    className: "text-foreground-muted",
+    iconTintClassName: "accent-foreground-muted",
+  },
   failed: {
     label: "Failed",
     icon: "exclamationmark.circle",
