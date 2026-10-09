@@ -104,7 +104,7 @@ export const layer = Layer.effectDiscard(
           yield* selfUpdate.update({ targetVersion });
           // The launcher stops us after accepting the handoff. Keep new provider
           // starts behind the install permit until this runtime is shut down.
-          yield* Effect.never;
+          return yield* Effect.never;
         }),
       );
     }).pipe(
