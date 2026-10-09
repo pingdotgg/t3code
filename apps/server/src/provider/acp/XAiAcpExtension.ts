@@ -141,6 +141,11 @@ export interface XAiAcpSubagentEndNotice {
 }
 
 const XAI_UUID_RE = "[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}";
+/**
+ * A background task id. Grok names a command it moves to the background after
+ * its blocking timeout by its tool call id, `call-<uuid>-<n>`.
+ */
+const XAI_TASK_ID_RE = `(?:${XAI_UUID_RE}|call-${XAI_UUID_RE}-\\d+)`;
 
 function unknownRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -355,19 +360,36 @@ export function extractXAiBackgroundTaskCompletion(toolCall: AcpToolCallState): 
   if (!isXAiGetSubagentOutputTool(toolCall, rawInput)) return [];
   // Caller matches taskId against registered background tools (monitors).
   // Subagent hydration stays on extractXAiAcpSubagentUpdate.
+  // A poll of several tasks reports each one in `MultiResult.results`.
+  const multiResults = unknownRecord(unknownRecord(toolCall.data.rawOutput)?.MultiResult)?.results;
+  if (Array.isArray(multiResults)) {
+    return multiResults.flatMap((value) => {
+      const result = unknownRecord(value);
+      const taskId = nonEmptyString(result?.task_id) ?? nonEmptyString(result?.taskId);
+      if (result === undefined || taskId === undefined) return [];
+      if (!new RegExp(`^${XAI_TASK_ID_RE}$`, "i").test(taskId)) return [];
+      return [
+        {
+          taskId,
+          status: statusFromGetOutputTool(toolCall, undefined, result),
+          appendOutput: resultFromGetOutputTool(toolCall, undefined, result) ?? "",
+        },
+      ];
+    });
+  }
   const text = xAiToolOutputText(toolCall);
   const status = statusFromGetOutputTool(toolCall, text);
   const appendOutput = resultFromGetOutputTool(toolCall, text) ?? "";
   // Prefer the completed identity from the result/header over the request list
   // (one call can poll multiple task_ids).
-  const resultTaskId = resultTaskIdFromGetOutputTool(toolCall, text);
+  const resultTaskId = resultTaskIdFromGetOutputTool(toolCall, text, XAI_TASK_ID_RE);
   if (resultTaskId !== undefined) {
     return [{ taskId: resultTaskId, status, appendOutput }];
   }
   const requestIds: string[] = [];
   const push = (value: unknown) => {
     const id = nonEmptyString(value);
-    if (id !== undefined && new RegExp(`^${XAI_UUID_RE}$`, "i").test(id)) {
+    if (id !== undefined && new RegExp(`^${XAI_TASK_ID_RE}$`, "i").test(id)) {
       requestIds.push(id);
     }
   };
@@ -382,7 +404,7 @@ export function extractXAiBackgroundTaskCompletion(toolCall: AcpToolCallState): 
 
 /**
  * A finished kill_command_or_subagent call is the genuine end signal for every
- * task id it names: the Grok CLI emits no `x.ai/task_completed` for a killed
+ * task id it names: older Grok CLIs emit no `x.ai/task_completed` for a killed
  * task. A failed kill is not proof the target stopped, so leave the existing
  * task state unchanged until a genuine terminal signal arrives.
  */
@@ -394,18 +416,41 @@ export function extractXAiKilledBackgroundTasks(toolCall: AcpToolCallState): Rea
   const title = titleKey(toolCall);
   const rawInput = unknownRecord(toolCall.data.rawInput);
   const variant = nonEmptyString(rawInput?.variant)?.toLowerCase();
-  if (!title.includes("kill_command_or_subagent") && variant !== "kill") return [];
+  // Grok 1.0.46 sends the `KillTask` variant and retitles the finished call
+  // `kill <id> (killed)`.
+  const isKill =
+    title.includes("kill_command_or_subagent") || variant === "kill" || variant === "killtask";
+  if (!isKill) return [];
   if (toolCall.status !== "completed") return [];
   const taskIds: string[] = [];
   const push = (value: unknown) => {
     const id = nonEmptyString(value);
     if (id !== undefined) taskIds.push(id);
   };
-  if (Array.isArray(rawInput?.task_ids)) {
-    for (const entry of rawInput.task_ids) push(entry);
+  // A structured result names each task's outcome; only a confirmed end
+  // (`killed`, or `already_exited` for a task that finished first) counts.
+  const multiResults = unknownRecord(unknownRecord(toolCall.data.rawOutput)?.MultiResult)?.results;
+  const singleResult = getOutputResult(toolCall);
+  const results = Array.isArray(multiResults)
+    ? multiResults.flatMap((value) => {
+        const result = unknownRecord(value);
+        return result === undefined ? [] : [result];
+      })
+    : singleResult === undefined
+      ? []
+      : [singleResult];
+  if (results.length > 0) {
+    for (const result of results) {
+      const outcome = nonEmptyString(result.outcome)?.toLowerCase();
+      if (outcome === "killed" || outcome === "already_exited") push(result.task_id);
+    }
+  } else {
+    if (Array.isArray(rawInput?.task_ids)) {
+      for (const entry of rawInput.task_ids) push(entry);
+    }
+    push(rawInput?.task_id);
+    push(rawInput?.taskId);
   }
-  push(rawInput?.task_id);
-  push(rawInput?.taskId);
   return [...new Set(taskIds)].map((taskId) => ({
     taskId,
     status: "completed" as const,
@@ -813,15 +858,16 @@ function taskIdsFromGetOutputTool(
 function resultTaskIdFromGetOutputTool(
   toolCall: AcpToolCallState,
   output: string | undefined,
+  idPattern = XAI_UUID_RE,
 ): string | undefined {
   const rawOutput = unknownRecord(toolCall.data.rawOutput);
-  const result = unknownRecord(rawOutput?.Result) ?? unknownRecord(rawOutput?.result);
+  const result = getOutputResult(toolCall);
   const structured =
     nonEmptyString(result?.task_id) ??
     nonEmptyString(result?.taskId) ??
     nonEmptyString(rawOutput?.task_id) ??
     nonEmptyString(rawOutput?.taskId);
-  if (structured !== undefined && new RegExp(`^${XAI_UUID_RE}$`, "i").test(structured)) {
+  if (structured !== undefined && new RegExp(`^${idPattern}$`, "i").test(structured)) {
     return structured;
   }
   if (output === undefined) return undefined;
@@ -832,12 +878,16 @@ function resultTaskIdFromGetOutputTool(
   return taskHeader;
 }
 
+function getOutputResult(toolCall: AcpToolCallState): Record<string, unknown> | undefined {
+  const rawOutput = unknownRecord(toolCall.data.rawOutput);
+  return unknownRecord(rawOutput?.Result) ?? unknownRecord(rawOutput?.result);
+}
+
 function resultFromGetOutputTool(
   toolCall: AcpToolCallState,
   output: string | undefined,
+  result = getOutputResult(toolCall),
 ): string | null {
-  const rawOutput = unknownRecord(toolCall.data.rawOutput);
-  const result = unknownRecord(rawOutput?.Result) ?? unknownRecord(rawOutput?.result);
   const structured =
     nonEmptyString(result?.output) ??
     nonEmptyString(result?.text) ??
@@ -860,10 +910,9 @@ function resultFromGetOutputTool(
 function statusFromGetOutputTool(
   toolCall: AcpToolCallState,
   output: string | undefined,
+  result = getOutputResult(toolCall),
 ): "running" | "completed" | "failed" {
   if (toolCall.status === "failed") return "failed";
-  const rawOutput = unknownRecord(toolCall.data.rawOutput);
-  const result = unknownRecord(rawOutput?.Result) ?? unknownRecord(rawOutput?.result);
   const structuredStatus = nonEmptyString(result?.status)?.toLowerCase();
   if (structuredStatus === "completed" || structuredStatus === "success") return "completed";
   if (structuredStatus === "failed" || structuredStatus === "error") return "failed";

@@ -3039,6 +3039,7 @@ export function makeAcpAdapterV2(
           context: ActiveAcpTurn,
           incoming: AcpToolCallState,
           projectedStatus?: ProjectedToolStatus,
+          options?: { readonly endReportedOutOfBand?: boolean },
         ) => Effect.Effect<void> = () => Effect.void;
 
         const markAwaitingBackgroundHydration = (context: ActiveAcpTurn, taskId: string) =>
@@ -3095,6 +3096,7 @@ export function makeAcpAdapterV2(
           context: ActiveAcpTurn,
           incoming: AcpToolCallState,
           projectedStatus?: ProjectedToolStatus,
+          options?: { readonly endReportedOutOfBand?: boolean },
         ) {
           // An identified message can stream concurrently with tool updates.
           // Keep its identity until the provider starts another message.
@@ -3105,9 +3107,20 @@ export function makeAcpAdapterV2(
           yield* closeTextStream(context, "user");
           const previous = context.tools.get(incoming.toolCallId);
           const merged = mergeToolCallState(previous, incoming);
-          const toolCall = flavor.normalizeToolCall?.(merged) ?? merged;
+          const normalized = flavor.normalizeToolCall?.(merged) ?? merged;
+          const backgroundTaskId = flavor.extractBackgroundTaskId?.(normalized);
+          // Normalization reads a kept start ACK as still running. Once the task
+          // has a genuine end, an ended row must not reopen and pin the turn.
+          const endedStatus =
+            merged.status === "completed" || merged.status === "failed" ? merged.status : undefined;
+          const toolCall =
+            endedStatus !== undefined &&
+            backgroundTaskId !== undefined &&
+            toolStatus(normalized.status) === "running" &&
+            (yield* Ref.get(endedBackgroundTaskIds)).has(backgroundTaskId)
+              ? { ...normalized, status: endedStatus }
+              : normalized;
           context.tools.set(toolCall.toolCallId, toolCall);
-          const backgroundTaskId = flavor.extractBackgroundTaskId?.(toolCall);
           if (backgroundTaskId !== undefined) {
             context.toolCallIdsByBackgroundTaskId.set(backgroundTaskId, toolCall.toolCallId);
             if (flavor.isPersistentBackgroundTool?.(toolCall) === true) {
@@ -3138,8 +3151,12 @@ export function makeAcpAdapterV2(
             // that case; likelihood is low because mid-turn monitor ends
             // normally arrive as reminder mutations that force inProgress, and
             // re-reports are documented post-settle traffic.
+            //
+            // An end Grok reported out of band (`task_completed`) is not
+            // evidence the agent read it; only its own poll or kill is.
             if (
               !context.promptSettled &&
+              options?.endReportedOutOfBand !== true &&
               backgroundStatus !== "pending" &&
               backgroundStatus !== "running"
             ) {
@@ -3192,7 +3209,27 @@ export function makeAcpAdapterV2(
             }
             const target =
               targetToolCallId !== undefined ? context.tools.get(targetToolCallId) : undefined;
-            if (target !== undefined && target.toolCallId !== toolCall.toolCallId) {
+            const targetStatus = target === undefined ? undefined : toolStatus(target.status);
+            const targetEnded = targetStatus === "completed" || targetStatus === "failed";
+            if (
+              target !== undefined &&
+              target.toolCallId !== toolCall.toolCallId &&
+              targetEnded &&
+              backgroundCompletion.appendOutput.length > 0 &&
+              toolOutputText(target).trim() !== backgroundCompletion.appendOutput.trim()
+            ) {
+              // `task_completed` already ended the row without its final output
+              // (only the start ACK or partial stdout). The poll's result is the
+              // full output: replace, never append.
+              yield* emitTool(
+                context,
+                setToolOutputText(target, backgroundCompletion.appendOutput),
+              );
+            } else if (
+              target !== undefined &&
+              target.toolCallId !== toolCall.toolCallId &&
+              !targetEnded
+            ) {
               const nextStatus =
                 backgroundCompletion.status === "running"
                   ? ("inProgress" as const)
@@ -3864,17 +3901,17 @@ export function makeAcpAdapterV2(
 
         // A structured task end (Grok `task_completed`) is authoritative for the
         // tool that registered the task: its own updates only ever say running.
-        // Finish the row while deferred finalize holds a settled root turn open
-        // for it, so the turn can settle. While the prompt is still open the
-        // agent reports the end itself (TaskOutput hydration), and an unreported
-        // end must keep its post-finalize continuation offer.
+        // Finish the row whenever it arrives, so deferred finalize never holds
+        // the turn for a task that already ended. Before the prompt settles the
+        // agent may still read the end itself (TaskOutput or kill hydration);
+        // until it does, the end keeps its post-finalize continuation offer.
         const finishRegisteredBackgroundTool = Effect.fnUntraced(function* (mutation: {
           readonly taskId: string;
           readonly status: "completed" | "failed";
           readonly output?: string;
         }) {
           const context = yield* Ref.get(activeTurn);
-          if (context === null || context.finalized || !context.promptSettled) return;
+          if (context === null || context.finalized) return;
           const toolCallId = context.toolCallIdsByBackgroundTaskId.get(mutation.taskId);
           const tool = toolCallId === undefined ? undefined : context.tools.get(toolCallId);
           if (tool === undefined) return;
@@ -3886,6 +3923,7 @@ export function makeAcpAdapterV2(
             context,
             mutation.output === undefined ? finished : setToolOutputText(finished, mutation.output),
             mutation.status,
+            { endReportedOutOfBand: true },
           );
           yield* rearmDeferredFinalize(context);
         });

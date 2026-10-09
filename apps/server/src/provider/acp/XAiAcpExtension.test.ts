@@ -848,6 +848,42 @@ describe("XAiAcpExtension", () => {
     ).toEqual([]);
   });
 
+  it("ends only the tasks a Grok 1.0.46 KillTask result confirms", () => {
+    const killTask = (rawOutput: unknown): AcpToolCallState => ({
+      toolCallId: "call-kill-4",
+      title: "kill call-bg-6 (killed)",
+      status: "completed",
+      data: { rawInput: { variant: "KillTask", task_id: "call-bg-6" }, rawOutput },
+    });
+    expect(
+      extractXAiKilledBackgroundTasks(
+        killTask({ type: "KillTask", Result: { task_id: "call-bg-6", outcome: "killed" } }),
+      ),
+    ).toEqual([{ taskId: "call-bg-6", status: "completed", appendOutput: "" }]);
+    expect(
+      extractXAiKilledBackgroundTasks(
+        killTask({ type: "KillTask", Result: { task_id: "call-bg-6", outcome: "error" } }),
+      ),
+    ).toEqual([]);
+    expect(
+      extractXAiKilledBackgroundTasks(
+        killTask({
+          type: "KillTask",
+          MultiResult: {
+            results: [
+              { task_id: "call-bg-6", outcome: "killed" },
+              { task_id: "call-bg-7", outcome: "error" },
+              { task_id: "call-bg-8", outcome: "already_exited" },
+            ],
+          },
+        }),
+      ),
+    ).toEqual([
+      { taskId: "call-bg-6", status: "completed", appendOutput: "" },
+      { taskId: "call-bg-8", status: "completed", appendOutput: "" },
+    ]);
+  });
+
   it("maps task lifecycle notifications to background mutations", () => {
     // task_backgrounded carries the cancelled call's tool_call_id as task_id.
     expect(

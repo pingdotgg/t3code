@@ -42,6 +42,12 @@ import { grokBackgroundBashInput } from "./grok_background_bash/input.ts";
 import { assertGrokBackgroundBashOutput } from "./grok_background_bash/output.ts";
 import { grokBackgroundBashFastWakeInput } from "./grok_background_bash_fast_wake/input.ts";
 import { assertGrokBackgroundBashFastWakeOutput } from "./grok_background_bash_fast_wake/output.ts";
+import { grokBackgroundBashKilledInput } from "./grok_background_bash_killed/input.ts";
+import { assertGrokBackgroundBashKilledOutput } from "./grok_background_bash_killed/output.ts";
+import { grokBackgroundBashPolledInput } from "./grok_background_bash_polled/input.ts";
+import { assertGrokBackgroundBashPolledOutput } from "./grok_background_bash_polled/output.ts";
+import { grokBackgroundBashUnpolledInput } from "./grok_background_bash_unpolled/input.ts";
+import { assertGrokBackgroundBashUnpolledOutput } from "./grok_background_bash_unpolled/output.ts";
 import { grokBackgroundSubagentInput } from "./grok_background_subagent/input.ts";
 import { assertGrokBackgroundSubagentOutput } from "./grok_background_subagent/output.ts";
 import { grokMonitorInput } from "./grok_monitor/input.ts";
@@ -513,6 +519,54 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: { ...GROK_MODEL_SELECTION, model: "grok-4.7-build-fast" },
         runContinuationWorker: true,
         assertOutput: assertGrokBackgroundBashFastWakeOutput,
+      },
+    ],
+  },
+  {
+    name: "grok_background_bash_polled",
+    buildInput: grokBackgroundBashPolledInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("grok"),
+        transcriptFile: new URL(
+          "./grok_background_bash_polled/grok_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: { ...GROK_MODEL_SELECTION, model: "grok-4.7-build-fast" },
+        runContinuationWorker: true,
+        assertOutput: assertGrokBackgroundBashPolledOutput,
+      },
+    ],
+  },
+  {
+    name: "grok_background_bash_killed",
+    buildInput: grokBackgroundBashKilledInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("grok"),
+        transcriptFile: new URL(
+          "./grok_background_bash_killed/grok_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: { ...GROK_MODEL_SELECTION, model: "grok-4.7-build-fast" },
+        runContinuationWorker: true,
+        assertOutput: assertGrokBackgroundBashKilledOutput,
+      },
+    ],
+  },
+  {
+    name: "grok_background_bash_unpolled",
+    buildInput: grokBackgroundBashUnpolledInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("grok"),
+        transcriptFile: new URL(
+          "./grok_background_bash_unpolled/grok_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: { ...GROK_MODEL_SELECTION, model: "grok-4.7-build-fast" },
+        runContinuationWorker: true,
+        assertOutput: assertGrokBackgroundBashUnpolledOutput,
       },
     ],
   },
