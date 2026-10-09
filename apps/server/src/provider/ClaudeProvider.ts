@@ -317,13 +317,19 @@ export type ClaudeSlashCommandsByCwd = ReadonlyMap<
   }
 >;
 
-/** Stores a probe result and returns the cwd's complete list. */
+/**
+ * Stores a probe result and returns the cwd's complete list. A failed probe
+ * (`pending`) only has fallback commands, so it keeps the last successful list.
+ */
 export function recordClaudeProbedSlashCommands(
   byCwd: ClaudeSlashCommandsByCwd,
   cwd: string,
-  probed: ReadonlyArray<ServerProviderSlashCommand>,
+  scanned: ReadonlyArray<ServerProviderSlashCommand>,
+  pending = false,
 ): readonly [ReadonlyArray<ServerProviderSlashCommand>, ClaudeSlashCommandsByCwd] {
-  const session = byCwd.get(cwd)?.session ?? [];
+  const current = byCwd.get(cwd);
+  const probed = (pending && current?.probed) || scanned;
+  const session = current?.session ?? [];
   return [
     dedupeSlashCommands([...probed, ...session]),
     new Map(byCwd).set(cwd, { probed, session }),

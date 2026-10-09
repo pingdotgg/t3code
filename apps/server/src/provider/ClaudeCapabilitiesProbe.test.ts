@@ -81,6 +81,26 @@ describe("live-session slash commands", () => {
     assert.deepEqual(reprobed, merged);
     assert.deepEqual(recordClaudeProbedSlashCommands(reprobedState, "/other", probed)[0], probed);
   });
+
+  it("keeps the last successful probe when a re-probe fails", () => {
+    const fallback = [COMPACT_SLASH_COMMAND];
+    const [, probedState] = recordClaudeProbedSlashCommands(new Map(), "/project", probed);
+    const [, failedState] = recordClaudeProbedSlashCommands(
+      probedState,
+      "/project",
+      fallback,
+      true,
+    );
+    assert.deepEqual(recordClaudeSessionSlashCommands(failedState, "/project", session)[0], merged);
+
+    const [, failedFirstState] = recordClaudeProbedSlashCommands(
+      new Map(),
+      "/other",
+      fallback,
+      true,
+    );
+    assert.deepEqual(recordClaudeSessionSlashCommands(failedFirstState, "/other", [])[0], fallback);
+  });
 });
 
 it("isolates Claude capability probes without dropping workspace setting sources", () => {

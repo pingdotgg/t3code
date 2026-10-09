@@ -389,7 +389,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
             ),
             Effect.flatMap((scanned) =>
               Ref.modify(slashCommandsByCwd, (byCwd) =>
-                recordClaudeProbedSlashCommands(byCwd, cwd, scanned.slashCommands),
+                recordClaudeProbedSlashCommands(
+                  byCwd,
+                  cwd,
+                  scanned.slashCommands,
+                  scanned.slashCommandsPending === true,
+                ),
               ).pipe(Effect.map((slashCommands) => ({ ...scanned, slashCommands }))),
             ),
             Effect.provideService(FileSystem.FileSystem, fileSystem),
