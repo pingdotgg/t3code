@@ -361,6 +361,45 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 
+  it.effect("launches with the user's thread name and no title generation", () =>
+    Effect.gen(function* () {
+      const launches: OrchestrationV2ThreadLaunchInput[] = [];
+      const supervisor = yield* makeSupervisor({ commands: [], projects: [], launches });
+
+      yield* startThreadTurn({
+        commandId: CommandId.make("launch-named-thread"),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("message-named-thread"),
+          role: "user",
+          text: "Fix the invoice PDF",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        titleSeed: "Fix the invoice PDF",
+        title: "ZA-123 invoice PDF",
+        bootstrap: {
+          createThread: {
+            projectId: ProjectId.make("project-1"),
+            title: "ZA-123 invoice PDF",
+            modelSelection: v2Projection.thread.modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: "2026-06-20T00:00:00.000Z",
+          },
+        },
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(launches[0]).toMatchObject({
+        title: "ZA-123 invoice PDF",
+        generateTitle: false,
+      });
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
   it.effect("provisions an origin-based worktree for an existing empty thread", () =>
     Effect.gen(function* () {
       const launches: OrchestrationV2ThreadLaunchInput[] = [];

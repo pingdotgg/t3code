@@ -174,6 +174,8 @@ export interface StartThreadTurnInput extends ThreadCommandInput {
   };
   readonly modelSelection?: ModelSelection;
   readonly titleSeed?: string;
+  /** A name the user typed for a new thread. It wins over `titleSeed` and skips title generation. */
+  readonly title?: string;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly bootstrap?: StartThreadBootstrap;
@@ -671,8 +673,8 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       threadId: input.threadId,
       ...(bootstrap === undefined ? { reuseExistingThread: true } : {}),
       projectId: thread.projectId,
-      title: input.titleSeed ?? thread.title,
-      generateTitle: input.titleSeed !== undefined,
+      title: input.title ?? input.titleSeed ?? thread.title,
+      generateTitle: input.title === undefined && input.titleSeed !== undefined,
       modelSelection: input.modelSelection ?? thread.modelSelection,
       runtimeMode: input.runtimeMode,
       interactionMode: input.interactionMode,
