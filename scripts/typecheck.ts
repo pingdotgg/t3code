@@ -24,7 +24,7 @@ const architecture = Effect.runSync(HostProcessArchitecture);
 const extraArgs = Effect.runSync(HostProcessArguments).slice(2);
 const supportsRust =
   (platform === "darwin" && architecture === "arm64") ||
-  (platform === "linux" && architecture === "x64");
+  (platform === "linux" && (architecture === "x64" || architecture === "arm64"));
 
 if (supportsRust && extraArgs.length === 0) {
   process.exitCode = runCompiler(
