@@ -166,6 +166,32 @@ describe("MCP server drafts", () => {
     });
   });
 
+  it("tells the server where a renamed server's stored secret lives", () => {
+    const draft = mcpServerDraftFrom("linear", {
+      enabled: true,
+      transport: {
+        type: "http",
+        url: "https://mcp.linear.app/mcp",
+        headers: [{ name: "Authorization", value: "", sensitive: true, valueRedacted: true }],
+      },
+    });
+    const renamed = {
+      ...draft,
+      name: "linear-work",
+      headers: draft.headers.map((header) => ({ ...header, name: "X-Api-Key" })),
+    };
+    const result = mcpServerFromDraft(renamed, new Set(), "linear");
+    expect(result.ok && result.transport.type === "http" && result.transport.headers).toEqual([
+      {
+        name: "X-Api-Key",
+        value: "",
+        sensitive: true,
+        valueRedacted: true,
+        storedAs: { server: "linear", variable: "Authorization" },
+      },
+    ]);
+  });
+
   it("rejects T3's own name, duplicates and missing commands", () => {
     const base = {
       ...mcpServerDraftFrom("x", {

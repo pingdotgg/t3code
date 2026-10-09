@@ -3374,6 +3374,7 @@ export const layer = Layer.unwrap(
     const peerLinks = yield* PeerLinks.PeerLinks;
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
     const sql = yield* SqlClient.SqlClient;
+    const serverSettingsService = yield* ServerSettings.ServerSettingsService;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -3427,7 +3428,7 @@ export const layer = Layer.unwrap(
                             : { surface: clientAnalyticsProps.surface }),
                         })
                         .pipe(Effect.ignore);
-                }),
+                }, serverSettingsService.getSettings.pipe(Effect.orElseSucceed(() => undefined))),
                 rpcInstrumentationLayer,
               ),
             ),

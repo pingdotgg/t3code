@@ -1015,6 +1015,8 @@ const make = Effect.gen(function* () {
     readonly environmentVariable?: string;
   } & (
     | { readonly kind: "write"; readonly value: Uint8Array }
+    // A renamed MCP server or variable: the value moves to the new name.
+    | { readonly kind: "copy"; readonly from: string }
     | { readonly kind: "remove"; readonly operation: "remove-secret" | "remove-stale-secret" }
   );
 
@@ -1077,8 +1079,14 @@ const make = Effect.gen(function* () {
       for (const change of mcp.changes) {
         changes.push(
           change.kind === "write"
-            ? { kind: "write", secretName: change.secretName, value: textEncoder.encode(change.value) }
-            : { kind: "remove", secretName: change.secretName, operation: "remove-secret" },
+            ? {
+                kind: "write",
+                secretName: change.secretName,
+                value: textEncoder.encode(change.value),
+              }
+            : change.kind === "copy"
+              ? { kind: "copy", secretName: change.secretName, from: change.from }
+              : { kind: "remove", secretName: change.secretName, operation: "remove-secret" },
         );
       }
       return { settings: mcp.settings, changes };
@@ -1118,34 +1126,48 @@ const make = Effect.gen(function* () {
       readonly environmentVariable?: string;
     }> = [];
     const rollback = Effect.suspend(() => rollbackSettingsSecretWrites(applied));
+    const readSecret = (change: SecretChange, secretName: string) =>
+      secretStore.get(secretName).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServerSettingsError({
+              settingsPath,
+              operation: "read-secret",
+              providerInstanceId: change.providerInstanceId,
+              environmentVariable: change.environmentVariable,
+              cause,
+            }),
+        ),
+      );
+    // Copies read their source before any removal in the same save drops it.
+    const ordered = [
+      ...changes.filter((change) => change.kind === "copy"),
+      ...changes.filter((change) => change.kind !== "copy"),
+    ];
     return Effect.forEach(
-      changes,
+      ordered,
       (change) =>
         Effect.gen(function* () {
-          const previousValue = yield* secretStore.get(change.secretName).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ServerSettingsError({
-                  settingsPath,
-                  operation: "read-secret",
-                  providerInstanceId: change.providerInstanceId,
-                  environmentVariable: change.environmentVariable,
-                  cause,
-                }),
-            ),
-          );
+          let value: Uint8Array | undefined;
+          if (change.kind === "write") value = change.value;
+          if (change.kind === "copy") {
+            const source = yield* readSecret(change, change.from);
+            if (Option.isNone(source)) return;
+            value = source.value;
+          }
+          const previousValue = yield* readSecret(change, change.secretName);
           // A store operation may mutate before reporting an error (for example chmod after rename).
           applied.push({ ...change, previousValue });
           yield* (
-            change.kind === "write"
-              ? secretStore.set(change.secretName, change.value)
+            value !== undefined
+              ? secretStore.set(change.secretName, value)
               : secretStore.remove(change.secretName)
           ).pipe(
             Effect.mapError(
               (cause) =>
                 new ServerSettingsError({
                   settingsPath,
-                  operation: change.kind === "write" ? "write-secret" : change.operation,
+                  operation: change.kind === "remove" ? change.operation : "write-secret",
                   providerInstanceId: change.providerInstanceId,
                   environmentVariable: change.environmentVariable,
                   cause,

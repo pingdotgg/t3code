@@ -6,6 +6,7 @@ import {
   AssetCreateUrlInput,
   AuthAccessReadScope,
   ServerSettingsPatch,
+  type ServerSettings,
   ProviderInstanceMutation,
   requiredScopesForServerSettingsPatch,
   requiredScopesForProjectMutation,
@@ -235,9 +236,12 @@ const SettingsUpdate = Schema.Struct({
 // Middleware receives the payload already decoded, so it is checked against the decoded shape.
 const decodeSettingsUpdate = Schema.decodeUnknownSync(Schema.toType(SettingsUpdate));
 
-const requiredScopesForSettingsUpdate = (payload: unknown) => {
+const requiredScopesForSettingsUpdate = (
+  payload: unknown,
+  current: Pick<ServerSettings, "projectSettingsOverrides"> | undefined,
+) => {
   const input = decodeSettingsUpdate(payload);
-  const scopes = requiredScopesForServerSettingsPatch(input.patch);
+  const scopes = requiredScopesForServerSettingsPatch(input.patch, current);
   if (input.providerInstanceMutation === undefined) return scopes;
   return Object.values(input.patch).every((value) => value === undefined)
     ? [AuthProvidersManageScope]
@@ -250,6 +254,7 @@ const decodeAssetCreateUrlInput = Schema.decodeUnknownSync(AssetCreateUrlInput);
 const requiredScopesForRpcCall = (
   method: string,
   payload: unknown,
+  currentSettings?: Pick<ServerSettings, "projectSettingsOverrides">,
 ): ReadonlyArray<AuthEnvironmentScope> => {
   if (method === WS_METHODS.serverRetryResourceTelemetry) {
     return [AuthEnvironmentMaintainScope, AuthDiagnosticsReadScope];
@@ -264,7 +269,9 @@ const requiredScopesForRpcCall = (
         : AuthOrchestrationReadScope,
     ];
   }
-  if (method === WS_METHODS.serverUpdateSettings) return requiredScopesForSettingsUpdate(payload);
+  if (method === WS_METHODS.serverUpdateSettings) {
+    return requiredScopesForSettingsUpdate(payload, currentSettings);
+  }
   if (method === WS_METHODS.projectsMutate) {
     return requiredScopesForProjectMutation(decodeProjectMutation(payload));
   }
@@ -277,18 +284,27 @@ const requiredScopesForRpcCall = (
  * `onAuthorized` runs once after an authorized request succeeds; for a stream
  * RPC, that is when the stream completes. Every RPC passes through here, so it
  * is the one place to observe requests without wrapping each handler.
+ * `currentSettings` lets a settings update that only resends a project's
+ * stored MCP servers pass with `settings:write`.
  */
 export const layer = (
   scopes: ReadonlyArray<AuthEnvironmentScope>,
   onAuthorized?: (method: string, payload: unknown) => Effect.Effect<void>,
+  currentSettings?: Effect.Effect<Pick<ServerSettings, "projectSettingsOverrides"> | undefined>,
 ) =>
   Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
-    const requiredScopes = requiredScopesForRpcCall(rpc._tag, payload);
-    const requiredScope = requiredScopes.find((scope) => !scopes.includes(scope));
-    if (requiredScope !== undefined) return Effect.fail(rpcAuthorizationError(requiredScope));
-    return onAuthorized === undefined
-      ? effect
-      : Effect.tap(effect, () => onAuthorized(rpc._tag, payload));
+    const authorize = (settings: Pick<ServerSettings, "projectSettingsOverrides"> | undefined) => {
+      const requiredScopes = requiredScopesForRpcCall(rpc._tag, payload, settings);
+      const requiredScope = requiredScopes.find((scope) => !scopes.includes(scope));
+      if (requiredScope !== undefined) return Effect.fail(rpcAuthorizationError(requiredScope));
+      return onAuthorized === undefined
+        ? effect
+        : Effect.tap(effect, () => onAuthorized(rpc._tag, payload));
+    };
+    // Only a settings update reads the stored settings, to tell a resent server from a new one.
+    return rpc._tag === WS_METHODS.serverUpdateSettings && currentSettings !== undefined
+      ? Effect.flatMap(currentSettings, authorize)
+      : authorize(undefined);
   });
 
 /** Retrying can install or restart tools even though ordinary listing is readable. */

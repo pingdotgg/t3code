@@ -975,9 +975,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         : providerSkills.filter((skill) => !disabledSkillNames.has(skill.name.toLowerCase())),
     [disabledSkillNames, providerSkills],
   );
-  const selectedProviderSlashCommands = selectedProviderStatus
+  const providerSlashCommands = selectedProviderStatus
     ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, gitCwd)
     : NO_PROVIDER_SLASH_COMMANDS;
+  // Claude also lists each skill as a slash command; a disabled one leaves both.
+  const selectedProviderSlashCommands = useMemo(
+    () =>
+      disabledSkillNames.size === 0
+        ? providerSlashCommands
+        : providerSlashCommands.filter(
+            (command) => !disabledSkillNames.has(command.name.toLowerCase()),
+          ),
+    [disabledSkillNames, providerSlashCommands],
+  );
   const { refresh: refreshWorkspaceSnapshotOnTyping, scanning: workspaceSkillsScanning } =
     useProviderWorkspaceSnapshotRefresh({
       environmentId,

@@ -160,40 +160,58 @@ export function redactMcpServerSecrets(settings: ServerSettings): ServerSettings
 
 export type McpSecretChange =
   | { readonly kind: "write"; readonly secretName: string; readonly value: string }
+  | { readonly kind: "copy"; readonly secretName: string; readonly from: string }
   | { readonly kind: "remove"; readonly secretName: string };
 
 /**
  * Plan the secret-store writes for moving from `current` to `next`, and the
  * settings to persist (sensitive values replaced by the redaction flag).
- * A sensitive variable sent back redacted with no value keeps its secret;
- * a value the user typed replaces it; an empty value or a variable that is
+ * A sensitive variable sent back redacted with no value keeps its secret,
+ * moved to its new name when `storedAs` says it was renamed, and a value still
+ * inline in `current` (hand-edited into settings.json) moves into the store.
+ * A value the user typed replaces it; an empty value or a variable that is
  * no longer sensitive (or no longer exists) removes it.
  */
 export function planMcpServerSecrets(
   current: ServerSettings,
   next: ServerSettings,
 ): { readonly settings: ServerSettings; readonly changes: ReadonlyArray<McpSecretChange> } {
-  const stored = new Set<string>();
+  const stored = new Map<string, McpServerVariable>();
   for (const site of variableSites(current)) {
-    if (site.variable.sensitive) stored.add(siteSecretName(site));
+    if (site.variable.sensitive) stored.set(siteSecretName(site), site.variable);
   }
   const changes: McpSecretChange[] = [];
   const kept = new Set<string>();
   const settings = mapVariables(next, (site) => {
     const secretName = siteSecretName(site);
-    const { variable } = site;
-    const { valueRedacted: _omit, ...plain } = variable;
-    if (!variable.sensitive) return plain;
-    if (variable.value.length === 0) {
-      if (!variable.valueRedacted) return plain;
+    const { valueRedacted: _omit, storedAs, ...plain } = site.variable;
+    if (!plain.sensitive) return plain;
+    const redacted = { ...plain, value: "", valueRedacted: true };
+    if (plain.value.length > 0) {
       kept.add(secretName);
-      return { ...variable, value: "", valueRedacted: true };
+      changes.push({ kind: "write", secretName, value: plain.value });
+      return redacted;
     }
+    if (!site.variable.valueRedacted) return plain;
+    const from =
+      storedAs === undefined
+        ? secretName
+        : siteSecretName({
+            ...site,
+            server: storedAs.server,
+            variable: { ...plain, name: storedAs.variable },
+          });
+    const previous = stored.get(from);
+    if (previous === undefined) return plain;
     kept.add(secretName);
-    changes.push({ kind: "write", secretName, value: variable.value });
-    return { ...variable, value: "", valueRedacted: true };
+    if (!previous.valueRedacted && previous.value.length > 0) {
+      changes.push({ kind: "write", secretName, value: previous.value });
+    } else if (from !== secretName) {
+      changes.push({ kind: "copy", secretName, from });
+    }
+    return redacted;
   });
-  for (const secretName of stored) {
+  for (const secretName of stored.keys()) {
     if (!kept.has(secretName)) changes.push({ kind: "remove", secretName });
   }
   return { settings, changes };

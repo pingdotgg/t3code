@@ -10,6 +10,7 @@ import {
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { MoreHorizontalIcon, PlusIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -96,10 +97,18 @@ function useToolsTargets(): ReadonlyArray<ToolsTarget> {
   }, [connectedEnvironments, scope]);
 }
 
+type ToolsSettingsSnapshot = NonNullable<
+  ReturnType<typeof useSettingsScope>["connectedEnvironments"][number]["serverConfig"]
+>["settings"];
+
 /**
  * Write a Tools change to every target. `apply` receives the target's raw
  * environment settings and returns its patch: the environment's own key at
  * environment scope, or the project's override entry at project scope.
+ *
+ * Each patch replaces a whole list or project entry, so it is built on the
+ * settings this page last wrote rather than the last ones the server pushed:
+ * a second click before the first save comes back must not undo it.
  */
 function usePersistToolsPatch() {
   const targets = useToolsTargets();
@@ -107,22 +116,33 @@ function usePersistToolsPatch() {
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: "update tools",
   });
+  const written = useRef(
+    new Map<
+      string,
+      { readonly base: ToolsSettingsSnapshot; readonly next: ToolsSettingsSnapshot }
+    >(),
+  );
   return useCallback(
     (
       apply: (input: {
-        readonly settings: NonNullable<
-          (typeof connectedEnvironments)[number]["serverConfig"]
-        >["settings"];
+        readonly settings: ToolsSettingsSnapshot;
         readonly projectId: ProjectId | null;
       }) => ServerSettingsPatch | null,
     ) => {
       for (const target of targets) {
-        const settings = connectedEnvironments.find(
+        const pushed = connectedEnvironments.find(
           (environment) => environment.environmentId === target.environmentId,
         )?.serverConfig?.settings;
-        if (!settings) continue;
+        if (!pushed) continue;
+        const pending = written.current.get(target.environmentId);
+        // Once the server pushes newer settings, they are the base again.
+        const settings = pending !== undefined && pending.base === pushed ? pending.next : pushed;
         const patch = apply({ settings, projectId: target.projectId });
         if (patch === null) continue;
+        written.current.set(target.environmentId, {
+          base: pushed,
+          next: applyServerSettingsPatch(settings, patch),
+        });
         void updateSettings({ environmentId: target.environmentId, input: { patch } });
       }
     },
@@ -130,7 +150,10 @@ function usePersistToolsPatch() {
   );
 }
 
-/** Replace one key of a project's override entry, dropping the key (or the entry) when empty. */
+/**
+ * Replace one key of a project's override entry, dropping the key (or the entry) when empty.
+ * The rest of the entry is resent as stored, since the patch replaces the whole entry.
+ */
 function projectOverridePatch<K extends "mcpServers" | "disabledSkills">(
   settings: {
     readonly projectSettingsOverrides: Readonly<Record<string, Record<string, unknown>>>;
@@ -455,6 +478,15 @@ function McpServersPanel() {
     previousName?: string,
   ) =>
     persist(({ settings, projectId: targetProject }) => {
+      const existing =
+        targetProject === null
+          ? settings.mcpServers
+          : (settings.projectSettingsOverrides[targetProject]?.mcpServers ?? {});
+      // An edit changes the server where it exists; it does not create a copy,
+      // without the stored secrets, on a target that never had it.
+      if (previousName !== undefined && existing[previousName]?.transport === undefined) {
+        return null;
+      }
       if (targetProject === null) {
         return {
           mcpServers: {
@@ -465,9 +497,7 @@ function McpServersPanel() {
           },
         };
       }
-      const entries: Record<string, McpServerProjectOverride> = {
-        ...settings.projectSettingsOverrides[targetProject]?.mcpServers,
-      };
+      const entries: Record<string, McpServerProjectOverride> = { ...existing };
       if (previousName !== undefined && previousName !== name) delete entries[previousName];
       entries[name] = { enabled, transport };
       return projectOverridePatch(settings, targetProject, "mcpServers", entries);
@@ -547,7 +577,8 @@ function McpServersPanel() {
             <McpServerSettingsRow
               key={row.name}
               row={row}
-              canSwitch={canWriteSettings}
+              // The environment's own switch is part of the server definition.
+              canSwitch={isProjectScope ? canWriteSettings : canEditServers}
               canEdit={canEditServers}
               onEnabledChange={(enabled) => setEnabled(row, enabled)}
               onEdit={() => setEditor({ mode: "edit", row })}
@@ -592,11 +623,26 @@ function McpServersPanel() {
             editor.mode === "edit" ? { name: editor.row.name, config: editor.row.config } : null
           }
           takenNames={
+            // Every target, not only the one shown: a name another environment
+            // already uses would otherwise overwrite its server and secrets.
             new Set(
-              rows
-                .filter((row) => editor.mode === "add" || row.name !== editor.row.name)
-                .filter((row) => !isProjectScope || row.origin === "project")
-                .map((row) => row.name),
+              targets
+                .flatMap((writeTarget) => {
+                  const settings = connectedEnvironments.find(
+                    (environment) => environment.environmentId === writeTarget.environmentId,
+                  )?.serverConfig?.settings;
+                  const servers =
+                    writeTarget.projectId === null
+                      ? settings?.mcpServers
+                      : Object.fromEntries(
+                          Object.entries(
+                            settings?.projectSettingsOverrides[writeTarget.projectId]?.mcpServers ??
+                              {},
+                          ).filter(([, entry]) => entry.transport !== undefined),
+                        );
+                  return Object.keys(servers ?? {});
+                })
+                .filter((name) => editor.mode === "add" || name !== editor.row.name),
             )
           }
           onSave={({ name, transport }) => {

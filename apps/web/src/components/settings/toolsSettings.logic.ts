@@ -216,7 +216,7 @@ export function listMcpServerRows(input: {
     rows.set(name, { name, config, origin: "environment", replacesEnvironment: false });
   }
   for (const [name, entry] of Object.entries(input.project ?? {})) {
-    const inherited = input.environment[name];
+    const inherited = Object.hasOwn(input.environment, name) ? input.environment[name] : undefined;
     if (entry.transport !== undefined) {
       rows.set(name, {
         name,
@@ -245,6 +245,8 @@ export interface McpVariableDraft {
   readonly sensitive: boolean;
   /** A stored secret the user has not replaced. */
   readonly stored: boolean;
+  /** The variable name its stored secret was saved under, kept through renames and toggles. */
+  readonly storedName?: string;
 }
 
 export interface McpServerDraft {
@@ -267,6 +269,7 @@ const variableDrafts = (variables: ReadonlyArray<McpServerVariable>) =>
     value: variable.valueRedacted ? "" : variable.value,
     sensitive: variable.sensitive,
     stored: variable.valueRedacted === true,
+    ...(variable.valueRedacted ? { storedName: variable.name } : {}),
   }));
 
 export const EMPTY_MCP_SERVER_DRAFT: McpServerDraft = {
@@ -338,12 +341,32 @@ export function parseArgs(line: string): ReadonlyArray<string> {
   return args;
 }
 
-function variablesFromDrafts(drafts: ReadonlyArray<McpVariableDraft>): McpServerVariable[] {
+/**
+ * A stored secret the user did not replace goes back redacted. When the server
+ * or the variable was renamed, `storedAs` tells the server where the secret was
+ * saved so it moves with the rename.
+ */
+function variablesFromDrafts(
+  drafts: ReadonlyArray<McpVariableDraft>,
+  server: { readonly name: string; readonly storedName: string | null },
+): McpServerVariable[] {
   return drafts.flatMap((draft) => {
     const name = draft.name.trim();
     if (name.length === 0) return [];
     if (draft.sensitive && draft.stored && draft.value.length === 0) {
-      return [{ name, value: "", sensitive: true, valueRedacted: true }];
+      const storedName = draft.storedName ?? name;
+      const renamed = server.storedName !== null && server.storedName !== server.name;
+      return [
+        {
+          name,
+          value: "",
+          sensitive: true,
+          valueRedacted: true,
+          ...(renamed || storedName !== name
+            ? { storedAs: { server: server.storedName ?? server.name, variable: storedName } }
+            : {}),
+        },
+      ];
     }
     return [{ name, value: draft.value, sensitive: draft.sensitive }];
   });
@@ -353,9 +376,11 @@ export type McpServerDraftResult =
   | { readonly ok: true; readonly name: string; readonly transport: McpServerTransport }
   | { readonly ok: false; readonly field: "name" | "command" | "url"; readonly message: string };
 
+/** `storedName` is the server's saved name when editing, so renames keep its secrets. */
 export function mcpServerFromDraft(
   draft: McpServerDraft,
   takenNames: ReadonlySet<string>,
+  storedName: string | null = null,
 ): McpServerDraftResult {
   const name = draft.name.trim();
   if (!isValidMcpServerName(name)) {
@@ -383,7 +408,7 @@ export function mcpServerFromDraft(
         type: "stdio",
         command,
         args: [...parseArgs(draft.args)],
-        env: variablesFromDrafts(draft.env),
+        env: variablesFromDrafts(draft.env, { name, storedName }),
       },
     };
   }
@@ -394,7 +419,11 @@ export function mcpServerFromDraft(
   return {
     ok: true,
     name,
-    transport: { type: "http", url, headers: variablesFromDrafts(draft.headers) },
+    transport: {
+      type: "http",
+      url,
+      headers: variablesFromDrafts(draft.headers, { name, storedName }),
+    },
   };
 }
 
