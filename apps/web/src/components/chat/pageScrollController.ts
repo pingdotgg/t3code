@@ -1,3 +1,5 @@
+import type { ChatPageScrollFraction } from "@t3tools/contracts/settings";
+
 export const PAGE_SCROLL_ANIMATION_MS = 150;
 export const PAGE_SCROLL_ACCELERATION_MS = 400;
 export const PAGE_SCROLL_MAX_MULTIPLIER = 2;
@@ -111,11 +113,16 @@ export function getPageScrollVelocityPxPerMs({
 export function getPageScrollDistancePx({
   containerHeightPx,
   scrollPaddingBottomPx,
+  pageScrollFraction = 1,
 }: {
   containerHeightPx: number;
   scrollPaddingBottomPx: number;
+  pageScrollFraction?: ChatPageScrollFraction;
 }): number {
-  return Math.max(0, containerHeightPx - PAGE_SCROLL_ALIGNMENT_OFFSET_PX - scrollPaddingBottomPx);
+  return (
+    Math.max(0, containerHeightPx - PAGE_SCROLL_ALIGNMENT_OFFSET_PX - scrollPaddingBottomPx) *
+    pageScrollFraction
+  );
 }
 
 function getDirection(key: PageScrollKey): -1 | 1 {
@@ -148,11 +155,13 @@ function easeInOut(progress: number): number {
 export function createPageScrollController({
   getContainer,
   getScrollPaddingBottomPx,
+  getPageScrollFraction = () => 1,
   onScrollStart,
   env = getDefaultEnv(),
 }: {
   getContainer: () => PageScrollContainer | null;
   getScrollPaddingBottomPx: () => number;
+  getPageScrollFraction?: () => ChatPageScrollFraction;
   onScrollStart?: (key: PageScrollKey) => void;
   env?: PageScrollEnv;
 }) {
@@ -170,6 +179,7 @@ export function createPageScrollController({
     getPageScrollDistancePx({
       containerHeightPx: container.getBoundingClientRect().height,
       scrollPaddingBottomPx: getScrollPaddingBottomPx(),
+      pageScrollFraction: getPageScrollFraction(),
     });
 
   const cancelDiscreteAnimation = () => {

@@ -37,6 +37,24 @@ afterEach(() => {
 });
 
 describe("client settings hydration", () => {
+  it("publishes and persists page-scroll changes without losing other preferences", async () => {
+    const saved = { ...DEFAULT_CLIENT_SETTINGS, wordWrap: false };
+    persistenceMocks.getClientSettings.mockResolvedValue(saved);
+    await ensureClientSettingsHydrated();
+    expect(getClientSettings().chatPageScrollFraction).toBe(1);
+
+    await persistClientSettingsPatch({ chatPageScrollFraction: 0.5 });
+    expect(getClientSettings().chatPageScrollFraction).toBe(0.5);
+    expect(persistenceMocks.setClientSettings).toHaveBeenLastCalledWith({
+      ...saved,
+      chatPageScrollFraction: 0.5,
+    });
+
+    await persistClientSettingsPatch({ chatPageScrollFraction: 1 });
+    expect(getClientSettings()).toEqual(saved);
+    expect(persistenceMocks.setClientSettings).toHaveBeenLastCalledWith(saved);
+  });
+
   const savedSettings = {
     ...DEFAULT_CLIENT_SETTINGS,
     timestampFormat: "12-hour" as const,

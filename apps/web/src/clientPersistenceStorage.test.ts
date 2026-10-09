@@ -141,4 +141,24 @@ describe("clientPersistenceStorage", () => {
     writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, diffLayout: "split" });
     expect(readBrowserClientSettings()?.diffLayout).toBe("split");
   });
+
+  it("keeps the chat page fraction across reloads and defaults older settings to a full page", async () => {
+    const testWindow = getTestWindow();
+    const { readBrowserClientSettings, writeBrowserClientSettings } =
+      await import("./clientPersistenceStorage");
+
+    testWindow.localStorage.setItem(
+      "t3code:client-settings:v1",
+      JSON.stringify({ wordWrap: false }),
+    );
+    expect(readBrowserClientSettings()?.chatPageScrollFraction).toBe(1);
+
+    writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, chatPageScrollFraction: 0.5 });
+    vi.resetModules();
+    const reloadedStorage = await import("./clientPersistenceStorage");
+    expect(reloadedStorage.readBrowserClientSettings()?.chatPageScrollFraction).toBe(0.5);
+
+    reloadedStorage.writeBrowserClientSettings(DEFAULT_CLIENT_SETTINGS);
+    expect(reloadedStorage.readBrowserClientSettings()?.chatPageScrollFraction).toBe(1);
+  });
 });

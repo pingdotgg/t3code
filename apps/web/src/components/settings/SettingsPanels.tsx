@@ -23,6 +23,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  ChatPageScrollFraction,
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
   type ChatWidth,
@@ -547,6 +548,9 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Diff colors"]
         : []),
       ...(settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ? ["Chat width"] : []),
+      ...(settings.chatPageScrollFraction !== DEFAULT_UNIFIED_SETTINGS.chatPageScrollFraction
+        ? ["Chat page scroll distance"]
+        : []),
       ...(settings.panelAnimationDurationMs !== DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs
         ? ["Panel animations"]
         : []),
@@ -674,6 +678,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.appearanceContrast,
       settings.diffColorScheme,
       settings.chatWidth,
+      settings.chatPageScrollFraction,
       settings.enableAgentBrowserAccess,
       settings.confirmQuit,
       settings.confirmThreadArchive,
@@ -802,6 +807,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
+      chatPageScrollFraction: DEFAULT_UNIFIED_SETTINGS.chatPageScrollFraction,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
@@ -2788,6 +2794,49 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Collapse composer on scroll"
             />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("chat-page-scroll-distance")}
+          description="Choose how far Page Up and Page Down scroll the chat timeline."
+          resetAction={
+            settings.chatPageScrollFraction !== DEFAULT_UNIFIED_SETTINGS.chatPageScrollFraction ? (
+              <SettingResetButton
+                label="chat page scroll distance"
+                onClick={() =>
+                  updateSettings({
+                    chatPageScrollFraction: DEFAULT_UNIFIED_SETTINGS.chatPageScrollFraction,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={String(settings.chatPageScrollFraction)}
+              onValueChange={(value) => {
+                const fraction = ChatPageScrollFraction.literals.find(
+                  (fraction) => String(fraction) === value,
+                );
+                if (fraction !== undefined) updateSettings({ chatPageScrollFraction: fraction });
+              }}
+            >
+              <SelectTrigger
+                size="sm"
+                className="w-full sm:w-40"
+                aria-label="Chat page scroll distance"
+              >
+                <SelectValue>{settings.chatPageScrollFraction * 100}%</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {ChatPageScrollFraction.literals.map((fraction) => (
+                  <SelectItem hideIndicator key={fraction} value={String(fraction)}>
+                    {fraction * 100}%
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
           }
         />
 

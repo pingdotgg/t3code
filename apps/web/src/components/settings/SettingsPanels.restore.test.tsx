@@ -61,6 +61,16 @@ beforeEach(() => {
 });
 
 describe("restoring V2 settings", () => {
+  it("restores full-page scrolling when the page distance is the only changed setting", async () => {
+    state.settings = { ...DEFAULT_UNIFIED_SETTINGS, chatPageScrollFraction: 0.5 };
+    hooks.beginRender();
+    const restore = useSettingsRestore();
+
+    expect(restore.changedSettingLabels).toEqual(["Chat page scroll distance"]);
+    await restore.restoreDefaults();
+    expect(state.update.mock.calls[0]?.[0].chatPageScrollFraction).toBe(1);
+  });
+
   it.each([
     ["persistComposerContextStrip", "Composer context"],
     ["autoResumeLimitedThreads", "Auto-resume limited threads"],
