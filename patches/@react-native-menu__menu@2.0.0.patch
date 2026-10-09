@@ -1,5 +1,5 @@
 diff --git a/ios/MenuViewManager.mm b/ios/MenuViewManager.mm
-index 3d149b3e7426b8f7c999603ddf1e15e12331c33a..e80fe2caae86e339fcb03408419a7d64b3e5b04f 100644
+index 3d149b3e7426b8f7c999603ddf1e15e12331c33a..c61a52db6767ddc45926c776184690167ae16efc 100644
 --- a/ios/MenuViewManager.mm
 +++ b/ios/MenuViewManager.mm
 @@ -1,6 +1,6 @@
@@ -10,7 +10,7 @@ index 3d149b3e7426b8f7c999603ddf1e15e12331c33a..e80fe2caae86e339fcb03408419a7d64
  
  #ifdef RCT_NEW_ARCH_ENABLED
  // NEW ARCH
-@@ -65,6 +65,10 @@ - (UIView *)view
+@@ -65,10 +65,18 @@ - (UIView *)view
   * onOpenMenu: callback to be called when the menu is opened
   */
  RCT_EXPORT_VIEW_PROPERTY(onOpenMenu, RCTDirectEventBlock);
@@ -20,6 +20,14 @@ index 3d149b3e7426b8f7c999603ddf1e15e12331c33a..e80fe2caae86e339fcb03408419a7d64
 +RCT_EXPORT_VIEW_PROPERTY(onMenuInteractionStart, RCTDirectEventBlock);
  /**
   * shouldOpenOnLongPress: determines whether menu should be opened after long press or normal press
+  */
+ RCT_EXPORT_VIEW_PROPERTY(shouldOpenOnLongPress, BOOL)
++/**
++ * longPressDuration: milliseconds a long press holds before the menu opens; 0 keeps UIKit's timing
++ */
++RCT_EXPORT_VIEW_PROPERTY(longPressDuration, NSInteger)
+ /**
+  * themeVariant: determines whether menu should use dark theme, light theme or system theme
   */
 diff --git a/ios/NewArch/FabricActionSheetView.swift b/ios/NewArch/FabricActionSheetView.swift
 index 484ff8a1d73a6d445273883c5b28b1c8e80901ec..bc92310d00369b853a80f4d2080578f3903191d2 100644
@@ -57,17 +65,22 @@ index 33d27c5a66593ae1a9b143804413578eb79f1a7d..359cd19fa53d10c0374b2b537517ea86
 +
  }
 diff --git a/ios/NewArch/FabricViewImplementationProtocol.swift b/ios/NewArch/FabricViewImplementationProtocol.swift
-index 2cef2fb8c74497da46775a490edc58cf8cbf29cc..54429c756eeecf6e96b55d62cc1e70213096f62a 100644
+index 2cef2fb8c74497da46775a490edc58cf8cbf29cc..839d213f997ce816b6d9e2fe7d71188c359deba8 100644
 --- a/ios/NewArch/FabricViewImplementationProtocol.swift
 +++ b/ios/NewArch/FabricViewImplementationProtocol.swift
-@@ -8,4 +8,5 @@ import Foundation
+@@ -4,8 +4,10 @@ import Foundation
+     var title: NSString? { get set }
+     var themeVariant: NSString? { get set }
+     var shouldOpenOnLongPress: Bool { get set }
++    var longPressDuration: Int { get set }
+     @objc optional var hitSlop: UIEdgeInsets { get set }
      var onPressAction: ((String) -> Void)? { get set }
      var onCloseMenu: (() -> Void)? { get set }
      var onOpenMenu: (() -> Void)? { get set }
 +    var onMenuInteractionStart: (() -> Void)? { get set }
  }
 diff --git a/ios/NewArch/MenuView.mm b/ios/NewArch/MenuView.mm
-index a54e619eb39e3402fa63f2ee4f734063d4f8fc58..773f6f1f5d4e0663fd3211fe51085a7f3935e445 100644
+index a54e619eb39e3402fa63f2ee4f734063d4f8fc58..757cf2e3e9648fa359086c899bd11d1fc8abf609 100644
 --- a/ios/NewArch/MenuView.mm
 +++ b/ios/NewArch/MenuView.mm
 @@ -46,6 +46,10 @@ - (instancetype)initWithFrame:(CGRect)frame
@@ -142,6 +155,17 @@ index a54e619eb39e3402fa63f2ee4f734063d4f8fc58..773f6f1f5d4e0663fd3211fe51085a7f
              },
              @"subactions": subactionsArray,
          };
+@@ -169,6 +205,10 @@ - (void)updateProps:(Props::Shared const &)props oldProps:(Props::Shared const &
+         _view.shouldOpenOnLongPress = newViewProps.shouldOpenOnLongPress;
+     }
+ 
++    if (oldViewProps.longPressDuration != newViewProps.longPressDuration) {
++        _view.longPressDuration = newViewProps.longPressDuration;
++    }
++
+     if (oldViewProps.hitSlop.top != newViewProps.hitSlop.top ||
+         oldViewProps.hitSlop.bottom != newViewProps.hitSlop.bottom ||
+         oldViewProps.hitSlop.left != newViewProps.hitSlop.left ||
 diff --git a/ios/OldArch/LegacyActionSheetView.swift b/ios/OldArch/LegacyActionSheetView.swift
 index 3cd1a2517624d99b51331c564fba9145d7c8d799..e458504bea6ef167d9b0db0c889f0f76ea965287 100644
 --- a/ios/OldArch/LegacyActionSheetView.swift
@@ -177,11 +201,38 @@ index 6a2a205f95c1001f3fdf6fb835815fa7c4c02c16..4f42b64349966fb1438f72439cec8256
 +    }
 +
  }
+diff --git a/ios/Shared/ActionSheetView.swift b/ios/Shared/ActionSheetView.swift
+index 352d8fa656aac2e39160104df2394ebe6719bac5..040701e5d7ee498a896f03ecc79fc9927a4ffb59 100644
+--- a/ios/Shared/ActionSheetView.swift
++++ b/ios/Shared/ActionSheetView.swift
+@@ -35,6 +35,7 @@ public class ActionSheetView: UIView {
+     }
+ 
+     @objc public var shouldOpenOnLongPress: Bool = false
++    @objc public var longPressDuration: Int = 0
+ 
+     private var _themeVariant: String?
+     @objc public var themeVariant: NSString? {
 diff --git a/ios/Shared/MenuViewImplementation.swift b/ios/Shared/MenuViewImplementation.swift
-index 5c4e0da4292b15d3a27b5ea1555f11452a470815..475a99b2a3b1800c9d3e3e5f77a64f552fa35828 100644
+index 5c4e0da4292b15d3a27b5ea1555f11452a470815..bbfd7e3f0fcdc3e522efc69307d59c8555e6f7ce 100644
 --- a/ios/Shared/MenuViewImplementation.swift
 +++ b/ios/Shared/MenuViewImplementation.swift
-@@ -60,17 +60,46 @@ public class MenuViewImplementation: UIButton {
+@@ -42,6 +42,14 @@ public class MenuViewImplementation: UIButton {
+         }
+     }
+ 
++    /// Milliseconds a long press holds before the menu opens; 0 keeps UIKit's
++    /// context-menu timing.
++    @objc public var longPressDuration: Int = 0 {
++        didSet {
++            self.updateLongPressDuration()
++        }
++    }
++
+     private var _themeVariant: String?
+     @objc public var themeVariant: NSString? {
+         didSet {
+@@ -60,17 +68,46 @@ public class MenuViewImplementation: UIButton {
      }
     
      public override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
@@ -230,7 +281,7 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..475a99b2a3b1800c9d3e3e5f77a64f55
      func setup () {
          let menu = UIMenu(title: _title,
              identifier: nil,
-@@ -86,8 +115,102 @@ public class MenuViewImplementation: UIButton {
+@@ -86,10 +123,126 @@ public class MenuViewImplementation: UIButton {
              }
          }
  
@@ -256,8 +307,9 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..475a99b2a3b1800c9d3e3e5f77a64f55
 +        // the wrapped content as the zoom preview.
 +        self.isUserInteractionEnabled = !shouldOpenOnLongPress
 +        self.updateLongPressInteraction()
-+    }
-+
++        self.updateLongPressDuration()
+     }
+ 
 +    private func refreshPresentedMenu(_ menu: UIMenu) {
 +        // Tap mode presents through the button's built-in interaction,
 +        // long-press mode through the superview-hosted one; cover both (plus
@@ -307,6 +359,26 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..475a99b2a3b1800c9d3e3e5f77a64f55
 +    public override func didMoveToSuperview() {
 +        super.didMoveToSuperview()
 +        self.updateLongPressInteraction()
++        self.updateLongPressDuration()
++    }
++
++    private func updateLongPressDuration() {
++        guard let host = longPressInteraction?.view else { return }
++        let seconds: NSNumber? = longPressDuration > 0 ? NSNumber(value: Double(longPressDuration) / 1000) : nil
++        // UIKit exposes no hold-duration setting, but UIControl's long-press
++        // menu reads it from its click driver: clickDownDuration decides when a
++        // release counts as a menu press, clickTimeoutDuration when a held press
++        // opens the menu. Give this driver a subclass that answers both with our
++        // duration, so the native menu opens sooner without being re-presented
++        // by hand. Unrecognized UIKit internals leave the system timing alone.
++        for recognizer in host.gestureRecognizers ?? [] {
++            guard let driver = recognizer.delegate as? NSObject,
++                  let durationClass = LongPressDurationDriver.subclass(of: type(of: driver)) else { continue }
++            objc_setAssociatedObject(driver, &LongPressDurationDriver.key, seconds, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
++            if seconds != nil && type(of: driver) !== durationClass {
++                object_setClass(driver, durationClass)
++            }
++        }
 +    }
 +
 +    private func updateLongPressInteraction() {
@@ -330,16 +402,51 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..475a99b2a3b1800c9d3e3e5f77a64f55
 +            self.addInteraction(existing)
 +            longPressInteraction = nil
 +        }
-     }
- 
++    }
++
++
      public override func reactSetFrame(_ frame: CGRect) {
-@@ -124,4 +247,8 @@ public class MenuViewImplementation: UIButton {
+         super.reactSetFrame(frame);
+     }
+@@ -124,4 +277,40 @@ public class MenuViewImplementation: UIButton {
      @objc func sendMenuOpen() {
          // NO-OP (should be overriden by parent)
      }
 +
 +    @objc func sendMenuInteractionStart() {
 +        // NO-OP (should be overriden by parent)
++    }
++}
++
++private enum LongPressDurationDriver {
++    static var key: UInt8 = 0
++    private static let prefix = "T3LongPressDuration_"
++    private static let selectors = ["clickDownDuration", "clickTimeoutDuration"].map(NSSelectorFromString)
++
++    /// A subclass of UIKit's long-press click driver whose hold durations
++    /// return the associated override, falling back to UIKit's own values.
++    static func subclass(of base: AnyClass) -> AnyClass? {
++        let baseName = NSStringFromClass(base)
++        if baseName.hasPrefix(prefix) { return base }
++        guard baseName.hasPrefix("_UI"), baseName.hasSuffix("LongPressClickInteractionDriver"),
++              selectors.allSatisfy({ class_getInstanceMethod(base, $0) != nil }) else { return nil }
++        let name = prefix + baseName
++        if let existing = NSClassFromString(name) { return existing }
++        guard let subclass = objc_allocateClassPair(base, name, 0) else { return nil }
++        typealias Getter = @convention(c) (AnyObject, Selector) -> Double
++        for selector in selectors {
++            guard let inherited = class_getMethodImplementation(base, selector) else { continue }
++            let original = unsafeBitCast(inherited, to: Getter.self)
++            let getter: @convention(block) (AnyObject) -> Double = { driver in
++                if let seconds = objc_getAssociatedObject(driver, &key) as? NSNumber {
++                    return seconds.doubleValue
++                }
++                return original(driver, selector)
++            }
++            class_addMethod(subclass, selector, imp_implementationWithBlock(getter), "d@:")
++        }
++        objc_registerClassPair(subclass)
++        return subclass
 +    }
  }
 diff --git a/ios/Shared/RCTMenuItem.swift b/ios/Shared/RCTMenuItem.swift
@@ -367,10 +474,10 @@ index bb6bb2b7ad56135089f267587c974b166760539d..949b3f7ec49af7ba26d966a8923a51f6
  
              if #available(iOS 16.0, *) {
 diff --git a/lib/commonjs/NativeModuleSpecs/UIMenuNativeComponent.ts b/lib/commonjs/NativeModuleSpecs/UIMenuNativeComponent.ts
-index e6509355275596c451f9d082223cc16bfe504e1a..dd16e1a7403970cc3a404355f95ed99580776353 100644
+index e6509355275596c451f9d082223cc16bfe504e1a..24f6eaf9805447430fb8d7f122adf9558615d11c 100644
 --- a/lib/commonjs/NativeModuleSpecs/UIMenuNativeComponent.ts
 +++ b/lib/commonjs/NativeModuleSpecs/UIMenuNativeComponent.ts
-@@ -48,6 +48,7 @@ export interface NativeProps extends ViewProps {
+@@ -48,11 +48,13 @@ export interface NativeProps extends ViewProps {
  	onPressAction?: DirectEventHandler<{ event: string }>;
  	onCloseMenu?: DirectEventHandler<{ event: string }>;
  	onOpenMenu?: DirectEventHandler<{ event: string }>;
@@ -378,11 +485,17 @@ index e6509355275596c451f9d082223cc16bfe504e1a..dd16e1a7403970cc3a404355f95ed995
  	actions: Array<MenuAction>;
  	actionsHash: string; // just a workaround to make sure we don't have to manually compare MenuActions manually in C++ (since it's a struct and that's a pain)
  	title?: string;
+ 	themeVariant?: string;
+ 	shouldOpenOnLongPress?: boolean;
++	longPressDuration?: Int32;
+ 	hitSlop: {
+ 		top: Int32;
+ 		bottom: Int32;
 diff --git a/lib/module/NativeModuleSpecs/UIMenuNativeComponent.ts b/lib/module/NativeModuleSpecs/UIMenuNativeComponent.ts
-index e6509355275596c451f9d082223cc16bfe504e1a..dd16e1a7403970cc3a404355f95ed99580776353 100644
+index e6509355275596c451f9d082223cc16bfe504e1a..24f6eaf9805447430fb8d7f122adf9558615d11c 100644
 --- a/lib/module/NativeModuleSpecs/UIMenuNativeComponent.ts
 +++ b/lib/module/NativeModuleSpecs/UIMenuNativeComponent.ts
-@@ -48,6 +48,7 @@ export interface NativeProps extends ViewProps {
+@@ -48,11 +48,13 @@ export interface NativeProps extends ViewProps {
  	onPressAction?: DirectEventHandler<{ event: string }>;
  	onCloseMenu?: DirectEventHandler<{ event: string }>;
  	onOpenMenu?: DirectEventHandler<{ event: string }>;
@@ -390,11 +503,17 @@ index e6509355275596c451f9d082223cc16bfe504e1a..dd16e1a7403970cc3a404355f95ed995
  	actions: Array<MenuAction>;
  	actionsHash: string; // just a workaround to make sure we don't have to manually compare MenuActions manually in C++ (since it's a struct and that's a pain)
  	title?: string;
+ 	themeVariant?: string;
+ 	shouldOpenOnLongPress?: boolean;
++	longPressDuration?: Int32;
+ 	hitSlop: {
+ 		top: Int32;
+ 		bottom: Int32;
 diff --git a/lib/typescript/src/NativeModuleSpecs/UIMenuNativeComponent.d.ts b/lib/typescript/src/NativeModuleSpecs/UIMenuNativeComponent.d.ts
-index 24ee7fdcd9f81cfe2c813cfca9d4e276b846fb7b..c1b4ea53b29193283295d35c18e068f2836c6176 100644
+index 24ee7fdcd9f81cfe2c813cfca9d4e276b846fb7b..7eb59d157dd2130372479ad8ccfe01f341ea8ae9 100644
 --- a/lib/typescript/src/NativeModuleSpecs/UIMenuNativeComponent.d.ts
 +++ b/lib/typescript/src/NativeModuleSpecs/UIMenuNativeComponent.d.ts
-@@ -41,6 +41,9 @@ export interface NativeProps extends ViewProps {
+@@ -41,11 +41,15 @@ export interface NativeProps extends ViewProps {
      onOpenMenu?: DirectEventHandler<{
          event: string;
      }>;
@@ -404,11 +523,17 @@ index 24ee7fdcd9f81cfe2c813cfca9d4e276b846fb7b..c1b4ea53b29193283295d35c18e068f2
      actions: Array<MenuAction>;
      actionsHash: string;
      title?: string;
+     themeVariant?: string;
+     shouldOpenOnLongPress?: boolean;
++    longPressDuration?: Int32;
+     hitSlop: {
+         top: Int32;
+         bottom: Int32;
 diff --git a/lib/typescript/src/index.d.ts b/lib/typescript/src/index.d.ts
-index 61d210aa9364f0354f77bddaecdc0a127b1cdbb4..0672bea3352b9ad0623124e308f740c70a7e6940 100644
+index 61d210aa9364f0354f77bddaecdc0a127b1cdbb4..c9f8cfd40bbfcb36ec6b4f289e1273b3e0c0f91f 100644
 --- a/lib/typescript/src/index.d.ts
 +++ b/lib/typescript/src/index.d.ts
-@@ -4,6 +4,7 @@ declare const MenuView: import("react").ForwardRefExoticComponent<{
+@@ -4,10 +4,12 @@ declare const MenuView: import("react").ForwardRefExoticComponent<{
      onPressAction?: ({ nativeEvent }: NativeActionEvent) => void;
      onCloseMenu?: () => void;
      onOpenMenu?: () => void;
@@ -416,8 +541,13 @@ index 61d210aa9364f0354f77bddaecdc0a127b1cdbb4..0672bea3352b9ad0623124e308f740c7
      actions: MenuAction[];
      title?: string;
      isAnchoredToRight?: boolean;
+     shouldOpenOnLongPress?: boolean;
++    longPressDuration?: number;
+     themeVariant?: string;
+     hitSlop?: {
+         top: number;
 diff --git a/lib/typescript/src/types.d.ts b/lib/typescript/src/types.d.ts
-index eac7940ab7eb6a69ac329848c9f3eeffdcbaf43d..19e82df15b042bc0cda27349b2b8a8ee1d3f0b51 100644
+index eac7940ab7eb6a69ac329848c9f3eeffdcbaf43d..069cf9d0fa77f757c92d85605127abd088a49869 100644
 --- a/lib/typescript/src/types.d.ts
 +++ b/lib/typescript/src/types.d.ts
 @@ -113,6 +113,12 @@ type MenuComponentPropsBase = {
@@ -433,7 +563,21 @@ index eac7940ab7eb6a69ac329848c9f3eeffdcbaf43d..19e82df15b042bc0cda27349b2b8a8ee
      /**
       * Actions to be displayed in the menu.
       */
-@@ -170,6 +176,7 @@ export type NativeMenuComponentProps = {
+@@ -134,6 +140,13 @@ type MenuComponentPropsBase = {
+      * @default false
+      */
+     shouldOpenOnLongPress?: boolean;
++    /**
++     * Milliseconds a long press holds before the menu opens. Unset keeps
++     * UIKit's context-menu timing.
++     *
++     * @platform iOS
++     */
++    longPressDuration?: number;
+     /**
+      * Overrides theme variant of menu to light mode, dark mode or system theme
+      * (Only support iOS for now)
+@@ -170,6 +183,7 @@ export type NativeMenuComponentProps = {
      onPressAction?: ({ nativeEvent }: NativeActionEvent) => void;
      onCloseMenu?: () => void;
      onOpenMenu?: () => void;
@@ -442,7 +586,7 @@ index eac7940ab7eb6a69ac329848c9f3eeffdcbaf43d..19e82df15b042bc0cda27349b2b8a8ee
      actionsHash: string;
      title?: string;
 diff --git a/src/NativeModuleSpecs/UIMenuNativeComponent.ts b/src/NativeModuleSpecs/UIMenuNativeComponent.ts
-index e6509355275596c451f9d082223cc16bfe504e1a..604dba0d90a2545910f8724a80205565de2391d4 100644
+index e6509355275596c451f9d082223cc16bfe504e1a..e20ab4bdc9ffc6e8a265bb4894f502851e78cc88 100644
 --- a/src/NativeModuleSpecs/UIMenuNativeComponent.ts
 +++ b/src/NativeModuleSpecs/UIMenuNativeComponent.ts
 @@ -13,6 +13,22 @@ import codegenNativeComponent from "react-native/Libraries/Utilities/codegenNati
@@ -488,7 +632,7 @@ index e6509355275596c451f9d082223cc16bfe504e1a..604dba0d90a2545910f8724a80205565
  	};
  	subactions?: Array<SubAction>;
  };
-@@ -48,6 +69,7 @@ export interface NativeProps extends ViewProps {
+@@ -48,11 +69,13 @@ export interface NativeProps extends ViewProps {
  	onPressAction?: DirectEventHandler<{ event: string }>;
  	onCloseMenu?: DirectEventHandler<{ event: string }>;
  	onOpenMenu?: DirectEventHandler<{ event: string }>;
@@ -496,8 +640,14 @@ index e6509355275596c451f9d082223cc16bfe504e1a..604dba0d90a2545910f8724a80205565
  	actions: Array<MenuAction>;
  	actionsHash: string; // just a workaround to make sure we don't have to manually compare MenuActions manually in C++ (since it's a struct and that's a pain)
  	title?: string;
+ 	themeVariant?: string;
+ 	shouldOpenOnLongPress?: boolean;
++	longPressDuration?: Int32;
+ 	hitSlop: {
+ 		top: Int32;
+ 		bottom: Int32;
 diff --git a/src/types.ts b/src/types.ts
-index 9c323d9c510e7359c83d4d6633affde673570632..5d5fdfb8b8235fcaa8295b85630443eaf5991a17 100644
+index 9c323d9c510e7359c83d4d6633affde673570632..d6a476dbad41619e66349f414d3d828ba357d235 100644
 --- a/src/types.ts
 +++ b/src/types.ts
 @@ -123,6 +123,12 @@ type MenuComponentPropsBase = {
@@ -513,7 +663,21 @@ index 9c323d9c510e7359c83d4d6633affde673570632..5d5fdfb8b8235fcaa8295b85630443ea
  	/**
  	 * Actions to be displayed in the menu.
  	 */
-@@ -189,6 +195,7 @@ export type NativeMenuComponentProps = {
+@@ -145,6 +151,13 @@ type MenuComponentPropsBase = {
+ 	 * @default false
+ 	 */
+ 	shouldOpenOnLongPress?: boolean;
++	/**
++	 * Milliseconds a long press holds before the menu opens. Unset keeps
++	 * UIKit's context-menu timing.
++	 *
++	 * @platform iOS
++	 */
++	longPressDuration?: number;
+ 	/**
+ 	 * Overrides theme variant of menu to light mode, dark mode or system theme
+ 	 * (Only support iOS for now)
+@@ -189,6 +202,7 @@ export type NativeMenuComponentProps = {
  	onPressAction?: ({ nativeEvent }: NativeActionEvent) => void;
  	onCloseMenu?: () => void;
  	onOpenMenu?: () => void;
