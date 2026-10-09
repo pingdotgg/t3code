@@ -23,7 +23,6 @@ import desktopPackageJson from "../apps/desktop/package.json" with { type: "json
 import gnomeCaptureBundle from "../apps/desktop/gnome-extension/bundle.json" with { type: "json" };
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 
-import { stageCuaLinuxSdk } from "./lib/cua-linux-bundle.ts";
 import { applyWebBrandAssets } from "./apply-web-brand-assets.ts";
 import {
   BRAND_ASSET_PATHS,
@@ -2944,19 +2943,6 @@ export const stageCuaDriverExecutable = Effect.fn("stageCuaDriverExecutable")(fu
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  if (input.platform === "linux") {
-    yield* runCommand(
-      ChildProcess.make("bash", [
-        path.join(input.repoRoot, "scripts/build-cua-linux.sh"),
-        input.repoRoot,
-        input.arch,
-        path.join(input.stageResourcesDir, "cua-driver"),
-        CUA_DRIVER_VERSION,
-      ]),
-      { label: "build patched Linux Cua Driver", verbose: input.verbose },
-    );
-    return;
-  }
   const asset = resolveCuaDriverAsset(input.platform, input.arch);
   const cacheDir = path.join(input.repoRoot, "node_modules/.cache/t3code/cua-driver");
   const archivePath = path.join(cacheDir, asset.archiveName);
@@ -3957,13 +3943,6 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     }),
     { label: "vp install --prod", verbose: options.verbose },
   );
-  if (options.platform === "linux") {
-    yield* stageCuaLinuxSdk({
-      arch: options.arch,
-      bundleDir: path.join(stageProdResourcesDir, "cua-driver"),
-      nodeModulesDir: path.join(stageAppDir, "node_modules"),
-    });
-  }
   yield* stageClerkPasskeyNativeBinaries(stageAppDir, options.platform, options.arch);
   yield* stageKeyringNativeBinaries(stageAppDir, options.platform, options.arch);
 

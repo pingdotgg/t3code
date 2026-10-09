@@ -1,12 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Effect has no incremental digest.
 import * as EffectNodeStream from "@effect/platform-node/NodeStream";
 import { cuaDriverRelease, type CuaDriverRelease } from "@t3tools/shared/cuaDriverRelease";
-import {
-  HostProcessArchitecture,
-  HostProcessPlatform,
-  HostProcessIsExecutable,
-  HostProcessExecutablePath,
-} from "@t3tools/shared/hostProcess";
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -40,8 +35,8 @@ const wrapFailure = (detail: string) => (cause: unknown) =>
 
 /**
  * The pinned Cua Driver for a server that runs without the desktop app. The
- * desktop and Linux CLI bundle their driver. Other standalone servers download
- * the pinned upstream release into T3's home when a session first needs it.
+ * desktop bundles the same release in its resources; a standalone `t3` server
+ * downloads it into T3's home the first time a session needs it.
  */
 export class CuaDriverInstallation extends Context.Service<
   CuaDriverInstallation,
@@ -52,11 +47,7 @@ export class CuaDriverInstallation extends Context.Service<
 >()("t3/cua/CuaDriverInstallation") {}
 
 export const makeCuaDriverInstallation = Effect.fn("CuaDriverInstallation.make")(
-  function* (options: {
-    readonly baseDir: string;
-    readonly release?: CuaDriverRelease | null;
-    readonly bundledDir?: string;
-  }) {
+  function* (options: { readonly baseDir: string; readonly release?: CuaDriverRelease | null }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const http = yield* HttpClient.HttpClient;
@@ -223,27 +214,6 @@ export const makeCuaDriverInstallation = Effect.fn("CuaDriverInstallation.make")
 
     const executable = gate.withPermit(
       Effect.gen(function* () {
-        if (options.bundledDir !== undefined) {
-          for (const file of [
-            "cua-driver",
-            "libcua_driver_sdk.so",
-            "cua-cursor-theme",
-            "wayland-helper/winrects@cua/extension.js",
-          ]) {
-            const filePath = path.join(options.bundledDir, file);
-            if (
-              !(yield* fs.stat(filePath).pipe(
-                Effect.map((info) => info.type === "File"),
-                Effect.orElseSucceed(() => false),
-              ))
-            ) {
-              return yield* new CuaDriverInstallError({
-                detail: `The bundled Cua Driver is incomplete: ${filePath}. Reinstall T3 Code.`,
-              });
-            }
-          }
-          return path.join(options.bundledDir, "cua-driver");
-        }
         if (release === null) {
           return yield* new CuaDriverInstallError({
             detail: `Cua publishes no driver for ${platform}-${arch}.`,
@@ -264,13 +234,6 @@ export const layer = Layer.effect(
   CuaDriverInstallation,
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    const path = yield* Path.Path;
-    const bundled = (yield* HostProcessPlatform) === "linux" && (yield* HostProcessIsExecutable);
-    return yield* makeCuaDriverInstallation({
-      baseDir: config.baseDir,
-      ...(bundled
-        ? { bundledDir: path.join(path.dirname(yield* HostProcessExecutablePath), "cua-driver") }
-        : {}),
-    });
+    return yield* makeCuaDriverInstallation({ baseDir: config.baseDir });
   }),
 );

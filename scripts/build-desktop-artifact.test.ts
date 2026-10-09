@@ -287,7 +287,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         );
         const error = yield* Effect.flip(
           stageCuaDriverExecutable({
-            platform: "mac",
+            platform: "linux",
             arch: "x64",
             repoRoot: root,
             stageRoot: root,
@@ -300,37 +300,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.isFalse(yield* fs.exists(path.join(root, "resources", "cua-driver")));
         const cache = path.join(root, "node_modules/.cache/t3code/cua-driver");
         assert.deepStrictEqual(yield* fs.readDirectory(cache), []);
-      }),
-    ),
-  );
-
-  it.effect("does not fall back to upstream when the patched Linux build fails", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cua-build-failure-" });
-        const commands: string[] = [];
-        const error = yield* Effect.flip(
-          stageCuaDriverExecutable({
-            platform: "linux",
-            arch: "arm64",
-            repoRoot: root,
-            stageRoot: root,
-            stageResourcesDir: `${root}/resources`,
-            verbose: false,
-          }).pipe(
-            Effect.provideService(
-              ChildProcessSpawner.ChildProcessSpawner,
-              ChildProcessSpawner.make((command) => {
-                commands.push((command as unknown as { command: string }).command);
-                return Effect.succeed(mockProcess(42));
-              }),
-            ),
-          ),
-        );
-        assert.instanceOf(error, BuildCommandFailedError);
-        assert.deepStrictEqual(commands, ["bash"]);
-        assert.isFalse(yield* fs.exists(`${root}/resources/cua-driver`));
       }),
     ),
   );

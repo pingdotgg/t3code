@@ -55,11 +55,7 @@ const FILES = ["cua-driver.exe", "cua-driver-uia.exe", "cua-cursor-theme.exe"];
 const archive = makeZip(FILES.map((name) => ({ name, data: name })));
 
 const makeHarness = Effect.fn("test.makeCuaDriverInstallation")(function* (
-  options: {
-    readonly sha256?: string;
-    readonly archive?: Buffer;
-    readonly bundled?: "complete" | "missing";
-  } = {},
+  options: { readonly sha256?: string; readonly archive?: Buffer } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -67,22 +63,8 @@ const makeHarness = Effect.fn("test.makeCuaDriverInstallation")(function* (
   const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cua-install-test-" });
   const body = options.archive ?? archive;
   const requests: Array<string> = [];
-  const bundledDir = path.join(baseDir, "bundled-cua");
-  if (options.bundled === "complete") {
-    for (const file of [
-      "cua-driver",
-      "libcua_driver_sdk.so",
-      "cua-cursor-theme",
-      "wayland-helper/winrects@cua/extension.js",
-    ]) {
-      const destination = path.join(bundledDir, file);
-      yield* fs.makeDirectory(path.dirname(destination), { recursive: true });
-      yield* fs.writeFileString(destination, "patched");
-    }
-  }
   const installation = yield* CuaDriverInstallation.makeCuaDriverInstallation({
     baseDir,
-    ...(options.bundled ? { bundledDir } : {}),
     release: {
       version: "9.9.9",
       archiveName: "cua-driver-fixture.zip",
@@ -109,7 +91,6 @@ const makeHarness = Effect.fn("test.makeCuaDriverInstallation")(function* (
   );
   return {
     installation,
-    bundledDir,
     fs,
     path,
     installRoot: path.join(baseDir, "tools", "cua-driver"),
@@ -118,27 +99,6 @@ const makeHarness = Effect.fn("test.makeCuaDriverInstallation")(function* (
 });
 
 it.layer(NodeServices.layer)("CuaDriverInstallation", (it) => {
-  it.effect(
-    "uses the shipped patched driver without fetching or accepting an older cached release",
-    () =>
-      Effect.gen(function* () {
-        const h = yield* makeHarness({ bundled: "complete" });
-        yield* h.fs.makeDirectory(h.path.join(h.installRoot, "9.9.9"), { recursive: true });
-        yield* h.fs.writeFileString(h.path.join(h.installRoot, "9.9.9/cua-driver.exe"), "upstream");
-        expect(yield* h.installation.executable).toBe(h.path.join(h.bundledDir, "cua-driver"));
-        expect(h.requests).toEqual([]);
-      }).pipe(Effect.scoped),
-  );
-
-  it.effect("refuses an incomplete shipped bundle instead of downloading upstream", () =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness({ bundled: "missing" });
-      const error = yield* Effect.flip(h.installation.executable);
-      expect(error.detail).toContain("bundled Cua Driver is incomplete");
-      expect(h.requests).toEqual([]);
-    }).pipe(Effect.scoped),
-  );
-
   it.effect("installs the verified release once and replaces older versions", () =>
     Effect.gen(function* () {
       const { installation, fs, path, installRoot, requests } = yield* makeHarness();

@@ -7,33 +7,33 @@
  * To bump: change the version, then replace every byte count and SHA-256 from
  * the release's `checksums.txt` and its asset sizes.
  */
-export const CUA_DRIVER_VERSION = "0.34.0";
+export const CUA_DRIVER_VERSION = "0.34.1";
 
 const ARCHIVES = {
   "darwin-universal": {
     archiveName: `cua-driver-rs-${CUA_DRIVER_VERSION}-darwin-universal-binary.tar.gz`,
-    bytes: 47_108_179,
-    sha256: "940dc008e0f7c5d217d14c0f247d1ebab91b1bac965f4a649d19e8c789bdfd81",
+    bytes: 47_101_654,
+    sha256: "52de49b5046df19245ad02ff9aa89ce9caf69e84988e1d0fac677611dd83e48c",
   },
   "linux-x64": {
     archiveName: `cua-driver-rs-${CUA_DRIVER_VERSION}-linux-x86_64-binary.tar.gz`,
-    bytes: 34_818_314,
-    sha256: "629ac96eff829d4dfd5cf221f3f2165c2d813aed91e5efb7b20777a741cd70a7",
+    bytes: 34_991_293,
+    sha256: "a41fe2bdcbeea4501dc594c074f16b0975728e0cc7b08b90acea8564d48fafee",
   },
   "linux-arm64": {
     archiveName: `cua-driver-rs-${CUA_DRIVER_VERSION}-linux-arm64-binary.tar.gz`,
-    bytes: 34_607_515,
-    sha256: "9db8b9084add57eb97be8164367b24b6be54ed4f3dc01213e64b72d7fc09fddb",
+    bytes: 34_722_300,
+    sha256: "1c839d35401bbdea20f3e1cf50ace926ef17be6f32cea7e821b02b263c4933dc",
   },
   "win32-x64": {
     archiveName: `cua-driver-rs-${CUA_DRIVER_VERSION}-windows-x86_64-binary.zip`,
-    bytes: 31_314_221,
-    sha256: "bcc520e50861c7092cf775846fec76ae386d7dcd6b5b408608b0ea4423a8b888",
+    bytes: 31_346_745,
+    sha256: "021bc2e5330c80a6c5e2c347c305fafbd4defe195d6282e0d20436f2f13c19bb",
   },
   "win32-arm64": {
     archiveName: `cua-driver-rs-${CUA_DRIVER_VERSION}-windows-arm64-binary.zip`,
-    bytes: 29_454_268,
-    sha256: "df5786c6e7841d2f0d88f31c627c487181463ed99614b03efc0e907acfc698c3",
+    bytes: 29_462_652,
+    sha256: "21820a2ae20cb4bb998a340ff87c11007b9eb5cec8d1b8338c7b0d6dc88b01a6",
   },
 } as const;
 
