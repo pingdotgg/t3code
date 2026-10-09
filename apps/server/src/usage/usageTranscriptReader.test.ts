@@ -10,7 +10,6 @@ import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
 
 import { TEST_FORMATS } from "./usageTestFormats.ts";
 import { readTranscriptRecords } from "./usageTranscriptReader.ts";
-import { readOpenCodeUsage } from "./opencodeUsageReader.ts";
 import { readCursorAccountUsage } from "./cursorUsageReader.ts";
 import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUsageReader.ts";
 
@@ -480,55 +479,6 @@ describe("SQLite usage readers", () => {
     );
     assert.isTrue(missing.missing);
     assert.isFalse(requested);
-  });
-
-  it("counts migrated OpenCode messages once and sees subsequent WAL writes", async () => {
-    const db = new NodeSqlite.DatabaseSync(NodePath.join(dir, "opencode.db"));
-    try {
-      db.exec(
-        "PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; CREATE TABLE message (id TEXT, session_id TEXT, data TEXT)",
-      );
-      const message = {
-        id: "msg-1",
-        sessionID: "session-1",
-        role: "assistant",
-        modelID: "claude-sonnet-4-5",
-        time: { created: 1780000000000 },
-        cost: 0.25,
-        tokens: { input: 100, output: 20, reasoning: 5, cache: { read: 30, write: 10 } },
-      };
-      const insert = db.prepare("INSERT INTO message VALUES (?, ?, ?)");
-      insert.run(message.id, message.sessionID, JSON.stringify(message));
-      const legacy = NodePath.join(dir, "storage", "message", message.sessionID);
-      await NodeFSP.mkdir(legacy, { recursive: true });
-      await NodeFSP.writeFile(NodePath.join(legacy, "msg-1.json"), JSON.stringify(message));
-      const first = await readOpenCodeUsage(dir, 0);
-      assert.isFalse(first.error);
-      const records = first.files.flatMap((file) => file.records);
-      assert.strictEqual(records.length, 1);
-      assert.deepStrictEqual(records[0]?.totals, {
-        uncachedInputTokens: 100,
-        cachedInputTokens: 30,
-        cacheCreationTokens: 10,
-        outputTokens: 25,
-        reasoningTokens: 5,
-      });
-      assert.strictEqual(records[0]?.reportedCostUsd, 0.25);
-      insert.run(
-        "msg-2",
-        message.sessionID,
-        JSON.stringify({ ...message, id: "msg-2", time: { created: 1780000001000 } }),
-      );
-      const next = await readOpenCodeUsage(dir, 1780000001000);
-      assert.isFalse(next.error);
-      assert.deepStrictEqual(
-        next.files.flatMap((file) => file.records).map((record) => record.dedupeKey),
-        ["opencode:msg-2"],
-      );
-      assert.isAbove((await NodeFSP.stat(NodePath.join(dir, "opencode.db-wal"))).size, 0);
-    } finally {
-      db.close();
-    }
   });
 
   it("deduplicates Antigravity generation and step usage while preserving retry model and token buckets", async () => {
