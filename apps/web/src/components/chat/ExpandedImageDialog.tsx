@@ -19,12 +19,8 @@ import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { createPortal } from "react-dom";
-import {
-  readVideoHandoff,
-  type ExpandedImageItem,
-  type ExpandedImagePreview,
-  type VideoHandoff,
-} from "./ExpandedImagePreview";
+import type { ExpandedImageItem, ExpandedImagePreview } from "./ExpandedImagePreview";
+import { readVideoHandoff, type VideoHandoff } from "../media/videoHandoff";
 import { resolveExternalWebLinkHost } from "./externalLinkContextMenu";
 import { useAssetUrlRefresh, useAssetUrlState } from "../../assets/assetUrls";
 import { OpenMediaLink } from "../media/OpenMediaLink";
@@ -83,7 +79,7 @@ function ExpandedVideo({
       originalUrl={item.originalUrl}
       preload="metadata"
       autoPlay={handoff ? handoff.playing : (item.autoPlay ?? true)}
-      startAt={handoff?.startAt}
+      resumeFrom={handoff ?? undefined}
       className={className}
       videoClassName={videoClassName}
       stateClassName={EXPANDED_MEDIA_STATE_CLASS_NAME}

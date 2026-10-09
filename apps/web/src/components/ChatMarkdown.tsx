@@ -112,8 +112,8 @@ import {
   renderCodexFileCitationsAsMarkdown,
 } from "@t3tools/shared/codexMarkdownDirectives";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
+import { readVideoHandoff } from "./media/videoHandoff";
 import {
-  readVideoHandoff,
   resolveMarkdownMediaPreview,
   type ExpandedImageItem,
   type ExpandedImagePreview,

@@ -17,6 +17,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { resolveExternalWebLinkHost } from "./externalLinkContextMenu";
 import type { MediaActionSource } from "../media/MediaActions";
+import type { VideoHandoff } from "../media/videoHandoff";
 import { resolveProtocolRelativeMediaUrl } from "../media/mediaContent";
 
 export interface ExpandedImageItem {
@@ -32,12 +33,6 @@ export interface ExpandedImageItem {
   actionsSource?: MediaActionSource;
 }
 
-/** Where playback stood when a video moved between the inline player, viewer and mini player. */
-export interface VideoHandoff {
-  readonly startAt: number;
-  readonly playing: boolean;
-}
-
 export interface ExpandedImagePreview {
   images: ExpandedImageItem[];
   index: number;
@@ -45,12 +40,6 @@ export interface ExpandedImagePreview {
   handoff?: VideoHandoff;
   /** Opens the selected video straight into the floating mini player. */
   minimized?: boolean;
-}
-
-/** A video that never played starts fresh (and autoplays) in its next player. */
-export function readVideoHandoff(video: HTMLVideoElement | null | undefined): VideoHandoff | null {
-  if (!video || video.played.length === 0) return null;
-  return { startAt: video.currentTime, playing: !video.paused && !video.ended };
 }
 
 /** Wraps navigation in either direction, including offsets beyond a complete cycle. */
