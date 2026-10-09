@@ -228,11 +228,18 @@ const make = Effect.fn("updates.UpdateWindow.make")(function* () {
 
   const runIfOpen: UpdateWindow["Service"]["runIfOpen"] = (options, install) => {
     const attempt = check(options).pipe(
-      Effect.flatMap((status) => (status.open ? Effect.asSome(install) : Effect.succeedNone)),
+      Effect.flatMap((status) => {
+        if (!status.open) return Effect.succeedNone;
+        if (!options.restartsServer) return Effect.asSome(install);
+        // Keep input available during the full check, then close the terminal race before restart.
+        return terminals.withRestartPermit(
+          terminals.hasBusyTerminals.pipe(
+            Effect.flatMap((busy) => (busy ? Effect.succeedNone : Effect.asSome(install))),
+          ),
+        );
+      }),
     );
-    return admission.withPermit(
-      options.restartsServer ? terminals.withRestartPermit(attempt) : attempt,
-    );
+    return admission.withPermit(attempt);
   };
   const runWhenOpen: UpdateWindow["Service"]["runWhenOpen"] = (options, install) =>
     Effect.gen(function* () {
