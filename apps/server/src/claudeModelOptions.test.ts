@@ -49,6 +49,30 @@ describe("compileClaudeModelSelection", () => {
     ).toMatchObject({ effort: "high", promptEffort: "ultrathink" });
   });
 
+  for (const model of [
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
+    "claude-sonnet-5",
+    "claude-haiku-5-5",
+  ]) {
+    it(`compiles Ultracode to xhigh effort and the ultracode setting for ${model}`, () => {
+      expect(
+        compileClaudeModelSelection(selection(model, [{ id: "effort", value: "ultracode" }])),
+      ).toMatchObject({
+        effort: "xhigh",
+        settings: { ultracode: true },
+      });
+    });
+  }
+
+  it("does not offer Ultracode on models that cannot run xhigh effort", () => {
+    const compiled = compileClaudeModelSelection(
+      selection("claude-sonnet-4-6", [{ id: "effort", value: "ultracode" }]),
+    );
+    expect(compiled.effort).toBe("high");
+    expect(compiled.settings).not.toHaveProperty("ultracode");
+  });
+
   it("compiles the thinking toggle for models that expose it", () => {
     expect(
       compileClaudeModelSelection(selection("claude-haiku-4-5", [{ id: "thinking", value: false }]))
