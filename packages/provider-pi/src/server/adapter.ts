@@ -63,12 +63,7 @@ import { ChildProcessSpawner } from "effect/process";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
-import {
-  expandPiSkillReference,
-  parsePiCompactCommand,
-  parsePiDiscoveredCommands,
-  type PiCompactCommand,
-} from "./commands.ts";
+import { parsePiCompactCommand, type PiCompactCommand } from "./commands.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -114,7 +109,6 @@ const STREAM_FLUSH_MS = 50;
 const PI_REQUEST_TIMEOUT_MS = 15_000;
 // Session lifecycle hooks reload extensions, MCP servers and language servers.
 const PI_SESSION_TIMEOUT_MS = 60_000;
-const PI_SKILL_DISCOVERY_TIMEOUT_MS = 4_000;
 const PI_UNSOLICITED_ACTIVITY_ERROR =
   "Pi started agent work outside an active T3 turn. The session was stopped to prevent invisible tool execution.";
 const SETTLE_PROBE_MAX_ATTEMPTS = 3;
@@ -458,15 +452,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             }),
         ),
       );
-      const discoverSkillNames = connection
-        .request({ type: "get_commands" }, PI_SKILL_DISCOVERY_TIMEOUT_MS)
-        .pipe(
-          Effect.map(
-            (data) => new Set(parsePiDiscoveredCommands(data).skills.map((skill) => skill.name)),
-          ),
-        );
-      let skillNames: Set<string> | null = null;
-
       const now = yield* DateTime.now;
       let sessionEntity: OrchestrationV2ProviderSession = {
         id: input.providerSessionId,
@@ -2117,16 +2102,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         Effect.forkIn(scope),
       );
 
-      // Discovery can invoke extension code and therefore raise a blocking
-      // UI request. Start it only after the event pump exists, and never hold
-      // session opening on it; startup requests are persisted at session
-      // scope and can be answered before a turn begins.
-      yield* discoverSkillNames.pipe(
-        Effect.tap((discovered) => Effect.sync(() => (skillNames = discovered))),
-        Effect.ignore,
-        Effect.forkIn(scope),
-      );
-
       // ── session runtime ───────────────────────────────────
 
       const registerThread = Effect.fnUntraced(function* (
@@ -2329,15 +2304,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         text: string,
         attachments: ReadonlyArray<ChatAttachment>,
       ) {
-        // Provider discovery and the live session are separate Pi processes.
-        // Retry a failed session-local lookup once at first use so a transient
-        // startup failure cannot leave a visible $ skill inert for this session.
-        if (skillNames === null && text.includes("$")) {
-          skillNames = yield* discoverSkillNames.pipe(
-            Effect.orElseSucceed(() => new Set<string>()),
-          );
-        }
-        const expandedText = skillNames === null ? text : expandPiSkillReference(text, skillNames);
         const images: Array<{ type: "image"; data: string; mimeType: string }> = [];
         const extraLines: Array<string> = [];
         for (const attachment of attachments) {
@@ -2354,8 +2320,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             extraLines.push(`[Attachment saved at ${path}]`);
           }
         }
-        const message =
-          extraLines.length === 0 ? expandedText : `${expandedText}\n\n${extraLines.join("\n")}`;
+        const message = extraLines.length === 0 ? text : `${text}\n\n${extraLines.join("\n")}`;
         return { message, images };
       });
 

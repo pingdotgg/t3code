@@ -23,7 +23,9 @@ export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
 
 export const PI_T3_MCP_EXTENSION_SOURCE = `\
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { stripFrontmatter, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 import { Type } from "typebox";
 
 const URL_ENV = ${JSON.stringify(T3_MCP_URL_ENV)};
@@ -210,6 +212,38 @@ function createMcpClient(endpoint: string, token: string) {
 }
 
 export default async function t3McpExtension(pi: ExtensionAPI) {
+  // Keep skill chips in the request. Pi expands only one leading /skill:
+  // command, so use its own frontmatter loader for every selected chip here.
+  pi.on("input", async (event, ctx) => {
+    if (!event.text.includes("$")) return;
+    const commands = pi.getCommands().filter((command) => command.source === "skill");
+    const nativeSkill = /^\\/skill:([^ ]+)(?: |$)/.exec(event.text)?.[1];
+    const seen = new Set<string>(nativeSkill === undefined ? [] : [nativeSkill]);
+    const blocks: string[] = [];
+    for (const match of event.text.matchAll(/(^|\\s)\\$([^\\s]+)(?=\\s|$)/g)) {
+      const name = match[2];
+      if (name === undefined || seen.has(name)) continue;
+      const command = commands.find((candidate) => candidate.name === "skill:" + name);
+      if (command === undefined) continue;
+      seen.add(name);
+      const path = command.sourceInfo.path;
+      try {
+        const body = stripFrontmatter(await NodeFSP.readFile(path, "utf8")).trim();
+        blocks.push(
+          \`<skill name="\${name}" location="\${path}">\\nReferences are relative to \${NodePath.dirname(path)}.\\n\\n\${body}\\n</skill>\`,
+        );
+      } catch {
+        ctx.ui.notify(\`Could not load skill \${name} from \${path}.\`, "error");
+      }
+    }
+    if (blocks.length === 0) return;
+    return {
+      action: "transform",
+      text: event.text + "\\n\\n" + blocks.join("\\n\\n"),
+      images: event.images,
+    };
+  });
+
   // Workaround for an upstream Pi context-budgeting bug: pi-ai reuses the
   // previous response's usage even when a fork's instructions/tools differ,
   // then reserves almost all remaining context for output. OpenRouter can

@@ -91,41 +91,6 @@ export function parsePiDiscoveredCommands(data: unknown): PiDiscoveredCommands {
   return { slashCommands, skills };
 }
 
-/**
- * Pi expands skills only through leading `/skill:name` commands. T3 stores
- * skill chips as `$name`, so hoist every known `$skill` to that native
- * command position while preserving the rest of the user's prompt.
- */
-export function expandPiSkillReference(text: string, skillNames: ReadonlySet<string>): string {
-  const references = /(^|\s)\$([^\s]+)(?=\s|$)/g;
-  const found: Array<{ name: string; start: number; end: number }> = [];
-  for (const match of text.matchAll(references)) {
-    const name = match[2];
-    if (name === undefined || !skillNames.has(name) || match.index === undefined) continue;
-    const tokenStart = match.index + (match[1]?.length ?? 0);
-    found.push({ name, start: tokenStart, end: tokenStart + name.length + 1 });
-  }
-  if (found.length === 0) return text;
-
-  const orderedNames: string[] = [];
-  const seen = new Set<string>();
-  for (const token of found) {
-    if (seen.has(token.name)) continue;
-    seen.add(token.name);
-    orderedNames.push(token.name);
-  }
-
-  let body = text;
-  for (let index = found.length - 1; index >= 0; index -= 1) {
-    const token = found[index];
-    if (token === undefined) continue;
-    body = `${body.slice(0, token.start)}${body.slice(token.end)}`;
-  }
-  body = body.trim();
-  const prefix = orderedNames.map((name) => `/skill:${name}`).join(" ");
-  return body.length === 0 ? prefix : `${prefix} ${body}`;
-}
-
 function recordField(input: unknown, key: string): unknown {
   return Predicate.isObject(input) ? input[key] : undefined;
 }
