@@ -1,4 +1,7 @@
-import { presentThreadShell } from "@t3tools/client-runtime/state/models";
+import {
+  presentThreadShell,
+  type EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/models";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
@@ -21,7 +24,7 @@ import {
   setNotificationBadge,
   unlockNotificationAudio,
 } from "../threadNotifications";
-import { resolveSidebarThreadStatus } from "./Sidebar.logic";
+import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "./Sidebar.logic";
 import { toastManager } from "./ui/toast";
 
 export function ThreadNotificationCoordinator() {
@@ -94,6 +97,17 @@ interface NotificationState {
   readonly completion: number | null;
 }
 
+type ThreadAlert = {
+  readonly thread: EnvironmentThreadShell;
+  readonly kind: "completion" | "input";
+  readonly status: SidebarThreadStatus;
+};
+
+// A completion only alerts once the thread has stayed ready this long. When the
+// background work holding a completion ends, the agent usually wakes for it, and
+// the shell reads ready for a moment before the wake turn starts.
+export const COMPLETION_SETTLE_MS = 3_000;
+
 function EnvironmentNotifications({
   environmentId,
   onNotification,
@@ -115,45 +129,10 @@ function EnvironmentNotifications({
     strict: false,
   });
   const previous = useRef(new Map<ThreadId, NotificationState>());
+  const pendingCompletions = useRef(new Map<ThreadId, ReturnType<typeof setTimeout>>());
 
-  useEffect(() => {
-    if (threads === null) {
-      previous.current.clear();
-      return;
-    }
-    const next = new Map<ThreadId, NotificationState>();
-    for (const rawThread of threads) {
-      if (rawThread.lineage.relationshipToParent === "subagent") continue;
-      const prior = previous.current.get(rawThread.id);
-      // The same object cannot produce a new notification.
-      if (prior?.raw === rawThread) {
-        next.set(rawThread.id, prior);
-        continue;
-      }
-      const thread = presentThreadShell(environmentId, rawThread);
-      let status = resolveSidebarThreadStatus(thread);
-      if (status === "ready" && thread.latestRun?.status === "failed") status = "failed";
-      const attention =
-        status === "input" || status === "approval" || status === "failed" || status === "limited"
-          ? `${thread.latestRun?.runId ?? ""}:${status}`
-          : null;
-      const completedAt = Date.parse(thread.latestRun?.completedAt ?? "");
-      // Commands left running (a dev server) read as ready; subagents and monitors wait.
-      const completion =
-        status === "ready" &&
-        thread.latestRun?.status === "completed" &&
-        Number.isFinite(completedAt)
-          ? completedAt
-          : (prior?.completion ?? null);
-      next.set(thread.id, { raw: rawThread, attention, completion });
-      if (!prior || thread.archivedAt !== null) continue;
-      const kind =
-        attention && attention !== prior.attention
-          ? "input"
-          : completion !== null && (prior.completion === null || completion > prior.completion)
-            ? "completion"
-            : null;
-      if (!kind) continue;
+  const showAlert = useCallback(
+    ({ thread, kind, status }: ThreadAlert) => {
       const title =
         kind === "completion"
           ? "Thread completed"
@@ -203,7 +182,7 @@ function EnvironmentNotifications({
             },
           },
         });
-        continue;
+        return;
       }
       if (
         !hasDesktopNotifications(mode) ||
@@ -211,7 +190,7 @@ function EnvironmentNotifications({
         typeof Notification === "undefined" ||
         Notification.permission !== "granted"
       )
-        continue;
+        return;
       try {
         const notification = new Notification(title, {
           body: thread.title,
@@ -230,18 +209,88 @@ function EnvironmentNotifications({
       } catch {
         // Some browsers expose Notification but reject desktop presentation.
       }
+    },
+    [
+      activeEnvironmentId,
+      activeThreadId,
+      environmentId,
+      inAppNotificationsEnabled,
+      mode,
+      navigate,
+      onNotification,
+    ],
+  );
+  // Settling completions alert with the settings and route current when they fire.
+  const latestAlert = useRef(showAlert);
+  useEffect(() => {
+    latestAlert.current = showAlert;
+  }, [showAlert]);
+
+  useEffect(() => {
+    const pending = pendingCompletions.current;
+    return () => {
+      for (const timer of pending.values()) clearTimeout(timer);
+      pending.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    const cancelCompletion = (threadId: ThreadId) => {
+      clearTimeout(pendingCompletions.current.get(threadId));
+      pendingCompletions.current.delete(threadId);
+    };
+    if (threads === null) {
+      for (const threadId of pendingCompletions.current.keys()) cancelCompletion(threadId);
+      previous.current.clear();
+      return;
+    }
+    const next = new Map<ThreadId, NotificationState>();
+    for (const rawThread of threads) {
+      if (rawThread.lineage.relationshipToParent === "subagent") continue;
+      const prior = previous.current.get(rawThread.id);
+      // The same object cannot produce a new notification.
+      if (prior?.raw === rawThread) {
+        next.set(rawThread.id, prior);
+        continue;
+      }
+      const thread = presentThreadShell(environmentId, rawThread);
+      let status = resolveSidebarThreadStatus(thread);
+      if (status === "ready" && thread.latestRun?.status === "failed") status = "failed";
+      const attention =
+        status === "input" || status === "approval" || status === "failed" || status === "limited"
+          ? `${thread.latestRun?.runId ?? ""}:${status}`
+          : null;
+      const completedAt = Date.parse(thread.latestRun?.completedAt ?? "");
+      // Commands left running (a dev server) read as ready; subagents and monitors wait.
+      const completed =
+        status === "ready" &&
+        thread.latestRun?.status === "completed" &&
+        Number.isFinite(completedAt);
+      const completion = completed ? completedAt : (prior?.completion ?? null);
+      next.set(thread.id, { raw: rawThread, attention, completion });
+      // Work resumed (or the thread changed state) before the completion settled.
+      if (!completed || thread.archivedAt !== null) cancelCompletion(thread.id);
+      if (!prior || thread.archivedAt !== null) continue;
+      if (attention && attention !== prior.attention) {
+        latestAlert.current({ thread, kind: "input", status });
+        continue;
+      }
+      if (completion !== null && (prior.completion === null || completion > prior.completion)) {
+        cancelCompletion(thread.id);
+        pendingCompletions.current.set(
+          thread.id,
+          setTimeout(() => {
+            pendingCompletions.current.delete(thread.id);
+            latestAlert.current({ thread, kind: "completion", status });
+          }, COMPLETION_SETTLE_MS),
+        );
+      }
+    }
+    for (const threadId of pendingCompletions.current.keys()) {
+      if (!next.has(threadId)) cancelCompletion(threadId);
     }
     previous.current = next;
-  }, [
-    activeEnvironmentId,
-    activeThreadId,
-    environmentId,
-    inAppNotificationsEnabled,
-    mode,
-    navigate,
-    onNotification,
-    threads,
-  ]);
+  }, [environmentId, threads]);
 
   return null;
 }

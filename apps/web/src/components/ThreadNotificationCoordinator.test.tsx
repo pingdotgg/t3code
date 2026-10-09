@@ -120,15 +120,19 @@ vi.mock("./ui/toast", () => ({
   toastManager: { add: state.add, close: state.close },
 }));
 
-import { ThreadNotificationCoordinator } from "./ThreadNotificationCoordinator";
+import {
+  COMPLETION_SETTLE_MS,
+  ThreadNotificationCoordinator,
+} from "./ThreadNotificationCoordinator";
 
 let renderer: ReactTestRenderer | undefined;
 
-async function render() {
+async function render({ settle = true } = {}) {
   await act(() => {
     if (renderer) renderer.update(<ThreadNotificationCoordinator />);
     else renderer = create(<ThreadNotificationCoordinator />);
   });
+  if (settle) await act(() => vi.advanceTimersByTime(COMPLETION_SETTLE_MS));
 }
 
 async function complete() {
@@ -155,6 +159,7 @@ beforeEach(() => {
     subagent: false,
     background: [],
   });
+  vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", new EventTarget());
   vi.stubGlobal("document", {
@@ -171,6 +176,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(() => renderer?.unmount());
   renderer = undefined;
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -258,6 +264,27 @@ describe("thread notifications", () => {
     expect(state.add).not.toHaveBeenCalled();
     state.background = [{ taskId: "dev", kind: "command" }];
     await render();
+    expect(state.add).toHaveBeenCalledTimes(1);
+    expect(state.add).toHaveBeenLastCalledWith(
+      expect.objectContaining({ title: "Thread completed" }),
+    );
+  });
+
+  it("does not alert when the agent wakes right after its background work ends", async () => {
+    await render();
+    state.background = [{ taskId: "agent", kind: "monitor" }];
+    await complete();
+    // The last background task ends, so the held completion is released...
+    state.background = [];
+    await render({ settle: false });
+    // ...and the agent wakes for it before the completion settles.
+    state.completedAt = null;
+    await render();
+    expect(state.add).not.toHaveBeenCalled();
+    state.completedAt = "2026-09-13T10:05:00.000Z";
+    await render({ settle: false });
+    expect(state.add).not.toHaveBeenCalled();
+    await act(() => vi.advanceTimersByTime(COMPLETION_SETTLE_MS));
     expect(state.add).toHaveBeenCalledTimes(1);
     expect(state.add).toHaveBeenLastCalledWith(
       expect.objectContaining({ title: "Thread completed" }),
