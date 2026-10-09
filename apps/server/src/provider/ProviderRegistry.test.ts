@@ -164,6 +164,7 @@ type TestClaudeCapabilities = {
   readonly email: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
+  readonly apiKeySource: string | undefined;
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
 };
@@ -174,6 +175,7 @@ function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
       email: undefined,
       subscriptionType: undefined,
       tokenSource: undefined,
+      apiKeySource: undefined,
       apiProvider: undefined,
       slashCommands: [],
       ...overrides,
@@ -3167,6 +3169,100 @@ it.layer(
       ),
     );
 
+    it.effect("reports a logged-out CLI as unauthenticated", () =>
+      Effect.gen(function* () {
+        // The capability probe resolves for a logged-out CLI, so `tokenSource:
+        // "none"` is the only thing separating it from an authenticated one.
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities({
+            tokenSource: "none",
+            apiKeySource: "none",
+            apiProvider: "firstParty",
+          }),
+        );
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(status.auth.status, "unauthenticated");
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect("keeps an API key install authenticated when it reports no token source", () =>
+      Effect.gen(function* () {
+        // `ANTHROPIC_API_KEY` never populates `tokenSource`, so reading that
+        // field alone would log the install out.
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities({
+            tokenSource: "none",
+            apiKeySource: "ANTHROPIC_API_KEY",
+            apiProvider: "firstParty",
+          }),
+        );
+        assert.strictEqual(status.status, "ready");
+        assert.strictEqual(status.auth.status, "authenticated");
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect("keeps a third-party backend authenticated without any token source", () =>
+      Effect.gen(function* () {
+        // Bedrock and Vertex authenticate outside the CLI, so the account
+        // payload is empty by design rather than because nobody logged in.
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities({ tokenSource: "none", apiProvider: "bedrock" }),
+        );
+        assert.strictEqual(status.status, "ready");
+        assert.strictEqual(status.auth.status, "authenticated");
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect("keeps a CLI that says nothing about its account authenticated", () =>
+      Effect.gen(function* () {
+        // Profile-authenticated installs report no token source at all, and a
+        // CLI too old to send an account payload reports nothing whatsoever.
+        // Only `tokenSource: "none"` disproves authentication; saying nothing
+        // is not the same as saying no.
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities(),
+        );
+        assert.strictEqual(status.status, "ready");
+        assert.strictEqual(status.auth.status, "authenticated");
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
     it.effect("returns a display label for claude subscription types", () =>
       Effect.gen(function* () {
         const status = yield* checkClaudeProviderStatus(
@@ -3204,6 +3300,7 @@ it.layer(
                 email: undefined,
                 subscriptionType: undefined,
                 tokenSource: undefined,
+                apiKeySource: undefined,
                 apiProvider: undefined,
                 slashCommands: [],
                 usage: { rate_limits_available: true, rate_limits: {} },
