@@ -84,7 +84,7 @@ Then it installs:
 - the newest T3 Code release on its channel, when it runs as a background service
   (`t3 service install`). It downloads first and restarts only inside that window.
 
-Background services also wait for integrated terminal commands to finish.
+T3 Code server restarts also wait for integrated terminal commands to finish.
 
 Servers started from a terminal or with `npx` are never replaced automatically.
 A failed provider update is retried after 6 hours or when a newer version is
