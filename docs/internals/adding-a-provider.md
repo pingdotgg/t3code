@@ -10,7 +10,7 @@ whether a turn runs. This page lists the decisions and evidence a new driver nee
 - **ACP agents** start as [ACP Registry](../user/providers-acp.md) entries, which follow the ACP
   spec with no per-agent handling. An agent gets a dedicated driver only when it needs behavior the
   spec does not cover, and then it is a small flavor over the
-  [shared ACP adapter](../../apps/server/src/orchestration-v2/Adapters/AcpAdapterV2.ts), like Grok
+  [shared ACP adapter](../../packages/provider-acp/src/server/adapter.ts), like Grok
   and Antigravity. Never add agent-id checks to the generic registry adapter.
 - **Other protocols** get a native adapter that implements
   [`ProviderAdapterV2`](../../packages/provider-core/src/server/ProviderAdapter.ts), like Codex,

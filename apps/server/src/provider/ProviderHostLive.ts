@@ -31,6 +31,7 @@ export const layer = Layer.effect(
         baseDir: config.baseDir,
         stateDir: config.stateDir,
         providerStatusCacheDir: config.providerStatusCacheDir,
+        attachmentsDir: config.attachmentsDir,
       },
       settings: {
         get: serverSettings.getSettings,

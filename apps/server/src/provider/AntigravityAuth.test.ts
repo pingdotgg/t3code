@@ -17,7 +17,7 @@ import {
   type AntigravityAuth,
   type AntigravityAuthRuntime,
 } from "./AntigravityAuth.ts";
-import type { AcpSessionRuntimeStartResult } from "./acp/AcpSessionRuntime.ts";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 const instanceId = ProviderInstanceId.make("antigravity-auth-test");
 const owner = "t3-auth-session-owner";
@@ -31,7 +31,7 @@ const initialized = {
   authMethods: [{ id: "oauth-personal", name: "Log in with Google" }],
   agentCapabilities: { auth: { logout: {} } },
 } satisfies AcpSchema.InitializeResponse;
-const started: AcpSessionRuntimeStartResult = {
+const started: AcpSessionRuntime.AcpSessionRuntimeStartResult = {
   sessionId: "native-session",
   initializeResult: initialized,
   sessionSetupResult: {

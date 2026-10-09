@@ -7,6 +7,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
+import { discardResponseBody, responsePayloads } from "@t3tools/shared/mcpResponsePayloads";
 
 /**
  * Stdio-to-HTTP bridge for T3's MCP endpoint.
@@ -63,58 +64,6 @@ function protocolVersionOf(entry: unknown): string | null {
   return typeof version === "string" && version.length > 0 ? version : null;
 }
 
-async function* sseDataLines(response: Response): AsyncGenerator<string> {
-  if (response.body === null) return;
-  const decoder = new TextDecoder();
-  let buffered = "";
-  for await (const chunk of response.body) {
-    buffered += decoder.decode(chunk as Uint8Array, { stream: true });
-    let separatorIndex = buffered.search(/\n\n|\r\n\r\n/u);
-    while (separatorIndex !== -1) {
-      const rawEvent = buffered.slice(0, separatorIndex);
-      buffered = buffered.slice(separatorIndex).replace(/^(?:\r?\n){2}/u, "");
-      const data = rawEvent
-        .split(/\r?\n/u)
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice("data:".length).trimStart())
-        .join("\n");
-      if (data.length > 0) yield data;
-      separatorIndex = buffered.search(/\n\n|\r\n\r\n/u);
-    }
-  }
-}
-
-const discardResponseBody = (response: Response): Effect.Effect<void> =>
-  Effect.promise(() => response.body?.cancel().catch(() => undefined) ?? Promise.resolve());
-
-/**
- * Every JSON-RPC payload carried by a response, in arrival order: nothing for
- * notification acknowledgements, each SSE `data:` event as it streams in, or
- * the single JSON body.
- */
-export function responsePayloads(response: Response): Stream.Stream<unknown, AcpMcpBridgeError> {
-  if (response.status === 202 || response.status === 204) {
-    return Stream.unwrap(discardResponseBody(response).pipe(Effect.as(Stream.empty)));
-  }
-  const contentType = response.headers.get("content-type") ?? "";
-  if (contentType.includes("text/event-stream")) {
-    return Stream.fromAsyncIterable(sseDataLines(response), bridgeError).pipe(
-      Stream.mapEffect((data) => Effect.try({ try: () => JSON.parse(data), catch: bridgeError })),
-    );
-  }
-  return Stream.unwrap(
-    Effect.tryPromise({ try: () => response.text(), catch: bridgeError }).pipe(
-      Effect.flatMap((text) =>
-        text.trim().length === 0
-          ? Effect.succeed(Stream.empty)
-          : Effect.try({ try: () => JSON.parse(text) as unknown, catch: bridgeError }).pipe(
-              Effect.map((payload) => Stream.fromIterable([payload])),
-            ),
-      ),
-    ),
-  );
-}
-
 export interface AcpMcpToolCallOptions {
   readonly endpoint: string;
   readonly authorization: string;
@@ -164,7 +113,7 @@ export function callAcpMcpTool(
             new AcpMcpBridgeError(`T3 Code MCP endpoint responded with HTTP ${response.status}.`),
           );
         }
-        const payloads = yield* Stream.runCollect(responsePayloads(response));
+        const payloads = yield* Stream.runCollect(responsePayloads(response, bridgeError));
         for (const payload of payloads) {
           protocolVersion = protocolVersionOf(payload) ?? protocolVersion;
         }
@@ -271,7 +220,7 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
           }
           return yield* discardResponseBody(response);
         }
-        yield* Stream.runForEach(responsePayloads(response), handleServerPayload);
+        yield* Stream.runForEach(responsePayloads(response, bridgeError), handleServerPayload);
       }).pipe(
         Effect.catchCause((cause) => {
           if (envelope.id === undefined) return Effect.void;

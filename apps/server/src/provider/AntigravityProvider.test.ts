@@ -23,7 +23,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProviderHostLive from "./ProviderHostLive.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import type { AcpSessionRuntimeStartResult } from "./acp/AcpSessionRuntime.ts";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   buildAntigravityModelsFromSession,
   makeAntigravityProvider,
@@ -98,7 +98,7 @@ const started = {
   initializeResult,
   sessionSetupResult,
   modelConfigId: "model",
-} satisfies AcpSessionRuntimeStartResult;
+} satisfies AcpSessionRuntime.AcpSessionRuntimeStartResult;
 
 const commands = [
   { name: "plan", description: "Create a plan", input: { type: "text", hint: "What to plan" } },

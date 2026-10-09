@@ -10,7 +10,8 @@ import { ChildProcessSpawner } from "effect/process";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 
-import * as ServerConfig from "../../config.ts";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import {
   GROK_ACP_CANCEL_META,
   GROK_ACP_INITIALIZE_META,
@@ -21,7 +22,6 @@ import * as ProviderContinuationRequests from "@t3tools/provider-core/server/con
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
-import { makeReplayServerConfig } from "../testkit/ProviderReplayHarness.ts";
 import {
   type AcpReplayTranscript,
   AcpReplayTranscriptDecodeError,
@@ -37,10 +37,7 @@ function layerGrokProviderAdapterRegistryReplay(
   transcript: AcpReplayTranscript,
   options: { readonly replayGate?: ProviderReplayGate } = {},
 ) {
-  const layerServerConfig = Layer.effect(
-    ServerConfig.ServerConfig,
-    makeReplayServerConfig(`grok-${transcript.scenario}`).pipe(Effect.orDie),
-  ).pipe(Layer.provide(NodeServices.layer));
+  const layerHost = layerTestProviderHost().pipe(Layer.provide(NodeServices.layer));
 
   return ProviderAdapterRegistry.layerFromAdaptersEffect(
     Effect.gen(function* () {
@@ -50,7 +47,7 @@ function layerGrokProviderAdapterRegistryReplay(
       const crypto = yield* Crypto.Crypto;
       const hostPlatform = yield* HostProcessPlatform;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const serverConfig = yield* ServerConfig.ServerConfig;
+      const host = yield* ProviderHost.ProviderHost;
       // Same queue the continuation worker drains when the fixture runs it.
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       const replayGate = options.replayGate;
@@ -72,7 +69,7 @@ function layerGrokProviderAdapterRegistryReplay(
         crypto,
         fileSystem,
         idAllocator,
-        serverConfig,
+        host,
         selfInvocation: yield* resolveSelfInvocation(),
         // Same wrapping as makeGrokAcpRuntime: client type and Ctrl+C cancel
         // metadata and the x.ai prompt-completion race, so replay sends what
@@ -102,7 +99,7 @@ function layerGrokProviderAdapterRegistryReplay(
       return [adapter];
     }),
   ).pipe(
-    Layer.provide(Layer.mergeAll(layerServerConfig, NodeServices.layer, IdAllocator.layer)),
+    Layer.provide(Layer.mergeAll(layerHost, NodeServices.layer, IdAllocator.layer)),
     // Held inbound lines must not outlive the scenario and wedge teardown.
     Layer.merge(
       Layer.effectDiscard(

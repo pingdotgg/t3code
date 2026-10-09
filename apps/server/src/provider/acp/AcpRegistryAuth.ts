@@ -20,7 +20,7 @@ import * as ProviderAuthFlow from "../ProviderAuthFlow.ts";
 import { normalizeAcpRegistryAuthMethods, normalizeAcpRegistryWebUrl } from "./AcpRegistryProbe.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
-import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 type Runtime = Pick<
   AcpSessionRuntime.AcpSessionRuntime["Service"],

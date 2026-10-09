@@ -1,6 +1,6 @@
 import type * as AcpSchema from "effect-acp/compat";
-import type { AcpToolCallState } from "../../provider/acp/AcpRuntimeModel.ts";
-import type { AcpAdapterV2SubagentUpdate } from "./AcpAdapterV2.ts";
+import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
+import type { AcpAdapterV2SubagentUpdate } from "@t3tools/provider-acp/server/adapter";
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)

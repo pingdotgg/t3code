@@ -17,7 +17,7 @@ import {
   type AcpPlanUpdate,
   type AcpToolCallState,
   canonicalItemTypeFromAcpToolKind,
-} from "./AcpRuntimeModel.ts";
+} from "./runtimeModel.ts";
 
 type AcpAdapterRawSource = Extract<
   RuntimeEventRawSource,

@@ -14,9 +14,9 @@ import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import * as EffectAcpErrors from "effect-acp/errors";
 
-import type { ServerConfig } from "../../config.ts";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type { AntigravityAuth } from "../../provider/AntigravityAuth.ts";
-import type * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   antigravityPermissionMode,
   applyAntigravityAcpModelSelection,
@@ -40,7 +40,7 @@ import {
   makeAcpAdapterV2,
   type AcpAdapterV2Flavor,
   type AcpAdapterV2RuntimeInput,
-} from "./AcpAdapterV2.ts";
+} from "@t3tools/provider-acp/server/adapter";
 
 const ANTIGRAVITY_PROVIDER = ProviderDriverKind.make("antigravity");
 
@@ -68,7 +68,7 @@ export interface AntigravityAdapterV2Options {
   readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly idAllocator: IdAllocatorV2["Service"];
-  readonly serverConfig: ServerConfig["Service"];
+  readonly host: ProviderHost.ProviderHostShape;
   /** Spawns the official agent with the instance's Google profile. */
   readonly makeRuntime: (
     input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
@@ -125,9 +125,7 @@ export function makeAntigravityAcpAdapterFlavor(
   // the turn text references. It is a leaf directory of uploads. A session
   // without a workspace gets no workspace root rather than the server's cwd.
   const antigravityClientFileRoots = (cwd: string | null) =>
-    cwd === null
-      ? [options.serverConfig.attachmentsDir]
-      : [cwd, options.serverConfig.attachmentsDir];
+    cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
   const makeRuntime = (input: AcpAdapterV2RuntimeInput) =>
     Effect.gen(function* () {
       // AcpAdapterV2 owns the runtime scope; sign-in and sign-out stop the
@@ -139,7 +137,7 @@ export function makeAntigravityAcpAdapterFlavor(
           options.makeRuntime({
             ...input,
             clientFileSystem: true,
-            additionalDirectories: [options.serverConfig.attachmentsDir],
+            additionalDirectories: [options.host.paths.attachmentsDir],
           }),
         )
         .pipe(Effect.provideService(Scope.Scope, scope));
@@ -233,7 +231,7 @@ export function makeAntigravityAdapterV2(options: AntigravityAdapterV2Options) {
     crypto: options.crypto,
     fileSystem: options.fileSystem,
     idAllocator: options.idAllocator,
-    serverConfig: options.serverConfig,
+    host: options.host,
     selfInvocation: options.selfInvocation,
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
     ...(options.continuationRequests === undefined

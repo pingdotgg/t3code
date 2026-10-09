@@ -32,6 +32,8 @@ export interface ProviderHostPaths {
   readonly stateDir: string;
   /** Scratch space for provider probes and generated helper files. */
   readonly providerStatusCacheDir: string;
+  /** Where chat attachments are stored; agents that sandbox file reads must be granted it. */
+  readonly attachmentsDir: string;
 }
 
 /** One opaque credential blob in the server's secret store. Only the provider decodes it. */

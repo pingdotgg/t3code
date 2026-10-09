@@ -13,7 +13,7 @@ import {
   acpPermissionDisposition,
   makeAcpClientPolicyGrants,
   type AcpRuntimePolicy,
-} from "./AcpClientPolicy.ts";
+} from "./clientPolicy.ts";
 
 function permissionRequest(
   kind: NonNullable<EffectAcpSchema.RequestPermissionRequest["toolCall"]["kind"]>,

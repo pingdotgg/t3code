@@ -8,8 +8,8 @@ import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as AcpErrors from "effect-acp/errors";
 
-import type { EventNdjsonLogger } from "../EventNdjsonLogger.ts";
-import { makeAcpNativeLoggerFactory } from "./AcpNativeLogging.ts";
+import type * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import { makeAcpNativeLoggerFactory } from "./nativeLogging.ts";
 
 const nodeServicesIt = it.layer(NodeServices.layer);
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -18,7 +18,7 @@ nodeServicesIt("ACP native logging", (it) => {
   it.effect("records bounded request and protocol diagnostics without raw payloads", () =>
     Effect.gen(function* () {
       const records: Array<unknown> = [];
-      const nativeEventLogger: EventNdjsonLogger = {
+      const nativeEventLogger: ProviderEventLoggers.EventNdjsonLogger = {
         filePath: "/tmp/provider-native.ndjson",
         write: (event) => Effect.sync(() => void records.push(event)),
         close: () => Effect.void,

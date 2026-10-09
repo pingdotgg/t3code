@@ -13,7 +13,7 @@ import { type AcpError, AcpRequestError } from "effect-acp/errors";
 
 import { applyAntigravityAcpModelSelection } from "../provider/acp/AntigravityAcpSupport.ts";
 import { removeAntigravitySessionFiles } from "../provider/acp/AntigravitySessionFiles.ts";
-import type { AcpSessionRuntime } from "../provider/acp/AcpSessionRuntime.ts";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 
 const ANTIGRAVITY_TIMEOUT_MS = 180_000;
@@ -25,7 +25,7 @@ const decodeConfiguration = Schema.decodeEffect(Schema.fromJsonString(Configurat
 const decodeConfigurationObject = Schema.decodeUnknownEffect(Configuration);
 
 type AntigravityTextRuntime = Pick<
-  AcpSessionRuntime["Service"],
+  AcpSessionRuntime.AcpSessionRuntime["Service"],
   | "start"
   | "setMode"
   | "getConfigOptions"
