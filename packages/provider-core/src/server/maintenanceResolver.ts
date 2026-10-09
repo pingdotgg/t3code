@@ -740,21 +740,10 @@ export function createProviderVersionAdvisory(input: {
   };
 }
 
-const DEFAULT_NPM_REGISTRY_URL = "https://registry.npmjs.org";
-
-/** Respect npm's registry override when checking mirrors for newer provider versions. */
-const NpmRegistryUrlConfig = Config.String("npm_config_registry").pipe(
-  Config.withDefault(DEFAULT_NPM_REGISTRY_URL),
-  Config.map((url) => url.trim().replace(/\/+$/, "") || DEFAULT_NPM_REGISTRY_URL),
-);
-
 const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (packageName: string) {
   const client = yield* HttpClient.HttpClient;
-  const registryUrl = yield* NpmRegistryUrlConfig.pipe(
-    Effect.orElseSucceed(() => DEFAULT_NPM_REGISTRY_URL),
-  );
   const request = HttpClientRequest.get(
-    `${registryUrl}/${encodeURIComponent(packageName)}/latest`,
+    `https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`,
   ).pipe(HttpClientRequest.setHeader("accept", "application/json"));
   const response = yield* client.execute(request).pipe(
     Effect.timeoutOption(LATEST_VERSION_TIMEOUT_MS),

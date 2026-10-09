@@ -227,7 +227,6 @@ interface CreateManagerOptions {
     readonly hasRunningSubprocess: boolean;
     readonly childCommand: string | null;
     readonly processIds: ReadonlyArray<number>;
-    readonly terminalCommand?: string | null;
   }>;
   processTable?: Effect.Effect<
     ReadonlyArray<{ readonly pid: number; readonly ppid: number; readonly name: string }>,
@@ -1280,7 +1279,6 @@ it.layer(
     Effect.gen(function* () {
       // FakePtyAdapter assigns pids from 9000 in open order.
       const { manager, ptyAdapter } = yield* createManager(5, {
-        shellResolver: () => "/bin/zsh",
         processTable: Effect.succeed([
           { pid: 9000, ppid: 1, name: "zsh" },
           // An async prompt worker: a copy of the shell with no children.
@@ -1299,15 +1297,7 @@ it.layer(
       yield* manager.open(openInput({ terminalId: "subshell" }));
       yield* manager.open(openInput({ threadId: "thread-2" }));
 
-      assert.equal(yield* manager.hasBusyTerminals, true);
-      expect(ptyAdapter.processes.map((process) => process.killed)).toEqual([
-        false,
-        false,
-        false,
-        false,
-      ]);
       yield* manager.closeIdle({ threadId: "thread-1" });
-      assert.equal(yield* manager.hasBusyTerminals, true);
 
       expect(ptyAdapter.processes.map((process) => process.killed)).toEqual([
         true,
@@ -1349,177 +1339,6 @@ it.layer(
       yield* manager.closeIdle({ threadId: "thread-1" });
 
       expect(ptyAdapter.processes.map((process) => process.killed)).toEqual([false, false]);
-    }),
-  );
-
-  it.effect("checks fresh work across threads without changing idle shells or metadata", () =>
-    Effect.gen(function* () {
-      let snapshotCalls = 0;
-      const shells = [
-        { pid: 9000, ppid: 1, name: "zsh" },
-        { pid: 100, ppid: 9000, name: "zsh" },
-        { pid: 9001, ppid: 1, name: "zsh" },
-      ];
-      let processes = shells;
-      const { manager, ptyAdapter, getEvents } = yield* createManager(5, {
-        shellResolver: () => "/bin/zsh",
-        subprocessPollIntervalMs: 60_000,
-        processTable: Effect.sync(() => {
-          snapshotCalls += 1;
-          return processes;
-        }),
-      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
-
-      assert.equal(yield* manager.hasBusyTerminals, false);
-      assert.equal(snapshotCalls, 0);
-      yield* manager.open(openInput());
-      yield* manager.open(openInput({ threadId: "thread-2" }));
-      const events = yield* getEvents;
-      assert.equal(yield* manager.hasBusyTerminals, false);
-      assert.equal(snapshotCalls, 1);
-
-      processes = [...shells, { pid: 200, ppid: 9001, name: "node" }];
-      assert.equal(yield* manager.hasBusyTerminals, true);
-      processes = [
-        ...shells,
-        { pid: 200, ppid: 9001, name: "zsh" },
-        { pid: 201, ppid: 200, name: "sleep" },
-      ];
-      assert.equal(yield* manager.hasBusyTerminals, true);
-      // `exec` replaces the shell at its PID and leaves no child to inspect.
-      processes = shells.map((entry) =>
-        entry.pid === 9001 ? { ...entry, name: "/usr/bin/sleep" } : entry,
-      );
-      assert.equal(yield* manager.hasBusyTerminals, true);
-      processes = shells.map((entry) => (entry.pid === 9001 ? { ...entry, name: "node" } : entry));
-      assert.equal(yield* manager.hasBusyTerminals, true);
-      processes = shells.map((entry) => (entry.pid === 9001 ? { ...entry, name: "" } : entry));
-      assert.equal(yield* manager.hasBusyTerminals, true);
-      processes = shells;
-      assert.equal(yield* manager.hasBusyTerminals, false);
-      expect(yield* getEvents).toEqual(events);
-      expect(ptyAdapter.processes.map((process) => process.killed)).toEqual([false, false]);
-    }),
-  );
-
-  it.effect("treats failed, truncated, timed out, and missing-shell inspections as busy", () =>
-    Effect.gen(function* () {
-      let stdout = "9000 1 zsh";
-      let code = 0;
-      let timedOut = false;
-      let stdoutTruncated = false;
-      const processRunner: ProcessRunner.ProcessRunner["Service"] = {
-        run: () =>
-          Effect.sync(() => ({
-            stdout,
-            stderr: "",
-            code: ChildProcessSpawner.ExitCode(code),
-            timedOut,
-            stdoutTruncated,
-            stderrTruncated: false,
-            stdoutInvalidUtf8: false,
-            stderrInvalidUtf8: false,
-          })),
-      };
-      const { manager, ptyAdapter } = yield* createManager(5, {
-        shellResolver: () => "/bin/zsh",
-        subprocessPollIntervalMs: 60_000,
-      }).pipe(
-        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
-        Effect.provide(layerWithHostPlatform("linux")),
-      );
-      yield* manager.open(openInput());
-      assert.equal(yield* manager.hasBusyTerminals, false);
-      code = 1;
-      assert.equal(yield* manager.hasBusyTerminals, true);
-      code = 0;
-      stdoutTruncated = true;
-      assert.equal(yield* manager.hasBusyTerminals, true);
-      stdoutTruncated = false;
-      timedOut = true;
-      assert.equal(yield* manager.hasBusyTerminals, true);
-      timedOut = false;
-      stdout = "";
-      assert.equal(yield* manager.hasBusyTerminals, true);
-      stdout = "9000 1 zsh";
-      assert.equal(yield* manager.hasBusyTerminals, false);
-      expect(ptyAdapter.processes[0]!.killed).toBe(false);
-    }),
-  );
-
-  it.effect("treats input, output, and new terminals during inspection as busy", () =>
-    Effect.gen(function* () {
-      let duringCheck: Effect.Effect<void> = Effect.void;
-      const { manager, ptyAdapter } = yield* createManager(5, {
-        shellResolver: () => "/bin/zsh",
-        subprocessPollIntervalMs: 60_000,
-        subprocessInspector: () =>
-          duringCheck.pipe(
-            Effect.as({
-              hasRunningSubprocess: false,
-              childCommand: null,
-              processIds: [],
-              terminalCommand: "zsh",
-            }),
-          ),
-      });
-      yield* manager.open(openInput());
-      assert.equal(yield* manager.hasBusyTerminals, false);
-      duringCheck = manager
-        .write({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID, data: "make build\r" })
-        .pipe(Effect.orDie);
-      assert.equal(yield* manager.hasBusyTerminals, true);
-      duringCheck = Effect.sync(() => ptyAdapter.processes[0]!.emitData("make build\r\n"));
-      assert.equal(yield* manager.hasBusyTerminals, true);
-      duringCheck = manager
-        .open(openInput({ threadId: "thread-2" }))
-        .pipe(Effect.asVoid, Effect.orDie);
-      assert.equal(yield* manager.hasBusyTerminals, true);
-      expect(ptyAdapter.processes.map((process) => process.killed)).toEqual([false, false]);
-    }),
-  );
-
-  it.effect("holds terminal launches and writes behind a server restart permit", () =>
-    Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager(5, {
-        shellResolver: () => "/bin/zsh",
-        subprocessPollIntervalMs: 60_000,
-        subprocessInspector: () =>
-          Effect.succeed({
-            hasRunningSubprocess: false,
-            childCommand: null,
-            processIds: [],
-            terminalCommand: "zsh",
-          }),
-      });
-      yield* manager.open(openInput());
-      const held = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      const restartWindow = yield* manager
-        .withRestartPermit(
-          Deferred.succeed(held, undefined).pipe(Effect.andThen(Deferred.await(release))),
-        )
-        .pipe(Effect.forkScoped);
-      yield* Deferred.await(held);
-      assert.equal(yield* manager.hasBusyTerminals, false);
-
-      const write = yield* manager
-        .write({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID, data: "make build\r" })
-        .pipe(Effect.forkScoped);
-      const open = yield* manager.open(openInput({ threadId: "thread-2" })).pipe(Effect.forkScoped);
-      const restart = yield* manager.restart(restartInput()).pipe(Effect.forkScoped);
-      yield* Effect.yieldNow;
-      expect(ptyAdapter.spawnInputs).toHaveLength(1);
-      expect(ptyAdapter.processes[0]!.writes).toEqual([]);
-      expect(ptyAdapter.processes[0]!.killed).toBe(false);
-
-      yield* Deferred.succeed(release, undefined);
-      yield* Fiber.join(restartWindow);
-      yield* Fiber.join(write);
-      yield* Fiber.join(open);
-      yield* Fiber.join(restart);
-      expect(ptyAdapter.spawnInputs).toHaveLength(3);
-      expect(ptyAdapter.processes.flatMap((process) => process.writes)).toEqual(["make build\r"]);
     }),
   );
 

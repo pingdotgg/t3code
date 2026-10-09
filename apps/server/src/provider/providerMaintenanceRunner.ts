@@ -27,11 +27,7 @@ import * as NodeUtil from "node:util";
 import * as ModelManifest from "./ModelManifest.ts";
 import { resolveProviderCompatibility } from "./providerCompatibility.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
-import {
-  admissionLayer,
-  makeProviderMaintenanceCommandCoordinator,
-  ProviderMaintenanceAdmission,
-} from "./providerMaintenanceCommandCoordinator.ts";
+import { makeProviderMaintenanceCommandCoordinator } from "./providerMaintenanceCommandCoordinator.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeTargetedProviderUpdateAction,
@@ -71,8 +67,6 @@ export interface ProviderMaintenanceRunnerShape {
           readonly targetVersion?: string | undefined;
         },
   ) => Effect.Effect<ServerProviderUpdatedPayload, ServerProviderUpdateError>;
-  /** Only for callers already holding the background update admission permit. */
-  readonly updateProviderWhileAdmitted: ProviderMaintenanceRunnerShape["updateProvider"];
 }
 
 export class ProviderMaintenanceRunner extends Context.Service<
@@ -298,7 +292,6 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
   const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
-  const admission = yield* ProviderMaintenanceAdmission;
   const runMaintenanceCommand = (
     update: ProviderMaintenanceCommandAction,
     onProgress: (line: string) => Effect.Effect<void>,
@@ -388,10 +381,9 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       }),
     );
 
-  const updateProvider = Effect.fn("ProviderMaintenanceRunner.updateProvider")(function* (
-    target: Parameters<ProviderMaintenanceRunnerShape["updateProvider"]>[0],
-    alreadyAdmitted: boolean = false,
-  ) {
+  const updateProvider: ProviderMaintenanceRunnerShape["updateProvider"] = Effect.fn(
+    "ProviderMaintenanceRunner.updateProvider",
+  )(function* (target) {
     const provider = typeof target === "string" ? target : target.provider;
     const instanceId =
       typeof target === "string"
@@ -603,9 +595,6 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             }),
           );
         }),
-        // Admit before the installer lock: a manual update must not hold that
-        // lock while a background pass holding admission waits for it.
-        ...(alreadyAdmitted ? {} : { admit: admission.withPermit }),
         run: runProviderUpdate(),
       })
       .pipe(
@@ -622,10 +611,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
 
   return ProviderMaintenanceRunner.of({
     updateProvider,
-    updateProviderWhileAdmitted: (target) => updateProvider(target, true),
   });
 });
 
-export const layer = Layer.effect(ProviderMaintenanceRunner, make()).pipe(
-  Layer.provide(admissionLayer),
-);
+export const layer = Layer.effect(ProviderMaintenanceRunner, make());
