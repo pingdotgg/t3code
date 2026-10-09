@@ -1,14 +1,11 @@
-import {
-  AcpRegistryOperationError,
-  AcpRegistrySettings,
-  ProviderInstanceId,
-} from "@t3tools/contracts";
+import { AcpRegistryOperationError, ProviderInstanceId } from "@t3tools/contracts";
+import { AcpRegistrySettings } from "../settings.ts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import * as AcpRegistrySupport from "../acp/AcpRegistrySupport.ts";
+import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import {
   acpRegistrySnapshotReadiness,
   applyAcpRegistryAvailableCommands,
@@ -16,7 +13,7 @@ import {
   buildCheckedAcpRegistrySnapshot,
   checkAcpRegistryProviderReadiness,
   checkAcpRegistryProviderStatus,
-} from "./AcpRegistryDriver.ts";
+} from "./driver.ts";
 
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
 const identity = {

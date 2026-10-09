@@ -1055,11 +1055,11 @@ export function windowsTaskkillResultIsSuccess(exitCode: number, _output?: strin
 }
 
 export const terminateWindowsProcessTreeWithTaskkill = (
-  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
   pid: number,
-): Effect.Effect<void, AcpProcessGroupTerminationError> =>
+): Effect.Effect<void, AcpProcessGroupTerminationError, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.scoped(
     Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const taskkill = yield* spawner.spawn(
         ChildProcess.make("taskkill", ["/PID", String(pid), "/T", "/F"]),
       );
@@ -1329,17 +1329,7 @@ export class AcpSessionRuntime extends Context.Service<
       payload: unknown,
     ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   }
->()("@t3tools/provider-acp/server/AcpSessionRuntime") {
-  static layer(
-    options: AcpSessionRuntimeOptions,
-  ): Layer.Layer<
-    AcpSessionRuntime,
-    EffectAcpErrors.AcpError,
-    ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
-  > {
-    return Layer.effect(AcpSessionRuntime, make(options));
-  }
-}
+>()("@t3tools/provider-acp/server/AcpSessionRuntime") {}
 
 interface AcpStartedState extends AcpSessionRuntimeStartResult {}
 
@@ -1669,7 +1659,10 @@ export const make = (
       );
     const terminateWindowsProcessTree =
       options.windowsProcessTreeTerminator ??
-      ((pid: number) => terminateWindowsProcessTreeWithTaskkill(spawner, pid));
+      ((pid: number) =>
+        terminateWindowsProcessTreeWithTaskkill(pid).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ));
     const terminatePosixProcessTree = (grace: Duration.Input, platformOverride?: NodeJS.Platform) =>
       Effect.gen(function* () {
         const platform = platformOverride ?? options.processGroupPlatform;
@@ -1738,7 +1731,9 @@ export const make = (
       const hostPlatform = yield* HostProcessPlatform;
       const forceTerminateOwnedProcessGroup =
         hostPlatform === "win32"
-          ? terminateWindowsProcessTreeWithTaskkill(spawner, Number(child.pid))
+          ? terminateWindowsProcessTreeWithTaskkill(Number(child.pid)).pipe(
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            )
           : linuxCgroupLease !== undefined
             ? terminateLinuxCgroupLease(linuxCgroupLease)
             : options.ownDescendantProcessGroups === true

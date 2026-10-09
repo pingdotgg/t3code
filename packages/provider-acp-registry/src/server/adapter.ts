@@ -2,12 +2,9 @@ import {
   normalizeDevinSessionUpdate,
   normalizeDevinToolCall,
   extractDevinSubagentUpdate,
-} from "./DevinAcp.ts";
-import {
-  AcpRegistrySettings,
-  defaultInstanceIdForDriver,
-  ProviderDriverKind,
-} from "@t3tools/contracts";
+} from "./devinAcp.ts";
+import { defaultInstanceIdForDriver, ProviderDriverKind } from "@t3tools/contracts";
+import { AcpRegistrySettings } from "../settings.ts";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Crypto from "effect/Crypto";
@@ -18,20 +15,21 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
-import { ChildProcessSpawner } from "effect/process";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import {
   normalizeAcpRegistryCommands,
   normalizeAcpRegistryLiveConfiguration,
   normalizeAcpRegistryWebUrl,
-} from "../../provider/acp/AcpRegistryProbe.ts";
-import * as AcpRegistrySupport from "../../provider/acp/AcpRegistrySupport.ts";
-import * as AcpRegistryRuntimeCoordinator from "../../provider/acp/AcpRegistryRuntimeCoordinator.ts";
+} from "./probe.ts";
+import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
+import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeLogging";
-import * as ProviderEventLoggers from "../../provider/ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -58,21 +56,14 @@ export interface AcpRegistryAdapterV2Options {
   readonly instanceId: Parameters<typeof makeAcpAdapterV2>[0]["instanceId"];
   readonly settings: AcpRegistrySettings;
   readonly environment: NodeJS.ProcessEnv;
-  readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
-  readonly crypto: Crypto.Crypto;
   readonly selfInvocation: SelfInvocation;
-  readonly fileSystem: FileSystem.FileSystem;
-  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
-  readonly resolver: Pick<AcpRegistrySupport.AcpRegistryCatalog["Service"], "resolve">;
-  readonly runtimeCoordinator?: AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator["Service"];
-  readonly host: ProviderHost.ProviderHostShape;
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
   readonly makeRuntime?: (
     input: AcpAdapterV2RuntimeInput,
   ) => Effect.Effect<
     AcpSessionRuntime.AcpSessionRuntime["Service"],
     EffectAcpErrors.AcpError,
-    Crypto.Crypto | Scope.Scope
+    ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
   >;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
 }
@@ -137,17 +128,20 @@ export function acpRegistryPromptFailure(agentId: string, cause: unknown) {
   });
 }
 
-function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
+function makeAcpRegistryRuntime(
+  options: AcpRegistryAdapterV2Options,
+  catalog: AcpRegistrySupport.AcpRegistryCatalog["Service"],
+) {
   return (
     input: AcpAdapterV2RuntimeInput,
   ): Effect.Effect<
     AcpSessionRuntime.AcpSessionRuntime["Service"],
     EffectAcpErrors.AcpError,
-    Crypto.Crypto | Scope.Scope
+    ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
   > =>
     Effect.gen(function* () {
       const { processEnvironment, ...runtimeInput } = input;
-      const resolved = yield* options.resolver
+      const resolved = yield* catalog
         .resolve(options.settings, input.cwd, options.environment)
         .pipe(
           Effect.mapError(
@@ -169,11 +163,7 @@ function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
                   env: { ...resolved.spawn.env, ...processEnvironment },
                 },
           ...(options.settings.authMethodId ? { authMethodId: options.settings.authMethodId } : {}),
-        }).pipe(
-          Layer.provide(
-            Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, options.childProcessSpawner),
-          ),
-        ),
+        }),
       );
       return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
         Effect.provide(context),
@@ -181,8 +171,13 @@ function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
     });
 }
 
-export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
-  const runtimeCoordinator = options.runtimeCoordinator;
+export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(function* (
+  options: AcpRegistryAdapterV2Options,
+) {
+  const catalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
+  const runtimeCoordinator = Option.getOrUndefined(
+    yield* Effect.serviceOption(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator),
+  );
   const registryAgentId = options.settings.source === "local" ? "" : options.settings.agentId;
   const startupKey =
     options.settings.source === "local" ? `local:${options.instanceId}` : registryAgentId;
@@ -207,7 +202,7 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
           extractSubagentUpdate: extractDevinSubagentUpdate,
         }
       : {}),
-    makeRuntime: options.makeRuntime ?? makeAcpRegistryRuntime(options),
+    makeRuntime: options.makeRuntime ?? makeAcpRegistryRuntime(options, catalog),
     ...(runtimeCoordinator === undefined
       ? {}
       : {
@@ -237,13 +232,9 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
         }),
     ...(options.assertComplete === undefined ? {} : { assertComplete: options.assertComplete }),
   };
-  return makeAcpAdapterV2({
+  return yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
     flavor,
-    crypto: options.crypto,
-    fileSystem: options.fileSystem,
-    idAllocator: options.idAllocator,
-    host: options.host,
     selfInvocation: options.selfInvocation,
     // Per-agent exception (see the note above registerMistralVibeAcpExtensions):
     // Devin runs commands through client terminals and has no ask mode over
@@ -251,7 +242,6 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
     ...(isDevin
       ? {
           clientTerminals: {
-            childProcessSpawner: options.childProcessSpawner,
             environment: options.environment,
             shellCommands: true,
           },
@@ -259,7 +249,7 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
       : {}),
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
   });
-}
+});
 
 export type AcpRegistryAdapterV2DriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
@@ -268,6 +258,7 @@ export type AcpRegistryAdapterV2DriverEnv =
   | AcpRegistrySupport.AcpRegistryCatalog
   | IdAllocator.IdAllocatorV2
   | Path.Path
+  | McpProviderSessions.McpProviderSessions
   | ProviderEventLoggers.ProviderEventLoggers
   | ProviderHost.ProviderHost;
 
@@ -282,30 +273,12 @@ export const AcpRegistryAdapterV2Driver: ProviderAdapterDriver<
     function* (input: ProviderAdapterDriverCreateInput<AcpRegistrySettings>) {
       const hostEnvironment = yield* HostProcessEnvironment;
       const selfInvocation = yield* resolveSelfInvocation();
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-      const host = yield* ProviderHost.ProviderHost;
       const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
-      const resolver = yield* AcpRegistrySupport.AcpRegistryCatalog;
-      const runtimeCoordinator = yield* Effect.serviceOption(
-        AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
-      );
-      return makeAcpRegistryAdapterV2({
+      return yield* makeAcpRegistryAdapterV2({
         instanceId: input.instanceId,
         settings: { ...input.config, enabled: input.enabled },
         environment: mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
-        childProcessSpawner,
-        crypto,
-        fileSystem,
-        idAllocator,
-        resolver,
-        ...(Option.isSome(runtimeCoordinator)
-          ? { runtimeCoordinator: runtimeCoordinator.value }
-          : {}),
-        host,
         selfInvocation,
         nativeLogging: (threadId) =>
           makeNativeLogger({

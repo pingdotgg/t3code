@@ -8,8 +8,8 @@ import {
 import type { SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import type * as FileSystem from "effect/FileSystem";
-import type * as Path from "effect/Path";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import * as EffectAcpErrors from "effect-acp/errors";
@@ -34,7 +34,6 @@ import {
   makeAntigravityUserInputResponse,
   normalizeAntigravityToolCall,
 } from "../../provider/acp/AntigravityProtocol.ts";
-import type { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
 import {
   AcpProviderCapabilitiesV2,
   makeAcpAdapterV2,
@@ -63,12 +62,7 @@ const AntigravityProviderCapabilitiesV2 = {
 
 export interface AntigravityAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
-  readonly crypto: Crypto.Crypto;
   readonly selfInvocation: SelfInvocation;
-  readonly fileSystem: FileSystem.FileSystem;
-  readonly path: Path.Path;
-  readonly idAllocator: IdAllocatorV2["Service"];
-  readonly host: ProviderHost.ProviderHostShape;
   /** Spawns the official agent with the instance's Google profile. */
   readonly makeRuntime: (
     input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
@@ -118,8 +112,16 @@ const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractS
   };
 };
 
+/** The services the Antigravity flavor runs its runtime and session files with. */
+interface AntigravityFlavorServices {
+  readonly crypto: Crypto.Crypto;
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly path: Path.Path;
+  readonly host: ProviderHost.ProviderHost["Service"];
+}
+
 export function makeAntigravityAcpAdapterFlavor(
-  options: AntigravityAdapterV2Options,
+  options: AntigravityAdapterV2Options & AntigravityFlavorServices,
 ): AcpAdapterV2Flavor {
   // The attachments dir grant lets the agent read pasted files at the paths
   // the turn text references. It is a leaf directory of uploads. A session
@@ -224,18 +226,22 @@ export function makeAntigravityAcpAdapterFlavor(
   };
 }
 
-export function makeAntigravityAdapterV2(options: AntigravityAdapterV2Options) {
-  return makeAcpAdapterV2({
+export const makeAntigravityAdapterV2 = Effect.fn("makeAntigravityAdapterV2")(function* (
+  options: AntigravityAdapterV2Options,
+) {
+  const services: AntigravityFlavorServices = {
+    crypto: yield* Crypto.Crypto,
+    fileSystem: yield* FileSystem.FileSystem,
+    path: yield* Path.Path,
+    host: yield* ProviderHost.ProviderHost,
+  };
+  return yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
-    flavor: makeAntigravityAcpAdapterFlavor(options),
-    crypto: options.crypto,
-    fileSystem: options.fileSystem,
-    idAllocator: options.idAllocator,
-    host: options.host,
+    flavor: makeAntigravityAcpAdapterFlavor({ ...options, ...services }),
     selfInvocation: options.selfInvocation,
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
     ...(options.continuationRequests === undefined
       ? {}
       : { continuationRequests: options.continuationRequests }),
   });
-}
+});

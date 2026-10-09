@@ -10,7 +10,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as NetService from "@t3tools/shared/Net";
 import { beforeEach, expect } from "vite-plus/test";
 
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 import * as OpenCodeTextGeneration from "./textGeneration.ts";
@@ -47,7 +47,7 @@ const runtimeMock = {
   },
 };
 
-const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
+const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
   startOpenCodeServerProcess: ({ binaryPath, serverPassword, environment }) =>
     Effect.gen(function* () {
       const index = runtimeMock.state.startCalls.length + 1;
@@ -128,7 +128,9 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
           );
         },
       },
-    }) as unknown as ReturnType<OpenCodeRuntime.OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
+    }) as unknown as ReturnType<
+      OpenCodeRuntime.OpenCodeRuntime["Service"]["createOpenCodeSdkClient"]
+    >,
   loadOpenCodeInventory: () =>
     Effect.fail(
       new OpenCodeRuntime.OpenCodeRuntimeError({
@@ -167,7 +169,7 @@ const layerOpenCodeTextGenerationTest = Layer.succeed(
   OpenCodeRuntime.OpenCodeRuntime,
   OpenCodeRuntimeTestDouble,
 ).pipe(
-  Layer.provideMerge(layerTestProviderHost()),
+  Layer.provideMerge(TestProviderHost.layer()),
   Layer.provideMerge(NetService.layer),
   Layer.provideMerge(NodeServices.layer),
 );
@@ -176,7 +178,7 @@ const layerOpenCodeTextGenerationExistingServerTest = Layer.succeed(
   OpenCodeRuntime.OpenCodeRuntime,
   OpenCodeRuntimeTestDouble,
 ).pipe(
-  Layer.provideMerge(layerTestProviderHost()),
+  Layer.provideMerge(TestProviderHost.layer()),
   Layer.provideMerge(NetService.layer),
   Layer.provideMerge(NodeServices.layer),
 );

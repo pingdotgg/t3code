@@ -1,5 +1,4 @@
 import {
-  AcpRegistrySettings,
   officialAcpRegistryIconUrlForAgentId,
   ProviderDriverKind,
   resolveOfficialAcpRegistryIconUrl,
@@ -8,6 +7,7 @@ import {
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import { AcpRegistrySettings } from "../settings.ts";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Clock from "effect/Clock";
@@ -19,15 +19,12 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import { ChildProcessSpawner } from "effect/process";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
-import {
-  AcpRegistryAdapterV2Driver,
-  type AcpRegistryAdapterV2DriverEnv,
-} from "../../orchestration-v2/Adapters/AcpRegistryAdapterV2.ts";
-import type { TextGeneration } from "../../textGeneration/TextGeneration.ts";
-import { ProviderDriverError } from "../Errors.ts";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { AcpRegistryAdapterV2Driver, type AcpRegistryAdapterV2DriverEnv } from "./adapter.ts";
+import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
+import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import {
@@ -54,11 +51,11 @@ import {
   logoutAcpRegistry,
   probeAcpRegistryConfiguration,
   setAcpRegistryProvider,
-} from "../acp/AcpRegistryProbe.ts";
-import * as AcpRegistrySupport from "../acp/AcpRegistrySupport.ts";
-import * as AcpRegistryRuntimeCoordinator from "../acp/AcpRegistryRuntimeCoordinator.ts";
-import * as AcpRegistryAuth from "../acp/AcpRegistryAuth.ts";
-import * as AcpRegistryAuthenticationState from "../acp/AcpRegistryAuthenticationState.ts";
+} from "./probe.ts";
+import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
+import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
+import * as AcpRegistryAuth from "./auth.ts";
+import * as AcpRegistryAuthenticationState from "./authenticationState.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
@@ -73,7 +70,7 @@ const MAINTENANCE = makeManualOnlyProviderMaintenanceCapabilities({
   packageName: null,
 });
 
-const makeUnsupportedTextGeneration = (): TextGeneration["Service"] => {
+const makeUnsupportedTextGeneration = (): ProviderTextGeneration => {
   const unsupported = (operation: string) =>
     Effect.fail(
       new TextGenerationError({
@@ -458,7 +455,7 @@ export const checkAcpRegistryProviderReadiness = Effect.fn(
     : snapshot;
 });
 
-export type AcpRegistryDriverEnv = AcpRegistryAdapterV2DriverEnv | ProviderHost;
+export type AcpRegistryDriverEnv = AcpRegistryAdapterV2DriverEnv | ProviderHost.ProviderHost;
 
 /** Canonical provider-instance wrapper for ACP Registry orchestration adapters. */
 export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryDriverEnv> = {
@@ -488,7 +485,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       const crypto = yield* Crypto.Crypto;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const hostEnvironment = yield* HostProcessEnvironment;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
@@ -622,7 +619,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           }
           return { provider: enriched, generation: cacheState.generation };
         });
-      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, host.settings);
+      const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
       const snapshot = yield* makeManagedServerProvider<
         ProviderSnapshotSettings<AcpRegistrySettings>
       >({

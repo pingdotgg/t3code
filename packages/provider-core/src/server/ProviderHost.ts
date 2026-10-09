@@ -45,29 +45,32 @@ export interface ProviderCredentials {
   readonly remove: Effect.Effect<void, ProviderCredentialError>;
 }
 
-export interface ProviderHostShape {
-  readonly paths: ProviderHostPaths;
-  readonly settings: {
-    readonly get: Effect.Effect<ServerSettings, ServerSettingsError>;
-    /** Every settings change after subscription, starting with the next one. */
-    readonly changes: Stream.Stream<ServerSettings>;
-    /** Changes buffered from the moment the scoped subscription is acquired. */
-    readonly subscribe: Effect.Effect<Stream.Stream<ServerSettings>, never, Scope.Scope>;
-  };
-  /** Whether background work for `scope` should run now (client demand and host power). */
-  readonly shouldRunBackgroundWork: (scope: BackgroundScope) => Effect.Effect<boolean>;
-  /**
-   * Absolute path of a stored chat attachment, or `null` when its id does not
-   * resolve inside the attachments directory.
-   */
-  readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
-  /** The credentials stored for `bindingId`, usually an instance id, under a provider-chosen namespace. */
-  readonly credentials: (
-    namespace: string,
-    bindingId: string,
-  ) => Effect.Effect<ProviderCredentials>;
-}
-
-export class ProviderHost extends Context.Service<ProviderHost, ProviderHostShape>()(
-  "@t3tools/provider-core/server/ProviderHost",
-) {}
+export class ProviderHost extends Context.Service<
+  ProviderHost,
+  {
+    readonly paths: ProviderHostPaths;
+    readonly settings: {
+      readonly get: Effect.Effect<ServerSettings, ServerSettingsError>;
+      /** Runs `use` on a settings snapshot that no settings write can change until it finishes. */
+      readonly withSnapshot: <A, E, R>(
+        use: (settings: ServerSettings) => Effect.Effect<A, E, R>,
+      ) => Effect.Effect<A, E | ServerSettingsError, R>;
+      /** Every settings change after subscription, starting with the next one. */
+      readonly changes: Stream.Stream<ServerSettings>;
+      /** Changes buffered from the moment the scoped subscription is acquired. */
+      readonly subscribe: Effect.Effect<Stream.Stream<ServerSettings>, never, Scope.Scope>;
+    };
+    /** Whether background work for `scope` should run now (client demand and host power). */
+    readonly shouldRunBackgroundWork: (scope: BackgroundScope) => Effect.Effect<boolean>;
+    /**
+     * Absolute path of a stored chat attachment, or `null` when its id does not
+     * resolve inside the attachments directory.
+     */
+    readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
+    /** The credentials stored for `bindingId`, usually an instance id, under a provider-chosen namespace. */
+    readonly credentials: (
+      namespace: string,
+      bindingId: string,
+    ) => Effect.Effect<ProviderCredentials>;
+  }
+>()("@t3tools/provider-core/server/ProviderHost") {}

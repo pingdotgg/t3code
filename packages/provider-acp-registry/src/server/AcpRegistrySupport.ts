@@ -9,9 +9,9 @@ import {
   type AcpRegistrySearchInput,
   type AcpRegistrySearchResult,
   type AcpRegistryDistribution as AcpRegistryDistributionKind,
-  type AcpRegistryDistributionPreference,
-  type AcpRegistrySettings,
 } from "@t3tools/contracts";
+import type { AcpRegistryDistributionPreference } from "../settings.ts";
+import type { AcpRegistrySettings } from "../settings.ts";
 import {
   HostProcessArchitecture,
   HostProcessEnvironment,
@@ -32,17 +32,21 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { sha256 } from "@noble/hashes/sha2";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
-import * as ServerSettings from "../../serverSettings.ts";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 const ACP_REGISTRY_URL = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
@@ -307,26 +311,26 @@ function withPreferredPath(
  * managed binary agents are both available by name. Best effort: unreadable
  * directories resolve to no entries.
  */
-export const acpRegistryManagedBinaryDirectories = (input: {
-  readonly fileSystem: FileSystem.FileSystem;
-  readonly path: Path.Path;
-  readonly cacheDir: string;
-  readonly toolsDir: string;
-  readonly platform: NodeJS.Platform;
-  readonly architecture: NodeJS.Architecture;
-}): Effect.Effect<ReadonlyArray<string>> =>
-  Effect.gen(function* () {
+export const acpRegistryManagedBinaryDirectories = Effect.fn("acpRegistryManagedBinaryDirectories")(
+  function* (input: {
+    readonly cacheDir: string;
+    readonly toolsDir: string;
+    readonly platform: NodeJS.Platform;
+    readonly architecture: NodeJS.Architecture;
+  }): Effect.fn.Return<ReadonlyArray<string>, never, FileSystem.FileSystem | Path.Path> {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const target = resolveAcpRegistryPlatformTarget(input.platform, input.architecture);
-    const registryDirectory = input.path.join(input.cacheDir, "acp-registry");
+    const registryDirectory = path.join(input.cacheDir, "acp-registry");
     const installsDirectory = input.toolsDir;
-    const packageReceiptsDirectory = input.path.join(registryDirectory, "package-installs");
+    const packageReceiptsDirectory = path.join(registryDirectory, "package-installs");
     const listDirectories = (directory: string) =>
-      input.fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed((): Array<string> => []));
+      fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed((): Array<string> => []));
     const directories: Array<string> = [];
 
     for (const receiptFile of (yield* listDirectories(packageReceiptsDirectory)).toSorted()) {
-      const receipt = yield* input.fileSystem
-        .readFileString(input.path.join(packageReceiptsDirectory, receiptFile))
+      const receipt = yield* fileSystem
+        .readFileString(path.join(packageReceiptsDirectory, receiptFile))
         .pipe(
           Effect.map(decodePackageInstallReceipt),
           Effect.orElseSucceed(() => Option.none()),
@@ -334,15 +338,15 @@ export const acpRegistryManagedBinaryDirectories = (input: {
       if (
         Option.isSome(receipt) &&
         receipt.value.binDirectory ===
-          input.path.join(
+          path.join(
             installsDirectory,
             receipt.value.agentId,
             encodeURIComponent(receipt.value.agentVersion),
             receipt.value.distribution === "npx" ? "npm" : "python",
             ...(receipt.value.distribution === "npx" && input.platform === "win32" ? [] : ["bin"]),
           ) &&
-        input.path.dirname(receipt.value.executablePath) === receipt.value.binDirectory &&
-        (yield* input.fileSystem
+        path.dirname(receipt.value.executablePath) === receipt.value.binDirectory &&
+        (yield* fileSystem
           .exists(receipt.value.executablePath)
           .pipe(Effect.orElseSucceed(() => false)))
       ) {
@@ -351,8 +355,8 @@ export const acpRegistryManagedBinaryDirectories = (input: {
     }
 
     if (target === undefined) return Array.from(new Set(directories));
-    const cachedAgents = yield* input.fileSystem
-      .readFileString(input.path.join(registryDirectory, "registry.json"))
+    const cachedAgents = yield* fileSystem
+      .readFileString(path.join(registryDirectory, "registry.json"))
       .pipe(
         Effect.flatMap(decodeJson),
         Effect.flatMap(decodeRegistryIndexEnvelope),
@@ -371,12 +375,12 @@ export const acpRegistryManagedBinaryDirectories = (input: {
       ),
     );
     for (const agent of (yield* listDirectories(installsDirectory)).toSorted()) {
-      const versions = (yield* listDirectories(input.path.join(installsDirectory, agent))).toSorted(
+      const versions = (yield* listDirectories(path.join(installsDirectory, agent))).toSorted(
         (left, right) => right.localeCompare(left, undefined, { numeric: true }),
       );
       for (const version of versions) {
-        const installRoot = input.path.join(installsDirectory, agent, version, target);
-        if (yield* input.fileSystem.exists(installRoot).pipe(Effect.orElseSucceed(() => false))) {
+        const installRoot = path.join(installsDirectory, agent, version, target);
+        if (yield* fileSystem.exists(installRoot).pipe(Effect.orElseSucceed(() => false))) {
           const binaryTarget = cachedAgentByInstall.get(`${agent}\0${version}`)?.distribution
             .binary?.[target];
           const commandSegments =
@@ -384,15 +388,16 @@ export const acpRegistryManagedBinaryDirectories = (input: {
           const directory =
             commandSegments === undefined
               ? installRoot
-              : input.path.join(installRoot, ...commandSegments.slice(0, -1));
-          if (yield* input.fileSystem.exists(directory).pipe(Effect.orElseSucceed(() => false))) {
+              : path.join(installRoot, ...commandSegments.slice(0, -1));
+          if (yield* fileSystem.exists(directory).pipe(Effect.orElseSucceed(() => false))) {
             directories.push(directory);
           }
         }
       }
     }
     return Array.from(new Set(directories));
-  });
+  },
+);
 
 export interface ResolvedAcpRegistryDistribution {
   readonly kind: AcpRegistryDistributionKind;
@@ -503,11 +508,30 @@ export class AcpRegistryCatalog extends Context.Service<
       input: AcpRegistryManagedBinaryUninstallInput,
     ) => Effect.Effect<AcpRegistryManagedBinaryUninstallResult, AcpRegistryError>;
   }
->()("t3/provider/acp/AcpRegistrySupport/AcpRegistryCatalog") {
-  static layer(options: AcpRegistryCatalogOptions) {
-    return Layer.effect(AcpRegistryCatalog, makeAcpRegistryCatalog(options));
-  }
-}
+>()("@t3tools/provider-acp-registry/server/AcpRegistrySupport/AcpRegistryCatalog") {}
+
+const layer = (options: AcpRegistryCatalogOptions) =>
+  Layer.effect(AcpRegistryCatalog, makeAcpRegistryCatalog(options));
+
+/**
+ * The server-lifetime catalog, with the runtime coordinator built alongside
+ * it so setup, snapshots, and turn launch share one of each. Its cache lives
+ * in the host's provider status cache and installed agents under the T3
+ * home's `tools` directory.
+ */
+export const layerFromHost = Layer.merge(
+  Layer.unwrap(
+    Effect.gen(function* () {
+      const { paths } = yield* ProviderHost.ProviderHost;
+      const path = yield* Path.Path;
+      return layer({
+        cacheDir: paths.providerStatusCacheDir,
+        toolsDir: path.join(paths.baseDir, "tools"),
+      });
+    }),
+  ),
+  AcpRegistryRuntimeCoordinator.layer,
+);
 
 export interface AcpRegistryCatalogOptions {
   readonly cacheDir: string;
@@ -603,7 +627,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path
-  | ServerSettings.ServerSettingsService
+  | ProviderHost.ProviderHost
 > {
   const crypto = yield* Crypto.Crypto;
   const sha256Hex = (data: Uint8Array) =>
@@ -612,7 +636,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   const path = yield* Path.Path;
   const httpClient = yield* HttpClient.HttpClient;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const { settings: hostSettings } = yield* ProviderHost.ProviderHost;
   const platform = yield* HostProcessPlatform;
   const architecture = yield* HostProcessArchitecture;
   const hostEnvironment = yield* HostProcessEnvironment;
@@ -1842,8 +1866,8 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     });
 
   const uninstallManagedBinary: AcpRegistryCatalog["Service"]["uninstallManagedBinary"] = (input) =>
-    serverSettings
-      .withSettingsSnapshot((settings) =>
+    hostSettings
+      .withSnapshot((settings) =>
         installSemaphore.withPermits(1)(
           Effect.gen(function* () {
             const safeAgentId = yield* decodeBoundedAgentId(input.agentId).pipe(

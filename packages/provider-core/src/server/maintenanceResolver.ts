@@ -17,7 +17,6 @@ import { causeErrorTag } from "@t3tools/shared/observability";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Cache from "effect/Cache";
 import * as Config from "effect/Config";
-import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -26,12 +25,14 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientRequest } from "effect/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { collectUint8StreamText } from "./collectStreamText.ts";
+import * as ProviderLatestVersions from "./ProviderLatestVersions.ts";
 
-const LATEST_VERSION_CACHE_TTL_MS = 60 * 60 * 1_000;
 const LATEST_VERSION_TIMEOUT_MS = 4_000;
 const HOMEBREW_INFO_TIMEOUT_MS = 10_000;
 const HOMEBREW_INFO_MAX_BYTES = 256 * 1_024;
@@ -102,17 +103,6 @@ export interface PackageManagedProviderMaintenanceDefinition {
   } | null;
 }
 
-export interface ProviderVersionCacheEntry {
-  readonly expiresAt: number;
-  readonly version: string | null;
-}
-
-export const ProviderVersionCache = Context.Reference<Map<string, ProviderVersionCacheEntry>>(
-  "@t3tools/server/providerMaintenance/ProviderVersionCache",
-  {
-    defaultValue: () => new Map(),
-  },
-);
 const NpmLatestVersionResponse = Schema.Struct({
   version: Schema.optional(Schema.String),
 });
@@ -784,19 +774,8 @@ export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVers
     return null;
   }
 
-  const latestVersionCache = yield* ProviderVersionCache;
-  const cached = latestVersionCache.get(packageName);
-  const now = DateTime.toEpochMillis(yield* DateTime.now);
-  if (cached && cached.expiresAt > now) {
-    return cached.version;
-  }
-
-  const version = yield* fetchNpmLatestVersion(packageName);
-  latestVersionCache.set(packageName, {
-    expiresAt: now + LATEST_VERSION_CACHE_TTL_MS,
-    version,
-  });
-  return version;
+  const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+  return yield* latestVersions.cached(packageName, fetchNpmLatestVersion(packageName));
 });
 
 export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
