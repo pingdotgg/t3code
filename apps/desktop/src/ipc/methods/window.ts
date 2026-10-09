@@ -16,7 +16,6 @@ import {
 import { WORKSPACE_IMAGE_PREVIEW_EXTENSIONS } from "@t3tools/shared/filePreview";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/hostProcess";
-import * as NodeOS from "node:os";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
@@ -46,6 +45,7 @@ import {
   resolveWslPickFolderDefaultPath,
   wslUncPathToLinuxPath,
 } from "../../wsl/wslPathParsing.ts";
+import { HostProcessHomeDirectory } from "@t3tools/shared/hostProcess";
 
 const ContextMenuPosition = Schema.Struct({
   x: Schema.Number,
@@ -398,7 +398,7 @@ export const pickThemeFiles = DesktopIpc.makeIpcMethod({
     // The VS Code extensions directory is the same dotfolder on Windows,
     // macOS, and Linux; when it is missing the picker opens wherever the
     // platform would by default.
-    const extensionsDir = path.join(NodeOS.homedir(), ".vscode", "extensions");
+    const extensionsDir = path.join(yield* HostProcessHomeDirectory, ".vscode", "extensions");
     const defaultPath = yield* fileSystem
       .exists(extensionsDir)
       .pipe(Effect.orElseSucceed(() => false));

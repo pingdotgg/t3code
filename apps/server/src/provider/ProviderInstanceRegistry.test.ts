@@ -39,7 +39,11 @@ import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderL
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import type { GrokSettings } from "@t3tools/provider-grok/settings";
 import type { CursorSettings } from "@t3tools/provider-cursor/settings";
-import { HostProcessPlatform, isHostWindows } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessHomeDirectory,
+  HostProcessPlatform,
+  isHostWindows,
+} from "@t3tools/shared/hostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -51,7 +55,6 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ServerConfig from "../config.ts";
-import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ServerSettings from "../serverSettings.ts";
 import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
@@ -153,7 +156,7 @@ const makeTildeProviderFixtures = Effect.fn(
 )(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const homePath = expandHomePath("~");
+  const homePath = yield* HostProcessHomeDirectory;
   const fixtureDir = yield* fileSystem.makeTempDirectoryScoped({
     directory: homePath,
     prefix: ".t3-provider-path-test-",

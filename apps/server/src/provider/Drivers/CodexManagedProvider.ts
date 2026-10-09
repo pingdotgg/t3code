@@ -36,7 +36,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     instanceId,
     enabled,
     config,
-    environment: mergeProviderInstanceEnvironment(input.environment),
+    environment: yield* mergeProviderInstanceEnvironment(input.environment),
   });
   const continuationIdentity = codexContinuationIdentity(runtime.homeLayout);
   const stamp = withInstanceIdentity({

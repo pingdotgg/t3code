@@ -7,12 +7,11 @@
  *
  * @module provider/claudeResetCredits
  */
-import * as NodeOS from "node:os";
 import type {
   ProviderConsumeResetCreditOutcome,
   ServerProviderResetCredits,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessHomeDirectory, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -190,10 +189,14 @@ export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
 );
 
 /** The CLI keeps the account record beside its settings, or in the home directory by default. */
-export const claudeAccountConfigPath = (configDir: string | undefined) =>
-  Effect.map(Path.Path, (path) =>
-    configDir ? path.join(configDir, ".claude.json") : path.join(NodeOS.homedir(), ".claude.json"),
-  );
+export const claudeAccountConfigPath = Effect.fn("claudeAccountConfigPath")(function* (
+  configDir: string | undefined,
+) {
+  const path = yield* Path.Path;
+  return configDir
+    ? path.join(configDir, ".claude.json")
+    : path.join(yield* HostProcessHomeDirectory, ".claude.json");
+});
 
 const CLAIM_OUTCOMES = {
   reset: "reset",

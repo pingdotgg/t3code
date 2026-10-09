@@ -344,17 +344,35 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
 
 it("resolves the home the agent expands ~ against", () => {
   assert.equal(
-    resolveAntigravityUserHome("linux", { HOME: "/home/user", USERPROFILE: "C:\\Users\\user" }),
+    resolveAntigravityUserHome(
+      "linux",
+      { HOME: "/home/user", USERPROFILE: "C:\\Users\\user" },
+      "/home/fallback",
+    ),
     "/home/user",
   );
   assert.equal(
-    resolveAntigravityUserHome("win32", { HOME: "/home/user", USERPROFILE: "C:\\Users\\user" }),
+    resolveAntigravityUserHome(
+      "win32",
+      { HOME: "/home/user", USERPROFILE: "C:\\Users\\user" },
+      "/home/fallback",
+    ),
     "C:\\Users\\user",
   );
   assert.equal(
-    resolveAntigravityUserHome("win32", { HOMEDRIVE: "D:", HOMEPATH: "\\Users\\alice" }),
+    resolveAntigravityUserHome(
+      "win32",
+      { HOMEDRIVE: "D:", HOMEPATH: "\\Users\\alice" },
+      "/home/fallback",
+    ),
     "D:\\Users\\alice",
   );
-  assert.equal(resolveAntigravityUserHome("darwin", { HOME: "/Users/a b " }), "/Users/a b ");
-  assert.equal(resolveAntigravityUserHome("darwin", { HOME: "" }).length > 0, true);
+  assert.equal(
+    resolveAntigravityUserHome("darwin", { HOME: "/Users/a b " }, "/home/fallback"),
+    "/Users/a b ",
+  );
+  assert.equal(
+    resolveAntigravityUserHome("darwin", { HOME: "" }, "/home/fallback"),
+    "/home/fallback",
+  );
 });

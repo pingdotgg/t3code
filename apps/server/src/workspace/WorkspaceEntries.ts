@@ -19,7 +19,7 @@ import type {
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessHomeDirectory, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
@@ -120,7 +120,7 @@ const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(fu
   }
 
   if (!isExplicitRelativePath(input.partialPath)) {
-    return path.resolve(expandHomePath(input.partialPath));
+    return path.resolve(expandHomePath(input.partialPath, yield* HostProcessHomeDirectory));
   }
 
   if (!input.cwd) {
@@ -128,7 +128,10 @@ const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(fu
       partialPath: input.partialPath,
     });
   }
-  return path.resolve(expandHomePath(input.cwd), input.partialPath);
+  return path.resolve(
+    expandHomePath(input.cwd, yield* HostProcessHomeDirectory),
+    input.partialPath,
+  );
 });
 
 /** @public Service construction is part of the canonical Effect module API. */

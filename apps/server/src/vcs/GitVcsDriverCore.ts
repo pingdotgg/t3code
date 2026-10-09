@@ -29,7 +29,7 @@ import {
   type VcsRef,
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@t3tools/shared/git";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessHomeDirectory, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
@@ -3403,6 +3403,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         options?.worktreesDirectory ?? "",
         worktreesDir,
         path,
+        yield* HostProcessHomeDirectory,
       );
       if (parentDir === null) {
         return yield* new GitCommandError({

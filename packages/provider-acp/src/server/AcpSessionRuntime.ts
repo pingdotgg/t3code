@@ -27,7 +27,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessHomeDirectory, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "./stderr.ts";
@@ -1408,6 +1408,7 @@ export const make = (
     const stoppingRef = yield* Ref.make(false);
     const stderrFailure = yield* Deferred.make<never, EffectAcpErrors.AcpError>();
     const stderrTailRef = yield* Ref.make("");
+    const homeDirectory = yield* HostProcessHomeDirectory;
     const stderrDrained = yield* Deferred.make<void>();
     const runtimeClosed = yield* Deferred.make<void>();
     const promptSerializationSemaphore = yield* Semaphore.make(1);
@@ -1440,7 +1441,7 @@ export const make = (
             Effect.ignore,
             Effect.andThen(Ref.get(stderrTailRef)),
             Effect.map((tail) => {
-              const stderr = sanitizeAcpStderrExcerpt(tail);
+              const stderr = sanitizeAcpStderrExcerpt(tail, homeDirectory);
               return stderr.length === 0
                 ? error
                 : new EffectAcpErrors.AcpProcessExitedError({

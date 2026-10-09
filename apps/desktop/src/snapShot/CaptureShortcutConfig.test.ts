@@ -29,7 +29,7 @@ beforeEach(async () => {
   tools.validateNiri.mockReset().mockResolvedValue(undefined);
   tools.hyprlandBindings.mockReset().mockResolvedValue([]);
   tools.reloadHyprland.mockReset().mockResolvedValue(undefined);
-  setup = new CaptureShortcutConfig(tools);
+  setup = new CaptureShortcutConfig(NodeOS.homedir(), tools);
 });
 afterEach(async () => {
   await NodeFSP.rm(directory, { recursive: true, force: true });
@@ -219,15 +219,15 @@ it("does not edit Omarchy's shipped defaults", async () => {
 });
 it("honors NIRI_CONFIG and XDG_CONFIG_HOME", () => {
   expect(
-    niriCaptureConfigPath(
-      { NIRI_CONFIG: "/custom/test.kdl", XDG_CONFIG_HOME: "/config" },
-      "/home/test",
-    ),
+    niriCaptureConfigPath("/home/test", {
+      NIRI_CONFIG: "/custom/test.kdl",
+      XDG_CONFIG_HOME: "/config",
+    }),
   ).toBe("/custom/test.kdl");
-  expect(niriCaptureConfigPath({ XDG_CONFIG_HOME: "/config" }, "/home/test")).toBe(
+  expect(niriCaptureConfigPath("/home/test", { XDG_CONFIG_HOME: "/config" })).toBe(
     "/config/niri/config.kdl",
   );
-  expect(niriCaptureConfigPath({}, "/home/test")).toBe("/home/test/.config/niri/config.kdl");
+  expect(niriCaptureConfigPath("/home/test", {})).toBe("/home/test/.config/niri/config.kdl");
 });
 it("preserves a UTF-8 BOM through preview and apply", async () => {
   await NodeFSP.writeFile(path, "\uFEFFbinds {}\r\n");
@@ -251,7 +251,7 @@ it("the installed Niri parser accepts the generated edit and its relative includ
     NodePath.join(directory, "keys.kdl"),
     "binds {\n    Ctrl+Alt+Q { quit; }\n}\n",
   );
-  const checked = new CaptureShortcutConfig({
+  const checked = new CaptureShortcutConfig(NodeOS.homedir(), {
     ...tools,
     validateNiri: async (file) => {
       await NodeUtil.promisify(NodeChildProcess.execFile)("niri", ["validate", "--config", file]);

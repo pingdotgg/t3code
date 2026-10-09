@@ -1,6 +1,6 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { MuseSettings } from "../settings.ts";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessHomeDirectory } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -71,14 +71,14 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       const hostEnvironment = yield* HostProcessEnvironment;
       // Drop an inherited META_API_KEY so Muse uses its login; an instance value still wins.
-      const processEnvironment = mergeProviderInstanceEnvironment(
+      const processEnvironment = yield* mergeProviderInstanceEnvironment(
         environment,
         makeMuseEnvironment(hostEnvironment),
       );
       const effectiveConfig = {
         ...config,
         enabled,
-        binaryPath: expandHomePath(config.binaryPath),
+        binaryPath: expandHomePath(config.binaryPath, yield* HostProcessHomeDirectory),
       } satisfies MuseSettings;
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
