@@ -94,7 +94,6 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       const installation = yield* AntigravityInstallation.AntigravityInstallation;
       const loggers = yield* ProviderEventLoggers.ProviderEventLoggers;
       const modelManifest = yield* ModelManifest.ModelManifest;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
       const settings = { ...config, enabled } satisfies AntigravitySettings;
@@ -397,13 +396,8 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       const defaultModel = modelManifest.current.pipe(
         Effect.map((manifest) => ModelManifest.manifestDefaultModel(manifest, DRIVER)),
       );
-      const orchestrationAdapter = makeAntigravityAdapterV2({
+      const orchestrationAdapter = yield* makeAntigravityAdapterV2({
         instanceId,
-        crypto,
-        fileSystem,
-        path,
-        idAllocator,
-        host,
         selfInvocation,
         makeRuntime,
         withProcess: authFlow.withProcess,

@@ -9,9 +9,9 @@ import {
   type AcpRegistrySearchInput,
   type AcpRegistrySearchResult,
   type AcpRegistryDistribution as AcpRegistryDistributionKind,
-  type AcpRegistryDistributionPreference,
-  type AcpRegistrySettings,
 } from "@t3tools/contracts";
+import type { AcpRegistryDistributionPreference } from "../settings.ts";
+import type { AcpRegistrySettings } from "../settings.ts";
 import {
   HostProcessArchitecture,
   HostProcessEnvironment,
@@ -32,6 +32,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -42,7 +43,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
-import * as ServerSettings from "../../serverSettings.ts";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 const ACP_REGISTRY_URL = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
@@ -503,11 +504,30 @@ export class AcpRegistryCatalog extends Context.Service<
       input: AcpRegistryManagedBinaryUninstallInput,
     ) => Effect.Effect<AcpRegistryManagedBinaryUninstallResult, AcpRegistryError>;
   }
->()("t3/provider/acp/AcpRegistrySupport/AcpRegistryCatalog") {
-  static layer(options: AcpRegistryCatalogOptions) {
-    return Layer.effect(AcpRegistryCatalog, makeAcpRegistryCatalog(options));
-  }
-}
+>()("@t3tools/provider-acp-registry/server/AcpRegistrySupport/AcpRegistryCatalog") {}
+
+const layer = (options: AcpRegistryCatalogOptions) =>
+  Layer.effect(AcpRegistryCatalog, makeAcpRegistryCatalog(options));
+
+/**
+ * The server-lifetime catalog, with the runtime coordinator built alongside
+ * it so setup, snapshots, and turn launch share one of each. Its cache lives
+ * in the host's provider status cache and installed agents under the T3
+ * home's `tools` directory.
+ */
+export const layerFromHost = Layer.merge(
+  Layer.unwrap(
+    Effect.gen(function* () {
+      const { paths } = yield* ProviderHost.ProviderHost;
+      const path = yield* Path.Path;
+      return layer({
+        cacheDir: paths.providerStatusCacheDir,
+        toolsDir: path.join(paths.baseDir, "tools"),
+      });
+    }),
+  ),
+  AcpRegistryRuntimeCoordinator.layer,
+);
 
 export interface AcpRegistryCatalogOptions {
   readonly cacheDir: string;
@@ -603,7 +623,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path
-  | ServerSettings.ServerSettingsService
+  | ProviderHost.ProviderHost
 > {
   const crypto = yield* Crypto.Crypto;
   const sha256Hex = (data: Uint8Array) =>
@@ -612,7 +632,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   const path = yield* Path.Path;
   const httpClient = yield* HttpClient.HttpClient;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const { settings: hostSettings } = yield* ProviderHost.ProviderHost;
   const platform = yield* HostProcessPlatform;
   const architecture = yield* HostProcessArchitecture;
   const hostEnvironment = yield* HostProcessEnvironment;
@@ -1842,8 +1862,8 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     });
 
   const uninstallManagedBinary: AcpRegistryCatalog["Service"]["uninstallManagedBinary"] = (input) =>
-    serverSettings
-      .withSettingsSnapshot((settings) =>
+    hostSettings
+      .withSnapshot((settings) =>
         installSemaphore.withPermits(1)(
           Effect.gen(function* () {
             const safeAgentId = yield* decodeBoundedAgentId(input.agentId).pipe(

@@ -22,7 +22,6 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
@@ -31,15 +30,14 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 
-import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import {
   makePiAdapterV2,
   PiAdapterV2Driver,
@@ -102,10 +100,6 @@ interface FakePi {
   readonly allRequests: () => ReadonlyArray<PiRpcRecord>;
   /** Data returned by the next `get_session_stats` acks, consumed in order. */
   readonly queueStats: (data: unknown) => void;
-  /** Data returned by the next `get_commands` acks, consumed in order. */
-  readonly queueCommands: (data: unknown) => void;
-  /** Make the next `get_commands` ack fail. */
-  readonly failNextCommands: () => void;
   /** Close the fake process stdout stream. */
   readonly closeStdout: Effect.Effect<void>;
   readonly lastSpawn: () => {
@@ -145,7 +139,6 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   const messagesQueue: Array<unknown> = [];
   const stateQueue: Array<Record<string, unknown>> = [];
   const statsQueue: Array<unknown> = [];
-  const commandsQueue: Array<{ readonly success: boolean; readonly data?: unknown }> = [];
   const allRequests: Array<PiRpcRecord> = [];
   let deferState = false;
   let deferredStateRequest: PiRpcRecord | undefined;
@@ -199,8 +192,6 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
         return { ...base, data: messagesQueue.shift() ?? { messages: [] } };
       case "get_session_stats":
         return { ...base, data: statsQueue.shift() ?? {} };
-      case "get_commands":
-        return { ...base, ...(commandsQueue.shift() ?? { data: { commands: [] } }) };
       case "fork":
         return { ...base, data: { text: "Hello pi", cancelled: false } };
       default:
@@ -313,8 +304,6 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     },
     queueState: (data) => stateQueue.push(data),
     queueStats: (data) => statsQueue.push(data),
-    queueCommands: (data) => commandsQueue.push({ success: true, data }),
-    failNextCommands: () => commandsQueue.push({ success: false }),
     closeStdout: Queue.end(stdout),
     lastSpawn: () => lastSpawn,
   } satisfies FakePi;
@@ -326,9 +315,6 @@ const makeAdapter = Effect.fnUntraced(function* (
   forkFake?: FakePi,
   continuationRequests?: PiAdapterV2Options["continuationRequests"],
 ) {
-  const idAllocator = yield* IdAllocator.IdAllocatorV2;
-  const host = yield* ProviderHost.ProviderHost;
-  const fileSystem = yield* FileSystem.FileSystem;
   const spawner =
     forkFake === undefined
       ? fake.spawner
@@ -337,6 +323,8 @@ const makeAdapter = Effect.fnUntraced(function* (
             ? forkFake.spawner.spawn(command)
             : fake.spawner.spawn(command),
         );
+  // Continuation cases go through the driver, which wires the offer from the
+  // environment the way production does.
   if (continuationRequests !== undefined) {
     return yield* PiAdapterV2Driver.create({
       instanceId: PI_INSTANCE_ID,
@@ -353,15 +341,11 @@ const makeAdapter = Effect.fnUntraced(function* (
       }),
     );
   }
-  return makePiAdapterV2({
+  return yield* makePiAdapterV2({
     instanceId: PI_INSTANCE_ID,
     settings: { enabled: true, binaryPath: "pi", launchArgs, customModels: [] },
     environment: {},
-    spawner,
-    fileSystem,
-    idAllocator,
-    host,
-  });
+  }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
 });
 
 const openRuntime = Effect.fnUntraced(function* (
@@ -1727,22 +1711,9 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("expands a selected $ skill through Pi's native skill command", () =>
+  it.effect("preserves selected skill references for the Pi extension to expand", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
-      fake.queueCommands({
-        commands: [
-          {
-            name: "skill:repo-review",
-            description: "Review this repository.",
-            source: "skill",
-            sourceInfo: {
-              path: "/workspace/.agents/skills/repo-review/SKILL.md",
-              scope: "project",
-            },
-          },
-        ],
-      });
       const { runtime } = yield* openRuntime(fake);
       const providerThread = yield* runtime.ensureThread({
         threadId: THREAD_ID,
@@ -1758,43 +1729,7 @@ describe("PiAdapterV2", () => {
         "Review this change please $repo-review",
       );
       const prompt = yield* fake.takeRequest("prompt");
-      assert.equal(prompt["message"], "/skill:repo-review Review this change please");
-    }).pipe(Effect.scoped, Effect.provide(layerTest)),
-  );
-
-  it.effect("expands every selected $ skill through Pi native skill commands", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakePi;
-      fake.queueCommands({
-        commands: [
-          {
-            name: "skill:repo-review",
-            source: "skill",
-            sourceInfo: {
-              path: "/workspace/.agents/skills/repo-review/SKILL.md",
-              scope: "project",
-            },
-          },
-          {
-            name: "skill:deploy",
-            source: "skill",
-            sourceInfo: {
-              path: "/workspace/.agents/skills/deploy/SKILL.md",
-              scope: "project",
-            },
-          },
-        ],
-      });
-      const { runtime } = yield* openRuntime(fake);
-      const providerThread = yield* runtime.ensureThread({
-        threadId: THREAD_ID,
-        modelSelection: modelSelection("default"),
-        runtimePolicy,
-      });
-
-      yield* startTurn(runtime, providerThread, "default", [], "use $repo-review and $deploy");
-      const prompt = yield* fake.takeRequest("prompt");
-      assert.equal(prompt["message"], "/skill:repo-review /skill:deploy use  and");
+      assert.equal(prompt["message"], "Review this change please $repo-review");
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
@@ -2104,6 +2039,317 @@ describe("PiAdapterV2", () => {
           failedEdit.turnItem.type === "file_change" &&
           failedEdit.turnItem.diffStr === "Could not find the text in c.ts.",
       );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each([false, true])("follows an extension rewind with summarize=%s", (summarize) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const root = { type: "model_change", id: "root", parentId: null };
+      const user = (id: string, parentId: string) => ({
+        type: "message",
+        id,
+        parentId,
+        message: { role: "user", content: [{ type: "text", text: id }] },
+      });
+      const reply = (id: string, parentId: string) => ({
+        type: "message",
+        id,
+        parentId,
+        message: { role: "assistant", content: [] },
+      });
+      fake.queueEntries({ entries: [root], leafId: "root" });
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      // Runs one turn to its terminal. `listings` answer the turn's
+      // get_entries requests in order.
+      const settle = Effect.fnUntraced(function* (
+        text: string,
+        runOrdinal: number,
+        ...listings: ReadonlyArray<unknown>
+      ) {
+        yield* startTurn(runtime, providerThread, "default", [], text, undefined, runOrdinal);
+        yield* fake.takeRequest("prompt");
+        for (const listing of listings) fake.queueEntries(listing);
+        // Pi acks every prompt; a command-only prompt then settles from
+        // an idle probe instead of agent events.
+        yield* fake.emit({ type: "response", command: "prompt", success: true });
+        if (!text.startsWith("/")) {
+          yield* fake.emit({ type: "agent_start" });
+          yield* fake.emit({ type: "agent_settled" });
+        }
+        const turn = yield* takeEvent(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+        );
+        const thread = yield* takeEvent(
+          (event) =>
+            event.type === "provider_thread.updated" && event.providerThread.status === "idle",
+        );
+        yield* takeEvent((event) => event.type === "turn.terminal");
+        return {
+          turnRef:
+            turn.type === "provider_turn.updated" ? turn.providerTurn.nativeTurnRef : undefined,
+          head:
+            thread.type === "provider_thread.updated"
+              ? thread.providerThread.nativeConversationHeadRef?.nativeId
+              : undefined,
+          retained:
+            thread.type === "provider_thread.updated" ? thread.retainedNativeTurnIds : undefined,
+        };
+      });
+
+      yield* settle("prompt A", 1, {
+        entries: [user("uA", "root"), reply("aA", "uA")],
+        leafId: "aA",
+      });
+      const promptB = yield* settle("prompt B", 2, {
+        entries: [user("uB", "aA"), reply("aB", "uB")],
+        leafId: "aB",
+      });
+      assert.equal(promptB.turnRef?.nativeId, "uB");
+      assert.isUndefined(promptB.retained);
+
+      // The extension moves the leaf back to A's reply. With a summary,
+      // pi appends a branch_summary child of that reply as the new leaf.
+      const rewoundLeaf = summarize ? "summary" : "aA";
+      const summary = summarize ? [{ type: "branch_summary", id: "summary", parentId: "aA" }] : [];
+      const rewind = yield* settle(
+        "/rewind",
+        3,
+        { entries: summary, leafId: rewoundLeaf },
+        {
+          entries: [
+            root,
+            user("uA", "root"),
+            reply("aA", "uA"),
+            user("uB", "aA"),
+            reply("aB", "uB"),
+            ...summary,
+          ],
+          leafId: rewoundLeaf,
+        },
+      );
+      assert.deepEqual(rewind.retained, ["uA"]);
+      assert.equal(rewind.head, rewoundLeaf);
+      if (summarize) {
+        // The summary is this turn's only entry, and fork cannot re-root
+        // before a non-user entry, so rollback may not pass it.
+        assert.equal(rewind.turnRef?.strength, "weak");
+      } else {
+        // Nothing of this turn is on the branch; rollback can pass it.
+        assert.isNull(rewind.turnRef);
+      }
+
+      // get_entries is append-ordered: after a rewind to an older leaf,
+      // the abandoned branch still comes first in the next window.
+      const promptC = yield* settle("prompt C", 4, {
+        entries: [
+          ...(summarize ? [] : [user("uB", "aA"), reply("aB", "uB")]),
+          user("uC", rewoundLeaf),
+          reply("aC", "uC"),
+        ],
+        leafId: "aC",
+      });
+      assert.deepEqual(promptC.turnRef, {
+        driver: PI_PROVIDER,
+        nativeId: "uC",
+        strength: "strong",
+      });
+      assert.isUndefined(promptC.retained);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  // Corrupted session data can loop its parentId chain. Finalizing the turn
+  // must still finish, and must not report a branch to roll runs back to.
+  it.effect.each(["turn window", "full tree"] as const)(
+    "finishes a turn whose %s has a parentId cycle",
+    (cycleIn) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        const root = { type: "model_change", id: "root", parentId: null };
+        const cycle = [
+          { type: "message", id: "x", parentId: "y", message: { role: "user", content: [] } },
+          { type: "message", id: "y", parentId: "x", message: { role: "assistant", content: [] } },
+        ];
+        fake.queueEntries({ entries: [root], leafId: "root" });
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* startTurn(runtime, providerThread, "default", [], "prompt", undefined, 1);
+        yield* fake.takeRequest("prompt");
+        if (cycleIn === "turn window") {
+          fake.queueEntries({ entries: cycle, leafId: "x" });
+        } else {
+          // The leaf is outside the `since` window, so this reads as a rewind
+          // and the full tree is walked for the surviving branch.
+          fake.queueEntries({ entries: [], leafId: "x" });
+          fake.queueEntries({ entries: [root, ...cycle], leafId: "x" });
+        }
+        yield* fake.emit({ type: "response", command: "prompt", success: true });
+        yield* fake.emit({ type: "agent_start" });
+        yield* fake.emit({ type: "agent_settled" });
+        yield* takeEvent(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+        );
+        const thread = yield* takeEvent(
+          (event) =>
+            event.type === "provider_thread.updated" && event.providerThread.status === "idle",
+        );
+        assert.isUndefined(
+          thread.type === "provider_thread.updated" ? thread.retainedNativeTurnIds : null,
+        );
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["missing parent", "invalid parent", "duplicate id"] as const)(
+    "does not reconcile malformed session entries: %s",
+    (malformed) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        const root = { type: "model_change", id: "root", parentId: null };
+        fake.queueEntries({ entries: [root], leafId: "root" });
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* startTurn(runtime, providerThread);
+        yield* fake.takeRequest("prompt");
+        const entry = {
+          type: "message",
+          id: "x",
+          message: { role: "user", content: [] },
+          ...(malformed === "missing parent"
+            ? {}
+            : { parentId: malformed === "invalid parent" ? 42 : null }),
+        };
+        fake.queueEntries({ entries: [], leafId: "x" });
+        fake.queueEntries({
+          entries: [
+            root,
+            entry,
+            ...(malformed === "duplicate id" ? [{ ...entry, parentId: "root" }] : []),
+          ],
+          leafId: "x",
+        });
+        yield* fake.emit({ type: "response", command: "prompt", success: true });
+        yield* fake.emit({ type: "agent_start" });
+        yield* fake.emit({ type: "agent_settled" });
+        yield* takeEvent(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+        );
+        const thread = yield* takeEvent(
+          (event) =>
+            event.type === "provider_thread.updated" && event.providerThread.status === "idle",
+        );
+        assert.isUndefined(
+          thread.type === "provider_thread.updated" ? thread.retainedNativeTurnIds : null,
+        );
+        yield* takeEvent((event) => event.type === "turn.terminal");
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("does not reconcile a replacement session tree as a native rewind", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      fake.queueEntries({
+        entries: [{ type: "model_change", id: "old-leaf", parentId: null }],
+        leafId: "old-leaf",
+      });
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const finish = Effect.fnUntraced(function* () {
+        yield* startTurn(runtime, providerThread);
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({ type: "response", command: "prompt", success: true });
+        yield* fake.emit({ type: "agent_start" });
+        yield* fake.emit({ type: "agent_settled" });
+        const update = yield* takeEvent(
+          (event) =>
+            event.type === "provider_thread.updated" && event.providerThread.status === "idle",
+        );
+        yield* takeEvent((event) => event.type === "turn.terminal");
+        assert.isUndefined(
+          update.type === "provider_thread.updated" ? update.retainedNativeTurnIds : null,
+        );
+      });
+      // A failed cursor read is followed by a full listing from a new session.
+      fake.queueEntries({ entries: [] });
+      yield* finish();
+      fake.queueEntries({
+        entries: [
+          {
+            type: "message",
+            id: "new-user",
+            parentId: null,
+            message: { role: "user", content: [] },
+          },
+        ],
+        leafId: "new-user",
+      });
+      yield* finish();
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("rolls back past turns that left nothing in the session tree", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const turn = (ordinal: number, entryId: string | null): OrchestrationV2ProviderTurn => ({
+        id: ProviderTurnId.make(`turn-${ordinal}`),
+        providerThreadId: providerThread.id,
+        nodeId: NodeId.make(`node-${ordinal}`),
+        runAttemptId: null,
+        nativeTurnRef:
+          entryId === null ? null : { driver: PI_PROVIDER, nativeId: entryId, strength: "strong" },
+        ordinal,
+        status: "completed",
+        startedAt: null,
+        completedAt: null,
+      });
+      const rollBackToFirst = (turns: ReadonlyArray<OrchestrationV2ProviderTurn>) =>
+        runtime.rollbackThread({
+          providerThread,
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("checkpoint-1"),
+            appRunOrdinal: 1,
+            providerTurn: turns[0]!,
+          },
+          providerThreadTurns: turns,
+        });
+      const forkedEntries = () =>
+        fake
+          .allRequests()
+          .filter((request) => request.type === "fork")
+          .map((request) => request.entryId);
+
+      // Only a turn that left nothing follows the target: already there.
+      yield* rollBackToFirst([turn(1, "u1"), turn(2, null)]);
+      assert.deepEqual(forkedEntries(), []);
+      // Pi re-roots before the first later turn that left entries.
+      yield* rollBackToFirst([turn(1, "u1"), turn(2, null), turn(3, "u3")]);
+      assert.deepEqual(forkedEntries(), ["u3"]);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

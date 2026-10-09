@@ -35,6 +35,7 @@ export const layer = Layer.effect(
       },
       settings: {
         get: serverSettings.getSettings,
+        withSnapshot: serverSettings.withSettingsSnapshot,
         changes: serverSettings.streamChanges,
         subscribe: serverSettings.subscribeChanges,
       },

@@ -7,26 +7,38 @@
  */
 import { DEFAULT_SERVER_SETTINGS, type ServerSettings } from "@t3tools/contracts";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 export interface TestProviderHostOptions {
   /** Session fallback cwd. Defaults to the test process cwd. */
   readonly cwd?: string;
+  /** Initial settings. A test changes them through `TestProviderHostSettings`. */
   readonly settings?: ServerSettings;
   /** Whether background work such as status probes may run. Defaults to `true`. */
   readonly runBackgroundWork?: boolean;
 }
 
+/** Lets a test change the settings its `layerTestProviderHost` reports. */
+export class TestProviderHostSettings extends Context.Service<
+  TestProviderHostSettings,
+  { readonly set: (settings: ServerSettings) => Effect.Effect<void> }
+>()("@t3tools/provider-testing/host/TestProviderHostSettings") {}
+
 export const layerTestProviderHost = (
   options: TestProviderHostOptions = {},
-): Layer.Layer<ProviderHost.ProviderHost, never, FileSystem.FileSystem | Path.Path> =>
-  Layer.effect(
-    ProviderHost.ProviderHost,
+): Layer.Layer<
+  ProviderHost.ProviderHost | TestProviderHostSettings,
+  never,
+  FileSystem.FileSystem | Path.Path
+> =>
+  Layer.effectContext(
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -39,9 +51,9 @@ export const layerTestProviderHost = (
       for (const directory of [stateDir, providerStatusCacheDir, attachmentsDir]) {
         yield* fileSystem.makeDirectory(directory, { recursive: true }).pipe(Effect.orDie);
       }
-      const settings = options.settings ?? DEFAULT_SERVER_SETTINGS;
+      const settings = yield* Ref.make(options.settings ?? DEFAULT_SERVER_SETTINGS);
       const credentials = new Map<string, Uint8Array>();
-      return ProviderHost.ProviderHost.of({
+      const host = ProviderHost.ProviderHost.of({
         paths: {
           cwd: options.cwd ?? process.cwd(),
           baseDir,
@@ -50,7 +62,8 @@ export const layerTestProviderHost = (
           attachmentsDir,
         },
         settings: {
-          get: Effect.succeed(settings),
+          get: Ref.get(settings),
+          withSnapshot: (use) => Ref.get(settings).pipe(Effect.flatMap(use)),
           changes: Stream.empty,
           subscribe: Effect.succeed(Stream.empty),
         },
@@ -69,5 +82,10 @@ export const layerTestProviderHost = (
             };
           }),
       });
+      return Context.make(ProviderHost.ProviderHost, host).pipe(
+        Context.add(TestProviderHostSettings, {
+          set: (next) => Ref.set(settings, next),
+        }),
+      );
     }),
   );

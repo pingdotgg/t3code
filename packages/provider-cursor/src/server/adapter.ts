@@ -844,17 +844,17 @@ export interface CursorAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly settings: CursorSettings;
   readonly environment: NodeJS.ProcessEnv;
-  readonly fileSystem: FileSystem.FileSystem;
-  readonly path: Path.Path;
-  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
-  readonly runner: CursorAgentSdk.CursorAgentSdkRunnerShape;
-  readonly host: ProviderHost.ProviderHostShape;
 }
 
-export function makeCursorAdapterV2(
-  adapterOptions: CursorAdapterV2Options,
-): ProviderAdapter.ProviderAdapterV2Shape {
-  const { fileSystem, path, idAllocator, runner, host } = adapterOptions;
+export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
+  options: CursorAdapterV2Options,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const idAllocator = yield* IdAllocator.IdAllocatorV2;
+  const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
+  const host = yield* ProviderHost.ProviderHost;
+  const adapterOptions = options;
   const apiKey = adapterOptions.environment.CURSOR_API_KEY?.trim() || undefined;
 
   return ProviderAdapter.ProviderAdapterV2.of({
@@ -2596,7 +2596,7 @@ export function makeCursorAdapterV2(
         ),
     ),
   });
-}
+});
 
 export type CursorAdapterV2DriverEnv =
   | CursorAgentSdk.CursorAgentSdkRunner
@@ -2615,23 +2615,13 @@ export const CursorAdapterV2Driver: ProviderAdapterDriver<
   create: Effect.fn("CursorAdapterV2Driver.create")(
     function* (input: ProviderAdapterDriverCreateInput<CursorSettings>) {
       const hostEnvironment = yield* HostProcessEnvironment;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
-      const host = yield* ProviderHost.ProviderHost;
-      return makeCursorAdapterV2({
+      return yield* makeCursorAdapterV2({
         instanceId: input.instanceId,
         settings: {
           ...input.config,
           enabled: input.enabled,
         },
         environment: mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
-        fileSystem,
-        path,
-        idAllocator,
-        runner,
-        host,
       });
     },
     (effect, input) =>
@@ -2661,20 +2651,10 @@ const layer: Layer.Layer<
   ProviderAdapter.ProviderAdapterV2,
   Effect.gen(function* () {
     const hostEnvironment = yield* HostProcessEnvironment;
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const idAllocator = yield* IdAllocator.IdAllocatorV2;
-    const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
-    const host = yield* ProviderHost.ProviderHost;
-    return makeCursorAdapterV2({
+    return yield* makeCursorAdapterV2({
       instanceId: CURSOR_DEFAULT_INSTANCE_ID,
       settings: DEFAULT_CURSOR_SETTINGS,
       environment: hostEnvironment,
-      fileSystem,
-      path,
-      idAllocator,
-      runner,
-      host,
     });
   }),
 );

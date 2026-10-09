@@ -1,15 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { AcpRegistrySettings } from "@t3tools/contracts";
+import { AcpRegistrySettings } from "@t3tools/provider-acp-registry/settings";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Effect from "effect/Effect";
-import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 
-import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
@@ -26,7 +24,7 @@ import {
   ACP_REGISTRY_DEFAULT_INSTANCE_ID,
   ACP_REGISTRY_PROVIDER,
   makeAcpRegistryAdapterV2,
-} from "./AcpRegistryAdapterV2.ts";
+} from "@t3tools/provider-acp-registry/testing";
 
 const REPLAY_SETTINGS = Schema.decodeUnknownSync(AcpRegistrySettings)({
   agentId: "replay-agent",
@@ -44,9 +42,6 @@ function layerAcpRegistryProviderAdapterRegistryReplay(
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const host = yield* ProviderHost.ProviderHost;
       const replayGate = options.replayGate;
       const replayDir = yield* fileSystem
         .makeTempDirectory({
@@ -57,18 +52,14 @@ function layerAcpRegistryProviderAdapterRegistryReplay(
       const scriptPath = yield* path
         .fromFileUrl(new URL("../../../scripts/acp-replay-agent.ts", import.meta.url))
         .pipe(Effect.orDie);
-      const adapter = makeAcpRegistryAdapterV2({
+      const adapter = yield* makeAcpRegistryAdapterV2({
         instanceId: ACP_REGISTRY_DEFAULT_INSTANCE_ID,
         settings: REPLAY_SETTINGS,
         environment: {},
         childProcessSpawner,
-        crypto,
-        fileSystem,
-        idAllocator,
         resolver: {
           resolve: () => Effect.die("ACP registry resolver must not run during replay"),
         },
-        host,
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: makeAcpReplayRuntime({
           transcript,

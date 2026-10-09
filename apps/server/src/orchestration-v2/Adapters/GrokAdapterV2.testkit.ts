@@ -1,7 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { GrokSettings } from "@t3tools/provider-grok/settings";
 import * as Effect from "effect/Effect";
-import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -10,7 +9,6 @@ import { ChildProcessSpawner } from "effect/process";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 
-import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import { GROK_ACP_CANCEL_META, GROK_ACP_INITIALIZE_META } from "@t3tools/provider-grok/testing";
 import { makeXAiPromptCompletionRuntime } from "@t3tools/provider-grok/testing";
@@ -45,10 +43,7 @@ function layerGrokProviderAdapterRegistryReplay(
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
       const hostPlatform = yield* HostProcessPlatform;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const host = yield* ProviderHost.ProviderHost;
       // Same queue the continuation worker drains when the fixture runs it.
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       const replayGate = options.replayGate;
@@ -61,16 +56,11 @@ function layerGrokProviderAdapterRegistryReplay(
       const scriptPath = yield* path
         .fromFileUrl(new URL("../../../scripts/acp-replay-agent.ts", import.meta.url))
         .pipe(Effect.orDie);
-      const adapter = makeGrokAdapterV2({
+      const adapter = yield* makeGrokAdapterV2({
         instanceId: GROK_DEFAULT_INSTANCE_ID,
         settings: DEFAULT_GROK_SETTINGS,
         environment: {},
         hostPlatform,
-        childProcessSpawner,
-        crypto,
-        fileSystem,
-        idAllocator,
-        host,
         selfInvocation: yield* resolveSelfInvocation(),
         // Same wrapping as makeGrokAcpRuntime: client type and Ctrl+C cancel
         // metadata and the x.ai prompt-completion race, so replay sends what

@@ -1,6 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { AcpRegistrySettings, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProviderDriverKind,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
+import { AcpRegistrySettings } from "../settings.ts";
 import {
   HostProcessArchitecture,
   HostProcessEnvironment,
@@ -19,7 +24,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
-import * as ServerSettings from "../../serverSettings.ts";
+import { layerTestProviderHost, TestProviderHostSettings } from "@t3tools/provider-testing/host";
 
 const registryUrl = "https://registry.test/registry.json";
 const archiveUrl = "https://registry.test/example-agent.bin";
@@ -55,7 +60,7 @@ function layerResolver(
 ) {
   return Layer.mergeAll(
     NodeServices.layer,
-    ServerSettings.layerTest(),
+    layerTestProviderHost().pipe(Layer.provide(NodeServices.layer)),
     Layer.succeed(HostProcessPlatform, "linux"),
     Layer.succeed(HostProcessArchitecture, "x64"),
     Layer.succeed(HostProcessEnvironment, environment),
@@ -768,7 +773,12 @@ describe("AcpRegistrySupport", () => {
       );
     }).pipe(
       Effect.scoped,
-      Effect.provide(Layer.mergeAll(NodeServices.layer, ServerSettings.layerTest())),
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          layerTestProviderHost().pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
       Effect.provideService(HostProcessPlatform, "linux"),
       Effect.provideService(HostProcessArchitecture, "x64"),
     );
@@ -1364,26 +1374,27 @@ describe("AcpRegistrySupport", () => {
           toolsDir: `${cacheDir}/tools`,
           registryUrl,
         });
-        const serverSettings = yield* ServerSettings.ServerSettingsService;
+        const hostSettings = yield* TestProviderHostSettings;
         const instanceId = ProviderInstanceId.make("uninstall-reference");
-        yield* serverSettings.updateProviderInstance({
-          operation: "upsert",
-          instanceId,
-          instance: {
-            driver: ProviderDriverKind.make("acpRegistry"),
-            displayName: "Uninstall reference",
-            enabled: true,
-            config: {
-              agentId,
-              commandPath: "/local/agent",
-              ...(source ? { source } : {}),
+        yield* hostSettings.set({
+          ...DEFAULT_SERVER_SETTINGS,
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("acpRegistry"),
+              displayName: "Uninstall reference",
+              enabled: true,
+              config: {
+                agentId,
+                commandPath: "/local/agent",
+                ...(source ? { source } : {}),
+              },
             },
           },
         });
         const first = yield* resolver.uninstallManagedBinary({ agentId: "example-agent" });
         expect(first).toEqual({ agentId: "example-agent", removed: !referenced });
         expect(yield* fileSystem.exists(agentRoot)).toBe(referenced);
-        yield* serverSettings.updateProviderInstance({ operation: "remove", instanceId });
+        yield* hostSettings.set(DEFAULT_SERVER_SETTINGS);
         const second = yield* resolver.uninstallManagedBinary({ agentId: "example-agent" });
 
         expect(second).toEqual({ agentId: "example-agent", removed: referenced });
@@ -1481,23 +1492,24 @@ describe("AcpRegistrySupport", () => {
         const agentRoot = `${cacheDir}/tools/${agent.id}`;
         expect(yield* fileSystem.exists(agentRoot)).toBe(true);
 
-        const serverSettings = yield* ServerSettings.ServerSettingsService;
+        const hostSettings = yield* TestProviderHostSettings;
         const instanceId = ProviderInstanceId.make("registry-reference");
-        yield* serverSettings.updateProviderInstance({
-          operation: "upsert",
-          instanceId,
-          instance: {
-            driver: ProviderDriverKind.make("acpRegistry"),
-            displayName: "Registry reference",
-            enabled: true,
-            config: { agentId: agent.id },
+        yield* hostSettings.set({
+          ...DEFAULT_SERVER_SETTINGS,
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("acpRegistry"),
+              displayName: "Registry reference",
+              enabled: true,
+              config: { agentId: agent.id },
+            },
           },
         });
         expect(yield* resolver.uninstallManagedBinary({ agentId: agent.id })).toEqual({
           agentId: agent.id,
           removed: false,
         });
-        yield* serverSettings.updateProviderInstance({ operation: "remove", instanceId });
+        yield* hostSettings.set(DEFAULT_SERVER_SETTINGS);
         expect(yield* resolver.uninstallManagedBinary({ agentId: agent.id })).toEqual({
           agentId: agent.id,
           removed: true,
