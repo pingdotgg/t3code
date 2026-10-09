@@ -388,7 +388,14 @@ export const buildWslRuntimeInstallScript = (
     // Failing here drops out to the mounted-tree fallback, which is
     // recoverable; promoting it would mark the defect ready and cache it.
     'if ! runtime_entry_runs "$runtime_tmp"; then',
-    "  printf 'WSL runtime archive does not contain a working t3 executable\\n' >&2",
+    // The digest above already proved the archive intact, so what stops `t3`
+    // here is the distro, typically a shared library the dynamic linker cannot
+    // find (libatomic.so.1 on minimal Debian and Ubuntu images). The readiness
+    // check discards output, so run it once more and keep the error: it is the
+    // only thing that names the fix, and the desktop logs this stderr as the
+    // reason it fell back to the mounted server tree.
+    "  printf 'WSL runtime t3 executable does not run in this distro:\\n' >&2",
+    '  "$runtime_tmp/t3" --version 2>&1 >/dev/null | tail -n 3 >&2 || true',
     "  exit 1",
     "fi",
     // The archive's bytes were verified against archiveSha256 above, so the

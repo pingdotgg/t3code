@@ -101,6 +101,11 @@ const readField = (stdout: string, field: string) => {
 // script only asks it for `--version`.
 const SERVER_ENTRY_SOURCE = '#!/bin/sh\necho "t3code wsl runtime test server 0.0.0"\n';
 
+// Fails the way the real executable does on a distro without libatomic1: the
+// dynamic linker reports the missing library on stderr and exits 127.
+const UNLOADABLE_ENTRY_SOURCE =
+  '#!/bin/sh\necho "$0: error while loading shared libraries: libatomic.so.1: cannot open shared object file: No such file or directory" >&2\nexit 127\n';
+
 const makeDistroListSpawner = (result: { readonly stdout?: string; readonly exitCode?: number }) =>
   ChildProcessSpawner.make(() =>
     Effect.succeed(
@@ -424,7 +429,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
     fixtures.length = 0;
   });
 
-  const createFixture = () => {
+  const createFixture = (entrySource = SERVER_ENTRY_SOURCE) => {
     const result = runShell(
       [
         "set -eu",
@@ -433,7 +438,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         // holds the executable and its native addons.
         'stage="$work/stage/t3-0.0.0-linux-x64"',
         'mkdir -p "$stage/node_modules/node-pty/build/Release" "$work/home"',
-        `printf '%s' ${sh(SERVER_ENTRY_SOURCE)} > "$stage/t3"`,
+        `printf '%s' ${sh(entrySource)} > "$stage/t3"`,
         'chmod +x "$stage/t3"',
         `printf '%s' 'pty-native-payload' > "$stage/node_modules/node-pty/build/Release/pty.node"`,
         `tar -czf "$work/wsl-runtime.tar.gz" -C "$work/stage" t3-0.0.0-linux-x64`,
@@ -577,6 +582,26 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
     // server, fail to become ready, and do it again on every restart.
     expect(broken.status).not.toBe(0);
     expect(parseWslRuntimeRoot(broken.stdout)).toBeNull();
+  });
+
+  // The archive passed its digest check, so a `t3` that will not start is a
+  // distro problem, and the loader's own message is the only thing that names
+  // the fix. The desktop logs the install's stderr as the fallback reason.
+  it("reports why an intact archive's executable does not run in this distro", () => {
+    const fixture = createFixture(UNLOADABLE_ENTRY_SOURCE);
+
+    const failed = fixture.install();
+
+    expect(failed.status).not.toBe(0);
+    expect(parseWslRuntimeRoot(failed.stdout)).toBeNull();
+    expect(failed.stderr).toContain(
+      "error while loading shared libraries: libatomic.so.1: cannot open shared object file",
+    );
+    expect(failed.stderr).not.toContain("does not contain a working t3 executable");
+    const leftovers = runShell(
+      `set -eu\nfind ${sh(fixture.runtimeParent)} -mindepth 1 -maxdepth 1 -type d`,
+    );
+    expect(leftovers.stdout.trim()).toBe("");
   });
 
   it("extracts once when two installs race for the same cache", () => {
