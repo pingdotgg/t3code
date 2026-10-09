@@ -99,7 +99,7 @@ export const CursorDriver: ProviderDriver<
       const httpClient = yield* HttpClient.HttpClient;
       const keychain = yield* CursorKeychain.CursorKeychain;
       const sdkRunner = yield* CursorAgentSdk.CursorAgentSdkRunner;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
+      const processEnv = yield* mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,

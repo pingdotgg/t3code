@@ -4,7 +4,6 @@
  *
  * @module provider-opencode/server/usage
  */
-import * as NodeOS from "node:os";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
@@ -12,7 +11,7 @@ import {
   type ProviderUsageReader,
   type UsageRecord,
 } from "@t3tools/provider-core/server/usage";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessHomeDirectory } from "@t3tools/shared/hostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -259,6 +258,7 @@ const resolveOpenCodeDataDirs = Effect.fn("resolveOpenCodeDataDirs")(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const environment = yield* HostProcessEnvironment;
+  const homeDirectory = yield* HostProcessHomeDirectory;
   const roots = environment["OPENCODE_DATA_DIR"]
     ?.split(",")
     .map((value) => value.trim())
@@ -268,13 +268,13 @@ const resolveOpenCodeDataDirs = Effect.fn("resolveOpenCodeDataDirs")(function* (
     path.join(
       dataHome && path.isAbsolute(dataHome)
         ? dataHome
-        : path.join(NodeOS.homedir(), ".local", "share"),
+        : path.join(homeDirectory, ".local", "share"),
       "opencode",
     ),
   ];
   const canonical = new Set<string>();
   for (const root of roots?.length ? roots : defaults) {
-    const resolved = path.resolve(expandHomePath(root));
+    const resolved = path.resolve(expandHomePath(root, homeDirectory));
     canonical.add(yield* fileSystem.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved)));
   }
   return [...canonical];

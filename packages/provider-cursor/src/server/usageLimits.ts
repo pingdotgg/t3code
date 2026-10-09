@@ -1,7 +1,6 @@
-import * as NodeOS from "node:os";
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 import type { CursorSettings } from "../settings.ts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessHomeDirectory, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { CURSOR_USAGE_WINDOWS } from "@t3tools/shared/usageLimits";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -109,7 +108,8 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
       token = (yield* keychain.accessToken)?.trim();
     } else if (!token) {
       const home =
-        (platform === "win32" ? environment.USERPROFILE : environment.HOME) || NodeOS.homedir();
+        (platform === "win32" ? environment.USERPROFILE : environment.HOME) ||
+        (yield* HostProcessHomeDirectory);
       const directory =
         platform === "win32"
           ? path.join(environment.APPDATA || path.join(home, "AppData", "Roaming"), "Cursor")

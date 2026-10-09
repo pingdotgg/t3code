@@ -94,9 +94,12 @@ describe("acpSubagentStatusBlocksTurnSettlement", () => {
 
 describe("GrokAdapterV2 capabilities", () => {
   it("preserves Grok's rate-limit stop and distinguishes other prompt failures", () => {
-    const flavor = makeGrokAcpAdapterFlavor({
-      makeRuntime: () => Effect.never,
-    } as unknown as Parameters<typeof makeGrokAcpAdapterFlavor>[0]);
+    const flavor = makeGrokAcpAdapterFlavor(
+      {
+        makeRuntime: () => Effect.never,
+      } as unknown as Parameters<typeof makeGrokAcpAdapterFlavor>[0],
+      "/home/ada",
+    );
     const limit = flavor.promptFailure?.(
       new EffectAcpErrors.AcpRequestError({
         code: xAiRateLimitedErrorCode,
@@ -122,9 +125,12 @@ describe("GrokAdapterV2 capabilities", () => {
   });
 
   it("wires hard Stop teardown but soft non-Stop interrupts in the constructor flavor", () => {
-    const flavor = makeGrokAcpAdapterFlavor({
-      makeRuntime: () => Effect.never,
-    } as unknown as Parameters<typeof makeGrokAcpAdapterFlavor>[0]);
+    const flavor = makeGrokAcpAdapterFlavor(
+      {
+        makeRuntime: () => Effect.never,
+      } as unknown as Parameters<typeof makeGrokAcpAdapterFlavor>[0],
+      "/home/ada",
+    );
 
     assert.isFalse(flavor.interruptPromptOnCancel);
     // User Stop (requestRuntimeRestart) keeps the hard process-group kill and
@@ -139,9 +145,12 @@ describe("GrokAdapterV2 capabilities", () => {
   });
 
   it("terminalizes only foreground tools under the actual Grok flavor", () => {
-    const flavor = makeGrokAcpAdapterFlavor({
-      makeRuntime: () => Effect.never,
-    } as unknown as Parameters<typeof makeGrokAcpAdapterFlavor>[0]);
+    const flavor = makeGrokAcpAdapterFlavor(
+      {
+        makeRuntime: () => Effect.never,
+      } as unknown as Parameters<typeof makeGrokAcpAdapterFlavor>[0],
+      "/home/ada",
+    );
     const foreground = {
       toolCallId: "foreground-1",
       title: "Terminal",
@@ -284,9 +293,12 @@ describe("ACP permission policy", () => {
 });
 
 describe("Grok permission prompts", () => {
-  const disposition = makeGrokAcpAdapterFlavor({
-    makeRuntime: () => Effect.never,
-  } as unknown as Parameters<typeof makeGrokAcpAdapterFlavor>[0]).permissionDisposition;
+  const disposition = makeGrokAcpAdapterFlavor(
+    {
+      makeRuntime: () => Effect.never,
+    } as unknown as Parameters<typeof makeGrokAcpAdapterFlavor>[0],
+    "/home/ada",
+  ).permissionDisposition;
 
   // grok_auto_blocked_command replays Auto end to end. When an explicit policy
   // launches Grok asking instead, T3's policy still answers its prompts.

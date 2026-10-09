@@ -1,4 +1,8 @@
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessEnvironment,
+  HostProcessHomeDirectory,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 import {
   listLoginShellCandidates,
   mergePathEntries,
@@ -93,11 +97,12 @@ export const fixPath = Effect.fn("fixPath")(function* (): Effect.fn.Return<
 
 export const expandHomePath = Effect.fn(function* (input: string) {
   const { join } = yield* Path.Path;
+  const home = yield* HostProcessHomeDirectory;
   if (input === "~") {
-    return NodeOS.homedir();
+    return home;
   }
   if (input.startsWith("~/") || input.startsWith("~\\")) {
-    return join(NodeOS.homedir(), input.slice(2));
+    return join(home, input.slice(2));
   }
   return input;
 });
@@ -105,7 +110,7 @@ export const expandHomePath = Effect.fn(function* (input: string) {
 export const resolveBaseDir = Effect.fn(function* (raw: string | undefined) {
   const { join, resolve } = yield* Path.Path;
   if (!raw || raw.trim().length === 0) {
-    return join(NodeOS.homedir(), ".t3");
+    return join(yield* HostProcessHomeDirectory, ".t3");
   }
   return resolve(yield* expandHomePath(raw.trim()));
 });

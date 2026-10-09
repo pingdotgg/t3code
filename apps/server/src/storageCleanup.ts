@@ -38,6 +38,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
+import { HostProcessHomeDirectory } from "@t3tools/shared/hostProcess";
 
 const decodeCleanupThread = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJson),
@@ -213,6 +214,7 @@ export const make = Effect.gen(function* () {
       serverSettings,
       config.worktreesDir,
       path,
+      yield* HostProcessHomeDirectory,
     )) {
       // An unmounted drive only skips its own worktrees.
       const root = yield* fs.exists(directory).pipe(

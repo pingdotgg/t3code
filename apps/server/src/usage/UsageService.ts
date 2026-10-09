@@ -339,10 +339,10 @@ export const make = Effect.gen(function* () {
    * not decode. Disabled accounts still have history. An unconfigured default
    * slot runs with default config, just as it does in the provider registry.
    */
-  const usageInstances = <Config>(
+  const usageInstances = Effect.fn("UsageService.usageInstances")(function* <Config>(
     driver: ProviderDriver<Config, unknown, unknown>,
     settings: ServerSettingsValue,
-  ): Array<ProviderUsageInstance<Config>> => {
+  ) {
     const entries: Array<
       readonly [ProviderInstanceId, Pick<ProviderInstanceConfig, "config" | "environment">, boolean]
     > = Object.entries(settings.providerInstances)
@@ -352,13 +352,22 @@ export const make = Effect.gen(function* () {
       entries.push([ProviderInstanceId.make(driver.driverKind), {}, false]);
     }
     const decodeConfig = Schema.decodeUnknownOption(driver.configSchema);
-    return entries.map(([instanceId, instance, configured]) => ({
-      instanceId,
-      config: Option.getOrUndefined(decodeConfig(instance.config ?? {})),
-      environment: mergeProviderInstanceEnvironment(instance.environment, hostEnvironment),
-      configured,
-    }));
-  };
+    return yield* Effect.forEach(
+      entries,
+      Effect.fnUntraced(function* ([instanceId, instance, configured]) {
+        const instanceConfig: ProviderUsageInstance<Config> = {
+          instanceId,
+          config: Option.getOrUndefined(decodeConfig(instance.config ?? {})),
+          environment: yield* mergeProviderInstanceEnvironment(
+            instance.environment,
+            hostEnvironment,
+          ),
+          configured,
+        };
+        return instanceConfig;
+      }),
+    );
+  });
 
   /** Resolves every transcript directory the usage readers point at. */
   const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* (
@@ -369,8 +378,9 @@ export const make = Effect.gen(function* () {
     const seen = new Set<string>();
     for (const { driver, reader } of transcriptReaders) {
       const { provider, format } = reader;
-      const directories = yield* Effect.forEach(usageInstances(driver, settings), (instance) =>
-        reader.directories(instance),
+      const directories = yield* Effect.forEach(
+        yield* usageInstances(driver, settings),
+        (instance) => reader.directories(instance),
       );
       for (const { dir: directory, fileName } of directories.flat()) {
         const sourceKey = provider + "\0" + directory;
@@ -635,14 +645,12 @@ export const make = Effect.gen(function* () {
     const scans = Effect.forEach(
       scanReaders,
       ({ driver, reader }) =>
-        reader
-          .scan({
-            instances: usageInstances(driver, settings),
-            settings,
-            windowStartMs,
-            retentionCutoffMs,
-            awaitRefresh,
-          })
+        usageInstances(driver, settings)
+          .pipe(
+            Effect.flatMap((instances) =>
+              reader.scan({ instances, settings, windowStartMs, retentionCutoffMs, awaitRefresh }),
+            ),
+          )
           .pipe(
             Effect.flatMap((sources) =>
               Effect.forEach(sources, ({ volumeId, ...source }) =>
