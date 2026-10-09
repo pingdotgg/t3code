@@ -109,6 +109,7 @@ function layerProviderHost(input: {
         baseDir: "/t3",
         stateDir: "/t3/userdata",
         providerStatusCacheDir: "/t3/caches",
+        attachmentsDir: "/t3/userdata/attachments",
       },
       settings: input.settings ?? {
         get: Effect.succeed(DEFAULT_SERVER_SETTINGS),
@@ -117,6 +118,7 @@ function layerProviderHost(input: {
       },
       shouldRunBackgroundWork: () => Effect.succeed(input.runBackgroundWork),
       resolveAttachmentPath: () => null,
+      credentials: () => Effect.die("unused"),
     }),
   );
 }

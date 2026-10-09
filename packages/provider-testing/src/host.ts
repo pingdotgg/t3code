@@ -10,6 +10,7 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
@@ -39,8 +40,15 @@ export const layerTestProviderHost = (
         yield* fileSystem.makeDirectory(directory, { recursive: true }).pipe(Effect.orDie);
       }
       const settings = options.settings ?? DEFAULT_SERVER_SETTINGS;
+      const credentials = new Map<string, Uint8Array>();
       return ProviderHost.ProviderHost.of({
-        paths: { cwd: options.cwd ?? process.cwd(), baseDir, stateDir, providerStatusCacheDir },
+        paths: {
+          cwd: options.cwd ?? process.cwd(),
+          baseDir,
+          stateDir,
+          providerStatusCacheDir,
+          attachmentsDir,
+        },
         settings: {
           get: Effect.succeed(settings),
           changes: Stream.empty,
@@ -49,6 +57,17 @@ export const layerTestProviderHost = (
         shouldRunBackgroundWork: () => Effect.succeed(options.runBackgroundWork ?? true),
         // Tests store attachments flat under the attachments directory by id.
         resolveAttachmentPath: (attachment) => path.join(attachmentsDir, attachment.id),
+        // Credentials live in memory for the layer's lifetime.
+        credentials: (namespace, bindingId) =>
+          Effect.sync(() => {
+            const key = `${namespace}:${bindingId}`;
+            return {
+              binding: { owner: "t3" as const, key },
+              get: Effect.sync(() => Option.fromUndefinedOr(credentials.get(key))),
+              set: (value: Uint8Array) => Effect.sync(() => void credentials.set(key, value)),
+              remove: Effect.sync(() => void credentials.delete(key)),
+            };
+          }),
       });
     }),
   );

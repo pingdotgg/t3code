@@ -14,15 +14,16 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import * as EffectAcpErrors from "effect-acp/errors";
 
-import * as ServerConfig from "../../config.ts";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import * as ServerSettings from "../../serverSettings.ts";
 import type {
   AcpRegistryAvailableCommands,
   AcpRegistryLiveConfiguration,
 } from "../../provider/acp/AcpRegistryProbe.ts";
 import * as AcpRegistrySupport from "../../provider/acp/AcpRegistrySupport.ts";
-import { ACP_SESSION_MODE_OPTION_ID } from "../../provider/acp/AcpSessionConfig.ts";
-import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
+import { ACP_SESSION_MODE_OPTION_ID } from "@t3tools/provider-acp/server/sessionConfig";
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   decodeAcpReplayTranscript,
@@ -43,9 +44,7 @@ const decodeAcpRegistryAdapterSettings = Schema.decodeUnknownEffect(
   AcpRegistryAdapterV2Driver.configSchema,
 );
 
-const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
-  prefix: "t3-acp-registry-v2-adapter-",
-}).pipe(Layer.provide(NodeServices.layer));
+const layerHost = layerTestProviderHost().pipe(Layer.provide(NodeServices.layer));
 
 const layerRegistry = Layer.succeed(
   HttpClient.HttpClient,
@@ -86,7 +85,7 @@ const layerRegistry = Layer.succeed(
 const layerTest = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
-  layerServerConfig,
+  layerHost,
   layerRegistry,
   ServerSettings.layerTest(),
 );
@@ -202,7 +201,7 @@ describe("AcpRegistryAdapterV2", () => {
         fileSystem,
         idAllocator: yield* IdAllocator.IdAllocatorV2,
         resolver: { resolve: () => Effect.die("the runtime is injected") },
-        serverConfig: yield* ServerConfig.ServerConfig,
+        host: yield* ProviderHost.ProviderHost,
         makeRuntime: makeAcpReplayRuntime({
           transcript,
           statusPath,
@@ -272,7 +271,7 @@ describe("AcpRegistryAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const serverConfig = yield* ServerConfig.ServerConfig;
+      const host = yield* ProviderHost.ProviderHost;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
@@ -291,7 +290,7 @@ describe("AcpRegistryAdapterV2", () => {
           fileSystem,
           idAllocator,
           resolver: { resolve: () => Effect.die("the runtime is injected") },
-          serverConfig,
+          host,
           makeRuntime: (input) =>
             Effect.gen(function* () {
               clientCapabilities = input.clientCapabilities;
@@ -348,13 +347,13 @@ describe("AcpRegistryAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const serverConfig = yield* ServerConfig.ServerConfig;
+      const host = yield* ProviderHost.ProviderHost;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
       const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
-        cacheDir: serverConfig.providerStatusCacheDir,
-        toolsDir: serverConfig.baseDir + "/tools",
+        cacheDir: host.paths.providerStatusCacheDir,
+        toolsDir: host.paths.baseDir + "/tools",
         registryUrl,
       });
       const settings = yield* decodeAcpRegistryAdapterSettings({
@@ -429,7 +428,7 @@ describe("AcpRegistryAdapterV2", () => {
               })),
             ),
         },
-        serverConfig,
+        host,
       });
       const threadId = ThreadId.make("thread-acp-registry-fixture");
       const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({

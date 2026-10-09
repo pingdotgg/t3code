@@ -707,58 +707,6 @@ export const ClaudeSettings = makeProviderSettingsSchema(
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
 
-export const CursorSettings = makeProviderSettingsSchema(
-  {
-    // Off by default like Grok and OpenCode. Users opt in from Settings.
-    enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(false)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    // Keep V1's CLI configuration when V2 rewrites the shared settings file.
-    // V2's Cursor SDK does not use these fields.
-    binaryPath: Schema.optionalKey(TrimmedString).pipe(
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    apiEndpoint: Schema.optionalKey(TrimmedString).pipe(
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    customModels: Schema.Array(CustomModelSetting).pipe(
-      Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-  },
-  {
-    order: [],
-  },
-);
-export type CursorSettings = typeof CursorSettings.Type;
-
-export const GrokSettings = makeProviderSettingsSchema(
-  {
-    // Off by default (like Cursor and OpenCode): the binding is not yet
-    // stable enough to probe on every install. Users opt in from Settings.
-    enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(false)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    binaryPath: makeBinaryPathSetting("grok").pipe(
-      Schema.annotateKey({
-        title: "Binary path",
-        description: "Path to the Grok CLI binary.",
-        providerSettingsForm: { placeholder: "grok", clearWhenEmpty: "omit" },
-      }),
-    ),
-    customModels: Schema.Array(CustomModelSetting).pipe(
-      Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-  },
-  {
-    order: ["binaryPath"],
-  },
-);
-export type GrokSettings = typeof GrokSettings.Type;
-
 /**
  * Antigravity ACP auth methods. Personal and Enterprise open a Google sign-in
  * in the browser. The API key and Agent Platform methods take credentials from
@@ -906,58 +854,6 @@ export const AcpRegistrySettings = makeProviderSettingsSchema(
   },
 );
 export type AcpRegistrySettings = typeof AcpRegistrySettings.Type;
-
-export const OpenCodeSettings = makeProviderSettingsSchema(
-  {
-    // Off by default (like Cursor and Grok): the binding is not yet stable
-    // enough to probe on every install. Users opt in from Settings.
-    enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(false)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    binaryPath: makeBinaryPathSetting("opencode").pipe(
-      Schema.annotateKey({
-        title: "Binary path",
-        description: "Path to the OpenCode binary.",
-        providerSettingsForm: {
-          placeholder: "opencode",
-          clearWhenEmpty: "omit",
-        },
-      }),
-    ),
-    serverUrl: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "Server URL",
-        description: "Leave blank to let T3 Code spawn the server when needed.",
-        providerSettingsForm: {
-          placeholder: "http://127.0.0.1:4096",
-          clearWhenEmpty: "omit",
-        },
-      }),
-    ),
-    serverPassword: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "Server password",
-        description: "Stored in plain text on disk.",
-        providerSettingsForm: {
-          control: "password",
-          placeholder: "Optional",
-          clearWhenEmpty: "omit",
-        },
-      }),
-    ),
-    customModels: Schema.Array(CustomModelSetting).pipe(
-      Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-  },
-  {
-    order: ["binaryPath", "serverUrl", "serverPassword"],
-  },
-);
-export type OpenCodeSettings = typeof OpenCodeSettings.Type;
 
 /**
  * A read-only quota source outside this environment's provider CLIs. The
