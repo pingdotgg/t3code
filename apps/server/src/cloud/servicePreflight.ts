@@ -1,3 +1,5 @@
+import { ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
+
 import packageJson from "../../package.json" with { type: "json" };
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 
@@ -6,6 +8,9 @@ export type ServicePreflightResult =
       readonly status: "ready";
       readonly version: string;
       readonly launcherProtocol: typeof SERVICE_LAUNCHER_PROTOCOL;
+      /** Absent from runtimes that predate it. A background update skips a
+          target whose clients would need a newer protocol. */
+      readonly orchestrationProtocol?: number;
     }
   | {
       readonly status: "blocked";
@@ -29,7 +34,12 @@ export function runServicePreflight(input: {
     };
   }
 
-  return { status: "ready", version, launcherProtocol: SERVICE_LAUNCHER_PROTOCOL };
+  return {
+    status: "ready",
+    version,
+    launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+    orchestrationProtocol: ORCHESTRATION_PROTOCOL_VERSION,
+  };
 }
 
 export function decodeServicePreflightResult(value: unknown): ServicePreflightResult | undefined {
@@ -46,6 +56,9 @@ export function decodeServicePreflightResult(value: unknown): ServicePreflightRe
       status: "ready",
       version: record.version,
       launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+      ...(typeof record.orchestrationProtocol === "number"
+        ? { orchestrationProtocol: record.orchestrationProtocol }
+        : {}),
     };
   }
   if (

@@ -38,6 +38,8 @@ export const updateTimings = Config.Boolean("T3CODE_UPDATE_LAB").pipe(
     recheck: lab ? Duration.seconds(5) : Duration.seconds(30),
     firstPassDelay: lab ? Duration.seconds(10) : Duration.minutes(2),
     passInterval: lab ? Duration.seconds(20) : Duration.minutes(10),
+    /** T3 releases are checked this often; the desktop app polls its own feed. */
+    releaseCheckInterval: lab ? Duration.seconds(20) : Duration.hours(1),
   })),
 );
 

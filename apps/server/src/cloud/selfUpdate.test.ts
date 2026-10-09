@@ -105,6 +105,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
           return "launcher-id";
         })),
     prepareTrial: Effect.undefined,
+    lastOutcome: undefined,
   });
   const config = yield* ServerConfig.ServerConfig.pipe(
     Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
@@ -127,6 +128,8 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
   return { selfUpdate, order };
 });
 
+const withoutStaging = { capability: null, stage: () => Effect.die("unused") } as const;
+
 it.layer(NodeServices.layer)("server self update", (it) => {
   it.effect("marks running threads at the boot-service handoff", () =>
     Effect.gen(function* () {
@@ -134,6 +137,7 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       const selfUpdate = yield* ServerSelfUpdate.withRunningThreadContinuation({
         mode: "web",
         selfUpdate: {
+          ...withoutStaging,
           update: (_input, reportProgress = () => Effect.void) =>
             reportProgress("downloading").pipe(
               Effect.andThen(reportProgress("installing")),
@@ -168,6 +172,7 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       const selfUpdate = yield* ServerSelfUpdate.withRunningThreadContinuation({
         mode: "desktop",
         selfUpdate: {
+          ...withoutStaging,
           update: (_input, reportProgress = () => Effect.void) =>
             reportProgress("installing").pipe(
               Effect.as({
@@ -216,6 +221,7 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       const selfUpdate = yield* ServerSelfUpdate.withRunningThreadContinuation({
         mode: "web",
         selfUpdate: {
+          ...withoutStaging,
           update: (_input, reportProgress = () => Effect.void) =>
             reportProgress("installing").pipe(Effect.andThen(Effect.fail(updateError))),
           commitDesktopUpdate: () => Effect.never,
@@ -238,6 +244,7 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       const selfUpdate = yield* ServerSelfUpdate.withRunningThreadContinuation({
         mode: "web",
         selfUpdate: {
+          ...withoutStaging,
           update: (
             _input,
             reportProgress = () => Effect.void,
@@ -271,6 +278,7 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       const selfUpdate = yield* ServerSelfUpdate.withRunningThreadContinuation({
         mode: "desktop",
         selfUpdate: {
+          ...withoutStaging,
           update: () =>
             Effect.succeed({
               targetVersion: "1.2.0",
@@ -307,6 +315,7 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       const selfUpdate = yield* ServerSelfUpdate.withRunningThreadContinuation({
         mode: "desktop",
         selfUpdate: {
+          ...withoutStaging,
           update: () =>
             Effect.succeed({
               targetVersion: "1.2.0",

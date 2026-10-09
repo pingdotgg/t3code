@@ -108,6 +108,9 @@ export class ServiceLauncherClient extends Context.Service<
       ServerSelfUpdateOutcome | undefined,
       ServiceLauncherClientError
     >;
+    /** The launcher's last finished update, kept until the next one, so a
+        rolled-back target is not retried on every boot. */
+    readonly lastOutcome: ServerSelfUpdateOutcome | undefined;
   }
 >()("t3/cloud/serviceLauncherClient") {}
 
@@ -247,6 +250,7 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
     managed,
     requestUpdate,
     prepareTrial,
+    lastOutcome: outcome,
   });
 });
 
