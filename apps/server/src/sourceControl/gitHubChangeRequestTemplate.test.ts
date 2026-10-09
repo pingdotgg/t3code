@@ -9,7 +9,7 @@ import * as Path from "effect/Path";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import { detectPrTemplate } from "./PrTemplateDetection.ts";
+import * as GitHubChangeRequestTemplate from "@t3tools/source-control-github/server/gitHubChangeRequestTemplate";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const SINGLE_TEMPLATE_PATHS = [
@@ -80,7 +80,7 @@ const commitTemplates = (cwd: string) =>
 const detectTemplate = (cwd: string, treeish = "HEAD") =>
   Effect.gen(function* () {
     const git = yield* GitVcsDriver.GitVcsDriver;
-    return yield* detectPrTemplate(cwd, treeish, git.execute);
+    return yield* GitHubChangeRequestTemplate.detect(cwd, treeish, git.execute);
   });
 
 it.effect.each(SINGLE_TEMPLATE_PATHS)("recognizes $0", (relativePath) =>

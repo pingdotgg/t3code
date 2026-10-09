@@ -158,6 +158,14 @@ export const makeDiscovery = Effect.gen(function* () {
   } satisfies SourceControlManagedCliDiscoverySpec;
 });
 
+/** HTTP paths can include an installation mount; Forgejo's API always names owner/repo. */
+export function repositoryNameFromRemoteUrl(url: string): string | null {
+  const path = SourceControlProvider.repositoryPathFromRemoteUrl(url);
+  return path === null || !/^https?:\/\//iu.test(url.trim())
+    ? path
+    : path.split("/").slice(-2).join("/");
+}
+
 const RepositorySchema = Schema.Struct({
   full_name: Schema.String,
   clone_url: Schema.String,
@@ -228,6 +236,7 @@ export const make = Effect.gen(function* () {
   });
   return SourceControlProvider.SourceControlProvider.of({
     kind: "forgejo",
+    repositoryNameFromRemoteUrl,
     listChangeRequests: (input) =>
       Effect.gen(function* () {
         const repo = yield* cli.resolveRepository(input);
