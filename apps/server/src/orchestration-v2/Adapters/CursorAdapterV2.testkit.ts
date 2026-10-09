@@ -213,7 +213,7 @@ function replayRunnerError(
 
 export function makeCursorAgentSdkReplayRunner(
   transcript: CursorAgentSdkReplayTranscript,
-): CursorAgentSdk.CursorAgentSdkRunnerShape {
+): CursorAgentSdk.CursorAgentSdkRunner["Service"] {
   let cursor = 0;
   let failure: CursorAgentSdkReplayError | null = null;
   let cursorAdvanced = makeSignal();
@@ -491,7 +491,7 @@ export function makeCursorAgentSdkReplayRunner(
 function layerCursorAgentSdkReplay(
   transcript: CursorAgentSdkReplayTranscript,
   options?: {
-    readonly runner?: CursorAgentSdk.CursorAgentSdkRunnerShape;
+    readonly runner?: CursorAgentSdk.CursorAgentSdkRunner["Service"];
     readonly assertCompleteOnFinalize?: boolean;
   },
 ): Layer.Layer<CursorAgentSdk.CursorAgentSdkRunner> {
@@ -512,7 +512,7 @@ function layerCursorAgentSdkReplay(
 export function layer(
   transcript: CursorAgentSdkReplayTranscript,
   options?: {
-    readonly runner?: CursorAgentSdk.CursorAgentSdkRunnerShape;
+    readonly runner?: CursorAgentSdk.CursorAgentSdkRunner["Service"];
     readonly assertCompleteOnFinalize?: boolean;
   },
 ) {
@@ -807,7 +807,7 @@ export const recordCursorAgentSdkReplayTranscript = Effect.fn(
         heldUntilCancel = [];
       }
     });
-  const runner = CursorAgentSdk.makeCursorAgentSdkRunner(() => recordFrame);
+  const runner = yield* CursorAgentSdk.makeCursorAgentSdkRunner(() => recordFrame);
 
   const awaitSignal = (signal: Deferred.Deferred<void>, description: string) =>
     Deferred.await(signal).pipe(

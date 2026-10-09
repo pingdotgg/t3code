@@ -22,6 +22,10 @@
     "./server/CursorAgentSdk": {
       "types": "./src/server/CursorAgentSdk.ts",
       "import": "./src/server/CursorAgentSdk.ts"
+    },
+    "./server/CursorSdk": {
+      "types": "./src/server/CursorSdk.ts",
+      "import": "./src/server/CursorSdk.ts"
     }
   },
   "scripts": {

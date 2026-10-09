@@ -13,7 +13,7 @@ import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/http";
+import * as HttpClient from "effect/http/HttpClient";
 import { readCursorUsageLimits } from "./usageLimits.ts";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -40,6 +40,7 @@ import { probeCursorSkills } from "./skills.ts";
 import { makeCursorAuth } from "./auth.ts";
 import * as CursorCredentialStore from "./credentialStore.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
+import * as CursorSdk from "./CursorSdk.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 const isSdkRunnerError = Schema.is(CursorAgentSdk.CursorAgentSdkRunnerError);
 
@@ -55,6 +56,7 @@ export type CursorDriverEnv =
   | FileSystem.FileSystem
   | Path.Path
   | HttpClient.HttpClient
+  | CursorSdk.CursorSdk
   | ProviderHost.ProviderHost;
 
 export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
@@ -238,7 +240,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
             new ProviderDriverError({
               driver: DRIVER_KIND,
               instanceId,
-              detail: `Failed to build Cursor snapshot: ${cause.message ?? String(cause)}`,
+              detail: "Failed to build Cursor snapshot.",
               cause,
             }),
         ),

@@ -2,9 +2,11 @@
 import * as NodeChildProcess from "node:child_process";
 import { describe, expect, it } from "vite-plus/test";
 
-const cursorSdkUrl = new URL("./sdk.ts", import.meta.url).href;
+import { isCursorShellSpawnFailure } from "./CursorSdk.ts";
 
-// Loads sdk.ts in a fresh process. @cursor/sdk is stubbed so the guard
+const cursorSdkUrl = new URL("./CursorSdk.ts", import.meta.url).href;
+
+// Builds the CursorSdk layer in a fresh process. @cursor/sdk is stubbed so the guard
 // can be tested without the real package. The vitest worker already has its
 // own unhandledRejection listener, which would hide the process-exit behavior.
 const probeProgram = `
@@ -30,55 +32,15 @@ registerHooks({
   },
 });
 
-const { isCursorShellSpawnFailure } = await import(${JSON.stringify(cursorSdkUrl)});
+const { layer } = await import(${JSON.stringify(cursorSdkUrl)});
+const Effect = await import("effect/Effect");
+const Layer = await import("effect/Layer");
+const Exit = await import("effect/Exit");
+const Scope = await import("effect/Scope");
+const scope = Scope.makeUnsafe();
+await Effect.runPromise(Layer.buildWithScope(layer, scope));
 const mode = process.argv[1];
 const missingCwd = join(tmpdir(), "t3-missing-cwd-" + process.pid);
-
-if (mode === "predicate") {
-  const cursorShell = Object.assign(new Error("spawn /bin/zsh ENOENT"), {
-    code: "ENOENT",
-    syscall: "spawn /bin/zsh",
-    path: "/bin/zsh",
-    spawnargs: ["-c", "dump_zsh_state >&4", "--", "true"],
-  });
-  const bashShell = Object.assign(new Error("spawn bash ENOENT"), {
-    code: "ENOENT",
-    syscall: "spawn bash",
-    spawnargs: ["-c", "dump_bash_state >&4"],
-  });
-  const sandboxRestore = Object.assign(new Error("spawn /bin/zsh ENOENT"), {
-    code: "ENOENT",
-    syscall: "spawn /bin/zsh",
-    spawnargs: ["-c", "builtin eval \\"\${__CURSOR_SANDBOX_ENV_RESTORE:-}\\""],
-  });
-  const gitSpawn = Object.assign(new Error("spawn git ENOENT"), {
-    code: "ENOENT",
-    syscall: "spawn git",
-    path: "git",
-    spawnargs: ["status"],
-  });
-  const plainZsh = Object.assign(new Error("spawn /bin/zsh ENOENT"), {
-    code: "ENOENT",
-    syscall: "spawn /bin/zsh",
-    path: "/bin/zsh",
-    spawnargs: ["-lc", "true"],
-  });
-  console.log(
-    JSON.stringify({
-      cursorShell: isCursorShellSpawnFailure(cursorShell),
-      bashShell: isCursorShellSpawnFailure(bashShell),
-      sandboxRestore: isCursorShellSpawnFailure(sandboxRestore),
-      gitSpawn: isCursorShellSpawnFailure(gitSpawn),
-      plainZsh: isCursorShellSpawnFailure(plainZsh),
-      open: isCursorShellSpawnFailure(
-        Object.assign(new Error("open failed"), { code: "ENOENT", syscall: "open" }),
-      ),
-      plain: isCursorShellSpawnFailure(new Error("boom")),
-      string: isCursorShellSpawnFailure("spawn ENOENT"),
-    }),
-  );
-  process.exit(0);
-}
 
 if (mode === "cursor-shell") {
   const child = spawn("/bin/zsh", ["-c", "dump_zsh_state >&4", "--", "true"], {
@@ -87,6 +49,16 @@ if (mode === "cursor-shell") {
   child.on("error", (error) => {
     Promise.reject(error);
   });
+  setTimeout(() => process.exit(0), 500);
+} else if (mode === "released") {
+  await Effect.runPromise(Scope.close(scope, Exit.void));
+  Promise.reject(
+    Object.assign(new Error("spawn /bin/zsh ENOENT"), {
+      code: "ENOENT",
+      syscall: "spawn /bin/zsh",
+      spawnargs: ["-c", "dump_zsh_state >&4"],
+    }),
+  );
   setTimeout(() => process.exit(0), 500);
 } else if (mode === "other-spawn") {
   Promise.reject(
@@ -147,19 +119,31 @@ function runProbe(mode: string): Promise<{ code: number | null; stdout: string; 
 }
 
 describe("isCursorShellSpawnFailure", () => {
-  it("matches only Cursor's shell wrapper", async () => {
-    const result = await runProbe("predicate");
-    expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({
-      cursorShell: true,
-      bashShell: true,
-      sandboxRestore: true,
-      gitSpawn: false,
-      plainZsh: false,
-      open: false,
-      plain: false,
-      string: false,
-    });
+  it("matches only Cursor's shell wrapper", () => {
+    const spawnFailure = (syscall: string, spawnargs: ReadonlyArray<string>) =>
+      Object.assign(new Error(`${syscall} ENOENT`), { code: "ENOENT", syscall, spawnargs });
+    expect(
+      isCursorShellSpawnFailure(
+        spawnFailure("spawn /bin/zsh", ["-c", "dump_zsh_state >&4", "--", "true"]),
+      ),
+    ).toBe(true);
+    expect(
+      isCursorShellSpawnFailure(spawnFailure("spawn bash", ["-c", "dump_bash_state >&4"])),
+    ).toBe(true);
+    expect(
+      isCursorShellSpawnFailure(
+        spawnFailure("spawn /bin/zsh", ["-c", 'builtin eval "${__CURSOR_SANDBOX_ENV_RESTORE:-}"']),
+      ),
+    ).toBe(true);
+    expect(isCursorShellSpawnFailure(spawnFailure("spawn git", ["status"]))).toBe(false);
+    expect(isCursorShellSpawnFailure(spawnFailure("spawn /bin/zsh", ["-lc", "true"]))).toBe(false);
+    expect(
+      isCursorShellSpawnFailure(
+        Object.assign(new Error("open failed"), { code: "ENOENT", syscall: "open" }),
+      ),
+    ).toBe(false);
+    expect(isCursorShellSpawnFailure(new Error("boom"))).toBe(false);
+    expect(isCursorShellSpawnFailure("spawn ENOENT")).toBe(false);
   });
 });
 
@@ -182,6 +166,12 @@ describe("Cursor shell spawn guard", () => {
     const result = await runProbe("other-rejection");
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("boom");
+  });
+
+  it("removes the guard when the layer is released", async () => {
+    const result = await runProbe("released");
+    expect(result.code).toBe(1);
+    expect(result.stderr).not.toContain("The server will keep running.");
   });
 
   it("leaves a spawn with no error listener fatal", async () => {
