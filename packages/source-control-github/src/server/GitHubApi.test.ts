@@ -275,7 +275,7 @@ describe("GitHubApi", () => {
         retryAt: reset * 1000,
       });
       // A user's own request may spend the reserve, and GraphQL has a quota of its own.
-      yield* api.rest(read).pipe(Effect.provideService(GitHubApi.AllowGitHubReserve, true));
+      yield* api.rest(read).pipe(Effect.provideService(SourceControlRateLimit.Interactive, true));
       yield* api.graphql({ host: "github.com", operation: "x", query: "query { viewer { id } }" });
       expect(requests).toHaveLength(3);
       // The reset gives the background its quota back.
@@ -344,7 +344,7 @@ describe("GitHubApi", () => {
           method: "PUT",
           path: "repos/acme/web/pulls/7/merge",
         })
-        .pipe(Effect.provideService(GitHubApi.AllowGitHubReserve, true));
+        .pipe(Effect.provideService(SourceControlRateLimit.Interactive, true));
       expect(merged.status).toBe(200);
       expect(requests).toHaveLength(2);
     }).pipe(Effect.provide(layer));

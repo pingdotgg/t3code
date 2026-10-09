@@ -963,7 +963,7 @@ export const make = Effect.gen(function* () {
     },
     listChangeRequests: (input) =>
       // An open lookup is a user waiting on a status; the rest may be a background sweep.
-      (input.state === "open" ? Effect.succeed(true) : GitHubApi.AllowGitHubReserve).pipe(
+      (input.state === "open" ? Effect.succeed(true) : SourceControlRateLimit.Interactive).pipe(
         Effect.flatMap((allowReserve) =>
           listByHead({
             cwd: input.cwd,

@@ -1,3 +1,4 @@
+import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
 import * as Effect from "effect/Effect";
 import type {
   PullRequestActor,
@@ -7,7 +8,7 @@ import type {
   PullRequestViewerPermissions,
 } from "@t3tools/contracts";
 
-import * as GitHubApi from "./GitHubApi.ts";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
 import {
   PullRequestProviderError,
@@ -262,6 +263,7 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: "github",
     capabilities: CAPABILITIES,
+    mergeMessageRewrite: removeAgentCredits,
     getRoutingIdentity: (input) =>
       cli.getRoutingIdentity(input).pipe(Effect.mapError(fail("routeIdentity"))),
     withVerifiedCredential: (input, use) =>
@@ -526,7 +528,7 @@ export const make = Effect.gen(function* () {
       // comparison, so one read usually answers what used to take three. When that heavier read
       // fails, the light access read still answers, withholding only update-branch.
       return cli.getPullRequestDetail(input).pipe(
-        Effect.provideService(GitHubApi.AllowGitHubReserve, true),
+        Effect.provideService(SourceControlRateLimit.Interactive, true),
         Effect.map((pullRequest) =>
           gitHubViewerPermissions({
             ...pullRequest.viewerAccess,

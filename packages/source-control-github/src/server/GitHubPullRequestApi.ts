@@ -1526,7 +1526,7 @@ export const make = Effect.gen(function* () {
 
   const getPullRequestDetail: GitHubPullRequestApi["Service"]["getPullRequestDetail"] = (input) => {
     const { owner, name } = parseRepositorySelector(input.repository);
-    return GitHubApi.AllowGitHubReserve.pipe(
+    return SourceControlRateLimit.Interactive.pipe(
       Effect.flatMap((allowReserve) =>
         graphqlRead({
           allowReserve,
