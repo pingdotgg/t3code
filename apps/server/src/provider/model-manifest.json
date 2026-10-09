@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-08T21:30:00Z",
+  "updatedAt": "2026-10-09T23:31:10Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -668,7 +668,6 @@
           "name": "Claude Opus 5.5",
           "aliases": ["opus", "opus-5.5", "claude-opus-5.5"],
           "status": "current",
-          "badge": "new",
           "profile": "opus-5-5",
           "adapter": { "claudeCode": { "minVersion": "2.1.280" } }
         },
@@ -677,7 +676,6 @@
           "name": "Claude Sonnet 5.5",
           "aliases": ["sonnet", "sonnet-5.5", "claude-sonnet-5.5"],
           "status": "current",
-          "badge": "new",
           "profile": "sonnet-5",
           "adapter": { "claudeCode": { "minVersion": "2.1.284" } }
         },
