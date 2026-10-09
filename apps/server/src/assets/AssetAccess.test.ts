@@ -2,7 +2,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
 import {
   AssetAccessError,
   AssetPreviewTypeValidationError,
@@ -16,12 +15,12 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse, HttpServerResponse } from "effect/http";
-import { ChildProcessSpawner } from "effect/process";
 import { vi } from "vite-plus/test";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -35,17 +34,13 @@ import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "./AssetAccess.t
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { openMediaFile } from "./MediaFile.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
-import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
 import { githubMediaResponse } from "./GitHubMediaFetch.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeFSP>();
   return { ...actual, open: vi.fn(actual.open), realpath: vi.fn(actual.realpath) };
-});
-
-vi.mock("node:os", async (importOriginal) => {
-  const actual = await importOriginal<typeof NodeOS>();
-  return { ...actual, homedir: vi.fn(actual.homedir) };
 });
 
 const layerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
@@ -126,7 +121,7 @@ const layerTest = Layer.mergeAll(
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 describe("AssetAccess", () => {
-  it.effect("loads private media immediately after login and reuses the found credential", () => {
+  it.effect("loads private media immediately after login with the GitHub credential", () => {
     let lookups = 0;
     const authorizations: Array<string | undefined> = [];
     return Effect.gen(function* () {
@@ -138,19 +133,21 @@ describe("AssetAccess", () => {
       expect((yield* githubMediaResponse(asset, {})).status).toBe(404);
       expect((yield* githubMediaResponse(asset, {})).status).toBe(200);
       expect((yield* githubMediaResponse(asset, {})).status).toBe(200);
-      expect(lookups).toBe(2);
+      // Caching the token is GitHubCredentials' job; this asks it every time.
+      expect(lookups).toBe(3);
       expect(authorizations).toEqual([undefined, "Bearer signed-in", "Bearer signed-in"]);
     }).pipe(
       Effect.provide(
-        Layer.mock(GitHubCli.GitHubCli)({
-          execute: () =>
-            Effect.sync(() => ({
-              exitCode: ChildProcessSpawner.ExitCode(0),
-              stdout: ++lookups === 1 ? "" : "signed-in",
-              stderr: "",
-              stdoutTruncated: false,
-              stderrTruncated: false,
-            })),
+        Layer.mock(GitHubCredentials.GitHubCredentials)({
+          get: (host) =>
+            ++lookups === 1
+              ? Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host }))
+              : Effect.succeed({
+                  host,
+                  token: Redacted.make("signed-in"),
+                  source: "gh" as const,
+                  fingerprint: "fingerprint",
+                }),
         }),
       ),
       Effect.provideService(
@@ -297,8 +294,7 @@ describe("AssetAccess", () => {
       yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
       yield* fs.writeFileString(filePath, "recording bytes");
       const canonicalFile = yield* fs.realPath(filePath);
-      const homeSpy = vi.mocked(NodeOS.homedir).mockReturnValue(home);
-      try {
+      yield* Effect.gen(function* () {
         for (const workspaceRoot of [
           path.join(home, "project"),
           path.join(directory, "srv", "project"),
@@ -330,9 +326,7 @@ describe("AssetAccess", () => {
             expect(yield* Effect.promise(() => response.text())).toBe("recording bytes");
           }
         }
-      } finally {
-        homeSpy.mockRestore();
-      }
+      }).pipe(Effect.provideService(HostProcess.HomeDirectory, home));
     }).pipe(Effect.provide(layerTest)),
   );
 

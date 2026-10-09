@@ -15,6 +15,7 @@ import {
   type PullRequestRef,
   type PullRequestStack,
   type PullRequestSummary,
+  type ThreadPullRequestKey,
   type ThreadPullRequestLink,
   type ThreadPullRequestSnapshot,
 } from "@t3tools/contracts";
@@ -30,7 +31,8 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
 
-import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
+import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
+import * as GitManager from "../git/GitManager.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerActivation from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -181,6 +183,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
   const summaryCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   const stackCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+  const stateChanges = yield* Queue.unbounded<ThreadPullRequestKey>();
 
   const summary: PullRequestService.PullRequestService["Service"]["summary"] = (
     input,
@@ -218,6 +221,10 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
       summary,
       stack,
       invalidate: options.invalidate ?? (() => Effect.void),
+      subscribeStateChanges: Effect.succeed(Stream.fromQueue(stateChanges)),
+    }),
+    Layer.mock(GitManager.GitManager)({
+      subscribePullRequestStateChanges: Effect.succeed(Stream.empty),
     }),
     Layer.mock(ProjectionStore.ProjectionStoreV2)({
       // Mirrors the store's filter: active threads that have at least one link.
@@ -269,6 +276,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
     summaryCalls,
     stackCalls,
     domainEvents,
+    stateChanges,
     layer: PullRequestSyncReactor.layer.pipe(Layer.provide(layerDependencies)),
   };
 });
@@ -654,6 +662,49 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 
+  it.effect("syncs a pull request a reader saw merge without waiting for the sweep", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const state = yield* Ref.make<PullRequestSummary["state"]>("open");
+        const invalidated = yield* Ref.make<ReadonlyArray<number>>([]);
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("agent", { pullRequests: [makeLink(7, { state: "open" })] }),
+          ]),
+          summary: (input) =>
+            Ref.get(state).pipe(
+              Effect.map((current) =>
+                makeSummary(input, current === "merged" ? { state: current, mergedAt: NOW } : {}),
+              ),
+            ),
+          invalidate: ({ reference }) =>
+            Ref.update(invalidated, (numbers) => [...numbers, reference?.number ?? -1]),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          yield* Ref.set(state, "merged");
+
+          // The clock stays put: the next sweep is still a minute away.
+          yield* Queue.offer(fixture.stateChanges, {
+            host: "github.com",
+            repository: "owner/repository",
+            number: 7,
+          });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+
+          assert.deepStrictEqual(yield* Ref.get(invalidated), [7]);
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.syncCommands)).map((command) => command.snapshot.state),
+            ["merged"],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("discovers externally reopened pull requests after fifteen minutes", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -802,7 +853,7 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 
-  it.effect("polls open pull requests on settled threads every fifteen minutes", () =>
+  it.effect("leaves a settled thread's links unread until the thread is unsettled", () =>
     Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
@@ -811,29 +862,35 @@ describe("PullRequestSyncReactor", () => {
             makeThread("settled", {
               settledOverride: "settled",
               settledAt: "2026-08-21T00:00:00.000Z",
-              pullRequests: [makeLink(5, { state: "open" })],
+              pullRequests: [makeLink(5, { state: "open" }), makeLink(6, { state: "closed" })],
             }),
           ]),
         });
 
         yield* Effect.gen(function* () {
           const reactor = yield* startAndSweep(fixture);
-          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
+          for (let index = 0; index < 15; index += 1) yield* sweepAgain(fixture, reactor);
+          assert.deepStrictEqual(yield* Ref.get(fixture.summaryCalls), []);
 
+          yield* Ref.update(fixture.snapshots, (snapshot) => ({
+            ...snapshot,
+            threads: snapshot.threads.map((thread) => ({
+              ...thread,
+              settledOverride: null,
+              settledAt: null,
+            })),
+          }));
           yield* sweepAgain(fixture, reactor);
-          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
-
-          for (let index = 0; index < 13; index += 1) yield* sweepAgain(fixture, reactor);
-          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
-
-          yield* sweepAgain(fixture, reactor);
-          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 2);
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.summaryCalls)).map((call) => call.number).toSorted(),
+            [5, 6],
+          );
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
   );
 
-  it.effect("auto-links missing native stack layers and leaves dismissed ones alone", () =>
+  it.effect("auto-links missing native stack layers on active threads only", () =>
     Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
@@ -856,6 +913,11 @@ describe("PullRequestSyncReactor", () => {
                 makeLink(41, { state: "merged" }, { source: "stack-dismissed" }),
               ],
             }),
+            makeThread("settled", {
+              settledOverride: "settled",
+              settledAt: "2026-08-21T00:00:00.000Z",
+              pullRequests: [makeLink(42)],
+            }),
           ]),
           stack: () => Effect.succeed(stack),
         });
@@ -865,8 +927,11 @@ describe("PullRequestSyncReactor", () => {
 
           const syncCommands = yield* Ref.get(fixture.syncCommands);
           assert.deepStrictEqual(
-            syncCommands.map((command) => [command.number, command.stack] as const),
-            [[42, { kind: "native", ...stack }]],
+            syncCommands.map((command) => [command.threadId, command.stack] as const),
+            [
+              [ThreadId.make("one"), { kind: "native", ...stack }],
+              [ThreadId.make("settled"), { kind: "native", ...stack }],
+            ],
           );
           assert.deepStrictEqual(
             (yield* Ref.get(fixture.linkCommands)).map(({ commandId: _, ...rest }) => rest),

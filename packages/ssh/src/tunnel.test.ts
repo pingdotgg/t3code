@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -233,12 +233,7 @@ describe("ssh tunnel scripts", () => {
   });
 
   it("uses the remote t3 runner for launch and pairing scripts", () => {
-    const target = {
-      alias: "devbox",
-      hostname: "devbox.example.com",
-      username: "julius",
-      port: 2222,
-    } as const;
+    const stateKey = "711bc738002d72fd";
     const launch = SshTunnel.buildRemoteLaunchScript(ARCHIVE);
     const devLaunch = SshTunnel.buildRemoteLaunchScript({
       ...NODE_SCRIPT,
@@ -265,28 +260,28 @@ describe("ssh tunnel scripts", () => {
     assert.include(launch, "It wrote nothing to %s");
     assert.include(launch, "T3_ARCHIVE_VERSION='1.2.3-preview.20260911.4'");
     assert.include(
-      SshTunnel.buildRemotePairingScript(target, ARCHIVE),
+      SshTunnel.buildRemotePairingScript(stateKey, ARCHIVE),
       '"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json',
     );
     assert.include(
-      SshTunnel.buildRemotePairingScript(target, ARCHIVE),
+      SshTunnel.buildRemotePairingScript(stateKey, ARCHIVE),
       'PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"',
     );
-    assert.notInclude(SshTunnel.buildRemotePairingScript(target, ARCHIVE), "server-home");
+    assert.notInclude(SshTunnel.buildRemotePairingScript(stateKey, ARCHIVE), "server-home");
     assert.include(
-      SshTunnel.buildRemotePairingScript(target, ARCHIVE),
+      SshTunnel.buildRemotePairingScript(stateKey, ARCHIVE),
       "T3_ARCHIVE_VERSION='1.2.3-preview.20260911.4'",
     );
     assert.include(
-      SshTunnel.buildRemoteStopScript(target),
+      SshTunnel.buildRemoteStopScript(stateKey),
       'if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ]',
     );
     assert.include(
-      SshTunnel.buildRemoteStopScript(target),
+      SshTunnel.buildRemoteStopScript(stateKey),
       'kill "$REMOTE_PID" 2>/dev/null || true',
     );
     assert.include(
-      SshTunnel.buildRemoteStopScript(target),
+      SshTunnel.buildRemoteStopScript(stateKey),
       'rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"',
     );
     assert.include(
@@ -696,8 +691,8 @@ describe("ssh tunnel scripts", () => {
 // lock excludes concurrent installers. Run the real script against a tiny
 // fake archive served from a file:// mirror.
 describe("archive runner script", () => {
-  const hostPlatform = HostProcessPlatform.defaultValue();
-  const hostArch = HostProcessArchitecture.defaultValue();
+  const hostPlatform = HostProcess.Platform.defaultValue();
+  const hostArch = HostProcess.Architecture.defaultValue();
   const windowsHost = hostPlatform === "win32";
   const archiveVersion = "1.2.3-preview.20260911.4";
 

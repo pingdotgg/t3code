@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - realpathSync.native resolves Windows 8.3 short names, which the Effect realPath does not.
 import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it, describe } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -35,6 +35,7 @@ import {
   makeGitVcsDriverCore,
   parseGitCheckoutProgressLine,
   splitNullSeparatedGitStdoutPaths,
+  windowsLongPathConfigEnv,
 } from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
@@ -1351,7 +1352,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           _tag: "GitCommandError",
           operation: "GitVcsDriver.removeWorktree",
           command: "git",
-          argumentCount: 3,
+          argumentCount: 5,
           cwd,
         });
         assert.notProperty(error, "cause");
@@ -1863,7 +1864,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* writeTextFile(cwd, " leading.txt", "whitespace path\n");
         yield* writeTextFile(cwd, "l.txt", "other\n");
         yield* writeTextFile(cwd, "binary.dat", "binary\0data");
-        if ((yield* HostProcessPlatform) !== "win32") {
+        if ((yield* HostProcess.Platform) !== "win32") {
           yield* writeTextFile(cwd, "tab\tand\nnewline.txt", "unusual path\n");
         }
         yield* git(cwd, ["add", "."]);
@@ -1905,7 +1906,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           additions: 0,
           deletions: 0,
         });
-        if ((yield* HostProcessPlatform) !== "win32") {
+        if ((yield* HostProcess.Platform) !== "win32") {
           assert.deepInclude(branch.files ?? [], {
             path: "tab\tand\nnewline.txt",
             previousPath: null,
@@ -2156,6 +2157,28 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           insertions: 2,
           deletions: 0,
         });
+      }),
+    );
+
+    it.effect("skips Changes totals instead of indexing thousands of untracked files", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* Effect.forEach(
+          Array.from({ length: 5_001 }, (_, index) => `bulk/${index}.txt`),
+          (file) => writeTextFile(cwd, file, "x\n"),
+          { concurrency: 32, discard: true },
+        );
+        yield* writeTextFile(cwd, "README.md", "changed\n");
+
+        const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+        assert.isTrue(status.hasWorkingTreeChanges);
+        assert.isUndefined(status.branchChanges);
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd });
+        assert.isNotEmpty(preview.sources);
+        assert.isTrue(preview.sources.every((source) => source.truncated));
       }),
     );
 
@@ -2867,7 +2890,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
     });
 
     // NTFS rejects a newline in a file name, so there is nothing to preserve there.
-    it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       "preserves newline characters in worktree paths when listing refs",
       () =>
         Effect.gen(function* () {
@@ -3195,6 +3218,34 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("keeps a worktree whose untracked files status is configured to hide", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "hidden");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/hidden",
+        });
+        yield* git(cwd, ["config", "status.showUntrackedFiles", "no"]);
+        yield* writeTextFile(worktreePath, "notes.txt", "draft\n");
+        assert.equal(yield* git(worktreePath, ["status", "--porcelain"]), "");
+
+        const result = yield* Effect.result(driver.removeWorktree({ cwd, path: worktreePath }));
+
+        assert.isTrue(Result.isFailure(result));
+        const fileSystem = yield* FileSystem.FileSystem;
+        assert.equal(
+          yield* fileSystem.readFileString(pathService.join(worktreePath, "notes.txt")),
+          "draft\n",
+        );
+      }),
+    );
+
     it.effect("allows worktree removal to run longer than the default command timeout", () =>
       Effect.gen(function* () {
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -3203,8 +3254,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           Effect.gen(function* () {
             if (
               ChildProcess.isStandardCommand(command) &&
-              command.args[0] === "worktree" &&
-              command.args[1] === "remove"
+              command.args.join(" ").includes("worktree remove")
             ) {
               yield* Deferred.succeed(removalStarted, undefined);
               yield* Effect.sleep("31 seconds");
@@ -3904,5 +3954,96 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.notEqual(originMain.exitCode, 0);
       }),
     );
+  });
+});
+
+describe("Windows long path configuration", () => {
+  const readGitConfig = Effect.fn("readGitConfig")(function* (
+    platform: NodeJS.Platform,
+    key: string,
+  ) {
+    const layer = GitVcsDriver.layer.pipe(
+      Layer.provide(layerServerConfig),
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provide(Layer.succeed(HostProcess.Platform, platform)),
+    );
+    return yield* Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir("git-longpath-test-");
+      const result = yield* driver.execute({
+        operation: "GitVcsDriverTest.readGitConfig",
+        cwd,
+        args: ["config", "--get", key],
+        // Replaces the suite's own core.longpaths=true so it cannot mask a
+        // missing injection. Entry 2 sits past the count and must stay unread.
+        env: {
+          GIT_CONFIG_COUNT: "2",
+          GIT_CONFIG_KEY_0: "user.name",
+          GIT_CONFIG_VALUE_0: "inherited-name",
+          GIT_CONFIG_KEY_1: "core.longpaths",
+          GIT_CONFIG_VALUE_1: "false",
+          GIT_CONFIG_KEY_2: "user.name",
+          GIT_CONFIG_VALUE_2: "outside-count",
+        },
+      });
+      return result.stdout.trim();
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.effect("enables long paths for every Git command on Windows", () =>
+    Effect.gen(function* () {
+      assert.equal(yield* readGitConfig("win32", "core.longpaths"), "true");
+      assert.equal(yield* readGitConfig("win32", "user.name"), "inherited-name");
+    }),
+  );
+
+  it.effect("leaves Git config untouched on other platforms", () =>
+    Effect.gen(function* () {
+      assert.equal(yield* readGitConfig("linux", "core.longpaths"), "false");
+      assert.equal(yield* readGitConfig("linux", "user.name"), "inherited-name");
+    }),
+  );
+
+  it("extends an inherited count spelled in a different case", () => {
+    // Two spellings collapse to one on spawn (the uppercase one wins), so the
+    // count must be bumped under the spelling that is already there.
+    assert.deepStrictEqual(windowsLongPathConfigEnv("win32", { git_config_count: "2" }), {
+      git_config_count: "3",
+      GIT_CONFIG_KEY_2: "core.longpaths",
+      GIT_CONFIG_VALUE_2: "true",
+    });
+  });
+
+  it("appends after inherited entries, parsing the count as Git does", () => {
+    for (const [count, next] of [
+      [undefined, 0],
+      ["", 0],
+      ["0", 0],
+      ["-0", 0],
+      ["2", 2],
+      [" 2", 2],
+      ["+2", 2],
+      ["02", 2],
+    ] as const) {
+      assert.deepStrictEqual(
+        windowsLongPathConfigEnv("win32", count === undefined ? {} : { GIT_CONFIG_COUNT: count }),
+        {
+          GIT_CONFIG_COUNT: String(next + 1),
+          [`GIT_CONFIG_KEY_${next}`]: "core.longpaths",
+          [`GIT_CONFIG_VALUE_${next}`]: "true",
+        },
+        `GIT_CONFIG_COUNT=${JSON.stringify(count)}`,
+      );
+    }
+  });
+
+  it("leaves a count Git would reject for Git to report", () => {
+    for (const count of ["nope", "2x", "-1", "1.5", "  ", "1 "]) {
+      assert.deepStrictEqual(
+        windowsLongPathConfigEnv("win32", { GIT_CONFIG_COUNT: count }),
+        {},
+        `GIT_CONFIG_COUNT=${JSON.stringify(count)}`,
+      );
+    }
   });
 });

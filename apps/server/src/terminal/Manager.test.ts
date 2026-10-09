@@ -12,7 +12,7 @@ import {
   ServerSettingsError,
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
-import { HostProcessPlatform, HostProcessArchitecture } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Data from "effect/Data";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -41,7 +41,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "./Manager.ts";
-import * as PtyAdapter from "./PtyAdapter.ts";
+import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -315,7 +315,7 @@ const createManager = (
   );
 
 const layerWithHostPlatform = (platform: NodeJS.Platform) =>
-  Layer.succeed(HostProcessPlatform, platform);
+  Layer.succeed(HostProcess.Platform, platform);
 
 // Apply the existing line policy, then find the longest code-point-aligned byte tail.
 function retainedHistory(text: string, maxLines: number, maxBytes = Infinity): string {
@@ -619,7 +619,7 @@ it.layer(
 
   it.effect("preserves non-notFound cwd stat failures", () =>
     Effect.gen(function* () {
-      if ((yield* HostProcessPlatform) === "win32") return;
+      if ((yield* HostProcess.Platform) === "win32") return;
 
       const path = yield* Path.Path;
 
@@ -1826,7 +1826,7 @@ it.layer(
 
   it.effect("retries with fallback shells when preferred shell spawn fails", () =>
     Effect.gen(function* () {
-      const platform = yield* HostProcessPlatform;
+      const platform = yield* HostProcess.Platform;
       const missingShell =
         platform === "win32" ? "C:\\definitely\\missing-shell.exe" : "/definitely/missing-shell -l";
       const { manager, ptyAdapter } = yield* createManager(5, {
@@ -1933,7 +1933,7 @@ it.layer(
         Effect.provide(
           Layer.merge(
             layerWithHostPlatform("win32"),
-            Layer.succeed(HostProcessArchitecture, "x64"),
+            Layer.succeed(HostProcess.Architecture, "x64"),
           ),
         ),
       );
@@ -2272,7 +2272,7 @@ it.layer(
     ),
   );
 
-  it.effect("resolves the legacy Codex default instance", () =>
+  it.effect("resolves the Codex default slot", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -2283,18 +2283,22 @@ it.layer(
         env: undefined,
       });
 
-      expect(environment.CODEX_HOME).toMatch(/[\\/][.]codex-legacy$/);
+      expect(environment.CODEX_HOME).toMatch(/[\\/][.]codex-default$/);
     }).pipe(
       Effect.provide(
         ServerSettings.ServerSettingsService.layerTest({
-          providerInstances: {},
-          providers: { codex: { homePath: "~/.codex-legacy" } },
+          providerInstances: {
+            [ProviderInstanceId.make("codex")]: {
+              driver: ProviderDriverKind.make("codex"),
+              config: { homePath: "~/.codex-default" },
+            },
+          },
         }),
       ),
     ),
   );
 
-  it.effect("resolves the legacy Claude default instance", () =>
+  it.effect("resolves the Claude default slot", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -2305,37 +2309,14 @@ it.layer(
         env: undefined,
       });
 
-      expect(environment.CLAUDE_CONFIG_DIR).toMatch(/[\\/][.]claude-legacy$/);
+      expect(environment.CLAUDE_CONFIG_DIR).toMatch(/[\\/][.]claude-default$/);
     }).pipe(
       Effect.provide(
         ServerSettings.ServerSettingsService.layerTest({
-          providerInstances: {},
-          providers: { claudeAgent: { homePath: "~/.claude-legacy" } },
-        }),
-      ),
-    ),
-  );
-
-  it.effect("prefers an explicit default instance over legacy provider settings", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const serverSettings = yield* ServerSettings.ServerSettingsService;
-      const environment = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
-        serverSettings,
-        path,
-        rawProviderInstanceId: "codex",
-        env: undefined,
-      });
-
-      expect(environment.CODEX_HOME).toMatch(/[\\/][.]codex-explicit$/);
-    }).pipe(
-      Effect.provide(
-        ServerSettings.ServerSettingsService.layerTest({
-          providers: { codex: { homePath: "~/.codex-legacy" } },
           providerInstances: {
-            [ProviderInstanceId.make("codex")]: {
-              driver: "codex",
-              config: { homePath: "~/.codex-explicit" },
+            [ProviderInstanceId.make("claudeAgent")]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              config: { homePath: "~/.claude-default" },
             },
           },
         }),
@@ -2343,7 +2324,24 @@ it.layer(
     ),
   );
 
-  it.effect("keeps unknown provider instance ids unavailable after legacy hydration", () =>
+  it.effect("resolves an empty Codex default slot with default config", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const environment = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+        serverSettings,
+        path,
+        rawProviderInstanceId: "codex",
+        env: { CODEX_HOME: "/inherited/codex-home" },
+      });
+
+      expect(environment.CODEX_HOME).toBe("/inherited/codex-home");
+    }).pipe(
+      Effect.provide(ServerSettings.ServerSettingsService.layerTest({ providerInstances: {} })),
+    ),
+  );
+
+  it.effect("keeps unknown provider instance ids unavailable after default-slot hydration", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -2515,7 +2513,7 @@ it.layer(
 
   it.effect("starts zsh with prompt spacer disabled to avoid `%` end markers", () =>
     Effect.gen(function* () {
-      if ((yield* HostProcessPlatform) === "win32") return;
+      if ((yield* HostProcess.Platform) === "win32") return;
       const { manager, ptyAdapter } = yield* createManager(5, {
         shellResolver: () => "/bin/zsh",
       });
@@ -2691,6 +2689,104 @@ it.layer(
         const events = yield* Ref.get(attachEvents);
         expect(events.filter((event) => event.type === "snapshot")).toHaveLength(1);
       }),
+  );
+
+  it.effect("observes terminal history and live output without changing the process", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const opened = yield* manager.open(openInput({ env: { OBSERVER_TEST: "original" } }));
+      const process = ptyAdapter.processes[0]!;
+      const historyReceived = yield* Deferred.make<void>();
+      const unsubscribeHistory = yield* manager.subscribe((event) =>
+        event.type === "output"
+          ? Deferred.succeed(historyReceived, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      process.emitData("existing history\n");
+      yield* Deferred.await(historyReceived);
+      unsubscribeHistory();
+
+      const observed = yield* Ref.make<ReadonlyArray<TerminalAttachStreamEvent>>([]);
+      const liveReceived = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.observeStream(
+        { threadId: opened.threadId, terminalId: opened.terminalId },
+        (event) =>
+          Ref.update(observed, (events) => [...events, event]).pipe(
+            Effect.andThen(
+              event.type === "output"
+                ? Deferred.succeed(liveReceived, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+            ),
+          ),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      process.emitData("live output\n");
+      yield* Deferred.await(liveReceived);
+
+      expect(yield* Ref.get(observed)).toMatchObject([
+        {
+          type: "snapshot",
+          snapshot: {
+            cwd: opened.cwd,
+            worktreePath: opened.worktreePath,
+            pid: opened.pid,
+            history: "existing history\n",
+          },
+        },
+        { type: "output", data: "live output\n" },
+      ]);
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      expect(ptyAdapter.spawnInputs[0]?.env.OBSERVER_TEST).toBe("original");
+      expect(process.resizeCalls).toEqual([]);
+      expect(process.writes).toEqual([]);
+      expect(process.killSignals).toEqual([]);
+    }),
+  );
+
+  it.effect("observes exited terminals without restarting and rejects missing sessions", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const missingEvents: TerminalAttachStreamEvent[] = [];
+      const missing = yield* manager
+        .observeStream({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID }, (event) =>
+          Effect.sync(() => {
+            missingEvents.push(event);
+          }),
+        )
+        .pipe(Effect.flip);
+      expect(missing._tag).toBe("TerminalSessionLookupError");
+      expect(ptyAdapter.spawnInputs).toEqual([]);
+
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      const exited = yield* Deferred.make<void>();
+      const unsubscribeExit = yield* manager.subscribe((event) =>
+        event.type === "exited"
+          ? Deferred.succeed(exited, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      process.emitExit({ exitCode: 7, signal: 0 });
+      yield* Deferred.await(exited);
+      unsubscribeExit();
+
+      const events: TerminalAttachStreamEvent[] = [];
+      const unsubscribe = yield* manager.observeStream(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        (event) =>
+          Effect.sync(() => {
+            events.push(event);
+          }),
+      );
+      unsubscribe();
+      expect(events).toMatchObject([
+        { type: "snapshot", snapshot: { status: "exited", exitCode: 7, pid: null } },
+      ]);
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      expect(process.resizeCalls).toEqual([]);
+      expect(process.writes).toEqual([]);
+      expect(process.killSignals).toEqual([]);
+      expect(missingEvents).toEqual([]);
+    }),
   );
 
   it.effect("buffers attach output delivered during the initial snapshot callback", () =>

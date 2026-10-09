@@ -4,7 +4,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
 
 import {
   VcsRepositoryDetectionError,
@@ -14,7 +13,6 @@ import {
   type ReviewDiffPreviewError,
   type ReviewDiffPreviewInput,
   type ReviewDiffPreviewResult,
-  type ReviewDiffPreviewSourceKind,
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
@@ -22,38 +20,19 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "../worktreesDirectory.ts";
-
-/** The checkout has no repository a diff can be read from. */
-export class ReviewRepositoryNotFoundError extends Schema.TaggedError<ReviewRepositoryNotFoundError>()(
-  "ReviewRepositoryNotFoundError",
-  { cwd: Schema.String },
-) {
-  override get message(): string {
-    return "The review checkout is not a repository.";
-  }
-}
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 export class ReviewService extends Context.Service<
   ReviewService,
   {
+    /**
+     * `workspaceRoot` also allows a registered project's root, which the caller
+     * resolved from the project, never from client input.
+     */
     readonly getDiffPreview: (
       input: ReviewDiffPreviewInput,
+      workspaceRoot?: string,
     ) => Effect.Effect<ReviewDiffPreviewResult, ReviewDiffPreviewError>;
-    /**
-     * One source or one file of a diff preview. A file reads branch-range unless source says
-     * otherwise, and only the requested source is returned.
-     */
-    readonly getScopedDiffPreview: (input: {
-      readonly cwd: ReviewDiffPreviewInput["cwd"];
-      /** Resolved by the caller from the thread's registered project, never tool input. */
-      readonly workspaceRoot?: string | undefined;
-      readonly baseRef?: ReviewDiffPreviewInput["baseRef"] | undefined;
-      readonly source?: ReviewDiffPreviewSourceKind | undefined;
-      readonly file?: NonNullable<ReviewDiffPreviewInput["file"]>["path"] | undefined;
-    }) => Effect.Effect<
-      ReviewDiffPreviewResult,
-      ReviewDiffPreviewError | ReviewRepositoryNotFoundError
-    >;
     readonly getDiffFileContents: (
       input: ReviewDiffFileContentsInput,
     ) => Effect.Effect<ReviewDiffFileContentsResult, ReviewDiffPreviewError>;
@@ -96,18 +75,19 @@ export const make = Effect.gen(function* () {
   const assertWorkspaceBoundCwd = Effect.fn("ReviewService.assertWorkspaceBoundCwd")(function* (
     operation: "ReviewService.getDiffPreview" | "ReviewService.getDiffFileContents",
     cwd: string,
-    authorizedWorkspaceRoot = config.cwd,
+    authorizedRoot = config.cwd,
   ) {
     const worktreesDirectories = yield* settings.getSettings.pipe(
       Effect.orElseSucceed(() => ({ worktreesDirectory: "", previousWorktreesDirectories: [] })),
     );
+    const home = yield* HostProcess.HomeDirectory;
     const [candidate, workspaceRoot, worktreesRoots] = yield* Effect.all([
       canonicalizePath(cwd),
-      canonicalizePath(authorizedWorkspaceRoot),
+      canonicalizePath(authorizedRoot),
       // A managed root that cannot be resolved, or resolves to a filesystem
       // root through a symlink, is skipped rather than failing every review.
       Effect.forEach(
-        managedWorktreesDirectories(worktreesDirectories, config.worktreesDir, path),
+        managedWorktreesDirectories(worktreesDirectories, config.worktreesDir, path, home),
         (directory) => canonicalizePath(directory).pipe(Effect.orElseSucceed(() => null)),
       ).pipe(
         Effect.map((roots) =>
@@ -133,10 +113,9 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  const readDiffPreview = Effect.fn("ReviewService.getDiffPreview")(function* (
-    input: ReviewDiffPreviewInput,
-    workspaceRoot?: string,
-  ) {
+  const getDiffPreview: ReviewService["Service"]["getDiffPreview"] = Effect.fn(
+    "ReviewService.getDiffPreview",
+  )(function* (input, workspaceRoot) {
     yield* assertWorkspaceBoundCwd("ReviewService.getDiffPreview", input.cwd, workspaceRoot);
 
     const handle = yield* vcsRegistry.detect({ cwd: input.cwd, requestedKind: "auto" });
@@ -163,54 +142,6 @@ export const make = Effect.gen(function* () {
     return yield* getDriverDiffPreview(input);
   });
 
-  const getScopedDiffPreview: ReviewService["Service"]["getScopedDiffPreview"] = Effect.fn(
-    "ReviewService.getScopedDiffPreview",
-  )(function* (input) {
-    // A file request reads a single source; branch-range covers committed and uncommitted work.
-    const sourceKind = input.source ?? (input.file === undefined ? undefined : "branch-range");
-    const readPreview = (
-      baseRef: ReviewDiffPreviewInput["baseRef"],
-      file?: ReviewDiffPreviewInput["file"],
-    ) =>
-      readDiffPreview(
-        {
-          cwd: input.cwd,
-          ...(baseRef === undefined ? {} : { baseRef }),
-          ...(file === undefined ? {} : { file }),
-        },
-        input.workspaceRoot,
-      );
-    let preview: ReviewDiffPreviewResult;
-    if (input.file !== undefined && sourceKind !== undefined) {
-      // A renamed file needs its old path, which only the full preview's stats know. The lookup
-      // is best effort: a working-tree read must not fail on a branch range it does not need.
-      const full = yield* readPreview(input.baseRef).pipe(Effect.orElseSucceed(() => undefined));
-      const previousPath =
-        full?.sources
-          .find((source) => source.kind === sourceKind)
-          ?.files?.find((file) => file.path === input.file)?.previousPath ?? null;
-      preview = yield* readPreview(input.baseRef, { path: input.file, previousPath, sourceKind });
-    } else {
-      // The working tree needs no base, so a baseRef the branch range can't use is not passed.
-      preview = yield* readPreview(sourceKind === "working-tree" ? undefined : input.baseRef).pipe(
-        Effect.catchTags({
-          GitCommandError: (error) =>
-            // An orphan branch can have a HEAD without sharing history with the default base.
-            sourceKind === "working-tree" &&
-            error.operation === "GitVcsDriver.resolveReviewMergeBase"
-              ? readPreview("HEAD")
-              : Effect.fail(error),
-        }),
-      );
-    }
-    if (preview.sources.length === 0) {
-      return yield* new ReviewRepositoryNotFoundError({ cwd: input.cwd });
-    }
-    return sourceKind === undefined
-      ? preview
-      : { ...preview, sources: preview.sources.filter((source) => source.kind === sourceKind) };
-  });
-
   const getDiffFileContents: ReviewService["Service"]["getDiffFileContents"] = Effect.fn(
     "ReviewService.getDiffFileContents",
   )(function* (input) {
@@ -229,8 +160,7 @@ export const make = Effect.gen(function* () {
   });
 
   return ReviewService.of({
-    getDiffPreview: (input) => readDiffPreview(input),
-    getScopedDiffPreview,
+    getDiffPreview,
     getDiffFileContents,
   });
 });

@@ -26,16 +26,14 @@ import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
-import * as ThreadInbox from "../../../orchestration-v2/ThreadInbox.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, mark read or unread, toggle auto-settle, or permanently delete a thread. Omit threadId for this thread. snooze requires snoozedUntil. delete cannot be undone and requires a full-access/default caller. Existing thread lifecycle rules apply; this does not schedule a future action.",
+    "Pin, snooze, settle, archive, or mark a thread read or unread. Omit threadId for this thread. snooze requires snoozedUntil. Existing thread lifecycle rules apply. Settling this thread takes effect when your turn completes, returning settlesWhenTurnEnds=true; a turn that fails or is interrupted, or a queued message, leaves it active.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     action: Schema.Literals([
@@ -49,13 +47,13 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
       "unarchive",
       "mark_read",
       "mark_unread",
-      "auto_settle_on",
-      "auto_settle_off",
-      "delete",
     ]),
     snoozedUntil: Schema.optional(IsoDateTime),
   }),
-  success: OrchestrationV2DispatchCommandResult,
+  success: Schema.Union([
+    OrchestrationV2DispatchCommandResult,
+    Schema.Struct({ settlesWhenTurnEnds: Schema.Literal(true) }),
+  ]),
   failure: OrchestratorMcpFailure,
   failureMode: "return" as const,
   dependencies: [
@@ -147,13 +145,14 @@ const question = Schema.Struct({
   ),
   multiSelect: Schema.optional(Schema.Boolean),
   allowCustomAnswer: Schema.optional(Schema.Boolean),
+  initialAnswer: Schema.optional(Schema.String),
   required: Schema.optional(Schema.Boolean),
 });
 const pendingRequestKind = OrchestrationV2RuntimeRequest.fields.kind;
 const pendingRequest = Schema.Struct({
   requestId: RuntimeRequestId,
   kind: pendingRequestKind,
-  /** Present for user_input requests. */
+  /** Present for user questions. */
   questions: Schema.optional(Schema.Array(question)),
   /** Present for approvals when the provider supplied them. */
   prompt: Schema.optional(Schema.String),
@@ -162,7 +161,7 @@ const pendingRequest = Schema.Struct({
 const PendingRequestListTool = Tool.make("t3_pending_request_list", {
   ...commandTool,
   description:
-    "List pending user questions (kind user_input) and approval requests in a thread. Omit threadId for this thread.",
+    "List pending user questions and approval requests in a thread. Omit threadId for this thread. requestIds holds only the questions.",
   parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
   success: Schema.Struct({
     requestIds: Schema.Array(RuntimeRequestId),
@@ -184,12 +183,8 @@ const PendingRequestReadTool = Tool.make("t3_pending_request_read", {
   .annotate(Tool.Destructive, false);
 const PendingRequestRespondTool = Tool.make("t3_pending_request_respond", {
   ...commandTool,
-  dependencies: [
-    McpInvocationContext.McpInvocationContext,
-    OrchestratorMcpService.OrchestratorMcpService,
-  ],
   description:
-    "Respond to a pending request using the existing runtime response command: answers for a user question, decision for an approval (one of the options from t3_pending_request_read, else cancel, decline, acceptForSession, or accept). Approving requires a full-access/default caller; declining or cancelling does not.",
+    "Respond to a pending request using the existing runtime response command: answers for a user question, decision for an approval (one of its offered options, else cancel, decline, acceptForSession, or accept). Approving needs a full-access/default caller; declining or cancelling does not.",
   parameters: Schema.Struct({
     ...requestTarget,
     answers: Schema.optional(ProviderUserInputAnswers),
@@ -198,12 +193,6 @@ const PendingRequestRespondTool = Tool.make("t3_pending_request_respond", {
 })
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
-const PendingRequestDismissTool = Tool.make("t3_pending_request_dismiss", {
-  ...commandTool,
-  description:
-    "Dismiss a pending user question without answering it. Only questions answered by message can be dismissed; others need an answer or an interrupt.",
-  parameters: Schema.Struct(requestTarget),
-}).annotate(Tool.Destructive, true);
 
 const ThreadConfigurationTool = Tool.make("t3_thread_configuration", {
   ...commandTool,
@@ -284,33 +273,6 @@ const ThreadSearchTool = Tool.make("t3_thread_search", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
 
-const InboxTool = Tool.make("t3_inbox", {
-  ...commandTool,
-  description:
-    "List active threads that need attention: pending requests first, then failed runs, then unread completed work, newest first. Limited to one project (projectId, else the calling thread's project); a caller outside a T3 thread that omits projectId sees every project. Settled and snoozed threads only appear for pending requests.",
-  parameters: Schema.Struct({
-    projectId: Schema.optional(ProjectId),
-    limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 200 }))),
-  }),
-  success: Schema.Struct({
-    items: Schema.Array(
-      Schema.Struct({
-        threadId: ThreadId,
-        projectId: ProjectId,
-        title: Schema.String,
-        updatedAt: IsoDateTime,
-        reason: Schema.Literals(["pending_request", "error", "unread"]),
-        pendingRequest: Schema.optional(
-          Schema.Struct({ requestId: RuntimeRequestId, kind: pendingRequestKind }),
-        ),
-      }),
-    ),
-  }),
-  dependencies: [...commandTool.dependencies, ThreadInbox.ThreadInbox],
-})
-  .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false);
-
 const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   ...commandTool,
   description:
@@ -339,8 +301,6 @@ export const ThreadToolkit = Toolkit.make(
   PendingRequestListTool,
   PendingRequestReadTool,
   PendingRequestRespondTool,
-  PendingRequestDismissTool,
-  InboxTool,
   ThreadOrganizeTool,
   QueueListTool,
   QueueReadTool,

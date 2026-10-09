@@ -4,6 +4,7 @@
  * and mint requests, and keeping the managed tunnel registered, recovered and
  * released. HTTP handlers, server startup and shutdown all go through it.
  */
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no createPublicKey.
 import * as NodeCrypto from "node:crypto";
 import {
   AuthStandardClientScopes,

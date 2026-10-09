@@ -1,4 +1,8 @@
 import {
+  ReviewDiffFileStat,
+  ReviewDiffPreviewSource,
+  ReviewDiffPreviewSourceKind,
+  TrimmedNonEmptyString,
   WorktreeMcpFailure,
   OrchestratorMcpFailure,
   VcsListRefsInput,
@@ -11,6 +15,7 @@ import {
 import * as Schema from "effect/Schema";
 import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as ReviewService from "../../../review/ReviewService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import { Tool, Toolkit } from "effect/ai";
 
@@ -19,15 +24,19 @@ import * as WorktreeMcpService from "../../WorktreeMcpService.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
+  ThreadManagementService.ThreadManagementService,
   WorktreeMcpService.WorktreeMcpService,
 ];
+
+/** What handoff and status fail with, including the access gate's refusal. */
+const WorktreeToolFailure = Schema.Union([WorktreeMcpFailure, OrchestratorMcpFailure]);
 
 const WorktreeHandoffTool = Tool.make("t3_worktree_handoff", {
   description:
     "Needs an agent running inside a T3 thread. Move this agent thread into a new git worktree. To launch a separate agent already bound to a new or existing worktree, use t3_thread_launch with workspaceStrategy instead. Creates the worktree branch (optionally from origin), re-points the thread at the worktree, and by default runs the project's setup script there. Changing the workspace detaches the live provider session, so the current turn ends shortly after the handoff is recorded; call this as the last action of the turn. To keep working after the handoff, pass continuationPrompt with the remaining work: it is queued as the thread's next message and starts a new turn inside the worktree with the conversation preserved. Without it the thread stays idle until the next message. The worktree is not removed automatically when the thread is deleted. Fails if the thread is already attached to a worktree.",
   parameters: WorktreeMcpHandoffInput,
   success: WorktreeMcpHandoffResult,
-  failure: WorktreeMcpFailure,
+  failure: WorktreeToolFailure,
   failureMode: "return",
   dependencies,
 })
@@ -45,7 +54,7 @@ const WorktreeStatusTool = Tool.make("t3_worktree_status", {
   // Schema.Struct({}) serializes to `anyOf: [object, array]`, which is not a
   // valid MCP tool input schema and makes clients reject the whole server.
   success: WorktreeMcpStatusResult,
-  failure: WorktreeMcpFailure,
+  failure: WorktreeToolFailure,
   failureMode: "return",
   dependencies,
 })
@@ -78,8 +87,53 @@ const WorktreeListTool = Tool.make("t3_worktree_list", {
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
+
+const MAX_DIFF_CHARACTERS = 100_000;
+
+const ThreadDiffTool = Tool.make("t3_thread_diff", {
+  description:
+    "Show what a thread changed in its checkout (omit threadId for this thread), as the diff panel does. Returns working-tree (uncommitted changes vs HEAD) and branch-range (changes since the merge base with baseRef, or the detected base branch), each with per-file stats and a unified diff cut to maxCharacters (default 20,000), with truncated set when cut. Pass source to return one.",
+  parameters: Schema.Struct({
+    threadId: Schema.optional(ThreadId),
+    baseRef: Schema.optional(TrimmedNonEmptyString),
+    source: Schema.optional(ReviewDiffPreviewSourceKind),
+    maxCharacters: Schema.optional(
+      Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: MAX_DIFF_CHARACTERS })),
+    ),
+  }),
+  success: Schema.Struct({
+    threadId: ThreadId,
+    cwd: Schema.String,
+    sources: Schema.Array(
+      Schema.Struct({
+        kind: ReviewDiffPreviewSource.fields.kind,
+        baseRef: ReviewDiffPreviewSource.fields.baseRef,
+        headRef: ReviewDiffPreviewSource.fields.headRef,
+        // Null when there were too many untracked files to count.
+        files: Schema.NullOr(Schema.Array(ReviewDiffFileStat)),
+        diff: Schema.String,
+        truncated: Schema.Boolean,
+      }),
+    ),
+  }),
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+    ProjectService.ProjectService,
+    ReviewService.ReviewService,
+  ],
+})
+  .annotate(Tool.Title, "Show thread diff")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
 export const WorktreeToolkit = Toolkit.make(
   WorktreeHandoffTool,
   WorktreeStatusTool,
   WorktreeListTool,
+  ThreadDiffTool,
 );

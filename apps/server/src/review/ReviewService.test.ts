@@ -9,7 +9,6 @@ import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
-import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as ReviewService from "./ReviewService.ts";
 
 function layer(input: {
@@ -44,71 +43,6 @@ function layer(input: {
 }
 
 describe("ReviewService", () => {
-  it.effect.each([false, true])(
-    "reads a registered project outside the launch folder with an unrelated base (committed: %s)",
-    (committed) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-orphan-" });
-        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
-        const layer = ReviewService.layer.pipe(
-          Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))),
-          Layer.provideMerge(GitVcsDriver.layer),
-          Layer.provide(ServerSettings.layerTest()),
-          Layer.provide(ServerConfig.layerTest(baseDir, baseDir)),
-          Layer.provideMerge(NodeServices.layer),
-        );
-
-        yield* Effect.gen(function* () {
-          const driver = yield* GitVcsDriver.GitVcsDriver;
-          const review = yield* ReviewService.ReviewService;
-          const git = (args: ReadonlyArray<string>) =>
-            driver.execute({ operation: "ReviewService.test.git", cwd, args });
-          yield* git(["init", "-b", "main"]);
-          yield* git(["config", "user.email", "test@test.com"]);
-          yield* git(["config", "user.name", "Test"]);
-          yield* fs.writeFileString(`${cwd}/README.md`, "base\n");
-          yield* git(["add", "."]);
-          yield* git(["commit", "-m", "main root"]);
-          yield* git(["checkout", "--orphan", "orphan"]);
-          if (committed) yield* git(["commit", "-m", "orphan root"]);
-          yield* fs.writeFileString(`${cwd}/README.md`, "base\ndirty\n");
-          yield* fs.writeFileString(`${cwd}/untracked.txt`, "new\n");
-
-          const preview = yield* review.getScopedDiffPreview({
-            cwd,
-            workspaceRoot: cwd,
-            source: "working-tree",
-            baseRef: "missing-base",
-          });
-          assert.strictEqual(preview.sources.length, 1);
-          const source = preview.sources[0]!;
-          assert.strictEqual(source.kind, "working-tree");
-          assert.deepStrictEqual(source.files, [
-            { path: "README.md", previousPath: null, additions: committed ? 1 : 2, deletions: 0 },
-            { path: "untracked.txt", previousPath: null, additions: 1, deletions: 0 },
-          ]);
-          assert.include(source.diff, "+dirty");
-          assert.include(source.diff, "+new");
-
-          if (committed) {
-            const error = yield* review
-              .getScopedDiffPreview({
-                cwd,
-                workspaceRoot: cwd,
-                source: "branch-range",
-                baseRef: "main",
-              })
-              .pipe(Effect.flip);
-            assert.strictEqual(error._tag, "GitCommandError");
-            if (error._tag === "GitCommandError") {
-              assert.strictEqual(error.operation, "GitVcsDriver.resolveReviewMergeBase");
-            }
-          }
-        }).pipe(Effect.provide(layer));
-      }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
   it.effect("rejects diff preview cwd outside the configured workspace roots", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

@@ -269,11 +269,6 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Respond to", "Responding to", "Responded to", "pending requests"],
     "question-respond",
   ),
-  t3_pending_request_dismiss: tool(
-    ["Dismiss", "Dismissing", "Dismissed", "a pending question"],
-    "question-respond",
-  ),
-  t3_inbox: tool(["Check", "Checking", "Checked", "threads needing attention"], "thread-list"),
   t3_thread_diff: tool(["Read", "Reading", "Read", "a thread diff"], "thread-read"),
   t3_thread_configuration: tool(
     ["Read", "Reading", "Read", "thread configuration"],

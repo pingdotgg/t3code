@@ -1,5 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
+import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
 import {
   CommandId,
   EnvironmentId,
@@ -27,7 +29,6 @@ import {
   type ProviderOptionDescriptor,
   ProviderThreadId,
   ProviderTurnId,
-  RuntimeRequestId,
   type ScheduledTask,
   ScheduledTaskId,
   type ScheduledTaskUpsertInput,
@@ -56,20 +57,16 @@ import { threadShellFromProjection } from "../orchestration-v2/ProjectionStore.t
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
-import {
-  type ProviderAdapterV2Event,
-  ProviderAdapterProtocolError,
-  type ProviderAdapterV2Shape,
-  type ProviderAdapterV2TurnInput,
-} from "../orchestration-v2/ProviderAdapter.ts";
+import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
-import * as ProviderContinuationRequests from "../orchestration-v2/ProviderContinuationRequests.ts";
-import { checkpointWorkspace } from "../orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import {
   decodeProviderReplayNdjson,
   materializeReplayTranscriptWorkspace,
-} from "../orchestration-v2/testkit/ReplayTranscriptNdjson.ts";
+} from "@t3tools/provider-testing/replayTranscript";
 import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -77,11 +74,8 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
-import {
-  delegatedTaskRun,
-  hasPendingChildRuns,
-  layer as layerOrchestratorMcpService,
-} from "./OrchestratorMcpService.ts";
+import { delegatedTaskRun, hasPendingChildRuns } from "./OrchestratorMcpService.ts";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 // Effect returns a declared tool failure as `isError` with its encoded payload
 // as JSON text, never as `structuredContent`.
@@ -149,7 +143,7 @@ interface CapturedTurn {
 }
 
 function unsupported(driver: ProviderDriverKind, detail: string) {
-  return Effect.fail(new ProviderAdapterProtocolError({ driver, detail }));
+  return Effect.fail(new ProviderAdapter.ProviderAdapterProtocolError({ driver, detail }));
 }
 
 function makeProviderSnapshot(input: {
@@ -188,10 +182,12 @@ function makeDeterministicAdapter(input: {
   readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
-  readonly shouldComplete: (turn: ProviderAdapterV2TurnInput) => boolean;
-  readonly terminalGate?: (turn: ProviderAdapterV2TurnInput) => Deferred.Deferred<void> | undefined;
-  readonly response: (turn: ProviderAdapterV2TurnInput) => string;
-}): ProviderAdapterV2Shape {
+  readonly shouldComplete: (turn: ProviderAdapter.ProviderAdapterV2TurnInput) => boolean;
+  readonly terminalGate?: (
+    turn: ProviderAdapter.ProviderAdapterV2TurnInput,
+  ) => Deferred.Deferred<void> | undefined;
+  readonly response: (turn: ProviderAdapter.ProviderAdapterV2TurnInput) => string;
+}): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: input.instanceId,
     driver: input.driver,
@@ -199,7 +195,7 @@ function makeDeterministicAdapter(input: {
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (sessionInput) =>
       Effect.gen(function* () {
-        const events = yield* PubSub.unbounded<ProviderAdapterV2Event>();
+        const events = yield* PubSub.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const now = yield* DateTime.now;
         const providerSession: OrchestrationV2ProviderSession = {
           id: sessionInput.providerSessionId,
@@ -214,12 +210,12 @@ function makeDeterministicAdapter(input: {
           lastError: null,
         };
 
-        const publish = (providerEvents: ReadonlyArray<ProviderAdapterV2Event>) =>
+        const publish = (providerEvents: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
           Effect.forEach(providerEvents, (event) => PubSub.publish(events, event), {
             discard: true,
           });
         const runOrdinals = new Map<ProviderTurnId, number>();
-        const turnInputs = new Map<ProviderTurnId, ProviderAdapterV2TurnInput>();
+        const turnInputs = new Map<ProviderTurnId, ProviderAdapter.ProviderAdapterV2TurnInput>();
 
         return {
           instanceId: input.instanceId,
@@ -680,12 +676,12 @@ describe("orchestrator MCP toolkit", () => {
             McpHttpServer.layerOrchestratorToolkit,
             McpHttpServer.layerThreadToolkit,
           ).pipe(
-            Layer.provide(layerOrchestratorMcpService),
             Layer.provideMerge(McpServer.McpServer.layer),
             Layer.provideMerge(layerOrchestration),
             Layer.provide(layerRegistry),
             Layer.provide(layerProviderRegistry),
             Layer.provide(layerScheduledTaskStub),
+            Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
             Layer.provide(
               Layer.mock(ProjectService.ProjectService)({
                 getById: (id) =>
@@ -771,46 +767,40 @@ describe("orchestrator MCP toolkit", () => {
             const invoke = (name: string, args: Record<string, unknown>) =>
               invokeAs(invocation, name, args);
 
+            // Settling would stop the session, so the agent's own turn keeps running.
+            const deferredSettle = yield* invoke("t3_thread_organize", { action: "settle" });
+            expect(deferredSettle.isError).toBe(false);
+            expect(deferredSettle.structuredContent).toEqual({ settlesWhenTurnEnds: true });
+            const afterDeferredSettle = yield* orchestrator.getThreadProjection(parentThreadId);
+            expect(afterDeferredSettle.thread.settledOverride).not.toBe("settled");
+            expect(afterDeferredSettle.runs.find((run) => run.id === parentRun?.id)?.status).toBe(
+              "running",
+            );
+
             const pinned = yield* invoke("t3_thread_organize", { action: "pin" });
+            expect(pinned.isError).toBe(false);
             expect(pinned.structuredContent).toHaveProperty("sequence");
             expect((yield* orchestrator.getThreadShell(parentThreadId))?.pinnedAt).not.toBeNull();
-            const pendingResponse = {
-              threadId: parentThreadId,
-              requestId: RuntimeRequestId.make("request:mcp-missing"),
-              decision: "decline",
-            };
-            const missingPendingResponse = yield* invoke(
-              "t3_pending_request_respond",
-              pendingResponse,
-            );
-            expect(missingPendingResponse.isError).toBe(true);
-            expect(declaredFailure(missingPendingResponse)).toMatchObject({
-              code: "invalid_request",
-              message: "The pending request was not found.",
-            });
-            const deniedPendingResponse = yield* invokeAs(
-              { ...invocation, capabilities: new Set<never>() },
-              "t3_pending_request_respond",
-              pendingResponse,
-            );
-            expect(deniedPendingResponse.isError).toBe(true);
-            expect(declaredFailure(deniedPendingResponse)).toMatchObject({
-              code: "capability_denied",
-            });
             yield* invoke("t3_thread_organize", { action: "unpin" });
             expect((yield* orchestrator.getThreadShell(parentThreadId))?.pinnedAt).toBeNull();
-            yield* invoke("t3_thread_organize", { action: "auto_settle_off" });
-            expect(
-              (yield* orchestrator.getThreadShell(parentThreadId))?.autoSettleDisabledAt,
-            ).not.toBeNull();
-            yield* invoke("t3_thread_organize", { action: "auto_settle_on" });
-            expect(
-              (yield* orchestrator.getThreadShell(parentThreadId))?.autoSettleDisabledAt,
-            ).toBeNull();
 
             if (parentRun === undefined || parentRun.rootNodeId === null) {
               return yield* Effect.die(new Error("Parent run missing."));
             }
+            for (const name of ["t3_queue_edit", "t3_queue_cancel"]) {
+              const refusedQueueMutation = yield* invoke(name, {
+                queuedRunId: parentRun.id,
+                ...(name === "t3_queue_edit" ? { text: "Keep the active turn." } : {}),
+              });
+              expect(refusedQueueMutation.isError).toBe(true);
+              expect(refusedQueueMutation.structuredContent).toBeUndefined();
+              expect(declaredFailure(refusedQueueMutation)).toEqual({
+                _tag: "OrchestratorMcpFailure",
+                code: "orchestration_error",
+                message: `Run ${parentRun.id} is not queued.`,
+              });
+            }
+
             let parentRootNodeId = parentRun.rootNodeId;
             const queueAutomaticCompletion = (suffix: string, taskText: string) =>
               Effect.gen(function* () {
@@ -1248,9 +1238,35 @@ describe("orchestrator MCP toolkit", () => {
               return yield* Effect.die(new Error("Queued user follow-up missing."));
             }
             const queueFirstPage = yield* invoke("t3_queue_list", { limit: 1 });
+            expect(queueFirstPage.isError).toBe(false);
             expect(queueFirstPage.structuredContent).toMatchObject({
               items: [{ queuedRunId: queueRace.queuedRun.id }],
               nextCursor: 1,
+            });
+            const queueDefinition = server.tools.find(({ tool }) => tool.name === "t3_queue_list");
+            const validateQueue = new AjvJsonSchemaValidator().getValidator(
+              queueDefinition!.tool.outputSchema! as JsonSchemaType,
+            );
+            expect(validateQueue(queueFirstPage.structuredContent).valid).toBe(true);
+            const missingThreadId = ThreadId.make("00000000-0000-4000-8000-000000000000");
+            const missingThreadQueue = yield* invoke("t3_queue_list", {
+              threadId: missingThreadId,
+              limit: 1,
+            });
+            expect(missingThreadQueue.isError).toBe(true);
+            expect(declaredFailure(missingThreadQueue)).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
+              code: "thread_not_found",
+              message: "The thread was not found.",
+            });
+            expect(missingThreadQueue.structuredContent).toBeUndefined();
+            expect(validateQueue({ items: "invalid", nextCursor: null }).valid).toBe(false);
+            const missingThreadRead = yield* invoke("t3_thread_read", {
+              threadId: missingThreadId,
+            });
+            expect(missingThreadRead.isError).toBe(true);
+            expect(declaredFailure(missingThreadRead)).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
             });
             const queueSecondPage = yield* invoke("t3_queue_list", { cursor: 1, limit: 1 });
             expect(queueSecondPage.structuredContent).toEqual({
@@ -1853,6 +1869,20 @@ describe("orchestrator MCP toolkit", () => {
                 legacyDelegatedRun,
               ),
             ).toBe(true);
+            // A queue Stop held waits for the user; it is not pending child work.
+            expect(
+              hasPendingChildRuns(
+                {
+                  ...legacyChildProjection,
+                  runs: legacyChildProjection.runs.map((run) =>
+                    run.id === activeChildFollowup.runId
+                      ? { ...run, status: "queued", queueHeld: true }
+                      : run,
+                  ),
+                },
+                legacyDelegatedRun,
+              ),
+            ).toBe(false);
             const completedTaskCancelCall = yield* invoke("task_cancel", {
               taskId: delegated.taskId,
               reason: "Stop the child's later work too.",
@@ -2208,6 +2238,41 @@ describe("orchestrator MCP toolkit", () => {
             yield* orchestrator.dispatch({
               type: "thread.unsettle",
               commandId: CommandId.make("command:mcp-empty:unsettle"),
+              threadId: emptyThread.threadId,
+              reason: "user",
+            });
+
+            expect(metadataRead.thread).toMatchObject({ snoozed: false, snoozedUntil: null });
+            yield* orchestrator.dispatch({
+              type: "thread.snooze",
+              commandId: CommandId.make("command:mcp-empty:snooze"),
+              threadId: emptyThread.threadId,
+              snoozedUntil: "2099-01-01T00:00:00.000Z",
+            });
+            const snoozedListCall = yield* invoke("t3_thread_list", { snoozed: true, limit: 100 });
+            const snoozedList = yield* decodeThreadListResult(
+              snoozedListCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(snoozedList.threads.map((thread) => thread.threadId)).toEqual([
+              emptyThread.threadId,
+            ]);
+            expect(snoozedList.threads[0]).toMatchObject({
+              snoozed: true,
+              snoozedUntil: "2099-01-01T00:00:00.000Z",
+            });
+            const snoozedReadCall = yield* invoke("t3_thread_read", {
+              threadId: emptyThread.threadId,
+            });
+            const snoozedRead = yield* decodeThreadReadResult(
+              snoozedReadCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(snoozedRead.thread).toMatchObject({
+              snoozed: true,
+              snoozedUntil: "2099-01-01T00:00:00.000Z",
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.unsnooze",
+              commandId: CommandId.make("command:mcp-empty:unsnooze"),
               threadId: emptyThread.threadId,
               reason: "user",
             });
@@ -3748,7 +3813,9 @@ describe("orchestrator MCP toolkit", () => {
           Layer.provideMerge(McpServer.McpServer.layer),
           Layer.provideMerge(layerOrchestration),
           Layer.provide(
-            CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(transcript),
+            CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(transcript).pipe(
+              Layer.provide(McpProviderSessions.layer),
+            ),
           ),
           Layer.provide(layerProviderRegistry),
           Layer.provide(layerUnusedScheduledTaskStub),

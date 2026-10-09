@@ -3,6 +3,7 @@ import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { type ProviderReplayTranscript } from "@t3tools/contracts";
 import * as CodexClient from "effect-codex-app-server/client";
+import type * as CodexError from "effect-codex-app-server/errors";
 import * as CodexReplay from "effect-codex-app-server/replay";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -13,12 +14,12 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../../config.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import { ProviderAdapterOpenSessionError } from "../ProviderAdapter.ts";
-import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
-import type { ProviderReplayGate } from "../testkit/ProviderReplayGate.testkit.ts";
+import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 
 export class CodexReplayTranscriptDecodeError extends Schema.TaggedError<CodexReplayTranscriptDecodeError>()(
@@ -45,7 +46,10 @@ export type CodexOrchestratorReplayHarnessError = typeof CodexOrchestratorReplay
 export function withCodexReplayChildMetadata(
   client: CodexClient.CodexAppServerClient["Service"],
   transcript: CodexReplay.CodexAppServerReplayTranscript,
-  readMetadata: (threadId: string) => Effect.Effect<unknown> = (threadId) =>
+  readMetadata: (
+    threadId: string,
+    method: "thread/read" | "thread/resume",
+  ) => Effect.Effect<unknown, CodexError.CodexAppServerError> = (threadId) =>
     Effect.succeed({ thread: { id: threadId }, model: null }),
 ): CodexClient.CodexAppServerClient["Service"] {
   const childThreadIds = new Set(
@@ -67,12 +71,12 @@ export function withCodexReplayChildMetadata(
     raw: {
       ...client.raw,
       request: (method, params) =>
-        method === "thread/resume" &&
+        (method === "thread/read" || method === "thread/resume") &&
         Predicate.isObject(params) &&
-        params.excludeTurns === true &&
+        (method === "thread/read" ? params.includeTurns === false : params.excludeTurns === true) &&
         typeof params.threadId === "string" &&
         childThreadIds.has(params.threadId)
-          ? readMetadata(params.threadId)
+          ? readMetadata(params.threadId, method)
           : client.raw.request(method, params),
     },
   };
@@ -191,7 +195,7 @@ export function layer(input: {
         const context = yield* Layer.build(layerReplay).pipe(
           Effect.mapError(
             (cause) =>
-              new ProviderAdapterOpenSessionError({
+              new ProviderAdapter.ProviderAdapterOpenSessionError({
                 driver: CodexAdapterV2.CODEX_DRIVER_KIND,
                 providerSessionId: openInput.providerSessionId,
                 cause,

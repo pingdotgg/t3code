@@ -7,6 +7,7 @@ import {
 import * as EnvironmentLinker from "../environments/EnvironmentLinker.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
 import * as Devices from "../agentActivity/Devices.ts";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync.
 import * as NodeCrypto from "node:crypto";
 import { createClerkClient, verifyToken } from "@clerk/backend";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
@@ -1185,12 +1186,13 @@ describe("relay request tracing", () => {
           Effect.provideService(HttpServerRequest.HttpServerRequest, request),
         );
 
-        expect(spans.map((span) => span.name)).toEqual(["http.server POST", "relay.test.endpoint"]);
+        expect(spans.map((span) => span.name)).toEqual(["POST", "relay.test.endpoint"]);
         expect(spans[0]?.kind).toBe("server");
         expect(spans[0]?.attributes.get("url.path")).toBe("/v1/mobile/devices");
         expect(spans[0]?.attributes.get("http.response.status_code")).toBe(204);
-        expect(spans[0]?.attributes.get("http.request.header.authorization")).toBe("<redacted>");
-        expect(spans[0]?.attributes.get("http.request.header.dpop")).toBe("<redacted>");
+        // Headers are not captured at all, so credentials never reach the span.
+        expect(spans[0]?.attributes.get("http.request.header.authorization")).toBeUndefined();
+        expect(spans[0]?.attributes.get("http.request.header.dpop")).toBeUndefined();
         expect(Option.isNone(spans[0]!.parent)).toBe(true);
         expect(Option.getOrUndefined(spans[1]!.parent)?.spanId).toBe(spans[0]?.spanId);
       }),

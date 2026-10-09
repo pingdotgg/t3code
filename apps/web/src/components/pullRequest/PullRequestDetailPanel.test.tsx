@@ -24,6 +24,11 @@ const { newThread, prepareThread, refresh, Wrapper, Trigger } = vi.hoisted(() =>
     </>
   ),
 }));
+vi.mock("~/state/session", async (original) => ({
+  ...(await original<typeof import("~/state/session")>()),
+  useEnvironmentScope: () => true,
+  readEnvironmentScope: () => true,
+}));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
 vi.mock("~/state/server", () => ({ primaryServerKeybindingsAtom: {} }));
 vi.mock("~/state/entities", () => ({ useProjects: () => [], useServerConfigs: () => new Map() }));
@@ -39,7 +44,7 @@ vi.mock("~/hooks/useSettings", () => ({
 vi.mock("~/hooks/useLiveRefresh", () => ({ useLiveRefresh: () => {} }));
 vi.mock("~/hooks/useHandleNewThread", () => ({ useNewThreadHandler: () => newThread }));
 vi.mock("~/lib/sourceControlActions", () => ({
-  usePreparePullRequestThreadAction: () => ({ run: prepareThread }),
+  usePreparePullRequestThreadAction: () => ({ run: prepareThread, isAllowed: true, error: null }),
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("~/state/pullRequests", async (importOriginal) => ({

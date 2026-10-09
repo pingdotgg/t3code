@@ -4,6 +4,7 @@ import type {
 } from "@t3tools/contracts/relay";
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync.
 import * as NodeCrypto from "node:crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
