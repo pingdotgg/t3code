@@ -39,6 +39,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type OrchestrationV2UserInputQuestion,
   type ProviderApprovalDecision,
@@ -384,6 +385,23 @@ interface PiWake {
   readonly events: Array<PiRpcRecord>;
 }
 
+type PiSubagentTurnItem = Extract<OrchestrationV2TurnItem, { readonly type: "subagent" }>;
+
+interface PiSubagentRow {
+  readonly node: OrchestrationV2ExecutionNode;
+  readonly subagent: OrchestrationV2Subagent;
+  readonly turnItem: PiSubagentTurnItem;
+}
+
+/**
+ * A pi-subagents async child, which outlives the turn that launched it. The
+ * rows are the running ones emitted at launch, so its completion settles them
+ * on the launching run whatever turn is active by then.
+ */
+interface PiAsyncSubagent extends PiSubagentRow {
+  readonly agent: string;
+}
+
 // ── adapter ───────────────────────────────────────────────────
 
 export function makePiAdapterV2(
@@ -498,6 +516,8 @@ export function makePiAdapterV2(
       // turn attaches. The guard remains for sessions with no routable owner.
       let unsolicitedActivityDetected = false;
       let pendingWake: PiWake | null = null;
+      /** Running pi-subagents async children, keyed by their run directory. */
+      const asyncSubagents = new Map<string, PiAsyncSubagent>();
       let rollbackBarrier: Deferred.Deferred<
         void,
         ProviderAdapter.ProviderAdapterProtocolError
@@ -1059,6 +1079,225 @@ export function makePiAdapterV2(
         });
         if (toolName === "subagent") {
           yield* emitSubagentTasks(turn, toolCallId, resultRecord, completed);
+          // A result that names a run directory launched a run, even if Pi reports an error.
+          if (completed) yield* trackAsyncSubagent(turn, toolCallId, args, resultRecord);
+        }
+      });
+
+      const subagentRow = (
+        turn: ActivePiTurn,
+        toolCallId: string,
+        nativeTaskId: string,
+        child: {
+          readonly agent: string;
+          readonly task: string;
+          readonly model: string | null;
+          readonly status: "running" | "completed" | "failed" | "interrupted";
+          readonly progress: string | undefined;
+          readonly result: string | null;
+          readonly startedAt: DateTime.Utc;
+          readonly updatedAt: DateTime.Utc;
+        },
+      ): PiSubagentRow => {
+        const subagentId = idAllocator.derive.nodeFromProviderItem({
+          driver: PI_PROVIDER,
+          nativeItemId: nativeTaskId,
+        });
+        const parentNodeId = idAllocator.derive.nodeFromProviderItem({
+          driver: PI_PROVIDER,
+          nativeItemId: toolCallId,
+        });
+        const completedAt = child.status === "running" ? null : child.updatedAt;
+        const progress = child.progress === undefined ? {} : { progress: child.progress };
+        return {
+          node: {
+            id: subagentId,
+            threadId: turn.turnInput.threadId,
+            runId: turn.turnInput.runId,
+            parentNodeId,
+            rootNodeId: turn.turnInput.rootNodeId,
+            kind: "subagent",
+            status: child.status,
+            countsForRun: false,
+            providerThreadId: turn.turnInput.providerThread.id,
+            providerTurnId: turn.providerTurn.id,
+            nativeItemRef: providerRef(nativeTaskId),
+            runtimeRequestId: null,
+            checkpointScopeId: null,
+            startedAt: child.startedAt,
+            completedAt,
+          },
+          subagent: {
+            id: subagentId,
+            threadId: turn.turnInput.threadId,
+            runId: turn.turnInput.runId,
+            parentNodeId,
+            origin: "provider_native",
+            createdBy: "agent",
+            driver: PI_PROVIDER,
+            providerInstanceId: options.instanceId,
+            providerThreadId: turn.turnInput.providerThread.id,
+            childThreadId: null,
+            nativeTaskRef: providerRef(nativeTaskId),
+            prompt: child.task,
+            title: child.agent,
+            model: child.model,
+            status: child.status,
+            ...progress,
+            result: child.result,
+            startedAt: child.startedAt,
+            completedAt,
+            updatedAt: child.updatedAt,
+          },
+          turnItem: {
+            ...baseItemFields(turn, nativeTaskId, child.startedAt, child.updatedAt),
+            status: child.status,
+            title: child.agent,
+            completedAt,
+            type: "subagent",
+            subagentId,
+            origin: "provider_native",
+            driver: PI_PROVIDER,
+            providerInstanceId: options.instanceId,
+            childThreadId: null,
+            prompt: child.task,
+            ...progress,
+            result: child.result,
+          },
+        };
+      };
+
+      const emitSubagentRow = Effect.fnUntraced(function* (row: PiSubagentRow) {
+        yield* emit({ type: "node.updated", driver: PI_PROVIDER, node: row.node });
+        yield* emit({ type: "subagent.updated", driver: PI_PROVIDER, subagent: row.subagent });
+        yield* emit({ type: "turn_item.updated", driver: PI_PROVIDER, turnItem: row.turnItem });
+      });
+
+      /**
+       * pi-subagents' async mode returns from the tool at launch, with an
+       * `asyncId` and no results. The child stays running on the launching run
+       * until the extension's completion notice names its run directory. Only
+       * single-agent launches are tracked: their notice labels the run with the
+       * launched agent.
+       */
+      const trackAsyncSubagent = Effect.fnUntraced(function* (
+        turn: ActivePiTurn,
+        toolCallId: string,
+        args: unknown,
+        resultRecord: unknown,
+      ) {
+        const details = recordField(resultRecord, "details");
+        const asyncDir = recordString(details, "asyncDir");
+        // pi-subagents launches, and names the run in its notice, with the trimmed agent.
+        const agent = recordString(args, "agent")?.trim();
+        const task = recordString(args, "task");
+        if (
+          recordString(details, "mode") !== "single" ||
+          recordString(details, "asyncId") === undefined ||
+          asyncDir === undefined ||
+          agent === undefined ||
+          task === undefined ||
+          asyncSubagents.has(asyncDir)
+        ) {
+          return;
+        }
+        const launchedAt = yield* DateTime.now;
+        const row = subagentRow(turn, toolCallId, `${toolCallId}:subagent:async`, {
+          agent,
+          task,
+          model: null,
+          status: "running",
+          progress: undefined,
+          result: null,
+          startedAt: launchedAt,
+          updatedAt: launchedAt,
+        });
+        asyncSubagents.set(asyncDir, { ...row, agent });
+        yield* emitSubagentRow(row);
+      });
+
+      const settleAsyncSubagent = Effect.fnUntraced(function* (
+        asyncDir: string,
+        status: PiAsyncSubagentOutcome,
+        result: string | null,
+      ) {
+        const tracked = asyncSubagents.get(asyncDir);
+        if (tracked === undefined) return;
+        asyncSubagents.delete(asyncDir);
+        const settledAt = yield* DateTime.now;
+        const completedAt = status === "idle" ? null : settledAt;
+        const settled = { status, result, completedAt, updatedAt: settledAt };
+        yield* emitSubagentRow({
+          node: { ...tracked.node, status, completedAt },
+          subagent: { ...tracked.subagent, ...settled },
+          turnItem: { ...tracked.turnItem, ...settled },
+        });
+      });
+
+      /**
+       * T3 can no longer see these children finish: Stop, a native session
+       * change, an unfinished launching turn, or Pi exiting. pi-subagents runs
+       * them detached, so they may still finish unseen.
+       */
+      const interruptAsyncSubagents = (runId?: ActivePiTurn["turnInput"]["runId"]) =>
+        Effect.forEach(
+          [...asyncSubagents].flatMap(([asyncDir, tracked]) =>
+            runId === undefined || tracked.subagent.runId === runId ? [asyncDir] : [],
+          ),
+          (asyncDir) => settleAsyncSubagent(asyncDir, "interrupted", null),
+          { discard: true },
+        );
+
+      /**
+       * pi-subagents announces finished runs in one custom message, without run
+       * ids. Its details list each run's agent and outcome in order. Its text
+       * gives each run a section that ends with a line naming the run's
+       * directory, after the child's own output, which may quote such lines. A
+       * lone background run's line is the last one, because only fixed fields
+       * follow it. A batch is read only when it names one distinct directory
+       * per run.
+       */
+      const settleNotifiedAsyncSubagents = Effect.fnUntraced(function* (message: unknown) {
+        const runs = recordField(recordField(message, "details"), "runs");
+        if (!Array.isArray(runs) || runs.length === 0) return;
+        const lines = contentText(recordField(message, "content")).split("\n");
+        const directoryLines = lines.flatMap((line, index) =>
+          line.startsWith(PI_ASYNC_RUN_DIRECTORY_PREFIX) ? [index] : [],
+        );
+        let runLines = directoryLines;
+        if (runs.length === 1) {
+          const background = lines[0]?.startsWith(PI_BACKGROUND_RUN_HEADER_PREFIX) === true;
+          runLines = background ? directoryLines.slice(-1) : [];
+        }
+        const asyncDirs = runLines.map((at) =>
+          lines[at]?.slice(PI_ASYNC_RUN_DIRECTORY_PREFIX.length),
+        );
+        if (asyncDirs.length !== runs.length || new Set(asyncDirs).size !== asyncDirs.length) {
+          return;
+        }
+        for (const [index, at] of runLines.entries()) {
+          const run = runs[index];
+          const asyncDir = asyncDirs[index];
+          const status = piAsyncSubagentOutcome(recordString(run, "status"));
+          if (
+            asyncDir === undefined ||
+            status === undefined ||
+            asyncSubagents.get(asyncDir)?.agent !== recordString(run, "agent")
+          ) {
+            continue;
+          }
+          // A batched run's section starts at its numbered heading, the first one
+          // after the previous run's directory line. A lone notice is one section.
+          let sectionStart = 0;
+          if (runs.length > 1) {
+            const previous = runLines[index - 1] ?? 0;
+            const heading = lines.findIndex(
+              (line, lineIndex) => lineIndex > previous && line.startsWith(`${index + 1}. `),
+            );
+            sectionStart = heading < 0 ? previous + 1 : heading;
+          }
+          const section = lines.slice(sectionStart, at + 1).join("\n");
+          yield* settleAsyncSubagent(asyncDir, status, section.slice(0, 10_000));
         }
       });
 
@@ -1077,19 +1316,11 @@ export function makePiAdapterV2(
         const results = recordField(recordField(resultRecord, "details"), "results");
         if (!Array.isArray(results)) return;
         const emittedAt = yield* DateTime.now;
-        const parentNodeId = idAllocator.derive.nodeFromProviderItem({
-          driver: PI_PROVIDER,
-          nativeItemId: toolCallId,
-        });
         for (const [index, result] of results.entries()) {
           const agent = recordString(result, "agent");
           const task = recordString(result, "task");
           if (agent === undefined || task === undefined) continue;
           const nativeTaskId = `${toolCallId}:subagent:${recordNumber(result, "step") ?? index}`;
-          const subagentId = idAllocator.derive.nodeFromProviderItem({
-            driver: PI_PROVIDER,
-            nativeItemId: nativeTaskId,
-          });
           const startedAt = turn.toolStartedAt.get(nativeTaskId) ?? emittedAt;
           turn.toolStartedAt.set(nativeTaskId, startedAt);
           const finished = completed || recordField(result, "finished") === true;
@@ -1107,54 +1338,18 @@ export function makePiAdapterV2(
                 ? "completed"
                 : "running";
           const outputText = piSubagentOutput(result);
-          const progress =
-            !finished && outputText.length > 0 ? { progress: outputText.slice(0, 200) } : {};
-          const resultText = finished && outputText.length > 0 ? outputText.slice(0, 10_000) : null;
-          yield* emit({
-            type: "subagent.updated",
-            driver: PI_PROVIDER,
-            subagent: {
-              id: subagentId,
-              threadId: turn.turnInput.threadId,
-              runId: turn.turnInput.runId,
-              parentNodeId,
-              origin: "provider_native",
-              createdBy: "agent",
-              driver: PI_PROVIDER,
-              providerInstanceId: options.instanceId,
-              providerThreadId: turn.turnInput.providerThread.id,
-              childThreadId: null,
-              nativeTaskRef: providerRef(nativeTaskId),
-              prompt: task,
-              title: agent,
+          yield* emitSubagentRow(
+            subagentRow(turn, toolCallId, nativeTaskId, {
+              agent,
+              task,
               model: recordString(result, "model") ?? null,
               status,
-              ...progress,
-              result: resultText,
+              progress: !finished && outputText.length > 0 ? outputText.slice(0, 200) : undefined,
+              result: finished && outputText.length > 0 ? outputText.slice(0, 10_000) : null,
               startedAt,
-              completedAt: finished ? emittedAt : null,
               updatedAt: emittedAt,
-            },
-          });
-          yield* emit({
-            type: "turn_item.updated",
-            driver: PI_PROVIDER,
-            turnItem: {
-              ...baseItemFields(turn, nativeTaskId, startedAt, emittedAt),
-              status,
-              title: agent,
-              completedAt: finished ? emittedAt : null,
-              type: "subagent",
-              subagentId,
-              origin: "provider_native",
-              driver: PI_PROVIDER,
-              providerInstanceId: options.instanceId,
-              childThreadId: null,
-              prompt: task,
-              ...progress,
-              result: resultText,
-            },
-          });
+            }),
+          );
         }
       });
 
@@ -1472,6 +1667,10 @@ export function makePiAdapterV2(
           ? yield* readTokenUsage(turn.latestCompactionAfterTokens, completedAt)
           : undefined;
         const failure = turn.interrupted ? null : (turn.rejectedPromptFailure ?? turn.failure);
+        // The run stops ingesting at an unfinished terminal, so settle its children first.
+        if (turn.interrupted || failure !== null) {
+          yield* interruptAsyncSubagents(turn.turnInput.runId);
+        }
         yield* emit({
           type: "provider_turn.updated",
           driver: PI_PROVIDER,
@@ -1706,8 +1905,13 @@ export function makePiAdapterV2(
             return;
           }
           case "message_end": {
-            if (turn === null) return;
             const message = event["message"];
+            // Arrives between turns, or buffered with the wake it triggers.
+            if (recordString(message, "customType") === PI_SUBAGENT_NOTIFY_TYPE) {
+              yield* settleNotifiedAsyncSubagents(message);
+              return;
+            }
+            if (turn === null) return;
             if (recordString(message, "role") !== "assistant") return;
             yield* completeOpenStreamItems(turn);
             if (recordString(message, "stopReason") === "error" && turn.failure === null) {
@@ -2087,6 +2291,7 @@ export function makePiAdapterV2(
               } else if (hadPendingWake) {
                 yield* cancelPendingPrompts(yield* DateTime.now);
               }
+              yield* interruptAsyncSubagents();
               if (unsolicitedActivityDetected) {
                 yield* updateProviderSession("error", PI_UNSOLICITED_ACTIVITY_ERROR);
                 yield* Queue.end(events);
@@ -2154,6 +2359,10 @@ export function makePiAdapterV2(
         const needsNewSession = resumeId == null && registrationAttempted;
         registrationAttempted = true;
         if (resumeId != null || needsNewSession) {
+          // pi-subagents announces a child only to the session file that launched it.
+          if (needsNewSession || resumeId !== lastNativeThreadId) {
+            yield* interruptAsyncSubagents();
+          }
           lastNativeThreadId = resumeId ?? lastNativeThreadId;
           // Even a failed lifecycle operation can change Pi's native session.
           // Never leave the old app binding or model defaults usable afterward.
@@ -2363,10 +2572,16 @@ export function makePiAdapterV2(
           return sessionEntity;
         },
         events: Stream.fromQueue(events),
-        hasPendingBackgroundWork: Effect.sync(() => pendingWake !== null),
+        hasPendingBackgroundWork: Effect.sync(
+          () => pendingWake !== null || asyncSubagents.size > 0,
+        ),
         hasPendingBackgroundWorkForThread: (providerThread) =>
           Effect.sync(
-            () => pendingWake !== null && pendingWake.state.providerThread.id === providerThread.id,
+            () =>
+              (pendingWake !== null && pendingWake.state.providerThread.id === providerThread.id) ||
+              [...asyncSubagents.values()].some(
+                (tracked) => tracked.subagent.providerThreadId === providerThread.id,
+              ),
           ),
         getModelContextWindow: (selection) => {
           if (selection.instanceId !== options.instanceId) return undefined;
@@ -2665,8 +2880,10 @@ export function makePiAdapterV2(
           Effect.gen(function* () {
             const turn = threadState?.activeTurn ?? null;
             // Stop on a settled turn: Pi runs nothing between prompts, so
-            // nothing of that turn is left to stop.
+            // nothing of that turn is left to stop. Async pi-subagents runs
+            // are detached from Pi, so Stop only ends their tracking here.
             if (turn === null && interruptInput.requestRuntimeRestart === true) {
+              yield* sessionEventPermit.withPermits(1)(interruptAsyncSubagents());
               if (pendingWake !== null)
                 yield* sessionEventPermit.withPermits(1)(stopPendingWake(pendingWake));
               return;
@@ -2895,6 +3112,8 @@ export function makePiAdapterV2(
                   const forkData = yield* lifecycleRequest({ type: "fork", entryId: forkEntryId });
                   if (recordField(forkData, "cancelled") === true)
                     return yield* protocolError("A Pi extension cancelled the session fork");
+                  // pi-subagents announces a child only to the session that launched it.
+                  yield* interruptAsyncSubagents();
                   const forkState = yield* request({ type: "get_state" }).pipe(
                     Effect.onError(() =>
                       Effect.sync(() => {
@@ -3106,6 +3325,30 @@ function piRollbackForkEntry(input: {
   const ref = boundary.nativeTurnRef;
   if (ref === null || ref.strength !== "strong" || ref.nativeId === null) return undefined;
   return ref.nativeId;
+}
+
+/** The custom message type pi-subagents uses to announce finished background runs. */
+const PI_SUBAGENT_NOTIFY_TYPE = "subagent-notify";
+/** pi-subagents writes this line, with the run's directory, into each async run's notice. */
+const PI_ASYNC_RUN_DIRECTORY_PREFIX = "Retention-managed async directory: ";
+/** pi-subagents opens a lone background run's notice with this; foreground runs differ. */
+const PI_BACKGROUND_RUN_HEADER_PREFIX = "Background task ";
+
+type PiAsyncSubagentOutcome = "completed" | "failed" | "interrupted" | "idle";
+
+function piAsyncSubagentOutcome(status: string | undefined): PiAsyncSubagentOutcome | undefined {
+  switch (status) {
+    case "completed":
+    case "failed":
+      return status;
+    case "stopped":
+      return "interrupted";
+    // A paused run waits to be resumed: no longer running, but not finished.
+    case "paused":
+      return "idle";
+    default:
+      return undefined;
+  }
 }
 
 /**
