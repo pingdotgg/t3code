@@ -4018,10 +4018,12 @@ export default function ChatView(props: ChatViewProps) {
     [],
   );
   const latestPromptSuggestion = promptSuggestionQuery.data ?? null;
-  // Tied to the completed run it follows, so a rollback or a later run hides it.
+  // Tied to the completed run it follows and to its provider instance, so a
+  // rollback, a later run, or picking another provider hides it.
   const promptSuggestion =
     latestRunSettled &&
     activeLatestRun?.status === "completed" &&
+    selectedProviderEntry?.instanceId === promptSuggestionInstanceId &&
     latestPromptSuggestion !== null &&
     latestPromptSuggestion.runId === activeLatestRun?.runId &&
     !dismissedPromptSuggestionIds.has(latestPromptSuggestion.id)
