@@ -54,7 +54,8 @@ t3 release feed, all under .t3/update-lab (state survives down/up).
   build-runtime <version> [--archive file]
       Publish a t3 runtime to the release feed: a source runtime (copy of
       apps/server stamped with <version>, runs on this checkout's deps) or
-      a real CLI archive built by the release pipeline.
+      a real CLI archive built by the release pipeline. Source runtimes
+      include apps/web/dist when present; otherwise they serve APIs only.
   reset                         Delete the lab (only after down).
 
 Providers: codex claude opencode pi grok. Install methods rotate across envs:
@@ -644,7 +645,8 @@ function compareVersions(a: string, b: string): number {
  * Publish `t3-<version>-<platform>.tar.gz` + SHA256SUMS. Without `--archive`
  * this is a source runtime: a copy of apps/server whose package.json carries
  * `version` (every version check reads it) and whose node_modules links back
- * to this checkout, started by a `t3` wrapper.
+ * to this checkout, started by a `t3` wrapper. An existing web build is copied
+ * beside the server; publishing does not build the client.
  */
 function buildRuntime(version: string, archive: string | undefined): string {
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version))
@@ -664,6 +666,12 @@ function buildRuntime(version: string, archive: string | undefined): string {
       filter: (source) =>
         !["node_modules", "dist", "dist-exe"].includes(NodePath.relative(serverSource, source)),
     });
+    const webDist = NodePath.join(REPO, "apps/web/dist");
+    if (NodeFS.existsSync(NodePath.join(webDist, "index.html"))) {
+      NodeFS.cpSync(webDist, NodePath.join(stage, "web/dist"), { recursive: true });
+    } else {
+      console.warn("No apps/web/dist/index.html; publishing an API-only source runtime.");
+    }
     const packageJsonPath = NodePath.join(stage, "server/package.json");
     const packageJson = JSON.parse(NodeFS.readFileSync(packageJsonPath, "utf8"));
     packageJson.version = version;
@@ -923,8 +931,14 @@ async function rpc(state: LabState, env: LabEnv, tag: string, payload: unknown):
     `${origin.replace("http", "ws")}/ws?orchestrationProtocol=${ORCHESTRATION_PROTOCOL}&wsTicket=${encodeURIComponent(ticket)}`,
   );
   return await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${tag} timed out`)), 10 * 60_000);
+    let settled = false;
+    const timer = setTimeout(
+      () => finish(() => reject(new Error(`${tag} timed out`))),
+      10 * 60_000,
+    );
     const finish = (settle: () => void) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       socket.close();
       settle();
@@ -933,6 +947,9 @@ async function rpc(state: LabState, env: LabEnv, tag: string, payload: unknown):
       socket.send(JSON.stringify({ _tag: "Request", id: "1", tag, payload, headers: [] })),
     );
     socket.addEventListener("error", () => finish(() => reject(new Error(`${tag}: socket error`))));
+    socket.addEventListener("close", () =>
+      finish(() => reject(new Error(`${tag}: socket closed before response`))),
+    );
     socket.addEventListener("message", (event) => {
       const decoded = JSON.parse(String(event.data));
       for (const message of Array.isArray(decoded) ? decoded : [decoded]) {
