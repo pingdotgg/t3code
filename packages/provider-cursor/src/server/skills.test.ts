@@ -167,6 +167,27 @@ describe("Cursor skills", () => {
       "please /review this",
     );
   });
+  it("preserves multiword skill references without invoking their first word", () => {
+    const prompt = 'use $"Poteto Mode" then $"Unknown Skill"';
+    expect(hasCursorSkillMention(prompt)).toBe(true);
+    expect(hasCursorSkillMention(prompt)).toBe(true);
+    expect(rewriteCursorSkillMentions(prompt, new Set(["Poteto Mode", "Poteto"]))).toBe(prompt);
+  });
+  it.each([
+    ["Poteto Mode", '$"Poteto Mode"'],
+    ["Poteto\tMode", '$"Poteto\tMode"'],
+    ["Poteto\nMode", '$"Poteto\\nMode"'],
+    ["Poteto\rMode", '$"Poteto\\rMode"'],
+    ["Poteto\r\nMode", '$"Poteto\\r\\nMode"'],
+    ["Poteto\u00a0Mode", '$"Poteto\u00a0Mode"'],
+  ])("keeps the name %j intact alongside single-word invocations", (name, source) => {
+    expect(
+      rewriteCursorSkillMentions(
+        `use ${source} then $"review"`,
+        new Set([name, "Poteto", "review"]),
+      ),
+    ).toBe(`use ${source} then /review`);
+  });
   it("detects and invokes digit-leading Cursor skills without rewriting money", () => {
     const names = new Set(["2spec", "20k", "100M", "1e6"]);
     expect(hasCursorSkillMention("use $2spec here")).toBe(true);

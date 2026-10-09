@@ -1,8 +1,50 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { collectComposerInlineTokens } from "./composerInlineTokens.ts";
+import {
+  collectComposerInlineTokens,
+  collectComposerSkillTokens,
+  serializeComposerSkillToken,
+} from "./composerInlineTokens.ts";
 
 describe("collectComposerInlineTokens", () => {
+  it.each(["Build @docs now", "Build [a.ts](a.ts) now", 'Build $ui and $"Nested name" now'])(
+    "keeps inline references inside %s within one skill chip",
+    (name) => {
+      const source = serializeComposerSkillToken(name);
+      const tokens = collectComposerInlineTokens(`Use ${source} next`);
+      expect(tokens).toEqual([
+        { type: "skill", value: name, source, start: 4, end: 4 + source.length },
+      ]);
+      expect(collectComposerInlineTokens(`Use ${source}`)).toEqual([]);
+      expect(
+        collectComposerInlineTokens(`Use ${source}`, { preserveTrailingFrom: tokens }),
+      ).toEqual(tokens);
+    },
+  );
+
+  it("keeps a quoted multiword skill in one atomic source range", () => {
+    expect(collectComposerInlineTokens('Use $"Poteto Mode" next')).toEqual([
+      { type: "skill", value: "Poteto Mode", source: '$"Poteto Mode"', start: 4, end: 18 },
+    ]);
+  });
+
+  it("decodes escaped quotes and backslashes in skill names", () => {
+    expect(collectComposerInlineTokens('Use $"Review \\"UI\\"\\\\Tools" next')).toEqual([
+      {
+        type: "skill",
+        value: 'Review "UI"\\Tools',
+        source: '$"Review \\"UI\\"\\\\Tools"',
+        start: 4,
+        end: 27,
+      },
+    ]);
+  });
+
+  it.each(['$"Poteto Mode', '$"" ', '$"Poteto\nMode" ', '$"Poteto Mode"suffix '])(
+    "leaves malformed quoted skill references as text: %s",
+    (text) => expect(collectComposerInlineTokens(text)).toEqual([]),
+  );
+
   it("collects file links, mentions, and skills with source ranges", () => {
     const text = "Use $ui and inspect [Chat.tsx](src/Chat.tsx) with @AGENTS.md please";
 
@@ -189,5 +231,27 @@ describe("collectComposerInlineTokens", () => {
     const started = performance.now();
     expect(collectComposerInlineTokens(" [[".repeat(40_000))).toEqual([]);
     expect(performance.now() - started).toBeLessThan(1_000);
+  });
+});
+
+describe("serializeComposerSkillToken", () => {
+  it.each([
+    ["Poteto Mode", '$"Poteto Mode"'],
+    ['Review "UI"\\Tools', '$"Review \\"UI\\"\\\\Tools"'],
+    ["review", "$review"],
+    ["2spec", "$2spec"],
+    ["plugin:review", "$plugin:review"],
+    ["技能", '$"技能"'],
+    ["Review\nUI", '$"Review\\nUI"'],
+    ["Review\rUI", '$"Review\\rUI"'],
+    ["Review\r\nUI", '$"Review\\r\\nUI"'],
+    [String.raw`Review\nUI`, '$"Review\\\\nUI"'],
+    [String.raw`Review\rUI`, '$"Review\\\\rUI"'],
+  ])("preserves the full catalog name %s", (name, expected) => {
+    const source = serializeComposerSkillToken(name);
+    expect(source).toBe(expected);
+    expect(collectComposerSkillTokens(source)).toEqual([
+      { type: "skill", value: name, source: expected, start: 0, end: expected.length },
+    ]);
   });
 });

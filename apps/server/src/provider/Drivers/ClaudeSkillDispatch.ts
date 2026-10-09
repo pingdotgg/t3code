@@ -24,13 +24,7 @@
  * @module provider/Drivers/ClaudeSkillDispatch
  */
 
-/**
- * Same token shape the composer and timeline chips recognise
- * (`packages/shared/src/composerInlineTokens.ts`), so a rendered chip and a
- * dispatched skill are always the same set.
- */
-const SKILL_MENTION_PATTERN =
-  /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
+import { collectComposerSkillTokens } from "@t3tools/shared/composerInlineTokens";
 
 export interface ClaudeSkillDispatch {
   /** Text before the dispatched mention, or `undefined` when it opens the prompt. */
@@ -44,17 +38,19 @@ export interface ClaudeSkillDispatch {
  * Split `prompt` around the last `$skill` mention that names a known skill.
  * Returns `undefined` when there is nothing to dispatch, in which case the
  * prompt should go out unchanged. Mentions that do not match a discovered
- * skill stay literal: a `$HOME` in prose must not become a command.
+ * skill stay literal: a `$HOME` in prose must not become a command. Names
+ * containing whitespace also stay literal because slash commands cannot
+ * preserve them as one command name.
  */
 export function planClaudeSkillDispatch(
   prompt: string,
   skillNames: ReadonlySet<string>,
 ): ClaudeSkillDispatch | undefined {
-  const mentions = [...prompt.matchAll(SKILL_MENTION_PATTERN)].flatMap((match) => {
-    const name = match[2] ?? "";
-    if (!skillNames.has(name)) return [];
-    const start = (match.index ?? 0) + (match[1]?.length ?? 0);
-    return [{ name, start, end: (match.index ?? 0) + match[0].length }];
+  const mentions = collectComposerSkillTokens(prompt).flatMap((token) => {
+    const name = token.value;
+    // Native slash invocations separate the command name from arguments at whitespace.
+    if (/\s/u.test(name) || !skillNames.has(name)) return [];
+    return [{ name, start: token.start, end: token.end }];
   });
   const last = mentions.at(-1);
   if (!last) {

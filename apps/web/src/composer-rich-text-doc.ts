@@ -16,6 +16,7 @@ import {
   TextSelection,
   type Transaction,
 } from "@tiptap/pm/state";
+import { serializeComposerSkillToken } from "@t3tools/shared/composerInlineTokens";
 
 import { splitPromptIntoComposerSegments } from "~/composer-editor-mentions";
 import { nextOrderedMarkerText } from "~/composer-list-continuation";
@@ -809,7 +810,7 @@ function readAtomSource(node: ProseMirrorNode): string {
       return typeof attrs.source === "string" ? attrs.source : "";
     case "composer-skill": {
       const name = typeof attrs.skillName === "string" ? attrs.skillName : "";
-      return name ? `$${name}` : "";
+      return name ? serializeComposerSkillToken(name) : "";
     }
     default:
       return "";
