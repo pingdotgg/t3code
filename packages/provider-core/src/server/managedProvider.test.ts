@@ -16,7 +16,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
-import { ProviderHost, type ProviderHostShape } from "./ProviderHost.ts";
+import * as ProviderHost from "./ProviderHost.ts";
 import { makeManagedServerProvider } from "./managedProvider.ts";
 
 const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
@@ -99,11 +99,11 @@ const refreshedSnapshotSecond: ServerProvider = {
 /** A host whose settings never change and whose background demand is fixed. */
 function layerProviderHost(input: {
   readonly runBackgroundWork: boolean;
-  readonly settings?: Pick<ProviderHostShape, "settings">["settings"];
+  readonly settings?: Pick<ProviderHost.ProviderHostShape, "settings">["settings"];
 }) {
   return Layer.succeed(
-    ProviderHost,
-    ProviderHost.of({
+    ProviderHost.ProviderHost,
+    ProviderHost.ProviderHost.of({
       paths: {
         cwd: process.cwd(),
         baseDir: "/t3",
@@ -281,7 +281,7 @@ describe("makeManagedServerProvider", () => {
         };
         const serverSettingsRef = yield* Ref.make(initialServerSettings);
         const serverSettingsChanges = yield* PubSub.unbounded<typeof initialServerSettings>();
-        const hostSettings: ProviderHostShape["settings"] = {
+        const hostSettings: ProviderHost.ProviderHostShape["settings"] = {
           get: Ref.get(serverSettingsRef),
           changes: Stream.empty,
           subscribe: PubSub.subscribe(serverSettingsChanges).pipe(

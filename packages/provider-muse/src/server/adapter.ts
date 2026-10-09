@@ -35,7 +35,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import type { ProviderHostShape } from "@t3tools/provider-core/server/ProviderHost";
+import type * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { museModelCapabilities, resolveMuseReasoningEffort } from "./modelCatalog.ts";
@@ -63,35 +63,13 @@ import {
   type createMuseSdkHost,
   type MuseSdkHost,
 } from "./sdk.ts";
-import type { EventNdjsonLogger } from "@t3tools/provider-core/server/ProviderEventLoggers";
+import type * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
   providerMessageTextWithAttachmentPaths,
   isProviderNativeImageAttachment,
 } from "@t3tools/provider-core/server/attachmentPrompt";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import {
-  ProviderAdapterEnsureThreadError,
-  ProviderAdapterForkThreadError,
-  ProviderAdapterInterruptError,
-  ProviderAdapterOpenSessionError,
-  ProviderAdapterProtocolError,
-  ProviderAdapterReadThreadSnapshotError,
-  ProviderAdapterResumeThreadError,
-  ProviderAdapterRollbackThreadError,
-  ProviderAdapterRuntimeRequestResponseError,
-  ProviderAdapterSteerRunError,
-  ProviderAdapterTurnStartError,
-  ProviderAdapterV2,
-  type ProviderAdapterV2Error,
-  type ProviderAdapterV2Event,
-  type ProviderAdapterV2EnsureThreadInput,
-  type ProviderAdapterV2OpenSessionInput,
-  type ProviderAdapterV2SessionRuntime,
-  type ProviderAdapterV2Shape,
-  type ProviderAdapterV2ThreadSnapshot,
-  type ProviderAdapterV2TurnInput,
-  type ProviderAdapterV2TurnMessage,
-} from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   backgroundWorkNotification,
   type BackgroundWorkReport,
@@ -102,8 +80,8 @@ import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/sel
 import { museItemStatus, museToolPresentation } from "./itemPresentation.ts";
 
 const MUSE_PROVIDER = ProviderDriverKind.make("muse");
-const isOpenSessionError = Schema.is(ProviderAdapterOpenSessionError);
-const isProtocolError = Schema.is(ProviderAdapterProtocolError);
+const isOpenSessionError = Schema.is(ProviderAdapter.ProviderAdapterOpenSessionError);
+const isProtocolError = Schema.is(ProviderAdapter.ProviderAdapterProtocolError);
 
 const MuseProviderCapabilitiesV2 = {
   runtimePolicy: { enforcement: "native" },
@@ -204,12 +182,12 @@ export interface MuseAdapterV2Options {
   readonly settings: MuseSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
-  readonly host: ProviderHostShape;
+  readonly host: ProviderHost.ProviderHostShape;
   readonly fileSystem: FileSystem.FileSystem;
   readonly modelCatalog?: Effect.Effect<ReadonlyArray<ServerProviderModel>>;
   readonly createHost?: typeof createMuseSdkHost;
   readonly requestTimeoutMs?: number;
-  readonly nativeEventLogger?: EventNdjsonLogger;
+  readonly nativeEventLogger?: ProviderEventLoggers.EventNdjsonLogger;
   /** Where a turn Muse starts on its own (a finished workflow's report) asks for its run. */
   readonly continuationRequests?: {
     readonly offer: (
@@ -219,7 +197,7 @@ export interface MuseAdapterV2Options {
 }
 
 interface ActiveTurn {
-  readonly input: ProviderAdapterV2TurnInput;
+  readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
   providerTurn: OrchestrationV2ProviderTurn;
   readonly nativeId: string;
   /** Turns Muse started on its own while this run was active, which this run shows. */
@@ -267,21 +245,23 @@ const TOOLS_WITH_NATIVE_ROWS = new Set(["write_todos", "request_user_input", "wo
 const responseAnswerSchema = Schema.Union([Schema.String, Schema.Array(Schema.String)]);
 
 /** One scoped Muse host owns one native session; the orchestrator owns app runs and queuing. */
-export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapterV2Shape {
+export function makeMuseAdapterV2(
+  options: MuseAdapterV2Options,
+): ProviderAdapter.ProviderAdapterV2Shape {
   const { idAllocator } = options;
   const protocolError = (detail: string, payload?: unknown) =>
-    new ProviderAdapterProtocolError({
+    new ProviderAdapter.ProviderAdapterProtocolError({
       driver: MUSE_PROVIDER,
       detail,
       ...(payload === undefined ? {} : { payload }),
     });
-  return ProviderAdapterV2.of({
+  return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: options.instanceId,
     driver: MUSE_PROVIDER,
     getCapabilities: () => Effect.succeed(MuseProviderCapabilitiesV2),
     planSelectionTransition: () => Effect.succeed(turnScopedSelectionTransition()),
     openSession: Effect.fn("MuseAdapterV2.openSession")(function* (
-      input: ProviderAdapterV2OpenSessionInput,
+      input: ProviderAdapter.ProviderAdapterV2OpenSessionInput,
     ) {
       if (!options.settings.enabled) return yield* protocolError("Muse Code is disabled");
       if (input.runtimePolicy.interactionMode === "plan")
@@ -307,8 +287,8 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
         lastError: null,
       };
       const events = yield* Queue.unbounded<
-        ProviderAdapterV2Event,
-        ProviderAdapterV2Error | Cause.Done
+        ProviderAdapter.ProviderAdapterV2Event,
+        ProviderAdapter.ProviderAdapterV2Error | Cause.Done
       >();
       type Inbox =
         | { type: "notification"; method: string; params: unknown; epoch: number }
@@ -344,7 +324,7 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
       let wake:
         | { readonly nativeId: string; readonly events: Array<[string, unknown]> }
         | undefined;
-      const emit = (event: ProviderAdapterV2Event) =>
+      const emit = (event: ProviderAdapter.ProviderAdapterV2Event) =>
         Queue.offer(events, event).pipe(Effect.asVoid);
       const decode = <A, I>(schema: Schema.Codec<A, I>, data: unknown) =>
         Schema.decodeUnknownEffect(schema)(data).pipe(
@@ -1400,7 +1380,7 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
           ).pipe(
             Effect.mapError(
               (error) =>
-                new ProviderAdapterOpenSessionError({
+                new ProviderAdapter.ProviderAdapterOpenSessionError({
                   driver: MUSE_PROVIDER,
                   providerSessionId: input.providerSessionId,
                   cause: error.cause,
@@ -1472,7 +1452,9 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
       );
       yield* launchHost();
 
-      const register = Effect.fnUntraced(function* (args: ProviderAdapterV2EnsureThreadInput) {
+      const register = Effect.fnUntraced(function* (
+        args: ProviderAdapter.ProviderAdapterV2EnsureThreadInput,
+      ) {
         if (broken || closed)
           return yield* protocolError("Muse host is unavailable; reopen the session");
         if (active)
@@ -1592,7 +1574,9 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
           ),
         );
       });
-      const prompt = Effect.fnUntraced(function* (message: ProviderAdapterV2TurnMessage) {
+      const prompt = Effect.fnUntraced(function* (
+        message: ProviderAdapter.ProviderAdapterV2TurnMessage,
+      ) {
         const parts: SendUserTurnOptions<unknown>["input"] = [];
         const text = providerMessageTextWithAttachmentPaths({
           text: message.text,
@@ -1635,7 +1619,7 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
         );
       });
       const start = Effect.fnUntraced(function* (
-        turnInput: ProviderAdapterV2TurnInput,
+        turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
         compact = false,
       ) {
         if (!validateThread(turnInput.providerThread) || broken || closed)
@@ -1783,7 +1767,10 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
       // Only messages are read back; T3 owns turn and item history.
       const snapshot = Effect.fnUntraced(function* (
         current: OrchestrationV2ProviderThread,
-      ): Effect.fn.Return<ProviderAdapterV2ThreadSnapshot, ProviderAdapterV2Error> {
+      ): Effect.fn.Return<
+        ProviderAdapter.ProviderAdapterV2ThreadSnapshot,
+        ProviderAdapter.ProviderAdapterV2Error
+      > {
         const result = yield* request("session/read", { excludeItems: false }, false).pipe(
           Effect.flatMap((value) => decode(MuseSessionResult, value)),
         );
@@ -1821,7 +1808,7 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
           providerPayload: items,
         };
       });
-      const runtime: ProviderAdapterV2SessionRuntime = {
+      const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
         instanceId: options.instanceId,
         driver: MUSE_PROVIDER,
         providerSessionId: input.providerSessionId,
@@ -1836,7 +1823,7 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
             commands.withPermits(1),
             Effect.mapError(
               (cause) =>
-                new ProviderAdapterEnsureThreadError({
+                new ProviderAdapter.ProviderAdapterEnsureThreadError({
                   driver: MUSE_PROVIDER,
                   threadId: args.threadId,
                   cause,
@@ -1853,7 +1840,7 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
             commands.withPermits(1),
             Effect.mapError(
               (cause) =>
-                new ProviderAdapterResumeThreadError({
+                new ProviderAdapter.ProviderAdapterResumeThreadError({
                   driver: MUSE_PROVIDER,
                   providerSessionId: input.providerSessionId,
                   providerThreadId: args.providerThread.id,
@@ -1866,7 +1853,7 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
             commands.withPermits(1),
             Effect.mapError(
               (cause) =>
-                new ProviderAdapterTurnStartError({
+                new ProviderAdapter.ProviderAdapterTurnStartError({
                   driver: MUSE_PROVIDER,
                   threadId: args.threadId,
                   providerThreadId: args.providerThread.id,
@@ -1897,7 +1884,7 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
             commands.withPermits(1),
             Effect.mapError(
               (cause) =>
-                new ProviderAdapterSteerRunError({
+                new ProviderAdapter.ProviderAdapterSteerRunError({
                   driver: MUSE_PROVIDER,
                   providerThreadId: args.providerThread.id,
                   providerTurnId: args.providerTurnId,
@@ -1946,7 +1933,7 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
             commands.withPermits(1),
             Effect.mapError(
               (cause) =>
-                new ProviderAdapterInterruptError({
+                new ProviderAdapter.ProviderAdapterInterruptError({
                   driver: MUSE_PROVIDER,
                   providerThreadId: args.providerThread.id,
                   providerTurnId: args.providerTurnId,
@@ -1999,7 +1986,7 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
           }).pipe(
             Effect.mapError(
               (cause) =>
-                new ProviderAdapterRuntimeRequestResponseError({
+                new ProviderAdapter.ProviderAdapterRuntimeRequestResponseError({
                   driver: MUSE_PROVIDER,
                   requestId: args.requestId,
                   cause,
@@ -2014,7 +2001,7 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
             commands.withPermits(1),
             Effect.mapError(
               (cause) =>
-                new ProviderAdapterReadThreadSnapshotError({
+                new ProviderAdapter.ProviderAdapterReadThreadSnapshotError({
                   driver: MUSE_PROVIDER,
                   providerThreadId: args.providerThread.id,
                   cause,
@@ -2025,7 +2012,7 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
         // portable context handoff for forks and does not rewind Muse conversations.
         rollbackThread: (args) =>
           Effect.fail(
-            new ProviderAdapterRollbackThreadError({
+            new ProviderAdapter.ProviderAdapterRollbackThreadError({
               driver: MUSE_PROVIDER,
               providerThreadId: args.providerThread.id,
               checkpointId: args.target.checkpointId,
@@ -2034,7 +2021,7 @@ export function makeMuseAdapterV2(options: MuseAdapterV2Options): ProviderAdapte
           ),
         forkThread: (args) =>
           Effect.fail(
-            new ProviderAdapterForkThreadError({
+            new ProviderAdapter.ProviderAdapterForkThreadError({
               driver: MUSE_PROVIDER,
               providerThreadId: args.sourceProviderThread.id,
               cause: "Muse Code does not support native forks in T3 Code.",

@@ -60,7 +60,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 
-import { ProviderHost, type ProviderHostShape } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import {
@@ -231,7 +231,7 @@ export interface PiAdapterV2Options {
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
-  readonly host: ProviderHostShape;
+  readonly host: ProviderHost.ProviderHostShape;
   readonly continuationRequests?: {
     readonly offer: (
       request: ProviderContinuationRequests.ProviderContinuationRequest,
@@ -3201,7 +3201,7 @@ export type PiAdapterV2DriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
-  | ProviderHost;
+  | ProviderHost.ProviderHost;
 
 export const PiAdapterV2Driver: ProviderAdapterDriver<PiSettings, PiAdapterV2DriverEnv> = {
   driverKind: PI_DRIVER_KIND,
@@ -3213,7 +3213,7 @@ export const PiAdapterV2Driver: ProviderAdapterDriver<PiSettings, PiAdapterV2Dri
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       return makePiAdapterV2({
         instanceId: input.instanceId,
@@ -3249,7 +3249,7 @@ const layer: Layer.Layer<ProviderAdapter.ProviderAdapterV2, never, PiAdapterV2Dr
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const host = yield* ProviderHost;
+      const host = yield* ProviderHost.ProviderHost;
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       return makePiAdapterV2({
         instanceId: PI_DEFAULT_INSTANCE_ID,

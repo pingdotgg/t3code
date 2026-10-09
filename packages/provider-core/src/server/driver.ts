@@ -37,7 +37,7 @@ import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
-import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
+import type * as ProviderAdapter from "./ProviderAdapter.ts";
 import type { ProviderAuthController } from "./auth.ts";
 import type { ProviderDriverError } from "./errors.ts";
 import type { ServerProviderShape } from "./snapshot.ts";
@@ -101,7 +101,7 @@ export interface ProviderInstance {
     ProviderConsumeResetCreditOutcome,
     ProviderDriverError
   >;
-  readonly orchestrationAdapter: ProviderAdapterV2Shape;
+  readonly orchestrationAdapter: ProviderAdapter.ProviderAdapterV2Shape;
   readonly textGeneration: ProviderTextGeneration;
   readonly auth?: ProviderAuthController;
   readonly acpSessionManagement?: {

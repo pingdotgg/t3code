@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
 
-import type { ProviderAdapterV2Shape } from "@t3tools/provider-core/server/ProviderAdapter";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 export class ProviderAdapterDriverCreateError extends Schema.TaggedError<ProviderAdapterDriverCreateError>()(
   "ProviderAdapterDriverCreateError",
@@ -38,7 +38,11 @@ export interface ProviderAdapterDriver<Config, R = never> {
   readonly defaultConfig: () => Config;
   readonly create: (
     input: ProviderAdapterDriverCreateInput<Config>,
-  ) => Effect.Effect<ProviderAdapterV2Shape, ProviderAdapterDriverCreateError, R | Scope.Scope>;
+  ) => Effect.Effect<
+    ProviderAdapter.ProviderAdapterV2Shape,
+    ProviderAdapterDriverCreateError,
+    R | Scope.Scope
+  >;
 }
 
 export type AnyProviderAdapterDriver<R = never> = ProviderAdapterDriver<any, R>;

@@ -31,17 +31,13 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { layerTestProviderHost } from "@t3tools/provider-testing/host";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import type { MuseItem } from "./protocol.ts";
 import type { MuseSdkHost } from "./sdk.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import {
-  ProviderAdapterV2RuntimePolicy,
-  type ProviderAdapterV2Event,
-  type ProviderAdapterV2TurnInput,
-} from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/continuationRequests";
 import { makeMuseAdapterV2, type MuseAdapterV2Options } from "./adapter.ts";
 
@@ -55,7 +51,7 @@ const INSTANCE_ID = ProviderInstanceId.make("muse_work");
 const THREAD_ID = ThreadId.make("thread-muse-test");
 const MODEL = "muse-spark-1.3-contributor";
 const museSettings = Schema.decodeSync(MuseSettings)({ enabled: true });
-const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
   runtimeMode: "full-access",
   interactionMode: "default",
   cwd: null,
@@ -204,7 +200,7 @@ const makeHarness = Effect.fnUntraced(function* (
     settings: museSettings,
     environment: { PATH: "/fake/bin" },
     idAllocator: yield* IdAllocator.IdAllocatorV2,
-    host: yield* ProviderHost,
+    host: yield* ProviderHost.ProviderHost,
     fileSystem: yield* FileSystem.FileSystem,
     createHost: async () => (hostCount++ === 0 ? fake.host : (replacement ?? fake).host),
     ...overrides,
@@ -216,8 +212,8 @@ const makeHarness = Effect.fnUntraced(function* (
     runtimePolicy: policy,
     ...(initialNativeThreadId ? { initialNativeThreadId } : {}),
   });
-  const emitted = yield* Queue.unbounded<ProviderAdapterV2Event>();
-  const allEvents: ProviderAdapterV2Event[] = [];
+  const emitted = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+  const allEvents: ProviderAdapter.ProviderAdapterV2Event[] = [];
   const eventsEnded = yield* Deferred.make<Exit.Exit<void, Stream.Error<typeof runtime.events>>>();
   yield* runtime.events.pipe(
     Stream.runForEach((event) =>
@@ -236,14 +232,21 @@ const makeHarness = Effect.fnUntraced(function* (
     runtimePolicy: policy,
     ...(existingProviderThread ? { existingProviderThread } : {}),
   });
-  const takeEvent = Effect.fnUntraced(function* <T extends ProviderAdapterV2Event["type"]>(
+  const takeEvent = Effect.fnUntraced(function* <
+    T extends ProviderAdapter.ProviderAdapterV2Event["type"],
+  >(
     type: T,
-    predicate: (event: Extract<ProviderAdapterV2Event, { type: T }>) => boolean = () => true,
+    predicate: (
+      event: Extract<ProviderAdapter.ProviderAdapterV2Event, { type: T }>,
+    ) => boolean = () => true,
   ) {
     while (true) {
       const event = yield* Queue.take(emitted);
-      if (event.type === type && predicate(event as Extract<ProviderAdapterV2Event, { type: T }>)) {
-        return event as Extract<ProviderAdapterV2Event, { type: T }>;
+      if (
+        event.type === type &&
+        predicate(event as Extract<ProviderAdapter.ProviderAdapterV2Event, { type: T }>)
+      ) {
+        return event as Extract<ProviderAdapter.ProviderAdapterV2Event, { type: T }>;
       }
     }
   });
@@ -275,7 +278,7 @@ const turnInput = Effect.fnUntraced(function* (
   providerThread: OrchestrationV2ProviderThread,
   runOrdinal = 1,
   policy = runtimePolicy,
-): Effect.fn.Return<ProviderAdapterV2TurnInput> {
+): Effect.fn.Return<ProviderAdapter.ProviderAdapterV2TurnInput> {
   const now = yield* DateTime.now;
   const threadId = providerThread.appThreadId ?? THREAD_ID;
   const selection = modelSelection(providerThread.providerInstanceId);
@@ -436,7 +439,7 @@ describe("MuseAdapterV2", () => {
           settings: museSettings,
           environment: { PATH: "/fake/bin" },
           idAllocator: yield* IdAllocator.IdAllocatorV2,
-          host: yield* ProviderHost,
+          host: yield* ProviderHost.ProviderHost,
           fileSystem: yield* FileSystem.FileSystem,
           createHost: async () => fake.host,
         });
@@ -833,7 +836,7 @@ describe("MuseAdapterV2", () => {
   it.effect("keeps a workflow child's approval pending for the user past the turn's end", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
-      const policy = ProviderAdapterV2RuntimePolicy.make({
+      const policy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         ...runtimePolicy,
         runtimeMode: "approval-required",
       });
