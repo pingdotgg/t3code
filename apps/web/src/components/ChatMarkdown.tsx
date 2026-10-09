@@ -2485,6 +2485,7 @@ function useChatMarkdownState({
   // makes a persisted "app" apply once settings hydrate after launch.
   const linkTargetPreference = useClientSettings((settings) => settings.browserLinkTarget);
   const showFileLinkPaths = useClientSettings((settings) => settings.showFileLinkPaths);
+  const finding = use(MarkdownFindContext);
   const resolveThreadPullRequest = useCallback(
     (href: string): (ThreadPullRequestKey & { readonly url: string }) | null => {
       if (
@@ -2634,7 +2635,8 @@ function useChatMarkdownState({
       const parentSuffix = fileLinkParentSuffixByPath.get(
         fileLinkMeta.filePath.replaceAll("\\", "/"),
       );
-      const label = showFileLinkPaths
+      // Thread find indexes canonical labels on the server; its DOM ranges must match.
+      const label = showFileLinkPaths && !finding
         ? formatFileChipLabel({
             showFileLinkPaths,
             targetPath: fileLinkMeta.targetPath,
@@ -2705,6 +2707,7 @@ function useChatMarkdownState({
       canOperatePreview,
       cwd,
       fileLinkParentSuffixByPath,
+      finding,
       openFileInPanel,
       openInPreferredEditor,
       openMarkdownFileInPreview,

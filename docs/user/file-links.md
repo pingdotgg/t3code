@@ -9,3 +9,5 @@ in each chip. Files safely identified inside the project use `./`. For projects 
 directory, other home files use `~/`; files outside both keep their absolute path. Authored paths
 containing `.` or `..` also stay absolute because resolving them safely requires the owning
 filesystem. Line and column numbers stay attached to the path.
+
+While thread find is open, chips use file names so their labels match search results.

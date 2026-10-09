@@ -6,7 +6,7 @@ import {
   type AuthEnvironmentScope,
 } from "@t3tools/contracts";
 import { createRoot } from "react-dom/client";
-import { useThreadFindHighlights } from "./chat/threadFindHighlights";
+import { collectThreadFindRanges, useThreadFindHighlights } from "./chat/threadFindHighlights";
 import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
 import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 
@@ -1108,6 +1108,69 @@ describe("ChatMarkdown Windows file links", () => {
     expect(html).not.toContain("chat-markdown-file-link");
   });
 });
+
+it.each([true, false])(
+  "keeps file chip find ranges aligned with the index when compact paths start %s",
+  async (initialPreference) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      showFileLinkPaths: initialPreference,
+    });
+    const cwd = "/tmp/project";
+    const text = "[Source](/tmp/project/src/main.ts:12:3) and `/tmp/project/src/main.ts:12:3`";
+    const segments = searchableMessageSegments({ role: "assistant", text, streaming: false }, cwd);
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    function Probe({ searching }: { searching: boolean }) {
+      return (
+        <div data-timeline-row-id="row">
+          <div data-thread-find-text>
+            <MarkdownFindContext value={searching}>
+              <ChatMarkdown cwd={cwd} text={text} />
+            </MarkdownFindContext>
+          </div>
+        </div>
+      );
+    }
+    const expectFindParity = () => {
+      expect(container.textContent).toContain("main.ts · L12:C3");
+      expect(container.textContent).not.toContain("./src/main.ts:12:3");
+      for (const query of ["main.ts · L12:C3", "src/main.ts", "main.ts:12:3"]) {
+        const indexed = (segments ?? []).reduce(
+          (sum, segment) => sum + countThreadSearchOccurrences(segment, query),
+          0,
+        );
+        expect(indexed).toBe(query === "main.ts · L12:C3" ? 2 : 0);
+        const ranges = collectThreadFindRanges(container, query);
+        expect(ranges.map(({ range }) => range.toString())).toEqual(
+          Array.from({ length: indexed }, () => query),
+        );
+      }
+    };
+    try {
+      await act(() => root.render(<Probe searching={false} />));
+      expect(container.textContent).toContain(
+        initialPreference ? "./src/main.ts:12:3" : "main.ts · L12:C3",
+      );
+      await act(() => root.render(<Probe searching={true} />));
+      expectFindParity();
+      for (const preference of [!initialPreference, initialPreference, true]) {
+        await act(() =>
+          __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, showFileLinkPaths: preference }),
+        );
+        expectFindParity();
+      }
+      await act(() => root.render(<Probe searching={false} />));
+      expect(container.textContent).toContain("./src/main.ts:12:3");
+    } finally {
+      await act(() => root.unmount());
+      container.remove();
+      vi.unstubAllGlobals();
+    }
+  },
+);
 
 it("opens a disclosure only when find selects a match inside it", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
