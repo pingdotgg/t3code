@@ -137,6 +137,11 @@ a shortcut.
 
 ## Commands with special behavior
 
+`pullRequests.open` opens the Pull Requests page with your saved filters. It has no
+default shortcut; assign one in **Settings → Keybindings**. Use `!terminalFocus`
+as its condition to leave terminal input alone. The command is available when an
+environment supports pull requests.
+
 `thread.stop` interrupts the running turn in the focused thread. It has no default
 shortcut; assign one in **Settings → Keybindings**.
 

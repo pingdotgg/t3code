@@ -18,6 +18,15 @@ import {
 } from "./KeybindingsSettings.logic";
 
 describe("KeybindingsSettings.logic", () => {
+  it("offers opening Pull Requests without assigning a default shortcut", () => {
+    expect(buildKeybindingCommandOptions(DEFAULT_RESOLVED_KEYBINDINGS)).toContain(
+      "pullRequests.open",
+    );
+    expect(commandLabel("pullRequests.open")).toBe("Pull Requests: Open");
+    expect(DEFAULT_RESOLVED_KEYBINDINGS.some((rule) => rule.command === "pullRequests.open")).toBe(
+      false,
+    );
+  });
   it("lists composer, provider, and pull request commands with editable defaults", () => {
     const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "");
     for (const command of [
