@@ -2,6 +2,7 @@ import type {
   OrchestrationV2DomainEvent,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
+  RunId,
 } from "@t3tools/contracts";
 import {
   createOrchestrationV2TurnItemVisibility,
@@ -11,6 +12,8 @@ import {
 export type ApplyOrchestrationV2ProjectionEventOptions = {
   readonly partialTimeline?: boolean;
   readonly latestLocalTurnOrdinal?: number | null;
+  /** Runs that were pending in the snapshot or became live afterwards. */
+  readonly liveRunIds?: ReadonlySet<RunId>;
 };
 
 function upsertEntity<T extends { readonly id: unknown }>(
@@ -90,10 +93,14 @@ function shouldDropMissingPartialTurnItem(
   projection: OrchestrationV2ThreadProjection,
   item: OrchestrationV2TurnItem,
   latestLocalTurnOrdinal: number | null | undefined,
+  liveRunIds: ReadonlySet<RunId> | undefined,
 ): boolean {
   if (projection.visibleTurnItems.some((row) => row.sourceItemId === item.id)) {
     return false;
   }
+  // Queue-time ordinals can be below newer turns even though these items are
+  // arriving live. Keep the exemption after completion for final reply events.
+  if (item.runId !== null && liveRunIds?.has(item.runId)) return false;
   if (
     latestLocalTurnOrdinal !== null &&
     latestLocalTurnOrdinal !== undefined &&
@@ -110,6 +117,7 @@ function upsertVisibleTurnItem(
   item: OrchestrationV2TurnItem,
   partialTimeline: boolean,
   latestLocalTurnOrdinal: number | null | undefined,
+  liveRunIds: ReadonlySet<RunId> | undefined,
 ): OrchestrationV2ThreadProjection["visibleTurnItems"] {
   const rows = projection.visibleTurnItems;
   const index = rows.findIndex((row) => row.sourceItemId === item.id);
@@ -133,7 +141,7 @@ function upsertVisibleTurnItem(
   if (
     index === -1 &&
     partialTimeline &&
-    shouldDropMissingPartialTurnItem(projection, item, latestLocalTurnOrdinal)
+    shouldDropMissingPartialTurnItem(projection, item, latestLocalTurnOrdinal, liveRunIds)
   ) {
     return rows;
   }
@@ -159,6 +167,7 @@ export function applyOrchestrationV2ProjectionEvent(
 
   const partialTimeline = options?.partialTimeline === true;
   const latestLocalTurnOrdinal = options?.latestLocalTurnOrdinal;
+  const liveRunIds = options?.liveRunIds;
   const base = { ...projection, updatedAt: event.occurredAt };
   switch (event.type) {
     case "thread.created":
@@ -252,7 +261,12 @@ export function applyOrchestrationV2ProjectionEvent(
       if (
         partialTimeline &&
         !projection.turnItems.some((candidate) => candidate.id === event.payload.id) &&
-        shouldDropMissingPartialTurnItem(projection, event.payload, latestLocalTurnOrdinal)
+        shouldDropMissingPartialTurnItem(
+          projection,
+          event.payload,
+          latestLocalTurnOrdinal,
+          liveRunIds,
+        )
       ) {
         return projection;
       }
@@ -267,7 +281,13 @@ export function applyOrchestrationV2ProjectionEvent(
       return {
         ...next,
         visibleTurnItems: shouldShowLocalTurnItem(next, event.payload)
-          ? upsertVisibleTurnItem(visible, event.payload, partialTimeline, latestLocalTurnOrdinal)
+          ? upsertVisibleTurnItem(
+              visible,
+              event.payload,
+              partialTimeline,
+              latestLocalTurnOrdinal,
+              liveRunIds,
+            )
           : removeVisibleItem(visible.visibleTurnItems, event.payload.id),
       };
     }

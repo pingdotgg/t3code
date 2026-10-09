@@ -2,10 +2,13 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  ProviderInstanceId,
+  RunId,
   ORCHESTRATION_V2_WS_METHODS,
   ThreadId,
   TurnItemId,
   type OrchestrationV2ThreadDetailSnapshot,
+  type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadStreamItem,
   type OrchestrationV2TurnItem,
@@ -1665,6 +1668,252 @@ describe("EnvironmentThreads", () => {
         String(recent.id),
       ]);
     }),
+  );
+
+  it.effect.each(["http", "socket", "cache", "retained"] as const)(
+    "keeps a queued run draining below a newer turn's watermark after a bounded %s snapshot",
+    (source) =>
+      Effect.gen(function* () {
+        const now = BASE_PROJECTION.updatedAt;
+        const providerInstanceId = ProviderInstanceId.make("codex");
+        const queuedRun = {
+          id: RunId.make("run-queued"),
+          threadId: THREAD_ID,
+          ordinal: 2,
+          providerInstanceId,
+          modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+          providerThreadId: null,
+          userMessageId: MessageId.make("message-queued"),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "queued",
+          requestedAt: now,
+          startedAt: null,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        } satisfies OrchestrationV2Run;
+        const newerRun = {
+          ...queuedRun,
+          id: RunId.make("run-newer"),
+          ordinal: 3,
+          status: "completed" as const,
+          startedAt: now,
+          completedAt: now,
+        };
+        const historicalRun = { ...newerRun, id: RunId.make("run-historical"), ordinal: 1 };
+        const recent = {
+          id: TurnItemId.make("item-newer"),
+          threadId: THREAD_ID,
+          runId: newerRun.id,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 3_000_000,
+          status: "completed" as const,
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "assistant_message" as const,
+          messageId: MessageId.make("message-newer"),
+          text: "Newer direct turn",
+          streaming: false,
+        } satisfies OrchestrationV2TurnItem;
+        const projection = {
+          ...BASE_PROJECTION,
+          runs: [historicalRun, queuedRun, newerRun],
+          turnItems: [recent],
+          visibleTurnItems: [
+            {
+              position: 0,
+              visibility: "local" as const,
+              sourceThreadId: THREAD_ID,
+              sourceItemId: recent.id,
+              item: recent,
+            },
+          ],
+        };
+        const history = {
+          historyCursor: "queued-history",
+          hasMoreHistory: true,
+          latestLocalTurnOrdinal: recent.ordinal,
+        };
+        const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
+          snapshot: undefined,
+          owner: undefined,
+        };
+        let scope = yield* Scope.make();
+        let harness = yield* makeHarness(
+          source === "cache"
+            ? { cached: projection, cachedHistory: history }
+            : source === "http" || source === "retained"
+              ? {
+                  resumeCache,
+                  httpSnapshot: {
+                    _tag: "present" as const,
+                    snapshot: { snapshotSequence: 7, projection, ...history },
+                    history,
+                  },
+                }
+              : {},
+        ).pipe(Effect.provideService(Scope.Scope, scope));
+        if (source === "socket") {
+          yield* Queue.offer(harness.inputs, { ...snapshot(projection, 7), ...history });
+        }
+        yield* awaitThreadState(
+          harness.observed,
+          (value) =>
+            Option.isSome(value.data) && value.history.historyCursor === history.historyCursor,
+        );
+
+        const liveAt = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
+        const newer = { ...recent, id: TurnItemId.make("item-newest"), ordinal: 3_000_001 };
+        const user = {
+          ...recent,
+          id: TurnItemId.make("item-queued-user"),
+          runId: queuedRun.id,
+          ordinal: 2_000_000,
+          type: "user_message" as const,
+          messageId: queuedRun.userMessageId,
+          text: "Queued follow-up",
+          attachments: [],
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+          inputIntent: "queued_turn" as const,
+          startedAt: liveAt,
+          completedAt: liveAt,
+          updatedAt: liveAt,
+        } satisfies OrchestrationV2TurnItem;
+        const assistant = {
+          ...recent,
+          id: TurnItemId.make("item-queued-assistant"),
+          runId: queuedRun.id,
+          ordinal: 2_000_001,
+          messageId: MessageId.make("message-queued-assistant"),
+          text: "Queued reply",
+          startedAt: liveAt,
+          completedAt: liveAt,
+          updatedAt: liveAt,
+        };
+        const unloaded = {
+          ...recent,
+          id: TurnItemId.make("item-unloaded"),
+          runId: historicalRun.id,
+          ordinal: 1_000_000,
+        };
+        yield* Queue.offerAll(harness.inputs, [
+          {
+            kind: "event",
+            sequence: 8,
+            event: {
+              id: EventId.make("newer-item"),
+              type: "turn-item.updated",
+              threadId: THREAD_ID,
+              occurredAt: liveAt,
+              payload: newer,
+            },
+          },
+          {
+            kind: "event",
+            sequence: 9,
+            event: {
+              id: EventId.make("queued-start"),
+              type: "run.updated",
+              threadId: THREAD_ID,
+              occurredAt: liveAt,
+              payload: { ...queuedRun, status: "starting" },
+            },
+          },
+          {
+            kind: "event",
+            sequence: 10,
+            event: {
+              id: EventId.make("queued-user"),
+              type: "turn-item.updated",
+              threadId: THREAD_ID,
+              occurredAt: liveAt,
+              payload: user,
+            },
+          },
+          {
+            kind: "event",
+            sequence: 11,
+            event: {
+              id: EventId.make("queued-complete"),
+              type: "run.updated",
+              threadId: THREAD_ID,
+              occurredAt: liveAt,
+              payload: {
+                ...queuedRun,
+                status: "completed",
+                startedAt: liveAt,
+                completedAt: liveAt,
+              },
+            },
+          },
+          titleUpdated("Before queued reply", 12),
+        ]);
+        yield* awaitThreadState(
+          harness.observed,
+          (value) =>
+            Option.isSome(value.data) && value.data.value.thread.title === "Before queued reply",
+        );
+        if (source === "retained") {
+          yield* Scope.close(scope, Exit.void);
+          scope = yield* Scope.make();
+          harness = yield* makeHarness({ resumeCache }).pipe(
+            Effect.provideService(Scope.Scope, scope),
+          );
+        }
+        yield* Queue.offerAll(harness.inputs, [
+          {
+            kind: "event",
+            sequence: 13,
+            event: {
+              id: EventId.make("queued-assistant"),
+              type: "turn-item.updated",
+              threadId: THREAD_ID,
+              occurredAt: liveAt,
+              payload: assistant,
+            },
+          },
+          {
+            kind: "event",
+            sequence: 14,
+            event: {
+              id: EventId.make("unloaded-item"),
+              type: "turn-item.updated",
+              threadId: THREAD_ID,
+              occurredAt: liveAt,
+              payload: unloaded,
+            },
+          },
+          titleUpdated("Queue drained", 15),
+        ]);
+        const drained = yield* awaitThreadState(
+          harness.observed,
+          (value) => Option.isSome(value.data) && value.data.value.thread.title === "Queue drained",
+        );
+        const expectedIds = [user.id, assistant.id, recent.id, newer.id];
+        expect(
+          Option.getOrThrow(drained.data).visibleTurnItems.map((row) => row.sourceItemId),
+        ).toEqual(expectedIds);
+        expect(
+          Option.getOrThrow(drained.data).turnItems.some((item) => item.id === unloaded.id),
+        ).toBe(false);
+        expect(drained.history.latestLocalTurnOrdinal).toBe(newer.ordinal);
+        expect(drained.history.historyCursor).toBe(history.historyCursor);
+
+        yield* Scope.close(scope, Exit.void);
+        const saved = (yield* Ref.get(harness.savedThreads)).at(-1);
+        expect(saved?.snapshotSequence).toBe(15);
+        expect(saved?.projection.visibleTurnItems.map((row) => row.sourceItemId)).toEqual(
+          expectedIds,
+        );
+      }),
   );
 
   it.effect("installs and advances latestLocalTurnOrdinal for partial progressive windows", () =>

@@ -36,6 +36,7 @@ const encodeStoredShellSnapshot = Schema.encodeSync(StoredOrchestrationShellSnap
 const decodeStoredShellSnapshotSync = Schema.decodeUnknownSync(StoredOrchestrationShellSnapshot);
 const encodeStoredShellSnapshotJson = Schema.encodeSync(StoredShellSnapshotJson);
 const decodeStoredShellSnapshotJson = Schema.decodeUnknownSync(StoredShellSnapshotJson);
+const encodeStoredThreadSnapshot = Schema.encodeSync(StoredOrchestrationThreadSnapshot);
 const encodeStoredThreadSnapshotJson = Schema.encodeSync(StoredThreadSnapshotJson);
 const decodeStoredThreadSnapshotJson = Schema.decodeUnknownSync(StoredThreadSnapshotJson);
 
@@ -181,6 +182,37 @@ describe("orchestration cache envelopes", () => {
 
       expect(Option.isNone(result)).toBe(true);
       expect(discardCount).toBe(1);
+    }),
+  );
+
+  it.effect("discards thread caches that may have persisted missing queued-run items", () =>
+    Effect.gen(function* () {
+      const encoded = encodeStoredThreadSnapshot({
+        schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
+        environmentId,
+        threadId: v2ThreadId,
+        snapshot: {
+          snapshotSequence: 42,
+          projection: v2Projection,
+          historyCursor: "bounded-history",
+          hasMoreHistory: true,
+          latestLocalTurnOrdinal: 3_000_001,
+        },
+      });
+      let discarded = false;
+      const result = yield* decodeOrDiscardOrchestrationCache(
+        Effect.try({
+          try: () =>
+            decodeStoredThreadSnapshotJson(JSON.stringify({ ...encoded, schemaVersion: 3 })),
+          catch: (cause) => new TestCacheDecodeError({ message: String(cause) }),
+        }).pipe(Effect.asSome),
+        Effect.sync(() => {
+          discarded = true;
+        }),
+      );
+
+      expect(Option.isNone(result)).toBe(true);
+      expect(discarded).toBe(true);
     }),
   );
 });

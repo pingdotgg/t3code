@@ -4,6 +4,8 @@ import {
   type OrchestrationV2ThreadDetailSnapshot,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadStreamItem,
+  type OrchestrationV2Run,
+  type RunId,
   type ThreadId as ThreadIdType,
 } from "@t3tools/contracts";
 import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
@@ -126,6 +128,21 @@ interface ThreadResumeSnapshot {
   readonly sequence: number;
   readonly persisted: boolean;
   readonly acceptsBoundedSnapshots?: boolean;
+  readonly liveRunIds?: ReadonlySet<RunId>;
+}
+
+function isPendingRun(run: OrchestrationV2Run): boolean {
+  return (
+    run.status === "queued" ||
+    run.status === "preparing" ||
+    run.status === "starting" ||
+    run.status === "running" ||
+    run.status === "waiting"
+  );
+}
+
+function pendingRunIds(projection: OrchestrationV2ThreadProjection | null): ReadonlySet<RunId> {
+  return new Set(projection?.runs.filter(isPendingRun).map((run) => run.id));
 }
 
 interface ThreadResumeCache {
@@ -215,6 +232,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         }),
       };
   const state = yield* SubscriptionRef.make(initialState);
+  let liveRunIds = retained?.liveRunIds ?? pendingRunIds(Option.getOrNull(initialState.data));
   // Paging support belongs to the client, even when the initial HTTP request
   // fails. A bounded socket reset retains a cursor so history can be retried.
   const canLoadHistory = Option.isSome(httpClient) && Option.isSome(historyController);
@@ -230,6 +248,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     sequence: initialSequence,
     persisted: retained?.persisted ?? Option.isSome(cached),
     acceptsBoundedSnapshots: canLoadHistory,
+    liveRunIds,
   };
   if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
   const awaitingCompletion = yield* Ref.make(false);
@@ -243,6 +262,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       state: current,
       sequence,
       acceptsBoundedSnapshots: yield* Ref.get(acceptsBoundedSocketSnapshots),
+      liveRunIds,
       persisted:
         committed.persisted &&
         matchesThreadSnapshot(committed, Option.getOrNull(current.data), sequence, current.history),
@@ -371,6 +391,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     // state when only the projection changes. Bounded installs pass history so
     // projection + cursor persist together in one enqueue.
     const next = yield* SubscriptionRef.updateAndGet(state, (previous) => {
+      // A replacement snapshot establishes a new history boundary.
+      liveRunIds = pendingRunIds(thread);
       const history =
         options?.history !== undefined
           ? options.history
@@ -499,6 +521,15 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         return [{ _tag: "delete" }, current];
       }
 
+      if (
+        item.event.threadId === threadId &&
+        (item.event.type === "run.created" || item.event.type === "run.updated") &&
+        isPendingRun(item.event.payload) &&
+        !liveRunIds.has(item.event.payload.id)
+      ) {
+        liveRunIds = new Set([...liveRunIds, item.event.payload.id]);
+      }
+
       // Incomplete progressive windows only (hasMore or open cursor). Do not
       // use expanded: it remains true after the last page as a cache marker.
       // Full/web and fully-loaded timelines keep default append-on-miss.
@@ -507,6 +538,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           ? {
               partialTimeline: true as const,
               latestLocalTurnOrdinal: current.history.latestLocalTurnOrdinal,
+              liveRunIds,
             }
           : undefined;
       const next = applyOrchestrationV2ProjectionEvent(current.data.value, item.event, partial);
