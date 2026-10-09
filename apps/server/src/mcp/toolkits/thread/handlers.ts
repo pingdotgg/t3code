@@ -238,13 +238,14 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       const { request, item } = yield* readPendingRequest(input);
       if (item?.type === "user_input_request")
         return { requestId: input.requestId, kind: request.kind, questions: item.questions };
+      const approval = item?.type === "approval_request" ? item : undefined;
       return {
         requestId: input.requestId,
         kind: request.kind,
-        ...(item?.prompt === undefined
+        ...(approval?.prompt === undefined
           ? {}
-          : { prompt: Array.from(item.prompt).slice(0, 4000).join("") }),
-        ...(item?.options === undefined ? {} : { options: item.options }),
+          : { prompt: Array.from(approval.prompt).slice(0, 4000).join("") }),
+        ...(approval?.options === undefined ? {} : { options: approval.options }),
       };
     }),
   ),
