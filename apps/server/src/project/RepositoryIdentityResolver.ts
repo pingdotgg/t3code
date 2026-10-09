@@ -128,12 +128,30 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
         timeoutBehavior: "timedOutResult",
       })
       .pipe(Effect.option);
-    if (topLevelResult._tag === "None" || topLevelResult.value.code !== 0) {
+    if (topLevelResult._tag === "Some" && topLevelResult.value.code === 0) {
+      const candidate = topLevelResult.value.stdout.trim();
+      return candidate.length > 0 ? candidate : null;
+    }
+
+    // A bare repository has no work tree, so --show-toplevel fails there. Its
+    // remotes still identify it, which keeps the bare root in the same project
+    // group as its linked worktrees.
+    const bareResult = yield* processRunner
+      .run({
+        command: "git",
+        args: ["-C", cwd, "rev-parse", "--is-bare-repository", "--absolute-git-dir"],
+        timeoutBehavior: "timedOutResult",
+      })
+      .pipe(Effect.option);
+    if (bareResult._tag === "None" || bareResult.value.code !== 0) {
       return null;
     }
 
-    const candidate = topLevelResult.value.stdout.trim();
-    return candidate.length > 0 ? candidate : null;
+    const [isBare, gitDir = ""] = bareResult.value.stdout.split("\n").map((line) => line.trim());
+    if (isBare !== "true" || gitDir.length === 0) {
+      return null;
+    }
+    return gitDir.replace(/[\\/]\.git$/, "");
   },
 );
 

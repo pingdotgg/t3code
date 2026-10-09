@@ -168,11 +168,54 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(recovered?.rootPath).toBe("/repo");
       expect(calls).toEqual([
         ["-C", "/repo/packages/web", "rev-parse", "--show-toplevel"],
+        ["-C", "/repo/packages/web", "rev-parse", "--is-bare-repository", "--absolute-git-dir"],
         ["-C", "/repo/packages/web", "rev-parse", "--show-toplevel"],
         ["-C", "/repo", "remote", "-v"],
       ]);
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), layerResolver)));
   });
+
+  it.effect("resolves a bare repository root to the same identity as its worktrees", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const bareRoot = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-bare-root-test-",
+      });
+      const plainBare = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-bare-plain-test-",
+      });
+      const worktree = path.join(bareRoot, "main");
+
+      // The `.git` layout that `git clone --bare repo .git` style tooling
+      // produces, with worktrees as siblings of the git dir.
+      yield* git(bareRoot, [
+        "init",
+        "--bare",
+        "--initial-branch=main",
+        path.join(bareRoot, ".git"),
+      ]);
+      yield* git(bareRoot, ["remote", "add", "origin", "git@github.com:T3Tools/t3code.git"]);
+      yield* git(bareRoot, ["worktree", "add", "--orphan", "-b", "main", worktree]);
+      yield* git(plainBare, ["init", "--bare", "--initial-branch=main"]);
+      yield* git(plainBare, ["remote", "add", "origin", "git@github.com:T3Tools/t3code.git"]);
+
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const bareIdentity = yield* resolver.resolve(bareRoot);
+      const worktreeIdentity = yield* resolver.resolve(worktree);
+      const plainBareIdentity = yield* resolver.resolve(plainBare);
+
+      expect(bareIdentity?.canonicalKey).toBe("github.com/t3tools/t3code");
+      expect(worktreeIdentity?.canonicalKey).toBe(bareIdentity?.canonicalKey);
+      expect(plainBareIdentity?.canonicalKey).toBe(bareIdentity?.canonicalKey);
+      expect(normalizeResolvedPath(NodeFS.realpathSync.native(bareIdentity?.rootPath ?? ""))).toBe(
+        normalizeResolvedPath(NodeFS.realpathSync.native(bareRoot)),
+      );
+      expect(
+        normalizeResolvedPath(NodeFS.realpathSync.native(plainBareIdentity?.rootPath ?? "")),
+      ).toBe(normalizeResolvedPath(NodeFS.realpathSync.native(plainBare)));
+    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
 
   it.effect("normalizes equivalent GitHub remotes into a stable repository identity", () =>
     Effect.gen(function* () {
