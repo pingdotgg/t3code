@@ -342,6 +342,7 @@ it.effect.each(
         projectThreads.find((candidate) => candidate.id === existing?.threadId) ??
         projectThreads[0];
       assert.isDefined(thread);
+      assert.equal(result.threadId, thread!.id);
       const projection = yield* threads.getThreadProjection(thread!.id);
       // Encoding the persisted projection exercises both message and turn-item wire schemas.
       const wire = yield* encodeThreadProjection(projection);
