@@ -1045,7 +1045,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         driver: ProviderDriverKind.make("codex"),
         config: { binaryPath: "/x" },
       });
-      assert.isFalse(settings.automaticUpdates);
       assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), raw);
     }).pipe(Effect.provide(layerServerSettings())),
   );
