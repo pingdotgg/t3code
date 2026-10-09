@@ -219,3 +219,19 @@ describe("right panel new-tab shortcut", () => {
     expect(document.querySelector('[role="menu"]:not([data-closed])')).toBeNull();
   });
 });
+
+describe("right panel launcher focus", () => {
+  it("focuses itself when nothing is being typed", async () => {
+    await renderPanel();
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Open a surface");
+  });
+
+  it("leaves focus in an editor that is being typed in", async () => {
+    const composer = document.createElement("textarea");
+    document.body.append(composer);
+    composer.focus();
+    await renderPanel();
+    expect(document.activeElement).toBe(composer);
+    composer.remove();
+  });
+});
