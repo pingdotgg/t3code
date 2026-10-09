@@ -13,7 +13,7 @@ import {
   type VcsError,
 } from "@t3tools/contracts";
 
-import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import {
   decodeGitLabMergeRequestJson,
   decodeGitLabMergeRequestListJson,
@@ -270,7 +270,7 @@ export class GitLabCli extends Context.Service<
       /** Piped to the child's stdin, for payloads that must never appear in argv. */
       readonly stdin?: string;
       readonly maxOutputBytes?: number;
-    }) => Effect.Effect<VcsProcess.VcsProcessOutput, GitLabCliError>;
+    }) => Effect.Effect<SourceControlHost.SourceControlProcessOutput, GitLabCliError>;
 
     readonly listMergeRequests: (input: {
       readonly cwd: string;
@@ -316,7 +316,7 @@ export class GitLabCli extends Context.Service<
       readonly force?: boolean;
     }) => Effect.Effect<void, GitLabCliError>;
   }
->()("t3/sourceControl/GitLabCli") {}
+>()("@t3tools/source-control-gitlab/server/GitLabCli") {}
 
 const RawGitLabRepositoryCloneUrlsSchema = Schema.Struct({
   path_with_namespace: TrimmedNonEmptyString,
@@ -410,7 +410,7 @@ function parseRepositoryPath(repository: string): {
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
-  const process = yield* VcsProcess.VcsProcess;
+  const { process } = yield* SourceControlHost.SourceControlHost;
 
   const run = (
     input: Parameters<GitLabCli["Service"]["execute"]>[0],

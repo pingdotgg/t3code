@@ -13,7 +13,6 @@ import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/source
 
 import * as BitbucketSourceControlProvider from "./BitbucketSourceControlProvider.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
-import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
 import * as BuiltInDrivers from "./builtInDrivers.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import {
@@ -306,7 +305,6 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
 export const make = Effect.gen(function* () {
   const github = yield* GitHubSourceControlProvider.make;
   const githubDiscovery = yield* GitHubSourceControlProvider.makeDiscovery;
-  const gitlab = yield* GitLabSourceControlProvider.make;
   const bitbucket = yield* BitbucketSourceControlProvider.make;
   const bitbucketDiscovery = yield* BitbucketSourceControlProvider.makeDiscovery;
   const drivers = yield* Effect.forEach(BuiltInDrivers.BUILT_IN_SOURCE_CONTROL_DRIVERS, (driver) =>
@@ -325,11 +323,6 @@ export const make = Effect.gen(function* () {
       kind: "github",
       provider: github,
       discovery: githubDiscovery,
-    },
-    {
-      kind: "gitlab",
-      provider: gitlab,
-      discovery: GitLabSourceControlProvider.discovery,
     },
     {
       kind: "bitbucket",

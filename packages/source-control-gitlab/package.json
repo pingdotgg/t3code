@@ -1,0 +1,55 @@
+{
+  "name": "@t3tools/source-control-gitlab",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./server/driver": {
+      "types": "./src/server/driver.ts",
+      "import": "./src/server/driver.ts"
+    },
+    "./server/gitLabAuthStatus": {
+      "types": "./src/server/gitLabAuthStatus.ts",
+      "import": "./src/server/gitLabAuthStatus.ts"
+    },
+    "./server/GitLabCli": {
+      "types": "./src/server/GitLabCli.ts",
+      "import": "./src/server/GitLabCli.ts"
+    },
+    "./server/gitLabMergeRequestJson": {
+      "types": "./src/server/gitLabMergeRequestJson.ts",
+      "import": "./src/server/gitLabMergeRequestJson.ts"
+    },
+    "./server/gitLabMergeRequests": {
+      "types": "./src/server/gitLabMergeRequests.ts",
+      "import": "./src/server/gitLabMergeRequests.ts"
+    },
+    "./server/GitLabPullRequestCli": {
+      "types": "./src/server/GitLabPullRequestCli.ts",
+      "import": "./src/server/GitLabPullRequestCli.ts"
+    },
+    "./server/GitLabPullRequestProvider": {
+      "types": "./src/server/GitLabPullRequestProvider.ts",
+      "import": "./src/server/GitLabPullRequestProvider.ts"
+    },
+    "./server/GitLabSourceControlProvider": {
+      "types": "./src/server/GitLabSourceControlProvider.ts",
+      "import": "./src/server/GitLabSourceControlProvider.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "@t3tools/source-control-core": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@t3tools/source-control-testing": "workspace:*",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

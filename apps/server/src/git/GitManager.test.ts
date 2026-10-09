@@ -44,7 +44,9 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { decodeGitHubPullRequestListJson } from "../sourceControl/gitHubPullRequests.ts";
-import * as GitLabCli from "../sourceControl/GitLabCli.ts";
+import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
+import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -53,7 +55,7 @@ import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
-import * as GitLabSourceControlProvider from "../sourceControl/GitLabSourceControlProvider.ts";
+import * as GitLabSourceControlProvider from "@t3tools/source-control-gitlab/server/GitLabSourceControlProvider";
 import {
   ForgejoPullRequestSchema,
   toForgejoChangeRequest,
@@ -2108,17 +2110,19 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           source_project: { path_with_namespace: "Group/Subgroup/Fork" },
         },
       ]);
-      const calls: VcsProcess.VcsProcessInput[] = [];
+      const calls: SourceControlHost.SourceControlProcessInput[] = [];
       const provider = yield* GitLabSourceControlProvider.make.pipe(
         Effect.provide(
           GitLabCli.layer.pipe(
             Layer.provide(
-              Layer.mock(VcsProcess.VcsProcess)({
-                run: (input) =>
-                  Effect.sync(() => {
-                    calls.push(input);
-                    return fakeGhOutput(output);
-                  }),
+              TestSourceControlHost.layer({
+                process: {
+                  run: (input) =>
+                    Effect.sync(() => {
+                      calls.push(input);
+                      return fakeGhOutput(output);
+                    }),
+                },
               }),
             ),
           ),

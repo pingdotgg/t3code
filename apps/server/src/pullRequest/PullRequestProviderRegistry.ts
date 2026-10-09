@@ -5,13 +5,10 @@ import type { SourceControlProviderKind } from "@t3tools/contracts";
 
 import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
 import * as GitHubApi from "../sourceControl/GitHubApi.ts";
-import * as GitLabCli from "../sourceControl/GitLabCli.ts";
 import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
 import * as BitbucketPullRequestProvider from "./BitbucketPullRequestProvider.ts";
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
 import * as GitHubPullRequestProvider from "./GitHubPullRequestProvider.ts";
-import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
-import * as GitLabPullRequestProvider from "./GitLabPullRequestProvider.ts";
 import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
 import type { PullRequestProviderApi } from "@t3tools/source-control-core/server/PullRequestProvider";
 
@@ -44,7 +41,6 @@ export function fromProviders(
 export const make = Effect.gen(function* () {
   const providers = yield* Effect.all([
     GitHubPullRequestProvider.make,
-    GitLabPullRequestProvider.make,
     BitbucketPullRequestProvider.make,
   ]);
   const drivers = yield* Effect.forEach(BuiltInDrivers.BUILT_IN_SOURCE_CONTROL_DRIVERS, (driver) =>
@@ -65,7 +61,6 @@ export const layer = Layer.effect(PullRequestProviderRegistry, make).pipe(
       ),
     ),
   ),
-  Layer.provide(GitLabPullRequestCli.layer.pipe(Layer.provide(GitLabCli.layer))),
   Layer.provide(BuiltInDrivers.layer),
   Layer.provide(BitbucketPullRequestApi.layer.pipe(Layer.provide(BitbucketApi.layer))),
 );
