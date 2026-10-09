@@ -14,7 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import { expandHomePathWith } from "../pathExpansion.ts";
+import { expandHomePathWith } from "@t3tools/provider-core/server/pathExpansion";
 
 export class WorkspaceRootNotExistsError extends Schema.TaggedError<WorkspaceRootNotExistsError>()(
   "WorkspaceRootNotExistsError",

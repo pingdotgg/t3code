@@ -143,6 +143,14 @@ const DEFAULT_BINDINGS = compile([
     command: "themeEditor.toggle",
   },
   {
+    shortcut: modShortcut("f"),
+    command: "chat.find",
+    whenAst: whenAnd(
+      whenNot(whenIdentifier("terminalFocus")),
+      whenNot(whenIdentifier("previewFocus")),
+    ),
+  },
+  {
     shortcut: modShortcut("m", { shiftKey: true }),
     command: "modelPicker.toggle",
     whenAst: whenNot(whenIdentifier("terminalFocus")),

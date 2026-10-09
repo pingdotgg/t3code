@@ -341,6 +341,6 @@ it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
       );
       assert.include(editors, "cursor");
       assert.include(editors, "vscode");
-      assert.notInclude(editors, "webstorm");
+      assert.include(editors, "webstorm");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

@@ -95,6 +95,10 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("terminal.cleanup"),
   }),
+  /** Closes a deleted thread's preview sessions, ending their server browser tabs. */
+  Schema.Struct({
+    type: Schema.Literal("preview.cleanup"),
+  }),
   Schema.Struct({
     type: Schema.Literal("attachment.cleanup"),
     attachmentIds: Schema.Array(Schema.String),
@@ -120,6 +124,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "provider-thread.rollback",
   "checkpoint.capture",
   "terminal.cleanup",
+  "preview.cleanup",
   "attachment.cleanup",
   "thread-title.generate",
   "delegated-tasks.stop",

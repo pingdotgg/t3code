@@ -31,6 +31,7 @@ export function ThreadDetailsCard({
         container: canvas.container,
         lane: canvas.lane,
         frame: null,
+        topInset: canvas.detailsCardTopInset,
       })
     : null;
   const placement = canvas
@@ -39,6 +40,7 @@ export function ThreadDetailsCard({
         lane: canvas.lane,
         frame: canvas.layout.frame,
         overlapsDetailsCard: canvas.layout.overlapsDetailsCard,
+        topInset: canvas.detailsCardTopInset,
       })
     : null;
   const mode = placement ? "inline" : "popover";

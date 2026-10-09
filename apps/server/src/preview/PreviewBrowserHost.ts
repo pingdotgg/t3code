@@ -90,11 +90,13 @@ export class PreviewBrowserLibrariesError extends Schema.TaggedError<PreviewBrow
 export type PreviewBrowserHostError = PreviewBrowserSandboxError | PreviewBrowserLibrariesError;
 
 const MISSING_LIBRARY = /^\s*(\S+) => not found$/gm;
+/** glibc's loader abort, naming the first library it could not load. */
+const LOADER_ERROR = /error while loading shared libraries: ([^:\s]+)/;
 
 /**
  * After a launch fails, names the host setup it is missing: the sandbox, from
- * Chrome's own abort message, or shared libraries, from `ldd`. Undefined when
- * neither explains it. Linux only; other hosts never need either.
+ * Chrome's own abort message, or shared libraries the loader refuses. Undefined
+ * when neither explains it. Linux only; other hosts never need either.
  */
 export const diagnoseLaunchFailure = Effect.fn("PreviewBrowserHost.diagnoseLaunchFailure")(
   function* (input: {
@@ -114,18 +116,29 @@ export const diagnoseLaunchFailure = Effect.fn("PreviewBrowserHost.diagnoseLaunc
   },
 );
 
-/** Shared libraries the loader cannot find for `executable`, by `ldd`. */
+/**
+ * Shared libraries the loader cannot find for `executable`. The browser's own
+ * `--version` decides whether any are missing; `ldd` only lists them after the
+ * real loader fails, because it can report libraries a host provides another
+ * way (NixOS's nix-ld).
+ */
 export const missingLibraries = Effect.fn("PreviewBrowserHost.missingLibraries")(function* (
   executable: string,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const report = yield* spawner
-    .string(ChildProcess.make("ldd", [executable], { stdin: "ignore", stderr: "ignore" }))
-    .pipe(
-      Effect.timeout("5 seconds"),
-      Effect.orElseSucceed(() => ""),
-    );
-  return [...report.matchAll(MISSING_LIBRARY)].map((match) => match[1]!);
+  const run = (command: string, args: ReadonlyArray<string>) =>
+    spawner
+      .string(ChildProcess.make(command, args, { stdin: "ignore" }), { includeStderr: true })
+      .pipe(
+        Effect.timeout("5 seconds"),
+        Effect.orElseSucceed(() => ""),
+      );
+  const loaderError = LOADER_ERROR.exec(yield* run(executable, ["--version"]))?.[1];
+  if (loaderError === undefined) return [];
+  const listed = [...(yield* run("ldd", [executable])).matchAll(MISSING_LIBRARY)].map(
+    (match) => match[1]!,
+  );
+  return listed.length > 0 ? listed : [loaderError];
 });
 
 /**
