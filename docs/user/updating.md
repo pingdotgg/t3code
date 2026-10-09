@@ -81,9 +81,10 @@ Then it installs:
 
 - provider CLI updates that have a one-click update;
 - the newest T3 Code release on its channel, when it runs as a background service
-  (`t3 service install`). It downloads first and restarts only inside that window;
-- a desktop app update that has finished downloading, when no desktop window is
-  focused or the machine has been idle for 15 minutes.
+  (`t3 service install`). It downloads first and restarts only inside that window.
+
+Desktop updates download in the background and install when you quit the app.
+The app stays open while you work, including when it hosts multiple backends.
 
 Servers started from a terminal or with `npx` are never replaced automatically.
 A failed provider update is retried after 6 hours or when a newer version is
