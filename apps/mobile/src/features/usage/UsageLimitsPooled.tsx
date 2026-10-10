@@ -8,7 +8,6 @@ import {
   collectLimitPools,
   cursorUsageWindowDetails,
   displayLimitWindows,
-  formatDuration,
   formatResetsIn,
   remainingPercent,
   type LimitAccount,
@@ -119,7 +118,9 @@ function PoolWindowCard({
       {nextRefill ? (
         <Text className="text-xs tabular-nums text-foreground-muted">
           ↻ +{nextRefill.restoresPercent}%{" "}
-          {nextRefill.at <= now ? "now" : `in ${formatDuration(nextRefill.at - now)}`}
+          {formatResetsIn(nextRefill.member.window, now)
+            ?.replace("resets in ", "in ")
+            .replace("resets now", "now")}
         </Text>
       ) : null}
       <View className="flex-row gap-1">

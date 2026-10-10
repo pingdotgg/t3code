@@ -56,6 +56,23 @@ function provider(overrides: Partial<ServerProvider>): ServerProvider {
 }
 
 describe("pace", () => {
+  it.each([
+    [60_000, "resets in 1m"],
+    [59_999, "Resets momentarily"],
+    [1, "Resets momentarily"],
+    [0, "resets now"],
+    [-1, "resets now"],
+  ])("formats the reset boundary at %i milliseconds", (remaining, label) => {
+    expect(
+      // @effect-diagnostics-next-line globalDate:off
+      formatResetsIn({ ...window, resetsAt: new Date(now + remaining).toISOString() }, now),
+    ).toBe(label);
+  });
+
+  it("ignores invalid reset timestamps", () => {
+    expect(formatResetsIn({ ...window, resetsAt: "invalid" }, now)).toBeNull();
+  });
+
   it("places the clock three fifths through a five-hour window with two hours left", () => {
     expect(elapsedShare(window, now)).toBeCloseTo(0.6);
     expect(paceOf(window, now)).toBe("under");

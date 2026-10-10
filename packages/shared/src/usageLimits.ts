@@ -596,7 +596,9 @@ export function formatDuration(ms: number): string {
 export function formatResetsIn(window: ServerProviderUsageWindow, now: number): string | null {
   const resetsAt = resetMillis(window);
   if (resetsAt === null) return null;
-  return resetsAt <= now ? "resets now" : `resets in ${formatDuration(resetsAt - now)}`;
+  if (resetsAt <= now) return "resets now";
+  if (resetsAt - now < MINUTE) return "Resets momentarily";
+  return `resets in ${formatDuration(resetsAt - now)}`;
 }
 
 /** Limit commands are served by T3 from the same snapshots as Usage → Limits. */
