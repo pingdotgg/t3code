@@ -18,6 +18,66 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const encodeAuth = Schema.encodeEffect(SourceControlProviderAuth);
 const decodeAuth = Schema.decodeEffect(SourceControlProviderAuth);
 
+const accountFailures = [
+  {
+    reason: "forbidden",
+    httpStatus: 403,
+    expectedDetail: "Account verification failed (HTTP 403). Check this account's permissions.",
+  },
+  {
+    reason: "rate-limit",
+    httpStatus: 429,
+    expectedDetail:
+      "Account verification failed (HTTP 429). Rescan after the server's rate limit resets.",
+  },
+] satisfies ReadonlyArray<{
+  reason: NonNullable<ForgejoCli.ForgejoCliError["reason"]>;
+  httpStatus: number;
+  expectedDetail: string;
+}>;
+
+it.effect.each(accountFailures)(
+  "preserves $reason diagnostics for the selected fj account",
+  (failure) =>
+    Effect.gen(function* () {
+      const spec = yield* ForgejoSourceControlProvider.makeDiscovery;
+      if (spec.type !== "managed-cli") return yield* Effect.die("Expected managed discovery");
+      const result = yield* spec.probe("/repo");
+      assert.strictEqual(result.executable, "fj");
+      assert.strictEqual(result.auth.status, "unknown");
+      assert.deepStrictEqual(result.auth.detail, Option.some(failure.expectedDetail));
+      assert.strictEqual(result.auth.instances?.[0]?.detail, failure.expectedDetail);
+      const encoded = yield* encodeAuth(result.auth);
+      assert.deepStrictEqual(yield* decodeAuth(encoded), result.auth);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(ForgejoCli.ForgejoCli)({
+            listLogins: ({ command }) =>
+              Effect.succeed(
+                command === "fj"
+                  ? [{ name: "work", url: "https://work.test", user: "", default: "true" }]
+                  : [],
+              ),
+            getAccount: ({ cwd }) =>
+              Effect.fail(
+                new ForgejoCli.ForgejoCliError({
+                  command: "fj",
+                  cwd,
+                  reason: failure.reason,
+                  httpStatus: failure.httpStatus,
+                  detail: `Forgejo API request failed (HTTP ${failure.httpStatus}): <html>${"private response body".repeat(100_000)}</html>`,
+                }),
+              ),
+          }),
+          TestSourceControlHost.layer({
+            process: { run: () => Effect.succeed(output("version")) },
+          }),
+        ),
+      ),
+    ),
+);
+
 it.effect("reports incomplete tea enumeration while retaining authenticated fj instances", () =>
   Effect.gen(function* () {
     const spec = yield* ForgejoSourceControlProvider.makeDiscovery;
@@ -232,6 +292,7 @@ it.effect(
           login: "revoked",
           account: Option.none(),
           status: "unauthenticated",
+          detail: "Account verification failed. Authenticate this server again with fj.",
         },
         {
           baseUrl: "https://offline.test",
@@ -239,6 +300,7 @@ it.effect(
           login: "offline",
           account: Option.none(),
           status: "unknown",
+          detail: "Account verification failed. Check server availability and rescan.",
         },
         {
           baseUrl: "https://gitea.test/team",

@@ -137,6 +137,7 @@ export const SourceControlProviderAuth = Schema.Struct({
         login: TrimmedNonEmptyString,
         account: Schema.Option(TrimmedNonEmptyString),
         status: SourceControlProviderAuthStatus,
+        detail: Schema.optionalKey(TrimmedNonEmptyString),
       }),
     ),
   ),

@@ -56,6 +56,7 @@ export function ForgejoInstanceSettings({ auth }: { readonly auth: SourceControl
                   <span>Could not verify username</span>
                 )}
               </p>
+              {instance.detail ? <p className="text-xs text-warning">{instance.detail}</p> : null}
             </li>
           ))}
         </ul>

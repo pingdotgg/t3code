@@ -21,6 +21,29 @@ type ForgejoInstance = NonNullable<SourceControlProviderAuth["instances"]>[numbe
 const INVALID_CONNECTION_DETAIL =
   "Some CLI connections have an invalid name or server URL. Check fj and tea login configuration.";
 
+function accountVerificationDetail(error: ForgejoCli.ForgejoCliError): string {
+  const advice = error.reason
+    ? {
+        "missing-cli": "Install fj and rescan.",
+        authentication: "Authenticate this server again with fj.",
+        forbidden: "Check this account's permissions.",
+        "not-found": "Check the server URL and account access.",
+        "rate-limit": "Rescan after the server's rate limit resets.",
+        "invalid-response": "The server returned an invalid response. Check the server and rescan.",
+      }[error.reason]
+    : "Check server availability and rescan.";
+  const status =
+    error.httpStatus !== undefined &&
+    Number.isInteger(error.httpStatus) &&
+    error.httpStatus >= 100 &&
+    error.httpStatus <= 599
+      ? ` (HTTP ${error.httpStatus})`
+      : "";
+  // API error details can contain entire proxy response bodies. Discovery sends only
+  // the safe status and failure category, keeping every connection's message bounded.
+  return `Account verification failed${status}. ${advice}`;
+}
+
 function hasConnectionIdentity(login: typeof ForgejoCli.ForgejoLoginSchema.Type): boolean {
   if (!login.name.trim()) return false;
   try {
@@ -193,6 +216,14 @@ export const makeDiscovery = Effect.gen(function* () {
                   ? Option.some(account.success)
                   : Option.fromNullishOr(entry.user.trim() || undefined),
               status,
+              ...(account && Result.isFailure(account)
+                ? {
+                    detail:
+                      account.failure._tag === "ForgejoCliError"
+                        ? accountVerificationDetail(account.failure)
+                        : "Account verification timed out. Rescan to try again.",
+                  }
+                : {}),
             };
           }),
         // fj serializes OAuth renewal. Start each deadline after the previous connection
@@ -229,6 +260,7 @@ export const makeDiscovery = Effect.gen(function* () {
           ? fjInstances.find((entry) => entry.login === login.name)
           : undefined;
       const details = new Set(Option.toArray(primary.auth.detail));
+      if (selectedInstance?.detail) details.add(selectedInstance.detail);
       if (
         (Result.isSuccess(credentials) && credentials.success.length !== logins.length) ||
         Option.getOrNull(tea.auth.detail) === INVALID_CONNECTION_DETAIL ||
