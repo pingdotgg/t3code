@@ -640,7 +640,19 @@ describe("GitCafePullRequestProvider", () => {
         },
         checks: { pending: 0, failing: 0, total: 0 },
       },
-      [`GET /repos/owner/repo/commits/${headOid}/checks`]: { items: [], next: null },
+      // Checks continue on a cursor too; a failure on a later page must not be dropped.
+      [`GET /repos/owner/repo/commits/${headOid}/checks`]: (request: SentRequest) => ({
+        items: [
+          {
+            name: request.query.has("after") ? "late" : "early",
+            status: "completed",
+            conclusion: request.query.has("after") ? "failure" : "success",
+            summary: null,
+            detailsUrl: null,
+          },
+        ],
+        next: request.query.has("after") ? null : "checks-1",
+      }),
       // `/changes` counts no lines, and a pull past one page continues on a cursor.
       "GET /repos/owner/repo/pulls/7/changes": () =>
         changePage++ === 0
@@ -668,6 +680,10 @@ describe("GitCafePullRequestProvider", () => {
         squash: false,
         rebase: true,
       });
+      assert.deepStrictEqual(
+        detail.checks.map((check) => check.name),
+        ["early", "late"],
+      );
       // A requested reviewer shows before they have reviewed.
       assert.deepStrictEqual(
         detail.reviewers.map((reviewer) => reviewer.login),

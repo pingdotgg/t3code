@@ -574,10 +574,10 @@ export const make = Effect.gen(function* () {
           read("getChangeRequest", input, { path: `${path}/status` }, Status),
           pull.headOid === null
             ? Effect.succeed(null)
-            : read(
+            : readPages(
                 "getChangeRequest",
                 input,
-                { path: `${base}/commits/${encodeURIComponent(pull.headOid)}/checks?limit=100` },
+                `${base}/commits/${encodeURIComponent(pull.headOid)}/checks`,
                 Json.GitCafeChecks,
               ),
           pull.headOid === null
