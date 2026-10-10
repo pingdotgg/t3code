@@ -87,6 +87,31 @@ describe("AzureDevOpsCli.layer", () => {
         cwd: "/repo",
         timeoutMs: 30_000,
       });
+      assert.strictEqual(result.isCrossRepository, false);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("marks a pull request from a fork as cross-repository", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            JSON.stringify({
+              pullRequestId: 43,
+              title: "From a fork",
+              sourceRefName: "refs/heads/main",
+              targetRefName: "refs/heads/main",
+              status: "active",
+              forkSource: { name: "refs/heads/main", repository: { name: "repo-fork" } },
+            }),
+          ),
+        ),
+      );
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      const result = yield* az.getPullRequest({ cwd: "/repo", reference: "43" });
+
+      assert.strictEqual(result.isCrossRepository, true);
     }).pipe(Effect.provide(layer)),
   );
 

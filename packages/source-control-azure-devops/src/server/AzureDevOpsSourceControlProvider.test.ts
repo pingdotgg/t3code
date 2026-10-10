@@ -23,6 +23,7 @@ it.effect("maps Azure DevOps PR summaries into provider-neutral change requests"
           baseRefName: "main",
           headRefName: "feature/source-control",
           state: "closed",
+          isCrossRepository: false,
           closedAt: "2026-08-23T10:00:00Z",
           updatedAt: Option.none(),
         }),

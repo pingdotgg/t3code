@@ -59,7 +59,7 @@ export class AzureDevOpsViewerUnavailableError extends Schema.TaggedError<AzureD
   },
 ) {
   get detail(): string {
-    return "Azure CLI returned no account for the current sign-in.";
+    return "Azure CLI could not name the signed-in account. Run `az login` and retry.";
   }
 
   override get message(): string {
@@ -544,6 +544,41 @@ export const make = Effect.gen(function* () {
             ? Effect.fail(new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }))
             : Effect.succeed(decoded.success);
         }),
+        // `az devops login` signs in with a personal access token, which `az account show` knows
+        // nothing about, and nothing in `az` prints whose token it is. `--creator me` is resolved
+        // by the extension itself, so the viewer's own pull request names them. Someone with none
+        // stays unnamed: `me` would read as nobody everywhere a row is compared with the viewer.
+        Effect.catchIf(
+          (error) => error._tag !== "AzureDevOpsCliUnavailableError",
+          () =>
+            executeJson({
+              cwd: input.cwd,
+              args: [
+                "repos",
+                "pr",
+                "list",
+                ...detectArgs,
+                "--creator",
+                "me",
+                "--status",
+                "all",
+                "--top",
+                "1",
+              ],
+            }).pipe(
+              Effect.flatMap((result): Effect.Effect<string, AzureDevOpsPullRequestCliError> => {
+                const decoded = decodePullRequestListJson(result.stdout.trim() || "[]");
+                const login = Result.isSuccess(decoded)
+                  ? decoded.success.items[0]?.author?.login
+                  : undefined;
+                return login === undefined
+                  ? Effect.fail(
+                      new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }),
+                    )
+                  : Effect.succeed(login);
+              }),
+            ),
+        ),
       ),
 
     listPullRequests: (input) =>

@@ -4948,6 +4948,106 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("prepares a worktree from the head branch when the host has no pull ref", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/no-pull-ref"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "head.txt"), "head\n");
+      yield* runGit(repoDir, ["add", "head.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Head without a pull ref"]);
+      yield* runGit(repoDir, ["push", "origin", "feature/no-pull-ref"]);
+      const headSha = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* runGit(repoDir, ["branch", "-D", "feature/no-pull-ref"]);
+      // The remote keeps its Azure spelling, which is what the pull request is compared with.
+      const remoteUrl = "https://dev.azure.com/org/project/_git/repo";
+      yield* runGit(repoDir, ["remote", "set-url", "origin", remoteUrl]);
+      yield* runGit(repoDir, ["config", `url.${remoteDir}.insteadOf`, remoteUrl]);
+
+      // A pull request of another repository in the organization is not this remote's branch.
+      const { manager: otherRepositoryManager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 79,
+            title: "Another repository's PR",
+            url: "https://dev.azure.com/org/project/_git/other/pullrequest/79",
+            baseRefName: "main",
+            headRefName: "feature/no-pull-ref",
+            state: "open",
+            isCrossRepository: false,
+          },
+        },
+      });
+      yield* Effect.flip(
+        preparePullRequestThread(otherRepositoryManager, {
+          cwd: repoDir,
+          reference: "79",
+          mode: "worktree",
+        }),
+      );
+      // Nor is the branch of a closed one, which may have moved past the head it closed with.
+      const { manager: mergedManager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 77,
+            title: "Merged PR",
+            url: "https://dev.azure.com/org/project/_git/repo/pullrequest/77",
+            baseRefName: "main",
+            headRefName: "feature/no-pull-ref",
+            state: "merged",
+            isCrossRepository: false,
+          },
+        },
+      });
+      yield* Effect.flip(
+        preparePullRequestThread(mergedManager, {
+          cwd: repoDir,
+          reference: "77",
+          mode: "worktree",
+        }),
+      );
+      const localBranches = (yield* runGit(repoDir, ["branch", "--list"])).stdout;
+      expect(localBranches).not.toContain("feature/no-pull-ref");
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 78,
+            title: "Azure DevOps PR",
+            url: "https://dev.azure.com/org/project/_git/repo/pullrequest/78",
+            baseRefName: "main",
+            headRefName: "feature/no-pull-ref",
+            state: "open",
+            isCrossRepository: false,
+          },
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "78",
+        mode: "worktree",
+      });
+
+      expect(result.branch).toBe("feature/no-pull-ref");
+      const worktreeHead = (yield* runGit(result.worktreePath as string, [
+        "rev-parse",
+        "HEAD",
+      ])).stdout.trim();
+      expect(worktreeHead).toBe(headSha);
+      const upstream = (yield* runGit(result.worktreePath as string, [
+        "rev-parse",
+        "--abbrev-ref",
+        "@{upstream}",
+      ])).stdout.trim();
+      expect(upstream).toBe("origin/feature/no-pull-ref");
+    }),
+  );
+
   it.effect("preserves both branch materialization failures when the fallback also fails", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
