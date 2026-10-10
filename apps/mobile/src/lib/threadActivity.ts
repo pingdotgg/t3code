@@ -117,6 +117,11 @@ export interface ThreadFeedActivity {
   readonly workEntry: WorkLogPresentationEntry;
   readonly groupedToolDetail?: boolean;
   readonly live?: boolean;
+  /**
+   * Set on a lone call shown in place of its group header. Carries the header's
+   * label and the group that takes over once a second call joins it.
+   */
+  readonly groupStandIn?: { readonly groupId: string; readonly label: string };
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
 }
 
@@ -1332,7 +1337,7 @@ export function deriveThreadFeedPresentation(
     activeWorkStartedAt !== null &&
     !result.some(
       (row) =>
-        (row.type === "work-toggle" && row.shimmer) ||
+        row.id === LIVE_ACTIVITY_ROW_ID ||
         (row.type === "activity-group" &&
           isContextCompactionActivityGroup(row) &&
           row.runId === activeRunId &&
@@ -1530,6 +1535,23 @@ function appendToolGroupRows(
       : singleActivity !== null && !singleActivity.toolLike
         ? singleActivity.workEntry.label
         : groupSummary.summary;
+  const id = shimmer ? LIVE_ACTIVITY_ROW_ID : `${live ? "work-live" : "work-toggle"}:${groupId}`;
+  // A lone call needs no header. Its own row takes the header's place, label
+  // and identity, and discloses its details directly. A lone thought keeps the
+  // header, whose expansion already shows the text itself.
+  if (singleActivity !== null && singleActivity.workEntry.itemType !== "reasoning") {
+    result.push({
+      type: "activity-group",
+      id,
+      createdAt: singleActivity.createdAt,
+      runId: singleActivity.runId,
+      activities: [{ ...singleActivity, live: shimmer, groupStandIn: { groupId, label: summary } }],
+      // Like the header, the row has no trailing margin, so the Thinking
+      // fallback and a growing group swap in without shifting the feed.
+      continuesWorkLog: true,
+    });
+    return;
+  }
   const primarySourceActivity = activities.find(
     (activity) => activity.workEntry.toolSource !== undefined,
   );
@@ -1553,14 +1575,10 @@ function appendToolGroupRows(
       .toolIcon;
   const summaryToolIcon = live
     ? resolveWorkEntryToolPresentation(latestActivity.workEntry)?.icon
-    : singleActivity !== null &&
-        singleActivity.toolLike &&
-        toolGroupAction(singleActivity.workEntry) !== "edit"
-      ? resolveWorkEntryToolPresentation(singleActivity.workEntry, "completed")?.icon
-      : undefined;
+    : undefined;
   result.push({
     type: "work-toggle",
-    id: shimmer ? LIVE_ACTIVITY_ROW_ID : `${live ? "work-live" : "work-toggle"}:${groupId}`,
+    id,
     createdAt: sourceGroup.createdAt,
     runId: sourceGroup.runId,
     groupId,

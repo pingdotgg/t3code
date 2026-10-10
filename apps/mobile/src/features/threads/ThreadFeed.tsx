@@ -1530,7 +1530,7 @@ function renderFeedEntry(
     readonly failedRunIds: ReadonlySet<RunId>;
     readonly onCopyWorkRow: (rowId: string, value: string) => void;
     readonly onToggleWorkGroup: (groupId: string, anchorKey?: string) => void;
-    readonly onToggleWorkRow: (rowId: string, anchorKey?: string) => void;
+    readonly onToggleWorkRow: (rowId: string, anchorKey?: string, groupId?: string) => void;
     readonly onToggleTurnFold: (runId: RunId) => void;
     readonly onPressPreview: (source: FilePreviewSource) => void;
     readonly onPressVideo: (attachment: ChatFileAttachment, sourceIdentifier: string) => void;
@@ -2902,16 +2902,22 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     [suspendEndScrollMaintenanceForDisclosure],
   );
 
+  // A lone call's row stands in for its group header, so both disclosures move
+  // together. Details the reader opened stay open when a second call turns the
+  // row into a group.
   const onToggleWorkRow = useCallback(
-    (rowId: string, anchorKey?: string) => {
+    (rowId: string, anchorKey?: string, groupId?: string) => {
       suspendEndScrollMaintenanceForDisclosure(anchorKey ?? null);
-      setInteractionState((current) => ({
-        ...current,
-        expandedWorkRows: {
-          ...current.expandedWorkRows,
-          [rowId]: !(current.expandedWorkRows[rowId] ?? false),
-        },
-      }));
+      setInteractionState((current) => {
+        const expanded = !(current.expandedWorkRows[rowId] ?? false);
+        return {
+          ...current,
+          expandedWorkRows: { ...current.expandedWorkRows, [rowId]: expanded },
+          ...(groupId === undefined
+            ? {}
+            : { expandedWorkGroups: { ...current.expandedWorkGroups, [groupId]: expanded } }),
+        };
+      });
     },
     [suspendEndScrollMaintenanceForDisclosure],
   );

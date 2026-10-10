@@ -887,7 +887,7 @@ describe("buildThreadFeed", () => {
       "message",
       "message",
       "run-fold",
-      "work-toggle",
+      "activity-group",
       "message",
       "message",
     ]);
@@ -1081,7 +1081,7 @@ describe("buildThreadFeed", () => {
     expect(expanded.map((entry) => entry.type)).toEqual([
       "message",
       "run-fold",
-      "work-toggle",
+      "activity-group",
       "message",
     ]);
   });
@@ -1104,11 +1104,8 @@ describe("buildThreadFeed", () => {
     );
 
     expect(presented.some((entry) => entry.type === "run-fold")).toBe(false);
-    expect(presented.find((entry) => entry.type === "work-toggle")).toMatchObject({
-      summary: "vp check",
-      hiddenCount: 1,
-      hasFailure: true,
-      live: false,
+    expect(presented.find((entry) => entry.type === "activity-group")).toMatchObject({
+      activities: [{ status: "failure", live: false, groupStandIn: { label: "vp check" } }],
     });
   });
 
@@ -1172,7 +1169,7 @@ describe("buildThreadFeed", () => {
     ).toEqual([
       "user:launch",
       "fold:Worked for 8.0s",
-      "work-toggle",
+      "activity-group",
       "assistant:launch-answer",
       "user:resume",
       "fold:Worked for 8.0s",
@@ -1196,7 +1193,7 @@ describe("buildThreadFeed", () => {
       "fold:Worked for 8.0s",
       "assistant:launch-answer",
       "user:resume",
-      "work-toggle",
+      "activity-group",
     ]);
   });
 
@@ -1279,10 +1276,9 @@ describe("buildThreadFeed", () => {
       startedAt,
       true,
     );
-    expect(presented.find((entry) => entry.type === "work-toggle")).toMatchObject({
-      summary: "Running vp",
-      live: true,
-      shimmer: true,
+    expect(presented.find((entry) => entry.type === "activity-group")).toMatchObject({
+      id: "live-activity-row",
+      activities: [{ live: true, groupStandIn: { label: "Running vp" } }],
     });
     expect(presented.some((entry) => entry.type === "thinking")).toBe(false);
   });
@@ -1417,6 +1413,112 @@ describe("buildThreadFeed", () => {
         { id: "activity-2", groupedToolDetail: true, live: false },
         { id: "activity-3", groupedToolDetail: true, live: false },
       ],
+    });
+  });
+
+  describe("a lone call", () => {
+    const wait = (overrides: Partial<OrchestrationV2TurnItem> = {}) =>
+      ({
+        ...base("wait", "2026-06-20T00:00:02.000Z", 1),
+        type: "dynamic_tool",
+        toolName: "t3-code.t3_thread_wait",
+        input: { threadId: "thread-child", timeoutMs: 50_000 },
+        output: { threadId: "thread-child", status: "timeout" },
+        ...overrides,
+      }) as OrchestrationV2TurnItem;
+    const read = (overrides: Partial<OrchestrationV2TurnItem> = {}) =>
+      ({
+        ...base("read", "2026-06-20T00:00:03.000Z", 2),
+        type: "dynamic_tool",
+        toolName: "t3-code.t3_thread_read",
+        input: { threadId: "thread-child" },
+        output: { messages: [] },
+        ...overrides,
+      }) as OrchestrationV2TurnItem;
+    const running = { status: "running", completedAt: null, output: null } as const;
+    const startedAt = "2026-06-20T00:00:01.000Z";
+    const liveRows = (items: ReadonlyArray<OrchestrationV2TurnItem>, groupIds: string[] = []) =>
+      deriveThreadFeedPresentation(
+        buildThreadFeed(items.map((item, position) => projected(item, position))),
+        { runId, status: "running", startedAt, completedAt: null },
+        new Set(),
+        new Set(groupIds),
+        startedAt,
+      );
+    const standIn = (rows: ReadonlyArray<ThreadFeedEntry>) => {
+      const row = rows.find((entry) => entry.type === "activity-group");
+      if (row?.type !== "activity-group") throw new Error("Expected the call's own row");
+      return row.activities[0]?.groupStandIn;
+    };
+
+    it("is its own row, with no group header to open first", () => {
+      // The second call never finished, so only one call is visible.
+      for (const items of [[wait()], [wait(), read(running)]]) {
+        const feed = buildThreadFeed(
+          [userMessage(), ...items, assistantMessage("2026-06-20T00:00:04.000Z")].map(
+            (item, position) => projected(item, position),
+          ),
+        );
+        const rows = deriveThreadFeedPresentation(feed, null, new Set([runId]));
+        expect(rows.map((entry) => entry.type)).toEqual([
+          "message",
+          "run-fold",
+          "activity-group",
+          "message",
+        ]);
+        expect(rows[2]).toMatchObject({
+          activities: [{ canExpand: true, groupStandIn: { label: "Waited for a T3 thread" } }],
+        });
+        expect(rows[2]).not.toMatchObject({ activities: [{ groupedToolDetail: true }] });
+        // The group's own disclosure adds nothing while the call is alone.
+        expect(
+          deriveThreadFeedPresentation(
+            feed,
+            null,
+            new Set([runId]),
+            new Set([standIn(rows)!.groupId]),
+          ).map((entry) => entry.id),
+        ).toEqual(rows.map((entry) => entry.id));
+      }
+    });
+
+    it("offers no disclosure when it has nothing to show", () => {
+      const rows = deriveThreadFeedPresentation(
+        buildThreadFeed([projected(wait({ toolName: "example", input: {}, output: null }), 0)]),
+        null,
+        new Set([runId]),
+      );
+      expect(rows.map((entry) => entry.type)).toEqual(["run-fold", "activity-group"]);
+      expect(rows[1]).toMatchObject({ activities: [{ canExpand: false }] });
+    });
+
+    it("holds the live slot until a second call makes it a group", () => {
+      for (const item of [wait(running), wait()]) {
+        const rows = liveRows([item]);
+        expect(rows.map((entry) => entry.type)).toEqual(["activity-group"]);
+        expect(rows[0]).toMatchObject({
+          id: "live-activity-row",
+          activities: [{ live: true, groupStandIn: { label: "Waiting for a T3 thread" } }],
+        });
+      }
+
+      const groupId = standIn(liveRows([wait()]))!.groupId;
+      const grouped = liveRows([wait(), read(running)], [groupId]);
+      expect(grouped.map((entry) => entry.type)).toEqual(["work-toggle", "activity-group"]);
+      expect(grouped[0]).toMatchObject({
+        id: "live-activity-row",
+        groupId,
+        hiddenCount: 2,
+        expanded: true,
+        summary: "Reading a T3 thread",
+      });
+      expect(grouped[1]).toMatchObject({
+        activities: [
+          { groupedToolDetail: true, live: false },
+          { groupedToolDetail: true, live: true },
+        ],
+      });
+      expect(standIn(grouped)).toBeUndefined();
     });
   });
 
@@ -1788,11 +1890,11 @@ describe("retained v2 feed presentation", () => {
   });
 
   it.each([
-    ["failed", "Failed to click in the preview browser", true],
-    ["cancelled", "Stopped clicking in the preview browser", false],
+    ["failed", "Failed to click in the preview browser", "failure"],
+    ["cancelled", "Stopped clicking in the preview browser", "neutral"],
   ] as const)(
     "keeps %s calls terminal while the parent run remains live",
-    (status, summary, hasFailure) => {
+    (status, label, activityStatus) => {
       const feed = buildThreadFeed([
         projected(
           {
@@ -1813,7 +1915,11 @@ describe("retained v2 feed presentation", () => {
         new Set(),
         "2026-06-20T00:00:01.000Z",
       );
-      expect(rows[0]).toMatchObject({ type: "work-toggle", summary, hasFailure, shimmer: false });
+      expect(rows[0]).toMatchObject({
+        type: "activity-group",
+        activities: [{ status: activityStatus, live: false, groupStandIn: { label } }],
+      });
+      expect(rows.at(-1)?.type).toBe("thinking");
     },
   );
 
