@@ -262,6 +262,11 @@ function nonEmptyProbeString(value: string): string | undefined {
 
 type ClaudeCapabilitiesProbe = {
   readonly email: string | undefined;
+  /**
+   * The organization UUID from the login's `.claude.json`. The driver reads it
+   * in the same cached probe, so it describes the same login as the rest.
+   */
+  readonly workspaceId?: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
   /** Where the CLI found an API key, when it authenticates with one. */
@@ -679,6 +684,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       auth: {
         status: "authenticated",
         ...(capabilities.email ? { email: capabilities.email } : {}),
+        ...(capabilities.workspaceId ? { workspaceId: capabilities.workspaceId } : {}),
         ...(authMetadata ? authMetadata : {}),
       },
       ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),

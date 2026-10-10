@@ -189,6 +189,13 @@ export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
 );
 
 /** The CLI keeps the account record beside its settings, or in the home directory by default. */
+/** The organization the login is signed in to; one email can belong to several. */
+export const readClaudeOrganizationId = (accountConfigPath: string) =>
+  readJson(Config, accountConfigPath).pipe(
+    Effect.map((config) => config.oauthAccount?.organizationUuid?.trim() || undefined),
+    Effect.orElseSucceed(() => undefined),
+  );
+
 export const claudeAccountConfigPath = Effect.fn("claudeAccountConfigPath")(function* (
   configDir: string | undefined,
 ) {

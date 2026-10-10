@@ -496,6 +496,128 @@ describe("pools", () => {
     expect(account?.redeem?.environmentId).toBe("env-2");
   });
 
+  it("keeps one email in two workspaces apart while merging each workspace's duplicates", () => {
+    const login = (instanceId: string, workspaceId: string, usedPercent: number) =>
+      provider({
+        instanceId: ProviderInstanceId.make(instanceId),
+        auth: { status: "authenticated", email: "same@example.com", workspaceId },
+        usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent }] },
+      });
+    const hubAccount = (id: string, workspaceId?: string) => ({
+      id,
+      driver: ProviderDriverKind.make("codex"),
+      email: "same@example.com",
+      ...(workspaceId ? { workspaceId } : {}),
+      usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent: 50 }] },
+    });
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [login("business", "ws-business", 8), login("personal", "ws-plus", 26)],
+            usageLimitSources: [
+              // A hub that names the workspace joins it; one that does not
+              // cannot say which of the two it read, so it keeps its own row.
+              { ...source, accounts: [hubAccount("plus.json", "ws-plus"), hubAccount("x.json")] },
+            ],
+          },
+        },
+      ],
+      [
+        EnvironmentId.make("env-b"),
+        {
+          entry: { target: { label: "Desktop" } },
+          serverConfig: { providers: [login("personal", "ws-plus", 26)] },
+        },
+      ],
+    ]);
+    const accounts = collectLimitAccounts(input);
+    expect(accounts.map((account) => account.key)).toEqual([
+      "env-a:business",
+      "env-a:personal",
+      "hub:x.json",
+    ]);
+    expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(8);
+    // One hub file name in two workspaces stays two accounts, even without an
+    // email to tell them apart.
+    const withoutEmail = (id: string, workspaceId: string) => {
+      const { email: _email, ...account } = hubAccount(id, workspaceId);
+      return account;
+    };
+    const sameFile = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            usageLimitSources: [{ ...source, accounts: [withoutEmail("a.json", "ws-1")] }],
+          },
+        },
+      ],
+      [
+        EnvironmentId.make("env-b"),
+        {
+          ...laptop,
+          serverConfig: {
+            usageLimitSources: [{ ...source, accounts: [withoutEmail("a.json", "ws-2")] }],
+          },
+        },
+      ],
+    ]);
+    expect(collectLimitAccounts(sameFile).map((account) => account.key)).toEqual([
+      "hub:a.json:ws-1",
+      "hub:a.json:ws-2",
+    ]);
+    expect(accounts[1]?.environments.map((environment) => environment.label)).toEqual([
+      "Laptop",
+      "Desktop",
+    ]);
+  });
+
+  it("joins a report without a workspace to the only workspace signed in with its email", () => {
+    const native = provider({
+      driver: claude,
+      auth: { status: "authenticated", email: "same@example.com", workspaceId: "org-a" },
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const hubAccount = {
+      id: "claude.json",
+      driver: claude,
+      email: "same@example.com",
+      usageLimits: { checkedAt, windows: [window] },
+    };
+    const withOther = (other: ServerProvider) =>
+      new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: {
+              providers: [native, other],
+              usageLimitSources: [{ ...source, accounts: [hubAccount] }],
+            },
+          },
+        ],
+      ]);
+    const unrelated = provider({ instanceId: ProviderInstanceId.make("codex-2") });
+    expect(collectLimitAccounts(withOther(unrelated)).map((account) => account.key)).toEqual([
+      "env-a:codex",
+    ]);
+    // A second org whose limits could not be read still makes the hub ambiguous.
+    const unreadable = provider({
+      ...native,
+      instanceId: ProviderInstanceId.make("team"),
+      auth: { ...native.auth, workspaceId: "org-b" },
+      usageLimits: { checkedAt, windows: [], unavailable: { reason: "probeFailed" } },
+    });
+    expect(collectLimitAccounts(withOther(unreadable)).map((account) => account.key)).toEqual([
+      "env-a:codex",
+      "hub:claude.json",
+    ]);
+  });
+
   it("names an environment once however many of its instances share the account", () => {
     const shared = provider({
       auth: { status: "authenticated", email: "same@example.com" },
@@ -534,6 +656,45 @@ describe("pools", () => {
     const accounts = collectLimitAccounts(input);
     expect(accounts.map((account) => account.key)).toEqual(["hub:claude-team-seat.json"]);
     expect(accounts[0]?.displayName).toBe("claude-team-seat");
+  });
+
+  it("pools Codex windows by kind, whichever slot reported them", () => {
+    const codexAccount = (id: string, slots: readonly string[]) => ({
+      id,
+      driver: ProviderDriverKind.make("codex"),
+      usageLimits: {
+        checkedAt,
+        windows: slots.map((slot) => ({ ...weekly, id: slot, usedPercent: 50 })),
+      },
+    });
+    const pooled = (accounts: ReturnType<typeof codexAccount>[]) =>
+      collectLimitPools(
+        collectLimitAccounts(
+          new Map([
+            [
+              EnvironmentId.make("env-a"),
+              { ...laptop, serverConfig: { usageLimitSources: [{ ...source, accounts }] } },
+            ],
+          ]),
+        ),
+        now,
+      )[0]?.windows ?? [];
+    // A weekly-only plan reports weekly as `primary`. The pool keeps one id
+    // whichever account sorts first.
+    for (const order of [
+      [codexAccount("business", ["primary"]), codexAccount("plus", ["secondary"])],
+      [codexAccount("plus", ["secondary"]), codexAccount("business", ["primary"])],
+    ]) {
+      const windows = pooled(order);
+      expect(windows.map((window) => window.id)).toEqual(["weekly"]);
+      expect(windows[0]?.members).toHaveLength(2);
+    }
+    // A second window of the same kind on one account stays apart, with its own id.
+    expect(
+      pooled([codexAccount("a", ["secondary"]), codexAccount("b", ["primary", "secondary"])]).map(
+        (window) => window.id,
+      ),
+    ).toEqual(["weekly", "weekly:secondary"]);
   });
 
   it("pools windows by id across accounts and orders resets by when they land", () => {
@@ -908,6 +1069,35 @@ describe("/usage-limits", () => {
       accountId: "oss",
       creditId: "oss-credit",
     });
+  });
+
+  it("gives a hub credit to no native row when its email is signed in to two workspaces", () => {
+    const workspaces = ["ws-a", "ws-b"].map((workspaceId) =>
+      provider({
+        instanceId: ProviderInstanceId.make(workspaceId),
+        usageLimits: limits,
+        auth: { status: "authenticated", email: "same@example.com", workspaceId },
+      }),
+    );
+    const hub = [
+      {
+        ...sources[0]!,
+        accounts: [
+          {
+            id: "duplicate",
+            driver: selected.driver,
+            email: "same@example.com",
+            usageLimits: { ...limits, resetCredits: { availableCount: 2, nextCreditId: "c" } },
+          },
+        ],
+      },
+    ];
+    const report = collectProviderUsageLimits(workspaces[0]!.instanceId, workspaces, hub, now);
+    expect(report?.accounts.map((account) => account.resetCreditInput)).toEqual([
+      { instanceId: "ws-a" },
+      { instanceId: "ws-b" },
+      { sourceId: "hub", accountId: "duplicate", creditId: "c" },
+    ]);
   });
 
   it("redeems a native duplicate through the hub even when the native snapshot is fresher", () => {
