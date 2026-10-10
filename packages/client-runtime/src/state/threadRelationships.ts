@@ -71,7 +71,12 @@ export function deriveThreadRelationshipGraph(input: {
   const addEdge = (edge: ThreadRelationshipEdge) => {
     ensureNode(edge.sourceThreadId);
     ensureNode(edge.targetThreadId);
-    edgesByKey.set(edgeKey(edge), edge);
+    edgesByKey.set(
+      edgeKey(edge),
+      edge.kind === "subagent" && edge.status === "rolled_back"
+        ? { ...edge, status: "interrupted" }
+        : edge,
+    );
   };
 
   for (const thread of threads) {

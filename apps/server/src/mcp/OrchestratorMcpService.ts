@@ -407,6 +407,8 @@ function directAppOwnedChildTasks(
     (task) =>
       task.origin === "app_owned" &&
       task.threadId === parent.thread.id &&
+      task.id ===
+        (target.thread.forkedFrom?.type === "node" ? target.thread.forkedFrom.nodeId : undefined) &&
       task.childThreadId === target.thread.id,
   );
   const taskIds = new Set(
@@ -1282,6 +1284,12 @@ const make = Effect.gen(function* () {
               .filter((run) => run.delegatedTaskId === task.id)
               .toSorted((a, b) => b.ordinal - a.ordinal)[0]
           : progress.resultRun;
+      const taskWorkState =
+        childRun?.delegatedTaskId === task.id
+          ? isTerminalTaskStatus(taskStatusForRun(taskResultRun))
+            ? "result_available"
+            : "working"
+          : progress.state;
       const resultRunIds = [
         ...new Set(
           [taskResultRun?.id, terminalRun?.id].filter((id): id is RunId => id !== undefined),
@@ -1304,12 +1312,12 @@ const make = Effect.gen(function* () {
       // the child started working again after this read.
       const heldForRestart =
         task.result === null &&
-        progress.state === "result_available" &&
+        taskWorkState === "result_available" &&
         (yield* threadManagement
-          .delegatedTaskResultPending(task.childThreadId)
+          .delegatedTaskResultPending(task.childThreadId, childRun?.delegatedTaskId)
           .pipe(Effect.mapError(threadManagementFailure)));
       const workState =
-        task.result !== null ? "result_available" : heldForRestart ? "working" : progress.state;
+        task.result !== null ? "result_available" : heldForRestart ? "working" : taskWorkState;
       const status =
         task.result !== null
           ? taskStatusForRun(
@@ -1322,7 +1330,7 @@ const make = Effect.gen(function* () {
             )
           : workState === "result_available"
             ? taskStatusForRun(taskResultRun ?? childRun)
-            : taskStatusForRun(childRun) === "queued"
+            : taskStatusForRun(taskResultRun ?? childRun) === "queued"
               ? "queued"
               : "running";
       const derivedResult =

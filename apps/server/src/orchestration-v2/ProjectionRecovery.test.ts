@@ -341,6 +341,7 @@ it.effect.each([
     assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), []);
     const taskId = NodeId.make("node:followup");
     yield* createRun(child, "completed", { ordinal: 3, delegatedTaskId: taskId });
+    yield* createRun(child, "running", { ordinal: 4 });
     const task = {
       id: taskId,
       threadId: parent,

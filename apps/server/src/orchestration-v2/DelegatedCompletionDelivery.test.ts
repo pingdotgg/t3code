@@ -41,7 +41,7 @@ import { continueRestartedRun } from "./RestartContinuation.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import * as ProviderTurnStartServiceTestkit from "./ProviderTurnStartService.testkit.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import * as ProviderContinuationRequests from "./ProviderContinuationRequests.ts";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 
 const layerPlatformTest = Layer.merge(
   NodeServices.layer,
@@ -908,7 +908,15 @@ const seedRestartCancelledChild = (input: {
 it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
   "subagent follow-ups",
   (it) => {
-    it.effect.each(["completed", "failed", "interrupted", "restarted", "stopped"] as const)(
+    const outcomes = [
+      "completed",
+      "failed",
+      "interrupted",
+      "restarted",
+      "stopped",
+      "overlapping",
+    ] as const;
+    it.effect.each(outcomes)(
       "delivers a %s follow-up independently of the original task",
       (outcome) =>
         Effect.gen(function* () {
@@ -991,6 +999,20 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             .find((thread) => thread.id === parentThreadId)
             ?.pendingBackgroundTasks?.find((task) => task.kind === "subagent");
           assert.equal(backgroundTask?.childThreadId, child.childThreadId);
+          if (outcome === "overlapping") {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "agent",
+              creationSource: "mcp",
+              commandId: CommandId.make("command:overlapping-followup"),
+              threadId: child.childThreadId,
+              senderThreadId: parentThreadId,
+              messageId: MessageId.make("message:overlapping-followup"),
+              text: "Keep working on another follow-up.",
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+            });
+          }
           if (outcome === "restarted") {
             const cut = { ...run, status: "cancelled" as const, startedAt: now, completedAt: now };
             yield* eventSink.writeWithEffects({
@@ -1061,7 +1083,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
                   status:
                     outcome === "stopped"
                       ? "interrupted"
-                      : outcome === "restarted"
+                      : outcome === "restarted" || outcome === "overlapping"
                         ? "completed"
                         : outcome,
                   startedAt: now,
@@ -1077,9 +1099,23 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             original,
           );
           const followup = finished.subagents.find((task) => task.id === run.delegatedTaskId)!;
+          if (outcome === "overlapping") {
+            const later = finished.subagents.find(
+              (task) =>
+                task.childThreadId === child.childThreadId &&
+                task.id !== child.taskId &&
+                task.id !== followup.id,
+            )!;
+            assert.equal(later.status, "pending");
+            assert.isNull(later.result);
+          }
           assert.equal(
             followup.status,
-            outcome === "stopped" ? "interrupted" : outcome === "restarted" ? "completed" : outcome,
+            outcome === "stopped"
+              ? "interrupted"
+              : outcome === "restarted" || outcome === "overlapping"
+                ? "completed"
+                : outcome,
           );
           assert.equal(
             followup.completionDelivery?.state,

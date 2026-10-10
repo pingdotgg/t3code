@@ -280,9 +280,11 @@ export interface OrchestratorV2Shape {
   /**
    * Whether a delegated child's apparent result is not final yet: a restart
    * continuation is pending, or the child is working again.
+   * A taskId limits the check to that follow-up's runs.
    */
   readonly delegatedTaskResultPending: (
     childThreadId: ThreadId,
+    taskId?: NodeId,
   ) => Effect.Effect<boolean, OrchestratorProjectionError>;
   readonly dispatch: (
     command: OrchestrationV2ServerCommand,
@@ -6794,7 +6796,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       .getThreadRecords(parentThreadId, ["runs", "subagents", "providerTurns", "attempts"])
       .pipe(mapDispatchError(command));
     const original = parent.subagents.find(
-      (task) => task.origin === "app_owned" && task.childThreadId === child.id,
+      (task) =>
+        task.origin === "app_owned" &&
+        task.childThreadId === child.id &&
+        task.id === (child.forkedFrom?.type === "node" ? child.forkedFrom.nodeId : undefined),
     );
     // Before first publication, follow-ups remain part of the original task.
     if (original === undefined || original.result === null) return;
@@ -9752,7 +9757,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     options: {
       readonly settledContinuationOf?: RunId;
       readonly taskId: NodeId;
-      readonly resultRun: OrchestrationV2Run;
+      readonly resultRun?: OrchestrationV2Run;
     },
   ) =>
     Effect.gen(function* () {
@@ -9779,7 +9784,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       if (
         yield* childAwaitsRestartContinuation(
-          childControls.runs,
+          taskRuns.length === 0 ? childControls.runs : taskRuns,
           childRun,
           options?.settledContinuationOf,
         )
@@ -10063,7 +10068,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       )
         return;
       const progress = delegatedTaskProgress(childControls);
-      if (progress.state !== "result_available" || progress.resultRun === undefined) return;
       const parent = yield* projectionStore.getThreadRecords(parentThreadId, [
         "subagents",
         "contextTransfers",
@@ -10072,6 +10076,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         if (
           task.origin !== "app_owned" ||
           task.childThreadId !== childThreadId ||
+          (task.id === childControls.thread.forkedFrom.nodeId &&
+            progress.state !== "result_available") ||
           (task.result !== null &&
             parent.contextTransfers.some(
               (transfer) =>
@@ -10082,7 +10088,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* finalizeAppOwnedSubagentTask(childControls, {
           ...options,
           taskId: task.id,
-          resultRun: progress.resultRun,
+          ...(progress.resultRun === undefined ? {} : { resultRun: progress.resultRun }),
         });
       }
     });
@@ -10853,7 +10859,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       )
         return yield* dispatch;
       const parentThreadId = yield* appOwnedSubagentParentThreadId(command.threadId).pipe(
-        mapDispatchError(command),
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
       );
       // Follow-up intake and Stop serialize on the parent before taking the child lock.
       return yield* parentThreadId === undefined
@@ -11024,13 +11032,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
   });
 
-  const delegatedTaskResultPending = (childThreadId: ThreadId) =>
+  const delegatedTaskResultPending = (childThreadId: ThreadId, taskId?: NodeId) =>
     Effect.gen(function* () {
       const child = yield* projectionStore.getThreadRecords(
         childThreadId,
         ["runs", "messages", "subagents", "providerThreads", "providerTurns", "attempts"],
         { messageRoles: ["user"] },
       );
+      if (taskId !== undefined) {
+        const runs = child.runs.filter((run) => run.delegatedTaskId === taskId);
+        const run = runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+        if (run === undefined || delegatedTaskTerminalStatus(run.status) === null) return true;
+        return yield* childAwaitsRestartContinuation(runs, run);
+      }
       const progress = delegatedTaskProgress(child);
       // A caller's older read saw a result; newer work since then means it is not final.
       if (progress.state !== "result_available") return true;

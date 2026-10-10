@@ -208,7 +208,7 @@ describe("OrchestratorMcpService", () => {
             delegatedTaskId: taskId,
           },
           // An unrelated later run cannot supply this follow-up's result.
-          { id: RunId.make("run:mcp-restart-later"), ordinal: 2, status: "completed" },
+          { id: RunId.make("run:mcp-restart-later"), ordinal: 2, status: "running" },
         ],
         contextTransfers: [],
         messages: [],

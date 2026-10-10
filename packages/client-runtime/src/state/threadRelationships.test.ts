@@ -195,6 +195,7 @@ describe("thread relationships", () => {
     [null, "interrupted", "interrupted"],
     [null, "cancelled", "cancelled"],
     [null, "completed", "completed"],
+    [null, "rolled_back", "interrupted"],
   ])(
     "shows child activity %s and latest status %s as %s after its delegated task settled",
     (childActivity, childStatus, expected) => {
