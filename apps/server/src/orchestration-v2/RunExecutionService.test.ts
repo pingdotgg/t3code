@@ -3581,6 +3581,128 @@ it.effect("refreshes pull requests after a provider stream exits with an error",
   }),
 );
 
+it.effect("cancels the run's open tool calls when its provider stream is lost", () =>
+  Effect.gen(function* () {
+    const finishedItemId = TurnItemId.make("turn-item:lost-stream:finished");
+    const { written } = yield* captureRootRunTermination({
+      key: "lost-stream-open-tool",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.concat(
+          Stream.make(
+            backgroundTurnItemEvent(ids, "dynamic_tool", "running", 1),
+            backgroundTurnItemEvent(ids, "command_execution", "running", 2, finishedItemId),
+            backgroundTurnItemEvent(ids, "command_execution", "completed", 3, finishedItemId),
+          ),
+          // A workspace change detaches the session while the tool call runs.
+          Stream.fail(
+            new ProviderAdapter.ProviderAdapterEventStreamError({
+              driver,
+              providerSessionId: ProviderSessionId.make("session:detached"),
+              cause: "Workspace changed.",
+            }),
+          ),
+        ),
+    });
+    assert.deepEqual(
+      written.map((item) => [item.type, item.status]),
+      [
+        ["dynamic_tool", "cancelled"],
+        ["error", "failed"],
+      ],
+    );
+  }),
+);
+
+it.effect("strips unserved image bytes from a tool call it cancels", () =>
+  Effect.gen(function* () {
+    const imageBase64 = Buffer.alloc(3_000, 7).toString("base64");
+    const { written } = yield* captureRootRunTermination({
+      key: "lost-stream-tool-image",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.concat(
+          Stream.make({
+            type: "turn_item.updated",
+            driver,
+            turnItem: {
+              id: ids.itemId,
+              threadId: ids.threadId,
+              runId: ids.runId,
+              providerTurnId: ids.rootProviderTurnId,
+              ordinal: 1,
+              type: "dynamic_tool",
+              status: "running",
+              toolName: "Read",
+              output: {
+                type: "image",
+                file: { base64: imageBase64, type: "image/png", originalSize: 3_000 },
+              },
+            },
+          } as ProviderAdapter.ProviderAdapterV2Event),
+          Stream.fail(
+            new ProviderAdapter.ProviderAdapterEventStreamError({
+              driver,
+              providerSessionId: ProviderSessionId.make("session:detached"),
+              cause: "Workspace changed.",
+            }),
+          ),
+        ),
+    });
+    const cancelled = written.find((item) => item.type === "dynamic_tool");
+    assert.deepEqual(cancelled?.type === "dynamic_tool" ? cancelled.output : null, {
+      type: "image",
+      file: { type: "image/png", originalSize: 3_000, sizeBytes: 3_000 },
+    });
+  }),
+);
+
+it.effect("leaves open tool calls to the next run when only storing an event fails", () =>
+  Effect.gen(function* () {
+    const { written } = yield* captureRootRunTermination({
+      key: "ingest-failure-open-tool",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.make(
+          backgroundTurnItemEvent(ids, "dynamic_tool", "running", 1),
+          backgroundTurnItemEvent(ids, "dynamic_tool", "running", 2),
+        ),
+      // The provider is still running the tool; only this server failed to store an update.
+      ingestNormalized: (ingest) =>
+        ingest.event.type === "turn_item.updated" && ingest.event.turnItem.ordinal === 2
+          ? Effect.fail(
+              new ProviderEventIngestor.ProviderEventPublishError({
+                providerSessionId: ingest.providerSessionId,
+                eventCount: 1,
+              }),
+            )
+          : Effect.succeed([]),
+    });
+    assert.deepEqual(
+      written.map((item) => [item.type, item.status]),
+      [["error", "failed"]],
+    );
+  }),
+);
+
+it.effect("leaves open tool calls to the next run when the provider reports the terminal", () =>
+  Effect.gen(function* () {
+    const { written } = yield* captureRootRunTermination({
+      key: "reported-terminal-open-tool",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.make(
+          backgroundTurnItemEvent(ids, "command_execution", "running", 1),
+          rootTerminalEvent(ids, "interrupted"),
+        ),
+    });
+    assert.deepEqual(
+      written.map((item) => item.type),
+      ["run_interrupt_result"],
+    );
+  }),
+);
+
 it.effect("refreshes pull requests only once when startup failure closes its event stream", () =>
   Effect.gen(function* () {
     const ingestionStarted = yield* Deferred.make<void>();
@@ -3637,6 +3759,7 @@ function captureRootRunTermination(input: {
   >;
   readonly startTurn?: ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"];
   readonly refreshAfterTurn?: Effect.Effect<void>;
+  readonly ingestNormalized?: ProviderEventIngestor.ProviderEventIngestorV2["Service"]["ingestNormalized"];
 }) {
   return Effect.gen(function* () {
     const ids = backgroundScenarioIds(input.key);
@@ -3702,7 +3825,7 @@ function captureRootRunTermination(input: {
           }),
           IdAllocator.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
-            ingestNormalized: () => Effect.succeed([]),
+            ingestNormalized: input.ingestNormalized ?? (() => Effect.succeed([])),
           }),
           ServerSettings.layerTest(),
           Layer.succeed(RunFinalizationService.RunFinalizationObserver, {

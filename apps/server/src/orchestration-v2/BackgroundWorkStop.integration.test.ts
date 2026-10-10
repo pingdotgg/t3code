@@ -14,12 +14,15 @@ import {
   ThreadId,
   TurnItemId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderCapabilities,
 } from "@t3tools/contracts";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
@@ -33,6 +36,94 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 const driver = ProviderDriverKind.make("codex");
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "test-model" };
+
+// A provider whose turns start running, then report only what a test offers
+// on `events`.
+const scriptedAdapter = (input: {
+  readonly cwd: string;
+  readonly events: Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>;
+  readonly started: ProviderAdapter.ProviderAdapterV2TurnInput[];
+  readonly capabilities: OrchestrationV2ProviderCapabilities;
+  readonly interrupts?: ProviderAdapter.ProviderAdapterV2InterruptInput[];
+}): ProviderAdapter.ProviderAdapterV2["Service"] => ({
+  instanceId,
+  driver,
+  getCapabilities: () => Effect.succeed(input.capabilities),
+  planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
+  openSession: (session) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      return {
+        instanceId,
+        driver,
+        providerSessionId: session.providerSessionId,
+        providerSession: {
+          id: session.providerSessionId,
+          driver,
+          providerInstanceId: instanceId,
+          status: "ready",
+          cwd: input.cwd,
+          model: modelSelection.model,
+          capabilities: input.capabilities,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+        events: Stream.fromQueue(input.events),
+        ensureThread: ({ threadId }) =>
+          Effect.succeed({
+            id: ProviderThreadId.make(`provider-thread:codex:${threadId}`),
+            driver,
+            providerInstanceId: instanceId,
+            providerSessionId: session.providerSessionId,
+            appThreadId: threadId,
+            ownerNodeId: null,
+            nativeThreadRef: { driver, nativeId: "native-thread", strength: "strong" },
+            nativeConversationHeadRef: null,
+            status: "idle",
+            firstRunOrdinal: null,
+            lastRunOrdinal: null,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+          }),
+        resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
+        startTurn: (turn) =>
+          Effect.gen(function* () {
+            input.started.push(turn);
+            yield* Queue.offer(input.events, {
+              type: "provider_turn.updated",
+              driver,
+              providerTurn: {
+                id: ProviderTurnId.make(`provider-turn:${turn.attemptId}`),
+                providerThreadId: turn.providerThread.id,
+                nodeId: turn.rootNodeId,
+                runAttemptId: turn.attemptId,
+                nativeTurnRef: {
+                  driver,
+                  nativeId: `native:${turn.attemptId}`,
+                  strength: "strong",
+                },
+                ordinal: turn.providerTurnOrdinal,
+                status: "running",
+                startedAt: now,
+                completedAt: null,
+              },
+            });
+          }),
+        steerTurn: () => Effect.die("unused"),
+        interruptTurn: (interrupt) =>
+          Effect.sync(() => {
+            input.interrupts?.push(interrupt);
+          }),
+        respondToRuntimeRequest: () => Effect.die("unused"),
+        readThreadSnapshot: () => Effect.die("unused"),
+        rollbackThread: () => Effect.die("unused"),
+        forkThread: () => Effect.die("unused"),
+      };
+    }),
+});
 
 // Codex turns leave commands running, then the thread moves to another
 // provider thread (a provider switch). Stop must end all of the Codex work,
@@ -59,85 +150,13 @@ const stopEarlierBackgroundWork = ({
       const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
       const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
       const interrupts: ProviderAdapter.ProviderAdapterV2InterruptInput[] = [];
-      const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
-        instanceId,
-        driver,
-        getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
-        planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
-        openSession: (input) =>
-          Effect.gen(function* () {
-            const now = yield* DateTime.now;
-            return {
-              instanceId,
-              driver,
-              providerSessionId: input.providerSessionId,
-              providerSession: {
-                id: input.providerSessionId,
-                driver,
-                providerInstanceId: instanceId,
-                status: "ready",
-                cwd,
-                model: modelSelection.model,
-                capabilities: CodexProviderCapabilitiesV2,
-                createdAt: now,
-                updatedAt: now,
-                lastError: null,
-              },
-              events: Stream.fromQueue(events),
-              ensureThread: ({ threadId }) =>
-                Effect.succeed({
-                  id: ProviderThreadId.make(`provider-thread:codex:${threadId}`),
-                  driver,
-                  providerInstanceId: instanceId,
-                  providerSessionId: input.providerSessionId,
-                  appThreadId: threadId,
-                  ownerNodeId: null,
-                  nativeThreadRef: { driver, nativeId: "native-thread", strength: "strong" },
-                  nativeConversationHeadRef: null,
-                  status: "idle",
-                  firstRunOrdinal: null,
-                  lastRunOrdinal: null,
-                  handoffIds: [],
-                  forkedFrom: null,
-                  createdAt: now,
-                  updatedAt: now,
-                }),
-              resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
-              startTurn: (turn) =>
-                Effect.gen(function* () {
-                  started.push(turn);
-                  yield* Queue.offer(events, {
-                    type: "provider_turn.updated",
-                    driver,
-                    providerTurn: {
-                      id: ProviderTurnId.make(`provider-turn:${turn.attemptId}`),
-                      providerThreadId: turn.providerThread.id,
-                      nodeId: turn.rootNodeId,
-                      runAttemptId: turn.attemptId,
-                      nativeTurnRef: {
-                        driver,
-                        nativeId: `native:${turn.attemptId}`,
-                        strength: "strong",
-                      },
-                      ordinal: turn.providerTurnOrdinal,
-                      status: "running",
-                      startedAt: now,
-                      completedAt: null,
-                    },
-                  });
-                }),
-              steerTurn: () => Effect.die("unused"),
-              interruptTurn: (interrupt) =>
-                Effect.sync(() => {
-                  interrupts.push(interrupt);
-                }),
-              respondToRuntimeRequest: () => Effect.die("unused"),
-              readThreadSnapshot: () => Effect.die("unused"),
-              rollbackThread: () => Effect.die("unused"),
-              forkThread: () => Effect.die("unused"),
-            };
-          }),
-      };
+      const adapter = scriptedAdapter({
+        cwd,
+        events,
+        started,
+        capabilities: CodexProviderCapabilitiesV2,
+        interrupts,
+      });
       yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
@@ -900,6 +919,144 @@ const stopEarlierBackgroundWork = ({
       );
     }),
   );
+
+// `t3_worktree_handoff` moves the calling thread, so the workspace change
+// detaches the session that is running that very tool call. Nothing will report
+// on the call again, so it is cancelled with the run instead of waiting as background work.
+it.effect("cancels a tool call cut off when a workspace change detaches its session", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("workspace-detach-tool-call");
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
+      const adapter = scriptedAdapter({
+        cwd,
+        events,
+        started,
+        capabilities: ClaudeProviderCapabilitiesV2,
+      });
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = ThreadId.make("thread:workspace-detach-tool-call");
+        const watch = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
+          orchestrator.streamDomainEvents.pipe(
+            Stream.filter(predicate),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("create"),
+          threadId,
+          projectId: ProjectId.make("project:workspace-detach-tool-call"),
+          title: "Workspace detach",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const running = yield* watch(
+          (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+        );
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("hand-off"),
+          threadId,
+          messageId: MessageId.make("message:hand-off"),
+          text: "Move this work to a worktree",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* worker.drain();
+        yield* Fiber.join(running);
+        const turn = started[0]!;
+        const providerTurn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
+        const toolCallId = TurnItemId.make("turn-item:worktree-handoff");
+        const toolCallStarted = yield* watch(
+          (event) => event.type === "turn-item.updated" && event.payload.id === toolCallId,
+        );
+        const now = yield* DateTime.now;
+        yield* Queue.offer(events, {
+          type: "turn_item.updated",
+          driver,
+          turnItem: {
+            id: toolCallId,
+            threadId,
+            runId: turn.runId,
+            nodeId: turn.rootNodeId,
+            providerThreadId: providerTurn.providerThreadId,
+            providerTurnId: providerTurn.id,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 100,
+            status: "running",
+            title: null,
+            startedAt: now,
+            completedAt: null,
+            updatedAt: now,
+            type: "dynamic_tool",
+            toolName: "mcp__t3-code__t3_worktree_handoff",
+            input: { branch: "t3code/handoff" },
+          },
+        });
+        yield* Fiber.join(toolCallStarted);
+
+        // Replays from here, so the failure commit cannot slip past the watch.
+        const sink = yield* EventSink.EventSinkV2;
+        const failed = yield* sink
+          .stream({ threadId, afterSequence: yield* sink.latestSequence() })
+          .pipe(
+            Stream.filter(
+              ({ event }) =>
+                event.type === "run.updated" &&
+                event.payload.id === turn.runId &&
+                event.payload.status === "failed",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+        // What the workspace change's detach effect runs. A Claude session hosts
+        // one provider thread, so detaching it releases the process.
+        const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        yield* sessions.detach({
+          providerSessionId: turn.providerThread.providerSessionId!,
+          threadId,
+          detail: "Workspace changed.",
+        });
+        yield* Fiber.join(failed);
+
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(after.turnItems.find((item) => item.id === toolCallId)?.status, "cancelled");
+        assert.deepEqual(
+          derivePendingBackgroundWork({
+            latestRun: after.runs.at(-1),
+            providerThreads: after.providerThreads,
+            turnItems: after.turnItems,
+            activeProviderThreadId: after.thread.activeProviderThreadId,
+            runs: after.runs,
+          }),
+          [],
+        );
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            { name: "workspace-detach-tool-call" },
+            ProviderAdapterRegistry.layerSingle(adapter),
+            { runEffectWorker: false },
+          ),
+        ),
+      );
+    }),
+  ),
+);
 
 it.effect("Stop reaches background work an earlier provider thread still runs", () =>
   stopEarlierBackgroundWork({}),
