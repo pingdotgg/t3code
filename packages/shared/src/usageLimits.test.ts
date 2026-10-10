@@ -57,16 +57,13 @@ function provider(overrides: Partial<ServerProvider>): ServerProvider {
 
 describe("pace", () => {
   it.each([
-    [60_000, "resets in 1m"],
-    [59_999, "Resets momentarily"],
-    [1, "Resets momentarily"],
-    [0, "resets now"],
-    [-1, "resets now"],
-  ])("formats the reset boundary at %i milliseconds", (remaining, label) => {
-    expect(
-      // @effect-diagnostics-next-line globalDate:off
-      formatResetsIn({ ...window, resetsAt: new Date(now + remaining).toISOString() }, now),
-    ).toBe(label);
+    ["2026-09-03T12:01:00.000Z", "resets in 1m"],
+    ["2026-09-03T12:00:59.999Z", "Resets momentarily"],
+    ["2026-09-03T12:00:00.001Z", "Resets momentarily"],
+    ["2026-09-03T12:00:00.000Z", "resets now"],
+    ["2026-09-03T11:59:59.999Z", "resets now"],
+  ])("formats the reset boundary at %s", (resetsAt, label) => {
+    expect(formatResetsIn({ ...window, resetsAt }, now)).toBe(label);
   });
 
   it("ignores invalid reset timestamps", () => {
