@@ -4216,6 +4216,27 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }),
         );
 
+        yield* client.handleServerNotification("item/commandExecution/outputDelta", (payload) =>
+          Effect.gen(function* () {
+            // A delta always follows its item/started, so the turn is already
+            // known; background commands keep printing after it settles.
+            const context =
+              (yield* Ref.get(activeTurns)).get(payload.turnId) ??
+              (yield* Ref.get(settledTurns)).get(payload.turnId);
+            if (context === undefined) return;
+            yield* emitProviderEvent({
+              type: "command_output.delta",
+              driver: CODEX_PROVIDER,
+              threadId: context.projectionThreadId,
+              itemId: idAllocator.derive.turnItemFromProviderItem({
+                driver: CODEX_PROVIDER,
+                nativeItemId: payload.itemId,
+              }),
+              chunk: payload.delta,
+            });
+          }),
+        );
+
         yield* client.handleServerNotification("item/reasoning/summaryTextDelta", (payload) =>
           appendReasoning(payload, "summary", payload.summaryIndex),
         );

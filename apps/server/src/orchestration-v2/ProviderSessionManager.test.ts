@@ -50,6 +50,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const layerTestDatabase = SqlitePersistence.layerMemory;
@@ -531,6 +532,9 @@ function layerTest(input: {
       Layer.provide(
         Layer.mergeAll(
           layerRegistry.pipe(Layer.provideMerge(McpProviderSessions.layer)),
+          CommandOutputHub.layer.pipe(
+            Layer.provide(Layer.merge(layerConfiguredEventSink, layerTestStores)),
+          ),
           layerConfiguredEventSink,
           IdAllocator.layer,
           layerProviderEventIngestorTest,

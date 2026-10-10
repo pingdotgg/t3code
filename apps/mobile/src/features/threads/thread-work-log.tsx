@@ -8,6 +8,7 @@ import {
   WorkLogPressable,
 } from "./work-log-layout";
 import { QuestionAnswerHistory } from "./QuestionAnswerHistory";
+import { ThreadCommandOutput, useCommandOutputStreaming } from "./thread-command-output";
 import {
   getQuestionAnswerPreview,
   hasQuestionAnswer,
@@ -849,8 +850,12 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
 ) {
   const { row, expanded } = props;
   const navigation = useNavigation();
+  // Command rows stream their output, including the final output, from the server.
+  const streamsOutput =
+    useCommandOutputStreaming(props.environmentId) &&
+    row.projectedItem.item.type === "command_execution";
   const fetchedDetail = useTurnItemDetail(
-    expanded && row.fetchesDetail
+    expanded && row.fetchesDetail && !streamsOutput
       ? { environmentId: props.environmentId, row: row.projectedItem }
       : null,
   );
@@ -961,19 +966,20 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
         : row.getFullDetail()
       : null;
   const outputImages = expanded && fetchedItem ? turnItemOutputImages(fetchedItem) : [];
-  const fetchedOutput = !expanded
-    ? null
-    : shownItem.type === "file_search" || shownItem.type === "web_search"
-      ? turnItemOutputText(shownItem)
-      : fetchedItem
-        ? (turnItemOutputText(fetchedItem) ?? (outputImages.length > 0 ? null : "No output."))
-        : fetchedDetail.error
-          ? `Couldn't load output: ${fetchedDetail.error}`
-          : row.fetchesDetail
-            ? fetchedDetail.data
-              ? "Output is no longer available."
-              : "Loading output…"
-            : null;
+  const fetchedOutput =
+    !expanded || streamsOutput
+      ? null
+      : shownItem.type === "file_search" || shownItem.type === "web_search"
+        ? turnItemOutputText(shownItem)
+        : fetchedItem
+          ? (turnItemOutputText(fetchedItem) ?? (outputImages.length > 0 ? null : "No output."))
+          : fetchedDetail.error
+            ? `Couldn't load output: ${fetchedDetail.error}`
+            : row.fetchesDetail
+              ? fetchedDetail.data
+                ? "Output is no longer available."
+                : "Loading output…"
+              : null;
   const viewedImagePath = workEntryViewedImagePath(row.workEntry);
   const toolPresentation = resolveWorkEntryToolPresentation(row.workEntry);
   const previewText = workEntryRowLabel(row.workEntry);
@@ -1196,12 +1202,24 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
                 {fetchedOutput}
               </Text>
             ) : null}
-            {failedExitCode !== null ? (
+            {failedExitCode !== null && !streamsOutput ? (
               <Text className="mt-1.5 font-mono text-2xs leading-normal text-danger-foreground">
                 exit {failedExitCode}
               </Text>
             ) : null}
           </ScrollView>
+          {streamsOutput ? (
+            <ThreadCommandOutput
+              environmentId={props.environmentId}
+              threadId={row.projectedItem.sourceThreadId}
+              itemId={row.projectedItem.sourceItemId}
+            />
+          ) : null}
+          {failedExitCode !== null && streamsOutput ? (
+            <Text className="mt-1.5 font-mono text-2xs leading-normal text-danger-foreground">
+              exit {failedExitCode}
+            </Text>
+          ) : null}
         </Animated.View>
       ) : null}
     </Animated.View>

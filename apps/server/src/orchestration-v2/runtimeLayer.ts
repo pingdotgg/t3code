@@ -36,6 +36,7 @@ import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationServic
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as ProviderRuntimeRecoveryService from "./ProviderRuntimeRecoveryService.ts";
 import * as ProviderSwitchService from "./ProviderSwitchService.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
@@ -124,9 +125,14 @@ const layerProviderSwitchServiceProvided = ProviderSwitchService.layer.pipe(
   Layer.provide(layerProviderAdapterRegistryProvided),
 );
 
+const layerCommandOutputHubProvided = CommandOutputHub.layer.pipe(
+  Layer.provide(Layer.merge(layerEventSinkProvided, ProjectionStore.layer)),
+);
+
 const layerProviderSessionManagerProvided = ProviderSessionManager.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      layerCommandOutputHubProvided,
       layerProviderAdapterRegistryProvided,
       layerEventSinkProvided,
       IdAllocator.layer,
@@ -330,6 +336,7 @@ const layerMcpAppRequestsProvided = McpAppRequests.layer.pipe(
 );
 
 export const layer = Layer.mergeAll(
+  layerCommandOutputHubProvided,
   layerOrchestratorProvided,
   layerMcpAppRequestsProvided,
   layerThreadManagementProvided,

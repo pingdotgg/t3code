@@ -31,6 +31,14 @@ The v2 checks pin these invariants:
   the wire boundary, including small outputs. Explicit failure flags and bounded result IDs
   preserve status and grouped action counts without shipping those bodies. Persisted events
   remain complete; the existing diff endpoints still provide file content when requested.
+- Command output reaches a client only through `orchestration.subscribeCommandOutput`, which an
+  expanded command row opens and closes with itself. Live output is never an orchestration event:
+  adapters send raw chunks to the
+  [command output hub](../../apps/server/src/orchestration-v2/CommandOutputHub.ts) ahead of
+  ingestion, and it keeps one bounded tail per running command. Each subscriber gets at most one
+  frame per 100 ms, and a subscriber that falls more than 16 KB behind gets the whole tail at most
+  every 500 ms instead. Do not route output deltas through `turn_item.updated`: a busy command
+  would flood the event store and block ingestion for every other thread.
 - The initial shell contains active navigation rows only. Archived rows use the dedicated archive
   query, and transcript message bodies stay in thread detail regardless of message size.
 - Shell resume sends deltas plus compact repository-enrichment metadata, not another full project
