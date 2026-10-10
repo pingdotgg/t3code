@@ -244,7 +244,10 @@ describe("ssh tunnel scripts", () => {
       launch,
       '[ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null',
     );
-    assert.include(launch, "RUNNER_CHANGED=1");
+    assert.notInclude(launch, "RUNNER_CHANGED");
+    assert.include(launch, 'STARTED_RUNNER_FILE="$STATE_DIR/run-t3-started.sh"');
+    assert.include(launch, 'if [ -f "$RUNNER_FILE" ] && [ ! -f "$STARTED_RUNNER_FILE" ]; then');
+    assert.include(launch, 'cp "$RUNNER_FILE" "$STARTED_RUNNER_FILE"');
     assert.include(launch, "ensure_remote_node_path()");
     assert.include(launch, "if ! ensure_remote_node_path; then");
     assert.include(devLaunch, `T3_NODE_ENGINE_RANGE='${TEST_NODE_ENGINE_RANGE}'`);
@@ -262,6 +265,14 @@ describe("ssh tunnel scripts", () => {
     assert.include(
       SshTunnel.buildRemotePairingScript(stateKey, ARCHIVE),
       '"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json',
+    );
+    assert.include(
+      SshTunnel.buildRemotePairingScript(stateKey, ARCHIVE),
+      '"$STARTED_RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json',
+    );
+    assert.include(
+      SshTunnel.buildRemotePairingScript(stateKey, ARCHIVE),
+      'kill -0 "$REMOTE_PID" 2>/dev/null; then',
     );
     assert.include(
       SshTunnel.buildRemotePairingScript(stateKey, ARCHIVE),
@@ -291,19 +302,11 @@ describe("ssh tunnel scripts", () => {
     assert.include(launch, "resolve_default_runtime_port()");
     assert.include(launch, 'DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port');
     assert.include(launch, "if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port))");
-    assert.include(launch, 'PID_TO_STOP="${REMOTE_PID:-$DEFAULT_RUNTIME_PID}"');
+    assert.notInclude(launch, "PID_TO_STOP");
     assert.include(launch, 'REMOTE_PORT="$DEFAULT_REMOTE_PORT"');
     assert.include(launch, 'rm -f "$PID_FILE"');
     assert.include(launch, "printf 'external\\n' >\"$MANAGED_FILE\"");
     assert.include(launch, 'if [ -z "$REMOTE_PORT" ]; then');
-    assert.isBelow(
-      launch.indexOf('if [ "$REMOTE_MANAGED" = "managed" ]'),
-      launch.indexOf("printf 'external\\n' >\"$MANAGED_FILE\""),
-    );
-    assert.isBelow(
-      launch.indexOf('DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port'),
-      launch.indexOf('elif [ -n "$REMOTE_PID" ]'),
-    );
   });
 
   it.effect("accepts launch JSON after remote shell startup noise", () => {
@@ -483,6 +486,59 @@ describe("ssh tunnel scripts", () => {
       assert.equal(result.credential, "LCL4R2TPHDKQ");
     }).pipe(Effect.provide(layerProcess));
   });
+
+  it.effect("replaces a stale SSH forward without stopping the remote server", () =>
+    Effect.gen(function* () {
+      const probeStarted = yield* Deferred.make<void>();
+      let stale = false;
+      let forwards = 0;
+      let stops = 0;
+      let kills = 0;
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          const args = commandArgs(command);
+          if (args.includes("-N")) {
+            forwards += 1;
+            stale = false;
+            return makeRunningProcess(() => {
+              kills += 1;
+            });
+          }
+          if (args.includes("--")) return makeSuccessfulProcess('{"remotePort":3773}\n');
+          if (args.includes("sh")) stops += 1;
+          return makeSuccessfulProcess("");
+        }),
+      );
+      const httpClient = HttpClient.make((request) =>
+        stale
+          ? Deferred.succeed(probeStarted, undefined).pipe(Effect.andThen(Effect.never))
+          : Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status: 200 }))),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, httpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const target = { alias: "devbox", hostname: "devbox", username: null, port: null };
+        yield* manager.ensureEnvironment(target);
+        stale = true;
+        const reconnect = yield* Effect.forkChild(manager.ensureEnvironment(target));
+        yield* Deferred.await(probeStarted);
+        yield* TestClock.adjust("2 seconds");
+        yield* Fiber.join(reconnect);
+        assert.equal(forwards, 2);
+        assert.equal(kills, 1);
+        assert.equal(stops, 0);
+        yield* manager.disconnectEnvironment(target);
+        assert.equal(stops, 1);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
 
   it.effect.each(["successful stop", "failed stop"] as const)(
     "closes the tunnel scope and starts fresh after a %s",
@@ -797,5 +853,169 @@ describe("archive runner script", () => {
         assert.isFalse(yield* fs.exists(lock));
       }).pipe(Effect.provide(NodeServices.layer)),
     60_000,
+  );
+});
+
+describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("remote reconnect script", () => {
+  it.effect.each([
+    { ready: true, runtime: "same" },
+    { ready: false, runtime: "same" },
+    { ready: true, runtime: "different" },
+  ] as const)("preserves a live managed server: %j", ({ ready, runtime }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-reconnect-" });
+      const state = `${root}/.t3/ssh-launch/test`;
+      yield* fs.makeDirectory(state, { recursive: true });
+      yield* fs.makeDirectory(`${root}/.t3/userdata`, { recursive: true });
+      const server = yield* spawner.spawn(ChildProcess.make("sleep", ["120"]));
+      const other = yield* spawner.spawn(ChildProcess.make("sleep", ["120"]));
+      yield* fs.writeFileString(`${state}/pid`, String(server.pid));
+      yield* fs.writeFileString(`${state}/port`, "3773");
+      yield* fs.writeFileString(`${state}/managed`, "managed");
+      yield* fs.writeFileString(`${state}/run-t3.sh`, "old runner");
+      yield* fs.writeFileString(
+        `${root}/.t3/userdata/server-runtime.json`,
+        JSON.stringify({
+          pid: runtime === "same" ? Number(server.pid) : Number(other.pid),
+          port: runtime === "same" ? 3773 : 4773,
+          origin: `http://127.0.0.1:${runtime === "same" ? 3773 : 4773}`,
+        }),
+      );
+      yield* fs.makeDirectory(`${root}/bin`);
+      yield* fs.writeFileString(
+        `${root}/bin/node`,
+        `#!/bin/sh
+if [ "$1" = "-" ] && { [ "$#" -eq 4 ] || [ "$2" = ">=20" ]; }; then
+  cat >/dev/null
+  if [ "$#" -eq 4 ]; then exit ${ready ? 0 : 1}; fi
+  exit 0
+fi
+exec "$REAL_NODE" "$@"
+`,
+      );
+      yield* fs.chmod(`${root}/bin/node`, 0o700);
+      const script = `${root}/launch.sh`;
+      yield* fs.writeFileString(
+        script,
+        SshTunnel.buildRemoteLaunchScript({
+          nodeScriptPath: `${root}/unused.mjs`,
+          nodeEngineRange: ">=20",
+        }),
+      );
+      const child = yield* spawner.spawn(
+        ChildProcess.make("sh", [script, "test"], {
+          env: {
+            HOME: root,
+            PATH: `${root}/bin:${process.env.PATH ?? ""}`,
+            REAL_NODE: process.execPath,
+          },
+          extendEnv: false,
+        }),
+      );
+      const [stdout, stderr, code] = yield* Effect.all(
+        [
+          child.stdout.pipe(
+            Stream.decodeText(),
+            Stream.runFold(
+              () => "",
+              (a, b) => a + b,
+            ),
+          ),
+          child.stderr.pipe(
+            Stream.decodeText(),
+            Stream.runFold(
+              () => "",
+              (a, b) => a + b,
+            ),
+          ),
+          child.exitCode,
+        ],
+        { concurrency: "unbounded" },
+      );
+      assert.isTrue(yield* server.isRunning);
+      assert.isTrue(yield* other.isRunning);
+      assert.equal(Number(code), ready ? 0 : 1, stderr);
+      if (ready) assert.deepEqual(JSON.parse(stdout), { remotePort: 3773, serverKind: "managed" });
+      else assert.include(stderr, "server was left running");
+      assert.equal(yield* fs.readFileString(`${state}/pid`), String(server.pid));
+      // The pairing handshake needs the runtime that owns the live server.
+      assert.equal(yield* fs.readFileString(`${state}/run-t3-started.sh`), "old runner");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("remote pairing script", () => {
+  it.effect.each([{ live: true }, { live: false }] as const)(
+    "uses the started runner while a managed server is live: %j",
+    ({ live }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-pairing-" });
+        const state = `${root}/.t3/ssh-launch/test`;
+        yield* fs.makeDirectory(state, { recursive: true });
+        const startedRunner = `${state}/run-t3-started.sh`;
+        yield* fs.writeFileString(
+          startedRunner,
+          `#!/bin/sh
+printf '{"credential":"started"}\\n'
+`,
+        );
+        yield* fs.chmod(startedRunner, 0o700);
+        const nodeScript = `${root}/runner.mjs`;
+        yield* fs.writeFileString(
+          nodeScript,
+          `console.log(JSON.stringify({ credential: "new" }));\n`,
+        );
+        if (live) {
+          const server = yield* spawner.spawn(ChildProcess.make("sleep", ["120"]));
+          yield* fs.writeFileString(`${state}/pid`, String(server.pid));
+          yield* fs.writeFileString(`${state}/managed`, "managed");
+        }
+        const script = `${root}/pair.sh`;
+        yield* fs.writeFileString(
+          script,
+          SshTunnel.buildRemotePairingScript("test", {
+            nodeScriptPath: nodeScript,
+            nodeEngineRange: ">=20",
+          }),
+        );
+        const child = yield* spawner.spawn(
+          ChildProcess.make("sh", [script], {
+            env: {
+              HOME: root,
+              PATH: `${process.execPath.slice(0, process.execPath.lastIndexOf("/"))}:${process.env.PATH ?? ""}`,
+            },
+            extendEnv: false,
+          }),
+        );
+        const [stdout, stderr, code] = yield* Effect.all(
+          [
+            child.stdout.pipe(
+              Stream.decodeText(),
+              Stream.runFold(
+                () => "",
+                (a, b) => a + b,
+              ),
+            ),
+            child.stderr.pipe(
+              Stream.decodeText(),
+              Stream.runFold(
+                () => "",
+                (a, b) => a + b,
+              ),
+            ),
+            child.exitCode,
+          ],
+          { concurrency: "unbounded" },
+        );
+        assert.equal(Number(code), 0, stderr);
+        // A live managed server must never run the newer runner: its
+        // migrations would run underneath the older running server.
+        assert.equal(stdout.trim(), live ? '{"credential":"started"}' : '{"credential":"new"}');
+        assert.equal(yield* fs.exists(`${state}/run-t3.sh`), !live);
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
