@@ -6,7 +6,9 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
+import type * as Statement from "effect/sql/Statement";
 
+import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -232,6 +234,23 @@ export const layer: Layer.Layer<
     const supersedableThreadEventTypes = new Set(SUPERSEDABLE_THREAD_EVENT_TYPES);
     const COMPACTION_PAGE_SIZE = 500;
 
+    // Recheck at deletion time: work can start while a discovery page yields.
+    const canCompactThread = (threadId: Statement.Fragment) => sql`
+      NOT EXISTS (
+        SELECT 1 FROM orchestration_v2_projection_runs
+        WHERE thread_id = ${threadId}
+          AND status NOT IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
+      ) AND NOT EXISTS (
+        SELECT 1 FROM orchestration_v2_effect_outbox
+        WHERE thread_id = ${threadId}
+          AND status NOT IN ('succeeded', 'failed', 'cancelled')
+      ) AND NOT EXISTS (
+        SELECT 1 FROM orchestration_v2_projection_runtime_requests
+        WHERE thread_id = ${threadId}
+          AND status NOT IN ('resolved', 'expired', 'cancelled')
+      )
+    `;
+
     /**
      * Scan newest first to retain the newest state for each entity.
      * Page every event, including non-candidates: filtering before LIMIT could
@@ -312,8 +331,13 @@ export const layer: Layer.Layer<
         // when this page has nothing to delete so startup and requests can progress.
         yield* Effect.yieldNow;
         if (obsolete.length > 0) {
-          yield* sql`DELETE FROM orchestration_events WHERE sequence IN ${sql.in(obsolete)}`;
-          deletedEventCount += obsolete.length;
+          const deleted = yield* sql`
+            DELETE FROM orchestration_events
+            WHERE sequence IN ${sql.in(obsolete)}
+              AND ${canCompactThread(sql`orchestration_events.stream_id`)}
+            RETURNING sequence
+          `;
+          deletedEventCount += deleted.length;
           yield* Effect.yieldNow;
         }
         throughSequence = (rows.at(-1)?.sequence ?? 1) - 1;
@@ -350,8 +374,13 @@ export const layer: Layer.Layer<
           .map((row) => row.command_id);
         yield* Effect.yieldNow;
         if (obsolete.length > 0) {
-          yield* sql`DELETE FROM orchestration_command_receipts WHERE command_id IN ${sql.in(obsolete)}`;
-          deletedReceiptCount += obsolete.length;
+          const deleted = yield* sql`
+            DELETE FROM orchestration_command_receipts
+            WHERE command_id IN ${sql.in(obsolete)}
+              AND ${canCompactThread(sql`orchestration_command_receipts.aggregate_id`)}
+            RETURNING command_id
+          `;
+          deletedReceiptCount += deleted.length;
           yield* Effect.yieldNow;
         }
         throughReceiptRowId = (rows.at(-1)?.row_id ?? 1) - 1;
@@ -371,5 +400,44 @@ export const layer: Layer.Layer<
       rebuild: mapError("rebuild")(rebuild),
       compactEventStore: mapError("compact event store")(compactEventStore),
     });
+  }),
+);
+
+const COMPACTION_INTERVAL_MS = 60 * 60 * 1_000;
+/**
+ * Verification decodes every projection row. Scan daily rather than on every hourly compaction;
+ * the relative cost of verification and compaction has not been measured.
+ */
+const VERIFY_INTERVAL_MS = 24 * 60 * 60 * 1_000;
+
+/** Daily verification skips that sweep on drift; hourly compaction resumes without repair. */
+export const workerLive = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const maintenance = yield* ProjectionMaintenanceV2;
+    const scheduler = yield* Scheduler.Scheduler;
+    let nextCompactionAt = 0;
+    let nextVerifyAt = 0;
+    const sweep = Effect.gen(function* () {
+      const now = DateTime.toEpochMillis(yield* DateTime.now);
+      if (now < nextCompactionAt) return;
+      nextCompactionAt = now + COMPACTION_INTERVAL_MS;
+      // Both deadlines move before either half runs, so a failing sweep waits for its own
+      // interval instead of retrying on every scheduler tick.
+      const verifyDue = now >= nextVerifyAt;
+      if (verifyDue) nextVerifyAt = now + VERIFY_INTERVAL_MS;
+      // Only a due verification gates this sweep. An invalid result skips this hour, but the
+      // next hourly sweep compacts without re-verifying, even if drift has not been repaired.
+      if (verifyDue) {
+        const verification = yield* maintenance.verify;
+        if (!verification.valid) {
+          yield* Effect.logWarning("Projection integrity verification failed", verification);
+          return;
+        }
+      }
+      // Full-history scan from the current high-water sequence, so this never gets cheaper.
+      const compaction = yield* maintenance.compactEventStore;
+      yield* Effect.logInfo("Projection maintenance completed", compaction);
+    });
+    yield* scheduler.register("projection-maintenance", sweep);
   }),
 );

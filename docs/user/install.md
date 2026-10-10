@@ -25,13 +25,14 @@ afterwards, that directory is not on your `PATH` yet; the installer prints the
 line to add. Set `T3CODE_CHANNEL=nightly` to install the nightly train, or
 `T3CODE_VERSION` to pin an exact version.
 
-| Task                                             | Command                                                   |
-| ------------------------------------------------ | --------------------------------------------------------- |
-| Start the server and open the web app            | `t3`                                                      |
-| Start the server without a browser               | `t3 serve`                                                |
-| Keep it running in the background (macOS, Linux) | `t3 service install` ([details](./background-service.md)) |
-| Move to the newest release                       | `t3 update`                                               |
-| Remove it again                                  | `t3 uninstall`                                            |
+| Task                                             | Command                                                     |
+| ------------------------------------------------ | ----------------------------------------------------------- |
+| Start the server and open the web app            | `t3`                                                        |
+| Start the server without a browser               | `t3 serve`                                                  |
+| Keep it running in the background (macOS, Linux) | `t3 service install` ([details](./background-service.md))   |
+| Move to the newest release                       | `t3 update`                                                 |
+| Remove it again                                  | `t3 uninstall`                                              |
+| Check or rebuild damaged thread data             | `t3 projections verify` ([details](#repairing-thread-data)) |
 
 Run `t3 help` or `t3 --help` for the full reference. To start in a new working
 directory, use an explicit path such as `t3 ./my-project`. A bare directory name
@@ -174,6 +175,21 @@ For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [OpenCode](./providers-opencode.md),
 [Antigravity](./providers-antigravity.md), [Pi](./providers-pi.md), and
 [Muse Code](./providers-muse.md).
+
+## Repairing thread data
+
+If server logs report "Projection integrity verification failed", stop the server
+for that environment and run `npx t3 projections verify` on its machine. The
+command prints the database path and any detected inconsistencies. Run
+`npx t3 projections rebuild` to rebuild thread data from its event history, then
+restart the server. Both commands exit unsuccessfully if verification fails.
+
+For a custom data directory, pass `--base-dir <T3 home>` to both commands. Use
+`--dev-url <web URL>` only for a development server that uses the `dev` state
+directory instead of `userdata`. Passing both flags targets `userdata` under
+`--base-dir`, because an explicit `--base-dir` wins over the dev directory. Take
+a backup of the data directory before rebuilding; if a rebuild leaves the data
+still unverifiable, restore that backup and report the problem.
 
 ## Next steps
 
