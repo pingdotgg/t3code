@@ -1728,7 +1728,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadEnvironmentId: _activeThreadEnvironmentId,
     activeThread,
     promptHistoryMessages,
-    isServerThread: _isServerThread,
+    isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
     forceExpandedOnMobile,
     projectSelectionRequired,
@@ -7664,7 +7664,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       </Tooltip>
                     </>
                   ) : null}
-                  {activeThread && newTaskGraph.canCreate ? (
+                  {/* A graph belongs to a thread on the server; a new draft has none until it is sent. */}
+                  {isServerThread && activeThread && newTaskGraph.canCreate ? (
                     <Tooltip>
                       <TooltipTrigger
                         render={
