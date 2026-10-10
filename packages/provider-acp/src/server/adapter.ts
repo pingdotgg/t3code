@@ -383,8 +383,9 @@ export interface AcpAdapterV2Flavor {
   ) => boolean;
   /**
    * When true, keep the active turn open after session/prompt returns while
-   * background tools/subagents are still running so later monitor/wake traffic
-   * can project (Grok monitors finish after the root prompt settles).
+   * background tools are still running so later monitor/wake traffic can
+   * project (Grok monitors finish after the root prompt settles). Background
+   * subagents never hold it: they carry over past the settled turn.
    */
   readonly deferFinalizeForBackgroundWork?: boolean;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
@@ -1424,6 +1425,8 @@ type AcpCarryoverSubagents = {
   readonly sessionId: string;
   readonly rootTerminalStatus: "completed" | "interrupted" | "failed" | "cancelled";
   readonly subagents: ReadonlyArray<ActiveAcpSubagent>;
+  /** The settled turn; projects the subagents' own session frames until the next turn adopts them. */
+  readonly context: ActiveAcpTurn;
 };
 
 type PendingRuntimeRequest = {
@@ -3013,11 +3016,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const status = toolStatus(tool.status);
             if (status === "pending" || status === "running") return true;
           }
-          for (const subagent of context.subagents.values()) {
-            if (acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) {
-              return true;
-            }
-          }
+          // Running subagents do not hold a settled root: the run completes,
+          // they carry over (finalizeTurn), and clients show them as waiting
+          // work. Holding the run kept a finished reply "working", turned the
+          // next message into a steering restart and queued follow-ups behind
+          // it, sometimes for an hour when a subagent's model stream stalled.
           return false;
         };
 
@@ -4107,6 +4110,115 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return true;
         });
 
+        /**
+         * A subagent's own session frames (tool calls, replies) project into
+         * its child thread through the turn that spawned or adopted it: the
+         * active turn, or a completed root's carryover while no turn runs.
+         */
+        const handleSubagentSessionUpdate = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          notification: EffectAcpSchema.SessionNotification,
+          rootSessionId: string | null,
+        ) {
+          const update = notification.update;
+          if (flavor.extractSubagentUpdate === undefined) return;
+          const subagent = context.subagentsBySessionId.get(notification.sessionId);
+          if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
+            if (subagent === undefined) return;
+            const nativeTaskId = subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
+            for (const event of parseSessionUpdateEvent(notification).events) {
+              if (event._tag !== "ToolCallUpdated") continue;
+              const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
+              const subagentUpdate = flavor.extractSubagentUpdate(toolCall);
+              if (subagentUpdate !== undefined) {
+                if (
+                  subagentUpdate.nativeTaskId === nativeTaskId ||
+                  subagentUpdate.childSessionId === notification.sessionId
+                ) {
+                  yield* emitSubagent(context, subagentUpdate);
+                }
+                continue;
+              }
+              const key = `${nativeTaskId}:tool:${toolCall.toolCallId}`;
+              const previous = context.tools.get(key);
+              const merged = mergeToolCallState(previous, toolCall);
+              context.tools.set(key, merged);
+              if (!shouldPersistToolUpdate(context, key, previous, merged, merged.status)) continue;
+              // Terminals are remembered under the raw session id: the child's
+              // own session, or the root one when the flavor routes child
+              // updates out of it (Devin).
+              const mcpIdentity = extractMcpToolCallIdentity(merged, {
+                embeddedTerminalCommands: [
+                  ...embeddedTerminalCommands(notification.sessionId, toolCall.toolCallId),
+                  ...(rootSessionId === null
+                    ? []
+                    : embeddedTerminalCommands(rootSessionId, toolCall.toolCallId)),
+                ],
+              });
+              const now = yield* DateTime.now;
+              const status = toolStatus(merged.status);
+              const startedAt = context.toolStartedAt.get(key) ?? now;
+              context.toolStartedAt.set(key, startedAt);
+              const ordinal = resolveSubagentChildOrdinal(subagent, key);
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver,
+                turnItem: {
+                  id: providerTurnItemId(key),
+                  threadId: subagent.childThreadId,
+                  runId: null,
+                  nodeId: subagent.childRootNodeId,
+                  providerThreadId: subagent.task.providerThreadId,
+                  providerTurnId: null,
+                  nativeItemRef: { driver, nativeId: key, strength: "strong" },
+                  parentItemId: null,
+                  ordinal,
+                  status,
+                  title: merged.title ?? merged.kind ?? "Tool",
+                  startedAt,
+                  completedAt: completedAtForStatus(status, now),
+                  updatedAt: now,
+                  type: "dynamic_tool",
+                  ...(mcpIdentity === undefined
+                    ? {}
+                    : mcpToolPresentation({
+                        serverName: mcpIdentity.server,
+                        toolName: mcpIdentity.tool,
+                        source: unknownRecord(
+                          (
+                            unknownRecord(unknownRecord(merged.data.rawOutput)?.result) ??
+                            unknownRecord(merged.data.rawOutput)
+                          )?._meta,
+                        )?.source,
+                      })),
+                  toolName:
+                    mcpIdentity === undefined
+                      ? (merged.title ?? merged.kind ?? "Tool")
+                      : `${mcpIdentity.server}.${mcpIdentity.tool}`,
+                  input: merged.data.rawInput ?? null,
+                  output: merged.data.rawOutput ?? merged.data.content ?? null,
+                },
+              });
+            }
+            return;
+          }
+          const isDisplayableAssistantUpdate =
+            (update.sessionUpdate === "agent_message_chunk" &&
+              acpContentBlockDisplayText(update.content) !== undefined) ||
+            (update.sessionUpdate === "agent_message" && update.content !== undefined);
+          if (!isDisplayableAssistantUpdate) {
+            return;
+          }
+          if (subagent !== undefined) {
+            yield* projectSubagentNotification(subagent, notification);
+            return;
+          }
+          const buffered = context.pendingSubagentNotifications.get(notification.sessionId) ?? [];
+          buffered.push(notification);
+          context.pendingSubagentNotifications.set(notification.sessionId, buffered);
+          return;
+        });
+
         const handleSessionUpdate = Effect.fnUntraced(function* (
           notification: EffectAcpSchema.SessionNotification,
         ) {
@@ -4214,6 +4326,36 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             // Direct Stop: quarantine residual events from the stopped run so
             // they cannot become history, wake buffers, or a later run attach.
             if (yield* Ref.get(stoppedRunQuarantine)) {
+              return;
+            }
+            // A background subagent keeps working after its completed root
+            // settled. Its own session's frames belong in its child thread,
+            // through the turn that still owns it.
+            const idleCarryover = yield* Ref.get(carryoverSubagents);
+            const idleRootSessionId = yield* Ref.get(activeSessionId);
+            if (
+              idleCarryover !== null &&
+              idleCarryover.rootTerminalStatus === "completed" &&
+              idleCarryover.sessionId === idleRootSessionId &&
+              notification.sessionId !== idleRootSessionId
+            ) {
+              yield* handleSubagentSessionUpdate(
+                idleCarryover.context,
+                notification,
+                idleRootSessionId,
+              );
+              // A nested subagent started meanwhile carries over with its parent.
+              const carried = new Set(idleCarryover.subagents);
+              const started = [...idleCarryover.context.subagents.values()].filter(
+                (subagent) =>
+                  !carried.has(subagent) && acpSubagentHasPendingBackgroundWork(subagent),
+              );
+              if (started.length > 0) {
+                yield* Ref.set(carryoverSubagents, {
+                  ...idleCarryover,
+                  subagents: [...idleCarryover.subagents, ...started],
+                });
+              }
               return;
             }
             const bufferOutcome = yield* bufferPostSettleWake(notification);
@@ -4390,106 +4532,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (notification.sessionId !== rootSessionId) {
             // Finalize may have completed during the activeSessionId yield.
             if (context.finalized) return;
-            if (flavor.extractSubagentUpdate === undefined) return;
-            const subagent = context.subagentsBySessionId.get(notification.sessionId);
-            if (
-              update.sessionUpdate === "tool_call" ||
-              update.sessionUpdate === "tool_call_update"
-            ) {
-              if (subagent === undefined) return;
-              const nativeTaskId =
-                subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
-              for (const event of parseSessionUpdateEvent(notification).events) {
-                if (event._tag !== "ToolCallUpdated") continue;
-                const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
-                const subagentUpdate = flavor.extractSubagentUpdate(toolCall);
-                if (subagentUpdate !== undefined) {
-                  if (
-                    subagentUpdate.nativeTaskId === nativeTaskId ||
-                    subagentUpdate.childSessionId === notification.sessionId
-                  ) {
-                    yield* emitSubagent(context, subagentUpdate);
-                  }
-                  continue;
-                }
-                const key = `${nativeTaskId}:tool:${toolCall.toolCallId}`;
-                const previous = context.tools.get(key);
-                const merged = mergeToolCallState(previous, toolCall);
-                context.tools.set(key, merged);
-                if (!shouldPersistToolUpdate(context, key, previous, merged, merged.status))
-                  continue;
-                // Terminals are remembered under the raw session id: the child's
-                // own session, or the root one when the flavor routes child
-                // updates out of it (Devin).
-                const mcpIdentity = extractMcpToolCallIdentity(merged, {
-                  embeddedTerminalCommands: [
-                    ...embeddedTerminalCommands(notification.sessionId, toolCall.toolCallId),
-                    ...(rootSessionId === null
-                      ? []
-                      : embeddedTerminalCommands(rootSessionId, toolCall.toolCallId)),
-                  ],
-                });
-                const now = yield* DateTime.now;
-                const status = toolStatus(merged.status);
-                const startedAt = context.toolStartedAt.get(key) ?? now;
-                context.toolStartedAt.set(key, startedAt);
-                const ordinal = resolveSubagentChildOrdinal(subagent, key);
-                yield* emitProviderEvent({
-                  type: "turn_item.updated",
-                  driver,
-                  turnItem: {
-                    id: providerTurnItemId(key),
-                    threadId: subagent.childThreadId,
-                    runId: null,
-                    nodeId: subagent.childRootNodeId,
-                    providerThreadId: subagent.task.providerThreadId,
-                    providerTurnId: null,
-                    nativeItemRef: { driver, nativeId: key, strength: "strong" },
-                    parentItemId: null,
-                    ordinal,
-                    status,
-                    title: merged.title ?? merged.kind ?? "Tool",
-                    startedAt,
-                    completedAt: completedAtForStatus(status, now),
-                    updatedAt: now,
-                    type: "dynamic_tool",
-                    ...(mcpIdentity === undefined
-                      ? {}
-                      : mcpToolPresentation({
-                          serverName: mcpIdentity.server,
-                          toolName: mcpIdentity.tool,
-                          source: unknownRecord(
-                            (
-                              unknownRecord(unknownRecord(merged.data.rawOutput)?.result) ??
-                              unknownRecord(merged.data.rawOutput)
-                            )?._meta,
-                          )?.source,
-                        })),
-                    toolName:
-                      mcpIdentity === undefined
-                        ? (merged.title ?? merged.kind ?? "Tool")
-                        : `${mcpIdentity.server}.${mcpIdentity.tool}`,
-                    input: merged.data.rawInput ?? null,
-                    output: merged.data.rawOutput ?? merged.data.content ?? null,
-                  },
-                });
-              }
-              return;
-            }
-            const isDisplayableAssistantUpdate =
-              (update.sessionUpdate === "agent_message_chunk" &&
-                acpContentBlockDisplayText(update.content) !== undefined) ||
-              (update.sessionUpdate === "agent_message" && update.content !== undefined);
-            if (!isDisplayableAssistantUpdate) {
-              return;
-            }
-            if (subagent !== undefined) {
-              yield* projectSubagentNotification(subagent, notification);
-              return;
-            }
-            const buffered = context.pendingSubagentNotifications.get(notification.sessionId) ?? [];
-            buffered.push(notification);
-            context.pendingSubagentNotifications.set(notification.sessionId, buffered);
+            yield* handleSubagentSessionUpdate(context, notification, rootSessionId);
             return;
           }
           // Re-check after the activeSessionId yield: idle/prompt settle can
@@ -6516,11 +6559,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           completedAt,
         });
 
+        // A subagent's own calls live in its child thread and outlive the root
+        // turn; root-turn terminalization must not re-emit them as root tools.
+        const isSubagentToolKey = (context: ActiveAcpTurn, key: string): boolean =>
+          [...context.subagents.keys()].some((nativeTaskId) =>
+            key.startsWith(`${nativeTaskId}:tool:`),
+          );
+
         const terminalizeOpenRunOwnedItems = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           options: { readonly terminalizeSubagents: boolean },
         ) {
-          for (const tool of context.tools.values()) {
+          for (const [key, tool] of context.tools) {
+            // A carried-over subagent's calls continue; Stop ends them with it.
+            if (!options.terminalizeSubagents && isSubagentToolKey(context, key)) continue;
             const status = toolStatus(tool.status);
             if (status === "pending" || status === "running" || status === "waiting") {
               yield* emitTool(context, tool, "interrupted");
@@ -6547,8 +6599,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const terminalizeOpenForegroundTools = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
         ) {
-          for (const tool of context.tools.values()) {
+          for (const [key, tool] of context.tools) {
             if (!acpCompletedTurnShouldTerminalizeTool(tool, flavor)) continue;
+            if (isSubagentToolKey(context, key)) continue;
             yield* emitTool(context, tool, "completed");
           }
         });
@@ -6712,6 +6765,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 sessionId,
                 rootTerminalStatus: settledStatus,
                 subagents: subagentsRequiringCarryover,
+                context,
               });
             }
           }
@@ -7031,10 +7085,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             let rehydratedCarryoverSubagents: ReadonlyArray<ActiveAcpSubagent> = [];
             if (carryover !== null && carryover.sessionId === requestedSessionId) {
               rehydratedCarryoverSubagents = carryover.subagents;
+              for (const [sessionId, buffered] of carryover.context.pendingSubagentNotifications) {
+                context.pendingSubagentNotifications.set(sessionId, buffered);
+              }
               for (const subagent of carryover.subagents) {
                 const nativeId = subagent.task.nativeTaskRef?.nativeId ?? null;
                 if (nativeId !== null) {
                   context.subagents.set(nativeId, subagent);
+                  // A subagent's open tool calls continue in this turn.
+                  for (const [key, tool] of carryover.context.tools) {
+                    if (!key.startsWith(`${nativeId}:tool:`)) continue;
+                    context.tools.set(key, tool);
+                    const toolStartedAt = carryover.context.toolStartedAt.get(key);
+                    if (toolStartedAt !== undefined) context.toolStartedAt.set(key, toolStartedAt);
+                  }
                 }
                 if (subagent.childSessionId !== null) {
                   context.subagentsBySessionId.set(subagent.childSessionId, subagent);

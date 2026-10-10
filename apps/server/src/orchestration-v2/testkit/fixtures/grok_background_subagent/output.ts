@@ -9,7 +9,11 @@ import {
   backgroundNotifications,
   projectionFor,
 } from "../shared.ts";
-import { GROK_BACKGROUND_SUBAGENT_PROMPT } from "./input.ts";
+import {
+  GROK_BACKGROUND_SUBAGENT_PROMPT,
+  GROK_BACKGROUND_SUBAGENT_QUEUED_PROMPT,
+  GROK_BACKGROUND_SUBAGENT_STEER_PROMPT,
+} from "./input.ts";
 
 function runAssistantTexts(
   projection: ReturnType<typeof projectionFor>,
@@ -22,9 +26,11 @@ function runAssistantTexts(
 
 // A background subagent outlives its root turn. Grok ends it only with the
 // root-session `subagent_finished` notification: the spawn tool completed at
-// launch and nothing names the subagent done in text. Run 1 is held open for
-// the subagent and completes with it; Grok's own reply to the finished
-// subagent (its `subagent-completed-*` wake) is a provider continuation.
+// launch and nothing names the subagent done in text. Run 1 completes with its
+// reply while the subagent runs on (#17159): the thread waits on the subagent,
+// a queued message starts at once, and a steer starts a new turn instead of
+// superseding the finished reply. Grok's own reply to the finished subagent
+// (its `subagent-completed-*` wake) is a provider continuation.
 export function assertGrokBackgroundSubagentOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -32,13 +38,17 @@ export function assertGrokBackgroundSubagentOutput(
   assertBaseProjection({
     result,
     transcript,
-    runCount: 2,
-    runStatuses: ["completed", "completed"],
+    runCount: 4,
+    runStatuses: ["completed", "completed", "completed", "completed"],
   });
   const projection = projectionFor(result, transcript.scenario);
   assertSemanticProjectionIntegrity(projection);
-  assertUserMessagesInclude(projection, [GROK_BACKGROUND_SUBAGENT_PROMPT]);
-  const [rootRun, wakeRun] = projection.runs;
+  assertUserMessagesInclude(projection, [
+    GROK_BACKGROUND_SUBAGENT_PROMPT,
+    GROK_BACKGROUND_SUBAGENT_QUEUED_PROMPT,
+    GROK_BACKGROUND_SUBAGENT_STEER_PROMPT,
+  ]);
+  const [rootRun, queuedRun, steerRun, wakeRun] = projection.runs;
 
   assert.lengthOf(projection.subagents, 1);
   const subagent = projection.subagents[0];
@@ -49,7 +59,7 @@ export function assertGrokBackgroundSubagentOutput(
   assert.equal(subagentItem?.status, "completed");
   assert.equal(subagentItem?.runId, rootRun?.id);
 
-  // Run 1 settles only after the subagent's structured end.
+  // Run 1 completes with ROOT_DONE; the running subagent does not hold it.
   const subagentCompletedAt = result.domainEvents.findIndex(
     (event) =>
       event.type === "turn-item.updated" &&
@@ -63,27 +73,42 @@ export function assertGrokBackgroundSubagentOutput(
       event.payload.status === "completed",
   );
   assert.isAtLeast(subagentCompletedAt, 0);
-  assert.isAbove(rootCompletedAt, subagentCompletedAt, "run 1 completed before the subagent");
+  assert.isAtLeast(rootCompletedAt, 0);
+  assert.isBelow(rootCompletedAt, subagentCompletedAt, "run 1 waited for the subagent");
   assert.include(runAssistantTexts(projection, rootRun?.id), "ROOT_DONE");
 
-  // Grok ends ROOT_DONE with its prompt; the subagent running on must not keep
-  // the reply streaming.
-  const rootDoneCompletedAt = result.domainEvents.findIndex(
-    (event) =>
-      event.type === "turn-item.updated" &&
-      event.payload.runId === rootRun?.id &&
-      event.payload.type === "assistant_message" &&
-      event.payload.text.trim() === "ROOT_DONE" &&
-      event.payload.status === "completed",
+  // While the subagent runs, clients see the thread waiting on it, not working.
+  const waitingShell = result.capturedShellSnapshots
+    .get("while-subagent-runs")
+    ?.threads.find((thread) => thread.id === projection.thread.id);
+  assert.deepEqual(
+    waitingShell?.pendingBackgroundTasks?.map((task) => [task.kind, task.childThreadId]),
+    [["subagent", subagent?.childThreadId]],
+    "the Waiting strip names the running subagent",
   );
-  assert.isAtLeast(rootDoneCompletedAt, 0);
+  assert.isNull(waitingShell?.activeRunId, "no run is working while only the subagent runs");
+
+  // The queued message did not wait for the subagent, and the steer started a
+  // new turn: no finished reply was superseded.
+  assert.deepEqual(runAssistantTexts(projection, queuedRun?.id), ["QUEUED_DONE"]);
+  assert.deepEqual(runAssistantTexts(projection, steerRun?.id), ["STEER_DONE"]);
+  const queuedStartedAt = result.domainEvents.findIndex(
+    (event) =>
+      event.type === "run.updated" &&
+      event.payload.id === queuedRun?.id &&
+      event.payload.status === "running",
+  );
   assert.isBelow(
-    rootDoneCompletedAt,
+    queuedStartedAt,
     subagentCompletedAt,
-    "ROOT_DONE streamed until the subagent finished",
+    "the queued message waited for the subagent",
+  );
+  assert.deepEqual(
+    projection.attempts.map((attempt) => attempt.status),
+    ["completed", "completed", "completed", "completed"],
   );
 
-  // The subagent's own reply stays in its child thread.
+  // The subagent's own work, done after run 1 settled, lands in its child thread.
   if (subagent?.childThreadId == null) {
     throw new Error("The background subagent is missing its child thread.");
   }
@@ -95,7 +120,16 @@ export function assertGrokBackgroundSubagentOutput(
     ),
     "the subagent's reply must land in its child thread",
   );
-  assert.notInclude(runAssistantTexts(projection, rootRun?.id), "SUBAGENT_DONE");
+  const childTools = child?.turnItems.filter((item) => item.type === "dynamic_tool") ?? [];
+  // Its poll of the sleep, made after run 1 completed, still projects.
+  assert.include(
+    childTools.map((item) => `${item.title}:${item.status}`),
+    "sleep 20 (call-d54):completed",
+    "the subagent's tool calls must land in its child thread",
+  );
+  for (const run of projection.runs) {
+    assert.notInclude(runAssistantTexts(projection, run.id), "SUBAGENT_DONE");
+  }
 
   // The timeline says which subagent finished, and opens its thread.
   assert.deepEqual(backgroundNotifications(projection), [
