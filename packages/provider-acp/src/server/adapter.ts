@@ -6607,11 +6607,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* emitProviderRetry(context, settledStatus);
           }
           const now = yield* DateTime.now;
+          // Agents that report their own compaction_update already produced the
+          // compaction row; only synthesize one for agents that compact silently.
           if (
             flavor.supportsCompaction === true &&
             context.input.message.text.trim() === "/compact" &&
             context.input.message.attachments.length === 0 &&
-            settledStatus === "completed"
+            settledStatus === "completed" &&
+            ![...context.tools.keys()].some((id) => id.startsWith("acp-compaction:"))
           ) {
             const nativeItemId = `${context.nativeTurnId}:compaction`;
             yield* emitProviderEvent({
