@@ -1503,6 +1503,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const continuationRequests = options.continuationRequests;
   const postSettleContinuationEnabled =
     flavor.enablePostSettleContinuation === true && continuationRequests !== undefined;
+  // Flavors that hold a settled root for background work (Grok) let running
+  // subagents carry past it instead, so their own frames keep projecting
+  // while no turn runs. Other flavors keep their settle-time handling.
+  const subagentsOutliveSettledRoot = flavor.deferFinalizeForBackgroundWork === true;
 
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: options.instanceId,
@@ -4334,6 +4338,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const idleCarryover = yield* Ref.get(carryoverSubagents);
             const idleRootSessionId = yield* Ref.get(activeSessionId);
             if (
+              subagentsOutliveSettledRoot &&
               idleCarryover !== null &&
               idleCarryover.rootTerminalStatus === "completed" &&
               idleCarryover.sessionId === idleRootSessionId &&
@@ -6562,6 +6567,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         // A subagent's own calls live in its child thread and outlive the root
         // turn; root-turn terminalization must not re-emit them as root tools.
         const isSubagentToolKey = (context: ActiveAcpTurn, key: string): boolean =>
+          subagentsOutliveSettledRoot &&
           [...context.subagents.keys()].some((nativeTaskId) =>
             key.startsWith(`${nativeTaskId}:tool:`),
           );
@@ -7085,8 +7091,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             let rehydratedCarryoverSubagents: ReadonlyArray<ActiveAcpSubagent> = [];
             if (carryover !== null && carryover.sessionId === requestedSessionId) {
               rehydratedCarryoverSubagents = carryover.subagents;
-              for (const [sessionId, buffered] of carryover.context.pendingSubagentNotifications) {
-                context.pendingSubagentNotifications.set(sessionId, buffered);
+              if (subagentsOutliveSettledRoot) {
+                for (const [sessionId, buffered] of carryover.context
+                  .pendingSubagentNotifications) {
+                  context.pendingSubagentNotifications.set(sessionId, buffered);
+                }
               }
               for (const subagent of carryover.subagents) {
                 const nativeId = subagent.task.nativeTaskRef?.nativeId ?? null;
@@ -7094,6 +7103,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   context.subagents.set(nativeId, subagent);
                   // A subagent's open tool calls continue in this turn.
                   for (const [key, tool] of carryover.context.tools) {
+                    if (!subagentsOutliveSettledRoot) break;
                     if (!key.startsWith(`${nativeId}:tool:`)) continue;
                     context.tools.set(key, tool);
                     const toolStartedAt = carryover.context.toolStartedAt.get(key);

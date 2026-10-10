@@ -367,6 +367,28 @@ const waitForPublishedProcessIds = (
     }
   }).pipe(Effect.timeoutOption("2 seconds"));
 
+/**
+ * A subagent no longer holds a settled root (#17159), so tests about carrying
+ * one across an interrupt keep the first prompt open until session/cancel and
+ * interrupt it once the subagent is projected. A respawned runtime prompts
+ * normally.
+ */
+const holdFirstGenericPromptUntilCancel = (runtimeOrdinal: number) =>
+  runtimeOrdinal === 1
+    ? {
+        T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1",
+        T3_ACP_HOLD_FIRST_GENERIC_PROMPT_UNTIL_CANCEL: "1",
+      }
+    : { T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1" };
+
+const signalSubagentSpawned = (
+  spawned: Deferred.Deferred<void>,
+  event: ProviderAdapter.ProviderAdapterV2Event,
+) =>
+  event.type === "turn_item.updated" && event.turnItem.type === "subagent"
+    ? Deferred.succeed(spawned, undefined).pipe(Effect.asVoid)
+    : Effect.void;
+
 function makeMockRuntime(input: {
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly mockAgentPath: string;
@@ -4948,7 +4970,7 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.effect("finalizes a settled turn held open for background work when interrupted", () =>
+  it.effect("completes a settled turn whose only background work is a running subagent", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -4958,12 +4980,7 @@ describe("AcpAdapterV2", () => {
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
       const instanceId = ProviderInstanceId.make("acp-test");
-      const promptSettled = yield* Deferred.make<void>();
       const adapter = yield* makeAcpAdapterV2({
-        testHooks: {
-          afterPromptSettledWithBackgroundWork: () =>
-            Deferred.succeed(promptSettled, undefined).pipe(Effect.asVoid),
-        },
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -5016,23 +5033,25 @@ describe("AcpAdapterV2", () => {
       yield* runtime.startTurn(
         makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
       );
-      // The still-running subagent defers finalize after session/prompt returns.
-      yield* Deferred.await(promptSettled);
-
+      // A running subagent no longer holds the root (#17159): the turn
+      // completes with its reply and the subagent stays running.
       const providerTurnId = idAllocator.derive.providerTurn({
         driver: ACP_TEST_DRIVER,
         nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
       });
-      yield* runtime.interruptTurn({ providerThread, providerTurnId });
-
+      let subagentStatus: string | null = null;
       let terminalStatus: string | null = null;
       while (terminalStatus === null) {
         const event = yield* Queue.take(events);
+        if (event.type === "turn_item.updated" && event.turnItem.type === "subagent") {
+          subagentStatus = event.turnItem.status;
+        }
         if (event.type === "turn.terminal" && event.providerTurnId === providerTurnId) {
           terminalStatus = event.status;
         }
       }
-      assert.equal(terminalStatus, "interrupted");
+      assert.equal(terminalStatus, "completed");
+      assert.equal(subagentStatus, "running");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
@@ -5049,12 +5068,8 @@ describe("AcpAdapterV2", () => {
         );
         const instanceId = ProviderInstanceId.make("acp-test");
         let subagentPhase: "spawn" | "complete" = "spawn";
-        const promptSettled = yield* Deferred.make<void>();
+        const subagentSpawned = yield* Deferred.make<void>();
         const adapter = yield* makeAcpAdapterV2({
-          testHooks: {
-            afterPromptSettledWithBackgroundWork: () =>
-              Deferred.succeed(promptSettled, undefined).pipe(Effect.asVoid),
-          },
           instanceId,
           flavor: {
             driver: ACP_TEST_DRIVER,
@@ -5088,7 +5103,7 @@ describe("AcpAdapterV2", () => {
             makeRuntime: makeMockRuntime({
               childProcessSpawner,
               mockAgentPath,
-              environment: { T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1" },
+              environment: holdFirstGenericPromptUntilCancel,
             }),
           },
           selfInvocation,
@@ -5108,7 +5123,11 @@ describe("AcpAdapterV2", () => {
         });
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         yield* runtime.events.pipe(
-          Stream.runForEach((event) => Queue.offer(events, event)),
+          Stream.runForEach((event) =>
+            signalSubagentSpawned(subagentSpawned, event).pipe(
+              Effect.andThen(Queue.offer(events, event)),
+            ),
+          ),
           Effect.forkScoped,
         );
         const providerThread = yield* runtime.ensureThread({
@@ -5120,7 +5139,8 @@ describe("AcpAdapterV2", () => {
         yield* runtime.startTurn(
           makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
         );
-        yield* Deferred.await(promptSettled);
+        // The root is still prompting with its subagent running.
+        yield* Deferred.await(subagentSpawned);
 
         const firstProviderTurnId = idAllocator.derive.providerTurn({
           driver: ACP_TEST_DRIVER,
@@ -5191,12 +5211,8 @@ describe("AcpAdapterV2", () => {
         );
         const instanceId = ProviderInstanceId.make("acp-test");
         let subagentPhase: "spawn" | "complete" = "spawn";
-        const promptSettled = yield* Deferred.make<void>();
+        const subagentSpawned = yield* Deferred.make<void>();
         const adapter = yield* makeAcpAdapterV2({
-          testHooks: {
-            afterPromptSettledWithBackgroundWork: () =>
-              Deferred.succeed(promptSettled, undefined).pipe(Effect.asVoid),
-          },
           instanceId,
           flavor: {
             driver: ACP_TEST_DRIVER,
@@ -5228,7 +5244,7 @@ describe("AcpAdapterV2", () => {
             makeRuntime: makeMockRuntime({
               childProcessSpawner,
               mockAgentPath,
-              environment: { T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1" },
+              environment: holdFirstGenericPromptUntilCancel,
             }),
           },
           selfInvocation,
@@ -5255,7 +5271,11 @@ describe("AcpAdapterV2", () => {
         const hasPendingBackgroundWork = runtime.hasPendingBackgroundWork;
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         yield* runtime.events.pipe(
-          Stream.runForEach((event) => Queue.offer(events, event)),
+          Stream.runForEach((event) =>
+            signalSubagentSpawned(subagentSpawned, event).pipe(
+              Effect.andThen(Queue.offer(events, event)),
+            ),
+          ),
           Effect.forkScoped,
         );
         const providerThread = yield* runtime.ensureThread({
@@ -5267,7 +5287,8 @@ describe("AcpAdapterV2", () => {
         yield* runtime.startTurn(
           makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
         );
-        yield* Deferred.await(promptSettled);
+        // The root is still prompting with its subagent running.
+        yield* Deferred.await(subagentSpawned);
 
         const firstProviderTurnId = idAllocator.derive.providerTurn({
           driver: ACP_TEST_DRIVER,
@@ -5338,12 +5359,8 @@ describe("AcpAdapterV2", () => {
       let subagentPhase: "spawn" | "complete" = "spawn";
       type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
       let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
-      const promptSettled = yield* Deferred.make<void>();
+      const subagentSpawned = yield* Deferred.make<void>();
       const adapter = yield* makeAcpAdapterV2({
-        testHooks: {
-          afterPromptSettledWithBackgroundWork: () =>
-            Deferred.succeed(promptSettled, undefined).pipe(Effect.asVoid),
-        },
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -5375,7 +5392,7 @@ describe("AcpAdapterV2", () => {
           makeRuntime: makeMockRuntime({
             childProcessSpawner,
             mockAgentPath,
-            environment: { T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1" },
+            environment: holdFirstGenericPromptUntilCancel,
             wrapRuntime: (runtime) => ({
               ...runtime,
               handleSessionUpdate: (handler) =>
@@ -5421,7 +5438,11 @@ describe("AcpAdapterV2", () => {
       const hasPendingBackgroundWork = runtime.hasPendingBackgroundWork;
       const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
       yield* runtime.events.pipe(
-        Stream.runForEach((event) => Queue.offer(events, event)),
+        Stream.runForEach((event) =>
+          signalSubagentSpawned(subagentSpawned, event).pipe(
+            Effect.andThen(Queue.offer(events, event)),
+          ),
+        ),
         Effect.forkScoped,
       );
       const providerThread = yield* runtime.ensureThread({
@@ -5433,7 +5454,8 @@ describe("AcpAdapterV2", () => {
       yield* runtime.startTurn(
         makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
       );
-      yield* Deferred.await(promptSettled);
+      // The root is still prompting with its subagent running.
+      yield* Deferred.await(subagentSpawned);
 
       const firstProviderTurnId = idAllocator.derive.providerTurn({
         driver: ACP_TEST_DRIVER,
@@ -5781,17 +5803,13 @@ describe("AcpAdapterV2", () => {
         const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
         const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
           [];
-        const promptSettled = yield* Deferred.make<void>();
+        const subagentSpawned = yield* Deferred.make<void>();
         const instanceId = ProviderInstanceId.make("acp-test");
         const childSessionId = "mock-child-session-post-settle";
         let subagentPhase: "spawn" | "complete" = "spawn";
         type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
         let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
         const adapter = yield* makeAcpAdapterV2({
-          testHooks: {
-            afterPromptSettledWithBackgroundWork: () =>
-              Deferred.succeed(promptSettled, undefined).pipe(Effect.asVoid),
-          },
           instanceId,
           flavor: {
             driver: ACP_TEST_DRIVER,
@@ -5823,7 +5841,7 @@ describe("AcpAdapterV2", () => {
             makeRuntime: makeMockRuntime({
               childProcessSpawner,
               mockAgentPath,
-              environment: { T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1" },
+              environment: holdFirstGenericPromptUntilCancel,
               protocolEvents,
               wrapRuntime: (runtime) => ({
                 ...runtime,
@@ -5865,7 +5883,11 @@ describe("AcpAdapterV2", () => {
         const hasPendingBackgroundWork = runtime.hasPendingBackgroundWork;
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         yield* runtime.events.pipe(
-          Stream.runForEach((event) => Queue.offer(events, event)),
+          Stream.runForEach((event) =>
+            signalSubagentSpawned(subagentSpawned, event).pipe(
+              Effect.andThen(Queue.offer(events, event)),
+            ),
+          ),
           Effect.forkScoped,
         );
         const providerThread = yield* runtime.ensureThread({
@@ -5877,7 +5899,8 @@ describe("AcpAdapterV2", () => {
         yield* runtime.startTurn(
           makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
         );
-        yield* Deferred.await(promptSettled);
+        // The root is still prompting with its subagent running.
+        yield* Deferred.await(subagentSpawned);
 
         const firstProviderTurnId = idAllocator.derive.providerTurn({
           driver: ACP_TEST_DRIVER,
@@ -6388,12 +6411,8 @@ describe("AcpAdapterV2", () => {
         let subagentPhase: "spawn" | "complete" = "spawn";
         type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
         let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
-        const promptSettled = yield* Deferred.make<void>();
+        const subagentSpawned = yield* Deferred.make<void>();
         const adapter = yield* makeAcpAdapterV2({
-          testHooks: {
-            afterPromptSettledWithBackgroundWork: () =>
-              Deferred.succeed(promptSettled, undefined).pipe(Effect.asVoid),
-          },
           instanceId,
           flavor: {
             driver: ACP_TEST_DRIVER,
@@ -6425,7 +6444,7 @@ describe("AcpAdapterV2", () => {
             makeRuntime: makeMockRuntime({
               childProcessSpawner,
               mockAgentPath,
-              environment: { T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1" },
+              environment: holdFirstGenericPromptUntilCancel,
               wrapRuntime: (runtime) => ({
                 ...runtime,
                 handleSessionUpdate: (handler) =>
@@ -6466,7 +6485,11 @@ describe("AcpAdapterV2", () => {
         const hasPendingBackgroundWork = runtime.hasPendingBackgroundWork;
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         yield* runtime.events.pipe(
-          Stream.runForEach((event) => Queue.offer(events, event)),
+          Stream.runForEach((event) =>
+            signalSubagentSpawned(subagentSpawned, event).pipe(
+              Effect.andThen(Queue.offer(events, event)),
+            ),
+          ),
           Effect.forkScoped,
         );
         const providerThread = yield* runtime.ensureThread({
@@ -6478,7 +6501,8 @@ describe("AcpAdapterV2", () => {
         yield* runtime.startTurn(
           makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
         );
-        yield* Deferred.await(promptSettled);
+        // The root is still prompting with its subagent running.
+        yield* Deferred.await(subagentSpawned);
 
         const firstProviderTurnId = idAllocator.derive.providerTurn({
           driver: ACP_TEST_DRIVER,
@@ -6903,17 +6927,13 @@ describe("AcpAdapterV2", () => {
       const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
       const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
         [];
-      const promptSettled = yield* Deferred.make<void>();
+      const subagentSpawned = yield* Deferred.make<void>();
       const instanceId = ProviderInstanceId.make("acp-test");
       const childSessionId = "019f5470-bf92-7a90-afb3-5a6cea5b34a3";
       let subagentPhase: "spawn" | "complete" = "spawn";
       type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
       let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
       const adapter = yield* makeAcpAdapterV2({
-        testHooks: {
-          afterPromptSettledWithBackgroundWork: () =>
-            Deferred.succeed(promptSettled, undefined).pipe(Effect.asVoid),
-        },
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -6956,7 +6976,7 @@ describe("AcpAdapterV2", () => {
           makeRuntime: makeMockRuntime({
             childProcessSpawner,
             mockAgentPath,
-            environment: { T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1" },
+            environment: holdFirstGenericPromptUntilCancel,
             protocolEvents,
             wrapRuntime: (runtime) => ({
               ...runtime,
@@ -6996,7 +7016,11 @@ describe("AcpAdapterV2", () => {
       const hasPendingBackgroundWork = runtime.hasPendingBackgroundWork;
       const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
       yield* runtime.events.pipe(
-        Stream.runForEach((event) => Queue.offer(events, event)),
+        Stream.runForEach((event) =>
+          signalSubagentSpawned(subagentSpawned, event).pipe(
+            Effect.andThen(Queue.offer(events, event)),
+          ),
+        ),
         Effect.forkScoped,
       );
       const providerThread = yield* runtime.ensureThread({
@@ -7008,7 +7032,8 @@ describe("AcpAdapterV2", () => {
       yield* runtime.startTurn(
         makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
       );
-      yield* Deferred.await(promptSettled);
+      // The root is still prompting with its subagent running.
+      yield* Deferred.await(subagentSpawned);
 
       const firstProviderTurnId = idAllocator.derive.providerTurn({
         driver: ACP_TEST_DRIVER,
@@ -7132,12 +7157,8 @@ describe("AcpAdapterV2", () => {
         let subagentPhase: "spawn" | "complete" = "spawn";
         type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
         let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
-        const promptSettled = yield* Deferred.make<void>();
+        const subagentSpawned = yield* Deferred.make<void>();
         const adapter = yield* makeAcpAdapterV2({
-          testHooks: {
-            afterPromptSettledWithBackgroundWork: () =>
-              Deferred.succeed(promptSettled, undefined).pipe(Effect.asVoid),
-          },
           instanceId,
           flavor: {
             driver: ACP_TEST_DRIVER,
@@ -7169,7 +7190,7 @@ describe("AcpAdapterV2", () => {
             makeRuntime: makeMockRuntime({
               childProcessSpawner,
               mockAgentPath,
-              environment: { T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1" },
+              environment: holdFirstGenericPromptUntilCancel,
               wrapRuntime: (runtime) => ({
                 ...runtime,
                 handleSessionUpdate: (handler) =>
@@ -7210,7 +7231,11 @@ describe("AcpAdapterV2", () => {
         const hasPendingBackgroundWork = runtime.hasPendingBackgroundWork;
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         yield* runtime.events.pipe(
-          Stream.runForEach((event) => Queue.offer(events, event)),
+          Stream.runForEach((event) =>
+            signalSubagentSpawned(subagentSpawned, event).pipe(
+              Effect.andThen(Queue.offer(events, event)),
+            ),
+          ),
           Effect.forkScoped,
         );
         const providerThread = yield* runtime.ensureThread({
@@ -7222,7 +7247,8 @@ describe("AcpAdapterV2", () => {
         yield* runtime.startTurn(
           makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
         );
-        yield* Deferred.await(promptSettled);
+        // The root is still prompting with its subagent running.
+        yield* Deferred.await(subagentSpawned);
 
         const firstProviderTurnId = idAllocator.derive.providerTurn({
           driver: ACP_TEST_DRIVER,
@@ -7397,12 +7423,8 @@ describe("AcpAdapterV2", () => {
         let subagentPhase: "spawn" | "complete" = "spawn";
         type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
         let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
-        const promptSettled = yield* Deferred.make<void>();
+        const subagentSpawned = yield* Deferred.make<void>();
         const adapter = yield* makeAcpAdapterV2({
-          testHooks: {
-            afterPromptSettledWithBackgroundWork: () =>
-              Deferred.succeed(promptSettled, undefined).pipe(Effect.asVoid),
-          },
           instanceId,
           flavor: {
             driver: ACP_TEST_DRIVER,
@@ -7434,7 +7456,7 @@ describe("AcpAdapterV2", () => {
             makeRuntime: makeMockRuntime({
               childProcessSpawner,
               mockAgentPath,
-              environment: { T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1" },
+              environment: holdFirstGenericPromptUntilCancel,
               wrapRuntime: (runtime) => ({
                 ...runtime,
                 handleSessionUpdate: (handler) =>
@@ -7475,7 +7497,11 @@ describe("AcpAdapterV2", () => {
         const hasPendingBackgroundWork = runtime.hasPendingBackgroundWork;
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         yield* runtime.events.pipe(
-          Stream.runForEach((event) => Queue.offer(events, event)),
+          Stream.runForEach((event) =>
+            signalSubagentSpawned(subagentSpawned, event).pipe(
+              Effect.andThen(Queue.offer(events, event)),
+            ),
+          ),
           Effect.forkScoped,
         );
         const providerThread = yield* runtime.ensureThread({
@@ -7487,7 +7513,8 @@ describe("AcpAdapterV2", () => {
         yield* runtime.startTurn(
           makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
         );
-        yield* Deferred.await(promptSettled);
+        // The root is still prompting with its subagent running.
+        yield* Deferred.await(subagentSpawned);
 
         const firstProviderTurnId = idAllocator.derive.providerTurn({
           driver: ACP_TEST_DRIVER,
@@ -13429,12 +13456,8 @@ describe("AcpAdapterV2", () => {
         );
         const instanceId = ProviderInstanceId.make("acp-test");
         let subagentPhase: "spawn" | "complete" = "spawn";
-        const promptSettled = yield* Deferred.make<void>();
+        const subagentSpawned = yield* Deferred.make<void>();
         const adapter = yield* makeAcpAdapterV2({
-          testHooks: {
-            afterPromptSettledWithBackgroundWork: () =>
-              Deferred.succeed(promptSettled, undefined).pipe(Effect.asVoid),
-          },
           instanceId,
           flavor: {
             driver: ACP_TEST_DRIVER,
@@ -13466,7 +13489,7 @@ describe("AcpAdapterV2", () => {
             makeRuntime: makeMockRuntime({
               childProcessSpawner,
               mockAgentPath,
-              environment: { T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1" },
+              environment: holdFirstGenericPromptUntilCancel,
             }),
           },
           selfInvocation,
@@ -13488,7 +13511,11 @@ describe("AcpAdapterV2", () => {
         });
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         yield* runtime.events.pipe(
-          Stream.runForEach((event) => Queue.offer(events, event)),
+          Stream.runForEach((event) =>
+            signalSubagentSpawned(subagentSpawned, event).pipe(
+              Effect.andThen(Queue.offer(events, event)),
+            ),
+          ),
           Effect.forkScoped,
         );
         const providerThread = yield* runtime.ensureThread({
@@ -13500,7 +13527,8 @@ describe("AcpAdapterV2", () => {
         yield* runtime.startTurn(
           makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
         );
-        yield* Deferred.await(promptSettled);
+        // The root is still prompting with its subagent running.
+        yield* Deferred.await(subagentSpawned);
 
         const firstProviderTurnId = idAllocator.derive.providerTurn({
           driver: ACP_TEST_DRIVER,
