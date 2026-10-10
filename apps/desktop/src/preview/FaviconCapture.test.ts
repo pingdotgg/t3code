@@ -5,6 +5,7 @@ import {
   MAX_FAVICON_RESPONSE_BYTES,
   captureFavicon,
   selectFaviconCandidates,
+  sourceDimensions,
 } from "./FaviconCapture.ts";
 
 const PNG = "data:image/png;base64,cG5n";
@@ -46,6 +47,26 @@ function sourceGif(
   buffer[offset] = 0x3b;
   return buffer;
 }
+
+it.each([
+  ["logical pixels", sourceGif(2048, 1024), { width: 2048, height: 1024 }],
+  [
+    "cumulative frame pixels",
+    sourceGif(1024, 1024, 1024, 1024, [{ width: 1024, height: 1024 }]),
+    { width: 1024, height: 1024 },
+  ],
+])("uses the caller's GIF limit for %s while keeping the favicon limit", (_, gif, dimensions) => {
+  expect(sourceDimensions(gif)).toBeNull();
+  expect(sourceDimensions(gif, 8_388_608)).toEqual(dimensions);
+});
+
+it("rejects GIF frames exceeding the caller's cumulative pixel limit", () => {
+  const gif = sourceGif(2048, 2048, 2048, 2048, [
+    { width: 2048, height: 2048 },
+    { width: 2048, height: 2048 },
+  ]);
+  expect(sourceDimensions(gif, 8_388_608)).toBeNull();
+});
 
 function sourceJpeg(
   width: number,

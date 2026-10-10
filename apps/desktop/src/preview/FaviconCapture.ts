@@ -246,14 +246,17 @@ interface ImageDimensions {
   readonly height: number;
 }
 
-function safeDimensions(dimensions: ImageDimensions | null): dimensions is ImageDimensions {
+function safeDimensions(
+  dimensions: ImageDimensions | null,
+  maxPixels = MAX_FAVICON_SOURCE_PIXELS,
+): dimensions is ImageDimensions {
   return (
     dimensions !== null &&
     Number.isSafeInteger(dimensions.width) &&
     Number.isSafeInteger(dimensions.height) &&
     dimensions.width > 0 &&
     dimensions.height > 0 &&
-    dimensions.width * dimensions.height <= MAX_FAVICON_SOURCE_PIXELS
+    dimensions.width * dimensions.height <= maxPixels
   );
 }
 
@@ -276,13 +279,13 @@ function skipGifSubBlocks(buffer: Buffer, startOffset: number): number | null {
   return null;
 }
 
-function gifDimensions(buffer: Buffer): ImageDimensions | null {
+function gifDimensions(buffer: Buffer, maxPixels: number): ImageDimensions | null {
   if (buffer.byteLength < 13 || !/^GIF8[79]a$/u.test(buffer.subarray(0, 6).toString("ascii"))) {
     return null;
   }
   const logicalWidth = buffer.readUInt16LE(6);
   const logicalHeight = buffer.readUInt16LE(8);
-  if (!safeDimensions({ width: logicalWidth, height: logicalHeight })) return null;
+  if (!safeDimensions({ width: logicalWidth, height: logicalHeight }, maxPixels)) return null;
   const packed = buffer[10]!;
   let offset = 13 + ((packed & 0x80) === 0 ? 0 : 3 * 2 ** ((packed & 0x07) + 1));
   if (offset > buffer.byteLength) return null;
@@ -301,10 +304,10 @@ function gifDimensions(buffer: Buffer): ImageDimensions | null {
       const frameHeight = buffer.readUInt16LE(offset + 7);
       if (frameWidth === 0 || frameHeight === 0) return null;
       framePixels += frameWidth * frameHeight;
-      if (framePixels > MAX_FAVICON_SOURCE_PIXELS) return null;
+      if (framePixels > maxPixels) return null;
       width = Math.max(width, left + frameWidth);
       height = Math.max(height, top + frameHeight);
-      if (!safeDimensions({ width, height })) return null;
+      if (!safeDimensions({ width, height }, maxPixels)) return null;
       const framePacked = buffer[offset + 9]!;
       offset += 10;
       if ((framePacked & 0x80) !== 0) {
@@ -491,7 +494,7 @@ function dibDimensions(buffer: Buffer): ImageDimensions | null {
   };
 }
 
-function icoDimensions(buffer: Buffer): ImageDimensions | null {
+function icoDimensions(buffer: Buffer, maxPixels: number): ImageDimensions | null {
   if (
     buffer.byteLength < 22 ||
     buffer.readUInt16LE(0) !== 0 ||
@@ -507,7 +510,7 @@ function icoDimensions(buffer: Buffer): ImageDimensions | null {
     const offset = 6 + index * 16;
     width = Math.max(width, buffer[offset] === 0 ? 256 : buffer[offset]!);
     height = Math.max(height, buffer[offset + 1] === 0 ? 256 : buffer[offset + 1]!);
-    if (!safeDimensions({ width, height })) return null;
+    if (!safeDimensions({ width, height }, maxPixels)) return null;
     const byteLength = buffer.readUInt32LE(offset + 8);
     const imageOffset = buffer.readUInt32LE(offset + 12);
     if (
@@ -519,18 +522,21 @@ function icoDimensions(buffer: Buffer): ImageDimensions | null {
       return null;
     const embedded = buffer.subarray(imageOffset, imageOffset + byteLength);
     const embeddedDimensions = pngDimensions(embedded) ?? dibDimensions(embedded);
-    if (!safeDimensions(embeddedDimensions)) return null;
+    if (!safeDimensions(embeddedDimensions, maxPixels)) return null;
   }
   return { width, height };
 }
 
-function sourceDimensions(buffer: Buffer): ImageDimensions | null {
+export function sourceDimensions(
+  buffer: Buffer,
+  maxPixels = MAX_FAVICON_SOURCE_PIXELS,
+): ImageDimensions | null {
   return (
     pngDimensions(buffer) ??
-    gifDimensions(buffer) ??
+    gifDimensions(buffer, maxPixels) ??
     jpegDimensions(buffer) ??
     webpDimensions(buffer) ??
-    icoDimensions(buffer)
+    icoDimensions(buffer, maxPixels)
   );
 }
 
