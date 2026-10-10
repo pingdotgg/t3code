@@ -1078,6 +1078,27 @@ importers:
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../shared
+      '@t3tools/source-control-azure-devops':
+        specifier: workspace:*
+        version: link:../source-control-azure-devops
+      '@t3tools/source-control-bitbucket':
+        specifier: workspace:*
+        version: link:../source-control-bitbucket
+      '@t3tools/source-control-core':
+        specifier: workspace:*
+        version: link:../source-control-core
+      '@t3tools/source-control-forgejo':
+        specifier: workspace:*
+        version: link:../source-control-forgejo
+      '@t3tools/source-control-gitcafe':
+        specifier: workspace:*
+        version: link:../source-control-gitcafe
+      '@t3tools/source-control-github':
+        specifier: workspace:*
+        version: link:../source-control-github
+      '@t3tools/source-control-gitlab':
+        specifier: workspace:*
+        version: link:../source-control-gitlab
       effect:
         specifier: 4.0.2
         version: 4.0.2(patch_hash=ec61ee307eaec3e17f757e0e6a16296ea4b7a8c3188df0c6ec5e66301fd78688)
