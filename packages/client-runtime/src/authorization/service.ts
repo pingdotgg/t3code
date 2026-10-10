@@ -254,6 +254,15 @@ export const make = Effect.gen(function* () {
       detail: "Your cloud sign-in changed. Sign in again to authorize the environment.",
     });
 
+  // A missing identity before an attempt captures one means the client has not
+  // finished loading its cloud session. Only a captured identity that goes away
+  // or changes is evidence of a sign-out or account switch.
+  const sessionPending = () =>
+    new ConnectionTransientError({
+      reason: "session-pending",
+      detail: "Waiting for the T3 Connect sign-in to load.",
+    });
+
   const assertSession = Effect.fnUntraced(function* (
     identity: ClientCapabilities.CloudSessionIdentity,
   ) {
@@ -365,7 +374,7 @@ export const make = Effect.gen(function* () {
   ) {
     const session = yield* cloudSession.identity;
     if (Option.isNone(session)) {
-      return yield* sessionChanged();
+      return yield* sessionPending();
     }
     const identity = session.value;
     const thumbprint = yield* signer.thumbprint.pipe(
