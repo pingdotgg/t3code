@@ -14,6 +14,7 @@ import {
   isProviderAvailable,
   type ServerProvider,
   type ServerProviderUsageLimits,
+  type ServerProviderCredits,
   type ServerProviderUsageWindow,
   type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
@@ -162,6 +163,7 @@ export interface LimitAccount {
 export function collectLimitAccounts(presentations: LimitPresentations): readonly LimitAccount[] {
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
+  const balanceSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
   const merge = (key: string, next: LimitAccount) => {
     // Redeeming through a hub also clears the routing cooldown that hub holds
@@ -186,6 +188,14 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       creditSources.set(key, next);
     }
     const previous = accounts.get(key);
+    const previousBalance = balanceSources.get(key);
+    if (
+      next.limits.credits !== undefined &&
+      (!previousBalance ||
+        Date.parse(next.limits.checkedAt) > Date.parse(previousBalance.limits.checkedAt))
+    ) {
+      balanceSources.set(key, next);
+    }
     if (!previous) {
       accounts.set(key, next);
       return;
@@ -216,6 +226,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem)),
       limits: {
         ...winner.limits,
+        credits: balanceSources.get(key)?.limits.credits,
         ...(creditSource?.limits.resetCredits
           ? { resetCredits: creditSource.limits.resetCredits }
           : { resetCredits: undefined }),
@@ -482,7 +493,23 @@ export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
   if (limits.unavailable?.reason === "probeFailed") {
     return limits.unavailable.message ?? "Could not read limits.";
   }
-  return limits.windows.length === 0 ? "No limits reported." : null;
+  return limits.windows.length === 0 && !limits.credits ? "No limits reported." : null;
+}
+
+/** A spendable balance has no known maximum, so it gets a value, never a quota bar. */
+export function creditBalanceLabel(credits: ServerProviderCredits): string {
+  if (credits.unlimited) return "Unlimited";
+  if (credits.balance !== undefined) {
+    const balance = Number(credits.balance);
+    if (/^\d+(?:\.\d+)?$/.test(credits.balance) && Number.isFinite(balance)) {
+      const value =
+        balance > 0 && balance < 0.01
+          ? `<${(0.01).toLocaleString()}`
+          : balance.toLocaleString(undefined, { maximumFractionDigits: 2 });
+      return `${value} remaining`;
+    }
+  }
+  return credits.hasCredits ? "Available · balance not reported" : "No credits remaining";
 }
 
 /** Quota left in the window, 0..100. Bars and labels show what remains, as Codex does. */

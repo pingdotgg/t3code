@@ -51,8 +51,8 @@ export function makeUnavailableUsageLimits(input: {
  * Fold a sparse runtime update into the limits a provider currently
  * publishes. Windows upsert by `id`; a window the update omits keeps its
  * previous values, and a window that arrives without `resetsAt` or
- * `windowDurationMins` keeps whatever the last probe resolved for it. An
- * update with no windows leaves `previous` untouched.
+ * `windowDurationMins` keeps whatever the last probe resolved for it.
+ * Credit-only updates can change the balance without changing any window.
  *
  * An `unsupported` snapshot stays unsupported: an account that cannot have
  * subscription windows will not start reporting them mid-turn.
@@ -63,14 +63,22 @@ export function applyUsageLimitsUpdate(input: {
   readonly checkedAt: string;
 }): ServerProviderUsageLimits | undefined {
   const { previous, update } = input;
-  if (update.windows.length === 0 || previous?.unavailable?.reason === "unsupported") {
+  if (
+    (update.windows.length === 0 && update.credits === undefined) ||
+    previous?.unavailable?.reason === "unsupported"
+  ) {
     return previous;
   }
   const merged = new Map(previous?.windows.map((window) => [window.id, window] as const));
   // Codex sends this notification beside every token-usage tick, almost
   // always with unchanged numbers. Decide "nothing changed" per window on
   // the way through so the no-op case never allocates a new snapshot.
-  let changed = false;
+  const credits = update.credits === undefined ? previous?.credits : update.credits;
+  let changed =
+    (update.credits === null && previous?.credits !== null) ||
+    credits?.balance !== previous?.credits?.balance ||
+    credits?.hasCredits !== previous?.credits?.hasCredits ||
+    credits?.unlimited !== previous?.credits?.unlimited;
   for (const window of update.windows) {
     const existing = merged.get(window.id);
     const next: ServerProviderUsageWindow = {
@@ -94,6 +102,10 @@ export function applyUsageLimitsUpdate(input: {
   return {
     ...makeUsageLimits({ checkedAt: input.checkedAt, windows: merged.values() }),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),
+    ...(credits !== undefined ? { credits } : {}),
+    ...(previous?.credentialFingerprint !== undefined
+      ? { credentialFingerprint: previous.credentialFingerprint }
+      : {}),
   };
 }
 

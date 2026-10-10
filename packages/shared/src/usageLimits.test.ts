@@ -25,6 +25,7 @@ import {
   providersWithLimits,
   remainingPercent,
   usesChatGptSharing,
+  creditBalanceLabel,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
@@ -81,6 +82,28 @@ describe("pace", () => {
 });
 
 describe("limitsNotice", () => {
+  it("keeps credit-only accounts visible without inventing a quota bar", () => {
+    const limits = {
+      checkedAt: "2026-09-03T11:00:00.000Z",
+      windows: [],
+      credits: { hasCredits: true, unlimited: false, balance: "42" },
+    };
+    expect(limitsNotice(limits)).toBeNull();
+    const presentations = new Map([
+      [
+        EnvironmentId.make("credits"),
+        {
+          entry: { target: { label: "Desktop" } },
+          serverConfig: { providers: [provider({ usageLimits: limits })] },
+        },
+      ],
+    ]);
+    const accounts = collectLimitAccounts(presentations);
+    expect(accounts).toHaveLength(1);
+    expect(collectLimitPools(accounts, now)[0]?.windows).toEqual([]);
+    expect(accounts[0]?.limits.credits?.balance).toBe("42");
+  });
+
   it("explains empty bars and passes provider messages through", () => {
     const checkedAt = "2026-09-03T11:00:00.000Z";
     expect(limitsNotice({ checkedAt, windows: [window] })).toBeNull();
@@ -95,6 +118,73 @@ describe("limitsNotice", () => {
         unavailable: { reason: "probeFailed", message: "Codex timed out." },
       }),
     ).toBe("Codex timed out.");
+  });
+});
+
+describe("credit balances", () => {
+  it("formats finite credit units separately from unknown and unlimited balances", () => {
+    const credits = { hasCredits: true, unlimited: false };
+    expect(creditBalanceLabel({ ...credits, balance: "12345.6789" })).toBe(
+      `${(12345.68).toLocaleString(undefined, { maximumFractionDigits: 2 })} remaining`,
+    );
+    expect(creditBalanceLabel({ ...credits, balance: "0.001" })).toBe(
+      `<${(0.01).toLocaleString()} remaining`,
+    );
+    expect(creditBalanceLabel({ ...credits, balance: "0" })).toBe("0 remaining");
+    expect(creditBalanceLabel(credits)).toBe("Available · balance not reported");
+    expect(creditBalanceLabel({ ...credits, balance: "invalid" })).toBe(
+      "Available · balance not reported",
+    );
+    expect(creditBalanceLabel({ ...credits, hasCredits: false })).toBe("No credits remaining");
+    expect(creditBalanceLabel({ ...credits, unlimited: true, balance: "0" })).toBe("Unlimited");
+  });
+
+  it("shows one balance per account, keeps a known value when another source omits it, and honors a later clear", () => {
+    const oldLimits = {
+      checkedAt: "2026-09-03T10:00:00.000Z",
+      windows: [window],
+      credits: { hasCredits: true, unlimited: false, balance: "42" },
+    };
+    const newerLimits = { checkedAt: "2026-09-03T11:00:00.000Z", windows: [window] };
+    const makePresentations = (credits?: typeof oldLimits.credits | null) =>
+      new Map([
+        [
+          EnvironmentId.make("desktop"),
+          {
+            entry: { target: { label: "Desktop" } },
+            serverConfig: {
+              providers: [
+                provider({
+                  auth: { status: "authenticated", email: "test@example.com" },
+                  usageLimits: oldLimits,
+                }),
+              ],
+            },
+          },
+        ],
+        [
+          EnvironmentId.make("laptop"),
+          {
+            entry: { target: { label: "Laptop" } },
+            serverConfig: {
+              providers: [
+                provider({
+                  auth: { status: "authenticated", email: "test@example.com" },
+                  usageLimits: { ...newerLimits, ...(credits !== undefined ? { credits } : {}) },
+                }),
+              ],
+            },
+          },
+        ],
+      ]);
+    const accounts = collectLimitAccounts(makePresentations());
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.limits.credits?.balance).toBe("42");
+    expect(
+      collectLimitAccounts(makePresentations({ ...oldLimits.credits, balance: "20" }))[0]?.limits
+        .credits?.balance,
+    ).toBe("20");
+    expect(collectLimitAccounts(makePresentations(null))[0]?.limits.credits).toBeNull();
   });
 });
 
