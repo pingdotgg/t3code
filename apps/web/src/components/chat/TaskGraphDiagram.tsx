@@ -5,6 +5,8 @@ import { CornerDownRightIcon, FolderIcon, GitBranchIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
+import { usePrimarySettings } from "../../hooks/useSettings";
+import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { PreviewCard, PreviewCardPopup, PreviewCardTrigger } from "../ui/preview-card";
 import {
   pullRequestLabel,
@@ -12,6 +14,8 @@ import {
   TASK_GRAPH_NODE_STATUS_DOT_CLASS,
   TASK_GRAPH_NODE_STATUS_LABEL,
   taskGraphDiagramLayout,
+  taskGraphNodeStatusText,
+  taskGraphNodeWaitDetail,
   taskGraphWorkspaceLabel,
 } from "./taskGraphView";
 import type { TaskGraphLabels } from "./useTaskGraphLabels";
@@ -31,6 +35,8 @@ export function TaskGraphDiagram(props: {
   const layout = taskGraphDiagramLayout(taskGraphLayers(props.nodes));
   const titles = new Map(props.nodes.map((node) => [node.key, node.title]));
   const titleOf = (key: string) => titles.get(key) ?? key;
+  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
+  const formatTime = (iso: string) => formatUpcomingTimestamp(iso, timestampFormat);
 
   return (
     <div className="relative p-2" style={{ width: layout.width + 16, height: layout.height + 16 }}>
@@ -60,6 +66,7 @@ export function TaskGraphDiagram(props: {
           y={y + 8}
           onOpenPullRequest={props.onOpenPullRequest}
           titleOf={titleOf}
+          formatTime={formatTime}
           onEdit={() => props.onEditNode(node.key)}
         />
       ))}
@@ -75,17 +82,20 @@ function TaskGraphDiagramNode(props: {
   readonly y: number;
   readonly onOpenPullRequest: (url: string) => void;
   readonly titleOf: (key: string) => string;
+  /** Renders an upcoming instant, such as when a wait ends. */
+  readonly formatTime: (iso: string) => string;
   readonly onEdit: () => void;
 }) {
   const { node } = props;
   const pullRequestUrl = node.pullRequestResult?.url ?? null;
   const machine = props.labels.nodeMachineLabel(node);
+  const status = taskGraphNodeStatusText(node, props.formatTime);
   const title = <span className="min-w-0 truncate text-foreground/85">{node.title}</span>;
   const box = (
     <div
       role="button"
       tabIndex={0}
-      aria-label={`${node.title}: ${TASK_GRAPH_NODE_STATUS_LABEL[node.status]}. Double-click to edit.`}
+      aria-label={`${node.title}: ${status}. Double-click to edit.`}
       onDoubleClick={props.onEdit}
       onKeyDown={(event) => {
         if (event.key === "Enter" && event.target === event.currentTarget) props.onEdit();
@@ -114,8 +124,7 @@ function TaskGraphDiagramNode(props: {
       </div>
       <div className="flex min-w-0 items-center gap-1 text-2xs text-muted-foreground">
         <span className="min-w-0 truncate">
-          {TASK_GRAPH_NODE_STATUS_LABEL[node.status]} ·{" "}
-          {machine === "Auto" ? machine : `on ${machine}`}
+          {status} · {machine === "Auto" ? machine : `on ${machine}`}
         </span>
         {pullRequestUrl !== null ? (
           <button
@@ -143,6 +152,7 @@ function TaskGraphDiagramNode(props: {
           node={node}
           labels={props.labels}
           titleOf={props.titleOf}
+          formatTime={props.formatTime}
         />
       </PreviewCardPopup>
     </PreviewCard>
@@ -155,10 +165,12 @@ function TaskGraphNodeDetails(props: {
   readonly node: TaskGraphNode;
   readonly labels: TaskGraphLabels;
   readonly titleOf: (key: string) => string;
+  readonly formatTime: (iso: string) => string;
 }) {
   const { node } = props;
   const pullRequestError =
     node.pullRequestResult?.status === "failed" ? node.pullRequestResult.error : null;
+  const wait = taskGraphNodeWaitDetail(node, props.formatTime);
   return (
     <div className="grid gap-2 p-3 text-xs">
       <div className="flex min-w-0 items-center gap-1.5">
@@ -177,6 +189,7 @@ function TaskGraphNodeDetails(props: {
       <p className="max-h-48 overflow-y-auto whitespace-pre-wrap text-pretty text-foreground/85">
         {node.prompt}
       </p>
+      {wait !== null ? <TaskGraphNodeDetail label="Waiting">{wait}</TaskGraphNodeDetail> : null}
       {node.dependsOn.length > 0 ? (
         <TaskGraphNodeDetail label="After">
           {node.dependsOn.map(props.titleOf).join(", ")}

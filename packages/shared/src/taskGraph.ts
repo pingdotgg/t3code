@@ -32,6 +32,10 @@ export const isTerminalTaskGraphNodeStatus = (status: TaskGraphNodeStatus): bool
 export const isActiveTaskGraphNodeStatus = (status: TaskGraphNodeStatus): boolean =>
   status === "running" || status === "delivering";
 
+/** Not started yet: pending, or waiting for its start time or a reset before its first run. */
+export const isUnstartedTaskGraphNode = (node: Pick<TaskGraphNode, "status" | "threadId">) =>
+  node.status === "pending" || (node.status === "waiting" && node.threadId === null);
+
 export function newTaskGraphNode(input: TaskGraphNodeInput): TaskGraphNode {
   return {
     key: input.key,
@@ -42,6 +46,9 @@ export function newTaskGraphNode(input: TaskGraphNodeInput): TaskGraphNode {
     modelSelection: input.modelSelection ?? null,
     environmentId: input.environmentId ?? null,
     workspace: input.workspace ?? "worktree",
+    startAt: input.startAt ?? null,
+    waitUntil: null,
+    waitReason: null,
     status: "pending",
     assignedEnvironmentId: null,
     threadId: null,
@@ -174,6 +181,8 @@ export function taskGraphPullRequestBase(
 const reopened = (node: TaskGraphNode): TaskGraphNode => ({
   ...node,
   status: "pending",
+  waitUntil: null,
+  waitReason: null,
   assignedEnvironmentId: null,
   threadId: null,
   branch: null,
@@ -194,7 +203,7 @@ function applyEdit(nodes: Nodes, edit: TaskGraphEdit, now: string): TaskGraphEdi
     case "add_node":
       return { ok: true, nodes: [...nodes, newTaskGraphNode(edit.node)] };
     case "update_node": {
-      if (target!.status !== "pending") {
+      if (!isUnstartedTaskGraphNode(target!)) {
         return { ok: false, error: `Node '${edit.key}' has started and can no longer be edited.` };
       }
       const { type: _type, key: _key, ...fields } = edit;
@@ -202,11 +211,15 @@ function applyEdit(nodes: Nodes, edit: TaskGraphEdit, now: string): TaskGraphEdi
         ...target!,
         ...Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)),
         ...(fields.dependsOn === undefined ? {} : { dependsOn: [...new Set(fields.dependsOn)] }),
+        // An edited node is weighed again from scratch, start time included.
+        status: "pending",
+        waitUntil: null,
+        waitReason: null,
       };
       return { ok: true, nodes: nodes.map((node) => (node.key === edit.key ? updated : node)) };
     }
     case "remove_node":
-      if (target!.status !== "pending") {
+      if (!isUnstartedTaskGraphNode(target!)) {
         return {
           ok: false,
           error: `Node '${edit.key}' has started. Use cancel_branch to stop it instead.`,
@@ -299,7 +312,7 @@ export function skipUnreachableTaskGraphNodes(nodes: Nodes, now: string): Nodes 
     const status = new Map(current.map((node) => [node.key, node.status]));
     let changed = false;
     current = current.map((node) => {
-      if (node.status !== "pending") return node;
+      if (!isUnstartedTaskGraphNode(node)) return node;
       const blocked = node.dependsOn.find((key) => {
         const dependency = status.get(key);
         return dependency === "failed" || dependency === "cancelled" || dependency === "skipped";
@@ -317,13 +330,23 @@ export function skipUnreachableTaskGraphNodes(nodes: Nodes, now: string): Nodes 
   }
 }
 
-/** Pending nodes whose dependencies have all succeeded, in graph order. */
-export function readyTaskGraphNodes(nodes: Nodes): ReadonlyArray<TaskGraphNode> {
+/**
+ * Nodes that could start now: not started, every dependency succeeded, and
+ * any wait over. A pending node with a future `startAt` is still returned; the
+ * caller moves it to `waiting` until then.
+ */
+export function readyTaskGraphNodes(nodes: Nodes, now: string): ReadonlyArray<TaskGraphNode> {
   const succeeded = new Set(
     nodes.filter((node) => node.status === "succeeded").map((node) => node.key),
   );
+  const nowMs = Date.parse(now);
   return nodes.filter(
-    (node) => node.status === "pending" && node.dependsOn.every((key) => succeeded.has(key)),
+    (node) =>
+      isUnstartedTaskGraphNode(node) &&
+      (node.status === "pending" ||
+        node.waitUntil === null ||
+        Date.parse(node.waitUntil) <= nowMs) &&
+      node.dependsOn.every((key) => succeeded.has(key)),
   );
 }
 

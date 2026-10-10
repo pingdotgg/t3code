@@ -34,6 +34,8 @@ export function taskGraphTone(status: TaskGraphStatus): SubagentRowTone {
 export function taskGraphNodeStatusLabel(status: TaskGraphNodeStatus): string {
   switch (status) {
     case "pending":
+      return "Pending";
+    case "waiting":
       return "Waiting";
     case "running":
       return "Running";
@@ -48,6 +50,41 @@ export function taskGraphNodeStatusLabel(status: TaskGraphNodeStatus): string {
     case "skipped":
       return "Skipped";
   }
+}
+
+const localDayStart = (date: Date) =>
+  new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+
+/** An upcoming instant: "3:40 PM" today, "tomorrow at 3:40 PM", else "Oct 13, 3:40 PM". */
+function formatTaskGraphWaitTime(iso: string, now: number): string {
+  const at = new Date(iso);
+  if (!Number.isFinite(at.getTime())) return "";
+  const time = at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  // Round so DST-shifted 23/25 hour days still count as whole days.
+  const days = Math.round((localDayStart(at) - localDayStart(new Date(now))) / 86_400_000);
+  if (days <= 0) return time;
+  if (days === 1) return `tomorrow at ${time}`;
+  const date = at.toLocaleDateString([], {
+    month: "short",
+    day: "numeric",
+    ...(at.getFullYear() !== new Date(now).getFullYear() ? { year: "numeric" as const } : {}),
+  });
+  return `${date}, ${time}`;
+}
+
+/** Why a waiting node waits and what happens next, as on web. Null when it is not waiting. */
+export function taskGraphNodeWaitDetail(
+  node: Pick<TaskGraphNode, "status" | "waitUntil" | "waitReason" | "threadId">,
+  now: number,
+): string | null {
+  if (node.status !== "waiting") return null;
+  const at = node.waitUntil === null ? null : formatTaskGraphWaitTime(node.waitUntil, now);
+  if (node.waitReason === "usage_limit") {
+    const next =
+      node.threadId === null ? "starts after the reset" : "continues on its thread after the reset";
+    return `Usage limit reached — ${next}${at === null ? "" : `, ${at}`}`;
+  }
+  return at === null ? "Waiting to start" : `Starts ${at}`;
 }
 
 export function taskGraphStatusLabel(status: TaskGraphStatus): string {
@@ -74,7 +111,8 @@ export function taskGraphSummaryLabel(graph: Pick<TaskGraph, "status" | "nodes">
   }
   if (graph.status === "running") {
     const done = graph.nodes.filter((node) => node.status === "succeeded").length;
-    return `Running · ${done} of ${total} done`;
+    const waiting = graph.nodes.filter((node) => node.status === "waiting").length;
+    return `Running · ${done} of ${total} done${waiting > 0 ? ` · ${waiting} waiting` : ""}`;
   }
   const failed = graph.nodes.filter((node) => node.status === "failed").length;
   return failed > 0
@@ -86,7 +124,7 @@ export function taskGraphSummaryLabel(graph: Pick<TaskGraph, "status" | "nodes">
 export function sortTaskGraphs(graphs: ReadonlyArray<TaskGraph>): ReadonlyArray<TaskGraph> {
   const rank = (graph: TaskGraph) =>
     graph.status === "running" ? 0 : graph.status === "draft" ? 1 : 2;
-  return graphs.toSorted(
+  return [...graphs].sort(
     (left, right) => rank(left) - rank(right) || right.updatedAt.localeCompare(left.updatedAt),
   );
 }
@@ -152,7 +190,9 @@ export function taskGraphNodeActions(
   if (graph.status === "cancelled") return { cancelBranch: false, retry: false };
   const cancelBranch =
     isOpenTaskGraph(graph) &&
-    (node.status === "pending" || isActiveTaskGraphNodeStatus(node.status));
+    (node.status === "pending" ||
+      node.status === "waiting" ||
+      isActiveTaskGraphNodeStatus(node.status));
   if (node.status === "failed" || node.status === "cancelled") return { cancelBranch, retry: true };
   if (node.status !== "skipped") return { cancelBranch, retry: false };
   const statusByKey = new Map(graph.nodes.map((other) => [other.key, other.status]));

@@ -1,5 +1,5 @@
 import type { TaskGraphNode } from "@t3tools/contracts";
-import { EnvironmentId, ProviderInstanceId, TaskGraphNodeKey } from "@t3tools/contracts";
+import { EnvironmentId, ProviderInstanceId, TaskGraphNodeKey, ThreadId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { taskGraphLayers } from "@t3tools/shared/taskGraph";
 import { describe, expect, it } from "vite-plus/test";
@@ -10,6 +10,8 @@ import {
   taskGraphDiagramLayout,
   taskGraphNodeKeyFromTitle,
   taskGraphNodeMachine,
+  taskGraphNodeStatusText,
+  taskGraphNodeWaitDetail,
   taskGraphProgressLabel,
   taskGraphPullRequestLinks,
   taskGraphResourcesLabel,
@@ -26,7 +28,10 @@ const node = (key: string, overrides: Partial<TaskGraphNode> = {}): TaskGraphNod
   modelSelection: null,
   environmentId: null,
   workspace: "worktree",
+  startAt: null,
   status: "pending",
+  waitUntil: null,
+  waitReason: null,
   assignedEnvironmentId: null,
   threadId: null,
   branch: null,
@@ -90,11 +95,33 @@ describe("task graph summaries", () => {
       node("b", { status: "running" }),
       node("c", { status: "failed" }),
       node("d"),
+      node("e", { status: "waiting", waitUntil: "2026-10-10T15:40:00.000Z" }),
     ];
     expect(taskGraphProgressLabel({ status: "running", nodes })).toBe(
-      "1 of 4 done · 1 running · 1 failed",
+      "1 of 5 done · 1 running · 1 waiting · 1 failed",
     );
     expect(taskGraphProgressLabel({ status: "draft", nodes: [node("a")] })).toBe("1 task");
+  });
+
+  it("names when a waiting node's wait ends and why", () => {
+    const formatTime = (iso: string) => `<${iso.slice(11, 16)}>`;
+    const waitUntil = "2026-10-10T15:40:00.000Z";
+    const scheduled = node("a", { status: "waiting", waitReason: "scheduled", waitUntil });
+    const limited = node("b", { status: "waiting", waitReason: "usage_limit", waitUntil });
+    const stopped = { ...limited, threadId: ThreadId.make("thread-b") };
+
+    expect(taskGraphNodeStatusText(scheduled, formatTime)).toBe("Waiting · until <15:40>");
+    expect(taskGraphNodeStatusText(limited, formatTime)).toBe("Usage limit · resets <15:40>");
+    expect(taskGraphNodeStatusText(node("c"), formatTime)).toBe("Pending");
+
+    expect(taskGraphNodeWaitDetail(scheduled, formatTime)).toBe("Starts <15:40>");
+    expect(taskGraphNodeWaitDetail(limited, formatTime)).toBe(
+      "Usage limit reached — starts after the reset, <15:40>",
+    );
+    expect(taskGraphNodeWaitDetail(stopped, formatTime)).toBe(
+      "Usage limit reached — continues on its thread after the reset, <15:40>",
+    );
+    expect(taskGraphNodeWaitDetail(node("c"), formatTime)).toBeNull();
   });
 
   it("lists only nodes with an opened pull request URL", () => {

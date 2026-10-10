@@ -7,6 +7,7 @@ import {
   TaskGraphId,
   ThreadId,
   type HostResourcesSnapshot,
+  type ServerProvider,
   type TaskGraphCreateInput,
   type TaskGraphEdit,
   type TaskGraphListResult,
@@ -28,6 +29,10 @@ import {
   validateTaskGraphNodes,
 } from "@t3tools/shared/taskGraph";
 import { chooseLoadBalancedEnvironment } from "@t3tools/shared/loadBalancing";
+import {
+  latestRootProviderFailure,
+  usageLimitBlockedRun,
+} from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -49,6 +54,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as HostResources from "../resourceTelemetry/HostResources.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -114,6 +120,24 @@ export function hostHasCapacity(snapshot: HostResourcesSnapshot): boolean {
     snapshot.totalMemoryBytes <= 0 ||
     snapshot.availableMemoryBytes / snapshot.totalMemoryBytes > MIN_AVAILABLE_MEMORY_FRACTION
   );
+}
+
+/**
+ * When a provider instance's usage limit resets, if one of its windows is used
+ * up right now; null when it has room or reports no limits.
+ */
+export function usageLimitResetFor(
+  provider: Pick<ServerProvider, "usageLimits"> | undefined,
+  nowMs: number,
+): string | null {
+  let latest: string | null = null;
+  for (const window of provider?.usageLimits?.windows ?? []) {
+    if (window.usedPercent < 100 || window.resetsAt === undefined) continue;
+    if (Date.parse(window.resetsAt) <= nowMs) continue;
+    if (latest === null || Date.parse(window.resetsAt) > Date.parse(latest))
+      latest = window.resetsAt;
+  }
+  return latest;
 }
 
 /** This machine's weight against its peers' (peers default to the same). */
@@ -202,6 +226,7 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const git = yield* GitWorkflow.GitWorkflowService;
   const hostResources = yield* HostResources.HostResources;
+  const providers = yield* ProviderRegistry.ProviderRegistry;
   const settings = yield* ServerSettings.ServerSettingsService;
   const scheduler = yield* Scheduler.Scheduler;
   const environment = yield* ServerEnvironment.ServerEnvironment;
@@ -215,6 +240,8 @@ const make = Effect.gen(function* () {
   const changes = yield* PubSub.unbounded<ThreadId>();
   /** Node threads still running locally, so run events map back to their node. */
   const nodeByThread = new Map<ThreadId, { graphId: TaskGraphId; key: string }>();
+  /** Threads of nodes stopped by a usage limit, which continue there at the reset. */
+  const waitingThreads = new Set<ThreadId>();
   /** Threads of local nodes that failed or were cancelled, in case someone continues them. */
   const endedByThread = new Map<ThreadId, { graphId: TaskGraphId; key: string }>();
 
@@ -259,11 +286,13 @@ const make = Effect.gen(function* () {
     for (const node of graph.nodes) {
       if (node.threadId === null) continue;
       const target = { graphId: graph.id, key: node.key };
-      if (isActiveTaskGraphNodeStatus(node.status)) {
+      if (isActiveTaskGraphNodeStatus(node.status) || node.status === "waiting") {
         nodeByThread.set(node.threadId, target);
       } else {
         nodeByThread.delete(node.threadId);
       }
+      if (node.status === "waiting") waitingThreads.add(node.threadId);
+      else waitingThreads.delete(node.threadId);
       if (
         (node.status === "failed" || node.status === "cancelled") &&
         graph.status !== "cancelled" &&
@@ -365,6 +394,23 @@ const make = Effect.gen(function* () {
         ),
       );
 
+  /** A node held by a usage limit is running again on its thread. */
+  const wakeNode = (graphId: TaskGraphId, key: string) =>
+    updateNode(graphId, key, (node) =>
+      node.status === "waiting" && node.threadId !== null
+        ? { ...node, status: "running", waitUntil: null, waitReason: null }
+        : node,
+    ).pipe(
+      Effect.asVoid,
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Could not wake task graph node", {
+          graphId,
+          key,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
+
   // --- Finishing nodes -------------------------------------------------------
 
   /** Commits the node's work so dependents can branch from it, and opens its PR. */
@@ -403,6 +449,35 @@ const make = Effect.gen(function* () {
       if (ThreadManagement.latestActiveRun(projection) !== undefined) return;
       const run = ThreadManagement.latestRun(projection);
       nodeByThread.delete(threadId);
+      const limited = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
+      const resetAt =
+        limited === null
+          ? null
+          : (latestRootProviderFailure(limited, projection.turnItems)?.resetAt ?? null);
+      if (limited !== null && resetAt !== null && limited.id === run?.id) {
+        // Hold the node and let usage-limit recovery continue its thread at the reset.
+        yield* updateNode(graphId, key, (node) =>
+          node.status === "running"
+            ? { ...node, status: "waiting", waitUntil: resetAt, waitReason: "usage_limit" }
+            : node,
+        );
+        yield* threads
+          .dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make(`task-graph-limit-arm:${threadId}:${limited.id}`),
+            threadId,
+            limitRecovery: { runId: limited.id, resetAt, autoResume: true },
+          })
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Could not arm usage limit recovery for a task graph node", {
+                threadId,
+                cause: Cause.pretty(cause),
+              }),
+            ),
+          );
+        return;
+      }
       if (run === undefined || run.status !== "completed") {
         const status =
           run?.status === "cancelled" || run?.status === "interrupted" ? "cancelled" : "failed";
@@ -662,12 +737,25 @@ const make = Effect.gen(function* () {
         const host = yield* hostResources.read;
         const hostFree = hostHasCapacity(host);
         const started: Array<{ graph: TaskGraph; node: TaskGraphNode }> = [];
+        const now = yield* nowIso;
+        const nowMs = Date.parse(now);
+        const localProviders = yield* providers.getProviders;
         for (const graph of graphs) {
-          const ready = readyTaskGraphNodes(
-            skipUnreachableTaskGraphNodes(graph.nodes, yield* nowIso),
-          );
+          const settled = skipUnreachableTaskGraphNodes(graph.nodes, now);
+          const ready = readyTaskGraphNodes(settled, now);
           const assigned = new Map<string, TaskGraphNode>();
           for (const node of ready) {
+            if (node.startAt !== null && Date.parse(node.startAt) > nowMs) {
+              if (node.status !== "waiting") {
+                assigned.set(node.key, {
+                  ...node,
+                  status: "waiting",
+                  waitUntil: node.startAt,
+                  waitReason: "scheduled",
+                });
+              }
+              continue;
+            }
             const environmentId = yield* placeNode(
               graph,
               node,
@@ -675,20 +763,41 @@ const make = Effect.gen(function* () {
               taskGraphMaxConcurrentNodes,
             );
             if (environmentId === null) continue;
-            if (environmentId === localEnvironmentId) active += 1;
+            if (environmentId === localEnvironmentId) {
+              // Starting into a used-up limit would only fail; wait for the reset instead.
+              const instanceId = (node.modelSelection ?? graph.modelSelection)?.instanceId;
+              const resetAt = usageLimitResetFor(
+                localProviders.find((provider) => provider.instanceId === instanceId),
+                nowMs,
+              );
+              if (resetAt !== null) {
+                if (node.waitUntil !== resetAt) {
+                  assigned.set(node.key, {
+                    ...node,
+                    status: "waiting",
+                    waitUntil: resetAt,
+                    waitReason: "usage_limit",
+                  });
+                }
+                continue;
+              }
+              active += 1;
+            }
             assigned.set(node.key, {
               ...node,
               status: "running",
+              waitUntil: null,
+              waitReason: null,
               assignedEnvironmentId: environmentId,
               threadId: ThreadId.make(`task-graph-node:${yield* crypto.randomUUIDv4}`),
               startedAt: yield* nowIso,
             });
           }
-          // Write even with nothing to start: skips may have settled the graph.
-          const stored = yield* writeGraph({
-            ...graph,
-            nodes: graph.nodes.map((node) => assigned.get(node.key) ?? node),
-          });
+          // Skips can settle a graph with nothing to start, but an unchanged graph
+          // is not rewritten: every write is pushed to each client watching it.
+          const nodes = settled.map((node) => assigned.get(node.key) ?? node);
+          if (nodes.every((node, index) => node === graph.nodes[index])) continue;
+          const stored = yield* writeGraph({ ...graph, nodes });
           if (stored.status !== "running") yield* reportFinished(stored).pipe(Effect.forkDetach);
           for (const node of assigned.values()) started.push({ graph: stored, node });
         }
@@ -720,14 +829,26 @@ const make = Effect.gen(function* () {
             threadId: node.threadId,
           });
         }
-        return threads
-          .interruptThread({
-            projectId: graph.projectId,
-            commandId: CommandId.make(`task-graph-stop:${node.threadId}`),
-            threadId: node.threadId,
-            reason: "The task graph branch was cancelled.",
-          })
-          .pipe(Effect.asVoid);
+        const disarm =
+          node.status === "waiting"
+            ? threads.dispatch({
+                type: "thread.metadata.update",
+                commandId: CommandId.make(`task-graph-limit-disarm:${node.threadId}`),
+                threadId: node.threadId,
+                limitRecovery: null,
+              })
+            : Effect.void;
+        return Effect.andThen(
+          disarm,
+          threads
+            .interruptThread({
+              projectId: graph.projectId,
+              commandId: CommandId.make(`task-graph-stop:${node.threadId}`),
+              threadId: node.threadId,
+              reason: "The task graph branch was cancelled.",
+            })
+            .pipe(Effect.asVoid),
+        );
       },
       { discard: true },
     ).pipe(
@@ -788,7 +909,11 @@ const make = Effect.gen(function* () {
           if (!result.ok) return yield* graphError(result.error, graphId);
           const stopped = current.nodes.filter((node) => {
             const next = result.nodes.find((candidate) => candidate.key === node.key);
-            return isActiveTaskGraphNodeStatus(node.status) && next?.status === "cancelled";
+            return (
+              (isActiveTaskGraphNodeStatus(node.status) ||
+                (node.status === "waiting" && node.threadId !== null)) &&
+              next?.status === "cancelled"
+            );
           });
           // Retrying a node in a finished graph puts the graph back to work.
           const reopened = result.nodes.some((node) => node.status === "pending");
@@ -837,7 +962,11 @@ const make = Effect.gen(function* () {
           const graph = yield* writeGraph({ ...current, status: "cancelled", nodes });
           return {
             graph,
-            stopped: current.nodes.filter((node) => isActiveTaskGraphNodeStatus(node.status)),
+            stopped: current.nodes.filter(
+              (node) =>
+                isActiveTaskGraphNodeStatus(node.status) ||
+                (node.status === "waiting" && node.threadId !== null),
+            ),
           };
         }),
       );
@@ -898,6 +1027,22 @@ const make = Effect.gen(function* () {
       { discard: true },
     );
     const graphs = yield* runningGraphs;
+    // A node held by a usage limit whose thread was continued while the server was down.
+    yield* Effect.forEach(
+      graphs.flatMap((graph) =>
+        graph.nodes
+          .filter((node) => node.status === "waiting" && node.threadId !== null)
+          .map((node) => ({ graph, node })),
+      ),
+      ({ graph, node }) =>
+        Effect.gen(function* () {
+          const projection = yield* threads.getThreadProjection(node.threadId!);
+          if (ThreadManagement.latestRun(projection)?.status === "failed") return;
+          yield* wakeNode(graph.id, node.key);
+          yield* finishLocalNode(graph.id, node.key, node.threadId!);
+        }).pipe(Effect.ignoreCause),
+      { discard: true },
+    );
     yield* Effect.forEach(
       graphs.flatMap((graph) =>
         graph.nodes
@@ -961,6 +1106,10 @@ const make = Effect.gen(function* () {
     Stream.runForEach(threads.streamDomainEvents, (event) => {
       if (event.type !== "run.updated") return Effect.void;
       if (!ThreadManagement.isTerminalRunStatus(event.payload.status)) {
+        const waiting = waitingThreads.has(event.threadId)
+          ? nodeByThread.get(event.threadId)
+          : undefined;
+        if (waiting !== undefined) return wakeNode(waiting.graphId, waiting.key);
         // Only a new run passes through an active status, so a repeated update of
         // the run that failed never resumes the node.
         const ended = endedByThread.get(event.threadId);

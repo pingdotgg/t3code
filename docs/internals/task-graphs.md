@@ -38,6 +38,18 @@ from `taskGraphPullRequestBase`: the nearest ancestor along first dependencies
 that opens its own PR, skipping nodes that share the branch, else the graph
 base. The same value goes to peers, so stacks work across machines.
 
+## Usage limits
+
+A run that hits a usage limit ends `failed`, with the reset on its failure turn
+item. For a node, `finishLocalNode` reads that, moves the node to `waiting`, and
+arms the thread's `limitRecovery` with `autoResume`, so the existing
+`UsageLimitRecoveryWorker` continues the thread at the reset regardless of the
+user's global auto-resume setting. The node wakes on that new run's first
+active `run.updated`. Cancelling a waiting node clears the recovery, or the
+worker would resume it and the node would come back. Before a launch, a local
+node whose provider instance reports a used-up window waits for `resetsAt`.
+Nodes on peers do neither yet: a limit there fails the node.
+
 ## Peers
 
 A peer is another environment this server holds a session on.

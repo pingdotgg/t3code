@@ -25,6 +25,17 @@ do it" runs straight away.
 this machine at the same time. Nodes also wait while the machine is nearly out
 of CPU or memory.
 
+## Waiting for a time or a usage reset
+
+Give a task a **Start at** time in the editor, or ask the agent to start it
+later, and it waits until then.
+
+Tasks never start into a used-up usage limit: a task whose model is out of
+usage on this machine waits for the reset instead. If a task's run stops
+because it hits a usage limit, the task waits rather than failing, and
+continues on its own thread when the limit resets. The graph shows when each
+waiting task will go again. Cancel the branch to stop waiting.
+
 ## Changing a graph
 
 Hover a task to see its prompt, model, machine and workspace. Double-click it

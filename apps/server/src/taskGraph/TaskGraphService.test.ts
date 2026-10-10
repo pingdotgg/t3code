@@ -4,14 +4,17 @@ import {
   EnvironmentId,
   type GitRunStackedActionInput,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadProjection,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
@@ -20,6 +23,7 @@ import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as HostResources from "../resourceTelemetry/HostResources.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -32,6 +36,14 @@ interface Harness {
   readonly launches: Queue.Queue<ThreadLaunch.ThreadLaunchInput>;
   readonly gitActions: Array<GitRunStackedActionInput>;
   readonly interrupted: Array<ThreadId>;
+  /** Commands the service dispatched to threads, such as arming usage limit recovery. */
+  readonly dispatched: Array<OrchestrationV2ServerCommand>;
+  /** Replaces a node thread's projection, then emits a run event with `status`. */
+  readonly setThread: (
+    threadId: ThreadId,
+    projection: OrchestrationV2ThreadProjection,
+    status: string,
+  ) => Effect.Effect<void>;
   readonly report: Deferred.Deferred<string>;
   /**
    * Sets a node thread's latest run, completed by default, with a reply on a
@@ -61,6 +73,7 @@ const projection = (input: {
     },
     runs: input.runStatus === undefined ? [] : [{ status: input.runStatus, ordinal: 1 }],
     messages: input.reply === undefined ? [] : [{ role: "assistant", text: input.reply }],
+    turnItems: [],
   }) as unknown as OrchestrationV2ThreadProjection;
 
 /** Builds the service against in-memory SQLite and recording fakes for everything it drives. */
@@ -80,11 +93,22 @@ const withService = <A, E>(
     ]);
     const gitActions: Array<GitRunStackedActionInput> = [];
     const interrupted: Array<ThreadId> = [];
+    const dispatched: Array<OrchestrationV2ServerCommand> = [];
 
     const harness: Harness = {
       launches,
       gitActions,
       interrupted,
+      dispatched,
+      setThread: (threadId, next, status) =>
+        Effect.gen(function* () {
+          projections.set(threadId, next);
+          yield* Queue.offer(events, {
+            type: "run.updated",
+            threadId,
+            payload: { status },
+          } as unknown as OrchestrationV2DomainEvent);
+        }),
       report,
       finish: (launch, result) =>
         Effect.gen(function* () {
@@ -131,6 +155,11 @@ const withService = <A, E>(
             streamDomainEvents: Stream.fromQueue(events),
             sendToThread: (input) =>
               Deferred.succeed(report, input.text).pipe(Effect.as({} as never)),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatched.push(command);
+                return {} as never;
+              }),
             interruptThread: (input) =>
               Effect.sync(() => {
                 interrupted.push(input.threadId);
@@ -149,6 +178,7 @@ const withService = <A, E>(
                 } as never;
               }),
           }),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
           Layer.mock(HostResources.HostResources)({
             read: Effect.succeed({
               sampledAt: 0,
@@ -431,6 +461,90 @@ it.effect("stacks PRs, continues a worktree in place, and never commits project-
           ["/worktrees/t3/b", "commit_push_pr", "t3/a"],
         ],
       );
+    }),
+  ),
+);
+
+/** A thread whose only run stopped on a usage limit that resets at `resetAt`. */
+const limitedThread = (threadId: ThreadId, resetAt: string) =>
+  ({
+    ...projection({ id: threadId, branch: "t3/a", worktreePath: "/worktrees/t3/a" }),
+    runs: [
+      {
+        id: "run-1",
+        status: "failed",
+        ordinal: 1,
+        rootNodeId: "node-1",
+        startedAt: DateTime.makeUnsafe(0),
+        completedAt: DateTime.makeUnsafe(1_000),
+      },
+    ],
+    turnItems: [
+      {
+        id: "item-1",
+        type: "error",
+        status: "failed",
+        runId: "run-1",
+        nodeId: "node-1",
+        ordinal: 1,
+        updatedAt: DateTime.makeUnsafe(1_000),
+        failure: { class: "usage_limit", message: "Limit reached", resetAt },
+      },
+    ],
+  }) as unknown as OrchestrationV2ThreadProjection;
+
+it.effect("holds a node stopped by a usage limit and continues it on its thread at the reset", () =>
+  withService((service, harness) =>
+    Effect.gen(function* () {
+      const graph = yield* service.create({
+        threadId: PARENT,
+        title: "Limits",
+        nodes: [node("a"), node("b", ["a"])],
+        run: true,
+      });
+      const a = yield* Queue.take(harness.launches);
+      const resetAt = "2026-10-10T05:00:00.000Z";
+      yield* harness.setThread(a.threadId!, limitedThread(a.threadId!, resetAt), "failed");
+
+      // The arm command is the last thing the service does for the limited run.
+      while (harness.dispatched.length === 0) yield* Effect.yieldNow;
+      assert.deepEqual(harness.dispatched[0], {
+        type: "thread.metadata.update",
+        commandId: `task-graph-limit-arm:${a.threadId}:run-1`,
+        threadId: a.threadId,
+        limitRecovery: { runId: "run-1", resetAt, autoResume: true },
+      } as never);
+      const waiting = (yield* service.get(graph.id)).nodes[0]!;
+      assert.deepEqual(
+        [waiting.status, waiting.waitUntil, waiting.waitReason],
+        ["waiting", resetAt, "usage_limit"],
+      );
+
+      // At the reset, recovery starts a new run on the same thread, which then succeeds.
+      yield* harness.setThread(a.threadId!, limitedThread(a.threadId!, resetAt), "running");
+      yield* harness.finish(a, { reply: "done after reset", branch: "t3/a" });
+      const b = yield* Queue.take(harness.launches);
+      assert.include(b.initialMessage!.text, "done after reset");
+    }),
+  ),
+);
+
+it.effect("waits for a node's start time", () =>
+  withService((service, harness) =>
+    Effect.gen(function* () {
+      const graph = yield* service.create({
+        threadId: PARENT,
+        title: "Overnight",
+        nodes: [{ ...node("a"), startAt: "1970-01-01T00:01:00.000Z" }],
+        run: true,
+      });
+      assert.deepEqual(
+        [(yield* service.get(graph.id)).nodes[0]!.status, yield* Queue.size(harness.launches)],
+        ["waiting", 0],
+      );
+      yield* TestClock.adjust("2 minutes");
+      const a = yield* Queue.take(harness.launches);
+      assert.equal(a.title, "a");
     }),
   ),
 );

@@ -46,11 +46,11 @@ describe("validateTaskGraphNodes", () => {
 describe("scheduling", () => {
   it("releases a node only once every dependency succeeded", () => {
     const nodes = diamond();
-    expect(readyTaskGraphNodes(nodes).map((node) => node.key)).toEqual(["a"]);
+    expect(readyTaskGraphNodes(nodes, NOW).map((node) => node.key)).toEqual(["a"]);
     const afterB = withStatus(nodes, { a: "succeeded", b: "succeeded", c: "running" });
-    expect(readyTaskGraphNodes(afterB)).toEqual([]);
+    expect(readyTaskGraphNodes(afterB, NOW)).toEqual([]);
     const afterC = withStatus(afterB, { c: "succeeded" });
-    expect(readyTaskGraphNodes(afterC).map((node) => node.key)).toEqual(["d"]);
+    expect(readyTaskGraphNodes(afterC, NOW).map((node) => node.key)).toEqual(["d"]);
   });
 
   it("skips everything below a failed node", () => {
@@ -228,5 +228,38 @@ describe("workspaces and pull request bases", () => {
         ),
       ),
     ).toMatch(/Only one node/);
+  });
+});
+
+describe("waiting nodes", () => {
+  it("holds a node that has not started until its wait ends", () => {
+    const later = "2026-10-10T06:00:00.000Z";
+    const nodes = graph(input("a")).map((node) => ({
+      ...node,
+      status: "waiting" as const,
+      waitUntil: later,
+      waitReason: "scheduled" as const,
+    }));
+    expect(readyTaskGraphNodes(nodes, NOW)).toEqual([]);
+    expect(readyTaskGraphNodes(nodes, later).map((node) => node.key)).toEqual(["a"]);
+  });
+
+  it("lets a waiting node be edited, and starts the wait over", () => {
+    const nodes = graph(input("a")).map((node) => ({
+      ...node,
+      status: "waiting" as const,
+      waitUntil: NOW,
+      waitReason: "usage_limit" as const,
+    }));
+    const result = applyTaskGraphEdits(
+      nodes,
+      [{ type: "update_node", key: "a", startAt: "2026-10-11T00:00:00.000Z" }],
+      NOW,
+    );
+    expect(result.ok && result.nodes[0]).toMatchObject({
+      status: "pending",
+      waitUntil: null,
+      startAt: "2026-10-11T00:00:00.000Z",
+    });
   });
 });

@@ -22,6 +22,7 @@ export const TASK_GRAPH_STATUS_LABEL: Record<TaskGraphStatus, string> = {
 
 export const TASK_GRAPH_NODE_STATUS_LABEL: Record<TaskGraphNodeStatus, string> = {
   pending: "Pending",
+  waiting: "Waiting",
   running: "Running",
   delivering: "Opening PR",
   succeeded: "Succeeded",
@@ -33,6 +34,7 @@ export const TASK_GRAPH_NODE_STATUS_LABEL: Record<TaskGraphNodeStatus, string> =
 /** Static status dots: a running node is a solid color, never an animation. */
 export const TASK_GRAPH_NODE_STATUS_DOT_CLASS: Record<TaskGraphNodeStatus, string> = {
   pending: "bg-muted-foreground/40",
+  waiting: "bg-warning",
   running: "bg-sky-500",
   delivering: "bg-sky-500",
   succeeded: "bg-emerald-500",
@@ -49,28 +51,62 @@ export interface TaskGraphProgress {
   readonly succeeded: number;
   readonly failed: number;
   readonly active: number;
+  readonly waiting: number;
 }
 
 export function taskGraphProgress(nodes: ReadonlyArray<TaskGraphNode>): TaskGraphProgress {
   let succeeded = 0;
   let failed = 0;
   let active = 0;
+  let waiting = 0;
   for (const node of nodes) {
     if (node.status === "succeeded") succeeded += 1;
     else if (node.status === "failed") failed += 1;
     else if (node.status === "running" || node.status === "delivering") active += 1;
+    else if (node.status === "waiting") waiting += 1;
   }
-  return { total: nodes.length, succeeded, failed, active };
+  return { total: nodes.length, succeeded, failed, active, waiting };
 }
 
-/** One line for the card header, such as "2 of 5 done · 1 failed". */
+/** One line for the card header, such as "2 of 5 done · 1 waiting · 1 failed". */
 export function taskGraphProgressLabel(graph: Pick<TaskGraph, "status" | "nodes">): string {
-  const { total, succeeded, failed, active } = taskGraphProgress(graph.nodes);
+  const { total, succeeded, failed, active, waiting } = taskGraphProgress(graph.nodes);
   if (graph.status === "draft") return `${total} task${total === 1 ? "" : "s"}`;
   const parts = [`${succeeded} of ${total} done`];
   if (active > 0) parts.push(`${active} running`);
+  if (waiting > 0) parts.push(`${waiting} waiting`);
   if (failed > 0) parts.push(`${failed} failed`);
   return parts.join(" · ");
+}
+
+/**
+ * A node's status in a few words, naming when a wait ends, such as
+ * "Usage limit · resets 3:40 PM". `formatTime` renders an upcoming instant.
+ */
+export function taskGraphNodeStatusText(
+  node: Pick<TaskGraphNode, "status" | "waitUntil" | "waitReason">,
+  formatTime: (iso: string) => string,
+): string {
+  if (node.status !== "waiting" || node.waitUntil === null) {
+    return TASK_GRAPH_NODE_STATUS_LABEL[node.status];
+  }
+  const at = formatTime(node.waitUntil);
+  return node.waitReason === "usage_limit" ? `Usage limit · resets ${at}` : `Waiting · until ${at}`;
+}
+
+/** Why a waiting node waits and what happens next, for its details. Null when it is not waiting. */
+export function taskGraphNodeWaitDetail(
+  node: Pick<TaskGraphNode, "status" | "waitUntil" | "waitReason" | "threadId">,
+  formatTime: (iso: string) => string,
+): string | null {
+  if (node.status !== "waiting") return null;
+  const at = node.waitUntil === null ? null : formatTime(node.waitUntil);
+  if (node.waitReason === "usage_limit") {
+    const next =
+      node.threadId === null ? "starts after the reset" : "continues on its thread after the reset";
+    return `Usage limit reached — ${next}${at === null ? "" : `, ${at}`}`;
+  }
+  return at === null ? "Waiting to start" : `Starts ${at}`;
 }
 
 /** The model a node runs with: its own, else the graph's. Null when neither is known. */

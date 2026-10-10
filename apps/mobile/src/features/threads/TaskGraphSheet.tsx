@@ -39,6 +39,7 @@ import {
   taskGraphNodeActions,
   taskGraphNodeStatusLabel,
   taskGraphNodeTone,
+  taskGraphNodeWaitDetail,
   taskGraphSummaryLabel,
   taskGraphTone,
 } from "./task-graph-presentation";
@@ -362,6 +363,9 @@ function NodeRow(props: {
   const pullRequestError =
     node.pullRequestResult?.status === "failed" ? node.pullRequestResult.error : null;
   const detail = node.status === "succeeded" ? pullRequestError : (node.error ?? pullRequestError);
+  // Read once: "today" versus "tomorrow" only needs to be right when the sheet opens.
+  const [now] = useState(Date.now);
+  const wait = taskGraphNodeWaitDetail(node, now);
   const hasActions = pullRequestUrl !== null || props.canCancelBranch || props.canRetry;
 
   const summary = (
@@ -375,6 +379,11 @@ function NodeRow(props: {
           {taskGraphNodeStatusLabel(node.status)}
         </Text>
       </View>
+      {wait !== null ? (
+        <Text numberOfLines={2} className="ps-4 text-xs text-foreground-secondary">
+          {wait}
+        </Text>
+      ) : null}
       {props.placement !== "" ? (
         <Text numberOfLines={1} className="ps-4 text-xs text-foreground-muted">
           {props.placement}

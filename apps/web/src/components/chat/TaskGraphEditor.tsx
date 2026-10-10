@@ -10,9 +10,15 @@ import type {
 } from "@t3tools/contracts";
 import {
   isActiveTaskGraphNodeStatus,
+  isUnstartedTaskGraphNode,
   isTerminalTaskGraphNodeStatus,
   taskGraphNodeOpensPullRequest,
 } from "@t3tools/shared/taskGraph";
+import {
+  localSnoozeDate,
+  localSnoozeTime,
+  resolveCustomSnooze,
+} from "@t3tools/client-runtime/state/thread-settled";
 import { Link } from "@tanstack/react-router";
 import {
   Background,
@@ -24,6 +30,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import {
+  CalendarIcon,
   MessageSquareTextIcon,
   PlayIcon,
   PlusIcon,
@@ -37,12 +44,16 @@ import { useEffect, useId, useMemo, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
+import { usePrimarySettings } from "../../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import { NO_PROVIDER_MODEL_SELECTION } from "../../providerInstances";
+import { formatUpcomingTimestamp, weekStartsOn } from "../../timestampFormat";
 import { Button } from "../ui/button";
+import { Calendar } from "../ui/calendar";
 import { DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
@@ -64,6 +75,7 @@ import {
   TASK_GRAPH_NODE_STATUS_LABEL,
   TASK_GRAPH_STATUS_LABEL,
   taskGraphNodeKeyFromTitle,
+  taskGraphNodeWaitDetail,
   taskGraphProgressLabel,
 } from "./taskGraphView";
 import type { TaskGraphCommands } from "./useTaskGraphCommands";
@@ -106,7 +118,7 @@ function TaskCanvasNode({ data, selected }: NodeProps<TaskGraphCanvasNode>) {
       <Handle
         type="target"
         position={Position.Left}
-        isConnectable={node.status === "pending"}
+        isConnectable={isUnstartedTaskGraphNode(node)}
         className="size-2.5 rounded-full border border-background"
       />
       <span className="flex min-w-0 items-center gap-1.5">
@@ -178,11 +190,11 @@ export default function TaskGraphEditor(props: {
   const canEdit = commands.canEdit && !commands.busy;
   const finished = isTaskGraphFinished(graph.status);
 
-  const pendingNode = (key: string) =>
-    graph.nodes.find((node) => node.key === key && node.status === "pending");
+  const unstartedNode = (key: string) =>
+    graph.nodes.find((node) => node.key === key && isUnstartedTaskGraphNode(node));
 
   const connect = (connection: Connection) => {
-    const dependent = pendingNode(connection.target);
+    const dependent = unstartedNode(connection.target);
     if (dependent === undefined || dependent.dependsOn.includes(connection.source)) return;
     void commands.edit([
       {
@@ -258,7 +270,7 @@ export default function TaskGraphEditor(props: {
             minZoom={0.2}
             isValidConnection={(connection) =>
               connection.source !== connection.target &&
-              pendingNode(connection.target) !== undefined
+              unstartedNode(connection.target) !== undefined
             }
             onConnect={connect}
             onNodeClick={(_event, node) => setSelection({ kind: "node", key: node.id })}
@@ -326,6 +338,7 @@ function SelectionPanel(props: {
           modelSelection: null,
           environmentId: null,
           workspace: "worktree",
+          startAt: null,
         }}
         placement={{ graph, labels: props.labels, dependency: null }}
         opensByDefault
@@ -357,6 +370,7 @@ function SelectionPanel(props: {
                   : { modelSelection: values.modelSelection }),
                 ...(values.environmentId === null ? {} : { environmentId: values.environmentId }),
                 ...(values.workspace === "worktree" ? {} : { workspace: values.workspace }),
+                ...(values.startAt === null ? {} : { startAt: values.startAt }),
               },
             },
           ]);
@@ -377,7 +391,7 @@ function SelectionPanel(props: {
           <span className="text-foreground">{dependent.title}</span> starts after{" "}
           <span className="text-foreground">{dependency.title}</span> succeeds.
         </p>
-        {dependent.status === "pending" ? (
+        {isUnstartedTaskGraphNode(dependent) ? (
           <Button
             size="sm"
             variant="destructive-outline"
@@ -452,8 +466,13 @@ function NodePanel(props: {
   });
   const canCancelBranch =
     isActiveTaskGraphNodeStatus(node.status) ||
+    node.status === "waiting" ||
     (node.status === "pending" && graph.status !== "draft");
   const canRetry = isTerminalTaskGraphNodeStatus(node.status) && node.status !== "succeeded";
+  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
+  const wait = taskGraphNodeWaitDetail(node, (iso) =>
+    formatUpcomingTimestamp(iso, timestampFormat),
+  );
 
   const actions = (
     <div className="flex flex-wrap gap-2">
@@ -482,9 +501,10 @@ function NodePanel(props: {
     </div>
   );
 
-  if (node.status === "pending") {
+  if (isUnstartedTaskGraphNode(node)) {
     return (
       <div className="space-y-4">
+        {wait !== null ? <p className="text-xs text-muted-foreground">{wait}</p> : null}
         <TaskNodeForm
           heading={`Task ${node.key}`}
           initial={{
@@ -494,6 +514,7 @@ function NodePanel(props: {
             modelSelection: node.modelSelection,
             environmentId: node.environmentId,
             workspace: node.workspace,
+            startAt: node.startAt,
           }}
           placement={placement}
           opensByDefault={opensByDefault}
@@ -516,6 +537,7 @@ function NodePanel(props: {
                   ? {}
                   : { environmentId: values.environmentId }),
                 ...(values.workspace === node.workspace ? {} : { workspace: values.workspace }),
+                ...(values.startAt === node.startAt ? {} : { startAt: values.startAt }),
               },
             ]);
           }}
@@ -554,6 +576,7 @@ function NodePanel(props: {
           <span className="min-w-0 truncate font-mono">{node.key}</span>
         </p>
       </div>
+      {wait !== null ? <p className="text-xs text-muted-foreground">{wait}</p> : null}
       {node.error !== null ? <p className="text-destructive">{node.error}</p> : null}
       {node.branch !== null ? (
         <p className="truncate font-mono text-xs text-muted-foreground">{node.branch}</p>
@@ -613,6 +636,8 @@ interface TaskNodeValues {
   /** Null balances across machines when the task starts. */
   readonly environmentId: EnvironmentId | null;
   readonly workspace: TaskGraphNodeWorkspace;
+  /** Earliest start as an ISO time; null starts as soon as its dependencies succeed. */
+  readonly startAt: string | null;
 }
 
 type TaskNodePlacement = Pick<TaskNodeValues, "modelSelection" | "environmentId" | "workspace">;
@@ -656,6 +681,8 @@ function TaskNodeForm(props: {
   const [prompt, setPrompt] = useState(props.initial.prompt);
   const [pullRequest, setPullRequest] = useState(props.initial.pullRequest);
   const [placement, setPlacement] = useState<TaskNodePlacement>(props.initial);
+  const [start, setStart] = useState(() => initialStartChoice(props.initial.startAt));
+  const startAt = resolveStartAt(start, props.initial.startAt);
   const values: TaskNodeValues = {
     title: title.trim(),
     prompt: prompt.trim(),
@@ -663,6 +690,7 @@ function TaskNodeForm(props: {
     modelSelection: placement.modelSelection,
     environmentId: placement.environmentId,
     workspace: placement.workspace,
+    startAt,
   };
   const dirty =
     values.title !== props.initial.title ||
@@ -670,8 +698,14 @@ function TaskNodeForm(props: {
     values.pullRequest !== props.initial.pullRequest ||
     !sameModel(values.modelSelection, props.initial.modelSelection) ||
     values.environmentId !== props.initial.environmentId ||
-    values.workspace !== props.initial.workspace;
-  const valid = values.title.length > 0 && values.title.length <= 120 && values.prompt.length > 0;
+    values.workspace !== props.initial.workspace ||
+    values.startAt !== props.initial.startAt;
+  const startAtInvalid = start.scheduled && startAt === null;
+  const valid =
+    values.title.length > 0 &&
+    values.title.length <= 120 &&
+    values.prompt.length > 0 &&
+    !startAtInvalid;
 
   return (
     <form
@@ -738,6 +772,12 @@ function TaskNodeForm(props: {
           </p>
         ) : null}
       </div>
+      <TaskNodeStartAtField
+        value={start}
+        invalid={startAtInvalid}
+        disabled={props.disabled}
+        onChange={setStart}
+      />
       <div className="flex justify-end gap-2">
         {props.onCancel ? (
           <Button type="button" size="sm" variant="ghost" onClick={props.onCancel}>
@@ -749,6 +789,117 @@ function TaskNodeForm(props: {
         </Button>
       </div>
     </form>
+  );
+}
+
+/** The start-at field's local date and time; kept while unscheduled so toggling back restores it. */
+interface StartChoice {
+  readonly scheduled: boolean;
+  readonly date: Date;
+  /** Local "HH:mm". */
+  readonly time: string;
+}
+
+function initialStartChoice(startAt: string | null): StartChoice {
+  const at = startAt === null ? new Date(Date.now() + 3_600_000) : new Date(startAt);
+  return { scheduled: startAt !== null, date: at, time: localSnoozeTime(at) };
+}
+
+/**
+ * The chosen start as an ISO time, or null when it starts once ready or the
+ * choice is not a future time. An untouched existing start keeps its exact
+ * value, even once it has passed, so saving other fields does not reject it.
+ */
+function resolveStartAt(choice: StartChoice, initial: string | null): string | null {
+  if (!choice.scheduled) return null;
+  const date = localSnoozeDate(choice.date);
+  if (initial !== null) {
+    const was = new Date(initial);
+    if (date === localSnoozeDate(was) && choice.time === localSnoozeTime(was)) return initial;
+  }
+  return resolveCustomSnooze({ mode: "date", date, time: choice.time }, new Date());
+}
+
+/** When a task may start: as soon as its dependencies succeed, or no earlier than a local time. */
+function TaskNodeStartAtField(props: {
+  readonly value: StartChoice;
+  readonly invalid: boolean;
+  readonly disabled: boolean;
+  readonly onChange: (next: StartChoice) => void;
+}) {
+  const id = useId();
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const { value } = props;
+  return (
+    <div className="space-y-1.5">
+      <Label id={`${id}-start`}>Start at</Label>
+      <ToggleGroup
+        aria-labelledby={`${id}-start`}
+        className="w-full *:flex-1"
+        value={[value.scheduled ? "at" : "ready"]}
+        disabled={props.disabled}
+        onValueChange={(next) => {
+          if (next[0] === "ready" || next[0] === "at") {
+            props.onChange({ ...value, scheduled: next[0] === "at" });
+          }
+        }}
+      >
+        <Toggle value="ready">As soon as ready</Toggle>
+        <Toggle value="at">At a time</Toggle>
+      </ToggleGroup>
+      {value.scheduled ? (
+        <div className="grid grid-cols-2 gap-2">
+          <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
+            <PopoverTrigger
+              disabled={props.disabled}
+              render={
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  aria-label="Start date"
+                  className="w-full justify-between"
+                />
+              }
+            >
+              {value.date.toLocaleDateString(undefined, {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              })}
+              <CalendarIcon />
+            </PopoverTrigger>
+            <PopoverPopup align="start" aria-label="Choose start date">
+              <Calendar
+                mode="single"
+                required
+                selected={value.date}
+                defaultMonth={value.date}
+                {...(weekStartsOn === undefined ? {} : { weekStartsOn })}
+                disabled={{ before: new Date(new Date().setHours(0, 0, 0, 0)) }}
+                onSelect={(selected) => {
+                  props.onChange({ ...value, date: selected });
+                  setCalendarOpen(false);
+                }}
+              />
+            </PopoverPopup>
+          </Popover>
+          <Input
+            nativeInput
+            type="time"
+            size="sm"
+            aria-label="Start time"
+            required
+            value={value.time}
+            disabled={props.disabled}
+            onChange={(event) => props.onChange({ ...value, time: event.target.value })}
+          />
+        </div>
+      ) : null}
+      {props.invalid ? (
+        <p className="text-xs text-destructive">Choose a date and time in the future.</p>
+      ) : null}
+    </div>
   );
 }
 

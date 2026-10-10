@@ -6,6 +6,7 @@ import {
   sortTaskGraphs,
   taskGraphActions,
   taskGraphNodeActions,
+  taskGraphNodeWaitDetail,
   taskGraphSummaryLabel,
 } from "./task-graph-presentation";
 
@@ -33,6 +34,12 @@ describe("taskGraphSummaryLabel", () => {
         graph("running", [node("a", "succeeded"), node("b", "running"), node("c", "pending")]),
       ),
     ).toBe("Running · 1 of 3 done");
+  });
+
+  it("counts waiting tasks while running", () => {
+    expect(
+      taskGraphSummaryLabel(graph("running", [node("a", "succeeded"), node("b", "waiting")])),
+    ).toBe("Running · 1 of 2 done · 1 waiting");
   });
 
   it("names failures on a failed graph", () => {
@@ -107,6 +114,14 @@ describe("taskGraphNodeActions", () => {
     expect(taskGraphNodeActions(graph("running", nodes), nodes[1]!).cancelBranch).toBe(true);
   });
 
+  it("cancels the branch of a waiting node, started or not", () => {
+    const nodes = [node("a", "waiting")];
+    expect(taskGraphNodeActions(graph("running", nodes), nodes[0]!)).toEqual({
+      cancelBranch: true,
+      retry: false,
+    });
+  });
+
   it("retries failed nodes, including in a finished graph", () => {
     const nodes = [node("a", "failed")];
     expect(taskGraphNodeActions(graph("failed", nodes), nodes[0]!)).toEqual({
@@ -131,5 +146,37 @@ describe("taskGraphNodeActions", () => {
       cancelBranch: false,
       retry: false,
     });
+  });
+});
+
+describe("taskGraphNodeWaitDetail", () => {
+  const now = new Date(2026, 9, 10, 9, 0).getTime();
+  const waitUntil = new Date(2026, 9, 10, 15, 40).toISOString();
+  const time = new Date(waitUntil).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const waiting = (overrides: Partial<TaskGraphNode>) =>
+    ({ status: "waiting", waitUntil, threadId: null, ...overrides }) as TaskGraphNode;
+
+  it("says when a scheduled node starts", () => {
+    expect(taskGraphNodeWaitDetail(waiting({ waitReason: "scheduled" }), now)).toBe(
+      `Starts ${time}`,
+    );
+  });
+
+  it("says whether a limited node starts or continues its thread after the reset", () => {
+    expect(taskGraphNodeWaitDetail(waiting({ waitReason: "usage_limit" }), now)).toBe(
+      `Usage limit reached — starts after the reset, ${time}`,
+    );
+    expect(
+      taskGraphNodeWaitDetail(
+        waiting({ waitReason: "usage_limit", threadId: "thread-a" as TaskGraphNode["threadId"] }),
+        now,
+      ),
+    ).toBe(`Usage limit reached — continues on its thread after the reset, ${time}`);
+  });
+
+  it("names the day once the wait ends after today", () => {
+    const tomorrow = waiting({ waitReason: "scheduled" });
+    expect(taskGraphNodeWaitDetail(tomorrow, now - 86_400_000)).toBe(`Starts tomorrow at ${time}`);
+    expect(taskGraphNodeWaitDetail({ ...tomorrow, status: "pending" }, now)).toBeNull();
   });
 });

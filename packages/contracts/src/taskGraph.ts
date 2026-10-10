@@ -25,11 +25,14 @@ export type TaskGraphNodeKey = typeof TaskGraphNodeKey.Type;
 /**
  * - `pending`: waiting for its dependencies, or for the graph to run.
  * - `running`: its thread has a turn in progress.
+ * - `waiting`: held until `waitUntil`: a scheduled start, or a usage limit reset. A node
+ *   with a thread was stopped by the limit and continues on that thread at the reset.
  * - `delivering`: the turn finished and the branch is being committed, pushed and opened as a PR.
  * - `skipped`: a dependency failed or was cancelled, so it never started.
  */
 export const TaskGraphNodeStatus = Schema.Literals([
   "pending",
+  "waiting",
   "running",
   "delivering",
   "succeeded",
@@ -68,6 +71,9 @@ const nodeFields = {
 export const TaskGraphNodeWorkspace = Schema.Literals(["worktree", "dependency", "root"]);
 export type TaskGraphNodeWorkspace = typeof TaskGraphNodeWorkspace.Type;
 
+export const TaskGraphNodeWaitReason = Schema.Literals(["scheduled", "usage_limit"]);
+export type TaskGraphNodeWaitReason = typeof TaskGraphNodeWaitReason.Type;
+
 export const TaskGraphNodeInput = Schema.Struct({
   key: TaskGraphNodeKey,
   ...nodeFields,
@@ -81,6 +87,10 @@ export const TaskGraphNodeInput = Schema.Struct({
   environmentId: Schema.optional(Schema.NullOr(EnvironmentId)).annotate({
     description:
       "Machine to run on, from task_graph_list's machines. Null or omitted balances across this machine and its paired peers.",
+  }),
+  startAt: Schema.optional(Schema.NullOr(IsoDateTime)).annotate({
+    description:
+      "Earliest time the node may start, as an ISO timestamp such as 2026-10-11T02:00:00Z. Omit to start as soon as its dependencies succeed.",
   }),
   workspace: Schema.optional(TaskGraphNodeWorkspace).annotate({
     description:
@@ -106,7 +116,14 @@ export const TaskGraphNode = Schema.Struct({
   workspace: TaskGraphNodeWorkspace.pipe(
     Schema.withDecodingDefault(Effect.succeed("worktree" as const)),
   ),
+  /** Earliest start; null starts once dependencies succeed. */
+  startAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   status: TaskGraphNodeStatus,
+  /** While `waiting`: when the wait ends, and why. */
+  waitUntil: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  waitReason: Schema.NullOr(TaskGraphNodeWaitReason).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   /** Where the node ran or runs; null until it starts. */
   assignedEnvironmentId: Schema.NullOr(EnvironmentId),
   threadId: Schema.NullOr(ThreadId),
@@ -159,6 +176,7 @@ export const TaskGraphEdit = Schema.Union([
     modelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
     environmentId: Schema.optional(Schema.NullOr(EnvironmentId)),
     workspace: Schema.optional(TaskGraphNodeWorkspace),
+    startAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   }),
   Schema.Struct({ type: Schema.Literal("remove_node"), key: TaskGraphNodeKey }),
   Schema.Struct({ type: Schema.Literal("cancel_branch"), key: TaskGraphNodeKey }),
