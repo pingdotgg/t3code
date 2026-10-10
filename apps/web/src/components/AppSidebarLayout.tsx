@@ -1,7 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
+  useCallback,
   useEffect,
+  useLayoutEffect,
   useState,
   useSyncExternalStore,
   type CSSProperties,
@@ -80,7 +82,7 @@ function readInitialThreadSidebarWidth(): number {
   }
 }
 
-function SidebarControl() {
+function SidebarControl({ isMobileSidebarMounted }: { isMobileSidebarMounted: boolean }) {
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { toggleSidebar } = useSidebar();
@@ -139,7 +141,11 @@ function SidebarControl() {
     // the panel), so the trigger mirrors it: both clusters sit one extra pixel
     // off their edge and the titlebar reads symmetric.
     <div
-      className="pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center"
+      // The drawer owns its trigger until its exit transition finishes.
+      className={cn(
+        "pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center",
+        isMobileSidebarMounted && "invisible",
+      )}
       data-sidebar-control=""
     >
       <Tooltip>
@@ -238,6 +244,13 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const isOnSettings = pathname === "/settings" || pathname.startsWith("/settings/");
   const isMacosDesktop = isElectron && isMacPlatform(navigator.platform);
   const [sidebarWidth, setSidebarWidth] = useState(readInitialThreadSidebarWidth);
+  const [isMobileSidebarMounted, setIsMobileSidebarMounted] = useState(false);
+  const observeSidebarMount = useCallback((node: HTMLDivElement | null) => {
+    if (!node?.closest('[data-mobile="true"]')) return;
+    // Track the actual sheet lifetime, including its closing animation.
+    setIsMobileSidebarMounted(true);
+    return () => setIsMobileSidebarMounted(false);
+  }, []);
   // Subscribed rather than read once: the clamp must track live window size,
   // and a clamped drag ends with an unchanged width, which skips the re-render
   // that would otherwise refresh a render-time snapshot.
@@ -262,10 +275,20 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const sidebarProviderStyle = {
     "--sidebar-width": `${clampThreadSidebarWidth(sidebarWidth, sidebarMinimumWidth, sidebarMaximumWidth)}px`,
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
-    ...(isMacosDesktop && !isWindowFullscreen
-      ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
-      : {}),
   } as CSSProperties;
+  // The traffic-light inset lives on the document root rather than on the
+  // provider: the zoomed-in sidebar renders as a sheet through a portal
+  // outside this subtree, and its header trigger has to see the same token
+  // as the floating control. Layout effect so the first paint already has it.
+  const reserveMacosWindowControls = isMacosDesktop && !isWindowFullscreen;
+  useLayoutEffect(() => {
+    if (!reserveMacosWindowControls) return;
+    const root = document.documentElement;
+    root.style.setProperty("--workspace-controls-left", MACOS_TRAFFIC_LIGHTS_LEFT_INSET);
+    return () => {
+      root.style.removeProperty("--workspace-controls-left");
+    };
+  }, [reserveMacosWindowControls]);
 
   useEffect(() => {
     if (!isMacosDesktop) return;
@@ -315,6 +338,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         <SidebarBrandWidthProbe onWidthChange={setBrandWidth} />
         <ProjectProjectionRetention />
         <Sidebar
+          ref={observeSidebarMount}
           side="left"
           collapsible="offcanvas"
           data-app-sidebar=""
@@ -343,7 +367,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           <SidebarRail onDoubleClick={resetSidebarWidth} />
         </Sidebar>
         {children}
-        <SidebarControl />
+        <SidebarControl isMobileSidebarMounted={isMobileSidebarMounted} />
         <NavigationHistoryShortcuts />
         <MainAppLocationTracker />
       </SidebarProvider>
