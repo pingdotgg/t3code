@@ -49,6 +49,13 @@ client connections and provider-instance rebuilds. Releases are immutable, with 
 selecting the version for new processes. Running processes hold leases on their version. Updates
 and removal must respect those leases instead of replacing executables under a running agent.
 
+## Delegated completion delivery
+
+Exhausting a [completion delivery](../../apps/server/src/orchestration-v2/ProviderContinuationService.ts)
+retry chain does not consume its durable mailbox offer. Recovery or a later re-offer
+can start a fresh retry budget, including in the same process; exhaustion is not a
+permanent delivery-failure marker.
+
 ## Setup must not happen as a health-check side effect
 
 Opening a provider session can start MCP servers, run hooks, or launch a login browser.

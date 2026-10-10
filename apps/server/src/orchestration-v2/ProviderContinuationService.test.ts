@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
   MessageId,
+  NodeId,
   ProviderDriverKind,
   ProviderThreadId,
   RunId,
@@ -9,8 +10,10 @@ import {
   type OrchestrationV2Notification,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -105,6 +108,289 @@ function layerTest(input: {
 }
 
 describe("ProviderContinuationService", () => {
+  it.effect.each(["same object", "copy"] as const)(
+    "bounds overlapping %s offers to one retry chain and gives a later offer a fresh budget",
+    (duplicate) =>
+      Effect.gen(function* () {
+        const attempts = yield* Ref.make(0);
+        const firstFailure = yield* Deferred.make<void>();
+        const fences = yield* Queue.unbounded<void>();
+        const threads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.succeed(delegatedProjection()),
+          dispatch: (command) =>
+            command.type === "message.dispatch" && command.messageId === delegatedMessageId
+              ? Ref.update(attempts, (count) => count + 1).pipe(
+                  Effect.andThen(Deferred.succeed(firstFailure, undefined)),
+                  Effect.andThen(Effect.die("persistent duplicated delivery failure")),
+                )
+              : Queue.offer(fences, undefined).pipe(Effect.as({} as never)),
+        });
+        const worker = ProviderContinuationService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, threads),
+          ),
+        );
+        yield* Effect.gen(function* () {
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          const offer = {
+            threadId,
+            providerThreadId,
+            driver,
+            detail: null,
+            delegatedCompletion: { parentRunId, generation: 1, messageId: delegatedMessageId },
+          };
+          yield* requests.offer(offer);
+          yield* requests.offer(duplicate === "same object" ? offer : { ...offer });
+          // A regular continuation fences consumption of both external offers.
+          yield* requests.offer(request());
+          yield* Queue.take(fences);
+          yield* Deferred.await(firstFailure);
+          for (const delay of [100, 200, 400, 800, 1600, 3200, 5000, 5000]) {
+            yield* TestClock.adjust(`${delay} millis`);
+          }
+          assert.equal(yield* Ref.get(attempts), 9);
+          yield* TestClock.adjust("1 day");
+          assert.equal(yield* Ref.get(attempts), 9);
+          // The original durable offer is still eligible once its chain ends.
+          yield* requests.offer({ ...offer });
+          yield* requests.offer(request());
+          yield* Queue.take(fences);
+          assert.equal(yield* Ref.get(attempts), 10);
+          yield* TestClock.adjust("100 millis");
+          assert.equal(yield* Ref.get(attempts), 11);
+        }).pipe(
+          Effect.provide(Layer.merge(ProviderContinuationRequests.layer, worker)),
+          Effect.scoped,
+        );
+      }),
+  );
+
+  it.effect("releases a delivery budget when its retry eligibility check is interrupted", () =>
+    Effect.gen(function* () {
+      const reads = yield* Ref.make(0);
+      const attempts = yield* Queue.unbounded<void>();
+      const fences = yield* Queue.unbounded<void>();
+      const interrupted = yield* Deferred.make<void>();
+      const threads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadRecords: () =>
+          Ref.updateAndGet(reads, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === 2
+                ? Deferred.succeed(interrupted, undefined).pipe(Effect.andThen(Effect.interrupt))
+                : Effect.succeed(delegatedProjection()),
+            ),
+          ),
+        dispatch: (command) =>
+          command.type === "message.dispatch" && command.messageId === delegatedMessageId
+            ? Queue.offer(attempts, undefined).pipe(Effect.andThen(Effect.die("delivery failure")))
+            : Queue.offer(fences, undefined).pipe(Effect.as({} as never)),
+      });
+      const worker = ProviderContinuationService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, threads),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        const offer = {
+          threadId,
+          providerThreadId,
+          driver,
+          detail: null,
+          delegatedCompletion: { parentRunId, generation: 1, messageId: delegatedMessageId },
+        };
+        yield* requests.offer(offer);
+        yield* Queue.take(attempts);
+        yield* TestClock.adjust("100 millis");
+        yield* Deferred.await(interrupted);
+        yield* requests.offer({ ...offer });
+        yield* requests.offer(request());
+        yield* Queue.take(fences);
+        assert.equal(yield* Queue.size(attempts), 1);
+        yield* Queue.take(attempts);
+        yield* TestClock.adjust("100 millis");
+        assert.equal(yield* Queue.size(attempts), 1);
+      }).pipe(
+        Effect.provide(Layer.merge(ProviderContinuationRequests.layer, worker)),
+        Effect.scoped,
+      );
+    }),
+  );
+
+  it.effect("delivers a different completion while another delivery has a retry pending", () =>
+    Effect.gen(function* () {
+      const otherRunId = RunId.make("other-delegated-parent");
+      const otherMessageId = MessageId.make("other-delegated-message");
+      const current = delegatedProjection();
+      const bothDeliveries = {
+        ...current,
+        runs: [
+          ...current.runs,
+          {
+            ...current.runs[0]!,
+            id: otherRunId,
+            delegatedCompletion: {
+              ...current.runs[0]!.delegatedCompletion!,
+              delivery: {
+                generation: 1,
+                messageId: otherMessageId,
+                taskIds: [NodeId.make("other-child")],
+              },
+            },
+          },
+        ],
+      };
+      const attempts = yield* Ref.make(0);
+      const otherDelivered = yield* Ref.make(0);
+      const fences = yield* Queue.unbounded<void>();
+      const threads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadRecords: () => Effect.succeed(bothDeliveries),
+        dispatch: (command) =>
+          command.type === "message.dispatch" && command.messageId === delegatedMessageId
+            ? Ref.update(attempts, (count) => count + 1).pipe(
+                Effect.andThen(Effect.die("first completion fails")),
+              )
+            : command.type === "message.dispatch" && command.messageId === otherMessageId
+              ? Ref.update(otherDelivered, (count) => count + 1).pipe(Effect.as({} as never))
+              : Queue.offer(fences, undefined).pipe(Effect.as({} as never)),
+      });
+      const worker = ProviderContinuationService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, threads),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        const offer = {
+          threadId,
+          providerThreadId,
+          driver,
+          detail: null,
+          delegatedCompletion: { parentRunId, generation: 1, messageId: delegatedMessageId },
+        };
+        yield* requests.offer(offer);
+        yield* requests.offer({
+          ...offer,
+          delegatedCompletion: {
+            parentRunId: otherRunId,
+            generation: 1,
+            messageId: otherMessageId,
+          },
+        });
+        yield* requests.offer(request());
+        yield* Queue.take(fences);
+        assert.equal(yield* Ref.get(attempts), 1);
+        assert.equal(yield* Ref.get(otherDelivered), 1);
+        yield* TestClock.adjust("100 millis");
+        assert.equal(yield* Ref.get(attempts), 2);
+        assert.equal(yield* Ref.get(otherDelivered), 1);
+      }).pipe(
+        Effect.provide(Layer.merge(ProviderContinuationRequests.layer, worker)),
+        Effect.scoped,
+      );
+    }),
+  );
+
+  it.effect.each(["dispatch", "projection"] as const)(
+    "bounds delegated completion retries after persistent %s failure",
+    (failure) =>
+      Effect.gen(function* () {
+        const attempts = yield* Ref.make(0);
+        const attemptEvents = yield* Queue.unbounded<number>();
+        const fail = Ref.updateAndGet(attempts, (count) => count + 1).pipe(
+          Effect.tap((count) => Queue.offer(attemptEvents, count)),
+          Effect.andThen(Effect.die("persistent continuation failure")),
+        );
+        const threads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () =>
+            failure === "projection" ? fail : Effect.succeed(delegatedProjection()),
+          dispatch: () => fail,
+        });
+        const worker = ProviderContinuationService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, threads),
+          ),
+        );
+        yield* Effect.gen(function* () {
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          yield* requests.offer({
+            threadId,
+            providerThreadId,
+            driver,
+            detail: null,
+            delegatedCompletion: { parentRunId, generation: 1, messageId: delegatedMessageId },
+          });
+          assert.equal(yield* Queue.take(attemptEvents), 1);
+          for (const delay of [100, 200, 400, 800, 1600, 3200, 5000, 5000]) {
+            yield* TestClock.adjust(`${delay} millis`);
+            if (failure === "projection") yield* Queue.take(attemptEvents);
+            yield* Queue.take(attemptEvents);
+          }
+          const exhaustedCount = yield* Ref.get(attempts);
+          assert.equal(exhaustedCount, failure === "projection" ? 17 : 9);
+          yield* TestClock.adjust("1 day");
+          assert.equal(yield* Ref.get(attempts), exhaustedCount);
+          // A durable mailbox re-offer starts another bounded retry chain.
+          yield* requests.offer({
+            threadId,
+            providerThreadId,
+            driver,
+            detail: null,
+            delegatedCompletion: { parentRunId, generation: 1, messageId: delegatedMessageId },
+          });
+          assert.equal(yield* Queue.take(attemptEvents), exhaustedCount + 1);
+          yield* TestClock.adjust("100 millis");
+          if (failure === "projection") yield* Queue.take(attemptEvents);
+          yield* Queue.take(attemptEvents);
+          assert.equal(
+            yield* Ref.get(attempts),
+            exhaustedCount + (failure === "projection" ? 3 : 2),
+          );
+        }).pipe(
+          Effect.provide(Layer.merge(ProviderContinuationRequests.layer, worker)),
+          Effect.scoped,
+        );
+      }),
+  );
+  it.effect("interrupts an in-flight delegated delivery when the worker scope closes", () =>
+    Effect.gen(function* () {
+      const attempts = yield* Ref.make(0);
+      const started = yield* Deferred.make<void>();
+      const stopped = yield* Deferred.make<Exit.Exit<never>>();
+      const threads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadRecords: () => Effect.succeed(delegatedProjection()),
+        dispatch: () =>
+          Ref.update(attempts, (count) => count + 1).pipe(
+            Effect.andThen(Deferred.succeed(started, undefined)),
+            Effect.andThen(Effect.never),
+            Effect.onExit((exit) => Deferred.succeed(stopped, exit)),
+          ),
+      });
+      const worker = ProviderContinuationService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, threads),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        yield* requests.offer({
+          threadId,
+          providerThreadId,
+          driver,
+          detail: null,
+          delegatedCompletion: { parentRunId, generation: 1, messageId: delegatedMessageId },
+        });
+        yield* Deferred.await(started);
+      }).pipe(
+        Effect.provide(Layer.merge(ProviderContinuationRequests.layer, worker)),
+        Effect.scoped,
+      );
+      const exit = yield* Deferred.await(stopped);
+      assert.isTrue(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
+      yield* TestClock.adjust("1 day");
+      assert.equal(yield* Ref.get(attempts), 1);
+    }),
+  );
   it.effect("recovers an unaccepted persisted steer using the same delivery identity", () =>
     Effect.gen(function* () {
       const dispatched = yield* Queue.unbounded<unknown>();
