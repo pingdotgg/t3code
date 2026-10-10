@@ -13,6 +13,7 @@ import {
   RunId,
   RuntimeRequestId,
   ThreadId,
+  TurnItemId,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -214,6 +215,74 @@ it.effect.each(storageCases)(
         payload: { ...turnEvent.payload, status: "completed", completedAt: now },
       });
       assert.isUndefined((yield* store.getRunningTurnContext(threadId)).providerTurn);
+    }).pipe(Effect.provide(storeLayer)),
+);
+it.effect.each(storageCases)(
+  "$storage: reports only wake runs that recorded work",
+  ({ storeLayer }) =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      yield* Effect.forEach(fixtureEvents(now), (event) => store.apply(event), {
+        discard: true,
+      });
+      const idleRunId = RunId.make("run:control-reads:idle-wake");
+      const workedRunId = RunId.make("run:control-reads:worked-wake");
+      const itemBase = {
+        threadId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      };
+      yield* store.apply({
+        id: EventId.make("control:wake-notice"),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          ...itemBase,
+          id: TurnItemId.make("control:wake-notice"),
+          runId: idleRunId,
+          nodeId,
+          ordinal: 1,
+          status: "completed",
+          type: "system_notice",
+          message: "Background activity updated",
+        },
+      });
+      yield* store.apply({
+        id: EventId.make("control:wake-reply"),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          ...itemBase,
+          id: TurnItemId.make("control:wake-reply"),
+          runId: workedRunId,
+          nodeId,
+          ordinal: 2,
+          status: "completed",
+          type: "assistant_message",
+          messageId: MessageId.make("message:control-reads:wake-reply"),
+          text: "The background task finished.",
+          streaming: false,
+        },
+      });
+      assert.deepEqual(
+        (yield* store.getWakeRunIdsWithWork(threadId, [
+          idleRunId,
+          workedRunId,
+          RunId.make("run:control-reads:missing-wake"),
+        ]))
+          .map(String)
+          .toSorted(),
+        [String(workedRunId)],
+      );
     }).pipe(Effect.provide(storeLayer)),
 );
 it.effect.each(storageCases)(

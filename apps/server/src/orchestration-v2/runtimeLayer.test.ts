@@ -5451,4 +5451,249 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       }
     }),
   );
+
+  // A limited provider answers each background wake with an empty turn, and
+  // the first wake lands before the recovery sweep has armed the limited run.
+  it.effect.each(["idle", "cancelled", "answered"] as const)(
+    "recovers a usage limit after background wakes that were %s",
+    (scenario) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const events = yield* EventSink.EventSinkV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const threadId = ThreadId.make(`recovery-wake:${scenario}`);
+        const projectId = ProjectId.make(`recovery-wake:project:${scenario}`);
+        yield* seedProject({
+          projectId,
+          title: "Recovery project",
+          workspaceRoot: process.cwd(),
+          defaultModelSelection: modelSelection,
+          createdAt: DateTime.formatIso(yield* DateTime.now),
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`recovery-wake:create:${scenario}`),
+          threadId,
+          projectId,
+          title: "Limited thread",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`recovery-wake:message:${scenario}`),
+          threadId,
+          messageId: MessageId.make(`recovery-wake:message:${scenario}`),
+          text: "Work on this.",
+          attachments: [],
+          dispatchMode: { type: "defer_start" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        const failedAt = yield* DateTime.now;
+        const resetAt = DateTime.formatIso(DateTime.add(failedAt, { minutes: 1 }));
+        yield* events.write({
+          commandId: CommandId.make(`recovery-wake:failure:${scenario}`),
+          events: [
+            {
+              id: EventId.make(`recovery-wake:run:${scenario}`),
+              type: "run.updated",
+              threadId,
+              occurredAt: failedAt,
+              payload: { ...run, status: "failed", startedAt: failedAt, completedAt: failedAt },
+            },
+            {
+              id: EventId.make(`recovery-wake:error:${scenario}`),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: failedAt,
+              payload: {
+                id: TurnItemId.make(`recovery-wake:error:${scenario}`),
+                type: "error",
+                threadId,
+                runId: run.id,
+                nodeId: run.rootNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 2,
+                status: "failed",
+                title: "Usage limit reached",
+                startedAt: failedAt,
+                completedAt: failedAt,
+                updatedAt: failedAt,
+                failure: {
+                  class: "usage_limit",
+                  message: "Plan limit reached.",
+                  code: "usageLimitExceeded",
+                  retryable: null,
+                  resetAt,
+                },
+              },
+            },
+          ],
+        });
+
+        for (const index of [1, 2]) {
+          yield* TestClock.adjust("2 seconds");
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`recovery-wake:wake:${scenario}:${index}`),
+            threadId,
+            messageId: MessageId.make(`recovery-wake:wake:${scenario}:${index}`),
+            text: "Background activity updated",
+            notification: {
+              source: { kind: "background_task" },
+              outcome: "failed",
+              summary: "Background task failed",
+            },
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "agent",
+            creationSource: "provider",
+          });
+          const wake = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+          assert.notEqual(wake.id, run.id);
+          const endedAt = yield* DateTime.now;
+          yield* events.write({
+            events: [
+              ...(scenario === "answered" && index === 2
+                ? [
+                    {
+                      id: EventId.make(`recovery-wake:reply:${scenario}`),
+                      type: "turn-item.updated" as const,
+                      threadId,
+                      occurredAt: endedAt,
+                      payload: {
+                        id: TurnItemId.make(`recovery-wake:reply:${scenario}`),
+                        type: "assistant_message" as const,
+                        threadId,
+                        runId: wake.id,
+                        nodeId: wake.rootNodeId,
+                        providerThreadId: null,
+                        providerTurnId: null,
+                        nativeItemRef: null,
+                        parentItemId: null,
+                        ordinal: 1_000,
+                        status: "completed" as const,
+                        title: null,
+                        startedAt: endedAt,
+                        completedAt: endedAt,
+                        updatedAt: endedAt,
+                        messageId: MessageId.make(`recovery-wake:reply:${scenario}`),
+                        text: "The background task finished.",
+                        streaming: false,
+                      },
+                    },
+                  ]
+                : []),
+              {
+                id: EventId.make(`recovery-wake:wake-completed:${scenario}:${index}`),
+                type: "run.updated",
+                threadId,
+                runId: wake.id,
+                occurredAt: endedAt,
+                payload: { ...wake, status: "completed", startedAt: endedAt, completedAt: endedAt },
+              },
+            ],
+          });
+        }
+
+        const candidate = (now: DateTime.Utc) =>
+          projections
+            .getLimitRecoveryCandidates({ now, autoResume: true, snooze: false })
+            .pipe(Effect.map((rows) => rows.find((row) => row.id === threadId)));
+        const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        )!;
+        const swept = yield* candidate(yield* DateTime.now);
+        if (scenario === "answered") {
+          // The provider replied, so it is working again and nothing is owed.
+          assert.equal(shell.status, "completed");
+          assert.isNull(shell.lastErrorClass);
+          assert.isUndefined(swept);
+          const stale = yield* orchestrator
+            .dispatch({
+              type: "thread.metadata.update",
+              commandId: CommandId.make("recovery-wake:stale-arm"),
+              threadId,
+              limitRecovery: { runId: run.id, resetAt, autoResume: true },
+            })
+            .pipe(Effect.exit);
+          assert.equal(stale._tag, "Failure");
+          return;
+        }
+        assert.equal(shell.status, "failed");
+        assert.equal(shell.lastErrorClass, "usage_limit");
+        assert.equal(shell.latestRunId, run.id);
+        assert.equal(swept?.latestRunId, run.id);
+
+        const arm = limitRecoveryCommand(swept!, true, DateTime.toEpochMillis(yield* DateTime.now));
+        assert.equal(arm?.type, "thread.metadata.update");
+        yield* orchestrator.dispatch(arm!);
+        assert.deepEqual((yield* orchestrator.getThreadProjection(threadId)).thread.limitRecovery, {
+          runId: run.id,
+          resetAt,
+          autoResume: true,
+          snooze: false,
+          requestId: arm!.commandId,
+        });
+        // Armed and not yet due: the sweep has nothing to do until the reset.
+        assert.isUndefined(yield* candidate(yield* DateTime.now));
+
+        if (scenario === "cancelled") {
+          yield* orchestrator.dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make("recovery-wake:cancel"),
+            threadId,
+            limitRecovery: { runId: run.id, resetAt, autoResume: false },
+          });
+        }
+        yield* TestClock.adjust("1 minute");
+        const due = yield* candidate(yield* DateTime.now);
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        if (scenario === "cancelled") {
+          assert.isUndefined(due);
+          assert.isFalse(before.thread.limitRecovery?.autoResume);
+          // Resuming by hand still continues from the limited run.
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("recovery-wake:manual"),
+            threadId,
+            messageId: MessageId.make("recovery-wake:manual"),
+            manualContinuationOfRunId: run.id,
+            text: "Continue where you left off.",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          assert.lengthOf(
+            (yield* orchestrator.getThreadProjection(threadId)).runs,
+            before.runs.length + 1,
+          );
+          return;
+        }
+        const resume = limitRecoveryCommand(
+          due!,
+          true,
+          DateTime.toEpochMillis(yield* DateTime.now),
+        );
+        assert.equal(resume?.type, "message.dispatch");
+        yield* orchestrator.dispatch(resume!);
+        yield* orchestrator.dispatch(resume!);
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.lengthOf(after.runs, before.runs.length + 1);
+        assert.lengthOf(after.messages, before.messages.length + 1);
+        // The resumed run is now the thread's outcome, so the sweep is done.
+        assert.isUndefined(yield* candidate(yield* DateTime.now));
+      }),
+  );
 });

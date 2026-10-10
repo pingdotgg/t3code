@@ -9,6 +9,7 @@ import {
   MessageId,
   type ModelSelection,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2TurnItem,
   type OrchestrationV2ThreadShellSnapshot,
   NodeId,
   ProjectId,
@@ -2966,6 +2967,153 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       // A new attempt's root cannot inherit an earlier attempt's limit.
       yield* applyRun("failed", NodeId.make("new-attempt-root"));
       yield* assertSummary(null, null);
+    }),
+  );
+
+  it.effect("keeps a usage limit that later wakes did nothing about", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = yield* addRolledBackRecoveryCandidate("limit-wake");
+      const limited = (yield* store.getThreadProjection(threadId)).runs[0]!;
+      const now = yield* DateTime.now;
+      const resetAt = "2099-01-01T00:00:00.000Z";
+      const itemBase = {
+        threadId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      };
+      const applyItem = (payload: OrchestrationV2TurnItem) =>
+        store.apply({
+          id: EventId.make(`event:limit-wake:${payload.id}`),
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: now,
+          payload,
+        });
+      yield* applyItem({
+        ...itemBase,
+        id: TurnItemId.make("limit-wake:error"),
+        runId: limited.id,
+        nodeId: limited.rootNodeId,
+        ordinal: 2,
+        status: "failed",
+        title: "Usage limit reached",
+        type: "error",
+        failure: {
+          class: "usage_limit",
+          message: "Plan limit reached.",
+          resetAt,
+          code: "usageLimitExceeded",
+          retryable: null,
+        },
+      });
+      yield* store.apply({
+        id: EventId.make("event:limit-wake:limited"),
+        type: "run.updated",
+        threadId,
+        occurredAt: now,
+        payload: { ...limited, status: "failed", completedAt: now },
+      });
+
+      // The limited provider answers each background wake with an empty turn.
+      const addWake = Effect.fnUntraced(function* (index: number) {
+        const runId = RunId.make(`run:limit-wake:${index}`);
+        const nodeId = NodeId.make(`node:limit-wake:${index}`);
+        const endedAt = DateTime.add(now, { seconds: index });
+        yield* store.apply({
+          id: EventId.make(`event:limit-wake:run:${index}`),
+          type: "run.created",
+          threadId,
+          runId,
+          nodeId,
+          driver,
+          providerInstanceId,
+          occurredAt: endedAt,
+          payload: {
+            ...limited,
+            id: runId,
+            ordinal: limited.ordinal + index,
+            rootNodeId: nodeId,
+            userMessageId: MessageId.make(`message:limit-wake:${index}`),
+            status: "completed",
+            requestedAt: endedAt,
+            startedAt: endedAt,
+            completedAt: endedAt,
+            workStartedAt: limited.startedAt!,
+          },
+        });
+        yield* applyItem({
+          ...itemBase,
+          id: TurnItemId.make(`limit-wake:notification:${index}`),
+          runId,
+          nodeId,
+          ordinal: index * 100,
+          status: "completed",
+          type: "notification",
+          source: { kind: "background_task" },
+          outcome: "failed",
+          summary: "Background task failed",
+        });
+        yield* applyItem({
+          ...itemBase,
+          id: TurnItemId.make(`limit-wake:notice:${index}`),
+          runId,
+          nodeId,
+          ordinal: index * 100 + 1,
+          status: "completed",
+          type: "system_notice",
+          message: "Background activity updated",
+        });
+        return { runId, nodeId };
+      });
+      const assertLimited = Effect.fnUntraced(function* (expected: boolean) {
+        const projection = yield* store.getThreadProjection(threadId);
+        const sqlShell = (yield* store.getShellSnapshot()).threads.find(
+          (row) => row.id === threadId,
+        )!;
+        for (const shell of [ProjectionStore.threadShellFromProjection(projection), sqlShell]) {
+          assert.equal(shell.status, expected ? "failed" : "completed");
+          assert.equal(shell.lastErrorClass, expected ? "usage_limit" : null);
+          assert.equal(shell.usageLimitResetAt, expected ? resetAt : null);
+          if (expected) assert.equal(shell.latestRunId, limited.id);
+          else assert.notEqual(shell.latestRunId, limited.id);
+        }
+        const candidate = (yield* store.getLimitRecoveryCandidates({
+          now,
+          autoResume: true,
+          snooze: false,
+        })).find((row) => row.id === threadId);
+        assert.equal(candidate?.latestRunId, expected ? limited.id : undefined);
+      });
+
+      yield* assertLimited(true);
+      yield* addWake(1);
+      const second = yield* addWake(2);
+      yield* assertLimited(true);
+
+      // A wake the provider answered means it is working again.
+      yield* applyItem({
+        ...itemBase,
+        id: TurnItemId.make("limit-wake:reply"),
+        runId: second.runId,
+        nodeId: second.nodeId,
+        ordinal: 250,
+        status: "completed",
+        type: "assistant_message",
+        messageId: MessageId.make("message:limit-wake:reply"),
+        text: "The background task finished.",
+        streaming: false,
+      });
+      yield* assertLimited(false);
+      // An idle wake after that reply does not bring the old limit back.
+      yield* addWake(3);
+      yield* assertLimited(false);
     }),
   );
 

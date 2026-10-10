@@ -26,10 +26,7 @@ import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment"
 import { useScratchProject } from "../hooks/useScratchProject";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
-import {
-  latestExecutedRun,
-  latestRootProviderFailure,
-} from "@t3tools/shared/orchestrationV2ThreadError";
+import { latestExecutedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import {
   collectProviderUsageLimits,
@@ -2147,12 +2144,11 @@ export default function ChatView(props: ChatViewProps) {
     if (!isServerThread || serverProjection === null) return null;
     const run = latestExecutedRun(serverProjection.runs);
     if (run?.status === "interrupted") return run.id;
-    return run?.status === "failed" &&
-      serverRuntime?.lastErrorClass === "usage_limit" &&
-      latestRootProviderFailure(run, serverProjection.turnItems)?.class === "usage_limit"
-      ? run.id
-      : null;
-  }, [isServerThread, serverProjection, serverRuntime?.lastErrorClass]);
+    // The shell owns the work-aware limit classification; the bounded
+    // projection can omit the items that prove a wake did work.
+    if (serverThread?.runtime?.lastErrorClass !== "usage_limit") return null;
+    return serverThread.latestRun?.runId ?? null;
+  }, [isServerThread, serverProjection, serverThread]);
   const parentSubagentThreadId =
     activeThread?.lineage.relationshipToParent === "subagent"
       ? activeThread.lineage.parentThreadId
@@ -2259,10 +2255,10 @@ export default function ChatView(props: ChatViewProps) {
   });
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
   const timelineThreadError =
-    serverRuntime?.status === "failed" &&
-    serverRuntime.lastErrorClass === "usage_limit" &&
-    activeThreadShell?.latestRun &&
-    visibleThreadError === serverRuntime.lastError
+    activeThreadShell?.runtime?.status === "failed" &&
+    activeThreadShell.runtime.lastErrorClass === "usage_limit" &&
+    activeThreadShell.latestRun &&
+    visibleThreadError === activeThreadShell.runtime.lastError
       ? null
       : visibleThreadError;
 
@@ -7793,12 +7789,12 @@ export default function ChatView(props: ChatViewProps) {
     [feedbackSubmissions, routeThreadKey],
   );
   const limitRecoveryBanner =
-    serverRuntime?.status === "failed" &&
-    serverRuntime.lastErrorClass === "usage_limit" &&
-    activeThreadShell?.latestRun
+    activeThreadShell?.runtime?.status === "failed" &&
+    activeThreadShell.runtime.lastErrorClass === "usage_limit" &&
+    activeThreadShell.latestRun
       ? usageLimitRecoveryBannerItem({
           runId: activeThreadShell.latestRun.runId,
-          resetAt: serverRuntime.usageLimitResetAt ?? null,
+          resetAt: activeThreadShell.runtime.usageLimitResetAt ?? null,
           stoppedAt: activeThreadShell.latestRun.completedAt ?? activeThreadShell.updatedAt,
           recovery: activeThreadShell.limitRecovery ?? null,
           snoozedUntil: activeThreadShell.snoozedUntil,

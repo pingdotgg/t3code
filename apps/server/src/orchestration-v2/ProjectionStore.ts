@@ -9,6 +9,7 @@ import type {
 import {
   latestRootProviderFailure,
   latestUnheldRun,
+  runIdsWithWork,
   threadErrorSummary,
   usageLimitRunPresentedAsLatest,
 } from "@t3tools/shared/orchestrationV2ThreadError";
@@ -498,6 +499,15 @@ export interface ProjectionStoreV2Shape {
   readonly canStartQueuedRun: (
     threadId: ThreadId,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  /**
+   * Among `runIds`, those whose stored items include anything other than the
+   * wake record itself. Type-only read: item payloads stay in the store, so a
+   * usage-limit check can probe wake runs without materializing their output.
+   */
+  readonly getWakeRunIdsWithWork: (
+    threadId: ThreadId,
+    runIds: ReadonlyArray<RunId>,
+  ) => Effect.Effect<ReadonlyArray<RunId>, ProjectionStoreV2Error>;
   readonly getRecoveryThreadIds: (
     kind: ProjectionRecoveryKind,
   ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
@@ -1397,8 +1407,17 @@ function secretRequestAsPendingInput(
   };
 }
 
+export interface ThreadShellFromProjectionOptions {
+  /**
+   * Wake runs with recorded work, when the projection's turn items do not
+   * cover the wakes. See `usageLimitRunPresentedAsLatest`.
+   */
+  readonly wakeRunIdsWithWork?: ReadonlySet<RunId>;
+}
+
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
+  options?: ThreadShellFromProjectionOptions,
 ): OrchestrationV2ThreadShell {
   const providerSession =
     projection.providerSessions
@@ -1412,6 +1431,7 @@ export function threadShellFromProjection(
       projection.runs,
       projection.turnItems,
       providerSession?.lastError ?? null,
+      options?.wakeRunIdsWithWork,
     ) ?? latestUnheldRun(projection.runs);
   const activeRun =
     projection.runs
@@ -3464,6 +3484,48 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
       );
 
+    /**
+     * Join condition selecting thread `t`'s failed run that usageLimitBlockedRun
+     * would test: its latest failed run, unless a run that did something ran
+     * after it. Starting from the status index keeps threads that never failed
+     * off the run history, and wake runs are probed for work only when they
+     * follow a failure.
+     */
+    const usageLimitBlockedRunJoin = (run: Statement.Fragment) => sql`${run}.run_id = (
+      SELECT failed.run_id FROM orchestration_v2_projection_runs failed
+      WHERE failed.thread_id = t.thread_id AND failed.status = 'failed'
+      -- The run that ended last (runRanAfter).
+      ORDER BY failed.completed_at IS NULL DESC, failed.completed_at DESC,
+        failed.ordinal DESC, failed.run_id DESC
+      LIMIT 1
+    ) AND NOT EXISTS (
+      SELECT 1 FROM orchestration_v2_projection_runs later
+      WHERE later.thread_id = t.thread_id
+        AND later.run_id <> ${run}.run_id
+        AND later.status <> 'queued'
+        AND NOT (
+          later.status = 'cancelled'
+          AND json_extract(later.payload_json, '$.startedAt') IS NULL
+        )
+        AND CASE
+          WHEN later.completed_at IS NULL
+            THEN ${run}.completed_at IS NOT NULL OR later.ordinal > ${run}.ordinal
+          WHEN ${run}.completed_at IS NULL THEN 0
+          ELSE later.completed_at > ${run}.completed_at
+            OR (later.completed_at = ${run}.completed_at AND later.ordinal > ${run}.ordinal)
+        END
+        -- A completed wake that recorded only the wake itself did nothing.
+        AND NOT (
+          later.status = 'completed'
+          AND json_extract(later.payload_json, '$.workStartedAt') IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM orchestration_v2_projection_turn_items work
+            WHERE work.run_id = later.run_id
+              AND work.type NOT IN ('notification', 'checkpoint', 'system_notice')
+          )
+        )
+    )`;
+
     const getLimitRecoveryCandidates = Effect.fn("ProjectionStore.getLimitRecoveryCandidates")(
       function* (options: Parameters<ProjectionStoreV2Shape["getLimitRecoveryCandidates"]>[0]) {
         // Indexed latest-run and root-error lookups avoid reading run histories,
@@ -3488,19 +3550,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               LIMIT 1
             ) AS last_error
           FROM orchestration_v2_projection_threads t
-          INNER JOIN orchestration_v2_projection_runs r ON r.run_id = (
-            SELECT latest.run_id FROM orchestration_v2_projection_runs latest
-            WHERE latest.thread_id = t.thread_id
-              AND latest.status <> 'queued'
-              AND NOT (
-                latest.status = 'cancelled'
-                AND json_extract(latest.payload_json, '$.startedAt') IS NULL
-              )
-            -- latestExecutedRun: the run that ended last (runRanAfter).
-            ORDER BY latest.completed_at IS NULL DESC, latest.completed_at DESC,
-              latest.ordinal DESC, latest.run_id DESC
-            LIMIT 1
-          ) AND r.status = 'failed'
+          INNER JOIN orchestration_v2_projection_runs r ON ${usageLimitBlockedRunJoin(sql`r`)}
           INNER JOIN orchestration_v2_projection_turn_items item ON item.turn_item_id = (
             SELECT error.turn_item_id FROM orchestration_v2_projection_turn_items error
             WHERE error.thread_id = t.thread_id AND error.run_id = r.run_id
@@ -4696,6 +4746,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
 
+    const getWakeRunIdsWithWork: ProjectionStoreV2Shape["getWakeRunIdsWithWork"] = (
+      threadId,
+      runIds,
+    ) =>
+      runIds.length === 0
+        ? Effect.succeed([] as ReadonlyArray<RunId>)
+        : sql<{ readonly run_id: string }>`
+          SELECT DISTINCT run_id FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${threadId}
+            AND run_id IN (SELECT value FROM json_each(${encodeIdList(runIds)}))
+            -- Keep in step with the shared wake record types and the shell join.
+            AND type NOT IN ('notification', 'checkpoint', 'system_notice')
+        `.pipe(
+            Effect.map((rows) => rows.map((row) => RunId.make(row.run_id))),
+            Effect.mapError(controlReadError(threadId)),
+          );
+
     const getMessageCount: ProjectionStoreV2Shape["getMessageCount"] = (threadId) =>
       sql<{
         count: number;
@@ -5315,20 +5382,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ORDER BY candidate.ordinal DESC, candidate.run_id DESC
               LIMIT 1
             )
-            LEFT JOIN orchestration_v2_projection_runs blocked ON blocked.run_id = (
-              SELECT candidate.run_id
-              FROM orchestration_v2_projection_runs candidate
-              WHERE candidate.thread_id = t.thread_id
-                AND candidate.status <> 'queued'
-                AND NOT (
-                  candidate.status = 'cancelled'
-                  AND json_extract(candidate.payload_json, '$.startedAt') IS NULL
-                )
-              -- latestExecutedRun: the run that ended last (runRanAfter).
-              ORDER BY candidate.completed_at IS NULL DESC, candidate.completed_at DESC,
-                candidate.ordinal DESC, candidate.run_id DESC
-              LIMIT 1
-            ) AND blocked.status = 'failed'
+            LEFT JOIN orchestration_v2_projection_runs blocked ON ${usageLimitBlockedRunJoin(sql`blocked`)}
             WHERE t.deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}${
               projectId === undefined ? sql`` : sql` AND t.project_id = ${projectId}`
             }${
@@ -5955,6 +6009,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getCheckpointCaptureContext,
       getRunMessage,
       canStartQueuedRun,
+      getWakeRunIdsWithWork,
       getPendingNativeUserInputs,
       hasUnpairedRunInterruptRequest,
       getMessageCount,
@@ -6129,7 +6184,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                   thread.archivedAt === null &&
                   thread.settledOverride !== "settled",
               )
-              .map(threadShellFromProjection)
+              .map((projection) => threadShellFromProjection(projection))
               .filter(
                 (thread) =>
                   thread.status === "failed" &&
@@ -6466,6 +6521,15 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 (run.status === "queued" && run.queueHeld === true),
             )
           );
+        }),
+      getWakeRunIdsWithWork: (threadId, runIds) =>
+        Effect.gen(function* () {
+          const projection = (yield* Ref.get(replayState)).projections.get(threadId);
+          if (projection === undefined) {
+            return yield* new ProjectionStoreThreadNotFoundError({ threadId });
+          }
+          const worked = runIdsWithWork(projection.turnItems);
+          return runIds.filter((runId) => worked.has(runId));
         }),
       getThreadProjection: (threadId) =>
         Effect.gen(function* () {
