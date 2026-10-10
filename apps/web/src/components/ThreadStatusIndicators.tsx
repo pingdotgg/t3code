@@ -182,8 +182,6 @@ export function resolveThreadPullRequestBadgePresentation({
   readonly url?: string | undefined;
   readonly status: PrStatusIndicator | null;
 }): ThreadPullRequestBadgePresentation | null {
-  // The badge already folds every visible link into one state, draft included, so both the
-  // stack and the linked count index the shared table directly rather than the single-PR resolver.
   if (badge?.kind === "stack") {
     const aggregate = PULL_REQUEST_STATE_PRESENTATION[badge.state];
     return {
@@ -193,19 +191,18 @@ export function resolveThreadPullRequestBadgePresentation({
       text: badge.layers,
     };
   }
+  if (badge?.kind === "pull-request" && badge.others > 0) {
+    // This is a total across unrelated PRs, not a count of any one status.
+    return {
+      Icon: PullRequestGlyph.pullRequest,
+      toneClassName: "text-muted-foreground",
+      label: `${badge.others + 1} linked pull requests`,
+      text: `${badge.others + 1} PRs`,
+    };
+  }
   if (number === undefined || url === undefined) return null;
 
   const tooltip = status?.tooltip ?? `PR #${number}, status pending`;
-  if (badge?.kind === "pull-request" && badge.others > 0) {
-    // Unrelated links fold into one state, so a count of merged PRs reads as merged.
-    const aggregate = PULL_REQUEST_STATE_PRESENTATION[badge.state];
-    return {
-      Icon: aggregate.Icon,
-      toneClassName: aggregate.toneClassName,
-      label: `${tooltip}, and ${badge.others} more linked; overall ${aggregate.label.toLowerCase()}`,
-      text: `+${badge.others + 1}`,
-    };
-  }
   return {
     Icon: status?.Icon ?? PullRequestGlyph.pullRequest,
     toneClassName: status?.colorClass ?? "text-muted-foreground",
@@ -216,7 +213,7 @@ export function resolveThreadPullRequestBadgePresentation({
 
 /**
  * The linked-PR badge shared by the sidebar and composer footer. The badge owns what it shows:
- * the state glyph and number at the meta size, in the state's color. The caller owns the control
+ * the state glyph and number, or a neutral total for unrelated links. The caller owns the control
  * it sits in through `render` (an inline link in a sidebar row, a toolbar control in the
  * composer), and the badge fills in the behavior: a single PR is a link to it, while a stack or
  * several linked PRs is a button that opens the thread's pull requests tab.
