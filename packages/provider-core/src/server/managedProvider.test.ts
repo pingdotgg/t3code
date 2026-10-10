@@ -710,6 +710,6 @@ describe("makeManagedServerProvider", () => {
         assert.deepStrictEqual((yield* provider.refresh).usageLimits, failedLimits);
         assert.deepStrictEqual((yield* provider.refresh).usageLimits, probedLimits);
       }),
-    ).pipe(Effect.provide(AlwaysRunTestLayer)),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
 });
