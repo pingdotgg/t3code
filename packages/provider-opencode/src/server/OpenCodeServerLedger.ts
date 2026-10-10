@@ -1,4 +1,4 @@
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -6,7 +6,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
@@ -118,7 +119,7 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   const directory = path.join(input.stateDir, ENTRY_DIRECTORY);
   // Windows servers are not detached and are never recorded.
   const recordable = platform === "linux" || platform === "darwin";

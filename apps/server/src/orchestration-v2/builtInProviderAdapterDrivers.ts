@@ -3,7 +3,7 @@ import type { ProviderDriverKind } from "@t3tools/contracts";
 import {
   AcpRegistryAdapterV2Driver,
   type AcpRegistryAdapterV2DriverEnv,
-} from "./Adapters/AcpRegistryAdapterV2.ts";
+} from "@t3tools/provider-acp-registry/server";
 import {
   ClaudeAdapterV2Driver,
   type ClaudeAdapterV2DriverEnv,

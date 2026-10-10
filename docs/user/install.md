@@ -20,7 +20,7 @@ On Windows, in PowerShell:
 irm https://t3.codes/install.ps1 | iex
 ```
 
-This puts `t3` in `~/.local/bin`. If your shell reports `command not found`
+This installs the `t3` binary to `~/.local/bin`. If your shell reports `command not found`
 afterwards, that directory is not on your `PATH` yet; the installer prints the
 line to add. Set `T3CODE_CHANNEL=nightly` to install the nightly train, or
 `T3CODE_VERSION` to pin an exact version.

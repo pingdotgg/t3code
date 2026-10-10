@@ -19,7 +19,7 @@ import {
   type LaunchEditorInput,
 } from "@t3tools/contracts";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   isCommandAvailable,
   resolveSpawnCommand,
@@ -441,20 +441,20 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
 const resolveBrowserLaunch = Effect.fn("externalLauncher.resolveBrowserLaunch")(function* (
   target: string,
 ) {
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   const env = yield* readBrowserLaunchEnv;
   return buildBrowserLaunch(target, platform, env);
 });
 
 const resolveAvailableEditors = Effect.fn("externalLauncher.resolveAvailableEditors")(function* () {
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   const env = { ...(yield* readBrowserLaunchEnv), ...(yield* readCommandLookupEnv) };
   return yield* buildAvailableEditors(platform, env).pipe(withPathDirectoryListings);
 });
 
 const resolveFileManagerRevealKind = Effect.fn("externalLauncher.resolveFileManagerRevealKind")(
   function* () {
-    const platform = yield* HostProcessPlatform;
+    const platform = yield* HostProcess.Platform;
     const env = { ...(yield* readBrowserLaunchEnv), ...(yield* readCommandLookupEnv) };
     return yield* fileManagerRevealKindForPlatform(platform, env);
   },
@@ -519,7 +519,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   ExternalLauncherError,
   FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
 > {
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   const env = { ...(yield* readBrowserLaunchEnv), ...(yield* readCommandLookupEnv) };
   yield* Effect.annotateCurrentSpan({
     "externalLauncher.editor": input.editor,

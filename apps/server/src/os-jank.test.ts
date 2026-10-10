@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { CommandAvailability, WindowsShellEnvironment } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Observe the existing synchronous shell probe without launching the user's login shell.
@@ -61,8 +61,8 @@ effectIt.effect.each(["darwin", "linux"] as const)(
           const env: NodeJS.ProcessEnv = { PATH: "/prepared/bin:/usr/bin" };
 
           yield* fixPath({ shellEnvironmentPrepared: true }).pipe(
-            Effect.provideService(HostProcessPlatform, platform),
-            Effect.provideService(HostProcessEnvironment, env),
+            Effect.provideService(HostProcess.Platform, platform),
+            Effect.provideService(HostProcess.Environment, env),
             Effect.provide(NodeServices.layer),
           );
 
@@ -86,8 +86,8 @@ effectIt.effect("hydrates PATH when the desktop handoff is absent", () =>
         const env: NodeJS.ProcessEnv = { SHELL: "/bin/bash", PATH: "/usr/bin" };
 
         yield* fixPath().pipe(
-          Effect.provideService(HostProcessPlatform, "linux"),
-          Effect.provideService(HostProcessEnvironment, env),
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.Environment, env),
           Effect.provide(NodeServices.layer),
         );
 
@@ -104,8 +104,8 @@ effectIt.effect("repairs Windows PATH even when the desktop marks it prepared", 
     const commands: string[] = [];
 
     yield* fixPath({ shellEnvironmentPrepared: true }).pipe(
-      Effect.provideService(HostProcessPlatform, "win32"),
-      Effect.provideService(HostProcessEnvironment, env),
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provideService(HostProcess.Environment, env),
       Effect.provideService(WindowsShellEnvironment, () => ({ PATH: "C:\\Tools" })),
       Effect.provideService(CommandAvailability, (command) =>
         Effect.sync(() => {

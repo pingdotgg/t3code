@@ -8,9 +8,14 @@ export const PIERRE_TREE_UNSAFE_CSS = `
     --trees-hover-bg-override: color-mix(in srgb, currentColor 7%, transparent);
     --trees-border-color-override: color-mix(in srgb, currentColor 14%, transparent);
     --trees-font-family-override: var(--font-sans);
-    --trees-font-size-override: 12px;
+    --trees-font-size-override: 0.75rem;
   }
   button[data-type='item'] { border-radius: 5px; }
+  svg[data-icon-name='t3-tree-icon-loading'] { opacity: 0.6; }
+  @media (prefers-reduced-motion: no-preference) {
+    svg[data-icon-name='t3-tree-icon-loading'] { animation: t3-tree-spin 1s linear infinite; }
+  }
+  @keyframes t3-tree-spin { to { transform: rotate(360deg); } }
 `;
 
 /** Host styles that keep a Pierre tree on the active color scheme and foreground. */

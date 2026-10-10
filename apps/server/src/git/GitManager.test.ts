@@ -43,8 +43,11 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { decodeGitHubPullRequestListJson } from "../sourceControl/gitHubPullRequests.ts";
-import * as GitLabCli from "../sourceControl/GitLabCli.ts";
+import { decodeGitHubPullRequestListJson } from "@t3tools/source-control-github/server/gitHubPullRequests";
+import * as GitHubChangeRequestTemplate from "@t3tools/source-control-github/server/gitHubChangeRequestTemplate";
+import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
+import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -53,12 +56,13 @@ import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
-import * as GitLabSourceControlProvider from "../sourceControl/GitLabSourceControlProvider.ts";
+import * as ForgejoSourceControlProvider from "@t3tools/source-control-forgejo/server/ForgejoSourceControlProvider";
+import * as GitLabSourceControlProvider from "@t3tools/source-control-gitlab/server/GitLabSourceControlProvider";
 import {
   ForgejoPullRequestSchema,
   toForgejoChangeRequest,
-} from "../sourceControl/forgejoPullRequests.ts";
-import type { SourceControlProvider } from "../sourceControl/SourceControlProvider.ts";
+} from "@t3tools/source-control-forgejo/server/forgejoPullRequests";
+import type { SourceControlProvider } from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -543,6 +547,13 @@ function createGitHubProviderWithFakeGh(scenario: FakeGhScenario = {}): {
   return {
     service: {
       kind: "github",
+      // The GitHub provider's own lookup rule and template convention, which GitManager reads
+      // instead of the kind.
+      headBranchProbe: ({ headSelectors }) => ({
+        headSelectors: headSelectors.filter((selector) => !selector.includes(":")),
+        limit: 100,
+      }),
+
       listChangeRequests: (input) =>
         input.state === "open"
           ? execute({
@@ -743,7 +754,18 @@ function makeManager(input?: {
       );
   const layerSourceControlRegistry = Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
-    Effect.succeed(input?.sourceControlProvider ?? fakeGitHubProvider).pipe(
+    Effect.gen(function* () {
+      // GitHub reads its PR template with git, which the fake gh cannot answer; give the fake
+      // the package's real reader over the test repository's git.
+      const git = yield* GitVcsDriver.GitVcsDriver;
+      return (
+        input?.sourceControlProvider ?? {
+          ...fakeGitHubProvider,
+          readChangeRequestTemplate: ({ cwd, treeish }: { cwd: string; treeish: string }) =>
+            GitHubChangeRequestTemplate.detect(cwd, treeish, git.execute),
+        }
+      );
+    }).pipe(
       Effect.map((provider) =>
         SourceControlProviderRegistry.SourceControlProviderRegistry.of({
           resolveLink: (input) => provider.resolveLink?.(input),
@@ -767,9 +789,12 @@ function makeManager(input?: {
         runForThread: () => Effect.succeed({ status: "no-script" as const }),
       },
     ),
-    layerVcsDriver,
     layerServerSettings,
-  ).pipe(Layer.provideMerge(layerSourceControlRegistry), Layer.provideMerge(NodeServices.layer));
+  ).pipe(
+    Layer.provideMerge(layerSourceControlRegistry),
+    Layer.provideMerge(layerVcsDriver),
+    Layer.provideMerge(NodeServices.layer),
+  );
   // Built into the test's scope: the manager reads these stores after this returns.
   const layerStores = Layer.merge(ProjectionStore.layer, ProjectStore.layer).pipe(
     Layer.provideMerge(SqlitePersistence.layerMemory),
@@ -2108,17 +2133,19 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           source_project: { path_with_namespace: "Group/Subgroup/Fork" },
         },
       ]);
-      const calls: VcsProcess.VcsProcessInput[] = [];
+      const calls: SourceControlHost.SourceControlProcessInput[] = [];
       const provider = yield* GitLabSourceControlProvider.make.pipe(
         Effect.provide(
           GitLabCli.layer.pipe(
             Layer.provide(
-              Layer.mock(VcsProcess.VcsProcess)({
-                run: (input) =>
-                  Effect.sync(() => {
-                    calls.push(input);
-                    return fakeGhOutput(output);
-                  }),
+              TestSourceControlHost.layer({
+                process: {
+                  run: (input) =>
+                    Effect.sync(() => {
+                      calls.push(input);
+                      return fakeGhOutput(output);
+                    }),
+                },
               }),
             ),
           ),
@@ -3716,7 +3743,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("create_pr pushes a clean branch before creating the PR when needed", () =>
+  it.effect("create_pr pushes committed changes while preserving a dirty worktree", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -3726,6 +3753,10 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       NodeFS.writeFileSync(NodePath.join(repoDir, "create-pr-only.txt"), "create pr\n");
       yield* runGit(repoDir, ["add", "create-pr-only.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "Create PR only branch"]);
+      const headBefore = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "uncommitted readme\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "untracked.txt"), "untracked work\n");
+      const statusBefore = (yield* runGit(repoDir, ["status", "--porcelain"])).stdout;
 
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
@@ -3754,6 +3785,10 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(result.push.setUpstream).toBe(true);
       expect(result.pr.status).toBe("created");
       expect(result.pr.number).toBe(303);
+      expect((yield* runGit(repoDir, ["status", "--porcelain"])).stdout).toBe(statusBefore);
+      expect(
+        (yield* runGit(remoteDir, ["rev-parse", "feature/create-pr-only"])).stdout.trim(),
+      ).toBe(headBefore);
       expect(
         ghCalls.some((call) =>
           call.includes("pr create --base main --head feature/create-pr-only"),
@@ -4228,7 +4263,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         };
         const repository = GitManager.parseRepositoryNameWithOwnerFromRemoteUrl(
           `https://forgejo.example/forgejo/${owner}/project.git`,
-          "forgejo",
+          { repositoryNameFromRemoteUrl: ForgejoSourceControlProvider.repositoryNameFromRemoteUrl },
         );
         expect(repository).toBe(`${owner}/project`);
         const context = {
@@ -4249,13 +4284,13 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(
         GitManager.parseRepositoryNameWithOwnerFromRemoteUrl(
           "git@forgejo.example:maria/project.git",
-          "forgejo",
+          { repositoryNameFromRemoteUrl: ForgejoSourceControlProvider.repositoryNameFromRemoteUrl },
         ),
       ).toBe("maria/project");
       expect(
         GitManager.parseRepositoryNameWithOwnerFromRemoteUrl(
           "https://gitlab.example/group/maria/project.git",
-          "gitlab",
+          {},
         ),
       ).toBe("group/maria/project");
     }),
@@ -6172,7 +6207,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("create_pr emits only the PR phase when the branch is already pushed", () =>
+  it.effect("create_pr preserves dirty work on an already pushed branch", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -6183,8 +6218,22 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* runGit(repoDir, ["add", "pr-only.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "PR only branch"]);
       yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-only-follow-up"]);
+      const headBefore = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout;
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "staged readme\n");
+      yield* runGit(repoDir, ["add", "README.md"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "pr-only.txt"), "unstaged feature work\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "untracked.txt"), "untracked work\n");
+      const statusBefore = (yield* runGit(repoDir, ["status", "--porcelain"])).stdout;
+      const stagedBefore = (yield* runGit(repoDir, ["diff", "--cached"])).stdout;
+      let generatedContent: TextGeneration.PrContentGenerationInput | undefined;
 
       const { manager } = yield* makeManager({
+        textGeneration: {
+          generatePrContent: (input) => {
+            generatedContent = input;
+            return Effect.succeed({ title: "PR only branch", body: "Committed feature work" });
+          },
+        },
         ghScenario: {
           prListSequence: [
             JSON.stringify([]),
@@ -6224,6 +6273,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(result.commit.status).toBe("skipped_not_requested");
       expect(result.push.status).toBe("skipped_not_requested");
       expect(result.pr.status).toBe("created");
+      expect(generatedContent?.diffPatch).toContain("+pr only");
+      expect(generatedContent?.diffPatch).not.toContain("staged readme");
+      expect(generatedContent?.diffPatch).not.toContain("unstaged feature work");
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout).toBe(headBefore);
+      expect((yield* runGit(repoDir, ["status", "--porcelain"])).stdout).toBe(statusBefore);
+      expect((yield* runGit(repoDir, ["diff", "--cached"])).stdout).toBe(stagedBefore);
       expect(
         events.filter(
           (event): event is Extract<GitActionProgressEvent, { kind: "phase_started" }> =>

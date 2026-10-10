@@ -252,7 +252,7 @@ export const layer: Layer.Layer<
 );
 
 function makeCheckpointTurnItem(input: {
-  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly run: OrchestrationV2Run;
   readonly rootNode: OrchestrationV2ExecutionNode;
   readonly providerThread: OrchestrationV2ProviderThread;

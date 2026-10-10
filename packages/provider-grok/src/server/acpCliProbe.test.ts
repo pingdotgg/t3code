@@ -15,20 +15,15 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/process";
 import { describe, expect } from "vite-plus/test";
 
 import { makeGrokAcpRuntime } from "./acpSupport.ts";
 
-const makeProbeRuntime = Effect.gen(function* () {
-  const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  return yield* makeGrokAcpRuntime({
-    grokSettings: { binaryPath: "grok" },
-    environment: process.env,
-    childProcessSpawner,
-    cwd: process.cwd(),
-    clientInfo: { name: "t3-grok-probe", version: "0.0.0" },
-  });
+const makeProbeRuntime = makeGrokAcpRuntime({
+  grokSettings: { binaryPath: "grok" },
+  environment: process.env,
+  cwd: process.cwd(),
+  clientInfo: { name: "t3-grok-probe", version: "0.0.0" },
 });
 
 describe.runIf(process.env.T3_GROK_ACP_PROBE === "1")("Grok ACP CLI probe", () => {
@@ -78,11 +73,9 @@ describe.runIf(process.env.T3_GROK_ACP_PROBE === "1")("Grok ACP CLI probe", () =
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const cwd = yield* fileSystem.makeTempDirectoryScoped();
-        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const runtime = yield* makeGrokAcpRuntime({
           grokSettings: { binaryPath: "grok" },
           environment: process.env,
-          childProcessSpawner,
           cwd,
           runtimeMode: "approval-required",
           clientInfo: { name: "t3-grok-probe", version: "0.0.0" },

@@ -82,16 +82,24 @@ export const isLocalLoopbackHost = (host: string): boolean => {
 };
 
 /**
- * A Tailscale address: a MagicDNS name, the 100.64.0.0/10 range Tailscale
- * assigns, or its IPv6 range fd7a:115c:a1e0::/48.
+ * A name or address only Tailscale uses: a MagicDNS name or its IPv6 range
+ * fd7a:115c:a1e0::/48. Its IPv4 addresses come from the shared 100.64.0.0/10
+ * range, so they prove nothing on their own.
  */
 export const isTailnetHost = (host: string): boolean => {
   const normalized = normalizeHostname(host);
   if (normalized.endsWith(".ts.net")) return true;
-  const parts = parseIpv4Address(normalized);
-  if (parts !== null) return parts[0] === 100 && parts[1]! >= 64 && parts[1]! <= 127;
   const ipv6 = parseIpv6Address(normalized);
   return ipv6 !== null && ipv6PrefixMatches(ipv6, [0xfd7a, 0x115c, 0xa1e0, 0, 0, 0, 0, 0], 48);
+};
+
+/**
+ * An IPv4 address in 100.64.0.0/10. Tailscale, Cloudflare WARP and Mesh, other
+ * VPNs, and carrier-grade NAT all assign from this range.
+ */
+export const isSharedAddressSpaceHost = (host: string): boolean => {
+  const parts = parseIpv4Address(host);
+  return parts !== null && parts[0] === 100 && parts[1]! >= 64 && parts[1]! <= 127;
 };
 
 export const isPrivateNetworkHost = (host: string): boolean => {

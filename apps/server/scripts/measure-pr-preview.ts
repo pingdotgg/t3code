@@ -10,14 +10,19 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { FetchHttpClient } from "effect/http";
 
-import * as GitHubPullRequestApi from "../src/pullRequest/GitHubPullRequestApi.ts";
-import * as GitHubPullRequestProvider from "../src/pullRequest/GitHubPullRequestProvider.ts";
-import * as GitHubApi from "../src/sourceControl/GitHubApi.ts";
-import * as GitHubCredentials from "../src/sourceControl/GitHubCredentials.ts";
+import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
+import * as GitHubPullRequestProvider from "@t3tools/source-control-github/server/GitHubPullRequestProvider";
+import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
+import * as ServerConfig from "../src/config.ts";
 import * as ServerSettings from "../src/serverSettings.ts";
-import * as GitHubQuota from "../src/sourceControl/githubQuota.ts";
-import * as SourceControlRateLimit from "../src/sourceControl/SourceControlRateLimit.ts";
+import * as GitHubQuota from "@t3tools/source-control-github/server/GitHubQuota";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as ServerSourceControlHost from "../src/sourceControl/ServerSourceControlHost.ts";
+import * as GitVcsDriver from "../src/vcs/GitVcsDriver.ts";
+import * as VcsDriverRegistry from "../src/vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../src/vcs/VcsProcess.ts";
+import * as VcsProjectConfig from "../src/vcs/VcsProjectConfig.ts";
 
 const [repository, ...numbers] = process.argv.slice(2);
 if (!repository || numbers.length === 0 || numbers.some((number) => !/^\d+$/.test(number))) {
@@ -40,6 +45,17 @@ function withRateLimit(query: string): string {
     ? query
     : `${query.slice(0, end)}\n  rateLimit { cost }\n${query.slice(end)}`;
 }
+
+// The server's host port over default settings: gh's own account choice, no saved token.
+const sourceControlHost = ServerSourceControlHost.layer.pipe(
+  Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),
+  Layer.provide(GitVcsDriver.layer),
+  Layer.provide(ServerSettings.layerTest()),
+  // A scratch state directory, so nothing here touches a real T3 home.
+  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-measure-pr-preview-" })),
+  Layer.provideMerge(VcsProcess.layer),
+  Layer.provideMerge(NodeServices.layer),
+);
 
 const measuredApi = Layer.effect(
   GitHubApi.GitHubApi,
@@ -73,18 +89,15 @@ const measuredApi = Layer.effect(
     });
   }),
 ).pipe(
-  Layer.provide(GitHubCredentials.layer.pipe(Layer.provide(ServerSettings.layerTest()))),
+  Layer.provide(GitHubCredentials.layer),
   Layer.provide(GitHubQuota.layer),
   Layer.provide(SourceControlRateLimit.layer),
   Layer.provide(FetchHttpClient.layer),
-  Layer.provide(VcsProcess.layer),
-  Layer.provide(NodeServices.layer),
 );
 
 const services = GitHubPullRequestApi.layer.pipe(
   Layer.provideMerge(measuredApi),
-  Layer.provideMerge(VcsProcess.layer),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(sourceControlHost),
 );
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
