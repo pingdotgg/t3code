@@ -47,6 +47,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 import { GitIcon, JujutsuIcon, type Icon } from "../Icons";
 import { SourceControlHostSettings } from "./SourceControlHostSettings";
+import { ForgejoInstanceSettings } from "./ForgejoInstanceSettings";
 import { GitHubAccountSettings } from "./GitHubAccountSettings";
 import { GitHubTokenSettings } from "./GitHubTokenSettings";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
@@ -208,6 +209,18 @@ function itemSummary({
   }
 
   if (auth) {
+    if (auth.instances && auth.instances.length > 1) {
+      const count = new Set(auth.instances.map((entry) => entry.baseUrl)).size;
+      const authenticated = auth.instances.filter(
+        (entry) => entry.status === "authenticated",
+      ).length;
+      return (
+        <span>
+          {count} {count === 1 ? "instance" : "instances"} configured · {authenticated}{" "}
+          authenticated {authenticated === 1 ? "connection" : "connections"}
+        </span>
+      );
+    }
     if (auth.status === "authenticated") {
       // The server names the account its requests use, Settings choice included, and
       // says when an environment token overrides it.
@@ -279,7 +292,8 @@ function DiscoveryItemRow({
     if (
       (item.kind === "git" && searchTargetId === searchableSetting("git-fetch-interval").id) ||
       searchTargetId === sourceControlHostSettingsSearchId(item.kind) ||
-      (item.kind === "github" && searchTargetId === searchableSetting("github-accounts").id)
+      (item.kind === "github" && searchTargetId === searchableSetting("github-accounts").id) ||
+      (item.kind === "forgejo" && searchTargetId === searchableSetting("forgejo-instances").id)
     ) {
       setIsExpanded(true);
     }
@@ -624,6 +638,10 @@ export function SourceControlSettingsPanel() {
                           />
                         ) : null}
                       </div>
+                    </SettingsSearchTarget>
+                  ) : item.kind === "forgejo" ? (
+                    <SettingsSearchTarget id={searchableSetting("forgejo-instances").id}>
+                      <ForgejoInstanceSettings key={environmentId} auth={item.auth} />
                     </SettingsSearchTarget>
                   ) : (
                     hostSettingsPanel(item.kind)

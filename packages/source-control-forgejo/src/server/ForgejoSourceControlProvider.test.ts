@@ -1257,10 +1257,7 @@ it.effect(
               ? Option.some("maria")
               : Option.none(),
           );
-          assert.strictEqual(
-            commands.some((command) => command.startsWith("tea ")),
-            scenario === "missing",
-          );
+          assert.isTrue(commands.some((command) => command.startsWith("tea ")));
           assert.include(commands, "fj version");
         }).pipe(
           Effect.provide(

@@ -1,8 +1,9 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { SourceControlProviderKind, type SourceControlProviderAuth } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
+import * as Option from "effect/Option";
 import { SourceControlProviderError } from "@t3tools/contracts";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as ForgejoCli from "./ForgejoCli.ts";
@@ -16,6 +17,44 @@ import {
 import { ForgejoPullRequestSchema, toForgejoChangeRequest } from "./forgejoPullRequests.ts";
 
 const isForgejoCliError = Schema.is(ForgejoCli.ForgejoCliError);
+type ForgejoInstance = NonNullable<SourceControlProviderAuth["instances"]>[number];
+const INVALID_CONNECTION_DETAIL =
+  "Some CLI connections have an invalid name or server URL. Check fj and tea login configuration.";
+
+function accountVerificationDetail(error: ForgejoCli.ForgejoCliError): string {
+  const advice = error.reason
+    ? {
+        "missing-cli": "Install fj and rescan.",
+        authentication: "Authenticate this server again with fj.",
+        forbidden: "Check this account's permissions.",
+        "not-found": "Check the server URL and account access.",
+        "rate-limit": "Rescan after the server's rate limit resets.",
+        "invalid-response": "The server returned an invalid response. Check the server and rescan.",
+      }[error.reason]
+    : "Check server availability and rescan.";
+  const status =
+    error.httpStatus !== undefined &&
+    Number.isInteger(error.httpStatus) &&
+    error.httpStatus >= 100 &&
+    error.httpStatus <= 599
+      ? ` (HTTP ${error.httpStatus})`
+      : "";
+  // API error details can contain entire proxy response bodies. Discovery sends only
+  // the safe status and failure category, keeping every connection's message bounded.
+  return `Account verification failed${status}. ${advice}`;
+}
+
+function hasConnectionIdentity(login: typeof ForgejoCli.ForgejoLoginSchema.Type): boolean {
+  if (!login.name.trim()) return false;
+  try {
+    const url = new URL(login.url);
+    return (
+      (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password
+    );
+  } catch {
+    return false;
+  }
+}
 
 export const discovery = {
   type: "cli",
@@ -26,9 +65,10 @@ export const discovery = {
   authArgs: ["login", "status", "--output", "json"],
   remoteRefinementArgs: ["login", "list", "--output", "json"],
   parseAuth: (input) => {
-    const logins = ForgejoCli.parseForgejoLogins(input.stdout);
+    const configured = ForgejoCli.parseForgejoLogins(input.stdout);
+    const logins = configured.filter(hasConnectionIdentity);
     const login = logins.find((entry) => entry.default === "true") ?? logins[0];
-    return login
+    const auth = login
       ? providerAuth({
           status: login.valid === "true" ? "authenticated" : "unauthenticated",
           account: login.user,
@@ -38,6 +78,24 @@ export const discovery = {
           status: "unauthenticated",
           detail: "Run `tea login add` to authenticate a Forgejo or Gitea server.",
         });
+    return {
+      ...auth,
+      ...(configured.length !== logins.length
+        ? { detail: Option.some(INVALID_CONNECTION_DETAIL) }
+        : {}),
+      instances: logins.map((entry): ForgejoInstance => ({
+        baseUrl: entry.url,
+        executable: "tea",
+        login: entry.name,
+        account: Option.fromNullishOr(entry.user.trim() || undefined),
+        status:
+          entry.valid === "true"
+            ? "authenticated"
+            : entry.valid === "false"
+              ? "unauthenticated"
+              : "unknown",
+      })),
+    };
   },
   refineUnknownRemote: (input) => {
     const remote = ForgejoCli.parseForgejoRemote(input.context.remoteUrl);
@@ -86,7 +144,9 @@ export const makeDiscovery = Effect.gen(function* () {
           Effect.orElseSucceed(() => ""),
         );
       const credentials = yield* Effect.result(listLogins({ cwd, command: "fj", remoteUrl }));
-      const logins = Result.isSuccess(credentials) ? credentials.success : [];
+      const logins = Result.isSuccess(credentials)
+        ? credentials.success.filter(hasConnectionIdentity)
+        : [];
       const remote = ForgejoCli.parseForgejoRemote(remoteUrl);
       const login =
         (remote && ForgejoCli.matchForgejoLogin(logins, remote)) ||
@@ -119,29 +179,117 @@ export const makeDiscovery = Effect.gen(function* () {
                   }),
         },
       });
-      // A configured fj account owns its requests, including authentication errors.
-      if (fj.status === "available" && (login || Result.isFailure(credentials))) {
-        if (login && fj.auth.status === "authenticated" && cli.getAccount) {
-          const account = yield* cli.getAccount({ cwd, baseUrl: login.url }).pipe(Effect.result);
-          return {
-            ...fj,
-            auth: Result.isSuccess(account)
-              ? providerAuth({
-                  status: "authenticated",
-                  account: account.success,
-                  host: ForgejoCli.parseForgejoRemote(login.url)?.host,
-                })
-              : providerAuth({
-                  status: "unknown",
-                  detail: account.failure.detail,
-                  host: ForgejoCli.parseForgejoRemote(login.url)?.host,
-                }),
-          };
-        }
-        return fj;
-      }
+      // Enumerate both tools even when fj owns the primary account. A tea-only server must
+      // still be visible, and fj's SSH aliases are not additional connections.
       const tea = yield* probeSourceControlProvider({ cwd, process, spec: discovery });
-      return tea.status === "available" || fj.status === "missing" ? tea : fj;
+      const getAccount = cli.getAccount;
+      const fjInstances = yield* Effect.forEach(
+        fj.status === "available"
+          ? [...new Map(logins.map((entry) => [entry.name, entry])).values()]
+          : [],
+        (entry) =>
+          Effect.gen(function* (): Effect.fn.Return<ForgejoInstance> {
+            const selected = entry.name === login?.name;
+            const account =
+              getAccount && (!selected || fj.auth.status === "authenticated")
+                ? yield* getAccount({ cwd, baseUrl: entry.url }).pipe(
+                    Effect.timeout(5_000),
+                    Effect.result,
+                  )
+                : null;
+            const status = account
+              ? Result.isSuccess(account)
+                ? "authenticated"
+                : account.failure._tag === "ForgejoCliError" &&
+                    account.failure.reason === "authentication"
+                  ? "unauthenticated"
+                  : "unknown"
+              : selected
+                ? fj.auth.status
+                : "unknown";
+            return {
+              baseUrl: entry.url,
+              executable: "fj",
+              login: entry.name,
+              account:
+                account && Result.isSuccess(account)
+                  ? Option.some(account.success)
+                  : Option.fromNullishOr(entry.user.trim() || undefined),
+              status,
+              ...(account && Result.isFailure(account)
+                ? {
+                    detail:
+                      account.failure._tag === "ForgejoCliError"
+                        ? accountVerificationDetail(account.failure)
+                        : "Account verification timed out. Rescan to try again.",
+                  }
+                : {}),
+            };
+          }),
+        // fj serializes OAuth renewal. Start each deadline after the previous connection
+        // finishes so a slow host cannot consume a healthy host's verification budget.
+        { concurrency: 1 },
+      );
+      // `tea login status` contacts every host. If one is offline or the command times
+      // out, its local login list still identifies the configured connections.
+      const teaConfigured =
+        !tea.auth.instances?.length && tea.status === "available"
+          ? yield* listLogins({ cwd, command: "tea", remoteUrl }).pipe(Effect.result)
+          : null;
+      const teaInstances = tea.auth.instances?.length
+        ? tea.auth.instances
+        : teaConfigured && Result.isSuccess(teaConfigured)
+          ? teaConfigured.success.filter(hasConnectionIdentity).map((entry): ForgejoInstance => ({
+              baseUrl: entry.url,
+              executable: "tea",
+              login: entry.name,
+              account: Option.fromNullishOr(entry.user.trim() || undefined),
+              status: "unknown",
+            }))
+          : [];
+      const instances = [...fjInstances, ...teaInstances];
+      // Listing tea must not silently switch the primary account after a fj auth failure.
+      const primary =
+        fj.status === "available" && (login || Result.isFailure(credentials))
+          ? fj
+          : tea.status === "available" || fj.status === "missing"
+            ? tea
+            : fj;
+      const selectedInstance =
+        primary === fj && login
+          ? fjInstances.find((entry) => entry.login === login.name)
+          : undefined;
+      const details = new Set(Option.toArray(primary.auth.detail));
+      if (selectedInstance?.detail) details.add(selectedInstance.detail);
+      if (
+        (Result.isSuccess(credentials) && credentials.success.length !== logins.length) ||
+        Option.getOrNull(tea.auth.detail) === INVALID_CONNECTION_DETAIL ||
+        (teaConfigured &&
+          Result.isSuccess(teaConfigured) &&
+          teaConfigured.success.some((entry) => !hasConnectionIdentity(entry)))
+      ) {
+        details.add(INVALID_CONNECTION_DETAIL);
+      }
+      if (teaConfigured && Result.isFailure(teaConfigured)) {
+        details.add("Could not read tea connections. Check tea login configuration and rescan.");
+      }
+      return {
+        ...primary,
+        auth: {
+          ...primary.auth,
+          detail: Option.fromNullishOr([...details].join(" ") || undefined),
+          ...(selectedInstance
+            ? {
+                status: selectedInstance.status,
+                account: selectedInstance.account,
+                host: Option.fromNullishOr(
+                  ForgejoCli.parseForgejoRemote(selectedInstance.baseUrl)?.host,
+                ),
+              }
+            : {}),
+          instances,
+        },
+      };
     }),
     refineUnknownRemote: Effect.fn("ForgejoSourceControlProvider.refineUnknownRemote")(
       function* (input: {
