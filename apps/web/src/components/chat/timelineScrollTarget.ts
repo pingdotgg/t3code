@@ -29,3 +29,28 @@ export function isTimelineScrollTarget(
   }
   return true;
 }
+
+/**
+ * Reports, for each timeline scroll, whether the reader moved it up. A scroll
+ * that chains out of an embedded frame (an HTML render or MCP app) reaches the
+ * timeline with no wheel, touch, or pointer event it can see. Following only
+ * moves toward the end, and shrinking content can only pull the offset up by
+ * clamping, so an upward move while the content kept its height is the reader.
+ */
+export function createUpwardScrollDetector(initial: { top: number; height: number }) {
+  let baseline = initial;
+  return (next: { top: number; height: number }) => {
+    // Shrinking content or a move toward the end starts a new measurement.
+    if (next.height < baseline.height || next.top > baseline.top) {
+      baseline = next;
+      return false;
+    }
+    if (next.top < baseline.top - 1) {
+      baseline = next;
+      return true;
+    }
+    // A slow scroll can move under a pixel per event; let those moves add up.
+    baseline = { top: baseline.top, height: next.height };
+    return false;
+  };
+}
