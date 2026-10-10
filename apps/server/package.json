@@ -66,6 +66,7 @@
     "playwright-core": "1.60.0",
     "proper-lockfile": "4.1.2",
     "saxes": "6.0.0",
+    "skills": "1.7.1",
     "stream-chain": "^4.2.5",
     "stream-json": "3.6.0",
     "undici": "catalog:",

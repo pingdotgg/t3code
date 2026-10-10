@@ -206,6 +206,7 @@ import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
+import * as SkillLibrary from "./skills/SkillLibrary.ts";
 import { readWorkflowScript } from "./orchestration-v2/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
@@ -1403,6 +1404,7 @@ export const layerWsRpc = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const skillLibrary = yield* SkillLibrary.SkillLibrary;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -2866,6 +2868,11 @@ export const layerWsRpc = (
                 }),
             ),
           ),
+        [WS_METHODS.skillsInspect]: (input) => skillLibrary.inspect(input),
+        [WS_METHODS.skillsPreview]: (input) => skillLibrary.preview(input),
+        [WS_METHODS.skillsInstall]: (input) => skillLibrary.install(input),
+        [WS_METHODS.skillsUpdate]: (input) => skillLibrary.update(input),
+        [WS_METHODS.skillsRemove]: (input) => skillLibrary.remove(input).pipe(Effect.as({})),
         [WS_METHODS.projectsReadFile]: (input) =>
           workspaceFileSystem.readFile(input).pipe(
             Effect.mapError(

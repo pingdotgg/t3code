@@ -158,6 +158,16 @@ import {
   ReviewDiffPreviewResult,
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
+import {
+  InstalledSkillInput,
+  SkillInspectInput,
+  SkillInspectResult,
+  SkillInstallInput,
+  SkillInstallResult,
+  SkillLibraryError,
+  SkillPreviewInput,
+  SkillPreviewResult,
+} from "./skills.ts";
 import { OrchestrationSearchThreadsError } from "./threadSearch.ts";
 import {
   ProviderUploadFeedbackError,
@@ -499,6 +509,11 @@ export const WS_METHODS = {
   serverGetConfig: "server.getConfig",
   serverGetNpmRelease: "server.getNpmRelease",
   serverRefreshProviders: "server.refreshProviders",
+  skillsInspect: "skills.inspect",
+  skillsPreview: "skills.preview",
+  skillsInstall: "skills.install",
+  skillsUpdate: "skills.update",
+  skillsRemove: "skills.remove",
   serverUpdateProvider: "server.updateProvider",
   serverUpdateServer: "server.updateServer",
   serverUpdateServerWithProgress: "server.updateServerWithProgress",
@@ -629,6 +644,36 @@ const WsServerProbeRpc = Rpc.make(WS_METHODS.serverProbe, {
   payload: Schema.Struct({}),
   success: Schema.Struct({}),
   error: EnvironmentAuthorizationError,
+});
+
+const WsSkillsInspectRpc = Rpc.make(WS_METHODS.skillsInspect, {
+  payload: SkillInspectInput,
+  success: SkillInspectResult,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsSkillsPreviewRpc = Rpc.make(WS_METHODS.skillsPreview, {
+  payload: SkillPreviewInput,
+  success: SkillPreviewResult,
+  error: Schema.Union([SkillLibraryError, EnvironmentAuthorizationError]),
+});
+
+const WsSkillsInstallRpc = Rpc.make(WS_METHODS.skillsInstall, {
+  payload: SkillInstallInput,
+  success: SkillInstallResult,
+  error: Schema.Union([SkillLibraryError, EnvironmentAuthorizationError]),
+});
+
+const WsSkillsUpdateRpc = Rpc.make(WS_METHODS.skillsUpdate, {
+  payload: InstalledSkillInput,
+  success: SkillInstallResult,
+  error: Schema.Union([SkillLibraryError, EnvironmentAuthorizationError]),
+});
+
+const WsSkillsRemoveRpc = Rpc.make(WS_METHODS.skillsRemove, {
+  payload: InstalledSkillInput,
+  success: Schema.Struct({}),
+  error: Schema.Union([SkillLibraryError, EnvironmentAuthorizationError]),
 });
 
 const WsServerGetConfigRpc = Rpc.make(WS_METHODS.serverGetConfig, {
@@ -1984,6 +2029,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
+  WsSkillsInspectRpc,
+  WsSkillsPreviewRpc,
+  WsSkillsInstallRpc,
+  WsSkillsUpdateRpc,
+  WsSkillsRemoveRpc,
   WsServerUpdateProviderRpc,
   WsProviderConsumeResetCreditRpc,
   WsProviderAuthStartRpc,
