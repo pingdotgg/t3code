@@ -539,6 +539,11 @@ describe("pools", () => {
       "env-a:personal",
       "hub:x.json",
     ]);
+    expect(accounts.map((account) => account.subscriptionKey)).toEqual([
+      "codex:same@example.com:ws-business",
+      "codex:same@example.com:ws-plus",
+      "hub:x.json",
+    ]);
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(8);
     // One hub file name in two workspaces stays two accounts, even without an
     // email to tell them apart.

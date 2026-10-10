@@ -101,6 +101,7 @@ import {
   savePreferencesPatch,
 } from "../persistence/imperative";
 import { toStableSavedRemoteConnection } from "./connection";
+import { DEFAULT_WIDGET_CONFIGURATION } from "../widgets/subscriptionWidgetPreferences";
 
 const managedConnection = {
   environmentId: EnvironmentId.make("environment-1"),
@@ -194,6 +195,31 @@ describe("mobile connection storage", () => {
       darkThemeId: "ocean",
       themeMode: "system",
     });
+  });
+
+  it("retains independent usage widget profiles across preference reloads and other edits", async () => {
+    const subscriptionWidgets = {
+      defaults: DEFAULT_WIDGET_CONFIGURATION,
+      widgets: {
+        "12": {
+          ...DEFAULT_WIDGET_CONFIGURATION,
+          accountIds: ["codex:personal@example.com"],
+          resetDisplay: "remaining" as const,
+          quotaResetDisplays: { session: "both" as const },
+          showEnvironment: true,
+          theme: "dark" as const,
+        },
+        "13": {
+          ...DEFAULT_WIDGET_CONFIGURATION,
+          grouping: "pooled" as const,
+          showResetTimes: false,
+          showEnvironment: false,
+        },
+      },
+    };
+    await savePreferencesPatch({ subscriptionWidgets });
+    await savePreferencesPatch({ baseFontSize: 17 });
+    await expect(loadPreferences()).resolves.toEqual({ subscriptionWidgets, baseFontSize: 17 });
   });
 
   it("persists Material You independently for each appearance", async () => {

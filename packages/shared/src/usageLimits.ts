@@ -173,6 +173,8 @@ function accountKeyResolver(reports: Iterable<AccountReport>) {
  */
 export interface LimitAccount {
   readonly key: string;
+  /** Subscription identity shared across environments, including its workspace when known. */
+  readonly subscriptionKey?: string;
   readonly driver: ServerProvider["driver"];
   /** The instance's configured name, which is not sensitive; null for hub accounts. */
   readonly displayName: string | null;
@@ -274,8 +276,11 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     const label = presentation.entry.target.label;
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       if (!provider.usageLimits || limitsNotice(provider.usageLimits) !== null) continue;
-      merge(resolveKey(nativeReport(provider)) ?? `${environmentId}:${provider.instanceId}`, {
+      const subscriptionKey =
+        resolveKey(nativeReport(provider)) ?? `${environmentId}:${provider.instanceId}`;
+      merge(subscriptionKey, {
         key: `${environmentId}:${provider.instanceId}`,
+        subscriptionKey,
         driver: provider.driver,
         displayName: provider.displayName?.trim() || null,
         email: provider.auth.email,
@@ -300,8 +305,10 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       for (const account of source.accounts) {
         if (limitsNotice(account.usageLimits) !== null) continue;
         const key = `${source.id}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
-        merge(resolveKey(account) ?? key, {
+        const subscriptionKey = resolveKey(account) ?? key;
+        merge(subscriptionKey, {
           key,
+          subscriptionKey,
           driver: account.driver,
           displayName: account.email ? null : account.id.replace(/\.json$/i, ""),
           email: account.email,

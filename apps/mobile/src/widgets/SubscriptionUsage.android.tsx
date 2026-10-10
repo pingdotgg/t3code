@@ -2,10 +2,12 @@ import {
   Button,
   Column,
   getMaterialColors,
+  LazyColumn,
   LinearProgressIndicator,
   Text,
 } from "@expo/ui/jetpack-compose";
 import {
+  background,
   fillMaxSize,
   fillMaxWidth,
   height,
@@ -16,98 +18,146 @@ import { createWidget, type WidgetEnvironment } from "expo-widgets";
 
 import type { SubscriptionUsageSnapshot as SubscriptionUsageProps } from "./subscriptionUsageSnapshot";
 
-export function SubscriptionUsage(props: SubscriptionUsageProps, environment: WidgetEnvironment) {
+type AndroidWidgetEnvironment = WidgetEnvironment & { widgetId?: number };
+
+export function SubscriptionUsage(
+  props: SubscriptionUsageProps,
+  environment: AndroidWidgetEnvironment,
+) {
   "widget";
-  // The widget runtime evaluates this function without the app's module scope.
-  // Android has no timeline, so freshness is decided on every render; the
-  // expiry alarm and each tap trigger one while the app is closed.
+  // The OS evaluates this function without the app's module scope.
   const now = Date.now();
-  // The 4x3 default cell fits two quotas per provider with their reset text.
-  const limit = 2;
-  const colors = getMaterialColors({
-    scheme: environment.colorScheme === "dark" ? "dark" : "light",
-  });
-  const muted = colors.onSurfaceVariant;
-  const providers = props.providers ?? [
-    { name: "Codex", detail: "Open T3 to connect", windows: [], expiresAt: 0, totalWindows: 0 },
-    { name: "Claude", detail: "Open T3 to connect", windows: [], expiresAt: 0, totalWindows: 0 },
-  ];
+  const snapshot = props.android?.widgets[String(environment.widgetId)] ?? props.android?.defaults;
+  const configuration = snapshot?.configuration;
+  const compact = configuration?.density === "compact";
+  const scheme =
+    configuration?.theme === "light" || configuration?.theme === "dark"
+      ? configuration.theme
+      : environment.colorScheme === "dark"
+        ? "dark"
+        : "light";
+  const colors = getMaterialColors({ scheme });
+  // Cached snapshots from older app versions remain readable until publication.
+  const groups =
+    snapshot?.groups ??
+    (props.providers ?? []).map((provider) => ({
+      id: provider.name,
+      name: provider.name,
+      detail: provider.detail,
+      windows: provider.windows.map((window) => ({
+        ...window,
+        id: window.label,
+        resetsAt: null,
+        resetDisplay: "reset" as const,
+        expiresAt: provider.expiresAt > 0 ? provider.expiresAt : Infinity,
+      })),
+      totalWindows: provider.totalWindows,
+    }));
+  const checkedAt = snapshot?.checkedAt ?? props.checkedAt;
+  // URL targets use native activity intents, including when the app is closed.
+  const usageTarget = props.url ? { target: `url:${props.url}` } : {};
+  const configureTarget = props.androidWidgetUrl
+    ? {
+        target: `url:${props.androidWidgetUrl}${environment.widgetId === undefined ? "" : `?widgetId=${environment.widgetId}`}`,
+      }
+    : usageTarget;
   return (
-    // The card is one Button so a tap reaches the app's interaction listener,
-    // which opens props.url. expo-widgets has no Android counterpart to widgetURL.
-    <Button
-      colors={{ containerColor: colors.surface }}
-      modifiers={[fillMaxSize()]}
-      onClick={() => {}}
-    >
-      <Column modifiers={[fillMaxSize(), paddingAll(16)]}>
-        {providers.map((provider, index) => {
-          const stale =
-            provider.windows.length > 0 && provider.expiresAt > 0 && now >= provider.expiresAt;
-          const shown = stale ? [] : provider.windows.slice(0, limit);
-          const hidden = stale ? 0 : (provider.totalWindows ?? provider.windows.length) - limit;
-          return (
-            <Column
-              key={provider.name}
-              modifiers={[fillMaxWidth(), padding(0, index === 0 ? 0 : 10, 0, 0)]}
-            >
+    <Column modifiers={[background(colors.surface), fillMaxSize(), paddingAll(compact ? 12 : 16)]}>
+      <LazyColumn modifiers={[fillMaxSize()]}>
+        {groups.length === 0 ? (
+          <Button
+            {...configureTarget}
+            colors={{ containerColor: colors.surface }}
+            onClick={() => {}}
+            modifiers={[fillMaxWidth()]}
+          >
+            <Text color={colors.onSurfaceVariant} style={{ fontSize: 12 }}>
+              {snapshot?.emptyMessage ?? "Open T3 to connect and configure usage."}
+            </Text>
+          </Button>
+        ) : null}
+        {groups.map((group) => (
+          <Button
+            key={group.id}
+            {...usageTarget}
+            colors={{ containerColor: colors.surface }}
+            onClick={() => {}}
+            modifiers={[fillMaxWidth()]}
+          >
+            <Column modifiers={[fillMaxWidth(), padding(0, 0, 0, compact ? 6 : 10)]}>
               <Text
                 color={colors.onSurface}
-                maxLines={1}
-                style={{ fontSize: 13, fontWeight: "bold" }}
+                maxLines={2}
+                style={{ fontSize: compact ? 12 : 14, fontWeight: "bold" }}
               >
-                {provider.name}
+                {group.name}
               </Text>
-              {shown.length === 0 ? (
-                <Text color={muted} maxLines={1} style={{ fontSize: 11 }}>
-                  {stale ? "Open T3 to refresh" : provider.detail}
+              {group.detail ? (
+                <Text color={colors.onSurfaceVariant} maxLines={2} style={{ fontSize: 10 }}>
+                  {group.detail}
                 </Text>
               ) : null}
-              {shown.map((window) => {
+              {group.windows.map((window) => {
+                const stale = window.expiresAt <= 0 || now >= window.expiresAt;
+                const used = configuration?.percentage === "used";
+                const percent = used ? 100 - window.remaining : window.remaining;
                 const low = window.remaining <= 10;
+                const minutes = Math.max(1, Math.ceil(((window.resetsAt ?? now) - now) / 60_000));
+                const days = Math.floor(minutes / 1440);
+                const hours = Math.floor((minutes % 1440) / 60);
+                const timeLeft = days
+                  ? `${days}d ${hours}h`
+                  : hours
+                    ? `${hours}h ${minutes % 60}m`
+                    : `${minutes}m`;
+                const reset =
+                  !window.resetsAt || window.resetDisplay === "reset"
+                    ? window.reset
+                    : window.resetDisplay === "both"
+                      ? `${window.reset} · ${timeLeft} left`
+                      : `Reset in ${timeLeft}`;
                 return (
-                  <Column key={window.label} modifiers={[fillMaxWidth(), padding(0, 4, 0, 0)]}>
+                  <Column
+                    key={window.id}
+                    modifiers={[fillMaxWidth(), padding(0, compact ? 2 : 5, 0, 0)]}
+                  >
                     <Text
-                      color={low ? colors.error : colors.onSurface}
-                      maxLines={1}
-                      style={{ fontSize: 11 }}
+                      color={!stale && low ? colors.error : colors.onSurface}
+                      maxLines={2}
+                      style={{ fontSize: compact ? 10 : 12 }}
                     >
-                      {`${window.label} · ${window.remaining}% left`}
+                      {stale
+                        ? `${window.label} · Open T3 to refresh`
+                        : `${window.label} · ${percent}% ${used ? "used" : "left"}`}
                     </Text>
-                    <Column modifiers={[fillMaxWidth(), padding(0, 3, 0, 3)]}>
-                      <LinearProgressIndicator
-                        progress={window.remaining / 100}
-                        color={low ? colors.error : colors.primary}
-                        trackColor={colors.surfaceVariant}
-                        modifiers={[fillMaxWidth(), height(6)]}
-                      />
-                    </Column>
-                    <Text color={muted} maxLines={1} style={{ fontSize: 10 }}>
-                      {window.reset}
-                    </Text>
+                    {!stale && configuration?.showBars !== false ? (
+                      <Column modifiers={[fillMaxWidth(), padding(0, 3, 0, 3)]}>
+                        <LinearProgressIndicator
+                          progress={percent / 100}
+                          color={low ? colors.error : colors.primary}
+                          trackColor={colors.surfaceVariant}
+                          modifiers={[fillMaxWidth(), height(compact ? 4 : 6)]}
+                        />
+                      </Column>
+                    ) : null}
+                    {!stale && configuration?.showResetTimes !== false ? (
+                      <Text color={colors.onSurfaceVariant} maxLines={2} style={{ fontSize: 10 }}>
+                        {reset}
+                      </Text>
+                    ) : null}
                   </Column>
                 );
               })}
-              {hidden > 0 ? (
-                <Text color={muted} maxLines={1} style={{ fontSize: 10 }}>
-                  {`${hidden} more in T3`}
-                </Text>
-              ) : null}
             </Column>
-          );
-        })}
-        <Text
-          color={muted}
-          maxLines={1}
-          style={{ fontSize: 10 }}
-          modifiers={[padding(0, 10, 0, 0)]}
-        >
-          {props.checkedAt
-            ? `As of ${new Date(props.checkedAt).toLocaleString(undefined, { hour: "numeric", minute: "2-digit", month: "short", day: "numeric" })}`
-            : "Tap to connect in T3"}
-        </Text>
-      </Column>
-    </Button>
+          </Button>
+        ))}
+        {configuration?.showUpdatedAt !== false && checkedAt > 0 ? (
+          <Text color={colors.onSurfaceVariant} maxLines={2} style={{ fontSize: 10 }}>
+            {`As of ${new Date(checkedAt).toLocaleString(undefined, { hour: "numeric", minute: "2-digit", month: "short", day: "numeric" })}`}
+          </Text>
+        ) : null}
+      </LazyColumn>
+    </Column>
   );
 }
 

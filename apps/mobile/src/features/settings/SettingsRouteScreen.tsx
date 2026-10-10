@@ -212,6 +212,9 @@ function SettingsIndexSections() {
 
       <SettingsSection title="App">
         <SettingsRow icon="chart.bar.xaxis" label="Usage" target="SettingsUsage" />
+        {Platform.OS === "android" ? (
+          <SettingsRow icon="square.grid.2x2" label="Usage widget" target="SettingsUsageWidget" />
+        ) : null}
         <SettingsRow icon="info.circle" label="About T3 Code" target="SettingsAbout" />
       </SettingsSection>
     </>

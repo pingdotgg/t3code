@@ -132,9 +132,14 @@ settings section when you no longer need it.
 ## Subscription usage widget
 
 Add **Subscription usage** from your iOS or Android widget gallery to see remaining Codex and
-Claude quotas. Tap it to open **Usage → Limits**; on Android this works while T3 is running in
-the background, otherwise open the app from the launcher. On iOS, use **Edit Widget** to choose
-Session, Weekly, or both for each provider. Reopen T3 to refresh expired readings.
+Claude quotas. Tap a quota to open **Usage → Limits**. On Android, use **Settings → Usage widget**
+or long-press the widget and choose its launcher edit action to select accounts, environments,
+quota periods, and appearance. Accounts appear separately with their configured names by default;
+choose a combined view to pool them. Each home screen widget can use its own settings or follow the
+defaults. For each quota, show the next reset time, time left, or both. Scroll the widget to see
+additional accounts and quotas. Environment names are hidden automatically when only one environment
+is connected; choose **Always show** or **Always hide** to override this. On iOS, use **Edit Widget**
+to choose Session, Weekly, or both for each provider. Reopen T3 to refresh expired readings.
 
 ## Keyboard shortcuts
 
