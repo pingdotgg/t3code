@@ -256,13 +256,22 @@ it.effect(
 );
 
 it.effect(
-  "keeps both lock entries when two installs run at once",
+  "keeps both lock entries when two installs run at once, and rescans listed projects",
   () =>
-    withLibrary(({ library, home, source }) =>
+    withLibrary(({ library, home, project, source, providers, refreshed }) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const target = { kind: "environment" } as const;
+        // Claude has listed this project's skills, which include the global ones.
+        yield* Ref.set(providers, [
+          {
+            ...claude,
+            workspaceSnapshots: [
+              { cwd: project, checkedAt: "2026-10-09T00:00:00Z", slashCommands: [], skills: [] },
+            ],
+          },
+        ]);
         yield* Effect.all(
           [
             library.install({ source, skills: ["notes"], target }),
@@ -274,6 +283,7 @@ it.effect(
           yield* fileSystem.readFileString(path.join(home, ".agents", ".skill-lock.json")),
         ) as { skills: Record<string, unknown> };
         expect(Object.keys(lock.skills).toSorted()).toEqual(["notes", "review"]);
+        expect(yield* Ref.get(refreshed)).toContain(`workspace:claude:${project}`);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   120_000,

@@ -110,6 +110,17 @@ describe("skill switches", () => {
   });
 });
 
+describe("skill switch names", () => {
+  it("switches a skill named __proto__ like any other", () => {
+    const settings = { ...DEFAULT_SERVER_SETTINGS, disabledSkills: [] } satisfies ServerSettings;
+    const next = applyServerSettingsPatch(
+      settings,
+      skillsDisabledPatch(settings, projectId, ["__proto__"], true),
+    );
+    expect(resolveProjectSettings(next, projectId).settings.disabledSkills).toEqual(["__proto__"]);
+  });
+});
+
 describe("mcpServers patches", () => {
   it("replaces one server at a time and removes it with null", () => {
     const current = { ...DEFAULT_SERVER_SETTINGS, mcpServers: { linear, supabase } };

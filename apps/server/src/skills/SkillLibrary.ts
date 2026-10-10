@@ -208,16 +208,24 @@ const make = Effect.gen(function* () {
   const refreshAgents = (target: SkillInstallTarget) =>
     Effect.gen(function* () {
       const providers = yield* enabledProviders;
+      // A project's skill list includes the global skills, so a global change
+      // rescans every project an agent has listed, not just its own folders.
+      const scans = providers.flatMap((provider) =>
+        target.kind === "environment"
+          ? (provider.workspaceSnapshots ?? []).map((snapshot) => ({
+              instanceId: provider.instanceId,
+              cwd: snapshot.cwd,
+            }))
+          : [{ instanceId: provider.instanceId, cwd: target.cwd }],
+      );
       yield* Effect.forEach(
-        providers,
-        (provider) =>
-          target.kind === "environment"
-            ? providerRegistry.refreshInstance(provider.instanceId)
-            : providerRegistry.refreshWorkspaceSnapshot({
-                instanceId: provider.instanceId,
-                cwd: target.cwd,
-                fresh: true,
-              }),
+        target.kind === "environment" ? providers : [],
+        (provider) => providerRegistry.refreshInstance(provider.instanceId),
+        { concurrency: "unbounded", discard: true },
+      );
+      yield* Effect.forEach(
+        scans,
+        (scan) => providerRegistry.refreshWorkspaceSnapshot({ ...scan, fresh: true }),
         { concurrency: "unbounded", discard: true },
       );
     });
