@@ -375,6 +375,8 @@ import {
   composerDraftHasUserContent,
   type ComposerFileAttachment,
   type ComposerImageAttachment,
+  composerTargetKey,
+  type ComposerThreadTarget,
   type DraftThreadEnvMode,
   useComposerDraftStore,
   DraftId,
@@ -441,6 +443,11 @@ import { isTimelineScrollTarget } from "./chat/timelineScrollTarget";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
+import {
+  type AssistantCitationCommentDraftEntries,
+  restoreAssistantCitationCommentDrafts,
+  takeAssistantCitationCommentDraftsForComposer,
+} from "./chat/assistantCitationCommentDrafts";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { MessagesTimeline, type MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
@@ -1829,7 +1836,16 @@ export default function ChatView(props: ChatViewProps) {
   const setComposerDraftInteractionMode = useComposerDraftStore(
     (store) => store.setInteractionMode,
   );
-  const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
+  const clearComposerContent = useComposerDraftStore((store) => store.clearComposerContent);
+  // A sent prompt takes its unsaved citation comments with it; a send that
+  // fails hands them back with the prompt (see assistantCitationCommentDrafts).
+  const clearComposerDraftContent = useCallback(
+    (target: ComposerThreadTarget) => {
+      clearComposerContent(target);
+      return takeAssistantCitationCommentDraftsForComposer(composerTargetKey(target));
+    },
+    [clearComposerContent],
+  );
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const getDraftSessionByLogicalProjectKey = useComposerDraftStore(
     (store) => store.getDraftSessionByLogicalProjectKey,
@@ -9165,7 +9181,7 @@ export default function ChatView(props: ChatViewProps) {
       const followUpPreviewAnnotations = [...composerPreviewAnnotations];
       const followUpThreadContexts = [...composerThreadContexts];
       promptRef.current = "";
-      clearComposerDraftContent(composerDraftTarget);
+      const followUpCitationDrafts = clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
       const followUpSent = await onSubmitPlanFollowUp({
         text: followUp.text,
@@ -9179,6 +9195,7 @@ export default function ChatView(props: ChatViewProps) {
       });
       if (!followUpSent) {
         promptRef.current = followUpPromptSnapshot;
+        restoreAssistantCitationCommentDrafts(followUpCitationDrafts);
         composerTerminalContextsRef.current = [...followUpTerminalContexts];
         restorePlanFollowUpComposer({
           snapshot: {
@@ -9502,6 +9519,7 @@ export default function ChatView(props: ChatViewProps) {
     if (multipleModelSelections !== null) {
       const failedSelections: ModelSelection[] = [];
       let clearedDraft = false;
+      let clearedCitationDrafts: AssistantCitationCommentDraftEntries = [];
       let releasedComposer = false;
       let canRestoreDraft = () => false;
       let startedCount = 0;
@@ -9522,7 +9540,7 @@ export default function ChatView(props: ChatViewProps) {
             "New thread",
         );
         promptRef.current = "";
-        clearComposerDraftContent(composerDraftTarget);
+        clearedCitationDrafts = clearComposerDraftContent(composerDraftTarget);
         composerRef.current?.resetCursorState();
         clearedDraft = true;
         const clearedDraftSnapshot = useComposerDraftStore
@@ -9691,6 +9709,7 @@ export default function ChatView(props: ChatViewProps) {
           setMultipleModelSelections(failedSelections);
           if (clearedDraft) {
             setComposerDraftPrompt(composerDraftTarget, messageTextForSend);
+            restoreAssistantCitationCommentDrafts(clearedCitationDrafts);
             addComposerDraftImages(
               composerDraftTarget,
               composerImagesSnapshot.map(cloneComposerImageForRetry),
@@ -9832,7 +9851,7 @@ export default function ChatView(props: ChatViewProps) {
       );
     }
     promptRef.current = "";
-    clearComposerDraftContent(composerDraftTarget);
+    const sentCitationDrafts = clearComposerDraftContent(composerDraftTarget);
     composerRef.current?.resetCursorState();
 
     let firstComposerImageName: string | null = null;
@@ -10100,6 +10119,7 @@ export default function ChatView(props: ChatViewProps) {
           return next.length === existing.length ? existing : next;
         });
         promptRef.current = messageTextForSend;
+        restoreAssistantCitationCommentDrafts(sentCitationDrafts);
         const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
         composerImagesRef.current = retryComposerImages;
         composerFilesRef.current = composerFilesSnapshot;
