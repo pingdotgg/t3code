@@ -765,7 +765,10 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const root = yield* fileSystem.realPath(cwd);
       const instructionPath = yield* fileSystem.realPath(path.join(root, fileName));
-      if (!instructionPath.startsWith(`${root}${path.sep}`)) {
+      // A drive root such as `D:\` already ends with a separator, so compare
+      // with path.relative instead of a `${root}${sep}` prefix.
+      const relative = path.relative(root, instructionPath);
+      if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
         return "";
       }
       const info = yield* fileSystem.stat(instructionPath);
