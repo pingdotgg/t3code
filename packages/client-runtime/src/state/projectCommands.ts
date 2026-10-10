@@ -13,7 +13,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Atom, AtomRegistry } from "effect/reactivity";
 
-import { type EnvironmentRpcInput, request } from "../rpc/client.ts";
+import { type EnvironmentRpcInput, request, requestGuarded } from "../rpc/client.ts";
 import type { EnvironmentProject } from "./models.ts";
 import {
   createAtomCommandScheduler,
@@ -30,6 +30,8 @@ import {
   updateProject,
 } from "../operations/commands.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import { createFileMetadataAtoms } from "./fileMetadata.ts";
+import { resolvePathLinkTarget, splitFilePathPosition } from "@t3tools/shared/fileLinks";
 
 export type {
   CreateProjectInput,
@@ -69,6 +71,7 @@ export function createProjectEnvironmentAtoms<R, E>(
     readonly projectAtom: (ref: ScopedProjectRef) => Atom.Atom<EnvironmentProject | null>;
   },
 ) {
+  const fileMetadata = createFileMetadataAtoms(runtime);
   const projectScheduler = createAtomCommandScheduler();
   const fileScheduler = createAtomCommandScheduler();
   const optimisticFileFamily = Atom.family((key: string) =>
@@ -82,22 +85,35 @@ export function createProjectEnvironmentAtoms<R, E>(
       JSON.stringify([environmentId, input.projectId]),
   };
   return {
+    fileMetadata: fileMetadata.metadata,
     searchEntries: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:search-entries",
       tag: WS_METHODS.projectsSearchEntries,
       staleTimeMs: 15_000,
+      execute: (input) =>
+        request(WS_METHODS.projectsSearchEntries, input).pipe(
+          Effect.tap((result) => fileMetadata.rememberEntries(input.cwd, result.entries)),
+        ),
     }),
     listEntries: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:list-entries",
       tag: WS_METHODS.projectsListEntries,
       staleTimeMs: 30_000,
       idleTtlMs: 5 * 60_000,
+      execute: (input) =>
+        request(WS_METHODS.projectsListEntries, input).pipe(
+          Effect.tap((result) => fileMetadata.rememberEntries(input.cwd, result.entries)),
+        ),
     }),
     readFile: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:read-file",
       tag: WS_METHODS.projectsReadFile,
       staleTimeMs: 30_000,
       idleTtlMs: 5 * 60_000,
+      execute: (input) =>
+        request(WS_METHODS.projectsReadFile, input).pipe(
+          Effect.tap((result) => fileMetadata.rememberFile(input.cwd, result)),
+        ),
     }),
     optimisticFile: (target: OptimisticProjectFileTarget) =>
       optimisticFileFamily(optimisticProjectFileKey(target)),
@@ -163,6 +179,26 @@ export function createProjectEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) =>
           JSON.stringify([environmentId, input.cwd, input.relativePath]),
       },
+      execute: (input) =>
+        requestGuarded(WS_METHODS.projectsWriteFile, input).pipe(
+          Effect.tap(() =>
+            fileMetadata.invalidate(
+              splitFilePathPosition(resolvePathLinkTarget(input.relativePath, input.cwd)).path,
+            ),
+          ),
+        ),
+      onSuccess: ({ environmentId, input }, registry) =>
+        Effect.sync(() => {
+          registry.refresh(
+            fileMetadata.metadata({
+              environmentId,
+              input: {
+                path: splitFilePathPosition(resolvePathLinkTarget(input.relativePath, input.cwd))
+                  .path,
+              },
+            }),
+          );
+        }),
     }),
   };
 }
