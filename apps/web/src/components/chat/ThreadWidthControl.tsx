@@ -1,0 +1,75 @@
+import { ArrowLeftRightIcon, MinusIcon, PlusIcon } from "lucide-react";
+import { useId, type CSSProperties } from "react";
+
+import { THREAD_WIDTH_STEP, useThreadWidth } from "~/hooks/useThreadWidth";
+import { Button } from "../ui/button";
+import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
+
+/** Adjust conversation width without leaving the thread. */
+export function ThreadWidthControl() {
+  const [expansion, setExpansion] = useThreadWidth();
+  const sliderId = useId();
+  const sliderStyle = {
+    "--settings-slider-progress": `${expansion}%`,
+    "--settings-slider-fill-offset": `${0.5 - expansion / 100}rem`,
+  } as CSSProperties;
+
+  return (
+    <Popover>
+      <PopoverTrigger
+        data-toolbar-control
+        render={<Button size="xs" variant="outline" aria-label={`Thread width: ${expansion}%`} />}
+      >
+        <ArrowLeftRightIcon aria-hidden="true" className="size-3.5" />
+        <span className="hidden sm:inline">Width</span>
+        <span className="tabular-nums">{expansion}%</span>
+      </PopoverTrigger>
+      <PopoverPopup align="end" width="sm">
+        <div className="space-y-3">
+          <PopoverTitle>Thread width</PopoverTitle>
+          <div className="flex items-center justify-between gap-3">
+            <Button
+              aria-label="Decrease thread width"
+              size="icon-xs"
+              variant="outline"
+              disabled={expansion === 0}
+              onClick={() => setExpansion(expansion - THREAD_WIDTH_STEP)}
+            >
+              <MinusIcon aria-hidden="true" />
+            </Button>
+            <output htmlFor={sliderId} className="text-sm tabular-nums">
+              {expansion}%
+            </output>
+            <Button
+              aria-label="Increase thread width"
+              size="icon-xs"
+              variant="outline"
+              disabled={expansion === 100}
+              onClick={() => setExpansion(expansion + THREAD_WIDTH_STEP)}
+            >
+              <PlusIcon aria-hidden="true" />
+            </Button>
+          </div>
+          <div>
+            <input
+              id={sliderId}
+              aria-label="Thread width"
+              className="settings-slider block w-full"
+              type="range"
+              min={0}
+              max={100}
+              step={THREAD_WIDTH_STEP}
+              value={expansion}
+              style={sliderStyle}
+              onChange={(event) => setExpansion(Number(event.currentTarget.value))}
+            />
+            <div className="flex justify-between text-xs text-muted-foreground" aria-hidden="true">
+              <span>0%</span>
+              <span>100%</span>
+            </div>
+          </div>
+        </div>
+      </PopoverPopup>
+    </Popover>
+  );
+}

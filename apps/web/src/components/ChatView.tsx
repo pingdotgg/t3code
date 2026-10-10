@@ -1,3 +1,4 @@
+import { threadWidthStyle, useThreadWidth } from "~/hooks/useThreadWidth";
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
@@ -1570,6 +1571,7 @@ function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | n
 const retryingWorkspacePreparationRunIds = new Set<RunId>();
 
 export default function ChatView(props: ChatViewProps) {
+  const [threadWidthExpansion] = useThreadWidth();
   const {
     environmentId,
     threadId,
@@ -11317,6 +11319,7 @@ export default function ChatView(props: ChatViewProps) {
           rightPanelMaximized ? "w-0 flex-none" : "flex-1",
         )}
         data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
+        style={threadWidthStyle(threadWidthExpansion)}
       >
         {/* Top bar */}
         <header
@@ -11583,9 +11586,10 @@ export default function ChatView(props: ChatViewProps) {
                       </div>
                     </div>
                   ) : null}
+                  {/* The stack already applies the width; nested composer surfaces fill it. */}
                   <div
                     ref={draftHeroTransition.composerAnchorRef}
-                    className="relative z-10"
+                    className="relative z-10 [--chat-content-max-width:100%]"
                     style={
                       forceExpandedMobileComposer
                         ? { viewTransitionName: MOBILE_COMPOSER_VIEW_TRANSITION_NAME }
