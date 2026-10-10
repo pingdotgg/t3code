@@ -239,7 +239,10 @@ const layerAgentSessionImporterProvided = AgentSessionImporter.layer.pipe(
   ),
 );
 
-const layerThreadManagementProvided = ThreadManagementService.layerWithLegacyImporter.pipe(
+// Exported (not just a local composition step) so the worktree-branch-drift
+// follow (#11078) can dispatch commands back into this same orchestrator
+// instance from outside this module, without building a second one.
+export const layerThreadManagementProvided = ThreadManagementService.layerWithLegacyImporter.pipe(
   Layer.provide(Layer.merge(layerOrchestratorProvided, layerLegacyV1ThreadImporterProvided)),
 );
 export const layerProjectSetupScriptRunner = ProjectSetupScriptRunner.layer.pipe(

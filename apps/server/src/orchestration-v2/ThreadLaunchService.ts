@@ -499,21 +499,43 @@ const make = Effect.gen(function* () {
         const worktreeCwd = worktreePath;
         yield* generateBranchNameFor(worktreeCwd, initialMessage).pipe(
           Effect.flatMap(({ branch: newBranch, exactName }) =>
-            git.renameBranch({
-              cwd: worktreeCwd,
-              oldBranch,
-              newBranch,
-              ...(exactName ? { exactName: true } : {}),
-            }),
-          ),
-          Effect.flatMap((renamed) =>
-            threads.dispatch({
-              type: "thread.metadata.update",
-              commandId: CommandId.make(`${input.commandId}:branch-rename`),
-              threadId,
-              branch: renamed.branch,
-              worktreePath: worktreeCwd,
-            }),
+            // Generation takes a beat, during which the agent can check out
+            // a real branch itself. Re-checking right before the git rename
+            // (rather than trusting the stamp this task started with) keeps
+            // the rename from rewriting a ref nothing has checked out
+            // anymore (#11078 review); the compare-and-swap below is the
+            // same guard for the thread's metadata stamp.
+            git.localStatus({ cwd: worktreeCwd }).pipe(
+              Effect.flatMap((local) =>
+                local.refName !== oldBranch
+                  ? Effect.void
+                  : git
+                      .renameBranch({
+                        cwd: worktreeCwd,
+                        oldBranch,
+                        newBranch,
+                        ...(exactName ? { exactName: true } : {}),
+                      })
+                      .pipe(
+                        Effect.flatMap((renamed) =>
+                          threads.dispatch({
+                            type: "thread.metadata.update",
+                            commandId: CommandId.make(`${input.commandId}:branch-rename`),
+                            threadId,
+                            branch: renamed.branch,
+                            worktreePath: worktreeCwd,
+                            // followBranchDrift can still land between this
+                            // check and the rename+dispatch below; this
+                            // compare-and-swap drops the rename instead of
+                            // overwriting that correction.
+                            expectedBranch: oldBranch,
+                            expectedWorktreePath: worktreeCwd,
+                          }),
+                        ),
+                        Effect.asVoid,
+                      ),
+              ),
+            ),
           ),
           Effect.catchCause((cause) =>
             Effect.logWarning("Thread worktree branch rename failed", {

@@ -2486,6 +2486,51 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} worktree changed before the metadata update could be applied.`,
       });
     }
+    if (
+      command.type === "thread.metadata.update" &&
+      command.expectedBranch !== undefined &&
+      command.expectedBranch !== thread.branch
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} branch changed before the metadata update could be applied.`,
+      });
+    }
+    // Resolved below, against the live projection at decision time rather
+    // than by the caller before dispatch: a sibling thread can start sharing
+    // this worktree between that earlier read and this command's turn to
+    // commit, and a stale read would miss it (#11078 review). `undefined`
+    // means "no override, use command.branch as given" further down.
+    let metadataBranchOverride: string | null | undefined = undefined;
+    if (command.type === "thread.metadata.update" && command.requireExclusiveWorktree === true) {
+      const targetWorktreePath =
+        command.worktreePath !== undefined ? command.worktreePath : thread.worktreePath;
+      const exclusive =
+        targetWorktreePath !== null &&
+        !(yield* projectionStore
+          .hasSiblingThreadWithWorktreePath({
+            threadId: command.threadId,
+            projectId: thread.projectId,
+            worktreePath: targetWorktreePath,
+          })
+          .pipe(mapDispatchError(command)));
+      if (!exclusive) {
+        if (command.worktreePath !== undefined) {
+          // The session's location is still worth tracking even though its
+          // branch isn't: commit the worktreePath move, but drop the branch.
+          metadataBranchOverride = null;
+        } else {
+          // No location change in this command; a rejected branch adoption
+          // leaves nothing else worth keeping.
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId}'s worktree is shared with another thread; not adopting the checked-out branch.`,
+          });
+        }
+      }
+    }
     if (command.type === "thread.metadata.update" && command.expectedEmpty === true) {
       const records = yield* projectionStore
         .getThreadRecords(command.threadId, ["runs"])
@@ -2953,7 +2998,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     Date.parse(thread.limitRecovery.resetAt)
                 ? { snoozedUntil: null, snoozedAt: null, lastSnoozeWakeAt: now }
                 : {}),
-            ...(command.branch === undefined ? {} : { branch: command.branch }),
+            ...(metadataBranchOverride !== undefined
+              ? { branch: metadataBranchOverride }
+              : command.branch === undefined
+                ? {}
+                : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
             ...(command.linkedPullRequest === undefined
               ? {}
@@ -3339,7 +3388,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? (providerContext?.providerSessions ?? []).map((session) => session.id)
         : command.type === "thread.metadata.update" &&
             command.worktreePath !== undefined &&
-            command.worktreePath !== thread.worktreePath
+            command.worktreePath !== thread.worktreePath &&
+            command.preserveProviderSession !== true
           ? (providerContext?.providerSessions ?? []).map((session) => session.id)
           : command.type === "thread.runtime-mode.set"
             ? (providerContext?.providerSessions ?? [])

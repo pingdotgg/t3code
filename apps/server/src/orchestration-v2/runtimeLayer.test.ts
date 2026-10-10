@@ -1969,6 +1969,109 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  // #11078: the worktree-branch-drift follow (RunFinalizationService)
+  // persists a thread's live checked-out branch through this same command.
+  // These guards are decided here, against the live projection, rather than
+  // by the caller before dispatch, so a race between that read and this
+  // command's turn to commit cannot adopt a stale branch or a worktree that
+  // started being shared in between.
+  it.effect("rejects a thread.metadata.update whose branch or worktree exclusivity is stale", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projectId = ProjectId.make("runtime-layer-drift-guard-project");
+      const threadId = ThreadId.make("runtime-layer-drift-guard-thread");
+      const siblingId = ThreadId.make("runtime-layer-drift-guard-sibling");
+      const worktreePath = "/tmp/runtime-layer-drift-guard-worktree";
+      yield* seedProject({
+        projectId,
+        title: "Drift guard project",
+        workspaceRoot: "/workspace/drift-guard",
+        defaultModelSelection: null,
+        createdAt: "2026-09-07T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-drift-guard-create"),
+        threadId,
+        projectId,
+        title: "Drift guard thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: "feature",
+        worktreePath,
+      });
+
+      // expectedBranch is a compare-and-swap, same as the existing
+      // expectedWorktreePath: a stale read of the branch must not commit.
+      const staleBranch = yield* orchestrator
+        .dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("runtime-layer-drift-guard-stale-branch"),
+          threadId,
+          branch: "other",
+          expectedBranch: "not-the-current-branch",
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(staleBranch, Orchestrator.OrchestratorDispatchError);
+      assert.equal((yield* orchestrator.getThreadProjection(threadId)).thread.branch, "feature");
+
+      // requireExclusiveWorktree succeeds while this thread is the
+      // worktree's only owner.
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("runtime-layer-drift-guard-exclusive-ok"),
+        threadId,
+        branch: "feature-renamed",
+        expectedBranch: "feature",
+        expectedWorktreePath: worktreePath,
+        requireExclusiveWorktree: true,
+      });
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(threadId)).thread.branch,
+        "feature-renamed",
+      );
+
+      // A sibling thread starts sharing the same worktree.
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-drift-guard-sibling-create"),
+        threadId: siblingId,
+        projectId,
+        title: "Drift guard sibling",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: "feature",
+        worktreePath,
+      });
+
+      // The same requireExclusiveWorktree update now rejects: this is
+      // rechecked against the live projection (which now shows the
+      // sibling), not against a read taken before the sibling existed.
+      const sharedWorktree = yield* orchestrator
+        .dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("runtime-layer-drift-guard-exclusive-shared"),
+          threadId,
+          branch: "feature-renamed-again",
+          expectedBranch: "feature-renamed",
+          expectedWorktreePath: worktreePath,
+          requireExclusiveWorktree: true,
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(sharedWorktree, Orchestrator.OrchestratorDispatchError);
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(threadId)).thread.branch,
+        "feature-renamed",
+      );
+    }),
+  );
+
   it.effect("persists linked pull requests through projection rebuilds and unlinking", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

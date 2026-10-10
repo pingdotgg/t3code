@@ -359,6 +359,32 @@ export interface ProjectionStoreV2Shape {
     options: ProjectionTimelinePageOptions,
   ) => Effect.Effect<ProjectionTimelinePage, ProjectionStoreV2Error>;
   readonly getMessageCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
+  /**
+   * Whether another active (non-deleted, non-archived) thread in the same
+   * project records the same worktreePath. Backs the worktree-branch-drift
+   * follow's exclusivity guard (#11078): two threads sharing one worktree
+   * make "whose branch is it" ambiguous, so a drifted checkout is only
+   * adopted while a thread is its sole owner.
+   *
+   * This read is not part of the same atomic commit as the write it gates
+   * (#11078 review): the orchestrator serializes commands per thread
+   * (KeyedSerialExecutor keyed by threadId), not globally, so two different
+   * threads' commands can run this read and their own commit concurrently.
+   * If both are the first to move into the same previously-unrecorded
+   * worktree, both can see "not shared" and both adopt a branch there. This
+   * is judged acceptable rather than worth a second, worktreePath-keyed lock
+   * (which would need careful ordering against the existing per-thread one
+   * to add zero deadlock risk, for a narrow race): the bad outcome is
+   * cosmetic, not data loss, and self-corrects the next time either
+   * thread's branch or location actually changes again, since that
+   * re-evaluates this same check against the (by then) genuinely shared
+   * worktree and drops the branch.
+   */
+  readonly hasSiblingThreadWithWorktreePath: (input: {
+    readonly threadId: ThreadId;
+    readonly projectId: ProjectId;
+    readonly worktreePath: string;
+  }) => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly getNextTurnItemOrdinal: (
     threadId: ThreadId,
   ) => Effect.Effect<number, ProjectionStoreV2Error>;
@@ -480,6 +506,11 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
     targetInstanceId?: ProviderInstanceId,
   ) => Effect.Effect<ProjectionThreadProviderContext, ProjectionStoreV2Error>;
+  /** Whether a provider session is also bound to a thread other than `threadId`. */
+  readonly isProviderSessionShared: (
+    threadId: ThreadId,
+    providerSessionId: ProviderSessionId,
+  ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly getRuntimeResponseContext: (
     threadId: ThreadId,
     requestId: RuntimeRequestId,
@@ -4517,6 +4548,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
 
+    const isProviderSessionShared: ProjectionStoreV2Shape["isProviderSessionShared"] = (
+      threadId,
+      providerSessionId,
+    ) =>
+      sql<{ readonly shared: number }>`
+        SELECT EXISTS (
+          SELECT 1 FROM orchestration_v2_projection_provider_session_bindings
+          WHERE provider_session_id = ${providerSessionId} AND thread_id <> ${threadId}
+        ) AS shared
+      `.pipe(
+        Effect.map((rows) => rows[0]?.shared === 1),
+        Effect.mapError(controlReadError(threadId)),
+      );
+
     const getRuntimeResponseContext: ProjectionStoreV2Shape["getRuntimeResponseContext"] = (
       threadId,
       requestId,
@@ -4703,6 +4748,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.map((rows) => rows[0]?.count ?? 0),
         Effect.mapError(controlReadError(threadId)),
       );
+
+    const hasSiblingThreadWithWorktreePath: ProjectionStoreV2Shape["hasSiblingThreadWithWorktreePath"] =
+      (input) =>
+        sql<{ readonly thread_id: string }>`
+          SELECT thread_id FROM orchestration_v2_projection_threads
+          WHERE project_id = ${input.projectId}
+            AND thread_id != ${input.threadId}
+            AND deleted_at IS NULL
+            AND archived_at IS NULL
+            AND json_extract(payload_json, '$.worktreePath') = ${input.worktreePath}
+          LIMIT 1
+        `.pipe(
+          Effect.map((rows) => rows.length > 0),
+          Effect.mapError(controlReadError(input.threadId)),
+        );
     const getNextTurnItemOrdinal: ProjectionStoreV2Shape["getNextTurnItemOrdinal"] = (threadId) =>
       sql<{ ordinal: number | null }>`SELECT MAX(ordinal) AS ordinal
         FROM orchestration_v2_projection_turn_items WHERE thread_id = ${threadId}`.pipe(
@@ -5950,6 +6010,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getRuntimeRecoveryProjection,
       getRunningTurnContext,
       getThreadProviderContext,
+      isProviderSessionShared,
       getRuntimeResponseContext,
       getCheckpointContext,
       getCheckpointCaptureContext,
@@ -5958,6 +6019,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getPendingNativeUserInputs,
       hasUnpairedRunInterruptRequest,
       getMessageCount,
+      hasSiblingThreadWithWorktreePath,
       getNextTurnItemOrdinal,
       getTurnItem,
       getThreadRecords,
@@ -6224,6 +6286,19 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
         Ref.get(replayState).pipe(
           Effect.map((state) => state.projections.get(threadId)?.messages.length ?? 0),
         ),
+      hasSiblingThreadWithWorktreePath: (input) =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) =>
+            [...state.projections.values()].some(
+              ({ thread }) =>
+                thread.id !== input.threadId &&
+                thread.projectId === input.projectId &&
+                thread.worktreePath === input.worktreePath &&
+                thread.deletedAt === null &&
+                thread.archivedAt === null,
+            ),
+          ),
+        ),
       getNextTurnItemOrdinal: (threadId) =>
         Ref.get(replayState).pipe(
           Effect.map(
@@ -6343,6 +6418,14 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             ),
           };
         }),
+      isProviderSessionShared: (threadId, providerSessionId) =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) =>
+            [...(state.providerSessionThreadIds.get(providerSessionId) ?? [])].some(
+              (boundThreadId) => boundThreadId !== threadId,
+            ),
+          ),
+        ),
       getThreadProviderContext: (threadId, targetInstanceId) =>
         Effect.gen(function* () {
           const projection = (yield* Ref.get(replayState)).projections.get(threadId);

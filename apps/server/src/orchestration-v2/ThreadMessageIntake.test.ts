@@ -739,6 +739,32 @@ it.effect("a retried response re-claims the preserved pending uploads", () =>
   }).pipe(Effect.provide(layerIntakeTest)),
 );
 
+it.effect(
+  "strips preserveProviderSession from a client-dispatched thread.metadata.update (#11078 review)",
+  () =>
+    Effect.gen(function* () {
+      const captured: OrchestrationV2ServerCommand[] = [];
+      yield* dispatchCommand({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("client-metadata-update"),
+        threadId: ThreadId.make("thread-client-metadata-update"),
+        worktreePath: "/repo/.claude/worktrees/feature",
+        // Only RunFinalizationService's own worktree-location follow may set
+        // this (it keeps the live provider session attached after a passive
+        // move). thread.metadata.update is also the dispatchCommand RPC's
+        // wire schema, so a client sending this directly must not be able to
+        // request skipping the detach an explicit handoff is supposed to do.
+        preserveProviderSession: true,
+      }).pipe(Effect.provide(layerFailingDispatch(captured)), Effect.result);
+      expect(captured).toHaveLength(1);
+      const command = captured[0]!;
+      expect(command.type).toBe("thread.metadata.update");
+      if (command.type !== "thread.metadata.update") return;
+      expect(command.preserveProviderSession).toBeUndefined();
+      expect(command.worktreePath).toBe("/repo/.claude/worktrees/feature");
+    }).pipe(Effect.provide(layerIntakeTest)),
+);
+
 it.effect("applies the image budget across all questions before dispatch", () =>
   Effect.gen(function* () {
     const attachments = Array.from({ length: 5 }, (_, index) => ({

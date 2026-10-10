@@ -2753,6 +2753,30 @@ export const OrchestrationV2Command = Schema.Union([
     branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     expectedWorktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    /**
+     * Only adopt `branch` while this thread's (new, if `worktreePath` is also
+     * set) worktree is exclusive to it. Set by the server's own
+     * worktree-location follow (#11078): a worktree two threads both point at
+     * makes "whose branch is it" ambiguous. Rechecked against the live
+     * projection when the command is decided, not against a stale read, so a
+     * thread that starts sharing the worktree in between cannot be adopted
+     * into. When `worktreePath` is also present, a shared worktree still
+     * commits with `branch` dropped (the location is always worth tracking;
+     * only adopting its branch is not) rather than rejecting the command;
+     * without a `worktreePath` change, there is nothing else worth keeping,
+     * so the whole command is rejected instead.
+     */
+    requireExclusiveWorktree: Schema.optional(Schema.Boolean),
+    /**
+     * Keep the thread's live provider session attached despite a worktreePath
+     * change. The default (used by an explicit worktree handoff) detaches it,
+     * since that session was configured for the old cwd. The worktree-
+     * location follow (#11078) sets this: the provider session itself (e.g.
+     * Claude's EnterWorktree) is what moved, so it is already working from
+     * the new location and detaching it would kill useful, in-progress work.
+     */
+    preserveProviderSession: Schema.optional(Schema.Boolean),
     /** Reject unless no message or run has landed on this thread. */
     expectedEmpty: Schema.optional(Schema.Boolean),
     limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecoveryUpdate)),

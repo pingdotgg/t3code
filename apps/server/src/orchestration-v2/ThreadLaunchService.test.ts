@@ -102,6 +102,7 @@ interface HarnessOptions {
   readonly fetchRemote?: GitWorkflow.GitWorkflowService["Service"]["fetchRemote"];
   readonly hasCommit?: GitWorkflow.GitWorkflowService["Service"]["hasCommit"];
   readonly renameBranch?: GitWorkflow.GitWorkflowService["Service"]["renameBranch"];
+  readonly localStatus?: GitWorkflow.GitWorkflowService["Service"]["localStatus"];
   readonly runSetup?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"];
   readonly generateTitle?: TextGeneration.TextGeneration["Service"]["generateThreadTitle"];
   readonly generateBranchName?: TextGeneration.TextGeneration["Service"]["generateBranchName"];
@@ -121,15 +122,45 @@ function makeHarness(options: HarnessOptions = {}) {
   const layerThreadManagement = ThreadManagement.layer.pipe(Layer.provide(layerOrchestrator));
   const layerReceipts = CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase));
   const layerOutbox = EffectOutbox.layer.pipe(Layer.provide(layerDatabase));
+  // The branch-rename flow re-checks this right before renaming (#11078
+  // review): this harness never actually runs git, so it is tracked here
+  // instead, starting at the literal most tests give an existing_worktree
+  // (no createWorktree call to learn it from otherwise) and updated to
+  // match whatever a new worktree actually gets checked out on, including a
+  // server-generated name the client never specified.
+  let liveBranch = "t3/abcd1234";
   const createWorktree = vi.fn(
-    options.createWorktree ??
-      ((input) =>
-        Effect.succeed({
-          worktree: { path: "/repo-worktrees/feature", refName: input.newRefName, headSha: "abc" },
-        } as never)),
+    (
+      ...args: Parameters<GitWorkflow.GitWorkflowService["Service"]["createWorktree"]>
+    ): ReturnType<GitWorkflow.GitWorkflowService["Service"]["createWorktree"]> => {
+      liveBranch = args[0].newRefName ?? liveBranch;
+      return (
+        options.createWorktree ??
+        ((input) =>
+          Effect.succeed({
+            worktree: {
+              path: "/repo-worktrees/feature",
+              refName: input.newRefName,
+              headSha: "abc",
+            },
+          } as never))
+      )(...args);
+    },
   );
   const renameBranch = vi.fn(
     options.renameBranch ?? ((input) => Effect.succeed({ branch: input.newBranch })),
+  );
+  const localStatus = vi.fn(
+    options.localStatus ??
+      (() =>
+        Effect.succeed({
+          isRepo: true,
+          hasPrimaryRemote: true,
+          isDefaultRef: false,
+          refName: liveBranch,
+          hasWorkingTreeChanges: false,
+          workingTree: { files: [], insertions: 0, deletions: 0 },
+        } as never)),
   );
   const removeWorktree = vi.fn(
     (_input: Parameters<GitWorkflow.GitWorkflowService["Service"]["removeWorktree"]>[0]) =>
@@ -169,6 +200,7 @@ function makeHarness(options: HarnessOptions = {}) {
     Layer.mock(GitWorkflow.GitWorkflowService)({
       createWorktree,
       renameBranch,
+      localStatus,
       fetchRemote: options.fetchRemote ?? (() => Effect.void),
       hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
       remoteExists: () => Effect.succeed(true),
@@ -241,6 +273,7 @@ function makeHarness(options: HarnessOptions = {}) {
     createWorktree,
     removeWorktree,
     renameBranch,
+    localStatus,
     generateBranchName,
     generateThreadTitle,
     runSetup,
@@ -1215,6 +1248,130 @@ it.effect("provisions under t3-<hash> when a plain t3 branch blocks t3/*", () =>
       assert.equal(harness.renameBranch.mock.calls[0]?.[0]?.oldBranch, "t3-abcd1234");
     }).pipe(Effect.provide(harness.layer));
   }),
+);
+
+it.effect(
+  "drops the background branch rename once the agent's own checkout already corrected the stamp",
+  () =>
+    Effect.gen(function* () {
+      const branchNameStarted = yield* Deferred.make<void>();
+      const allowBranchName = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        createWorktree: (input) =>
+          Effect.succeed({
+            worktree: { path: "/repo-worktrees/temp", refName: input.newRefName, headSha: "abc" },
+          } as never),
+        generateBranchName: () =>
+          Deferred.succeed(branchNameStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(allowBranchName)),
+            Effect.as({ branch: "generated-branch" }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const dispatch = threads.dispatch;
+        const settledCommandIds: Array<string> = [];
+        vi.spyOn(threads, "dispatch").mockImplementation((command) =>
+          dispatch(command).pipe(
+            Effect.onExit(() => Effect.sync(() => settledCommandIds.push(command.commandId))),
+          ),
+        );
+        const launched = yield* launches.launch(
+          launchInput({
+            command: "command:launch:stale-rename",
+            thread: "thread:launch:stale-rename",
+            message: "Build the feature",
+            workspace: { type: "worktree", baseRef: "main", branch: "t3/abcd1234" },
+          }),
+        );
+        yield* Deferred.await(branchNameStarted);
+        // The agent checked out a real branch during the first turn, and
+        // followBranchDrift (RunFinalizationService) already corrected the
+        // stamp before generation finishes and the rename lands.
+        yield* threads.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("command:drift-follow:stale-rename"),
+          threadId: launched.threadId,
+          branch: "feature/agent-chosen",
+          expectedBranch: "t3/abcd1234",
+          expectedWorktreePath: "/repo-worktrees/temp",
+          requireExclusiveWorktree: true,
+        });
+        assert.equal(
+          (yield* threads.getThreadProjection(launched.threadId)).thread.branch,
+          "feature/agent-chosen",
+        );
+        yield* Deferred.succeed(allowBranchName, undefined);
+        yield* waitUntil(() =>
+          Effect.sync(() =>
+            settledCommandIds.includes("command:launch:stale-rename:branch-rename"),
+          ),
+        );
+        // The rename's compare-and-swap (expectedBranch/expectedWorktreePath)
+        // found the stamp already moved on, so it no-opped instead of
+        // overwriting the agent's real branch with the generated name.
+        assert.equal(
+          (yield* threads.getThreadProjection(launched.threadId)).thread.branch,
+          "feature/agent-chosen",
+        );
+      }).pipe(Effect.provide(harness.layer));
+    }),
+);
+
+it.effect(
+  "skips the background branch rename itself once the worktree's real branch has already moved (#11078 review)",
+  () =>
+    Effect.gen(function* () {
+      const branchNameStarted = yield* Deferred.make<void>();
+      const allowBranchName = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        createWorktree: (input) =>
+          Effect.succeed({
+            worktree: { path: "/repo-worktrees/temp", refName: input.newRefName, headSha: "abc" },
+          } as never),
+        generateBranchName: () =>
+          Deferred.succeed(branchNameStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(allowBranchName)),
+            Effect.as({ branch: "generated-branch" }),
+          ),
+        // The agent checked out a real branch itself during the first turn,
+        // before followBranchDrift (which only runs at turn end, unlike this
+        // rename) has had any chance to correct the thread's stamp — so a
+        // stamp-only check here would still see the temp branch and miss it.
+        localStatus: () =>
+          Effect.succeed({
+            isRepo: true,
+            hasPrimaryRemote: true,
+            isDefaultRef: false,
+            refName: "feature/agent-chosen",
+            hasWorkingTreeChanges: false,
+            workingTree: { files: [], insertions: 0, deletions: 0 },
+          } as never),
+      });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const launched = yield* launches.launch(
+          launchInput({
+            command: "command:launch:real-branch-moved",
+            thread: "thread:launch:real-branch-moved",
+            message: "Build the feature",
+            workspace: { type: "worktree", baseRef: "main", branch: "t3/abcd1234" },
+          }),
+        );
+        yield* Deferred.await(branchNameStarted);
+        yield* Deferred.succeed(allowBranchName, undefined);
+        yield* waitUntil(() => Effect.sync(() => harness.localStatus.mock.calls.length > 0));
+        // The actual `git branch -m` never runs against a ref the agent has
+        // already checked off of.
+        assert.equal(harness.renameBranch.mock.calls.length, 0);
+        assert.equal(
+          (yield* threads.getThreadProjection(launched.threadId)).thread.branch,
+          "t3/abcd1234",
+        );
+      }).pipe(Effect.provide(harness.layer));
+    }),
 );
 
 it.effect("keeps an explicit branch name instead of generating one", () =>

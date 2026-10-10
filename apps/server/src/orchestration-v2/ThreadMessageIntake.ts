@@ -51,9 +51,20 @@ const releaseUnusedClaims = Effect.fn("ThreadMessageIntake.releaseUnusedClaims")
 });
 
 export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(function* (
-  command: OrchestrationV2Command,
+  input: OrchestrationV2Command,
 ) {
   const threads = yield* ThreadManagement.ThreadManagementService;
+  // preserveProviderSession is server-only (set by RunFinalizationService's
+  // worktree-location follow, #11078, to keep a session that itself moved
+  // attached). OrchestrationV2Command is also the wire schema for the
+  // client-facing dispatchCommand RPC, so a client could otherwise set it
+  // directly on thread.metadata.update and skip the provider-session detach
+  // an explicit worktree handoff is supposed to trigger. Strip it here,
+  // the one place every client-originated command passes through.
+  const command: OrchestrationV2Command =
+    input.type === "thread.metadata.update" && input.preserveProviderSession !== undefined
+      ? { ...input, preserveProviderSession: undefined }
+      : input;
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;
     const incomingByQuestionId = command.attachmentsByQuestionId;

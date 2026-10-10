@@ -1069,6 +1069,126 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
   );
 });
 
+// #11078: Claude's EnterWorktree/ExitWorktree move the session's own cwd
+// without any T3 command. A PostToolUse hook on those two tools reports the
+// SDK's own post-tool cwd (the same signal V1's adapter used), which the
+// adapter turns into a provider_session.updated event so the orchestration
+// layer can follow the move at turn end (RunFinalizationService).
+describe("ClaudeAdapterV2 worktree location follow", () => {
+  it.effect("reports EnterWorktree/ExitWorktree cwd moves as provider_session.updated", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-worktree-follow-",
+        });
+        let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+        const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir,
+          fileSystem,
+          path: yield* Path.Path,
+          crypto: yield* Crypto.Crypto,
+          idAllocator,
+          queryRunner: {
+            allocateSessionId: Effect.succeed("native-thread-claude-worktree-follow"),
+            open: (input) =>
+              Effect.sync(() => {
+                openedOptions = input.options;
+                return {
+                  messages: Stream.never,
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Effect.void,
+                };
+              }),
+            forkSession: () => Effect.die("unused"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const originalCwd = "/workspace";
+        const threadId = ThreadId.make("thread-claude-worktree-follow");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-worktree-follow"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const now = yield* DateTime.now;
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-worktree-follow"),
+            text: "Enter the worktree.",
+            attachments: [],
+          }),
+        );
+        const hook = openedOptions?.hooks?.PostToolUse?.[0]?.hooks[0];
+        assert.isFunction(hook);
+        const fireHook = (input: {
+          readonly cwd: string;
+          readonly toolName: "EnterWorktree" | "ExitWorktree";
+          readonly agentId?: string;
+        }) =>
+          Effect.promise(() =>
+            hook!(
+              {
+                hook_event_name: "PostToolUse",
+                session_id: "sdk-session",
+                transcript_path: "/tmp/transcript.jsonl",
+                cwd: input.cwd,
+                tool_name: input.toolName,
+                tool_use_id: `tool-${input.toolName}`,
+                tool_input: {},
+                tool_response: {},
+                ...(input.agentId === undefined ? {} : { agent_id: input.agentId }),
+              },
+              undefined,
+              { signal: new AbortController().signal },
+            ),
+          );
+        const nextSessionUpdate = Effect.gen(function* () {
+          const event = yield* runtime.events.pipe(
+            Stream.filter((item) => item.type === "provider_session.updated"),
+            Stream.runHead,
+          );
+          assert.isTrue(Option.isSome(event));
+          return Option.isSome(event) ? event.value.providerSession.cwd : null;
+        });
+
+        const worktreeCwd = `${originalCwd}/.claude/worktrees/feature`;
+        yield* fireHook({ cwd: worktreeCwd, toolName: "EnterWorktree" });
+        assert.equal(yield* nextSessionUpdate, worktreeCwd);
+
+        // A subagent's own EnterWorktree (agent_id set) is its own isolated
+        // concern, not this (root) session's: it must leave the tracked cwd
+        // at worktreeCwd, so the next root-level report below (to the SAME
+        // subagentCwd) is still a real change and still emits.
+        const subagentCwd = `${originalCwd}/.claude/worktrees/subagent-only`;
+        yield* fireHook({ cwd: subagentCwd, toolName: "EnterWorktree", agentId: "agent-1" });
+        yield* fireHook({ cwd: subagentCwd, toolName: "EnterWorktree" });
+        assert.equal(yield* nextSessionUpdate, subagentCwd);
+
+        yield* fireHook({ cwd: originalCwd, toolName: "ExitWorktree" });
+        assert.equal(yield* nextSessionUpdate, originalCwd);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+});
+
 describe("ClaudeAdapterV2 approval cancellation", () => {
   it.effect("observes an approval signal that was already aborted", () =>
     Effect.gen(function* () {
