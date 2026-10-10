@@ -123,6 +123,30 @@ capture fails, the `always()` upload still publishes partial PNGs without re-val
 Download `app-store-connect-screenshots` and `google-play-screenshots` from the workflow run's
 Artifacts section. Artifacts are retained for 14 days.
 
+For iOS runs, `pen_assets` also exports the checked-in G dark and H light designs as
+`app-store-pen-layouts`. Add an organization CLI key from pen.dev to the repository's
+Actions secrets as `PEN_CLI_KEY`, or turn off `pen_assets` to capture only raw screenshots.
+The export runs on a separate Linux runner after iOS validation succeeds; it needs no laptop
+or open Pen application. Each selected appearance and palette gets seven 1290×2796 RGB PNGs.
+These are iPhone marketing layouts; the iPad and Google Play artifacts remain separate.
+
+The exporter replaces the six phone-screen images with fresh iPhone 6.9-inch captures. It keeps
+the original text, phone frame, crop mode, decorative callout cards, and testimonials. The
+designed callouts are fixed artwork, not additional live captures. Pen's CLI version is pinned;
+exports use scale 1, and missing files, export errors, or incorrect dimensions fail the job.
+Rendering can differ slightly from desktop exports around antialiased edges and shadows.
+
+Edit G/H and their shared components in
+[`app-store.pen`](../../scripts/mobile-showcase-assets/app-store.pen), keeping its adjacent
+asset folder. After changing the design, verify both appearances against the intended exports:
+
+    npm install --global @pen.dev/cli@0.3.9
+    node scripts/mobile-showcase-assets.ts --appearance both --theme t3-code
+
+Set `PEN_CLI_KEY` in the environment before running the exporter. `--input` selects the
+`iphone-6.9` capture directory; `--output` selects the designed-image destination. Design changes
+must be committed to the repository before the workflow uses them.
+
 The workflow uses the same checked-in device and scene matrix as local capture. Android remains
 ARM64 by default for local Apple Silicon development; CI sets `T3_SHOWCASE_ANDROID_ABI=x86_64` so the
 debug APK matches its accelerated emulator.
