@@ -179,7 +179,7 @@ export function PullRequestComposer({
               textareaRef={commentRef}
               onCommentAction={onCommentAction}
               onCommented={onCommented}
-              onClose={() => setOpen(false)}
+              onOpenChange={setOpen}
             />
           </div>
         ) : null}

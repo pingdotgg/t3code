@@ -9,6 +9,15 @@ import { useState, type RefObject } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
@@ -22,7 +31,7 @@ export function PullRequestCommentForm({
   textareaRef,
   onCommentAction,
   onCommented,
-  onClose,
+  onOpenChange,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
@@ -34,10 +43,11 @@ export function PullRequestCommentForm({
     action: "close" | "reopen",
   ) => Promise<{ readonly commentPosted: boolean }>;
   onCommented: () => void;
-  onClose: () => void;
+  onOpenChange: (open: boolean) => void;
 }) {
   const [body, setBody] = useState("");
   const [submitting, setSubmitting] = useState<"comment" | "close" | "reopen" | null>(null);
+  const [confirmingClose, setConfirmingClose] = useState(false);
   const postComment = useAtomCommand(pullRequestEnvironment.comment, {
     reportFailure: false,
   });
@@ -60,7 +70,10 @@ export function PullRequestCommentForm({
       const result = await onCommentAction(trimmed, action);
       if (result.commentPosted) {
         setBody("");
-        onClose();
+        onOpenChange(false);
+      } else {
+        // A close confirmed from the dialog runs with the composer hidden; bring the draft back.
+        onOpenChange(true);
       }
       setSubmitting(null);
       return;
@@ -79,7 +92,7 @@ export function PullRequestCommentForm({
     }
     setBody("");
     setSubmitting(null);
-    onClose();
+    onOpenChange(false);
     onCommented();
   };
 
@@ -115,7 +128,13 @@ export function PullRequestCommentForm({
             size="xs"
             variant={followUpAction === "close" ? "destructive-outline" : "outline"}
             disabled={body.trim().length === 0 || submitting !== null || actionPending}
-            onClick={() => void submit(followUpAction)}
+            onClick={() => {
+              if (followUpAction === "reopen") return void submit("reopen");
+              // Closing asks first, like Close pull request in the header menu. The composer steps
+              // aside because popovers stack above dialogs, and returns if the close is cancelled.
+              onOpenChange(false);
+              setConfirmingClose(true);
+            }}
           >
             {followUpAction === "close" ? (
               <PullRequestGlyph.closed className="size-3.5" />
@@ -141,6 +160,38 @@ export function PullRequestCommentForm({
           {submitting === "comment" ? "Posting..." : "Comment"}
         </Button>
       </div>
+      <AlertDialog
+        open={confirmingClose}
+        onOpenChange={(open) => {
+          setConfirmingClose(open);
+          if (!open) onOpenChange(true);
+        }}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Close pull request?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {`This posts your comment and closes #${reference.number} without merging it.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" size="sm" />}>
+              Cancel
+            </AlertDialogClose>
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={submitting !== null || actionPending}
+              onClick={() => {
+                setConfirmingClose(false);
+                void submit("close");
+              }}
+            >
+              Close
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
     </div>
   );
 }
