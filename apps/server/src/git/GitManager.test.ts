@@ -43,8 +43,11 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { decodeGitHubPullRequestListJson } from "../sourceControl/gitHubPullRequests.ts";
-import * as GitLabCli from "../sourceControl/GitLabCli.ts";
+import { decodeGitHubPullRequestListJson } from "@t3tools/source-control-github/server/gitHubPullRequests";
+import * as GitHubChangeRequestTemplate from "@t3tools/source-control-github/server/gitHubChangeRequestTemplate";
+import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
+import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -53,12 +56,13 @@ import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
-import * as GitLabSourceControlProvider from "../sourceControl/GitLabSourceControlProvider.ts";
+import * as ForgejoSourceControlProvider from "@t3tools/source-control-forgejo/server/ForgejoSourceControlProvider";
+import * as GitLabSourceControlProvider from "@t3tools/source-control-gitlab/server/GitLabSourceControlProvider";
 import {
   ForgejoPullRequestSchema,
   toForgejoChangeRequest,
-} from "../sourceControl/forgejoPullRequests.ts";
-import type { SourceControlProvider } from "../sourceControl/SourceControlProvider.ts";
+} from "@t3tools/source-control-forgejo/server/forgejoPullRequests";
+import type { SourceControlProvider } from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -543,6 +547,13 @@ function createGitHubProviderWithFakeGh(scenario: FakeGhScenario = {}): {
   return {
     service: {
       kind: "github",
+      // The GitHub provider's own lookup rule and template convention, which GitManager reads
+      // instead of the kind.
+      headBranchProbe: ({ headSelectors }) => ({
+        headSelectors: headSelectors.filter((selector) => !selector.includes(":")),
+        limit: 100,
+      }),
+
       listChangeRequests: (input) =>
         input.state === "open"
           ? execute({
@@ -743,7 +754,18 @@ function makeManager(input?: {
       );
   const layerSourceControlRegistry = Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
-    Effect.succeed(input?.sourceControlProvider ?? fakeGitHubProvider).pipe(
+    Effect.gen(function* () {
+      // GitHub reads its PR template with git, which the fake gh cannot answer; give the fake
+      // the package's real reader over the test repository's git.
+      const git = yield* GitVcsDriver.GitVcsDriver;
+      return (
+        input?.sourceControlProvider ?? {
+          ...fakeGitHubProvider,
+          readChangeRequestTemplate: ({ cwd, treeish }: { cwd: string; treeish: string }) =>
+            GitHubChangeRequestTemplate.detect(cwd, treeish, git.execute),
+        }
+      );
+    }).pipe(
       Effect.map((provider) =>
         SourceControlProviderRegistry.SourceControlProviderRegistry.of({
           resolveLink: (input) => provider.resolveLink?.(input),
@@ -767,9 +789,12 @@ function makeManager(input?: {
         runForThread: () => Effect.succeed({ status: "no-script" as const }),
       },
     ),
-    layerVcsDriver,
     layerServerSettings,
-  ).pipe(Layer.provideMerge(layerSourceControlRegistry), Layer.provideMerge(NodeServices.layer));
+  ).pipe(
+    Layer.provideMerge(layerSourceControlRegistry),
+    Layer.provideMerge(layerVcsDriver),
+    Layer.provideMerge(NodeServices.layer),
+  );
   // Built into the test's scope: the manager reads these stores after this returns.
   const layerStores = Layer.merge(ProjectionStore.layer, ProjectStore.layer).pipe(
     Layer.provideMerge(SqlitePersistence.layerMemory),
@@ -2108,17 +2133,19 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           source_project: { path_with_namespace: "Group/Subgroup/Fork" },
         },
       ]);
-      const calls: VcsProcess.VcsProcessInput[] = [];
+      const calls: SourceControlHost.SourceControlProcessInput[] = [];
       const provider = yield* GitLabSourceControlProvider.make.pipe(
         Effect.provide(
           GitLabCli.layer.pipe(
             Layer.provide(
-              Layer.mock(VcsProcess.VcsProcess)({
-                run: (input) =>
-                  Effect.sync(() => {
-                    calls.push(input);
-                    return fakeGhOutput(output);
-                  }),
+              TestSourceControlHost.layer({
+                process: {
+                  run: (input) =>
+                    Effect.sync(() => {
+                      calls.push(input);
+                      return fakeGhOutput(output);
+                    }),
+                },
               }),
             ),
           ),
@@ -4228,7 +4255,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         };
         const repository = GitManager.parseRepositoryNameWithOwnerFromRemoteUrl(
           `https://forgejo.example/forgejo/${owner}/project.git`,
-          "forgejo",
+          { repositoryNameFromRemoteUrl: ForgejoSourceControlProvider.repositoryNameFromRemoteUrl },
         );
         expect(repository).toBe(`${owner}/project`);
         const context = {
@@ -4249,13 +4276,13 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(
         GitManager.parseRepositoryNameWithOwnerFromRemoteUrl(
           "git@forgejo.example:maria/project.git",
-          "forgejo",
+          { repositoryNameFromRemoteUrl: ForgejoSourceControlProvider.repositoryNameFromRemoteUrl },
         ),
       ).toBe("maria/project");
       expect(
         GitManager.parseRepositoryNameWithOwnerFromRemoteUrl(
           "https://gitlab.example/group/maria/project.git",
-          "gitlab",
+          {},
         ),
       ).toBe("group/maria/project");
     }),
