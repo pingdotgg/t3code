@@ -32,6 +32,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -53,10 +54,13 @@ import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -64,6 +68,7 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 const projectId = ProjectId.make("project:launch-test");
 const otherProjectId = ProjectId.make("project:launch-other");
 const encodeThreadProjection = Schema.encodeEffect(OrchestrationV2ThreadProjectionJson);
+const isDispatchError = Schema.is(Orchestrator.OrchestratorDispatchError);
 const modelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5.1-codex",
@@ -232,9 +237,12 @@ function makeHarness(options: HarnessOptions = {}) {
   return {
     layer: Layer.mergeAll(
       layerLaunch,
+      layerOrchestrator,
       layerThreadManagement,
       layerTitleRegeneration,
       layerOutbox,
+      layerReceipts,
+      ThreadCommandExecutor.layer,
       layerDatabase,
       layerExternalServices,
     ),
@@ -290,6 +298,321 @@ function waitUntil<E, R>(predicate: () => Effect.Effect<boolean, E, R>): Effect.
     assert.fail("Condition was not reached before timeout.");
   });
 }
+
+it.effect.each([false, true])(
+  "rejects an archived launch sender before claiming a target (reuse: %s)",
+  (reuseExistingThread) => {
+    const harness = makeHarness({ runSetup: () => Effect.never });
+    return Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const senderThreadId = ThreadId.make("thread:launch-sender");
+      yield* launches.launch(launchInput({ command: "create-sender", thread: senderThreadId }));
+      yield* threads.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("archive-sender"),
+        threadId: senderThreadId,
+      });
+      const original = reuseExistingThread
+        ? (yield* launches.launch(
+            launchInput({ command: "create-target", thread: "thread:launch-target" }),
+          )).projection
+        : null;
+      const input = {
+        ...launchInput({ command: "launch-from-sender", thread: "thread:launch-target" }),
+        reuseExistingThread,
+        initialMessage: {
+          messageId: MessageId.make("message:launch-from-sender"),
+          text: "Start the delegated work",
+          attachments: [],
+          senderThreadId,
+        },
+        createdBy: "agent" as const,
+        creationSource: "mcp" as const,
+      };
+      const failed = yield* launches.launch(input).pipe(Effect.flip);
+      assert.equal(failed.operation, "dispatch-message");
+      assert.ok(isDispatchError(failed.cause));
+      assert.include(String(failed.cause.cause), "not active");
+      if (original === null) {
+        assert.isNull(yield* threads.getThreadShell(input.threadId));
+      } else {
+        assert.deepEqual(yield* threads.getThreadProjection(input.threadId), original);
+      }
+      for (const commandId of [
+        input.commandId,
+        CommandId.make(`${input.commandId}:initial-message`),
+      ]) {
+        assert.isTrue(Option.isNone(yield* receipts.getByCommandId(commandId)));
+        assert.isEmpty(yield* outbox.listByCommandId(commandId));
+      }
+      yield* threads.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("unarchive-sender"),
+        threadId: senderThreadId,
+      });
+      const retried = yield* launches.launch(input);
+      assert.lengthOf(retried.projection.messages, 1);
+      assert.equal(retried.projection.messages[0]?.senderThreadId, senderThreadId);
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect.each(["archive", "delete"] as const)(
+  "rejects a reused launch target that changes after preflight (%s)",
+  (change) => {
+    const harness = makeHarness({ runSetup: () => Effect.never });
+    return Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const input = {
+        ...launchInput({
+          command: "launch-reused-target-race",
+          thread: "thread:reused-target-race",
+          message: "Start work",
+        }),
+        reuseExistingThread: true,
+      };
+      yield* launches.launch(
+        launchInput({ command: "create-reused-target-race", thread: input.threadId }),
+      );
+      const preflightDone = yield* Deferred.make<void>();
+      const allowDispatch = yield* Deferred.make<void>();
+      const dispatchLaunch = threads.dispatchLaunch;
+      const dispatchSpy = vi
+        .spyOn(threads, "dispatchLaunch")
+        .mockImplementation((command) =>
+          Deferred.succeed(preflightDone, undefined).pipe(
+            Effect.andThen(Deferred.await(allowDispatch)),
+            Effect.andThen(dispatchLaunch(command)),
+          ),
+        );
+      yield* Effect.gen(function* () {
+        const launchFiber = yield* launches.launch(input).pipe(Effect.forkChild());
+        yield* Deferred.await(preflightDone);
+        yield* threads.dispatch({
+          type: change === "archive" ? "thread.archive" : "thread.delete",
+          commandId: CommandId.make("change-reused-target-race"),
+          threadId: input.threadId,
+        });
+        yield* Deferred.succeed(allowDispatch, undefined);
+        const failed = yield* Fiber.join(launchFiber).pipe(Effect.flip);
+        assert.equal(failed.operation, "dispatch-message");
+        assert.ok(isDispatchError(failed.cause));
+        assert.include(String(failed.cause.cause), "not active");
+        for (const commandId of [
+          input.commandId,
+          CommandId.make(`${input.commandId}:initial-message`),
+        ]) {
+          assert.isTrue(Option.isNone(yield* receipts.getByCommandId(commandId)));
+          assert.isEmpty(yield* outbox.listByCommandId(commandId));
+        }
+        if (change === "archive") {
+          yield* threads.dispatch({
+            type: "thread.unarchive",
+            commandId: CommandId.make("unarchive-reused-target-race"),
+            threadId: input.threadId,
+          });
+          const retried = yield* launches.launch(input);
+          assert.lengthOf(retried.projection.messages, 1);
+          yield* threads.dispatch({
+            type: "thread.stop",
+            commandId: CommandId.make("stop-reused-target-race"),
+            threadId: input.threadId,
+          });
+          yield* threads.dispatch({
+            type: "thread.archive",
+            commandId: CommandId.make("rearchive-reused-target-race"),
+            threadId: input.threadId,
+          });
+          const replayed = yield* launches.launch(input);
+          assert.isTrue(replayed.resumed);
+          assert.lengthOf(replayed.projection.messages, 1);
+        }
+      }).pipe(Effect.ensuring(Effect.sync(() => dispatchSpy.mockRestore())));
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect.each(["target", "sender"] as const)(
+  "preserves an interrupted launch's initial message retry while its %s is archived",
+  (inactive) => {
+    const harness = makeHarness({ runSetup: () => Effect.never });
+    return Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const senderThreadId =
+        inactive === "sender" ? ThreadId.make("thread:interrupted-launch-sender") : undefined;
+      if (senderThreadId !== undefined) {
+        yield* launches.launch(
+          launchInput({
+            command: "create-interrupted-launch-sender",
+            thread: senderThreadId,
+            workspace: { type: "existing_worktree", worktreePath: "/existing-worktree" },
+          }),
+        );
+      }
+      const { threadId: _unusedThreadId, ...baseInput } = launchInput({
+        command: "launch-interrupted-after-create",
+        thread: "unused",
+        message: "Deliver after reopening",
+      });
+      const input = {
+        ...baseInput,
+        initialMessage: {
+          ...baseInput.initialMessage!,
+          ...(senderThreadId === undefined ? {} : { senderThreadId }),
+        },
+      };
+      const created = yield* Deferred.make<void>();
+      const commitCommand = eventSink.commitCommand;
+      const commitSpy = vi.spyOn(eventSink, "commitCommand").mockImplementation((command) =>
+        command.commandId === input.commandId
+          ? commitCommand(command).pipe(
+              Effect.tap(() => Deferred.succeed(created, undefined)),
+              Effect.andThen(Effect.never),
+            )
+          : commitCommand(command),
+      );
+      yield* Effect.gen(function* () {
+        const launchFiber = yield* launches.launch(input).pipe(Effect.forkChild());
+        yield* Deferred.await(created);
+        yield* Fiber.interrupt(launchFiber);
+        const claimReceipt = Option.getOrThrow(yield* receipts.getByCommandId(input.commandId));
+        assert.equal(claimReceipt.status, "accepted");
+        const threadId = claimReceipt.threadId;
+        assert.isEmpty((yield* threads.getThreadProjection(threadId)).messages);
+        yield* threads.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("archive-interrupted-launch"),
+          threadId: senderThreadId ?? threadId,
+        });
+        const failed = yield* launches.launch(input).pipe(Effect.flip);
+        assert.equal(failed.operation, "dispatch-message");
+        assert.ok(isDispatchError(failed.cause));
+        assert.include(String(failed.cause.cause), "not active");
+        const messageCommandId = CommandId.make(`${input.commandId}:initial-message`);
+        assert.isTrue(Option.isNone(yield* receipts.getByCommandId(messageCommandId)));
+        assert.isEmpty(yield* outbox.listByCommandId(messageCommandId));
+        yield* threads.dispatch({
+          type: "thread.unarchive",
+          commandId: CommandId.make("unarchive-interrupted-launch"),
+          threadId: senderThreadId ?? threadId,
+        });
+        const retried = yield* launches.launch(input);
+        assert.equal(retried.threadId, threadId);
+        assert.isTrue(retried.resumed);
+        assert.lengthOf(retried.projection.messages, 1);
+        assert.lengthOf(retried.projection.runs, 1);
+        assert.equal(
+          Option.getOrThrow(yield* receipts.getByCommandId(messageCommandId)).status,
+          "accepted",
+        );
+      }).pipe(Effect.ensuring(Effect.sync(() => commitSpy.mockRestore())));
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect("holds the sender through launch acceptance and replays after it archives", () => {
+  const setupEntered = Deferred.makeUnsafe<void>();
+  const harness = makeHarness({
+    runSetup: () => Deferred.succeed(setupEntered, undefined).pipe(Effect.andThen(Effect.never)),
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+    const senderThreadId = ThreadId.make("thread:z-launch-sender");
+    yield* launches.launch(launchInput({ command: "create-race-sender", thread: senderThreadId }));
+    // Finish the sender's background workspace update before observing its locks.
+    yield* Deferred.await(setupEntered);
+    const input = {
+      ...launchInput({ command: "launch-race", thread: "thread:a-launch-target" }),
+      initialMessage: {
+        messageId: MessageId.make("message:launch-race"),
+        text: "Start the delegated work",
+        attachments: [],
+        senderThreadId,
+      },
+      createdBy: "agent" as const,
+      creationSource: "mcp" as const,
+    };
+    const created = yield* Deferred.make<void>();
+    const allowMessage = yield* Deferred.make<void>();
+    const archiveQueued = yield* Deferred.make<void>();
+    const commitCommand = eventSink.commitCommand;
+    const withLock = executor.withLock;
+    let archiveStarted = false;
+    const commitSpy = vi.spyOn(eventSink, "commitCommand").mockImplementation((command) =>
+      command.commandId === input.commandId
+        ? commitCommand(command).pipe(
+            Effect.tap(() => Deferred.succeed(created, undefined)),
+            Effect.tap(() => Deferred.await(allowMessage)),
+          )
+        : commitCommand(command),
+    );
+    const observeLock: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withLock"] = (
+      key,
+      effect,
+    ) =>
+      key === senderThreadId && archiveStarted
+        ? Deferred.succeed(archiveQueued, undefined).pipe(Effect.andThen(withLock(key, effect)))
+        : withLock(key, effect);
+    const lockSpy = vi.spyOn(executor, "withLock").mockImplementation(observeLock);
+    yield* Effect.gen(function* () {
+      const launchFiber = yield* launches
+        .launch(input)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Effect.raceFirst(
+        Deferred.await(created),
+        Fiber.join(launchFiber).pipe(
+          Effect.andThen(Effect.die("Launch missed the creation barrier.")),
+        ),
+      );
+      archiveStarted = true;
+      const archiveFiber = yield* threads
+        .dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("archive-race-sender"),
+          threadId: senderThreadId,
+        })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Effect.raceFirst(
+        Deferred.await(archiveQueued),
+        Fiber.join(archiveFiber).pipe(
+          Effect.andThen(Effect.die("Archive bypassed launch acceptance.")),
+        ),
+      );
+      assert.isNull((yield* threads.getThreadProjection(senderThreadId)).thread.archivedAt);
+      assert.isEmpty((yield* threads.getThreadProjection(input.threadId)).messages);
+      yield* Deferred.succeed(allowMessage, undefined);
+      const launched = yield* Fiber.join(launchFiber);
+      yield* Fiber.join(archiveFiber);
+      assert.isNotNull((yield* threads.getThreadProjection(senderThreadId)).thread.archivedAt);
+      assert.lengthOf(launched.projection.messages, 1);
+      assert.equal(launched.projection.messages[0]?.senderThreadId, senderThreadId);
+      const replayed = yield* launches.launch(input);
+      assert.isTrue(replayed.resumed);
+      assert.equal(replayed.threadId, launched.threadId);
+      assert.lengthOf(replayed.projection.messages, 1);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          commitSpy.mockRestore();
+          lockSpy.mockRestore();
+        }),
+      ),
+    );
+  }).pipe(Effect.provide(harness.layer));
+});
 
 it.effect.each(
   (["new", "existing"] as const).flatMap((target) =>
@@ -374,6 +697,20 @@ it.effect("retains automation and sender attribution while a message waits in th
     );
     const scheduledTaskId = ScheduledTaskId.make("scheduled-task:queued");
     const senderThreadId = ThreadId.make("thread:agent-sender");
+    yield* threads.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create:agent-sender"),
+      threadId: senderThreadId,
+      projectId,
+      title: "Agent sender",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
     const queued = yield* threads.sendToThread({
       projectId,
       commandId: CommandId.make("command:automation:queued"),
@@ -1051,6 +1388,89 @@ it.effect("falls back when the source control writer is unavailable", () =>
       );
     }).pipe(Effect.provide(harness.layer));
   }),
+);
+
+it.effect.each(["archive", "delete", "missing"] as const)(
+  "does not allocate a Scratch folder for an inactive sender (%s)",
+  (inactive) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const scratchRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-launch-scratch-" });
+      let folderCount = 0;
+      const harness = makeHarness({
+        runSetup: () => Effect.never,
+        managedFolders: Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: scratchRoot,
+          folderForThread: () =>
+            Effect.gen(function* () {
+              const path = `${scratchRoot}/folder-${++folderCount}`;
+              yield* fs.makeDirectory(path).pipe(Effect.orDie);
+              return Option.some(path);
+            }),
+        }),
+      });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+        const senderThreadId = ThreadId.make("thread:scratch-sender");
+        if (inactive !== "missing") {
+          yield* launches.launch(
+            launchInput({
+              command: "create-scratch-sender",
+              thread: senderThreadId,
+              workspace: { type: "existing_worktree", worktreePath: "/existing-worktree" },
+            }),
+          );
+          yield* threads.dispatch({
+            type: inactive === "archive" ? "thread.archive" : "thread.delete",
+            commandId: CommandId.make("deactivate-scratch-sender"),
+            threadId: senderThreadId,
+          });
+        }
+        const input = {
+          ...launchInput({ command: "scratch-from-sender", thread: "thread:scratch-target" }),
+          initialMessage: { text: "Start work", attachments: [], senderThreadId },
+          createdBy: "agent" as const,
+          creationSource: "mcp" as const,
+        };
+        const failed = yield* launches.launch(input).pipe(Effect.flip);
+        assert.equal(failed.operation, "dispatch-message");
+        assert.isEmpty(yield* fs.readDirectory(scratchRoot));
+        assert.ok(isDispatchError(failed.cause));
+        assert.include(String(failed.cause.cause), "not active");
+        assert.isNull(yield* threads.getThreadShell(input.threadId));
+        for (const commandId of [
+          input.commandId,
+          CommandId.make(`${input.commandId}:initial-message`),
+        ]) {
+          assert.isTrue(Option.isNone(yield* receipts.getByCommandId(commandId)));
+        }
+        if (inactive === "archive") {
+          yield* threads.dispatch({
+            type: "thread.unarchive",
+            commandId: CommandId.make("reopen-scratch-sender"),
+            threadId: senderThreadId,
+          });
+          const launched = yield* launches.launch(input);
+          assert.lengthOf(launched.projection.messages, 1);
+          assert.deepEqual(yield* fs.readDirectory(scratchRoot), ["folder-1"]);
+          yield* threads.dispatch({
+            type: "thread.archive",
+            commandId: CommandId.make("rearchive-scratch-sender"),
+            threadId: senderThreadId,
+          });
+          const replayed = yield* launches.launch(input);
+          assert.isTrue(replayed.resumed);
+          assert.lengthOf(replayed.projection.messages, 1);
+          assert.equal(
+            replayed.projection.thread.worktreePath,
+            launched.projection.thread.worktreePath,
+          );
+          assert.deepEqual(yield* fs.readDirectory(scratchRoot), ["folder-1"]);
+        }
+      }).pipe(Effect.provide(harness.layer));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("runs a Scratch thread launched at the root in its own folder", () =>
@@ -1778,6 +2198,66 @@ it.effect("bounds concurrent first launches to one thread per command", () =>
     }).pipe(Effect.provide(harness.layer));
   }),
 );
+
+it.effect("keeps a losing allocated launch from rejecting the winner's initial message", () => {
+  const harness = makeHarness({ runSetup: () => Effect.never });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const { threadId: _unusedThreadId, ...input } = launchInput({
+      command: "command:launch:claim-race",
+      thread: "unused",
+      message: "Race the initial message",
+    });
+    const firstClaimPlanned = yield* Deferred.make<void>();
+    const secondClaimPlanned = yield* Deferred.make<void>();
+    const winnerCommitted = yield* Deferred.make<void>();
+    const allowWinnerMessage = yield* Deferred.make<void>();
+    const commitCommand = eventSink.commitCommand;
+    let claimCount = 0;
+    const commitSpy = vi.spyOn(eventSink, "commitCommand").mockImplementation((command) =>
+      command.commandId !== input.commandId
+        ? commitCommand(command)
+        : Effect.gen(function* () {
+            if (++claimCount === 1) {
+              yield* Deferred.succeed(firstClaimPlanned, undefined);
+              yield* Deferred.await(secondClaimPlanned);
+              const committed = yield* commitCommand(command);
+              yield* Deferred.succeed(winnerCommitted, undefined);
+              yield* Deferred.await(allowWinnerMessage);
+              return committed;
+            }
+            yield* Deferred.succeed(secondClaimPlanned, undefined);
+            yield* Deferred.await(winnerCommitted);
+            return yield* commitCommand(command);
+          }),
+    );
+    yield* Effect.gen(function* () {
+      const winner = yield* launches.launch(input).pipe(Effect.forkChild());
+      yield* Deferred.await(firstClaimPlanned);
+      const loser = yield* launches.launch(input).pipe(Effect.flip);
+      assert.equal(loser.operation, "create-thread");
+      assert.include(String(loser.cause), "cannot be replayed");
+      const messageCommandId = CommandId.make(`${input.commandId}:initial-message`);
+      assert.isTrue(Option.isNone(yield* receipts.getByCommandId(messageCommandId)));
+      yield* Deferred.succeed(allowWinnerMessage, undefined);
+      const launched = yield* Fiber.join(winner);
+      assert.lengthOf(launched.projection.messages, 1);
+      const replayed = yield* launches.launch(input);
+      assert.equal(replayed.threadId, launched.threadId);
+      assert.isTrue(replayed.resumed);
+      assert.lengthOf(replayed.projection.messages, 1);
+      assert.lengthOf(replayed.projection.runs, 1);
+      assert.lengthOf(yield* threads.listProjectThreads({ projectId, includeSubagents: false }), 1);
+      assert.equal(
+        Option.getOrThrow(yield* receipts.getByCommandId(messageCommandId)).status,
+        "accepted",
+      );
+    }).pipe(Effect.ensuring(Effect.sync(() => commitSpy.mockRestore())));
+  }).pipe(Effect.provide(harness.layer));
+});
 
 it.effect("deduplicates retried launch side effects in-process", () =>
   Effect.gen(function* () {

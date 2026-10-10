@@ -477,8 +477,8 @@ describe("threadRuntimeCanArchive", () => {
     updatedAt: DateTime.formatIso(now),
   });
 
-  it.each(["preparing", "starting", "running"] as const)(
-    "blocks archive while a provider is %s",
+  it.each(["preparing", "starting", "running", "waiting"] as const)(
+    "blocks archive while a run is %s",
     (status) => {
       expect(threadRuntimeCanArchive(runtime(status, RunId.make(`run-${status}`)))).toBe(false);
     },
@@ -489,8 +489,7 @@ describe("threadRuntimeCanArchive", () => {
     expect(threadRuntimeCanArchive(runtime("queued", null))).toBe(true);
   });
 
-  it("allows waiting and idle threads", () => {
-    expect(threadRuntimeCanArchive(runtime("waiting", RunId.make("run-finished")))).toBe(true);
+  it("allows idle threads", () => {
     expect(threadRuntimeCanArchive(runtime("idle", null))).toBe(true);
   });
 });

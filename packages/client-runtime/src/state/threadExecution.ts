@@ -262,6 +262,7 @@ export function deriveThreadRuntime(
       : backgroundWorkHoldsRun && latestRunProjection?.status !== "failed"
         ? "idle"
         : (activityRun?.status ?? "idle"),
+    activityRunStatus: activityRun?.status ?? null,
     activeRunId,
     activityStartedAt:
       liveActivityRun === null

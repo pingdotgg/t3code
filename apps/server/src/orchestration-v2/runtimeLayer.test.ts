@@ -3596,9 +3596,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("cancels queued work when a thread is archived", () =>
+  it.effect("cancels held queued work when an inactive thread is archived", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
       const threadId = ThreadId.make("runtime-layer-archive-queued-thread");
 
       yield* orchestrator.dispatch({
@@ -3645,6 +3646,31 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const queuedRun = beforeArchive.runs.find((run) => run.status === "queued");
       assert.isDefined(activeRun);
       assert.isDefined(queuedRun);
+
+      // Simulate recovery ending active work and holding the queue for user action.
+      const now = yield* DateTime.now;
+      const recoveryCommandId = "command:runtime-reconcile:archive-queued";
+      yield* eventSink.commitCommand({
+        commandId: CommandId.make(recoveryCommandId),
+        threadId,
+        commandType: "provider-runtime.reconcile",
+        acceptedAt: now,
+        events: [activeRun, queuedRun].map((run) => ({
+          id: EventId.make(`${recoveryCommandId}:${run.id}`),
+          type: "run.updated" as const,
+          threadId,
+          runId: run.id,
+          occurredAt: now,
+          payload:
+            run.status === "queued"
+              ? { ...run, queueHeld: true }
+              : { ...run, status: "cancelled" as const, completedAt: now },
+        })),
+        effects: [],
+      });
+      const recovered = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(recovered.runs.find((run) => run.id === queuedRun.id)?.status, "queued");
+      assert.isTrue(recovered.runs.find((run) => run.id === queuedRun.id)?.queueHeld);
 
       yield* orchestrator.dispatch({
         type: "thread.archive",

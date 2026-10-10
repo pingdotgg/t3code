@@ -287,6 +287,7 @@ export interface ThreadManagementServiceShape {
   readonly dispatch: (
     command: OrchestrationV2ServerCommand,
   ) => Effect.Effect<Orchestrator.OrchestratorV2DispatchResult, Orchestrator.OrchestratorV2Error>;
+  readonly dispatchLaunch: Orchestrator.OrchestratorV2["Service"]["dispatchLaunch"];
   readonly getThreadHistoryPage: Orchestrator.OrchestratorV2["Service"]["getThreadHistoryPage"];
   readonly getTimelinePage: Orchestrator.OrchestratorV2["Service"]["getTimelinePage"];
   readonly getMessageCount: Orchestrator.OrchestratorV2["Service"]["getMessageCount"];
@@ -470,12 +471,13 @@ const make = Effect.gen(function* () {
 
   const ensureCommandTranscripts = Effect.fn(
     "orchestrationV2.threadManagement.ensureCommandTranscripts",
-  )(function* (command: OrchestrationV2ServerCommand) {
-    yield* Effect.forEach(
-      existingThreadIdsForCommand(command),
-      (threadId) => ensureLegacyTranscript(threadId),
-      { discard: true },
-    ).pipe(
+  )(function* (
+    command: OrchestrationV2ServerCommand,
+    threadIds: ReadonlyArray<ThreadId> = existingThreadIdsForCommand(command),
+  ) {
+    yield* Effect.forEach(threadIds, (threadId) => ensureLegacyTranscript(threadId), {
+      discard: true,
+    }).pipe(
       Effect.mapError(
         (cause) =>
           new Orchestrator.OrchestratorDispatchError({
@@ -511,6 +513,17 @@ const make = Effect.gen(function* () {
 
   const dispatch: ThreadManagementServiceShape["dispatch"] = (command) =>
     ensureCommandTranscripts(command).pipe(Effect.andThen(orchestrator.dispatch(command)));
+
+  const dispatchLaunch: ThreadManagementServiceShape["dispatchLaunch"] = Effect.fn(
+    "orchestrationV2.threadManagement.dispatchLaunch",
+  )(function* (input) {
+    yield* ensureCommandTranscripts(input.claim);
+    const { senderThreadId, threadId } = input.initialMessage;
+    if (senderThreadId !== undefined && senderThreadId !== threadId) {
+      yield* ensureCommandTranscripts(input.initialMessage, [senderThreadId]);
+    }
+    return yield* orchestrator.dispatchLaunch(input);
+  });
 
   const getProjectThread: ThreadManagementServiceShape["getProjectThread"] = (input) =>
     getThreadProjection(input.threadId).pipe(
@@ -880,6 +893,7 @@ const make = Effect.gen(function* () {
         Effect.andThen(orchestrator.searchThread(input)),
       ),
     dispatch,
+    dispatchLaunch,
     getThreadHistoryPage: (threadId, cursor, throughEntryId, conversationOnly) =>
       ensureProjectionTranscript(threadId).pipe(
         Effect.andThen(

@@ -26,6 +26,7 @@ import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import { AcceptedSteeringContinuation } from "./Orchestrator.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 
@@ -256,7 +257,7 @@ export const layerExecutor: Layer.Layer<
                     if (message === undefined || run === undefined) return yield* error;
                     // Reuse the message identity and a stable command receipt so an outbox
                     // retry cannot append a duplicate message or start a second follow-up.
-                    yield* threads.dispatch({
+                    const followUp = threads.dispatch({
                       type: "message.dispatch",
                       commandId: CommandId.make(`command:steer-follow-up:${effect.id}`),
                       threadId: effect.threadId,
@@ -291,6 +292,9 @@ export const layerExecutor: Layer.Layer<
                         ? {}
                         : { senderThreadId: message.senderThreadId }),
                     });
+                    yield* followUp.pipe(
+                      Effect.provideService(AcceptedSteeringContinuation, message.id),
+                    );
                   }),
                 ),
                 Effect.mapError(

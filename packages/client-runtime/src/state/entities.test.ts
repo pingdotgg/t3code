@@ -23,6 +23,7 @@ import {
   presentThreadShell,
   resolveThreadProviderStack,
   resolveThreadWorkingStartedAt,
+  threadRuntimeCanArchive,
 } from "./models.ts";
 import { v2Projection, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { deriveLatestThreadRun, deriveThreadRuntime } from "./threadExecution.ts";
@@ -384,6 +385,31 @@ describe("V2 client presentation", () => {
     ]);
   });
 
+  it.each(["subagent", "monitor", "background_task"] as const)(
+    "keeps a parked waiting shell unarchivable until it completes with pending %s work",
+    (kind) => {
+      const waiting = {
+        ...v2ThreadShell,
+        latestRunId: RunId.make("run-parked-waiting"),
+        activeRunId: null,
+        activityRunStatus: "waiting" as const,
+        status: "waiting" as const,
+        pendingBackgroundTasks: [{ taskId: "pending-work", kind }],
+      };
+      const shell = presentThreadShell(environmentId, waiting);
+
+      expect(shell.runtime).toMatchObject({ status: "idle", activeRunId: null });
+      expect(threadRuntimeCanArchive(shell.runtime)).toBe(false);
+      const completed = presentThreadShell(environmentId, {
+        ...waiting,
+        activityRunStatus: null,
+        status: "completed",
+      });
+      expect(completed.runtime?.status).toBe("idle");
+      expect(threadRuntimeCanArchive(completed.runtime)).toBe(true);
+    },
+  );
+
   it("derives execution summaries without wrapping or copying the projection", () => {
     const runId = RunId.make("run-1");
     const now = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
@@ -531,16 +557,16 @@ describe("V2 client presentation", () => {
       result: null,
     };
 
-    expect(
-      deriveThreadRuntime({
-        ...v2Projection,
-        runs: [run],
-        turnItems: [backgroundItem],
-      }),
-    ).toMatchObject({
+    const parkedRuntime = deriveThreadRuntime({
+      ...v2Projection,
+      runs: [run],
+      turnItems: [backgroundItem],
+    });
+    expect(parkedRuntime).toMatchObject({
       status: "idle",
       activeRunId: null,
     });
+    expect(threadRuntimeCanArchive(parkedRuntime)).toBe(false);
     expect(
       deriveThreadRuntime({
         ...v2Projection,
@@ -573,13 +599,13 @@ describe("V2 client presentation", () => {
       [[backgroundItem], "idle"],
       [[commandItem, backgroundItem], "idle"],
     ] as const) {
-      expect(
-        deriveThreadRuntime({
-          ...v2Projection,
-          runs: [{ ...run, status: "completed", completedAt: now }],
-          turnItems,
-        }),
-      ).toMatchObject({ status, activeRunId: null });
+      const runtime = deriveThreadRuntime({
+        ...v2Projection,
+        runs: [{ ...run, status: "completed", completedAt: now }],
+        turnItems,
+      });
+      expect(runtime).toMatchObject({ status, activeRunId: null });
+      expect(threadRuntimeCanArchive(runtime)).toBe(true);
     }
 
     for (const kind of ["monitor", "background_task"] as const) {
@@ -601,14 +627,17 @@ describe("V2 client presentation", () => {
         createdAt: now,
         updatedAt: now,
       };
-      for (const status of ["completed", "failed"] as const) {
-        expect(
-          deriveThreadRuntime({
-            ...v2Projection,
-            runs: [{ ...run, status, completedAt: now }],
-            providerThreads: [providerThread],
-          }),
-        ).toMatchObject({ status: status === "failed" ? "failed" : "idle", activeRunId: null });
+      for (const status of ["waiting", "completed", "failed"] as const) {
+        const runtime = deriveThreadRuntime({
+          ...v2Projection,
+          runs: [{ ...run, status, completedAt: status === "waiting" ? null : now }],
+          providerThreads: [providerThread],
+        });
+        expect(runtime).toMatchObject({
+          status: status === "failed" ? "failed" : "idle",
+          activeRunId: null,
+        });
+        expect(threadRuntimeCanArchive(runtime)).toBe(status !== "waiting");
       }
     }
   });

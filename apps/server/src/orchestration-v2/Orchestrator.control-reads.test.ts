@@ -266,6 +266,19 @@ it.effect(
         turnItemTypes: ["user_message"],
       });
       assert.isAbove(fresh.turnItems.at(-1)!.ordinal, 900);
+      const run = (yield* projections.getThreadRecords(threadId, ["runs"])).runs[0]!;
+      yield* orchestrator.dispatch({
+        type: "prepared-run.fail",
+        commandId: CommandId.make("finish-preparation-with-old-history"),
+        threadId,
+        runId: run.id,
+        failure: {
+          class: "validation_error",
+          message: "Workspace setup failed.",
+          code: null,
+          retryable: false,
+        },
+      });
       yield* orchestrator.dispatch({
         type: "thread.archive",
         commandId: CommandId.make("archive-with-old-history"),

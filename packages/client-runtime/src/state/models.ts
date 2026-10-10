@@ -51,6 +51,8 @@ export interface ThreadRunSummary {
 
 export interface ThreadRuntimeSummary {
   readonly status: OrchestrationV2RunStatus | "idle";
+  /** Run status before background-work presentation parks the runtime at idle. */
+  readonly activityRunStatus?: OrchestrationV2RunStatus | "idle" | null;
   readonly activeRunId: RunId | null;
   readonly activityStartedAt?: string | null | undefined;
   readonly providerInstanceId: ProviderInstanceId;
@@ -65,14 +67,12 @@ export function threadRuntimeIsActive(runtime: ThreadRuntimeSummary | null | und
   return runtime !== null && runtime !== undefined && threadRunStatusIsActive(runtime.status);
 }
 
-/** Archiving may discard queued work, but it must not detach a provider that
- * is preparing, starting, or running a turn. */
+/** Archiving may discard queued work, but must wait for an active run and its finalization. */
 export function threadRuntimeCanArchive(runtime: ThreadRuntimeSummary | null | undefined): boolean {
-  if (runtime?.status === "queued") return runtime.activeRunId === null;
+  const status = runtime?.activityRunStatus ?? runtime?.status;
+  if (status === "queued") return runtime?.activeRunId === null;
   return (
-    runtime?.status !== "preparing" &&
-    runtime?.status !== "starting" &&
-    runtime?.status !== "running"
+    status !== "preparing" && status !== "starting" && status !== "running" && status !== "waiting"
   );
 }
 
@@ -184,6 +184,7 @@ function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary 
   const status = parkAtIdle ? "idle" : (thread.activityRunStatus ?? thread.status);
   return {
     status,
+    activityRunStatus: thread.activityRunStatus ?? thread.status,
     activeRunId: thread.activeRunId,
     activityStartedAt:
       thread.activityRunStartedAt === undefined
