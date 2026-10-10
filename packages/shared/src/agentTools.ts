@@ -71,7 +71,11 @@ export function skillsDisabledPatch(
       ],
     };
   }
-  const switches = { ...settings.projectSettingsOverrides[projectId]?.disabledSkills };
+  // Null-prototype, so a skill named like an Object property (`__proto__`) is a key like any other.
+  const switches: Record<string, boolean> = Object.assign(
+    Object.create(null),
+    settings.projectSettingsOverrides[projectId]?.disabledSkills,
+  );
   for (const name of names) {
     // One switch per name, whatever its case.
     for (const existing of Object.keys(switches)) {
