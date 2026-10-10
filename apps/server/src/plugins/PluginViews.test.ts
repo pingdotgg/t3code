@@ -216,6 +216,12 @@ it.layer(NodeServices.layer)("PluginViews", (it) => {
           fs.writeFileString(plugin.script, `${VIEW_SCRIPT}// edited\n`),
       },
       {
+        // The read fails before the digest, which still finds the edit.
+        name: "bytes change into an invalid view",
+        change: (fs: FileSystem.FileSystem, plugin: { directory: string; script: string }) =>
+          fs.writeFileString(plugin.script, `document.write("</script>");\n`),
+      },
+      {
         // The final digest refuses a symlinked tree instead of computing a different digest.
         name: "directory stops being digestible",
         change: (fs: FileSystem.FileSystem, plugin: { directory: string; script: string }) =>
@@ -268,6 +274,82 @@ it.layer(NodeServices.layer)("PluginViews", (it) => {
           expect(shown.views).toEqual([]);
           const refused = yield* views.readBundle(target).pipe(Effect.flip);
           expect(refused.reason).toBe("unavailable");
+        }),
+      ),
+    );
+
+    it.effect("serves nothing when the bytes read differ from the bytes digested", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const plugin = yield* preparePlugin();
+          // As if the script changed for the read and was restored before the digest.
+          const swapped: FileSystem.FileSystem = {
+            ...fs,
+            readFile: (target) =>
+              target.endsWith("panel.js")
+                ? Effect.succeed(new TextEncoder().encode(`${VIEW_SCRIPT}// swapped\n`))
+                : fs.readFile(target),
+          };
+          const { catalog, views } = yield* startViews(yield* Scope.Scope, swapped);
+          const installation = yield* install(catalog, plugin.directory);
+          const shown = yield* awaitViews(
+            views,
+            (snapshot) => snapshot.views.length > 0 || snapshot.problems.length > 0,
+          );
+          expect(shown.views).toEqual([]);
+          expect(shown.problems[0]?.message).toBe(
+            "The plugin's files changed while its views were read.",
+          );
+          const refused = yield* views
+            .readBundle({
+              installationId: installation.installationId,
+              generation: installation.generation,
+              viewId: "panel",
+            })
+            .pipe(Effect.flip);
+          expect(refused.reason).toBe("source-changed");
+        }),
+      ),
+    );
+
+    it.effect("serves nothing when views sharing a script read it differently", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const plugin = yield* preparePlugin({
+            views: [
+              { id: "panel", title: "Panel", placement: "side-panel", script: "views/panel.js" },
+              { id: "other", title: "Other", placement: "side-panel", script: "views/panel.js" },
+            ],
+          });
+          // As if the script changed for the first view's read and was restored before the second.
+          let reads = 0;
+          const swapped: FileSystem.FileSystem = {
+            ...fs,
+            readFile: (target) =>
+              target.endsWith("panel.js") && reads++ === 0
+                ? Effect.succeed(new TextEncoder().encode(`${VIEW_SCRIPT}// swapped\n`))
+                : fs.readFile(target),
+          };
+          const { catalog, views } = yield* startViews(yield* Scope.Scope, swapped);
+          const installation = yield* install(catalog, plugin.directory);
+          const shown = yield* awaitViews(
+            views,
+            (snapshot) => snapshot.views.length > 0 || snapshot.problems.length > 0,
+          );
+          expect(shown.views).toEqual([]);
+          expect(shown.problems[0]?.message).toBe(
+            "The plugin's files changed while its views were read.",
+          );
+          const refused = yield* views
+            .readBundle({
+              installationId: installation.installationId,
+              generation: installation.generation,
+              viewId: "panel",
+            })
+            .pipe(Effect.flip);
+          expect(refused.reason).toBe("source-changed");
         }),
       ),
     );

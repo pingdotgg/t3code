@@ -60,7 +60,7 @@ const walk = async (
   root: string,
   limits: PluginSourceLimits,
   signal: AbortSignal,
-): Promise<PluginSource> => {
+): Promise<DigestedFiles> => {
   const files: Array<string> = [];
   let declaredBytes = 0;
   const visit = async (relative: string) => {
@@ -87,6 +87,7 @@ const walk = async (
   files.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 
   const digest = NodeCrypto.createHash("sha256");
+  const contents = new Map<string, string>();
   let bytes = 0;
   for (const file of files) {
     const content = NodeCrypto.createHash("sha256");
@@ -105,13 +106,27 @@ const walk = async (
       await handle.close();
     }
     bytes += size;
-    digest.update(`${file}\0${size}\0${content.digest("hex")}\n`);
+    const hash = content.digest("hex");
+    contents.set(file, hash);
+    digest.update(`${file}\0${size}\0${hash}\n`);
   }
-  return { digest: `sha256:${digest.digest("hex")}`, files: files.length, bytes };
+  return {
+    source: { digest: `sha256:${digest.digest("hex")}`, files: files.length, bytes },
+    contents,
+  };
 };
 
-/** Digests `directory` (a real path), or says why its bytes cannot be pinned. */
-export const digestPluginSource = (
+interface DigestedFiles {
+  readonly source: PluginSource;
+  /** The SHA-256 (hex) of each file's content the digest covered, by `/`-separated relative path. */
+  readonly contents: ReadonlyMap<string, string>;
+}
+
+/**
+ * Digests `directory` (a real path) and keeps each file's content hash, so
+ * bytes read separately can be matched to the very pass that was digested.
+ */
+export const digestPluginSourceFiles = (
   directory: string,
   limits: PluginSourceLimits = defaultPluginSourceLimits,
 ) =>
@@ -128,3 +143,9 @@ export const digestPluginSource = (
               : "a file could not be read.",
       }),
   }).pipe(Effect.withSpan("pluginSource.digest"));
+
+/** Digests `directory` (a real path), or says why its bytes cannot be pinned. */
+export const digestPluginSource = (
+  directory: string,
+  limits: PluginSourceLimits = defaultPluginSourceLimits,
+) => digestPluginSourceFiles(directory, limits).pipe(Effect.map(({ source }) => source));

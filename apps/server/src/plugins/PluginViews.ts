@@ -51,7 +51,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { PluginCatalog } from "./PluginCatalog.ts";
-import { digestPluginSource } from "./pluginSource.ts";
+import { digestPluginSourceFiles } from "./pluginSource.ts";
 
 const MAX_MANIFEST_BYTES = 64 * 1024;
 
@@ -120,7 +120,7 @@ export const make = Effect.fn("PluginViews.make")(function* () {
   let installations: ReadonlyArray<PluginInstallation> = [];
   const snapshot = yield* SubscriptionRef.make<PluginViewsSnapshot>({ views: [], problems: [] });
 
-  /** Reads one asset as strict UTF-8 text from inside `directory`. */
+  /** Reads one asset as strict UTF-8 text from inside `directory`, with its `/` path and hex hash. */
   const readAsset = Effect.fnUntraced(function* (
     directory: string,
     relative: string,
@@ -156,12 +156,17 @@ export const make = Effect.fn("PluginViews.make")(function* () {
           ? "contains CR, NUL, `<!--`, `<script`, or `</script`, which cannot be inlined exactly."
           : "contains CR, NUL, or `</style`, which cannot be inlined exactly.",
       );
-    const sha256 = NodeCrypto.createHash("sha256").update(bytes).digest("base64");
-    return { asset: { text, sha256 } satisfies PluginViewAsset, bytes: bytes.length };
+    const hash = NodeCrypto.createHash("sha256").update(bytes).digest();
+    return {
+      asset: { text, sha256: hash.toString("base64") } satisfies PluginViewAsset,
+      bytes: bytes.length,
+      file: inside.split(path.sep).join("/"),
+      hash: hash.toString("hex"),
+    };
   });
 
-  /** Reads every declared view, then checks the directory still has the consented bytes. */
-  const load = Effect.fnUntraced(function* (installation: PluginInstallation, digest: string) {
+  /** Reads every declared view, with the hash of each file read by its relative path. */
+  const readViews = Effect.fnUntraced(function* (installation: PluginInstallation, digest: string) {
     const directory = installation.directory;
     const manifestPath = path.join(directory, PLUGIN_MANIFEST_FILE);
     const info = yield* fs
@@ -171,8 +176,17 @@ export const make = Effect.fn("PluginViews.make")(function* () {
       );
     if (info.type !== "File" || Number(info.size) > MAX_MANIFEST_BYTES)
       return yield* viewError("invalid-view", `${PLUGIN_MANIFEST_FILE} is too large.`);
-    const manifest = yield* fs.readFileString(manifestPath).pipe(
-      Effect.flatMap(decodeViewsManifest),
+    const manifestBytes = yield* fs
+      .readFile(manifestPath)
+      .pipe(
+        Effect.mapError(() =>
+          viewError("invalid-view", `${PLUGIN_MANIFEST_FILE} is not readable.`),
+        ),
+      );
+    const read = new Map([
+      [PLUGIN_MANIFEST_FILE, NodeCrypto.createHash("sha256").update(manifestBytes).digest("hex")],
+    ]);
+    const manifest = yield* decodeViewsManifest(new TextDecoder().decode(manifestBytes)).pipe(
       Effect.mapError((error) =>
         viewError(
           "invalid-view",
@@ -189,6 +203,15 @@ export const make = Effect.fn("PluginViews.make")(function* () {
         declaration.style === undefined
           ? null
           : yield* readAsset(directory, declaration.style, "style");
+      // A file read again must match its earlier read, or one view could keep bytes the digest never saw.
+      for (const asset of style === null ? [script] : [script, style]) {
+        if ((read.get(asset.file) ?? asset.hash) !== asset.hash)
+          return yield* viewError(
+            "source-changed",
+            "The plugin's files changed while its views were read.",
+          );
+        read.set(asset.file, asset.hash);
+      }
       if (script.bytes + (style?.bytes ?? 0) > PLUGIN_VIEW_BUNDLE_MAX_BYTES)
         return yield* viewError(
           "invalid-view",
@@ -215,6 +238,11 @@ export const make = Effect.fn("PluginViews.make")(function* () {
         },
       });
     }
+    return { views: views as ReadonlyMap<string, LoadedView>, read };
+  });
+
+  /** Reads every declared view, then checks the directory still has the consented bytes. */
+  const load = Effect.fnUntraced(function* (installation: PluginInstallation, digest: string) {
     // The catalogue disables an installation whose bytes changed; its next snapshot drops the views.
     const revoke = (message: string) =>
       catalog
@@ -224,15 +252,28 @@ export const make = Effect.fn("PluginViews.make")(function* () {
           Effect.forkIn(scope),
           Effect.andThen(viewError("source-changed", message)),
         );
-    // The reads above count only if the whole directory still has the consented bytes.
-    const source = yield* digestPluginSource(directory).pipe(
+    // The whole directory must still have the consented bytes; anything else revokes.
+    const verify = digestPluginSourceFiles(installation.directory).pipe(
       Effect.catch((error) => revoke(error.reason)),
+      Effect.flatMap(({ source, contents }) =>
+        source.digest === digest
+          ? Effect.succeed(contents)
+          : revoke("The plugin's files changed since they were approved, so it was disabled."),
+      ),
     );
-    if (source.digest !== digest)
-      return yield* revoke(
-        "The plugin's files changed since they were approved, so it was disabled.",
-      );
-    return views as ReadonlyMap<string, LoadedView>;
+    // A file that no longer reads as a view may have been edited since approval.
+    const { views, read } = yield* readViews(installation, digest).pipe(
+      Effect.tapError(() => verify),
+    );
+    const contents = yield* verify;
+    // Serve only bytes that pass covered, not a file changed and restored around the reads.
+    for (const [file, hash] of read)
+      if (contents.get(file) !== hash)
+        return yield* viewError(
+          "source-changed",
+          "The plugin's files changed while its views were read.",
+        );
+    return views;
   });
 
   /** Rebuilds the snapshot from the latest catalogue and whatever has loaded. */
