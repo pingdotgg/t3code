@@ -66,6 +66,8 @@ export function setNotificationBadge(count: number) {
 
 let audioContext: AudioContext | undefined;
 const buffers = new Map<string, Promise<AudioBuffer>>();
+/** When each sound's current playback ends, on the audio context's clock. */
+const playingUntil = new Map<string, number>();
 
 /** Called from a gesture so browsers allow later background playback. */
 export function unlockNotificationAudio() {
@@ -90,10 +92,16 @@ export async function playNotificationSound(
     }
     const decoded = await buffer;
     if (!shouldPlay() || context.state !== "running") return;
+    // Threads that finish together each ask for this sound, and full-volume copies sum into
+    // clipping. One playback stands for the burst. Checked after the decode, since every caller
+    // in a burst is waiting on it. The other kind keeps its own slot, so an input alert is still
+    // heard over a completion.
+    if (context.currentTime < (playingUntil.get(url) ?? 0)) return;
     const source = context.createBufferSource();
     source.buffer = decoded;
     source.connect(context.destination);
     source.start();
+    playingUntil.set(url, context.currentTime + decoded.duration);
   } catch {
     buffers.delete(url);
   }
