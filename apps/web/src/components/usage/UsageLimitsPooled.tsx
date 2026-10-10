@@ -386,10 +386,13 @@ function ResetBadges({
   return (
     <>
       {resetsIn ? (
-        <span className="inline-flex items-center gap-1">
-          <RotateCwIcon className="size-3" aria-hidden />
-          {resetsIn.replace("resets in ", "")}
-        </span>
+        <>
+          <span aria-hidden className="inline-flex items-center gap-1">
+            <RotateCwIcon className="size-3" />
+            {resetsIn.replace("resets in ", "")}
+          </span>
+          <span className="sr-only">{resetsIn}</span>
+        </>
       ) : null}
       {resetsIn && credits ? (
         <span aria-hidden className="text-muted-foreground">
