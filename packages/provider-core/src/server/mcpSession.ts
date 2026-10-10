@@ -1,4 +1,32 @@
-import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ProviderInstanceId,
+  ResolvedMcpServer,
+  ThreadId,
+} from "@t3tools/contracts";
+
+/**
+ * The user's tools for one thread, resolved from Settings → Tools when the
+ * session is prepared. Adapters add the servers next to `t3-code` and hide
+ * the skills where their provider can.
+ */
+export interface McpProviderSessionTools {
+  /** Enabled servers with secrets materialized, sorted by name. */
+  readonly servers: ReadonlyArray<ResolvedMcpServer>;
+  /** Skill names hidden from the agent, sorted. */
+  readonly disabledSkills: ReadonlyArray<string>;
+  /**
+   * Changes whenever `servers` or `disabledSkills` do, without exposing a
+   * secret. Adapters compare it to decide when a live process is stale.
+   */
+  readonly fingerprint: string;
+}
+
+export const EMPTY_MCP_PROVIDER_SESSION_TOOLS: McpProviderSessionTools = {
+  servers: [],
+  disabledSkills: [],
+  fingerprint: "",
+};
 
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
@@ -22,6 +50,8 @@ export interface McpProviderSessionConfig {
    * already pointed at the server's daemon; the agent never handles a token.
    */
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
+  /** Servers and skill switches from Settings → Tools; absent means none. */
+  readonly tools?: McpProviderSessionTools;
 }
 
 /** Provider env with the device variables applied over `base`, or `base` untouched. */

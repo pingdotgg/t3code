@@ -33,6 +33,7 @@ import {
   type ProviderInstanceId,
   type ProviderRequestKind,
   type ProviderSessionId,
+  mcpServerVariableRecord,
   type RuntimeRequestId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -617,6 +618,20 @@ const OPENCODE_RESTRICTED_PERMISSIONS = [
  */
 export function openCodePermissionRules(
   runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+  disabledSkills: ReadonlyArray<string> = [],
+): PermissionRuleset {
+  // Skills switched off in Settings → Tools; the last matching rule wins, so
+  // these follow every allow below.
+  const skillRules = disabledSkills.map((name) => ({
+    permission: "skill",
+    pattern: name,
+    action: "deny" as const,
+  }));
+  return [...openCodeRuntimePermissionRules(runtimePolicy), ...skillRules];
+}
+
+function openCodeRuntimePermissionRules(
+  runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
 ): PermissionRuleset {
   const sandboxPolicy = recordValue(runtimePolicy, "sandboxPolicy");
   const sandboxType = recordString(sandboxPolicy, "type");
@@ -983,6 +998,35 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 oauth: false,
               },
             }),
+          );
+        }
+        // The user's servers are additions that do not need to reach T3, so
+        // an external server gets them too. One that fails to register must
+        // not stop the session, so each logs and moves on.
+        for (const server of mcpSession?.tools?.servers ?? []) {
+          yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
+            client.mcp.add({
+              name: server.name,
+              config:
+                server.transport.type === "stdio"
+                  ? {
+                      type: "local",
+                      command: [server.transport.command, ...server.transport.args],
+                      environment: mcpServerVariableRecord(server.transport.env),
+                    }
+                  : {
+                      type: "remote",
+                      url: server.transport.url,
+                      headers: mcpServerVariableRecord(server.transport.headers),
+                    },
+            }),
+          ).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Could not add an MCP server to OpenCode.", {
+                server: server.name,
+                cause,
+              }),
+            ),
           );
         }
 
@@ -3044,12 +3088,16 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               }
               // No title: OpenCode generates one from the first prompt only when
               // session.create leaves it unset (SessionPrompt.ensureTitle).
+              const disabledSkills =
+                (yield* mcpSessions.read(threadInput.threadId))?.tools?.disabledSkills ?? [];
               const response = yield* sdkCall(
                 "session.create",
-                { permission: openCodePermissionRules(threadInput.runtimePolicy) },
+                {
+                  permission: openCodePermissionRules(threadInput.runtimePolicy, disabledSkills),
+                },
                 () =>
                   client.session.create({
-                    permission: openCodePermissionRules(threadInput.runtimePolicy),
+                    permission: openCodePermissionRules(threadInput.runtimePolicy, disabledSkills),
                   }),
               );
               const nativeSession = unwrapData("session.create", response);
@@ -3096,6 +3144,24 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 client.session.get({ sessionID: sessionId }),
               );
               const nativeSession = unwrapData("session.get", response);
+              // The saved rules may predate a skill switched off since; a
+              // resume that knows its policy brings them up to date.
+              const appThreadId = threadInput.threadId ?? threadInput.providerThread.appThreadId;
+              if (threadInput.runtimePolicy !== undefined && appThreadId !== null) {
+                const permission = openCodePermissionRules(
+                  threadInput.runtimePolicy,
+                  (yield* mcpSessions.read(appThreadId))?.tools?.disabledSkills ?? [],
+                );
+                const saved = nativeSession.permission ?? [];
+                const unchanged =
+                  saved.length === permission.length &&
+                  saved.every((rule, index) => permissionRuleEquals(rule, permission[index]!));
+                if (!unchanged) {
+                  yield* sdkCall("session.update", { sessionID: sessionId, permission }, () =>
+                    client.session.update({ sessionID: sessionId, permission }),
+                  );
+                }
+              }
               const resumedAt = yield* DateTime.now;
               const providerThread = {
                 ...threadInput.providerThread,
@@ -3607,10 +3673,16 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   return yield* protocolError(
                     "OpenCode did not preserve the requested rewind boundary.",
                   );
+                // The fork replaces the session, so it needs the skill rules too.
+                const appThreadId = rollbackInput.providerThread.appThreadId;
+                const disabledSkills =
+                  appThreadId === null
+                    ? []
+                    : ((yield* mcpSessions.read(appThreadId))?.tools?.disabledSkills ?? []);
                 yield* sdkCall("session.update", { sessionID: fork.id }, () =>
                   client.session.update({
                     sessionID: fork.id,
-                    permission: openCodePermissionRules(input.runtimePolicy),
+                    permission: openCodePermissionRules(input.runtimePolicy, disabledSkills),
                   }),
                 );
                 retainedThread = {

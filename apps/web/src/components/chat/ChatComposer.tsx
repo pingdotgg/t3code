@@ -1128,6 +1128,7 @@ import {
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
+import { mergeProjectDisabledSkills } from "@t3tools/shared/projectSettings";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useDelayedStatus } from "../../hooks/useDelayedStatus";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
@@ -1620,6 +1621,8 @@ export interface ChatComposerProps {
   keybindings: ResolvedKeybindingsConfig;
   terminalOpen: boolean;
   gitCwd: string | null;
+  /** The thread's project, for its Settings → Tools skill switches. */
+  skillsProjectId: ProjectId | null;
   pullRequestProjectId: ProjectId | null;
   pullRequestRepository: string | null;
   restingControlsHost: HTMLDivElement | null;
@@ -1765,6 +1768,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     keybindings,
     terminalOpen,
     gitCwd,
+    skillsProjectId,
     pullRequestProjectId,
     pullRequestRepository,
     restingControlsHost,
@@ -2220,18 +2224,34 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const compactCommandAvailable = providerSupportsManualCompaction(selectedProviderEntry);
   // Memoized so the composer menu memo below can cache between renders.
-  const selectedProviderSkills = useMemo(
-    () =>
-      selectedProviderStatus ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd) : [],
-    [gitCwd, selectedProviderStatus],
-  );
-  const selectedProviderSlashCommands = useMemo(
-    () =>
-      selectedProviderStatus
-        ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, gitCwd)
-        : [],
-    [gitCwd, selectedProviderStatus],
-  );
+  // Skills switched off in Settings → Tools leave the menu; the server keeps
+  // them out of the session where the provider allows it.
+  const disabledSkillNames = useMemo(() => {
+    const disabled = mergeProjectDisabledSkills(
+      settings.disabledSkills,
+      skillsProjectId === null
+        ? undefined
+        : settings.projectSettingsOverrides[skillsProjectId]?.disabledSkills,
+    );
+    return new Set(disabled.map((name) => name.toLowerCase()));
+  }, [settings.disabledSkills, settings.projectSettingsOverrides, skillsProjectId]);
+  const selectedProviderSkills = useMemo(() => {
+    const skills = selectedProviderStatus
+      ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd)
+      : [];
+    return disabledSkillNames.size === 0
+      ? skills
+      : skills.filter((skill) => !disabledSkillNames.has(skill.name.toLowerCase()));
+  }, [disabledSkillNames, gitCwd, selectedProviderStatus]);
+  // Claude also lists each skill as a slash command; a disabled one leaves both.
+  const selectedProviderSlashCommands = useMemo(() => {
+    const commands = selectedProviderStatus
+      ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, gitCwd)
+      : [];
+    return disabledSkillNames.size === 0
+      ? commands
+      : commands.filter((command) => !disabledSkillNames.has(command.name.toLowerCase()));
+  }, [disabledSkillNames, gitCwd, selectedProviderStatus]);
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });

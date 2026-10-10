@@ -64,6 +64,12 @@ import {
   isModelSelectionProviderEnabled,
 } from "@t3tools/shared/serverSettings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import {
+  materializeMcpServerSecrets,
+  mcpServerSecretNames,
+  planMcpServerSecrets,
+  redactMcpServerSecrets,
+} from "./mcpServerSecrets.ts";
 
 export { resolveSourceControlWriterModelSelection } from "@t3tools/shared/serverSettings";
 
@@ -217,7 +223,13 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
       Object.entries(settings.github.tokens).map(([host, token]) => [host, redactSecret(token)]),
     ),
   };
-  return { ...settings, providerInstances, usageLimitSources, bitbucket, github };
+  return redactMcpServerSecrets({
+    ...settings,
+    providerInstances,
+    usageLimitSources,
+    bitbucket,
+    github,
+  });
 }
 
 export function applyProviderInstanceMutation(
@@ -960,13 +972,27 @@ const make = Effect.gen(function* () {
           );
         tokens[host] = Option.isSome(secret) ? textDecoder.decode(secret.value) : "";
       }
-      return {
-        ...settings,
-        providerInstances: providerInstances as ServerSettings["providerInstances"],
-        usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
-        bitbucket,
-        github: { ...settings.github, tokens },
-      };
+      const mcpSecrets = new Map<string, string>();
+      for (const secretName of mcpServerSecretNames(settings)) {
+        const secret = yield* secretStore
+          .get(secretName)
+          .pipe(
+            Effect.mapError(
+              (cause) => new ServerSettingsError({ settingsPath, operation: "read-secret", cause }),
+            ),
+          );
+        if (Option.isSome(secret)) mcpSecrets.set(secretName, textDecoder.decode(secret.value));
+      }
+      return materializeMcpServerSecrets(
+        {
+          ...settings,
+          providerInstances: providerInstances as ServerSettings["providerInstances"],
+          usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
+          bitbucket,
+          github: { ...settings.github, tokens },
+        },
+        mcpSecrets,
+      );
     });
 
   const materializeChanges = (changes: Stream.Stream<ServerSettings>) =>
@@ -992,6 +1018,8 @@ const make = Effect.gen(function* () {
     readonly environmentVariable?: string;
   } & (
     | { readonly kind: "write"; readonly value: Uint8Array }
+    // A renamed MCP server or variable: the value moves to the new name.
+    | { readonly kind: "copy"; readonly from: string }
     | { readonly kind: "remove"; readonly operation: "remove-secret" | "remove-stale-secret" }
   );
 
@@ -1159,9 +1187,24 @@ const make = Effect.gen(function* () {
         });
       }
 
+      const mcp = planMcpServerSecrets(current, next);
+      for (const change of mcp.changes) {
+        changes.push(
+          change.kind === "write"
+            ? {
+                kind: "write",
+                secretName: change.secretName,
+                value: textEncoder.encode(change.value),
+              }
+            : change.kind === "copy"
+              ? { kind: "copy", secretName: change.secretName, from: change.from }
+              : { kind: "remove", secretName: change.secretName, operation: "remove-secret" },
+        );
+      }
+
       return {
         settings: {
-          ...next,
+          ...mcp.settings,
           providerInstances: providerInstances as ServerSettings["providerInstances"],
           usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
           bitbucket,
@@ -1205,43 +1248,63 @@ const make = Effect.gen(function* () {
       readonly environmentVariable?: string;
     }> = [];
     const rollback = Effect.suspend(() => rollbackProviderEnvironmentSecretWrites(applied));
+    const readSecret = (change: SecretChange, secretName: string) =>
+      secretStore.get(secretName).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServerSettingsError({
+              settingsPath,
+              operation: "read-secret",
+              providerInstanceId: change.providerInstanceId,
+              environmentVariable: change.environmentVariable,
+              cause,
+            }),
+        ),
+      );
+    const apply = (copied: ReadonlyMap<string, Option.Option<Uint8Array>>) =>
+      Effect.forEach(
+        changes,
+        (change) =>
+          Effect.gen(function* () {
+            let value: Uint8Array | undefined;
+            if (change.kind === "write") value = change.value;
+            if (change.kind === "copy") {
+              const source = copied.get(change.secretName) ?? Option.none();
+              if (Option.isNone(source)) return;
+              value = source.value;
+            }
+            const previousValue = yield* readSecret(change, change.secretName);
+            // A store operation may mutate before reporting an error (for example chmod after rename).
+            applied.push({ ...change, previousValue });
+            yield* (
+              value !== undefined
+                ? secretStore.set(change.secretName, value)
+                : secretStore.remove(change.secretName)
+            ).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ServerSettingsError({
+                    settingsPath,
+                    operation: change.kind === "remove" ? change.operation : "write-secret",
+                    providerInstanceId: change.providerInstanceId,
+                    environmentVariable: change.environmentVariable,
+                    cause,
+                  }),
+              ),
+            );
+          }),
+        { discard: true },
+      );
+    // Every copy reads its source before anything is written or removed, so a
+    // rename that swaps two names, or drops the old one, still moves both values.
     return Effect.forEach(
-      changes,
+      changes.filter((change) => change.kind === "copy"),
       (change) =>
-        Effect.gen(function* () {
-          const previousValue = yield* secretStore.get(change.secretName).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ServerSettingsError({
-                  settingsPath,
-                  operation: "read-secret",
-                  providerInstanceId: change.providerInstanceId,
-                  environmentVariable: change.environmentVariable,
-                  cause,
-                }),
-            ),
-          );
-          // A store operation may mutate before reporting an error (for example chmod after rename).
-          applied.push({ ...change, previousValue });
-          yield* (
-            change.kind === "write"
-              ? secretStore.set(change.secretName, change.value)
-              : secretStore.remove(change.secretName)
-          ).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ServerSettingsError({
-                  settingsPath,
-                  operation: change.kind === "write" ? "write-secret" : change.operation,
-                  providerInstanceId: change.providerInstanceId,
-                  environmentVariable: change.environmentVariable,
-                  cause,
-                }),
-            ),
-          );
-        }),
-      { discard: true },
+        readSecret(change, change.from).pipe(
+          Effect.map((source) => [change.secretName, source] as const),
+        ),
     ).pipe(
+      Effect.flatMap((sources) => apply(new Map(sources))),
       Effect.tapError(() => rollback),
       Effect.as(rollback),
     );

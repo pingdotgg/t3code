@@ -198,7 +198,8 @@ provider. On mobile, both are also available before starting a thread on
 **New task**.
 
 The slash menu also includes skills unless you turn off **Settings → General →
-Show skills in slash menu**. Only skills enabled for the provider are listed.
+Show skills in slash menu**. Only skills enabled for the provider are listed;
+**Settings → Tools** turns individual skills off (see [Skills and MCP servers](./tools.md)).
 
 After you add or change skills, plugins, or MCP servers, use **Restart agent
 session** in the command palette on web and desktop. The conversation continues,

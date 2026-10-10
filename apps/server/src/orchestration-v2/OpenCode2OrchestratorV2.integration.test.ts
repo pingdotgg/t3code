@@ -73,11 +73,13 @@ const labelled = (entry: ProviderReplayEntry, label: string): ProviderReplayEntr
   entry.type === "runtime_exit" ? entry : { ...entry, label };
 /**
  * T3's own rules after a mode's: every thread's T3 MCP server is denied, and
- * then this thread's own is allowed again (last match wins).
+ * then this thread's own is allowed again (last match wins). No thread's
+ * Settings → Tools servers are allowed, since these threads have none.
  */
 const mcpRules = (name: string) => [
   { action: "t3-code-*", resource: "*", effect: "deny" },
   { action: `t3-code-thread_${name}_*`, resource: "*", effect: "allow" },
+  { action: "t3u-*", resource: "*", effect: "deny" },
 ];
 const FULL_ACCESS = [{ action: "*", resource: "*", effect: "allow" }];
 /** Full access for the thread named `name`. */
