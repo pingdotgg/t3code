@@ -106,6 +106,15 @@ describe("canEditPullRequestChangeRequest", () => {
         }),
       ),
     ).toBe(false);
+    // The host can't rewrite change requests at all, so the reader's answer can't widen that.
+    expect(
+      canEditPullRequestChangeRequest(
+        subject({
+          capabilities: capabilities({ changeRequest: false, comment: true }),
+          viewerPermissions: permissions({ editChangeRequest: true }),
+        }),
+      ),
+    ).toBe(false);
   });
 
   it("refuses a reader who neither wrote it nor may merge it", () => {
