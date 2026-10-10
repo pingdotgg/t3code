@@ -4,6 +4,7 @@ import type {
   PreviewStreamControl,
   PreviewStreamDownload,
   PreviewStreamFileChooser,
+  PreviewStreamPasskeyRequest,
 } from "@t3tools/client-runtime/preview/server-browser-stream";
 
 export interface PreviewStreamConfiguration {
@@ -13,6 +14,8 @@ export interface PreviewStreamConfiguration {
   /** Taps, scrolls, keys, and `resize` to the view size. The floating player only watches. */
   readonly interactive: boolean;
   readonly background: string;
+  /** This device answers the page's passkey requests; offered to the server with control. */
+  readonly passkeys: boolean;
 }
 
 /** Messages the WebView document posts to the native view. */
@@ -28,8 +31,12 @@ export type PreviewStreamMessage =
   | ({ readonly type: "hostSetup" } & PreviewStreamHostSetup)
   | { readonly type: "viewport"; readonly width: number; readonly height: number }
   | { readonly type: "clipboard"; readonly text: string }
+  /** The input that types into page fields gained or lost focus. */
+  | { readonly type: "input"; readonly focused: boolean }
   | ({ readonly type: "download" } & PreviewStreamDownload)
   | { readonly type: "fileChooser"; readonly chooser: PreviewStreamFileChooser | null }
+  | { readonly type: "passkey"; readonly request: PreviewStreamPasskeyRequest }
+  | { readonly type: "passkeyCancel"; readonly id: string }
   | {
       readonly type: "pictureInPicture";
       readonly supported: boolean;

@@ -10,6 +10,10 @@ Object.assign(process.env, repoEnv);
 
 const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
 const isIosPersonalTeamBuild = repoEnv.T3CODE_IOS_PERSONAL_TEAM === "1";
+// Passkeys for Browser page sites need Apple's managed default-browser entitlement.
+// A profile without it cannot sign the build, so it stays off until Apple grants it
+// (README.md, "Passkeys on the Browser page").
+const iosBrowserPasskeys = repoEnv.T3CODE_IOS_BROWSER_PASSKEYS === "1";
 const runtimeVersionPolicy =
   process.env.MOBILE_VERSION_POLICY ??
   (APP_VARIANT === "development" ? "appVersion" : "fingerprint");
@@ -262,8 +266,11 @@ const config: ExpoConfig = {
     ],
     entitlements: {
       "keychain-access-groups": [`$(AppIdentifierPrefix)${variant.iosBundleIdentifier}`],
+      ...(iosBrowserPasskeys ? { "com.apple.developer.web-browser": true } : {}),
     },
     infoPlist: {
+      // Read by modules/t3-passkeys, so the app offers passkeys only when signed for them.
+      ...(iosBrowserPasskeys ? { T3BrowserPasskeys: true } : {}),
       UISupportedInterfaceOrientations: [
         "UIInterfaceOrientationPortrait",
         "UIInterfaceOrientationLandscapeLeft",

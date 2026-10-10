@@ -205,6 +205,17 @@ picker, and a finished download is offered for you to save. Popups such as
 sign-in windows open as their own tabs. Downloads stay on the host until the
 tab closes. Audio does not play on your device.
 
+On a phone, while you type into the page, the clipboard button above the
+keyboard pastes your clipboard, copies the page's selection, or fills a login
+saved in your password manager. The fill card shows the site the login goes to,
+and nothing is filled if the page has left that site by then. The password only
+goes into a password field.
+
+The host's browser has no passkeys of its own. On an iPhone build that carries
+Apple's browser entitlement, a page's passkey sign-in or sign-up opens your
+phone's passkey sheet while you have control, for that page's site only. Other
+builds, and Android, leave passkeys to the host's browser.
+
 On a phone, tap the floating preview's corner dot to show its controls, then
 **Pop into separate window** to keep watching in picture-in-picture over other
 apps.

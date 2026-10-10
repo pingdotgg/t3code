@@ -31,6 +31,7 @@ import IconCamera from "@tabler/icons-react-native/IconCamera";
 import IconCar from "@tabler/icons-react-native/IconCar";
 import IconChartBar from "@tabler/icons-react-native/IconChartBar";
 import IconCheck from "@tabler/icons-react-native/IconCheck";
+import IconClipboard from "@tabler/icons-react-native/IconClipboard";
 import IconCloud from "@tabler/icons-react-native/IconCloud";
 import IconChevronDown from "@tabler/icons-react-native/IconChevronDown";
 import IconChevronLeft from "@tabler/icons-react-native/IconChevronLeft";
@@ -67,6 +68,7 @@ import IconGitPullRequest from "@tabler/icons-react-native/IconGitPullRequest";
 import IconHammer from "@tabler/icons-react-native/IconHammer";
 import IconHome from "@tabler/icons-react-native/IconHome";
 import IconInfoCircle from "@tabler/icons-react-native/IconInfoCircle";
+import IconKey from "@tabler/icons-react-native/IconKey";
 import IconKeyboard from "@tabler/icons-react-native/IconKeyboard";
 import IconKeyboardHide from "@tabler/icons-react-native/IconKeyboardHide";
 import IconLock from "@tabler/icons-react-native/IconLock";
@@ -169,6 +171,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "chevron.up": IconChevronUp,
   desktopcomputer: IconDeviceDesktop,
   doc: IconFileText,
+  "doc.on.clipboard": IconClipboard,
   "doc.on.doc": IconCopy,
   "doc.text": IconFileText,
   ellipsis: IconDots,
@@ -186,6 +189,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   headphones: IconHeadphones,
   house: IconHome,
   "info.circle": IconInfoCircle,
+  key: IconKey,
   internaldrive: IconDatabase,
   iphone: IconDeviceMobile,
   keyboard: IconKeyboard,

@@ -59,6 +59,7 @@
     "proper-lockfile": "4.1.2",
     "stream-chain": "^4.2.5",
     "stream-json": "3.6.0",
+    "tldts": "catalog:",
     "yaml": "catalog:",
     "yauzl": "^3.4.0"
   },

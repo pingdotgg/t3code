@@ -20,7 +20,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import type { BrowserContext, Page } from "playwright-core";
-import { beforeEach, expect, vi } from "vite-plus/test";
+import { assert, beforeEach, expect, vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -118,6 +118,7 @@ function makeContext(onClose?: (context: BrowserContext) => void) {
       throw new Error("Unexpected locator action");
     }),
     isClosed: () => closed,
+    isDetached: () => closed,
     close: vi.fn(async () => {
       if (!closed) {
         closed = true;
@@ -130,8 +131,9 @@ function makeContext(onClose?: (context: BrowserContext) => void) {
     sessions,
     newPage: async () => page as unknown as Page,
     grantPermissions: vi.fn(async () => {}),
-    exposeBinding: vi.fn(async (_name: string, binding: ClipboardBinding) => {
-      clipboardBinding = binding;
+    exposeBinding: vi.fn(async (name: string, binding: unknown) => {
+      if (name === "__t3PreviewClipboard") clipboardBinding = binding as ClipboardBinding;
+      if (name === "__t3PreviewPasskey") passkeyBinding = binding as PasskeyBinding;
     }),
     addInitScript: vi.fn(async () => {}),
     newCDPSession: async () => {
@@ -155,6 +157,13 @@ const contextRequests: Array<{ profileId: string; isolated: boolean }> = [];
 let contextGate: PromiseWithResolvers<void> | null = null;
 type ClipboardBinding = (source: { page: unknown }, text: unknown) => void;
 let clipboardBinding: ClipboardBinding | null = null;
+type PasskeyBinding = (
+  source: { page: unknown; frame: unknown },
+  kind: unknown,
+  ticket?: unknown,
+  options?: unknown,
+) => Promise<unknown>;
+let passkeyBinding: PasskeyBinding | null = null;
 let contextFailure: Error | null = null;
 /** Server tabs the fake desktop renders, and the endpoints the server connected to. */
 let desktopRendersNext = false;
@@ -258,10 +267,11 @@ const stallViewer = (
   const output = viewer.output as unknown as Queue.Queue<ServerBrowser.ServerBrowserViewerOutput>;
   while (Queue.offerUnsafe(output, item));
 };
-const viewerInput = (tabId: string, canOperate: boolean) => ({
+const viewerInput = (tabId: string, canOperate: boolean, passkeys = false) => ({
   threadId: scope.thread.threadId,
   tabId,
   canOperate,
+  passkeys,
   maxWidth: 1280,
   maxHeight: 800,
   quality: 70,
@@ -1031,6 +1041,227 @@ it.live("page copies reach only the controlling viewer right after its input", (
       clipboardBinding!({ page }, "copied");
       expect(yield* clipboard(viewer.output)).toEqual([{ _tag: "clipboard", text: "copied" }]);
       expect(yield* clipboard(watcher.output)).toEqual([]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live.each([
+  {
+    name: "a username field gets the username, then Tab, then the password field the password",
+    url: "https://example.com/login",
+    focused: "field",
+    afterTab: "password",
+    typed: ["nick", "hunter2"],
+    tabs: 2,
+  },
+  {
+    name: "the password is never typed where Tab lands outside a password field",
+    url: "https://example.com/login",
+    focused: "field",
+    afterTab: "field",
+    typed: ["nick"],
+    tabs: 2,
+  },
+  {
+    name: "a focused password field gets only the password",
+    url: "https://example.com/login",
+    focused: "password",
+    afterTab: "password",
+    typed: ["hunter2"],
+    tabs: 0,
+  },
+  {
+    name: "a page that left the confirmed site gets nothing",
+    url: "https://example.net/login",
+    focused: "password",
+    afterTab: "password",
+    typed: [],
+    tabs: 0,
+  },
+  {
+    name: "a field in a cross-origin frame gets nothing",
+    url: "https://example.com/login",
+    focused: "frame",
+    afterTab: "password",
+    typed: [],
+    tabs: 0,
+  },
+] as const)("$name", ({ url, focused, afterTab, typed, tabs }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      yield* Effect.promise(() => contexts[0]!.page.goto(url));
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const cdp = contexts[0]!.sessions.at(-1)!;
+      const send = cdp.send.getMockImplementation()!;
+      // Stands in for the page: Tab moves focus to the next field.
+      let field: "field" | "password" | "frame" = focused;
+      cdp.send.mockImplementation(async (method, input) => {
+        const params = (input ?? {}) as { expression?: string; type?: string; key?: string };
+        if (method === "Runtime.evaluate" && params.expression?.includes("activeElement")) {
+          return { result: { value: field } };
+        }
+        if (
+          method === "Input.dispatchKeyEvent" &&
+          params.key === "Tab" &&
+          params.type === "keyUp"
+        ) {
+          field = afterTab;
+        }
+        return send(method, input);
+      });
+      yield* viewer.input({
+        type: "fillLogin",
+        origin: "https://example.com",
+        username: "nick",
+        password: "hunter2",
+      });
+      const inserted = cdp.send.mock.calls
+        .filter(([method]) => method === "Input.insertText")
+        .map(([, input]) => (input as { text: string }).text);
+      expect(inserted).toEqual(typed);
+      const tabPresses = cdp.send.mock.calls.filter(
+        ([method, input]) =>
+          method === "Input.dispatchKeyEvent" && (input as { key?: string }).key === "Tab",
+      );
+      expect(tabPresses).toHaveLength(tabs);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+/** SHA-256 of `example.com`, which authenticator data starts with. */
+const EXAMPLE_RP_ID_HASH = "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce1947";
+/** What the phone's authenticator would sign for a sign-in on example.com. */
+const exampleAssertion = (challenge: string, origin = "https://example.com") => ({
+  success: true,
+  credential: {
+    id: "Y3JlZA",
+    clientDataJSON: Buffer.from(
+      JSON.stringify({ type: "webauthn.get", challenge, origin, crossOrigin: false }),
+    ).toString("base64url"),
+    authenticatorData: Buffer.from(`${EXAMPLE_RP_ID_HASH}0500000001`, "hex").toString("base64url"),
+    signature: "c2ln",
+    userHandle: "dXNlcg",
+    authenticatorAttachment: "platform",
+  },
+});
+
+/** Opens example.com with a viewer in control, then touches the page so it may ask. */
+const passkeyViewer = (passkeys: boolean) =>
+  Effect.gen(function* () {
+    const { browser, tabId } = yield* ready;
+    const page = contexts[0]!.page;
+    yield* Effect.promise(() => page.goto("https://example.com/login"));
+    const viewer = yield* browser.attachViewer(viewerInput(tabId, true, passkeys));
+    yield* viewer.input({ type: "takeControl" });
+    yield* viewer.input({ type: "mouse", action: "move", x: 1, y: 1, button: "none", buttons: 0 });
+    return { page, viewer };
+  });
+
+const nextPasskeyOutput = (viewer: ServerBrowser.ServerBrowserViewer) =>
+  Effect.gen(function* () {
+    let output = yield* Queue.take(viewer.output);
+    while (output._tag !== "passkey" && output._tag !== "passkeyCancel") {
+      output = yield* Queue.take(viewer.output);
+    }
+    return output;
+  });
+
+it.live("a page's passkey request goes to the controlling viewer's device and back", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { page, viewer } = yield* passkeyViewer(true);
+      expect(yield* Effect.promise(() => passkeyBinding!({ page, frame: page }, "available"))).toBe(
+        true,
+      );
+      const answer = passkeyBinding!({ page, frame: page }, "get", 1, {
+        challenge: "Y2hhbGxlbmdl",
+        userVerification: "required",
+      });
+      const request = yield* nextPasskeyOutput(viewer);
+      assert(request._tag === "passkey");
+      expect(request).toMatchObject({
+        kind: "get",
+        origin: "https://example.com",
+        publicKey: { rpId: "example.com", challenge: "Y2hhbGxlbmdl", userVerification: "required" },
+      });
+      yield* viewer.input({
+        type: "passkeyResult",
+        id: request.id,
+        result: exampleAssertion("Y2hhbGxlbmdl"),
+      });
+      expect(yield* Effect.promise(() => answer)).toMatchObject({
+        credential: {
+          id: "Y3JlZA",
+          rawId: "Y3JlZA",
+          type: "public-key",
+          authenticatorAttachment: "platform",
+          response: { signature: "c2ln", userHandle: "dXNlcg" },
+        },
+      });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("without a passkey device in control the page keeps Chromium's own WebAuthn", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { page } = yield* passkeyViewer(false);
+      expect(yield* Effect.promise(() => passkeyBinding!({ page, frame: page }, "available"))).toBe(
+        false,
+      );
+      expect(
+        yield* Effect.promise(() =>
+          passkeyBinding!({ page, frame: page }, "get", 1, { challenge: "Y2hhbGxlbmdl" }),
+        ),
+      ).toEqual({ native: true });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("only a secure top-level page asks, and the device's answer must be for it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { page, viewer } = yield* passkeyViewer(true);
+      const ask = (frame: unknown, options: unknown) =>
+        Effect.promise(() => passkeyBinding!({ page, frame }, "get", 1, options));
+      const notAllowed = { error: "NotAllowedError" };
+      // A frame inside the page cannot open the sheet.
+      expect(yield* ask({}, { challenge: "Y2hhbGxlbmdl" })).toEqual(notAllowed);
+      // Another site's RP ID is refused before the device is asked.
+      expect(yield* ask(page, { challenge: "Y2hhbGxlbmdl", rpId: "example.net" })).toEqual({
+        error: "SecurityError",
+      });
+      // An answer signed for another origin never reaches the page.
+      const fiber = yield* Effect.forkScoped(ask(page, { challenge: "Y2hhbGxlbmdl" }));
+      const request = yield* nextPasskeyOutput(viewer);
+      assert(request._tag === "passkey");
+      yield* viewer.input({
+        type: "passkeyResult",
+        id: request.id,
+        result: exampleAssertion("Y2hhbGxlbmdl", "https://example.net"),
+      });
+      expect(yield* Fiber.join(fiber)).toEqual(notAllowed);
+      // Plain http is not a secure context.
+      yield* Effect.promise(() => page.goto("http://example.com/login"));
+      expect(yield* ask(page, { challenge: "Y2hhbGxlbmdl" })).toEqual(notAllowed);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("releasing control cancels the request on the device and refuses the page", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { page, viewer } = yield* passkeyViewer(true);
+      const answer = passkeyBinding!({ page, frame: page }, "get", 1, {
+        challenge: "Y2hhbGxlbmdl",
+      });
+      const request = yield* nextPasskeyOutput(viewer);
+      assert(request._tag === "passkey");
+      yield* viewer.input({ type: "releaseControl" });
+      expect(yield* nextPasskeyOutput(viewer)).toEqual({ _tag: "passkeyCancel", id: request.id });
+      expect(yield* Effect.promise(() => answer)).toEqual({ error: "NotAllowedError" });
     }),
   ).pipe(Effect.provide(layer)),
 );

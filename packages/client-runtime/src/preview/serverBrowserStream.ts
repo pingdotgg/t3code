@@ -87,6 +87,24 @@ export type PreviewStreamInput =
       readonly modifiers: number;
     }
   | { readonly type: "text"; readonly text: string }
+  /**
+   * A saved login from the viewer's AutoFill, for the page only while it is on
+   * `origin`, the site the viewer confirmed. A focused password field gets the
+   * password; another field gets the username, then Tab, then the password only
+   * if Tab reached a password field. A field in a cross-origin frame gets nothing.
+   */
+  | {
+      readonly type: "fillLogin";
+      readonly origin: string;
+      readonly username: string;
+      readonly password: string;
+    }
+  /** Answer to a `passkey` request (see `PreviewStreamTarget.passkeys`). */
+  | {
+      readonly type: "passkeyResult";
+      readonly id: string;
+      readonly result: PreviewStreamPasskeyResult;
+    }
   | { readonly type: "resize"; readonly width: number; readonly height: number }
   | { readonly type: "navigate"; readonly url: string }
   | { readonly type: "history"; readonly delta: -1 | 1 }
@@ -153,6 +171,39 @@ export const previewStreamDownloadUrl = (
     target.access,
   );
 
+/**
+ * A page's WebAuthn request, for the controlling viewer's own passkeys. The
+ * server has checked the origin and RP ID. Binary members are base64url, as in
+ * WebAuthn's JSON forms of the options.
+ */
+export interface PreviewStreamPasskeyRequest {
+  readonly id: string;
+  readonly kind: "create" | "get";
+  /** The page's origin, as the server's browser reports it, never as the page claims it. */
+  readonly origin: string;
+  /** `PublicKeyCredentialCreationOptionsJSON` or `PublicKeyCredentialRequestOptionsJSON`. */
+  readonly publicKey: Readonly<Record<string, unknown>>;
+}
+
+/** What the device's authenticator returned, base64url throughout. */
+export interface PreviewStreamPasskeyCredential {
+  readonly id: string;
+  readonly clientDataJSON: string;
+  /** Registrations only. */
+  readonly attestationObject?: string;
+  /** Assertions only. */
+  readonly authenticatorData?: string;
+  readonly signature?: string;
+  readonly userHandle?: string;
+  readonly authenticatorAttachment?: "platform" | "cross-platform";
+  readonly transports?: ReadonlyArray<string>;
+}
+
+export type PreviewStreamPasskeyResult =
+  | { readonly success: true; readonly credential: PreviewStreamPasskeyCredential }
+  /** A WebAuthn DOMException name, such as `NotAllowedError`. */
+  | { readonly success: false; readonly error: string };
+
 /** Answer to a `probe`, echoing its point. */
 export interface PreviewStreamProbe {
   readonly x: number;
@@ -189,6 +240,8 @@ export interface PreviewStreamTarget {
   readonly maxHeight: number;
   /** Passive viewers reduce their own access, including automatic control grants. */
   readonly interactive?: boolean;
+  /** This device answers the page's passkey requests while it has control. */
+  readonly passkeys?: boolean;
 }
 
 export interface PreviewStreamEvents {
@@ -207,6 +260,10 @@ export interface PreviewStreamEvents {
   readonly onPopup?: (tabId: string) => void;
   /** The page opened a file picker (`null` once answered or replaced). */
   readonly onFileChooser?: (chooser: PreviewStreamFileChooser | null) => void;
+  /** The page asked for a passkey; answer with a `passkeyResult` input. */
+  readonly onPasskey?: (request: PreviewStreamPasskeyRequest) => void;
+  /** The page gave up on a passkey request: it aborted, timed out, navigated, or control moved. */
+  readonly onPasskeyCancel?: (id: string) => void;
   /** Input sent while disconnected is dropped. */
   readonly onConnectedChange: (connected: boolean) => void;
   /** The upgrade was refused; refresh access and start a new client. */
@@ -235,6 +292,7 @@ export function createPreviewStreamClient(
     maxHeight: String(Math.max(1, Math.round(target.maxHeight))),
   });
   if (target.interactive === false) query.set("interactive", "false");
+  if (target.passkeys) query.set("passkeys", "true");
   const url = withDeviceHubQuery(`${target.access.wsBase}/ws?${query.toString()}`, target.access);
   let stopped = false;
   let socket: WebSocket | null = null;
@@ -290,8 +348,27 @@ export function createPreviewStreamClient(
         phase,
         sequence,
         tabId,
+        kind,
+        origin,
+        publicKey,
       } = message as Record<string, unknown>;
       if (
+        type === "passkey" &&
+        typeof id === "string" &&
+        (kind === "create" || kind === "get") &&
+        typeof origin === "string" &&
+        typeof publicKey === "object" &&
+        publicKey !== null
+      ) {
+        events.onPasskey?.({
+          id,
+          kind,
+          origin,
+          publicKey: publicKey as Readonly<Record<string, unknown>>,
+        });
+      } else if (type === "passkeyCancel" && typeof id === "string") {
+        events.onPasskeyCancel?.(id);
+      } else if (
         type === "fileChooser" &&
         typeof id === "string" &&
         typeof multiple === "boolean" &&

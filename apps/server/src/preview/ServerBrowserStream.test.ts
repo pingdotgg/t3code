@@ -111,7 +111,8 @@ it.effect.each([
     );
     const server = Context.get(services, HttpServer.HttpServer);
     const origin = HttpServer.formatAddress(server.address).replace(/^http/, "ws");
-    const resource = `/api/preview-stream/ws?threadId=thread&tabId=tab&wsTicket=one-use-ticket${interactive ? "" : "&interactive=false"}`;
+    // Every viewer offers passkeys here; only one that may operate the page keeps them.
+    const resource = `/api/preview-stream/ws?threadId=thread&tabId=tab&passkeys=true&wsTicket=one-use-ticket${interactive ? "" : "&interactive=false"}`;
     const received = Promise.withResolvers<void>();
     const socket = yield* Effect.acquireRelease(
       Effect.sync(() => new WebSocket(`${origin}${resource}`)),
@@ -147,6 +148,7 @@ it.effect.each([
         maxHeight: 800,
         quality: 70,
         canOperate,
+        passkeys: canOperate,
       },
     ]);
     // In particular, a one-use ticket must never be authenticated a second

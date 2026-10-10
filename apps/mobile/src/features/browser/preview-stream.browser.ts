@@ -179,6 +179,7 @@ export function start(configuration: PreviewStreamConfiguration) {
         maxWidth: cap.width,
         maxHeight: cap.height,
         interactive,
+        passkeys: configuration.passkeys,
       },
       {
         onFrame: (jpeg) => painter.paint(jpeg),
@@ -186,6 +187,8 @@ export function start(configuration: PreviewStreamConfiguration) {
         onClipboard: (text) => post({ type: "clipboard", text }),
         onDownload: (download) => post({ type: "download", ...download }),
         onFileChooser: (chooser) => post({ type: "fileChooser", chooser }),
+        onPasskey: (request) => post({ type: "passkey", request }),
+        onPasskeyCancel: (id) => post({ type: "passkeyCancel", id }),
         onViewport: (page) => {
           if (viewport?.width === page.width && viewport.height === page.height) return;
           viewport = page;
@@ -610,6 +613,9 @@ export function start(configuration: PreviewStreamConfiguration) {
     input.addEventListener("input", onInput);
     input.addEventListener("compositionend", onCompositionEnd);
     input.addEventListener("focus", resetInput);
+    // Native shows its clipboard and password tools while a page field has the keyboard.
+    input.addEventListener("focus", () => post({ type: "input", focused: true }));
+    input.addEventListener("blur", () => post({ type: "input", focused: false }));
     // Copying the input would put its sentinel on this device's clipboard.
     input.addEventListener("copy", preventDefault);
     input.addEventListener("cut", preventDefault);

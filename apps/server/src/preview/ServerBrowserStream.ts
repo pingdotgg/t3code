@@ -86,6 +86,7 @@ const makeHandler = (browser: ServerBrowser.ServerBrowser["Service"]) =>
             threadId,
             tabId,
             canOperate,
+            passkeys: canOperate && params.get("passkeys") === "true",
             maxWidth: intParam(params, "maxWidth", 1280, 7680),
             maxHeight: intParam(params, "maxHeight", 800, 4320),
             quality: intParam(params, "quality", DEFAULT_QUALITY, 100),
@@ -156,6 +157,8 @@ const makeHandler = (browser: ServerBrowser.ServerBrowser["Service"]) =>
               case "download":
               case "fileChooser":
               case "fileChooserClosed":
+              case "passkey":
+              case "passkeyCancel":
               case "popup":
               case "pointer":
               case "probe": {

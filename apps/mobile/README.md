@@ -129,6 +129,31 @@ For preview or production EAS environments, set `T3CODE_CLERK_PUBLISHABLE_KEY`,
 `T3CODE_CLERK_JWT_TEMPLATE`, and `T3CODE_RELAY_URL`
 as EAS environment variables. Expo config maps the canonical values into the mobile build.
 
+### Passkeys on the Browser page
+
+The Browser page shows a page that runs in the server's headless browser, which has no
+authenticator. iOS builds can answer that page's passkey requests with the phone's own passkey
+sheet (iCloud Keychain, password managers, security keys), but iOS lets an app use passkeys for any
+site only with Apple's managed default-browser entitlement, `com.apple.developer.web-browser`.
+The Mac counterpart that the desktop app uses, `com.apple.developer.web-browser.public-key-credential`,
+does not exist on iOS.
+
+Builds leave this off. `T3CODE_IOS_BROWSER_PASSKEYS=1` adds the entitlement, and the app then
+offers passkeys to the server. Set it only for a bundle identifier whose provisioning profile grants
+the entitlement: a profile without it cannot sign the build. To get it:
+
+- The Account Holder of the T3 Tools Apple Developer organization requests it for the app's App ID
+  through Apple's
+  [default browser entitlement request form](https://developer.apple.com/contact/request/default-browser-entitlement/).
+- Apple's [criteria](https://developer.apple.com/documentation/xcode/preparing-your-app-to-be-the-default-browser)
+  make this a product decision to settle first. The app must declare the `http` and `https` URL
+  schemes, open such links straight to the page, and offer a URL field on launch, so T3 Code
+  becomes a default browser choice in iOS Settings. iOS also ignores an entitled app's own
+  Universal Links, which the app's `applinks:` domain relies on today.
+- After approval, regenerate the profiles and build with `T3CODE_IOS_BROWSER_PASSKEYS=1`.
+
+Simulator builds are not signed against a profile, so they accept the flag for local testing.
+
 Create a PR preview dev-client build manually:
 
 ```bash

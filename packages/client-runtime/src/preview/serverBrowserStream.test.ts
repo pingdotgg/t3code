@@ -172,6 +172,43 @@ describe("preview stream downloads", () => {
   });
 });
 
+describe("preview stream passkeys", () => {
+  beforeEach(() => vi.stubGlobal("WebSocket", FakeSocket));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("offers passkeys only when asked, and hands over well-formed requests", () => {
+    const events = {
+      onFrame: vi.fn(),
+      onViewport: vi.fn(),
+      onConnectedChange: vi.fn(),
+      onUnauthorized: vi.fn(),
+    };
+    createPreviewStreamClient(target, events).stop();
+    expect(new URL(FakeSocket.current.url).searchParams.has("passkeys")).toBe(false);
+    const onPasskey = vi.fn();
+    const onPasskeyCancel = vi.fn();
+    const client = createPreviewStreamClient(
+      { ...target, passkeys: true },
+      { ...events, onPasskey, onPasskeyCancel },
+    );
+    const socket = FakeSocket.current;
+    expect(new URL(socket.url).searchParams.get("passkeys")).toBe("true");
+    const request = {
+      id: "p1",
+      kind: "get",
+      origin: "https://example.com",
+      publicKey: { challenge: "Y2hhbGxlbmdl", rpId: "example.com" },
+    };
+    socket.message(JSON.stringify({ type: "passkey", ...request, kind: "register" }));
+    socket.message(JSON.stringify({ type: "passkey", ...request, publicKey: null }));
+    socket.message(JSON.stringify({ type: "passkey", ...request }));
+    socket.message(JSON.stringify({ type: "passkeyCancel", id: "p1" }));
+    expect(onPasskey).toHaveBeenCalledExactlyOnceWith(request);
+    expect(onPasskeyCancel).toHaveBeenCalledExactlyOnceWith("p1");
+    client.stop();
+  });
+});
+
 describe("preview stream agent pointer", () => {
   beforeEach(() => vi.stubGlobal("WebSocket", FakeSocket));
   afterEach(() => vi.unstubAllGlobals());
