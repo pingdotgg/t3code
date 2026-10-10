@@ -519,6 +519,7 @@ export const make = Effect.gen(function* () {
     format: TranscriptUsageFormat<unknown>,
   ): Effect.Effect<{
     readonly records: readonly UsageRecord[];
+    readonly failed?: true;
     readonly update?: { readonly entry: CachedFile; readonly replaces: CachedFile | undefined };
   }> =>
     Effect.gen(function* () {
@@ -554,6 +555,7 @@ export const make = Effect.gen(function* () {
       if (parsed === null)
         return {
           records: cached?.provider === provider ? [...cached.records, ...cached.tailRecords] : [],
+          failed: true,
         };
 
       // Stored already de-duplicated within the file, which is 99% of all
@@ -600,7 +602,7 @@ export const make = Effect.gen(function* () {
       .exists(dir)
       .pipe(Effect.catchCause(() => Effect.succeed(false)));
     if (!exists) return { provider, dir, volumeId, files: null } satisfies ScannedDir;
-    const files = yield* Effect.promise(() =>
+    const { files, failedPaths } = yield* Effect.promise(() =>
       listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
     );
     // A cold parse waits on disk reads, so a few files in flight read
@@ -629,7 +631,20 @@ export const make = Effect.gen(function* () {
       }
       return { path, records };
     });
-    return { provider, dir, volumeId, files: parsedFiles } satisfies ScannedDir;
+    // Unread files keep their cached usage, but the total may be short.
+    const unread = failedPaths + read.filter((file) => file.failed).length;
+    return {
+      provider,
+      dir,
+      volumeId,
+      files: parsedFiles,
+      ...(unread > 0
+        ? {
+            status: "partial",
+            message: `${unread} transcript path(s) could not be read; usage may be incomplete.`,
+          }
+        : {}),
+    } satisfies ScannedDir;
   });
 
   const collectDirs = Effect.fn("UsageService.collectDirs")(function* (

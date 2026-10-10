@@ -996,6 +996,34 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
+  it.live.skipIf(HostProcess.Platform.defaultValue() === "win32" || process.getuid?.() === 0)(
+    "reports unreadable transcripts as partial and recovers once they can be read",
+    () =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        const unreadable = NodePath.join(NodePath.dirname(transcript), "other.jsonl");
+        yield* Effect.promise(async () => {
+          await NodeFSP.writeFile(transcript, claudeLine(1, 5));
+          await NodeFSP.writeFile(unreadable, claudeLine(2, 7));
+          await NodeFSP.chmod(unreadable, 0);
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          const partial = yield* service.readSummary(WINDOW);
+          assert.strictEqual(totalOutputTokens(partial), 5);
+          assert.strictEqual(partial.sources[0]?.status, "partial");
+
+          yield* Effect.promise(() => NodeFSP.chmod(unreadable, 0o600));
+          const healthy = yield* service.readSummary(WINDOW);
+          assert.strictEqual(totalOutputTokens(healthy), 12);
+          assert.strictEqual(healthy.sources[0]?.status, "ok");
+          assert.isNull(healthy.sources[0]?.message);
+        }).pipe(
+          Effect.provide(layerService({ prefix: "usage-service-unreadable", home, settings })),
+        );
+      }).pipe(Effect.scoped),
+  );
+
   it.live("reprices unchanged transcripts when custom prices are added, edited, or removed", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
