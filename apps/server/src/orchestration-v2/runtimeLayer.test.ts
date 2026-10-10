@@ -3988,6 +3988,16 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* settle("queued", queuedStartedAt);
       assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("late-wake")).id);
       assert.equal(millis((yield* runFor("late-wake")).workStartedAt), millis(queuedStartedAt));
+
+      // Runs sort in the order they started, including after a wake that ran ahead.
+      const ordinals = yield* Effect.forEach(
+        ["prompt", "early-wake", "queued", "late-wake"],
+        (key) => Effect.map(runFor(key), (run) => run.ordinal),
+      );
+      assert.deepEqual(
+        ordinals,
+        ordinals.toSorted((left, right) => left - right),
+      );
     }),
   );
 

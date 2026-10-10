@@ -1330,18 +1330,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // Run ordinals order the transcript, checkpoints, and the latest run. A
       // run that started while this one waited (a resume of a held queue, a
       // reorder, a delivery that jumps the queue) has a newer ordinal, so this
-      // run moves after it. A message cancelled from the queue never started.
-      const startedRunIds = new Set(
-        projection.turnItems.flatMap((item) =>
-          item.type === "user_message" && item.runId !== null ? [item.runId] : [],
-        ),
-      );
-      const ordinal = projection.runs.some(
-        (run) =>
-          run.status !== "queued" && run.ordinal > queuedRun.ordinal && startedRunIds.has(run.id),
-      )
-        ? nextRunOrdinal(projection)
-        : queuedRun.ordinal;
+      // run moves after it. A started run has its prompt in the transcript (a
+      // wake's prompt is a notification); a message cancelled from the queue has none.
+      const newerRunIds = projection.runs
+        .filter((run) => run.status !== "queued" && run.ordinal > queuedRun.ordinal)
+        .map((run) => run.id);
+      const startedAhead =
+        newerRunIds.length > 0 &&
+        (yield* projectionStore.getThreadRecords(threadId, ["turnItems"], {
+          turnItemTypes: ["user_message", "notification"],
+          turnItemRunIds: newerRunIds,
+        })).turnItems.length > 0;
+      const ordinal = startedAhead ? nextRunOrdinal(projection) : queuedRun.ordinal;
       const rootNodeId = queuedRun.rootNodeId;
       const attemptId = queuedRun.activeAttemptId;
       const providerThreadId = queuedRun.providerThreadId;
