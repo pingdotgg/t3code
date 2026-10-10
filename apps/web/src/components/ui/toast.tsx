@@ -368,6 +368,7 @@ function ToastBodyContent({
           className={cn(
             "flex items-center gap-1.5",
             stackedActionLayout ? "w-full justify-end" : "shrink-0",
+            stackedActionLayout && additionalActions.length > 0 && "justify-between",
           )}
         >
           {copyErrorText !== null ? <CopyErrorButton text={copyErrorText} /> : null}
