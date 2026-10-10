@@ -103,10 +103,10 @@ function fillSearchUrlTemplate(template: string, query: string) {
 export function isValidSearchUrlTemplate(template: string) {
   if (!template.includes("%s")) return false;
   try {
-    const url = new URL(fillSearchUrlTemplate(template, "t3query"));
-    return (
-      (url.protocol === "http:" || url.protocol === "https:") && !url.hostname.includes("t3query")
-    );
+    // Two different queries land on different hosts only when `%s` is in the host.
+    const url = new URL(fillSearchUrlTemplate(template, "a"));
+    const other = new URL(fillSearchUrlTemplate(template, "b"));
+    return (url.protocol === "http:" || url.protocol === "https:") && url.host === other.host;
   } catch {
     return false;
   }
