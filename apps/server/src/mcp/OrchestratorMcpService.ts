@@ -81,6 +81,7 @@ import {
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -221,16 +222,42 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * Workspace strategy for a scheduled task created/updated over MCP: bound runs
- * post into the existing thread (the strategy is unused, keep root); unbound
- * runs launch a fresh worktree per run.
+ * Bound runs post into the existing thread. Unbound runs use an isolated
+ * worktree when the project is a Git repository, and its root otherwise.
  */
 function scheduledTaskWorkspaceStrategy(
   boundToThread: boolean,
+  isGitRepository: boolean,
 ): ScheduledTask["workspaceStrategy"] {
-  return boundToThread
+  return boundToThread || !isGitRepository
     ? { type: "root" }
     : { type: "worktree", baseRef: "main", startFromOrigin: true };
+}
+
+function resolveScheduledTaskWorkspaceStrategy(
+  boundToThread: boolean,
+  workspaceRoot: string,
+): Effect.Effect<ScheduledTask["workspaceStrategy"], OrchestratorMcpFailure> {
+  return Effect.gen(function* () {
+    if (boundToThread) return { type: "root" };
+    const git = yield* Effect.serviceOption(GitWorkflow.GitWorkflowService);
+    if (Option.isNone(git)) {
+      return yield* Effect.fail(
+        failure(
+          "orchestration_error",
+          "Cannot choose a scheduled task workspace because Git detection is unavailable.",
+        ),
+      );
+    }
+    const isGitRepository = yield* git.value
+      .isRepository(workspaceRoot)
+      .pipe(
+        Effect.mapError((error) =>
+          failure("orchestration_error", `Could not inspect project Git status: ${error.message}`),
+        ),
+      );
+    return scheduledTaskWorkspaceStrategy(boundToThread, isGitRepository);
+  });
 }
 
 /**
@@ -1511,6 +1538,10 @@ const make = Effect.gen(function* () {
         }
         const modelSelection =
           parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
+        const workspaceStrategy = yield* resolveScheduledTaskWorkspaceStrategy(
+          bindToCurrentThread,
+          project.workspaceRoot,
+        );
         const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
         const title =
           input.title ?? (derivedTitle.length > 0 ? derivedTitle.slice(0, 80) : "Scheduled task");
@@ -1521,7 +1552,7 @@ const make = Effect.gen(function* () {
           schedule: input.schedule,
           projectId,
           threadId: bindToCurrentThread && parent !== undefined ? parent.thread.id : null,
-          workspaceStrategy: scheduledTaskWorkspaceStrategy(bindToCurrentThread),
+          workspaceStrategy,
           modelSelection,
           runtimeMode: limits.runtimeMode,
           interactionMode: limits.interactionMode,
@@ -1588,13 +1619,18 @@ const make = Effect.gen(function* () {
             : input.bindToCurrentThread && parent !== undefined
               ? parent.thread.id
               : null;
-        // Rebinding changes where runs execute, so the workspace strategy must
-        // follow: unbinding a root-strategy task would otherwise run loose
-        // prompts in the shared project checkout.
+        // Re-evaluate the workspace when binding changes so Git projects stay
+        // isolated and non-Git projects do not request worktrees.
         const workspaceStrategy =
           input.bindToCurrentThread === undefined
             ? existing.workspaceStrategy
-            : scheduledTaskWorkspaceStrategy(input.bindToCurrentThread);
+            : yield* Effect.gen(function* () {
+                const project = yield* requireProject(existing.projectId);
+                return yield* resolveScheduledTaskWorkspaceStrategy(
+                  input.bindToCurrentThread === true,
+                  project.workspaceRoot,
+                );
+              });
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
           title: input.title ?? existing.title,

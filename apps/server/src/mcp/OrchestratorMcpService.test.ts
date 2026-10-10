@@ -18,6 +18,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
 import {
@@ -30,6 +31,7 @@ import {
 } from "../orchestration-v2/Orchestrator.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { buildUnavailableProviderSnapshot } from "../provider/unavailableProviderSnapshot.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -1610,6 +1612,155 @@ describe("OrchestratorMcpService provider resolution", () => {
       capabilities: new Set(["orchestration"]),
       issuedAt: 1,
     };
+
+    const scheduleForProject = (isGitRepository: boolean) =>
+      Effect.gen(function* () {
+        const workspaceRoot = "/family-vault";
+        const project = {
+          id: projectId,
+          title: "Family vault",
+          workspaceRoot,
+          repositoryIdentity: null,
+          defaultModelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+          defaultThreadEnvMode: null,
+          autoPull: false,
+          faviconPath: null,
+          projectIcon: null,
+          scripts: [],
+          createdAt: "2026-10-05T00:00:00.000Z",
+          updatedAt: "2026-10-05T00:00:00.000Z",
+          deletedAt: null,
+        } as never;
+        const detectedRoots = yield* Ref.make<ReadonlyArray<string>>([]);
+        const savedStrategy = yield* Ref.make<ScheduledTask["workspaceStrategy"] | null>(null);
+        const dependencies = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+          Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+            list: () => Effect.succeed([]),
+          }),
+          Layer.mock(ProjectService.ProjectService)({
+            getById: () => Effect.succeed(Option.some(project)),
+          }),
+          Layer.mock(GitWorkflow.GitWorkflowService)({
+            isRepository: (cwd) =>
+              Ref.update(detectedRoots, (roots) => [...roots, cwd]).pipe(
+                Effect.as(isGitRepository),
+              ),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+            upsert: (input) =>
+              Ref.set(savedStrategy, input.workspaceStrategy).pipe(
+                Effect.as({
+                  task: task({
+                    projectId,
+                    threadId: null,
+                    workspaceStrategy: input.workspaceStrategy,
+                  }),
+                }),
+              ),
+          }),
+        );
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))),
+        );
+
+        yield* service
+          .scheduleTask(supervisedClient, {
+            projectId,
+            prompt: "Run the daily check",
+            schedule: { type: "interval", everyMs: 60_000 },
+            bindToCurrentThread: false,
+          })
+          .pipe(Effect.provide(dependencies));
+
+        assert.deepEqual(yield* Ref.get(detectedRoots), [workspaceRoot]);
+        assert.deepEqual(
+          yield* Ref.get(savedStrategy),
+          isGitRepository
+            ? { type: "worktree", baseRef: "main", startFromOrigin: true }
+            : { type: "root" },
+        );
+      });
+
+    it.effect("uses the project root for an unbound schedule in a non-Git project", () =>
+      scheduleForProject(false),
+    );
+
+    it.effect("uses a worktree for an unbound schedule in a Git project", () =>
+      scheduleForProject(true),
+    );
+
+    it.effect("uses the project root when unbinding a schedule in a non-Git project", () =>
+      Effect.gen(function* () {
+        const workspaceRoot = "/family-vault";
+        const project = {
+          id: projectId,
+          title: "Family vault",
+          workspaceRoot,
+          repositoryIdentity: null,
+          defaultModelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+          defaultThreadEnvMode: null,
+          autoPull: false,
+          faviconPath: null,
+          projectIcon: null,
+          scripts: [],
+          createdAt: "2026-10-05T00:00:00.000Z",
+          updatedAt: "2026-10-05T00:00:00.000Z",
+          deletedAt: null,
+        } as never;
+        const existing = task({ threadId: boundThreadId, workspaceStrategy: { type: "root" } });
+        const detectedRoots = yield* Ref.make<ReadonlyArray<string>>([]);
+        const savedStrategy = yield* Ref.make<ScheduledTask["workspaceStrategy"] | null>(null);
+        const dependencies = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadShell: () => Effect.succeed(null),
+          }),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+          Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+            list: () => Effect.succeed([]),
+          }),
+          Layer.mock(ProjectService.ProjectService)({
+            getById: () => Effect.succeed(Option.some(project)),
+          }),
+          Layer.mock(GitWorkflow.GitWorkflowService)({
+            isRepository: (cwd) =>
+              Ref.update(detectedRoots, (roots) => [...roots, cwd]).pipe(Effect.as(false)),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+            list: () => Effect.succeed({ tasks: [existing] }),
+            upsert: (input) =>
+              Ref.set(savedStrategy, input.workspaceStrategy).pipe(
+                Effect.as({
+                  task: task({
+                    ...existing,
+                    threadId: null,
+                    workspaceStrategy: input.workspaceStrategy,
+                  }),
+                }),
+              ),
+          }),
+        );
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))),
+        );
+
+        yield* service
+          .updateScheduledTask(supervisedClient, {
+            scheduledTaskId: existing.id,
+            bindToCurrentThread: false,
+          })
+          .pipe(Effect.provide(dependencies));
+
+        assert.deepEqual(yield* Ref.get(detectedRoots), [workspaceRoot]);
+        assert.deepEqual(yield* Ref.get(savedStrategy), { type: "root" });
+      }),
+    );
+
     const service = (
       tasks: ReadonlyArray<ScheduledTask>,
       boundThread: OrchestrationV2ThreadShell | null,
