@@ -45,6 +45,7 @@ import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
+import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
 import * as OpenCodeRuntime from "./opencodeRuntime.ts";
 import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
@@ -2717,6 +2718,7 @@ it.layer(
           ),
           Layer.provideMerge(ModelManifest.layerTest),
           Layer.provideMerge(ResetCreditCoordinator.layerTest),
+          Layer.provideMerge(UsageLimitSources.layerTest),
           Layer.provideMerge(
             OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
           ),
@@ -2819,6 +2821,7 @@ it.layer(
           ),
           Layer.provideMerge(ModelManifest.layerTest),
           Layer.provideMerge(ResetCreditCoordinator.layerTest),
+          Layer.provideMerge(UsageLimitSources.layerTest),
           Layer.provideMerge(
             OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
           ),
@@ -2938,6 +2941,7 @@ it.layer(
           ),
           Layer.provideMerge(ModelManifest.layerTest),
           Layer.provideMerge(ResetCreditCoordinator.layerTest),
+          Layer.provideMerge(UsageLimitSources.layerTest),
           Layer.provideMerge(
             OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
           ),
@@ -3003,6 +3007,7 @@ it.layer(
             ),
             Layer.provideMerge(ModelManifest.layerTest),
             Layer.provideMerge(ResetCreditCoordinator.layerTest),
+            Layer.provideMerge(UsageLimitSources.layerTest),
             Layer.provideMerge(
               OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
             ),

@@ -124,7 +124,9 @@ The accounts appear under **Usage → Limits**. Codex accounts show banked reset
 account and choose **Use reset** to redeem one. No hub plugin is required.
 
 This connection supplies usage information; configure
-the provider separately to send agent requests through the hub. Remove the hub from the same
+the provider separately to send agent requests through the hub. When a Claude instance sends
+requests through a connected hub and every pooled Claude account is out of quota, its limited
+threads can resume as soon as the first account recovers. Remove the hub from the same
 settings section when you no longer need it.
 
 ## Subscription usage widget

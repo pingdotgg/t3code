@@ -16,6 +16,7 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ResetCreditCoordinator from "../provider/resetCreditCoordinator.ts";
+import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
 import { FetchHttpClient } from "effect/http";
 import { describe } from "vite-plus/test";
 
@@ -139,6 +140,7 @@ const layerLive = RuntimeLayer.layer.pipe(
   Layer.provide(layerServerSettings),
   Layer.provide(layerProviderInstanceRegistry),
   Layer.provide(ResetCreditCoordinator.layer),
+  Layer.provide(UsageLimitSources.layerTest),
   Layer.provide(layerBackgroundPolicy),
   Layer.provide(ProviderTurnStartServiceTestkit.layer),
   Layer.provide(layerPlatformTest),

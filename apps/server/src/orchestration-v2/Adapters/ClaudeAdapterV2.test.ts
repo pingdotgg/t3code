@@ -2086,6 +2086,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
     readonly interrupt?: Effect.Effect<void>;
     readonly environment?: NodeJS.ProcessEnv;
+    readonly usageLimitResetFallback?: Effect.Effect<string | null>;
     // A CLI process opened after the first streams from its own queue, so the
     // first one can exit (Queue.shutdown) and a later turn can start another.
     readonly freshQueueOnReopen?: boolean;
@@ -2117,6 +2118,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
         settings: DEFAULT_CLAUDE_SETTINGS,
         environment: options?.environment ?? {},
+        ...(options?.usageLimitResetFallback
+          ? { usageLimitResetFallback: options.usageLimitResetFallback }
+          : {}),
         attachmentsDir,
         fileSystem,
         path: yield* Path.Path,
@@ -2990,6 +2994,97 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.notInclude(terminal.failure.message.toLowerCase(), "usage limit");
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
+
+  describe("usage-limit reset fallback", () => {
+    // The shape a pooling proxy produces: a bare 429 with no rate_limit_event.
+    const runLimitedTurn = (options: {
+      readonly fallback: Effect.Effect<string | null>;
+      readonly rateLimitResetsAt?: number;
+    }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          usageLimitResetFallback: options.fallback,
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-reset-fallback"),
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        if (options.rateLimitResetsAt !== undefined) {
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              type: "rate_limit_event",
+              rate_limit_info: {
+                status: "rejected",
+                rateLimitType: "five_hour",
+                resetsAt: options.rateLimitResetsAt,
+              },
+              uuid: "00000000-0000-4000-8000-000000000660",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantErrorFrame({
+            uuid: "00000000-0000-4000-8000-000000000661",
+            error: "rate_limit",
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000662",
+            result: "API Error",
+            terminalReason: "api_error",
+            isError: true,
+            apiErrorStatus: 429,
+          }),
+        );
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "failed");
+        if (terminal.status !== "failed") throw new Error("Expected a failed turn.");
+        assert.equal(terminal.failure.class, "usage_limit");
+        return terminal.failure;
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)));
+
+    it.effect("takes the reset time from the fallback when the provider named none", () =>
+      Effect.gen(function* () {
+        const failure = yield* runLimitedTurn({
+          fallback: Effect.succeed("2026-10-10T08:00:00.000Z"),
+        });
+        assert.equal(failure.resetAt, "2026-10-10T08:00:00.000Z");
+      }),
+    );
+
+    it.effect("keeps the reset time unknown when the fallback does not know it either", () =>
+      Effect.gen(function* () {
+        const failure = yield* runLimitedTurn({ fallback: Effect.succeed(null) });
+        assert.equal(failure.resetAt, null);
+      }),
+    );
+
+    it.effect("does not consult the fallback when the provider reported a reset time", () =>
+      Effect.gen(function* () {
+        let consulted = 0;
+        const failure = yield* runLimitedTurn({
+          rateLimitResetsAt: 1790298600,
+          fallback: Effect.sync(() => {
+            consulted += 1;
+            return "2026-10-10T08:00:00.000Z";
+          }),
+        });
+        assert.equal(failure.resetAt, "2026-09-25T01:10:00.000Z");
+        assert.equal(consulted, 0);
+      }),
+    );
+  });
 
   it.effect("surfaces a Claude safety model fallback without failing the turn", () =>
     Effect.gen(function* () {

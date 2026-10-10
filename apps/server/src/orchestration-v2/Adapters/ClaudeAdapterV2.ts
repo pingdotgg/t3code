@@ -2998,6 +2998,12 @@ export interface ClaudeAdapterV2Options {
   readonly queryRunner: ClaudeAgentSdkQueryRunnerShape;
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
   readonly onUsageLimits?: ServerProviderShape["applyUsageLimits"];
+  /**
+   * Consulted only when a usage-limit stop carries no reset time from the
+   * provider, as when a proxy in front of several accounts returns a bare 429.
+   * Resolves the time the proxy's pool recovers, or null when unknown.
+   */
+  readonly usageLimitResetFallback?: Effect.Effect<string | null>;
   /** Sink for wake-turn continuation requests; defaults to dropping them. */
   readonly continuationRequests?: {
     readonly offer: (
@@ -6663,7 +6669,14 @@ export function makeClaudeAdapterV2(
               : providerFailureFromResult(message, failureHint, usageLimited);
             const terminalFailure =
               resultFailure?.class === "usage_limit"
-                ? { ...resultFailure, resetAt }
+                ? {
+                    ...resultFailure,
+                    resetAt:
+                      resetAt ??
+                      (adapterOptions.usageLimitResetFallback
+                        ? yield* adapterOptions.usageLimitResetFallback
+                        : null),
+                  }
                 : resultFailure;
             yield* finalizeActiveTurn({
               context,
@@ -8147,7 +8160,10 @@ export type ClaudeAdapterV2DriverEnv =
 export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
   function* (
     input: ProviderAdapterDriverCreateInput<ClaudeSettings>,
-    hooks: Pick<ClaudeAdapterV2Options, "scopedLimitNames" | "onUsageLimits"> = {},
+    hooks: Pick<
+      ClaudeAdapterV2Options,
+      "scopedLimitNames" | "onUsageLimits" | "usageLimitResetFallback"
+    > = {},
   ) {
     const { instanceId, environment, enabled, config } = input;
     const fileSystem = yield* FileSystem.FileSystem;

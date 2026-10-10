@@ -33,6 +33,7 @@ import {
   type ClaudeAdapterV2DriverEnv,
 } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import * as UsageLimitSources from "../../usage/UsageLimitSources.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeClaudeScopedLimitNames } from "../claudeUsageLimits.ts";
 import * as ClaudeResetCredits from "../claudeResetCredits.ts";
@@ -105,7 +106,8 @@ export type ClaudeDriverEnv =
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers
   | ServerConfig.ServerConfig
-  | ServerSettings.ServerSettingsService;
+  | ServerSettings.ServerSettingsService
+  | UsageLimitSources.UsageLimitSources;
 
 export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
   driverKind: DRIVER_KIND,
@@ -124,6 +126,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const httpClient = yield* HttpClient.HttpClient;
       const resetCreditCoordinator = yield* ResetCreditCoordinator.ResetCreditCoordinator;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
       const modelManifest = yield* ModelManifest.ModelManifest;
       const modelCatalog = modelManifest.current.pipe(Effect.map(resolveClaudeModelCatalog));
       const processEnv = mergeProviderInstanceEnvironment(environment);
@@ -165,6 +168,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       });
 
       const scopedLimitNames = yield* makeClaudeScopedLimitNames;
+      // A pooling proxy answers an exhausted pool with a bare 429, so the
+      // reset time comes from the hub's own per-account usage windows.
+      const proxyBaseUrl = processEnv.ANTHROPIC_BASE_URL?.trim();
       const orchestrationAdapter = yield* createClaudeAdapterV2(
         {
           instanceId,
@@ -174,7 +180,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
           enabled,
           config,
         },
-        { scopedLimitNames, onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
+        {
+          scopedLimitNames,
+          onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+          ...(proxyBaseUrl
+            ? { usageLimitResetFallback: usageLimitSources.poolResetAt(proxyBaseUrl) }
+            : {}),
+        },
       ).pipe(
         Effect.mapError(
           (cause) =>
