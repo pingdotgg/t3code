@@ -1028,6 +1028,14 @@ export const WINDOWS_SERVER_ASAR_RESOURCE = "server.asar";
 // asar redirect convention). Everything else stays packed.
 export const WINDOWS_NATIVE_ASAR_UNPACK_GLOB =
   "{**/*.node,**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib}";
+// The server sidecar unpacks .node files separately, keeping only Windows ones.
+export const WINDOWS_SERVER_ASAR_UNPACK_GLOBS = [
+  "**/*.dll",
+  "**/*.exe",
+  "**/*.so",
+  "**/*.so.*",
+  "**/*.dylib",
+] as const;
 // Mirrors DESKTOP_FILE_EXCLUSIONS for the hand-packed sidecar: the Claude SDK
 // platform packages are dead weight (see above), and node_modules/.bin shims
 // are never spawned at runtime (and are symlinks on POSIX build hosts, which
@@ -2939,6 +2947,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     const winConfig: Record<string, unknown> = {
       target: [target],
       icon: "icon.ico",
+      // Smart App Control validates unpacked native addons independently from
+      // the signed desktop executable. Extend release signing to every native
+      // Windows library that Electron or the server sidecar loads at runtime.
+      signExts: [".node", ".dll"],
       // Resource editing applies the product metadata and icon independently
       // of code signing. Disabling it for local unsigned builds leaves the
       // packaged executable with Electron's stock icon.
@@ -3027,11 +3039,33 @@ export const packWindowsServerAsar = Effect.fn("packWindowsServerAsar")(function
   readonly arch: typeof BuildArch.Type;
 }) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  // Native addons are unpacked only when they are Windows PE ("MZ") binaries.
+  // Signed builds Authenticode-sign every unpacked .node file, which fails on
+  // the darwin and linux prebuilds some packages (node-pty) ship alongside
+  // their win32 ones. The Windows primary never loads those, so they stay packed.
+  const unpackGlobs: string[] = [...WINDOWS_SERVER_ASAR_UNPACK_GLOBS];
+  for (const entry of yield* fs.readDirectory(input.sourceDir, { recursive: true })) {
+    if (!entry.endsWith(".node")) continue;
+    const addonPath = path.join(input.sourceDir, entry);
+    if ((yield* fs.stat(addonPath)).type !== "File") continue;
+    const bytes = yield* fs.readFile(addonPath);
+    if (bytes[0] !== 0x4d || bytes[1] !== 0x5a) continue;
+    const posixPath = entry.split(path.sep).join("/");
+    // Backslash escapes are path separators to minimatch on Windows.
+    if (/[\\*?[\]{}(),]/.test(posixPath)) {
+      return yield* new WindowsServerSidecarPackError({
+        asarPath: input.asarPath,
+        cause: new Error(`native addon path contains glob syntax: ${posixPath}`),
+      });
+    }
+    unpackGlobs.push(`**/${posixPath}`);
+  }
   yield* Effect.tryPromise({
     try: () =>
       createPackageWithOptions(input.sourceDir, input.asarPath, {
         dot: true,
-        unpack: WINDOWS_NATIVE_ASAR_UNPACK_GLOB,
+        unpack: `{${unpackGlobs.join(",")}}`,
         // glob 13 (via @electron/asar 4) matches `ignore` relative to `cwd`,
         // not against the absolute paths it crawls, so anchor it at the source.
         globOptions: {
