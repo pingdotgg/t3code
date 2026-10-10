@@ -701,9 +701,18 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    useExtraUsage: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({
+        title: "Use extra usage",
+        description:
+          "Keep working on extra usage after a plan limit. When off, turns stop at the limit instead.",
+        providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath", "autoCompactWindow", "launchArgs"],
+    order: ["binaryPath", "homePath", "autoCompactWindow", "useExtraUsage", "launchArgs"],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;

@@ -2755,6 +2755,7 @@ function describeClaudeUsageLimit(
   info: SDKRateLimitInfo,
   nowMs: number,
   names: ClaudeScopedLimitNames,
+  stopped = false,
 ): string {
   const label =
     info.rateLimitType === "seven_day_overage_included" && names.overageIncluded
@@ -2769,9 +2770,10 @@ function describeClaudeUsageLimit(
     waitMs !== undefined && waitMs > 0 && waitMs <= CLAUDE_USAGE_LIMIT_MAX_WAIT_MS
       ? formatClaudeUsageLimitWait(waitMs)
       : undefined;
-  return `Claude usage limit reached. This turn is paused until the ${
-    label ? `${label} ` : ""
-  }limit resets${wait ? ` in ${wait}` : ""}.`;
+  const reset = `${label ? `${label} ` : ""}limit resets${wait ? ` in ${wait}` : ""}`;
+  return stopped
+    ? `Claude usage limit reached. Extra usage is off, so this turn stopped. The ${reset}.`
+    : `Claude usage limit reached. This turn is paused until the ${reset}.`;
 }
 
 function formatClaudeUsageLimitWait(waitMs: number): string {
@@ -2817,6 +2819,9 @@ interface ActiveClaudeTurnContext {
   readonly rejectedRateLimitTypes: Set<string>;
   readonly rateLimitResetTimes: Map<string, string | null>;
   latestAssistantRateLimited: boolean;
+  // Interrupted because Claude started billing extra usage while the
+  // instance has it turned off.
+  extraUsageStopped: boolean;
   readonly subagentsByTaskId: Map<string, ActiveClaudeSubagent>;
   readonly subagentsByToolUseId: Map<string, ActiveClaudeSubagent>;
   readonly subagentNodesByTaskId: Map<string, OrchestrationV2ExecutionNode["id"]>;
@@ -5917,7 +5922,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               rateLimitInfo.overageStatus === "allowed_warning" ||
               rateLimitInfo.isUsingOverage === true ||
               rateLimitInfo.overageInUse === true;
-            const blocked = rateLimitInfo.status === "rejected" && !overageAllowed;
+            // Overage only bills once the plan window itself is exhausted.
+            const usingExtraUsage =
+              rateLimitInfo.isUsingOverage === true ||
+              rateLimitInfo.overageInUse === true ||
+              (rateLimitInfo.status === "rejected" && overageAllowed);
+            const stopForExtraUsage = usingExtraUsage && !adapterOptions.settings.useExtraUsage;
+            const blocked =
+              (rateLimitInfo.status === "rejected" && !overageAllowed) || stopForExtraUsage;
             const limitType = rateLimitInfo.rateLimitType ?? "unknown";
             if (blocked) {
               context.rejectedRateLimitTypes.add(limitType);
@@ -5937,7 +5949,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               context.rateLimitResetTimes.delete(limitType);
             }
             // Rejected windows pause the SDK without ending its turn. Overage
-            // and warnings keep running; repeats of a window need only one notice.
+            // keeps running unless the instance turned it off, which stops the
+            // turn here; warnings keep running. Repeats need only one notice.
+            if (stopForExtraUsage && !context.extraUsageStopped) {
+              context.extraUsageStopped = true;
+              yield* input.query.interrupt.pipe(Effect.ignore, Effect.forkIn(sessionScope));
+            }
             if (blocked) {
               const limitKey = `${limitType}:${rateLimitInfo.resetsAt ?? "unknown"}`;
               if (!context.announcedUsageLimits.has(limitKey)) {
@@ -5947,6 +5964,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   rateLimitInfo,
                   DateTime.toEpochMillis(now),
                   names,
+                  stopForExtraUsage,
                 );
                 yield* emitProviderEvent({
                   type: "turn_item.updated",
@@ -6817,16 +6835,29 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               resetTimes.length > 0 && resetTimes.every((time) => time !== null)
                 ? resetTimes.reduce((latest, time) => (time! > latest ? time! : latest), "")
                 : null;
+            const resultStatus = terminalStatusFromResult(message, failureHint);
+            // The extra-usage interrupt ends the turn at the limit, not as a
+            // user stop. A turn that finished before it landed stays completed.
+            const extraUsageStopped =
+              !interrupted && context.extraUsageStopped && resultStatus !== "completed";
             const resultFailure = interrupted
               ? null
-              : providerFailureFromResult(message, completedAt, failureHint, usageLimited);
+              : extraUsageStopped
+                ? makeProviderFailure({
+                    class: "usage_limit",
+                    code: "extra_usage_disabled",
+                    message:
+                      "Claude usage limit reached and extra usage is off. Send the message again once the limit resets.",
+                    retryable: true,
+                  })
+                : providerFailureFromResult(message, completedAt, failureHint, usageLimited);
             const terminalFailure =
               resultFailure?.class === "usage_limit"
                 ? { ...resultFailure, resetAt: resetAt ?? resultFailure.resetAt ?? null }
                 : resultFailure;
             yield* finalizeActiveTurn({
               context,
-              status: interrupted ? "interrupted" : terminalStatusFromResult(message, failureHint),
+              status: interrupted ? "interrupted" : extraUsageStopped ? "failed" : resultStatus,
               completedAt,
               result: message,
               ...(terminalFailure === null ? {} : { failure: terminalFailure }),
@@ -7688,6 +7719,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               rejectedRateLimitTypes: new Set(),
               rateLimitResetTimes: new Map(),
               latestAssistantRateLimited: false,
+              extraUsageStopped: false,
               subagentsByTaskId: new Map(),
               subagentsByToolUseId: new Map(),
               subagentNodesByTaskId: new Map(),
