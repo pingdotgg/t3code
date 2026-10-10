@@ -4,8 +4,13 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as ServerConfig from "../config.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
+import {
+  makeCodexManagedTokenSource,
+  managedCodexTokenCommand,
+} from "./CodexManagedTokenSource.ts";
 import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";
 import { materializeCodexShadowHome } from "./Drivers/CodexHomeLayout.ts";
 
@@ -22,12 +27,15 @@ const managedCodexLaunchArgs = [
   'model_providers.openai_token_sharing.base_url="https://api.openai.com/v1"',
   'model_providers.openai_token_sharing.model_catalog_url="https://api.openai.com/v1/models"',
   "features.api_key_model_discovery=true",
-  'model_providers.openai_token_sharing.env_key="ACCESS_TOKEN"',
+  `model_providers.openai_token_sharing.auth.command=${JSON.stringify(process.execPath)}`,
+  `model_providers.openai_token_sharing.auth.args=${JSON.stringify(["-e", managedCodexTokenCommand])}`,
+  "model_providers.openai_token_sharing.auth.timeout_ms=25000",
+  "model_providers.openai_token_sharing.auth.refresh_interval_ms=30000",
   'model_providers.openai_token_sharing.wire_api="responses"',
   "model_providers.openai_token_sharing.requires_openai_auth=false",
   "model_providers.openai_token_sharing.supports_websockets=false",
 ]
-  .map((value) => `-c '${value}'`)
+  .map((value) => `-c '${value.replaceAll("'", "'\"'\"'")}'`)
   .join(" ");
 
 export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(function* (options: {
@@ -47,6 +55,11 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
       config.devUrl ?? `http://localhost:${config.port}`,
     ).toString(),
   });
+  const scope = yield* Scope.Scope;
+  const tokenSource = yield* makeCodexManagedTokenSource(options.instanceId, auth.access).pipe(
+    Effect.provideService(Scope.Scope, scope),
+    Effect.cached,
+  );
   const homeLayout = yield* resolveManagedCodexHomeLayout(
     config.stateDir,
     options.instanceId,
@@ -65,6 +78,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
       ),
     );
     const credentials = yield* auth.access;
+    const source = yield* tokenSource;
     yield* materializeCodexShadowHome(homeLayout).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
@@ -90,9 +104,13 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
     // Ambient CLI overrides cannot redirect a T3-owned token to a different provider.
     const environment: NodeJS.ProcessEnv = {
       ...options.environment,
-      ACCESS_TOKEN: credentials.accessToken,
+      T3CODE_MANAGED_CODEX_AUTH_URL: source.url,
+      T3CODE_MANAGED_CODEX_AUTH_SECRET: source.secret,
+      T3CODE_MANAGED_CODEX_AUTH_ACCOUNT: credentials.clientId,
+      ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
       CODEX_HOME: homePath,
     };
+    delete environment.ACCESS_TOKEN;
     delete environment.T3CODE_CODEX_LAUNCH_ARGS;
     delete environment.OPENAI_API_KEY;
     delete environment.OPENAI_BASE_URL;
