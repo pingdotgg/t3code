@@ -5921,9 +5921,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             (yield* Ref.get(activeTurn)) ??
             (yield* settledTurnForSubagentFrame(liveQuery.nativeThreadId, message));
           if (context === null) {
-            // Root output with no turn is a background wake, which outdates
+            // A root turn with no T3 turn is a background wake, which outdates
             // the current suggestion and any that follows it.
             if (
+              isClaudeTurnStartMessage(message) ||
               message.type === "result" ||
               (message.type === "assistant" && !message.parent_tool_use_id)
             ) {

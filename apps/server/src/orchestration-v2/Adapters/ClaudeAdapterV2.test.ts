@@ -2957,13 +2957,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("clears the suggestion on a background wake's output and offers none after it", () =>
+  it.effect("clears the suggestion when a background wake starts and offers none after it", () =>
     Effect.gen(function* () {
       const { harness, published, publishedSuggestions, completeTurn } =
         yield* makePromptSuggestionHarness;
       yield* completeTurn(1);
       yield* harness.offerAndWait(promptSuggestionFrame);
       assert.lengthOf(publishedSuggestions(), 1);
+      yield* harness.offerAndWait(wakeTurnInit);
+      assert.deepEqual(published.at(-1), [harness.threadId, null]);
       yield* harness.offerAndWait(
         makeAssistantTextFrame({
           uuid: "00000000-0000-4000-8000-000000000711",
