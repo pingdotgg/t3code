@@ -142,6 +142,7 @@ vi.mock("../ui/toast", () => ({
   toastManager: { add: vi.fn(), update: vi.fn(), close: vi.fn() },
 }));
 
+import { changeLanguage } from "../../i18n";
 import { WelcomeWizard } from "./WelcomeWizard";
 
 const primaryId = EnvironmentId.make("primary");
@@ -232,7 +233,7 @@ async function click(label: string) {
 function hasViewport() {
   return renderer!.root.findAllByProps({ "data-terminal-viewport": true }).length > 0;
 }
-async function enterRemoteAgents() {
+async function enterRemoteAgents(continueLabel = "Continue") {
   await act(async () => {
     renderer = create(
       <RegistryContext.Provider value={state.registry!}>
@@ -240,11 +241,12 @@ async function enterRemoteAgents() {
       </RegistryContext.Provider>,
     );
   });
-  await click("Continue");
+  await click(continueLabel);
   expect(text(renderer!.root)).toContain("Paired computer");
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  await changeLanguage("en");
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("document", { activeElement: null, body: {}, getElementById: () => null });
   state.registry = AtomRegistry.make();
@@ -291,6 +293,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => renderer?.unmount());
   renderer = undefined;
+  await changeLanguage("en");
   state.registry?.dispose();
   state.sessions.clear();
   state.providers.clear();
@@ -299,6 +302,43 @@ afterEach(async () => {
 });
 
 describe("welcome agent terminal setup", () => {
+  it("translates account setup, terminal permissions, retry and close in Chinese", async () => {
+    await changeLanguage("zh");
+    state.registry!.set(state.providers.get(remoteId)!, [
+      missingClaude,
+      { ...signedOutCodex, status: "ready", auth: { status: "authenticated" } },
+    ]);
+    state.open.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("Could not open"))));
+    await enterRemoteAgents("继续");
+    expect(button("连接其他 ChatGPT 账号")).toBeDefined();
+    expect(text(renderer!.root)).not.toContain("Connect another ChatGPT account");
+
+    await click("安装");
+    expect(text(renderer!.root)).toContain("无法打开设置终端。");
+    expect(button("重试")).toBeDefined();
+    expect(button("关闭")).toBeDefined();
+    expect(text(renderer!.root)).not.toContain("Retry");
+    expect(text(renderer!.root)).not.toContain("Close");
+
+    await act(async () => setAccess(remoteId, false));
+    const drawer = renderer!.root.findByProps({ "data-thread-terminal-drawer": true });
+    expect(text(drawer)).toContain("此连接无法控制终端。");
+    expect(
+      renderer!.root.findAllByType("p").some((node) => text(node) === "此连接无法控制终端。"),
+    ).toBe(true);
+    expect(text(renderer!.root)).not.toContain("This connection cannot control terminals.");
+    expect(button("重试").props.disabled).toBe(true);
+
+    await act(async () => setAccess(remoteId, true));
+    await click("重试");
+    expect(state.open).toHaveBeenCalledTimes(2);
+    expect(state.write).toHaveBeenCalledOnce();
+    expect(hasViewport()).toBe(true);
+    await click("关闭");
+    expect(hasViewport()).toBe(false);
+    expect(state.close).toHaveBeenCalledTimes(2);
+  });
+
   it("disables both setup actions for the paired read-only connection and preserves local completion", async () => {
     setAccess(remoteId, false);
     await enterRemoteAgents();

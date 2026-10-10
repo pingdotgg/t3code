@@ -63,6 +63,7 @@ export const zh: Partial<Messages> = {
   "wizard.agents.reviewCommand": "确认命令后按回车运行。",
   "wizard.agents.couldNotOpenTerminal": "无法打开设置终端。",
   "wizard.agents.preparingCommand": "正在准备命令…",
+  "wizard.agents.cannotControlTerminals": "此连接无法控制终端。",
   "wizard.runInTerminal_before": "请在终端中运行 ",
   "wizard.runInTerminal_after": "",
   "wizard.agents.terminalLabel": "安装 {{driver}}",
@@ -87,6 +88,7 @@ export const zh: Partial<Messages> = {
   "wizard.projects.scanLimitReached": "已达扫描上限，部分项目或会话可能未显示。",
 
   // Import results.
+  "wizard.import.cannotImportProjects": "此连接无法导入项目或会话记录。",
   "wizard.import.imported_other": "已导入 {{count}} 条会话",
   "wizard.import.skipped_other": "有 {{count}} 条会话无法导入。",
   "wizard.import.importedWithRemaining_other": "已导入 {{count}} 条会话。部分会话记录无法导入。",

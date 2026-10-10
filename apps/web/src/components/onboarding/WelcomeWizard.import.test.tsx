@@ -20,6 +20,7 @@ type CreateProjectInput = {
 };
 const state = vi.hoisted(() => ({
   selectedEnvironment: "primary",
+  includeUnnamedEnvironment: false,
   registry: null as AtomRegistry.AtomRegistry | null,
   sessions: new Map<EnvironmentId, Atom.Writable<SessionResult>>(),
   projects: null as Atom.Writable<ReadonlyArray<Project>> | null,
@@ -93,16 +94,18 @@ vi.mock("../../state/agentSessions", () => ({
 }));
 vi.mock("../../onboarding/useProjectScans", () => ({
   useProjectScans: (ids: EnvironmentId[]) =>
-    ids.map((environmentId) => {
-      state.scan({ environmentId });
-      return {
-        environmentId,
-        data: { candidates: state.candidates, truncated: false },
-        isPending: false,
-        error: null,
-        refresh: state.refreshScan,
-      };
-    }),
+    (state.includeUnnamedEnvironment && ids.length > 0 ? [...ids, remoteId] : ids).map(
+      (environmentId) => {
+        state.scan({ environmentId });
+        return {
+          environmentId,
+          data: { candidates: state.candidates, truncated: false },
+          isPending: false,
+          error: null,
+          refresh: state.refreshScan,
+        };
+      },
+    ),
 }));
 vi.mock("../ui/dialog", () => ({
   Dialog: "div",
@@ -148,6 +151,7 @@ vi.mock("../ui/collapsible", () => ({
 }));
 vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn(), close: vi.fn(), update: vi.fn() } }));
 
+import { changeLanguage } from "../../i18n";
 import { WelcomeWizard } from "./WelcomeWizard";
 
 const primaryId = EnvironmentId.make("primary");
@@ -218,7 +222,11 @@ async function click(label: string) {
   await act(async () => target.props.onClick());
 }
 
-async function mountImport(remote = false) {
+async function mountImport(
+  remote = false,
+  continueLabel = "Continue",
+  title = "Choose your projects",
+) {
   state.selectedEnvironment = remote ? "remote" : "primary";
   await act(async () => {
     renderer = create(
@@ -227,12 +235,14 @@ async function mountImport(remote = false) {
       </RegistryContext.Provider>,
     );
   });
-  await click("Continue");
-  await click("Continue");
-  expect(text(renderer!.root)).toContain("Choose your projects");
+  await click(continueLabel);
+  await click(continueLabel);
+  expect(text(renderer!.root)).toContain(title);
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  await changeLanguage("en");
+  state.includeUnnamedEnvironment = false;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("document", { activeElement: null, body: {}, getElementById: () => null });
   state.registry = AtomRegistry.make();
@@ -265,9 +275,50 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => renderer?.unmount());
   renderer = undefined;
+  await changeLanguage("en");
   state.registry?.dispose();
   state.sessions.clear();
   vi.unstubAllGlobals();
+});
+
+it("translates the fallback computer label without changing named environments", async () => {
+  await changeLanguage("zh");
+  state.includeUnnamedEnvironment = true;
+  await mountImport(false, "继续", "选择你的项目");
+  expect(renderer!.root.findAllByType("legend").map(text)).toEqual(["primary", "电脑"]);
+});
+
+it("updates the import permission notice with language changes and clears it after regrant", async () => {
+  await changeLanguage("zh");
+  await mountImport(true, "继续", "选择你的项目");
+  const retainedImport = button("导入 2 个项目").props.onClick;
+  await act(async () => {
+    setGrant(remoteId, false);
+    retainedImport();
+  });
+  expect(text(renderer!.root)).toContain("此连接无法导入项目或会话记录。");
+  expect(text(renderer!.root)).not.toContain(permissionMessage);
+  expect(button("导入 2 个项目").props.disabled).toBe(true);
+  expect(state.createProject).not.toHaveBeenCalled();
+  expect(state.importThreads).not.toHaveBeenCalled();
+
+  await act(async () => {
+    await changeLanguage("en");
+  });
+  expect(text(renderer!.root)).toContain(permissionMessage);
+  expect(text(renderer!.root)).not.toContain("此连接无法导入项目或会话记录。");
+  expect(button("Import 2 projects").props.disabled).toBe(true);
+
+  await act(async () => {
+    await changeLanguage("zh");
+    setGrant(remoteId, true);
+  });
+  expect(text(renderer!.root)).not.toContain("此连接无法导入项目或会话记录。");
+  expect(text(renderer!.root)).not.toContain(permissionMessage);
+  await click("导入 2 个项目");
+  expect(state.createProject).toHaveBeenCalledTimes(2);
+  expect(state.importThreads).toHaveBeenCalledTimes(2);
+  expect(state.onDone).toHaveBeenCalledOnce();
 });
 
 it("keeps scanning, choosing and skipping available to a paired read-only environment", async () => {

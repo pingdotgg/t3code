@@ -65,6 +65,7 @@ export const en = {
   "wizard.agents.reviewCommand": "Review the command, then press Enter to run it.",
   "wizard.agents.couldNotOpenTerminal": "Could not open the setup terminal.",
   "wizard.agents.preparingCommand": "Preparing command...",
+  "wizard.agents.cannotControlTerminals": "This connection cannot control terminals.",
   /**
    * Split around an inline command element so each language owns its own
    * spacing and word order: English needs a space around the command, Chinese
@@ -98,6 +99,7 @@ export const en = {
     "Scan limit reached. Some projects or conversations may be missing.",
 
   // Import results.
+  "wizard.import.cannotImportProjects": "This connection cannot import projects or thread history.",
   "wizard.import.imported_one": "Imported {{count}} thread",
   "wizard.import.imported_other": "Imported {{count}} threads",
   "wizard.import.skipped_one": "{{count}} thread could not be imported.",

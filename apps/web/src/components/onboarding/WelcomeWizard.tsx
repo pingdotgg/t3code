@@ -369,7 +369,8 @@ function ConnectionStep({
                       ? t("wizard.connection.connected")
                       : environment.connection.phase === "connecting"
                         ? t("wizard.connection.connecting")
-                        : presentSavedCloudEnvironmentConnection(environment.connection).buttonLabel}
+                        : presentSavedCloudEnvironmentConnection(environment.connection)
+                            .buttonLabel}
                   </span>
                 </span>
                 {environment.displayUrl ? (
@@ -731,6 +732,7 @@ function ConnectedAgentsStep({
   readonly environmentId: EnvironmentId;
   readonly machineLabel: string;
 }) {
+  const t = useTranslate();
   const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
@@ -779,7 +781,7 @@ function ConnectedAgentsStep({
       <h2 className="mb-2 text-sm font-medium">{machineLabel}</h2>
       {!canOperateTerminal ? (
         <p className="mb-2 text-sm text-muted-foreground">
-          This connection cannot control terminals.
+          {t("wizard.agents.cannotControlTerminals")}
         </p>
       ) : null}
       <div className="space-y-1.5">
@@ -862,7 +864,7 @@ function ConnectedAgentsStep({
       ) ? (
         <div className="mt-3">
           <Button size="xs" variant="ghost-muted" onClick={() => setAddingAccount(true)}>
-            Connect another ChatGPT account
+            {t("wizard.connection.connectAnotherChatGpt")}
           </Button>
         </div>
       ) : null}
@@ -1154,7 +1156,7 @@ function AgentInstallTerminal({
       <div className="flex items-center justify-between border-b border-border/60 bg-background/60 px-3 py-1.5">
         <span className="text-2xs font-medium text-muted-foreground">
           {!canOperateTerminal ? (
-            "This connection cannot control terminals."
+            t("wizard.agents.cannotControlTerminals")
           ) : setupState === "writeFailed" ? (
             <>
               {t("wizard.runInTerminal_before")}
@@ -1181,11 +1183,11 @@ function AgentInstallTerminal({
                 }
               }}
             >
-              Retry
+              {t("wizard.retry")}
             </Button>
           ) : null}
           <Button size="xs" variant="ghost-muted" onClick={onClose}>
-            Close
+            {t("wizard.close")}
           </Button>
         </div>
       </div>
@@ -1214,8 +1216,6 @@ function AgentInstallTerminal({
 }
 
 // ── Step 4: import ───────────────────────────────────────────
-
-const IMPORT_PERMISSION_MESSAGE = "This connection cannot import projects or thread history.";
 
 function ImportStep({
   scans,
@@ -1299,12 +1299,7 @@ function ImportStep({
   const canImport = selected.every((candidate) =>
     writableEnvironments.has(candidate.environmentId),
   );
-  const [importError, setImportError] = useState("");
-  const visibleImportError = !canImport
-    ? IMPORT_PERMISSION_MESSAGE
-    : importError === IMPORT_PERMISSION_MESSAGE
-      ? ""
-      : importError;
+  const visibleImportError = canImport ? "" : t("wizard.import.cannotImportProjects");
 
   const finishAfterImport = () => {
     const projectRef = resolveOnboardingLandingProject(
@@ -1328,7 +1323,6 @@ function ImportStep({
       );
     const stopForDeniedAccess = () => {
       setIsImporting(false);
-      setImportError(IMPORT_PERMISSION_MESSAGE);
     };
     if (!hasAccess()) {
       stopForDeniedAccess();
@@ -1526,7 +1520,7 @@ function ImportStep({
             );
             const label =
               environments.find((environment) => environment.environmentId === scan.environmentId)
-                ?.label ?? "Computer";
+                ?.label ?? t("wizard.computer");
             return (
               <fieldset
                 key={scan.environmentId}
