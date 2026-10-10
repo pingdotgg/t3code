@@ -60,19 +60,24 @@ export function useScopedSettingSource(keys: readonly (keyof ServerSettings)[]) 
   return scopedSettingsSource(targets, keys);
 }
 
+/**
+ * Runs a settings plan; resolves whether anything was saved. `false` only when the plan is
+ * unavailable or every planned server write failed; partial saves and plans without failures
+ * (including client-only writes) resolve `true`.
+ */
 function useRunScopedPlan() {
   const persistServer = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   return useCallback(
-    (plan: ReturnType<typeof planScopedSettingsPatch>) => {
+    async (plan: ReturnType<typeof planScopedSettingsPatch>) => {
       if (plan.unavailableReason) {
         toastManager.add({
           type: "warning",
           title: "Setting not saved",
           description: plan.unavailableReason,
         });
-        return;
+        return false;
       }
-      void persistScopedSettingsPatch(
+      const result = await persistScopedSettingsPatch(
         plan,
         async (request) => {
           const missing = requiredScopesForServerSettingsPatch(request.input.patch).find(
@@ -90,22 +95,23 @@ function useRunScopedPlan() {
           return persistServer(request);
         },
         persistClientSettingsPatch,
-      ).then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
-        if (failedEnvironments.length === 0) return;
-        toastManager.add({
-          type: "error",
-          title:
-            savedEnvironmentCount > 0 ? "Setting saved on some environments" : "Setting not saved",
-          description: [
-            ...failedEnvironments.map(
-              ({ label, message }) => `Could not save on ${label}: ${message}`,
-            ),
-            ...(savedEnvironmentCount > 0
-              ? [`Saved on ${savedEnvironments.map(({ label }) => label).join(", ")}.`]
-              : []),
-          ].join("\n"),
-        });
+      );
+      const { failedEnvironments, savedEnvironments, savedEnvironmentCount } = result;
+      if (failedEnvironments.length === 0) return true;
+      toastManager.add({
+        type: "error",
+        title:
+          savedEnvironmentCount > 0 ? "Setting saved on some environments" : "Setting not saved",
+        description: [
+          ...failedEnvironments.map(
+            ({ label, message }) => `Could not save on ${label}: ${message}`,
+          ),
+          ...(savedEnvironmentCount > 0
+            ? [`Saved on ${savedEnvironments.map(({ label }) => label).join(", ")}.`]
+            : []),
+        ].join("\n"),
       });
+      return savedEnvironmentCount > 0;
     },
     [persistServer],
   );
