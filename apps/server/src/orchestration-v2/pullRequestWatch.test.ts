@@ -100,6 +100,13 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(watch(), plain, noRemarks).changes, []);
   });
 
+  it("reports passed when a check was skipped and the rest succeeded", () => {
+    const green = detail({ checks: [check("checks", "success"), check("deploy", "skipped")] });
+    assert.deepEqual(evaluatePullRequestWatch(watch(), green, noRemarks).changes, [
+      { kind: "checks-passed", count: 2, required: false },
+    ]);
+  });
+
   it("reports passed again when a required check shows up already passed", () => {
     const required = (name: string, status: PullRequestCheck["status"]) => ({
       ...check(name, status),
