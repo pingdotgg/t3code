@@ -1,7 +1,8 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
-import { useState } from "react";
-import { Pressable, ScrollView, View } from "react-native";
+import { getRecordingPermissionsAsync, requestRecordingPermissionsAsync } from "expo-audio";
+import { useCallback, useEffect, useState } from "react";
+import { AppState, Linking, Pressable, ScrollView, View } from "react-native";
 import Reanimated, { ReduceMotion, useAnimatedStyle, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -10,10 +11,39 @@ import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 import type { MicrophoneKind, RememberedMicrophone } from "../../lib/microphonePriority";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
 import { SettingsSection } from "./components/SettingsSection";
 
 const REMOVE_SIZE = 20;
+
+type MicrophonePermission = "checking" | "granted" | "ask" | "denied";
+
+/** Re-reads microphone access whenever the app returns from system Settings. */
+function useMicrophonePermission() {
+  const [permission, setPermission] = useState<MicrophonePermission>("checking");
+  const apply = useCallback(
+    (response: { readonly granted: boolean; readonly canAskAgain: boolean }) =>
+      setPermission(response.granted ? "granted" : response.canAskAgain ? "ask" : "denied"),
+    [],
+  );
+  const refresh = useCallback(
+    () => void getRecordingPermissionsAsync().then(apply, () => setPermission("ask")),
+    [apply],
+  );
+  useEffect(() => {
+    refresh();
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") refresh();
+    });
+    return () => subscription.remove();
+  }, [refresh]);
+  const request = useCallback(
+    () => void requestRecordingPermissionsAsync().then(apply, refresh),
+    [apply, refresh],
+  );
+  return { permission, request };
+}
 
 const KINDS: Record<MicrophoneKind, { readonly label: string; readonly icon: AppSymbolName }> = {
   wired: { label: "Wired", icon: "cable.connector" },
@@ -34,6 +64,7 @@ export function SettingsMicrophoneRouteScreen() {
   const microphones = AsyncResult.isSuccess(preferencesResult)
     ? (preferencesResult.value.microphones ?? [])
     : [];
+  const { permission, request: requestPermission } = useMicrophonePermission();
   const [editing, setEditing] = useState(false);
   const [drag, setDrag] = useState<{ readonly uid: string; readonly translation: number } | null>(
     null,
@@ -81,12 +112,30 @@ export function SettingsMicrophoneRouteScreen() {
         contentContainerClassName="gap-3 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
+        {permission === "ask" || permission === "denied" ? (
+          <>
+            <SettingsSection title="Microphone access">
+              <SettingsActionRow
+                icon="mic"
+                label={permission === "ask" ? "Allow microphone access" : "Open Settings"}
+                onPress={
+                  permission === "ask" ? requestPermission : () => void Linking.openSettings()
+                }
+              />
+            </SettingsSection>
+            <Text className="px-2 text-sm text-foreground-muted">
+              {permission === "ask"
+                ? "Voice input needs microphone access before it can record or list your microphones."
+                : "Microphone access is off for T3 Code. Turn it on in Settings to use voice input."}
+            </Text>
+          </>
+        ) : null}
         {microphones.length === 0 ? (
-          <Text className="px-2 text-sm text-foreground-muted">
-            {ready
-              ? "Microphones appear here after you use voice input with them connected."
-              : null}
-          </Text>
+          permission === "granted" && ready ? (
+            <Text className="px-2 text-sm text-foreground-muted">
+              Microphones appear here after you use voice input with them connected.
+            </Text>
+          ) : null
         ) : (
           <>
             <SettingsSection
