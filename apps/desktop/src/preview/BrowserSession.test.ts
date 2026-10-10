@@ -1,9 +1,12 @@
+import * as NodeEvents from "node:events";
+import type { WebContents } from "electron";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
+import { TestClock } from "effect/testing";
 import { beforeEach, vi } from "vite-plus/test";
 
 const { fromPartition, sessions } = vi.hoisted(() => ({
@@ -274,6 +277,133 @@ describe("BrowserSession", () => {
       });
 
       assert.strictEqual(showMessageBox.mock.calls[0]?.[1], hostWindow);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect(
+    "grants one tab recording only to the owning app frame and keeps ordinary media denied",
+    () =>
+      Effect.gen(function* () {
+        const browserSessions = yield* BrowserSession.BrowserSession;
+        const browserSession = yield* browserSessions.getSession("recording");
+        const requester = Object.assign(new NodeEvents.EventEmitter(), {
+          mainFrame: { url: "t3code-dev://app/" },
+          isDestroyed: () => false,
+        }) as unknown as WebContents;
+        const source = Object.assign(new NodeEvents.EventEmitter(), {
+          mainFrame: { url: "https://untrusted.example/" },
+          hostWebContents: requester,
+          isDestroyed: () => false,
+        }) as unknown as WebContents;
+        const request = vi.mocked(browserSession.setPermissionRequestHandler).mock.calls[0]![0]!;
+        const permits = (
+          contents: WebContents,
+          mediaTypes: string[],
+          securityOrigin = "t3code-dev://app/",
+          isMainFrame = true,
+        ) => {
+          const callback = vi.fn();
+          request(contents, "media", callback, {
+            isMainFrame,
+            requestingUrl: "https://untrusted.example/",
+            mediaTypes: mediaTypes as Array<"video" | "audio">,
+            securityOrigin,
+          });
+          return callback.mock.calls[0]?.[0];
+        };
+        assert.isFalse(permits(source, []));
+        const authorization = browserSessions.authorizeRecording(source, requester);
+        assert.isFalse(permits(source, []));
+        assert.strictEqual(source.listenerCount("destroyed"), 0);
+        const release = yield* authorization;
+        assert.isFalse(permits(source, ["video"]));
+        assert.isFalse(permits(source, ["audio"]));
+        assert.isFalse(permits(source, [], "https://untrusted.example/"));
+        assert.isFalse(permits(source, [], "t3code-dev://app/", false));
+        assert.isFalse(permits(requester, []));
+        assert.isTrue(permits(source, []));
+        assert.isFalse(permits(source, []));
+        release();
+        assert.strictEqual(source.listenerCount("destroyed"), 0);
+        assert.strictEqual(requester.listenerCount("destroyed"), 0);
+        (yield* browserSessions.authorizeRecording(source, requester))();
+        assert.isFalse(permits(source, []));
+      }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("reports recording ownership rejection without granting media access", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const browserSession = yield* browserSessions.getSession("recording-rejection");
+      const requester = Object.assign(new NodeEvents.EventEmitter(), {
+        id: 7,
+        mainFrame: { url: "t3code-dev://app/" },
+        isDestroyed: () => false,
+      }) as unknown as WebContents;
+      const source = Object.assign(new NodeEvents.EventEmitter(), {
+        id: 41,
+        hostWebContents: null,
+        isDestroyed: () => false,
+      }) as unknown as WebContents;
+      const error = yield* browserSessions.authorizeRecording(source, requester).pipe(Effect.flip);
+      assert.instanceOf(error, BrowserSession.BrowserSessionRecordingOwnershipError);
+      assert.strictEqual(error.message, "Recording requester does not own the preview guest");
+      assert.strictEqual(error.sourceWebContentsId, 41);
+      assert.strictEqual(error.requesterWebContentsId, 7);
+      const callback = vi.fn();
+      const request = vi.mocked(browserSession.setPermissionRequestHandler).mock.calls[0]![0]!;
+      request(source, "media", callback, {
+        isMainFrame: true,
+        requestingUrl: "https://untrusted.example/",
+        securityOrigin: "t3code-dev://app/",
+        mediaTypes: [],
+      });
+      assert.isFalse(callback.mock.calls[0]?.[0]);
+      assert.strictEqual(source.listenerCount("destroyed"), 0);
+      assert.strictEqual(requester.listenerCount("destroyed"), 0);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("revokes recording permission on expiry, frame replacement and destruction", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const browserSession = yield* browserSessions.getSession("recording");
+      const requesterFrame = { url: "https://app.example/" };
+      const requester = Object.assign(new NodeEvents.EventEmitter(), {
+        mainFrame: requesterFrame,
+        isDestroyed: () => false,
+      }) as unknown as WebContents;
+      const source = Object.assign(new NodeEvents.EventEmitter(), {
+        mainFrame: { url: "https://untrusted.example/" },
+        hostWebContents: requester,
+        isDestroyed: () => false,
+      }) as unknown as WebContents;
+      const request = vi.mocked(browserSession.setPermissionRequestHandler).mock.calls[0]![0]!;
+      const permits = () => {
+        const callback = vi.fn();
+        request(source, "media", callback, {
+          isMainFrame: true,
+          requestingUrl: "https://untrusted.example/",
+          mediaTypes: [],
+          securityOrigin: "https://app.example/",
+        });
+        return callback.mock.calls[0]?.[0];
+      };
+      const release = yield* browserSessions.authorizeRecording(source, requester);
+      yield* TestClock.adjust("10 seconds");
+      assert.isFalse(permits());
+      release();
+      yield* browserSessions.authorizeRecording(source, requester);
+      Object.assign(requester, { mainFrame: { url: requesterFrame.url } });
+      assert.isFalse(permits());
+      yield* browserSessions.authorizeRecording(source, requester);
+      source.emit("destroyed");
+      assert.isFalse(permits());
+      yield* browserSessions.authorizeRecording(source, requester);
+      requester.emit("destroyed");
+      assert.isFalse(permits());
+      assert.strictEqual(source.listenerCount("destroyed"), 0);
+      assert.strictEqual(requester.listenerCount("destroyed"), 0);
     }).pipe(Effect.provide(layer)),
   );
 

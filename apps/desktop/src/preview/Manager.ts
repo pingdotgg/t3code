@@ -123,13 +123,6 @@ const ZOOM_LEVELS: ReadonlyArray<number> = [
 
 const DEFAULT_ZOOM_FACTOR = 1.0;
 const ZOOM_EPSILON = 0.001;
-/**
- * A `[role]` container's innerText is its whole subtree, which turned one
- * snapshot's element list into 60 KB of repeated page text. Names are labels,
- * not content, so cap them where they are read.
- */
-/** How long an armed tab keeps the exclusive display-media slot before another tab may take it. */
-const RECORDING_ARM_GRACE_MS = 10_000;
 const PICTURE_IN_PICTURE_FRAME_INTERVAL_MS = Math.ceil(1_000 / 12);
 const PICTURE_IN_PICTURE_JPEG_QUALITY = 80;
 /**
@@ -139,14 +132,19 @@ const PICTURE_IN_PICTURE_JPEG_QUALITY = 80;
 const CAPTURE_PAGE_RETRY_ATTEMPTS = 3;
 const CAPTURE_PAGE_RETRY_DELAY_MS = 120;
 const CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS = 1_000;
+const RECORDING_SOURCE_RECOVERY_TIMEOUT_MS = 5_000;
 const PICTURE_IN_PICTURE_INITIAL_WIDTH = 480;
 const PICTURE_IN_PICTURE_INITIAL_HEIGHT = 320;
 const PICTURE_IN_PICTURE_MIN_WIDTH = 240;
 const PICTURE_IN_PICTURE_MIN_HEIGHT = 160;
 const PICTURE_IN_PICTURE_ASPECT_RATIO_EPSILON = 0.002;
 const MAX_ARTIFACT_SITE_SLUG_LENGTH = 80;
-const requestRecordingCaptureExpression = (tabId: string): string =>
-  `globalThis[${JSON.stringify(DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER)}]?.(${JSON.stringify(tabId)}) === true`;
+const requestRecordingCaptureExpression = (
+  tabId: string,
+  sourceId: string,
+  size: { readonly width: number; readonly height: number },
+): string =>
+  `globalThis[${JSON.stringify(DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER)}]?.(${JSON.stringify(tabId)}, ${JSON.stringify(sourceId)}, ${JSON.stringify(size)})`;
 const DEFAULT_ANNOTATION_THEME: DesktopPreviewAnnotationTheme = {
   colorScheme: "light",
   radius: "0.625rem",
@@ -380,14 +378,6 @@ interface PictureInPictureSession {
   readonly initializationScope: Scope.Closeable;
 }
 
-/** The tab whose frame the next `getDisplayMedia()` request is allowed to capture. */
-interface PendingRecording {
-  readonly tabId: string;
-  readonly webContents: Electron.WebContents;
-  readonly requestingFrameTreeNodeId: number;
-  readonly armedAtMillis: number;
-}
-
 interface PickSession {
   readonly cancel: Effect.Effect<void>;
 }
@@ -541,6 +531,7 @@ const isPreviewInputSignal = (value: unknown): value is PreviewInputSignal => {
 const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function* (
   artifactDirectory: string,
   pictureInPicturePreloadPath: string,
+  authorizeRecording: BrowserSession.BrowserSession["Service"]["authorizeRecording"],
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
@@ -582,11 +573,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const pictureInPictureAspectRatiosRef = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
   const pictureInPictureMutationSemaphore = yield* Semaphore.make(1);
   const closingTabIdsRef = yield* Ref.make<ReadonlySet<string>>(new Set());
-  // Tab recording uses `setDisplayMediaRequestHandler` because Electron's legacy
-  // `getMediaSourceId` + `chromeMediaSource: "tab"` capture path was removed upstream
-  // (electron#44618) and now always rejects with NotAllowedError.
-  let pendingRecording: PendingRecording | null = null;
-  const displayMediaHandlerSessions = new WeakSet<Session>();
+  const recordingPermissions = new Map<string, () => void>();
+  const recordingFrameSubscriptions = new Map<string, Effect.Effect<void>>();
+  const recordingFrameRequests = new Map<
+    string,
+    {
+      readonly requester: Electron.WebContents;
+      readonly captureId: string;
+      readonly sourceVersion: number;
+    }
+  >();
   let frameCaptureWindowOpen = true;
   let currentMainWindow: BrowserWindow | undefined;
   let mainWindowCleanupFiber: Fiber.Fiber<void, never> | undefined;
@@ -764,10 +760,24 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
     });
   });
+  const releaseRecordingSource = Effect.fn("PreviewManager.releaseRecordingSource")(function* (
+    tabId: string,
+  ) {
+    const subscription = recordingFrameSubscriptions.get(tabId);
+    recordingFrameSubscriptions.delete(tabId);
+    if (subscription) yield* subscription;
+    recordingPermissions.get(tabId)?.();
+    recordingPermissions.delete(tabId);
+  });
+
   const stopFrameCapture = Effect.fn("PreviewManager.stopFrameCapture")(function* (
     tabId: string,
     consumer: FrameCaptureConsumer,
   ) {
+    if (consumer === "recording") {
+      recordingFrameRequests.delete(tabId);
+      yield* releaseRecordingSource(tabId);
+    }
     yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) =>
       Effect.gen(function* () {
         const current = sessions.get(tabId);
@@ -824,7 +834,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   const stopAllRecordings = Effect.fn("PreviewManager.stopAllRecordings")(function* () {
-    pendingRecording = null;
     const sessions = yield* SynchronizedRef.get(frameCaptureSessionsRef);
     yield* Effect.forEach(sessions.keys(), (tabId) => stopFrameCapture(tabId, "recording"), {
       concurrency: "unbounded",
@@ -1001,6 +1010,181 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     }
     return wc;
   });
+
+  const requestRendererCaptureEnd = (
+    tabId: string,
+    request: { readonly requester: Electron.WebContents; readonly captureId: string },
+  ) => {
+    if (request.requester.isDestroyed()) return;
+    const context = { tabId, webContentsId: request.requester.id, captureId: request.captureId };
+    // Renderer STOP takes the tab lifecycle lock, so initiate termination without awaiting it.
+    runFork(
+      attemptPromise(
+        { operation: "recording.requestCapture", tabId, webContentsId: request.requester.id },
+        () =>
+          request.requester.executeJavaScript(
+            `globalThis[${JSON.stringify(DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER)}]?.end?.(${JSON.stringify(tabId)}, ${JSON.stringify(request.captureId)})`,
+          ),
+      ).pipe(
+        Effect.timeout("5 seconds"),
+        Effect.flatMap((acknowledged) =>
+          acknowledged === true
+            ? Effect.void
+            : Effect.logDebug("Preview recording termination was not acknowledged.", context),
+        ),
+        Effect.catch((error) =>
+          Effect.logDebug("Preview recording termination request failed.", {
+            ...context,
+            category: error._tag,
+          }),
+        ),
+      ),
+    );
+  };
+
+  const subscribeRecordingPageFrames = Effect.fn("PreviewManager.subscribeRecordingPageFrames")(
+    function* (tabId: string, wc: Electron.WebContents) {
+      const request = recordingFrameRequests.get(tabId);
+      if (!request || request.requester !== wc.hostWebContents || request.requester.isDestroyed()) {
+        return yield* new PreviewMainWindowClosedError({ tabId });
+      }
+      if (request.sourceVersion > 0) {
+        const sourceReady = yield* attemptPromise(
+          { operation: "recording.requestCapture", tabId, webContentsId: request.requester.id },
+          () =>
+            request.requester.executeJavaScript(
+              `globalThis[${JSON.stringify(DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER)}]?.source?.(${JSON.stringify(tabId)}, ${JSON.stringify(request.captureId)}, ${request.sourceVersion})`,
+            ),
+        ).pipe(
+          Effect.timeoutOrElse({
+            duration: "5 seconds",
+            orElse: () =>
+              Effect.fail(
+                new PreviewRecordingCaptureUnavailableError({
+                  tabId,
+                  webContentsId: request.requester.id,
+                }),
+              ),
+          }),
+        );
+        if (sourceReady !== true) {
+          return yield* new PreviewRecordingCaptureUnavailableError({
+            tabId,
+            webContentsId: request.requester.id,
+          });
+        }
+      }
+      let stopped = false;
+      let delivering = false;
+      let pendingImage: Electron.NativeImage | null = null;
+      let delivery: ReturnType<typeof runFork> | undefined;
+      let sourceLossCleanup: ReturnType<typeof runFork> | undefined;
+      const sourceRecovered = () => {
+        const cleanup = sourceLossCleanup;
+        sourceLossCleanup = undefined;
+        if (cleanup) runFork(Fiber.interrupt(cleanup));
+      };
+      const sourceLost = () => {
+        if (stopped || sourceLossCleanup) return;
+        sourceLossCleanup = runFork(
+          Effect.sleep(RECORDING_SOURCE_RECOVERY_TIMEOUT_MS).pipe(
+            Effect.andThen(
+              withTabLifecycleLock(
+                tabId,
+                Effect.gen(function* () {
+                  if (
+                    stopped ||
+                    recordingFrameRequests.get(tabId) !== request ||
+                    recordingFrameSubscriptions.get(tabId) !== stopSubscription
+                  )
+                    return;
+                  // Cleanup must not interrupt its own fiber through stopSubscription.
+                  sourceLossCleanup = undefined;
+                  yield* stopFrameCapture(tabId, "recording");
+                  requestRendererCaptureEnd(tabId, request);
+                }),
+              ),
+            ),
+            Effect.ignore,
+          ),
+        );
+      };
+      const stopSubscription = Effect.gen(function* () {
+        stopped = true;
+        pendingImage = null;
+        wc.off("destroyed", sourceLost);
+        wc.off("render-process-gone", sourceLost);
+        wc.off("dom-ready", sourceRecovered);
+        if (sourceLossCleanup) yield* Fiber.interrupt(sourceLossCleanup);
+        yield* attempt(
+          { operation: "recording.requestCapture", tabId, webContentsId: wc.id },
+          () => {
+            if (!wc.isDestroyed()) wc.endFrameSubscription();
+          },
+        ).pipe(Effect.ignore);
+        if (delivery) yield* Fiber.interrupt(delivery);
+      });
+      recordingFrameSubscriptions.set(tabId, stopSubscription);
+      yield* attempt({ operation: "recording.requestCapture", tabId, webContentsId: wc.id }, () => {
+        wc.on("destroyed", sourceLost);
+        wc.on("render-process-gone", sourceLost);
+        wc.on("dom-ready", sourceRecovered);
+        wc.beginFrameSubscription(false, (image) => {
+          if (stopped || image.isEmpty()) return;
+          const size = image.getSize();
+          if (size.width <= 0 || size.height <= 0) return;
+          // One unencoded latest image preserves final damage without an IPC queue.
+          pendingImage = image;
+          if (delivering) return;
+          delivering = true;
+          delivery = runFork(
+            Effect.gen(function* () {
+              while (pendingImage) {
+                if (stopped) return;
+                const current = pendingImage;
+                pendingImage = null;
+                const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+                if (
+                  !frameCaptureWindowOpen ||
+                  wc.isDestroyed() ||
+                  request.requester.isDestroyed() ||
+                  tab?.webContentsId !== wc.id ||
+                  recordingFrameRequests.get(tabId) !== request
+                )
+                  return;
+                const { width, height } = current.getSize();
+                const frame: DesktopPreviewRecordingFrame = {
+                  tabId,
+                  data: current.toJPEG(95).toString("base64"),
+                  width,
+                  height,
+                  receivedAt: yield* currentIso,
+                };
+                // The private requester resolves only after decoding/drawing.
+                yield* attemptPromise(
+                  {
+                    operation: "recording.requestCapture",
+                    tabId,
+                    webContentsId: request.requester.id,
+                  },
+                  () =>
+                    request.requester.executeJavaScript(
+                      `globalThis[${JSON.stringify(DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER)}]?.frame?.(${JSON.stringify(tabId)}, ${JSON.stringify(request.captureId)}, ${JSON.stringify(frame)}, ${request.sourceVersion})`,
+                    ),
+                ).pipe(Effect.ignore);
+              }
+            }).pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  delivering = false;
+                }),
+              ),
+            ),
+          );
+        });
+      });
+    },
+  );
 
   const resolveArtifactPath = (artifactPath: string) =>
     attempt({ operation: "resolveArtifactPath", artifactPath }, () => {
@@ -1734,7 +1918,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   const closeTabUnlocked = Effect.fn("PreviewManager.closeTabUnlocked")(function* (tabId: string) {
     if (!(yield* SynchronizedRef.get(tabsRef)).has(tabId)) return;
-    clearPendingRecording(tabId);
     annotationSendEnabled.delete(tabId);
     yield* Effect.all(
       [
@@ -1849,121 +2032,162 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         ? tab.webContentsId
         : null;
     if (replacedWebContentsId !== null) {
-      // The replaced guest can no longer redeem a display-media grant.
-      clearPendingRecording(tabId);
-      yield* Effect.all(
-        [
-          detachControlSession(replacedWebContentsId),
-          detachListeners(replacedWebContentsId),
-          cancelPickElement(tabId),
-        ],
-        { concurrency: 3, discard: true },
+      yield* releaseRecordingSource(tabId);
+      const recordingRequest = recordingFrameRequests.get(tabId);
+      if (recordingRequest)
+        recordingFrameRequests.set(tabId, {
+          ...recordingRequest,
+          sourceVersion: recordingRequest.sourceVersion + 1,
+        });
+    }
+    const rebindRequest =
+      replacedWebContentsId === null ? undefined : recordingFrameRequests.get(tabId);
+    return yield* Effect.gen(function* () {
+      if (replacedWebContentsId !== null) {
+        yield* Effect.all(
+          [
+            detachControlSession(replacedWebContentsId),
+            detachListeners(replacedWebContentsId),
+            cancelPickElement(tabId),
+          ],
+          { concurrency: 3, discard: true },
+        );
+      }
+      const currentTab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+      if (
+        !currentTab ||
+        tabLifecycleGenerations.get(tabId) !== expectedGeneration ||
+        (yield* Ref.get(closingTabIdsRef)).has(tabId)
+      ) {
+        return yield* new PreviewTabNotFoundError({ tabId });
+      }
+      // Always assert the tab's own zoom rather than reading the guest's: a guest
+      // attaching while the app UI is zoomed starts at the embedder's inherited
+      // zoom level, which is not the preview's zoom. Done before the guest is
+      // published so it never paints a frame at the inherited zoom.
+      yield* attempt({ operation: "registerWebview.restoreZoomFactor", tabId, webContentsId }, () =>
+        wc.setZoomFactor(currentTab.zoomFactor),
       );
-    }
-    const currentTab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
-    if (
-      !currentTab ||
-      tabLifecycleGenerations.get(tabId) !== expectedGeneration ||
-      (yield* Ref.get(closingTabIdsRef)).has(tabId)
-    ) {
-      return yield* new PreviewTabNotFoundError({ tabId });
-    }
-    // Always assert the tab's own zoom rather than reading the guest's: a guest
-    // attaching while the app UI is zoomed starts at the embedder's inherited
-    // zoom level, which is not the preview's zoom. Done before the guest is
-    // published so it never paints a frame at the inherited zoom.
-    yield* attempt({ operation: "registerWebview.restoreZoomFactor", tabId, webContentsId }, () =>
-      wc.setZoomFactor(currentTab.zoomFactor),
-    );
-    // A replacement guest attaches unmuted, so reassert the tab's mute before it
-    // is published rather than letting it emit audio the user already silenced.
-    // Settled again after attach, below, the same way zoom is.
-    yield* attempt({ operation: "registerWebview.restoreAudioMuted", tabId, webContentsId }, () =>
-      wc.setAudioMuted(currentTab.audioMuted),
-    );
-    yield* attachListeners(tabId, wc);
-    const readAudible = attempt(
-      { operation: "registerWebview.readAudible", tabId, webContentsId },
-      () => wc.isCurrentlyAudible(),
-    ).pipe(Effect.orElseSucceed(() => false));
-    const attachedAudible = yield* readAudible;
-    const registeredAt = yield* currentIso;
-    const registration = yield* SynchronizedRef.modifyEffect(tabsRef, (tabs) =>
-      Effect.gen(function* () {
-        const current = tabs.get(tabId);
-        if (
-          !current ||
-          tabLifecycleGenerations.get(tabId) !== expectedGeneration ||
-          (yield* Ref.get(closingTabIdsRef)).has(tabId)
-        ) {
+      // A replacement guest attaches unmuted, so reassert the tab's mute before it
+      // is published rather than letting it emit audio the user already silenced.
+      // Settled again after attach, below, the same way zoom is.
+      yield* attempt({ operation: "registerWebview.restoreAudioMuted", tabId, webContentsId }, () =>
+        wc.setAudioMuted(currentTab.audioMuted),
+      );
+      yield* attachListeners(tabId, wc);
+      const readAudible = attempt(
+        { operation: "registerWebview.readAudible", tabId, webContentsId },
+        () => wc.isCurrentlyAudible(),
+      ).pipe(Effect.orElseSucceed(() => false));
+      const attachedAudible = yield* readAudible;
+      const registeredAt = yield* currentIso;
+      const registration = yield* SynchronizedRef.modifyEffect(tabsRef, (tabs) =>
+        Effect.gen(function* () {
+          const current = tabs.get(tabId);
+          if (
+            !current ||
+            tabLifecycleGenerations.get(tabId) !== expectedGeneration ||
+            (yield* Ref.get(closingTabIdsRef)).has(tabId)
+          ) {
+            return [
+              Option.none<{
+                readonly state: PreviewTabState;
+                readonly pendingUrl: string | null;
+              }>(),
+              tabs,
+            ] as const;
+          }
+          const pendingUrl = current.navStatus.kind === "Loading" ? current.navStatus.url : null;
+          const { favicon: _favicon, ...currentWithoutFavicon } = current;
+          const next: PreviewTabState = {
+            ...currentWithoutFavicon,
+            webContentsId,
+            navStatus: pendingUrl === null ? computeNavStatus(wc) : current.navStatus,
+            canGoBack: wc.navigationHistory.canGoBack(),
+            canGoForward: wc.navigationHistory.canGoForward(),
+            audible: attachedAudible,
+            updatedAt: registeredAt,
+          };
           return [
-            Option.none<{ readonly state: PreviewTabState; readonly pendingUrl: string | null }>(),
-            tabs,
+            Option.some({
+              state: next,
+              pendingUrl,
+            }),
+            replaceMap(tabs, (copy) => {
+              copy.set(tabId, next);
+            }),
           ] as const;
-        }
-        const pendingUrl = current.navStatus.kind === "Loading" ? current.navStatus.url : null;
-        const { favicon: _favicon, ...currentWithoutFavicon } = current;
-        const next: PreviewTabState = {
-          ...currentWithoutFavicon,
-          webContentsId,
-          navStatus: pendingUrl === null ? computeNavStatus(wc) : current.navStatus,
-          canGoBack: wc.navigationHistory.canGoBack(),
-          canGoForward: wc.navigationHistory.canGoForward(),
-          audible: attachedAudible,
-          updatedAt: registeredAt,
-        };
-        return [
-          Option.some({
-            state: next,
-            pendingUrl,
-          }),
-          replaceMap(tabs, (copy) => {
-            copy.set(tabId, next);
-          }),
-        ] as const;
-      }),
-    );
-    if (Option.isNone(registration)) {
-      yield* Effect.all([detachControlSession(webContentsId), detachListeners(webContentsId)], {
-        concurrency: 2,
-        discard: true,
-      });
-      return yield* new PreviewTabNotFoundError({ tabId });
-    }
-    const { state: registered, pendingUrl } = registration.value;
-    // A zoom or mute action that landed while this attach was in flight
-    // addressed the guest this one replaced, so settle the new guest on the
-    // committed values.
-    yield* assertTabZoom(tabId);
-    // Best-effort here, unlike in setAudioMuted: a guest that dies mid-attach
-    // must not fail the registration it was attaching for.
-    yield* assertTabAudioMuted(tabId).pipe(Effect.ignore);
-    runFork(restoreControlSession(tabId, wc));
-    // emitIfCurrent, not emit: audio-state-changed can land between the commit
-    // above and here, and republishing this snapshot would roll the UI back to
-    // a superseded audibility that syncTabAudible will not re-send.
-    yield* emitIfCurrent(tabId, registered);
-    // Transitions that fired before the tab owned this guest were dropped by
-    // syncTabAudible's ownership check, so re-read and reconcile through the
-    // same path the event uses.
-    yield* syncTabAudible(tabId, wc, yield* readAudible);
-    yield* attempt({ operation: "registerWebview.sendTheme", tabId, webContentsId }, () => {
-      wc.send(ANNOTATION_THEME_CHANNEL, annotationTheme);
-      wc.send(ANNOTATION_SEND_ENABLED_CHANNEL, annotationSendEnabled.get(tabId) === true);
-    });
-    const latestNavStatus = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.navStatus;
-    if (
-      pendingUrl &&
-      latestNavStatus?.kind === "Loading" &&
-      latestNavStatus.url === pendingUrl &&
-      wc.getURL() !== pendingUrl
-    ) {
-      runFork(
-        attemptPromise({ operation: "registerWebview.loadPendingUrl", tabId, webContentsId }, () =>
-          wc.loadURL(pendingUrl),
-        ).pipe(Effect.ignore),
+        }),
       );
-    }
+      if (Option.isNone(registration)) {
+        yield* Effect.all([detachControlSession(webContentsId), detachListeners(webContentsId)], {
+          concurrency: 2,
+          discard: true,
+        });
+        return yield* new PreviewTabNotFoundError({ tabId });
+      }
+      const { state: registered, pendingUrl } = registration.value;
+      // A zoom or mute action that landed while this attach was in flight
+      // addressed the guest this one replaced, so settle the new guest on the
+      // committed values.
+      yield* assertTabZoom(tabId);
+      // Best-effort here, unlike in setAudioMuted: a guest that dies mid-attach
+      // must not fail the registration it was attaching for.
+      yield* assertTabAudioMuted(tabId).pipe(Effect.ignore);
+      if (recordingFrameRequests.has(tabId) && !recordingFrameSubscriptions.has(tabId)) {
+        yield* subscribeRecordingPageFrames(tabId, wc).pipe(
+          Effect.catch(() =>
+            Effect.gen(function* () {
+              const request = recordingFrameRequests.get(tabId);
+              yield* stopFrameCapture(tabId, "recording").pipe(Effect.ignore);
+              if (request) requestRendererCaptureEnd(tabId, request);
+            }),
+          ),
+        );
+      }
+      runFork(restoreControlSession(tabId, wc));
+      // emitIfCurrent, not emit: audio-state-changed can land between the commit
+      // above and here, and republishing this snapshot would roll the UI back to
+      // a superseded audibility that syncTabAudible will not re-send.
+      yield* emitIfCurrent(tabId, registered);
+      // Transitions that fired before the tab owned this guest were dropped by
+      // syncTabAudible's ownership check, so re-read and reconcile through the
+      // same path the event uses.
+      yield* syncTabAudible(tabId, wc, yield* readAudible);
+      yield* attempt({ operation: "registerWebview.sendTheme", tabId, webContentsId }, () => {
+        wc.send(ANNOTATION_THEME_CHANNEL, annotationTheme);
+        wc.send(ANNOTATION_SEND_ENABLED_CHANNEL, annotationSendEnabled.get(tabId) === true);
+      });
+      const latestNavStatus = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.navStatus;
+      if (
+        pendingUrl &&
+        latestNavStatus?.kind === "Loading" &&
+        latestNavStatus.url === pendingUrl &&
+        wc.getURL() !== pendingUrl
+      ) {
+        runFork(
+          attemptPromise(
+            { operation: "registerWebview.loadPendingUrl", tabId, webContentsId },
+            () => wc.loadURL(pendingUrl),
+          ).pipe(Effect.ignore),
+        );
+      }
+    }).pipe(
+      Effect.onError(() =>
+        Effect.gen(function* () {
+          // This registration retired the producer and its recovery deadline.
+          // Preserve registration failures, but end only its still-orphaned capture.
+          if (
+            !rebindRequest ||
+            recordingFrameRequests.get(tabId) !== rebindRequest ||
+            recordingFrameSubscriptions.has(tabId)
+          )
+            return;
+          yield* stopFrameCapture(tabId, "recording").pipe(Effect.ignore);
+          requestRendererCaptureEnd(tabId, rebindRequest);
+        }),
+      ),
+    );
   });
 
   const registerWebview = Effect.fn("PreviewManager.registerWebview")(function* (
@@ -3073,83 +3297,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     return yield* Effect.failCause(initializationExit.cause);
   });
 
-  /** Only drops the armed target when it still belongs to `tabId`, so tabs cannot clobber each other. */
-  const clearPendingRecording = (tabId: string) => {
-    if (pendingRecording?.tabId === tabId) pendingRecording = null;
-  };
-
-  /**
-   * Claims the single arm slot for `tabId`. A display-media request carries no tab identity, so the
-   * slot is exclusive: a second tab arming before the first request lands would redirect the first
-   * renderer's stream. Rather than queue (which can only ever stall a start), a colliding start
-   * fails fast and the renderer can retry. An arm the renderer never redeemed goes stale after
-   * `RECORDING_ARM_GRACE_MS` so it cannot hold the slot forever.
-   */
-  const armPendingRecording = Effect.fn("PreviewManager.armPendingRecording")(function* (
-    tabId: string,
-    wc: Electron.WebContents,
-    requestingFrameTreeNodeId: number,
-  ) {
-    const now = yield* Clock.currentTimeMillis;
-    const previous = pendingRecording;
-    if (
-      previous !== null &&
-      previous.tabId !== tabId &&
-      !previous.webContents.isDestroyed() &&
-      now - previous.armedAtMillis < RECORDING_ARM_GRACE_MS
-    ) {
-      return yield* new PreviewRecordingArmConflictError({
-        tabId,
-        webContentsId: wc.id,
-        armedTabId: previous.tabId,
-      });
-    }
-    const armed: PendingRecording = {
-      tabId,
-      webContents: wc,
-      requestingFrameTreeNodeId,
-      armedAtMillis: now,
-    };
-    pendingRecording = armed;
-    // The handler callback is sync and cannot read a clock, so expiry is driven from here.
-    // Identity compare: a re-arm replaces the object, and this fiber must not clobber it.
-    yield* Effect.forkIn(
-      Effect.sleep(RECORDING_ARM_GRACE_MS).pipe(
-        Effect.andThen(
-          Effect.sync(() => {
-            if (pendingRecording === armed) pendingRecording = null;
-          }),
-        ),
-      ),
-      parentScope,
-    );
-  });
-
-  // Installed once per session: answers the renderer's `getDisplayMedia()` with the tab that
-  // `startRecording` armed, and denies anything else so pages cannot capture on their own.
-  const installDisplayMediaRequestHandler = (session: Session) => {
-    if (displayMediaHandlerSessions.has(session)) return;
-    displayMediaHandlerSessions.add(session);
-    session.setDisplayMediaRequestHandler((request, callback) => {
-      const armed = pendingRecording;
-      if (!armed) {
-        callback({});
-        return;
-      }
-      if (armed.webContents.isDestroyed()) {
-        pendingRecording = null;
-        callback({});
-        return;
-      }
-      if (request.frame?.frameTreeNodeId !== armed.requestingFrameTreeNodeId) {
-        callback({});
-        return;
-      }
-      pendingRecording = null;
-      callback({ video: armed.webContents.mainFrame });
-    });
-  };
-
   const startRecording = Effect.fn("PreviewManager.startRecording")(function* (
     tabId: string,
     options: RecordingInputOptions = DEFAULT_RECORDING_INPUT_OPTIONS,
@@ -3176,14 +3323,44 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         yield* attempt({ operation: "recording.cursor", tabId, webContentsId: wc.id }, () =>
           wc.send(RECORDING_CURSOR_CHANNEL, true, options, tab?.controller),
         );
-        yield* attemptPromise(
-          {
-            operation: "recording.warmSource",
-            tabId,
-            webContentsId: wc.id,
-          },
-          () => wc.capturePage().then(() => undefined),
-        ).pipe(Effect.retry({ times: 1 }), Effect.ignore);
+        const requireCaptureSize = (size: { width: number; height: number }) => {
+          if (
+            !Number.isInteger(size.width) ||
+            size.width <= 0 ||
+            !Number.isInteger(size.height) ||
+            size.height <= 0
+          ) {
+            throw new Error("Preview recording dimensions are unavailable.");
+          }
+          return size;
+        };
+        const errorContext = { operation: "recording.warmSource", tabId, webContentsId: wc.id };
+        const warmSource = <A>(evaluate: () => PromiseLike<A>) =>
+          Effect.tryPromise({
+            // Electron cannot cancel these calls, but the lifecycle lock must be interruptible.
+            try: (_signal) => evaluate(),
+            catch: (cause) => new PreviewOperationError({ ...errorContext, cause }),
+          }).pipe(
+            Effect.timeout(CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS),
+            Effect.catchTags({
+              TimeoutError: (cause) =>
+                Effect.fail(new PreviewOperationError({ ...errorContext, cause })),
+            }),
+          );
+        const captureSize = yield* warmSource(() =>
+          wc.capturePage().then((image) => requireCaptureSize(image.getSize())),
+        ).pipe(
+          Effect.retry({ times: 1 }),
+          Effect.catch(() =>
+            warmSource(() =>
+              (
+                wc.executeJavaScript(
+                  "({ width: Math.ceil(innerWidth * devicePixelRatio), height: Math.ceil(innerHeight * devicePixelRatio) })",
+                ) as Promise<{ width: number; height: number }>
+              ).then(requireCaptureSize),
+            ),
+          ),
+        );
         const currentWebContents = yield* requireWebContents(tabId);
         if (currentWebContents !== wc || wc.isDestroyed()) {
           return yield* new PreviewWebContentsNotFoundError({
@@ -3194,8 +3371,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         if (!frameCaptureWindowOpen || requestWebContents.isDestroyed()) {
           return yield* new PreviewMainWindowClosedError({ tabId });
         }
-        installDisplayMediaRequestHandler(requestWebContents.session);
-        yield* armPendingRecording(tabId, wc, requestWebContents.mainFrame.frameTreeNodeId);
+        // Capture the authoritative guest with a requester-bound tab source, rather than
+        // asking the OS for a display capture or creating another preview page.
+        const sourceId = yield* attempt(
+          { operation: "recording.requestCapture", tabId, webContentsId: wc.id },
+          () => wc.getMediaSourceId(requestWebContents),
+        );
+        recordingFrameRequests.delete(tabId);
+        yield* releaseRecordingSource(tabId);
+        const releaseRecordingPermission = yield* authorizeRecording(wc, requestWebContents);
+        recordingPermissions.set(tabId, releaseRecordingPermission);
         const captureRequested = yield* attemptPromise(
           {
             operation: "recording.requestCapture",
@@ -3203,32 +3388,43 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             webContentsId: requestWebContents.id,
           },
           () =>
-            requestWebContents.executeJavaScript(requestRecordingCaptureExpression(tabId), true),
+            requestWebContents.executeJavaScript(
+              requestRecordingCaptureExpression(tabId, sourceId, captureSize),
+            ),
         );
-        if (captureRequested !== true) {
+        if (
+          typeof captureRequested === "object" &&
+          captureRequested !== null &&
+          "mode" in captureRequested &&
+          captureRequested.mode === "frame-subscription" &&
+          "captureId" in captureRequested &&
+          typeof captureRequested.captureId === "string"
+        ) {
+          if (!frameCaptureWindowOpen || requestWebContents.isDestroyed()) {
+            return yield* new PreviewMainWindowClosedError({ tabId });
+          }
+          if (wc.isDestroyed()) {
+            return yield* new PreviewWebContentsNotFoundError({ tabId, webContentsId: wc.id });
+          }
+          recordingFrameRequests.set(tabId, {
+            requester: requestWebContents,
+            captureId: captureRequested.captureId,
+            sourceVersion: 0,
+          });
+          yield* subscribeRecordingPageFrames(tabId, wc);
+        } else if (captureRequested !== true) {
           return yield* new PreviewRecordingCaptureUnavailableError({
             tabId,
             webContentsId: requestWebContents.id,
           });
         }
-      }).pipe(
-        Effect.onError(() => {
-          clearPendingRecording(tabId);
-          return stopFrameCapture(tabId, "recording").pipe(Effect.ignore);
-        }),
-      ),
+      }).pipe(Effect.onError(() => stopFrameCapture(tabId, "recording").pipe(Effect.ignore))),
     );
   });
 
   const stopRecording = Effect.fn("PreviewManager.stopRecording")(function* (tabId: string) {
-    // Clearing runs under the tab lock so it cannot land before an in-flight start arms.
-    yield* withTabLifecycleLock(
-      tabId,
-      Effect.suspend(() => {
-        clearPendingRecording(tabId);
-        return stopFrameCapture(tabId, "recording");
-      }),
-    );
+    // Stop cannot overtake source acquisition for the same tab.
+    yield* withTabLifecycleLock(tabId, stopFrameCapture(tabId, "recording"));
   });
 
   const saveRecording = Effect.fn("PreviewManager.saveRecording")(function* (
@@ -3479,19 +3675,6 @@ export class PreviewMainWindowClosedError extends Schema.TaggedError<PreviewMain
   }
 }
 
-export class PreviewRecordingArmConflictError extends Schema.TaggedError<PreviewRecordingArmConflictError>()(
-  "PreviewRecordingArmConflictError",
-  {
-    tabId: Schema.String,
-    webContentsId: Schema.Number,
-    armedTabId: Schema.String,
-  },
-) {
-  override get message(): string {
-    return `Preview tab ${this.armedTabId} is still claiming the capture stream, so recording could not start for tab ${this.tabId}`;
-  }
-}
-
 export class PreviewRecordingCaptureUnavailableError extends Schema.TaggedError<PreviewRecordingCaptureUnavailableError>()(
   "PreviewRecordingCaptureUnavailableError",
   {
@@ -3574,8 +3757,8 @@ export const PreviewManagerError = Schema.Union([
   PreviewWebContentsNotFoundError,
   PreviewWebviewNotInitializedError,
   PreviewMainWindowClosedError,
-  PreviewRecordingArmConflictError,
   PreviewRecordingCaptureUnavailableError,
+  BrowserSession.BrowserSessionRecordingOwnershipError,
   PreviewOperationError,
   PreviewArtifactPathOutsideDirectoryError,
   PreviewArtifactImageLoadError,
@@ -3741,6 +3924,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
   const operations = yield* makeNativeOperations(
     environment.browserArtifactsDir,
     environment.path.join(environment.dirname, "preview-pip-preload.cjs"),
+    browserSession.authorizeRecording,
   );
 
   return PreviewManager.of({

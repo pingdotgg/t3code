@@ -1,6 +1,7 @@
 import type { Session, WebContents } from "electron";
 import { BrowserWindow, session } from "electron";
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -129,6 +130,18 @@ export class BrowserSessionCacheClearError extends Schema.TaggedError<BrowserSes
   }
 }
 
+export class BrowserSessionRecordingOwnershipError extends Schema.TaggedError<BrowserSessionRecordingOwnershipError>()(
+  "BrowserSessionRecordingOwnershipError",
+  {
+    sourceWebContentsId: Schema.Number,
+    requesterWebContentsId: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return "Recording requester does not own the preview guest";
+  }
+}
+
 export const BrowserSessionGetSessionError = Schema.Union([
   BrowserSessionPartitionDerivationError,
   BrowserSessionCreationError,
@@ -140,6 +153,7 @@ export const BrowserSessionError = Schema.Union([
   BrowserSessionCreationError,
   BrowserSessionStorageClearError,
   BrowserSessionCacheClearError,
+  BrowserSessionRecordingOwnershipError,
 ]);
 export type BrowserSessionError = typeof BrowserSessionError.Type;
 
@@ -157,6 +171,11 @@ export class BrowserSession extends Context.Service<
       persistent?: boolean,
       namespace?: BrowserSessionPartitionNamespace,
     ) => Effect.Effect<Session, BrowserSessionGetSessionError>;
+    /** Authorizes one native tab-capture request, never camera or microphone access. */
+    readonly authorizeRecording: (
+      source: WebContents,
+      requester: WebContents,
+    ) => Effect.Effect<() => void, BrowserSessionRecordingOwnershipError>;
     /** Omit `partitions` to clear every known partition. */
     readonly clearCookies: (
       partitions?: ReadonlyArray<string>,
@@ -262,7 +281,53 @@ export const make = Effect.gen(function* BrowserSessionMake() {
         ),
     );
   };
+  const clock = yield* Clock.Clock;
   const sessionsRef = yield* SynchronizedRef.make<ReadonlyMap<string, Session>>(new Map());
+  const recordingGrants = new WeakMap<
+    WebContents,
+    {
+      readonly requester: WebContents;
+      readonly sourceFrame: Electron.WebFrameMain;
+      readonly requesterFrame: Electron.WebFrameMain;
+      readonly origin: string;
+      readonly expiresAt: number;
+      readonly release: () => void;
+    }
+  >();
+
+  const authorizeRecording = Effect.fn("BrowserSession.authorizeRecording")(function* (
+    source: WebContents,
+    requester: WebContents,
+  ) {
+    if (source.hostWebContents !== requester || source.isDestroyed() || requester.isDestroyed()) {
+      return yield* new BrowserSessionRecordingOwnershipError({
+        sourceWebContentsId: source.id,
+        requesterWebContentsId: requester.id,
+      });
+    }
+    const url = new URL(requester.mainFrame.url);
+    // Chromium reports custom app schemes as scheme://host/, rather than URL.origin's "null".
+    const origin = `${url.protocol}//${url.host}/`;
+    recordingGrants.get(source)?.release();
+    const release = () => {
+      if (recordingGrants.get(source) === grant) recordingGrants.delete(source);
+      source.removeListener("destroyed", release);
+      requester.removeListener("destroyed", release);
+    };
+    const grant = {
+      requester,
+      sourceFrame: source.mainFrame,
+      requesterFrame: requester.mainFrame,
+      origin,
+      expiresAt: clock.currentTimeMillisUnsafe() + 10_000,
+      release,
+    };
+    // Electron's source ID expires after ten seconds; the permission cannot outlive it.
+    recordingGrants.set(source, grant);
+    source.once("destroyed", release);
+    requester.once("destroyed", release);
+    return release;
+  });
 
   const getPartition = Effect.fn("BrowserSession.getPartition")(function* (
     scope = "shared",
@@ -303,19 +368,36 @@ export const make = Effect.gen(function* BrowserSessionMake() {
           // the challenge every few seconds, so logins behind it never complete
           // (#5002). Re-setting the unchanged native string is harmless, so it
           // is the rewritten string itself that trips the check.
-          browserSession.setPermissionRequestHandler(
-            (webContents, permission, callback, details) => {
-              if (permission === "openExternal") {
-                confirmOpenExternal(
-                  webContents,
-                  "externalURL" in details ? details.externalURL : undefined,
-                  callback,
-                );
-                return;
-              }
-              callback(ALLOWED_PREVIEW_PERMISSIONS.has(permission));
-            },
-          );
+          browserSession.setPermissionRequestHandler((contents, permission, callback, details) => {
+            if (permission === "openExternal") {
+              confirmOpenExternal(
+                contents,
+                "externalURL" in details ? details.externalURL : undefined,
+                callback,
+              );
+              return;
+            }
+            const grant = recordingGrants.get(contents);
+            // Tab capture asks the target guest's session for permission. Its native source ID
+            // already binds the request to the app's requesting frame and origin. Consume only
+            // that recording request; normal media requests carry camera/microphone mediaTypes.
+            const recording =
+              permission === "media" &&
+              grant !== undefined &&
+              "mediaTypes" in details &&
+              details.mediaTypes?.length === 0 &&
+              details.isMainFrame &&
+              "securityOrigin" in details &&
+              details.securityOrigin === grant.origin &&
+              clock.currentTimeMillisUnsafe() < grant.expiresAt &&
+              !contents.isDestroyed() &&
+              !grant.requester.isDestroyed() &&
+              contents.hostWebContents === grant.requester &&
+              contents.mainFrame === grant.sourceFrame &&
+              grant.requester.mainFrame === grant.requesterFrame;
+            if (recording) grant.release();
+            callback(ALLOWED_PREVIEW_PERMISSIONS.has(permission) || recording);
+          });
           browserSession.setPermissionCheckHandler((_webContents, permission) =>
             ALLOWED_PREVIEW_PERMISSIONS.has(permission),
           );
@@ -339,6 +421,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
       partition.startsWith(PREVIEW_PARTITION_PREFIX) ||
       partition.startsWith(PREVIEW_EPHEMERAL_PARTITION_PREFIX),
     getSession,
+    authorizeRecording,
     clearCookies: Effect.fn("BrowserSession.clearCookies")(function* (partitions?) {
       const sessions = yield* SynchronizedRef.get(sessionsRef);
       yield* Effect.forEach(

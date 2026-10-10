@@ -1266,7 +1266,7 @@ export interface DesktopBridge {
   preview?: DesktopPreviewBridge;
 }
 
-/** Renderer callback invoked by Electron with a fresh user gesture before display-media capture. */
+/** Renderer callback receiving (tabId, requester-bound sourceId, guest pixel size) for tab capture. */
 export const DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER = "__t3DesktopPreviewRecordingCapture";
 
 export interface DesktopPreviewBridge {

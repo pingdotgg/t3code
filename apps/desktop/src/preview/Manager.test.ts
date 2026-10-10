@@ -1,6 +1,9 @@
 import { it as effectIt } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import { DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER } from "@t3tools/contracts";
+import * as NodeVM from "node:vm";
+import * as NodeEvents from "node:events";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { session } from "electron";
 import type {
   DesktopPreviewRecordingFrame,
   DesktopPreviewRecordingInputEvent,
@@ -26,6 +29,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 import * as PreviewManager from "./Manager.ts";
@@ -258,12 +262,17 @@ vi.mock("electron", () => ({
   },
 }));
 
+const releaseRecordingPermission = vi.fn();
+const authorizeRecording = vi.fn<BrowserSession.BrowserSession["Service"]["authorizeRecording"]>(
+  () => Effect.succeed(releaseRecordingPermission),
+);
 const layerBrowserSession = Layer.succeed(
   BrowserSession.BrowserSession,
   BrowserSession.BrowserSession.of({
     getPartition: () => Effect.succeed("persist:t3code-preview-test"),
     isPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
     getSession: () => Effect.succeed(previewSession as unknown as Electron.Session),
+    authorizeRecording,
     clearCookies: () => Effect.void,
     clearCache: () => Effect.void,
   }),
@@ -332,20 +341,11 @@ interface TestCapturedPreviewImage {
   readonly getSize: () => { readonly width: number; readonly height: number };
 }
 
-type TestDisplayMediaHandler = (
-  request: { readonly frame: { readonly frameTreeNodeId: number } | null },
-  callback: (streams: { video?: unknown }) => void,
-) => void;
-
 interface TestHostWebContents {
   readonly id: number;
   readonly mainFrame: { readonly frameTreeNodeId: number };
   readonly executeJavaScript: ReturnType<typeof vi.fn>;
   readonly isDestroyed: () => boolean;
-  readonly session: {
-    readonly setDisplayMediaRequestHandler: ReturnType<typeof vi.fn>;
-  };
-  readonly displayMediaHandler: () => TestDisplayMediaHandler | undefined;
 }
 
 type TestPreviewWebContents = Electron.WebContents & {
@@ -353,18 +353,11 @@ type TestPreviewWebContents = Electron.WebContents & {
 };
 
 const makeTestHostWebContents = (): TestHostWebContents => {
-  let handler: TestDisplayMediaHandler | undefined;
   return {
     id: 7,
     mainFrame: { frameTreeNodeId: 7 },
     executeJavaScript: vi.fn(async () => true),
     isDestroyed: () => false,
-    session: {
-      setDisplayMediaRequestHandler: vi.fn((next: TestDisplayMediaHandler) => {
-        handler = next;
-      }),
-    },
-    displayMediaHandler: () => handler,
   };
 };
 
@@ -378,6 +371,7 @@ const makeTestPreviewWebContents = (
     id,
     mainFrame: { routingId: id },
     hostWebContents,
+    getMediaSourceId: vi.fn((requester: { id: number }) => `tab:${id}:requester:${requester.id}`),
     executeJavaScript: vi.fn(async () => ({ width: 1280, height: 720 })),
     isDestroyed: () => false,
     getType: () => "webview",
@@ -407,7 +401,7 @@ const makeTestPreviewWebContents = (
   } as unknown as TestPreviewWebContents;
 };
 
-/** Two ready tabs (41, 42) sharing one window, so they contend for the single display-media slot. */
+/** Two authoritative guests sharing one requesting window. */
 const setupRecordingRaceTabs = (manager: PreviewManager.PreviewManager["Service"]) =>
   Effect.gen(function* () {
     const capturePage = vi.fn(async () => ({
@@ -432,16 +426,7 @@ const setupRecordingRaceTabs = (manager: PreviewManager.PreviewManager["Service"
     yield* manager.createTab("tab_race_b");
     yield* manager.registerWebview("tab_race_a", 41);
     yield* manager.registerWebview("tab_race_b", 42);
-    const grants: Array<{ video?: unknown }> = [];
-    return {
-      host,
-      grants,
-      destroy: (id: number) => destroyedIds.add(id),
-      takeGrant: (frame = host.mainFrame) =>
-        host.displayMediaHandler()?.({ frame }, (value) => {
-          grants.push(value);
-        }),
-    };
+    return { host };
   });
 
 const TEST_FAVICON = "data:image/png;base64,cG5n";
@@ -586,6 +571,8 @@ const makeTestPictureInPictureWindow = (loadURL: () => Promise<void> = async () 
 
 describe("PreviewManager", () => {
   beforeEach(() => {
+    authorizeRecording.mockReset().mockReturnValue(Effect.succeed(releaseRecordingPermission));
+    releaseRecordingPermission.mockClear();
     browserWindowConstructor.mockReset();
     fromId.mockClear();
     getFocusedWebContents.mockReset();
@@ -2585,8 +2572,6 @@ describe("PreviewManager", () => {
         } as never);
 
         yield* manager.startRecording("tab_capture_throttling_1");
-        // The first renderer takes its grant, freeing the arm slot for the second tab.
-        host.displayMediaHandler()?.({ frame: host.mainFrame }, () => {});
         yield* manager.startRecording("tab_capture_throttling_2");
         expect(setBackgroundThrottling.mock.calls).toEqual([[false]]);
         expect(firstWebContents.setBackgroundThrottling.mock.calls).toEqual([[false]]);
@@ -2763,6 +2748,323 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("empty recording warmup retries a usable guest image", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const host = makeTestHostWebContents();
+        const capture = vi.fn(
+          (_tab: string, _source: string, size: { width: number; height: number }) =>
+            Number.isInteger(size.width) &&
+            size.width > 0 &&
+            Number.isInteger(size.height) &&
+            size.height > 0,
+        );
+        host.executeJavaScript.mockImplementation(async (expression: string) =>
+          NodeVM.runInNewContext(expression, { __t3DesktopPreviewRecordingCapture: capture }),
+        );
+        const capturePage = vi.fn(async () => ({
+          toJPEG: () => Buffer.from("frame"),
+          getSize: () => ({ width: 600, height: 800 }),
+        }));
+        capturePage.mockResolvedValueOnce({
+          toJPEG: () => Buffer.from(""),
+          getSize: () => ({ width: 0, height: 0 }),
+        });
+        const guest = makeTestPreviewWebContents(capturePage, 41, host);
+        fromId.mockReturnValue(guest);
+        yield* manager.createTab("tab_empty_warmup");
+        yield* manager.registerWebview("tab_empty_warmup", 41);
+        yield* manager.startRecording("tab_empty_warmup");
+        expect(capturePage).toHaveBeenCalledTimes(2);
+        expect(capture).toHaveBeenCalledWith("tab_empty_warmup", "tab:41:requester:7", {
+          width: 600,
+          height: 800,
+        });
+        yield* manager.stopRecording("tab_empty_warmup");
+      }),
+    ),
+  );
+  effectIt.effect("empty recording warmup recovers guest viewport dimensions", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const host = makeTestHostWebContents();
+        const capture = vi.fn(
+          (_tab: string, _source: string, size: { width: number; height: number }) =>
+            Number.isInteger(size.width) &&
+            size.width > 0 &&
+            Number.isInteger(size.height) &&
+            size.height > 0,
+        );
+        host.executeJavaScript.mockImplementation(async (expression: string) =>
+          NodeVM.runInNewContext(expression, { __t3DesktopPreviewRecordingCapture: capture }),
+        );
+        const capturePage = vi.fn(async () => ({
+          toJPEG: () => Buffer.from(""),
+          getSize: () => ({ width: 0, height: 0 }),
+        }));
+        const guest = Object.assign(makeTestPreviewWebContents(capturePage, 41, host), {
+          executeJavaScript: vi.fn(async () => ({ width: 600, height: 800 })),
+        });
+        fromId.mockReturnValue(guest);
+        yield* manager.createTab("tab_empty_viewport");
+        yield* manager.registerWebview("tab_empty_viewport", 41);
+        yield* manager.startRecording("tab_empty_viewport");
+        expect(capturePage).toHaveBeenCalledTimes(2);
+        expect(guest.executeJavaScript).toHaveBeenCalledOnce();
+        expect(capture).toHaveBeenCalledWith("tab_empty_viewport", "tab:41:requester:7", {
+          width: 600,
+          height: 800,
+        });
+        yield* manager.stopRecording("tab_empty_viewport");
+      }),
+    ),
+  );
+
+  for (const stalledViewport of [false, true]) {
+    effectIt.effect(
+      `releases queued recording cleanup after stalled warmup${stalledViewport ? " and viewport" : ""}`,
+      () =>
+        withManager((manager) =>
+          Effect.gen(function* () {
+            const host = makeTestHostWebContents();
+            const capture = vi.fn(() => true);
+            host.executeJavaScript.mockImplementation(async (expression: string) =>
+              NodeVM.runInNewContext(expression, { __t3DesktopPreviewRecordingCapture: capture }),
+            );
+            const pendingCapture = Promise.withResolvers<TestCapturedPreviewImage>();
+            const pendingViewport = Promise.withResolvers<{ width: number; height: number }>();
+            const capturePage = vi.fn(() => pendingCapture.promise);
+            const guest = Object.assign(makeTestPreviewWebContents(capturePage, 41, host), {
+              executeJavaScript: vi.fn(() =>
+                stalledViewport
+                  ? pendingViewport.promise
+                  : Promise.resolve({ width: 600, height: 800 }),
+              ),
+            });
+            fromId.mockReturnValue(guest);
+            yield* manager.createTab("tab_stalled_warmup");
+            yield* manager.registerWebview("tab_stalled_warmup", 41);
+            const start = yield* Effect.exit(manager.startRecording("tab_stalled_warmup")).pipe(
+              Effect.forkChild({ startImmediately: true }),
+            );
+            yield* TestClock.adjust(0);
+            expect(capturePage).toHaveBeenCalledTimes(1);
+            const stop = yield* manager
+              .stopRecording("tab_stalled_warmup")
+              .pipe(Effect.forkChild({ startImmediately: true }));
+            yield* TestClock.adjust(1_000);
+            expect(capturePage).toHaveBeenCalledTimes(2);
+            yield* TestClock.adjust(1_000);
+            expect(guest.executeJavaScript).toHaveBeenCalledOnce();
+            if (stalledViewport) yield* TestClock.adjust(1_000);
+            const exit = yield* Fiber.join(start);
+            expect(Exit.isFailure(exit)).toBe(stalledViewport);
+            if (Exit.isFailure(exit)) {
+              expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+                _tag: "PreviewOperationError",
+                operation: "recording.warmSource",
+                tabId: "tab_stalled_warmup",
+              });
+            }
+            yield* Fiber.join(stop);
+            expect(capture).toHaveBeenCalledTimes(stalledViewport ? 0 : 1);
+            expect(authorizeRecording).toHaveBeenCalledTimes(stalledViewport ? 0 : 1);
+            expect(guest.setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
+            pendingCapture.resolve({
+              toJPEG: () => Buffer.from("late-frame"),
+              getSize: () => ({ width: 600, height: 800 }),
+            });
+            pendingViewport.resolve({ width: 600, height: 800 });
+            yield* TestClock.adjust(0);
+            expect(capture).toHaveBeenCalledTimes(stalledViewport ? 0 : 1);
+            expect(authorizeRecording).toHaveBeenCalledTimes(stalledViewport ? 0 : 1);
+            yield* manager.closeTab("tab_stalled_warmup");
+          }),
+        ),
+    );
+  }
+
+  effectIt.effect("hands off guest pixels when the requester has a different aspect ratio", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const host = makeTestHostWebContents();
+        const capture = vi.fn();
+        host.executeJavaScript.mockImplementation(async (expression: string) =>
+          NodeVM.runInNewContext(expression, {
+            __t3DesktopPreviewRecordingCapture: capture.mockReturnValue(true),
+            innerWidth: 1920,
+            innerHeight: 1080,
+          }),
+        );
+        const guest = makeTestPreviewWebContents(
+          async () => ({
+            toJPEG: () => Buffer.from("frame"),
+            getSize: () => ({ width: 600, height: 800 }),
+          }),
+          41,
+          host,
+        );
+        fromId.mockReturnValue(guest);
+        yield* manager.createTab("tab_portrait_recording");
+        yield* manager.registerWebview("tab_portrait_recording", 41);
+        yield* manager.startRecording("tab_portrait_recording");
+        expect(capture).toHaveBeenCalledWith("tab_portrait_recording", "tab:41:requester:7", {
+          width: 600,
+          height: 800,
+        });
+        yield* manager.stopRecording("tab_portrait_recording");
+      }),
+    ),
+  );
+
+  effectIt.effect(
+    "preserves ownership rejection and cleans up failed recording authorization",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const browserSessions = yield* BrowserSession.make.pipe(
+            Effect.provide(Layer.merge(NodeServices.layer, ElectronDialog.layer)),
+          );
+          authorizeRecording.mockImplementation(browserSessions.authorizeRecording);
+          const hostEvents = new NodeEvents.EventEmitter();
+          const host = Object.assign(makeTestHostWebContents(), {
+            mainFrame: { url: "t3://app/", frameTreeNodeId: 7 },
+            once: hostEvents.once.bind(hostEvents),
+            removeListener: hostEvents.removeListener.bind(hostEvents),
+          });
+          const guestEvents = new NodeEvents.EventEmitter();
+          const guest = Object.assign(
+            makeTestPreviewWebContents(
+              async () => ({
+                toJPEG: () => Buffer.from("frame"),
+                getSize: () => ({ width: 800, height: 600 }),
+              }),
+              41,
+              host,
+            ),
+            {
+              once: guestEvents.once.bind(guestEvents),
+              removeListener: guestEvents.removeListener.bind(guestEvents),
+            },
+          );
+          vi.mocked(guest.getMediaSourceId).mockImplementationOnce(() => {
+            Object.assign(guest, { hostWebContents: null });
+            return "tab:41";
+          });
+          fromId.mockReturnValue(guest);
+          yield* manager.createTab("tab_ownership_rejection");
+          yield* manager.registerWebview("tab_ownership_rejection", 41);
+          const error = yield* manager.startRecording("tab_ownership_rejection").pipe(
+            Effect.catchTags({
+              BrowserSessionRecordingOwnershipError: (error) => Effect.succeed(error),
+            }),
+          );
+          expect(error).toBeInstanceOf(BrowserSession.BrowserSessionRecordingOwnershipError);
+          expect(error).toMatchObject({ sourceWebContentsId: 41, requesterWebContentsId: 7 });
+          expect(host.executeJavaScript).not.toHaveBeenCalled();
+          expect(guestEvents.listenerCount("destroyed")).toBe(0);
+          expect(hostEvents.listenerCount("destroyed")).toBe(0);
+          expect(guest.setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
+          expect(webviewSend.mock.calls).toContainEqual(["preview:recording-cursor", false]);
+
+          Object.assign(guest, { hostWebContents: host });
+          yield* manager.startRecording("tab_ownership_rejection");
+          expect(guestEvents.listenerCount("destroyed")).toBe(1);
+          expect(host.executeJavaScript).toHaveBeenCalledTimes(1);
+          yield* manager.stopRecording("tab_ownership_rejection");
+          expect(guestEvents.listenerCount("destroyed")).toBe(0);
+          expect(hostEvents.listenerCount("destroyed")).toBe(0);
+          expect(guest.setBackgroundThrottling.mock.calls).toEqual([
+            [false],
+            [true],
+            [false],
+            [true],
+          ]);
+        }),
+      ),
+  );
+
+  effectIt.effect("revokes actual recording permission on stop and guest replacement", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const permissions = {
+          on: vi.fn(),
+          setPermissionRequestHandler: vi.fn(),
+          setPermissionCheckHandler: vi.fn(),
+        };
+        vi.mocked(session.fromPartition).mockReturnValueOnce(permissions as never);
+        const browserSessions = yield* BrowserSession.make.pipe(
+          Effect.provide(Layer.merge(NodeServices.layer, ElectronDialog.layer)),
+        );
+        yield* browserSessions.getSession("recording-lifecycle").pipe(Effect.orDie);
+        authorizeRecording.mockImplementation(browserSessions.authorizeRecording);
+        const handler = permissions.setPermissionRequestHandler.mock.calls[0]?.[0] as NonNullable<
+          Parameters<Electron.Session["setPermissionRequestHandler"]>[0]
+        >;
+        const hostEvents = new NodeEvents.EventEmitter();
+        const host = Object.assign(makeTestHostWebContents(), {
+          mainFrame: { url: "t3://app/", frameTreeNodeId: 7 },
+          once: hostEvents.once.bind(hostEvents),
+          removeListener: hostEvents.removeListener.bind(hostEvents),
+        });
+        const makeGuest = (id: number) => {
+          const events = new NodeEvents.EventEmitter();
+          return Object.assign(
+            makeTestPreviewWebContents(
+              async () => ({
+                toJPEG: () => Buffer.from("frame"),
+                getSize: () => ({ width: 800, height: 600 }),
+              }),
+              id,
+              host,
+            ),
+            {
+              once: events.once.bind(events),
+              removeListener: events.removeListener.bind(events),
+            },
+          );
+        };
+        const first = makeGuest(41);
+        const replacement = makeGuest(42);
+        fromId.mockImplementation((id) => (id === 41 ? first : replacement));
+        const request = (guest: Electron.WebContents, mediaTypes: ("audio" | "video")[] = []) => {
+          let allowed: boolean | undefined;
+          handler(
+            guest,
+            "media",
+            (result) => {
+              allowed = result;
+            },
+            {
+              isMainFrame: true,
+              requestingUrl: "t3://app/",
+              securityOrigin: "t3://app/",
+              mediaTypes,
+            },
+          );
+          return allowed;
+        };
+        yield* manager.createTab("tab_permission_lifecycle");
+        yield* manager.registerWebview("tab_permission_lifecycle", 41);
+        yield* manager.startRecording("tab_permission_lifecycle");
+        expect(request(replacement)).toBe(false);
+        expect(request(first, ["video"])).toBe(false);
+        yield* manager.stopRecording("tab_permission_lifecycle");
+        expect(request(first)).toBe(false);
+
+        yield* manager.startRecording("tab_permission_lifecycle");
+        yield* manager.registerWebview("tab_permission_lifecycle", 42);
+        expect(request(first)).toBe(false);
+        expect(request(replacement)).toBe(false);
+        yield* manager.startRecording("tab_permission_lifecycle");
+        yield* manager.startRecording("tab_permission_lifecycle");
+        expect(request(replacement)).toBe(true);
+        expect(request(replacement)).toBe(false);
+        yield* manager.stopRecording("tab_permission_lifecycle");
+      }),
+    ),
+  );
+
   effectIt.effect("releases frame capture when the main window closes", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -2795,6 +3097,8 @@ describe("PreviewManager", () => {
         } as never);
         yield* manager.startRecording("tab_window_close_recording");
         expect(firstWindowThrottling.mock.calls).toEqual([[false]]);
+        const authorizationsBeforeClose = authorizeRecording.mock.calls.length;
+        const capturesBeforeClose = host.executeJavaScript.mock.calls.length;
 
         closeMainWindow?.();
         const racedStart = yield* Effect.exit(manager.startRecording("tab_window_close_race"));
@@ -2808,9 +3112,9 @@ describe("PreviewManager", () => {
         yield* Effect.yieldNow;
         yield* Effect.yieldNow;
 
-        const grants: Array<{ video?: unknown }> = [];
-        host.displayMediaHandler()?.({ frame: host.mainFrame }, (value) => grants.push(value));
-        expect(grants).toEqual([{}]);
+        expect(authorizeRecording).toHaveBeenCalledTimes(authorizationsBeforeClose);
+        expect(host.executeJavaScript).toHaveBeenCalledTimes(capturesBeforeClose);
+        expect(webContentsById.get(43)?.getMediaSourceId).not.toHaveBeenCalled();
 
         yield* manager.setMainWindow({
           isDestroyed: () => false,
@@ -2822,7 +3126,7 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect("does not arm recording after the main window closes during warmup", () =>
+  effectIt.effect("does not authorize capture after the main window closes during warmup", () =>
     withManager((manager) =>
       Effect.gen(function* () {
         let closeMainWindow: (() => void) | undefined;
@@ -2870,7 +3174,7 @@ describe("PreviewManager", () => {
             tabId: "tab_window_close_warmup",
           });
         }
-        expect(host.session.setDisplayMediaRequestHandler).not.toHaveBeenCalled();
+        expect(host.executeJavaScript).not.toHaveBeenCalled();
       }),
     ),
   );
@@ -2996,6 +3300,9 @@ describe("PreviewManager", () => {
             id,
             mainFrame: { routingId: id },
             hostWebContents: host,
+            getMediaSourceId: vi.fn(
+              (requester: { id: number }) => `tab:${id}:requester:${requester.id}`,
+            ),
             executeJavaScript: vi.fn(async () =>
               id === 41 ? { width: 800, height: 600 } : { width: 390, height: 844 },
             ),
@@ -3037,17 +3344,12 @@ describe("PreviewManager", () => {
         yield* manager.registerWebview("tab_1", 41);
         yield* manager.registerWebview("tab_2", 42);
 
-        const grants: Array<{ video?: unknown }> = [];
-        const takeGrant = () =>
-          host.displayMediaHandler()?.({ frame: host.mainFrame }, (value) => {
-            grants.push(value);
-          });
-
         yield* manager.startRecording("tab_1");
-        takeGrant();
         yield* manager.startRecording("tab_2");
-        takeGrant();
-        expect(grants).toEqual([{ video: { routingId: 41 } }, { video: { routingId: 42 } }]);
+        expect(host.executeJavaScript.mock.calls.map(([expression]) => expression)).toEqual([
+          expect.stringContaining("tab:41:requester:7"),
+          expect.stringContaining("tab:42:requester:7"),
+        ]);
 
         expect(firstCapturePage).toHaveBeenCalledOnce();
         expect(secondCapturePage).toHaveBeenCalledOnce();
@@ -3068,34 +3370,912 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect("requests display media with a fresh renderer gesture", () =>
+  effectIt.effect(
+    "delivers authoritative page frames only for an unreadable native recording",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const host = makeTestHostWebContents();
+          const image = {
+            isEmpty: () => false,
+            toJPEG: () => Buffer.from("authoritative page pixels"),
+            getSize: () => ({ width: 1280, height: 720 }),
+          };
+          let receiveFrame!: (image: Electron.NativeImage, rect: Electron.Rectangle) => void;
+          const begin = vi.fn((_dirty: boolean, callback: typeof receiveFrame) => {
+            receiveFrame = callback;
+          });
+          const end = vi.fn();
+          const wc = Object.assign(
+            makeTestPreviewWebContents(async () => image, 42, host),
+            {
+              beginFrameSubscription: begin,
+              endFrameSubscription: end,
+            },
+          );
+          fromId.mockReturnValue(wc);
+          yield* manager.createTab("tab_frames");
+          yield* manager.registerWebview("tab_frames", 42);
+          yield* manager.startRecording("tab_frames");
+          expect(begin).not.toHaveBeenCalled();
+          yield* manager.stopRecording("tab_frames");
+          const capture = Object.assign(
+            vi.fn(async () => ({ mode: "frame-subscription", captureId: "capture-1" })),
+            {
+              frame: vi.fn(
+                async (_tabId: string, _id: string, frame: DesktopPreviewRecordingFrame) => {
+                  frames.push(frame);
+                  Deferred.doneUnsafe(delivered, Effect.void);
+                  return true;
+                },
+              ),
+            },
+          );
+          host.executeJavaScript.mockImplementation(async (expression: string) =>
+            NodeVM.runInNewContext(expression, { __t3DesktopPreviewRecordingCapture: capture }),
+          );
+          const delivered = yield* Deferred.make<void>();
+          const frames: DesktopPreviewRecordingFrame[] = [];
+          yield* manager.startRecording("tab_frames");
+          receiveFrame(image as unknown as Electron.NativeImage, {
+            x: 0,
+            y: 0,
+            width: 1280,
+            height: 720,
+          });
+          yield* Deferred.await(delivered);
+          expect(frames).toEqual([
+            expect.objectContaining({
+              tabId: "tab_frames",
+              data: Buffer.from("authoritative page pixels").toString("base64"),
+              width: 1280,
+              height: 720,
+            }),
+          ]);
+          yield* manager.stopRecording("tab_frames");
+          expect(end).toHaveBeenCalledOnce();
+          receiveFrame(image as unknown as Electron.NativeImage, {
+            x: 0,
+            y: 0,
+            width: 1280,
+            height: 720,
+          });
+          expect(frames).toHaveLength(1);
+        }),
+      ),
+  );
+
+  for (const replacement of ["fallback", "native", "unavailable"] as const) {
+    effectIt.effect(`releases the previous fallback source before a ${replacement} START`, () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const host = makeTestHostWebContents();
+          const oldDelivered = yield* Deferred.make<void>();
+          const sourceReleased = yield* Deferred.make<void>();
+          const newDelivered = yield* Deferred.make<void>();
+          let finishOldDelivery!: () => void;
+          const pendingDelivery = new Promise<boolean>((resolve) => {
+            finishOldDelivery = () => resolve(true);
+          });
+          const capture = Object.assign(
+            vi
+              .fn()
+              .mockResolvedValueOnce({ mode: "frame-subscription", captureId: "previous" })
+              .mockImplementationOnce(async () => {
+                expect(guest.endFrameSubscription).toHaveBeenCalledOnce();
+                expect(releaseRecordingPermission).toHaveBeenCalledOnce();
+                for (const event of sourceEvents) {
+                  expect(events.listenerCount(event)).toBe(baseline.get(event));
+                }
+                return replacement === "fallback"
+                  ? { mode: "frame-subscription", captureId: "replacement" }
+                  : replacement === "native";
+              }),
+            {
+              frame: vi.fn((_tabId: string, captureId: string) => {
+                if (captureId === "previous") {
+                  Deferred.doneUnsafe(oldDelivered, Effect.void);
+                  return pendingDelivery;
+                }
+                Deferred.doneUnsafe(newDelivered, Effect.void);
+                return true;
+              }),
+              end: vi.fn(() => true),
+            },
+          );
+          host.executeJavaScript.mockImplementation(async (expression: string) =>
+            NodeVM.runInNewContext(expression, { __t3DesktopPreviewRecordingCapture: capture }),
+          );
+          const image = {
+            isEmpty: () => false,
+            toJPEG: () => Buffer.from("page"),
+            getSize: () => ({ width: 800, height: 600 }),
+          };
+          const events = new NodeEvents.EventEmitter();
+          const callbacks: ((image: Electron.NativeImage, rect: Electron.Rectangle) => void)[] = [];
+          const guest = Object.assign(
+            makeTestPreviewWebContents(async () => image, 42, host),
+            {
+              on: events.on.bind(events),
+              off: events.off.bind(events),
+              beginFrameSubscription: vi.fn(
+                (_dirty: boolean, callback: (typeof callbacks)[number]) => {
+                  callbacks.push(callback);
+                },
+              ),
+              endFrameSubscription: vi.fn(() => Deferred.doneUnsafe(sourceReleased, Effect.void)),
+            },
+          );
+          fromId.mockReturnValue(guest);
+          yield* manager.createTab("tab_repeated_start");
+          yield* manager.registerWebview("tab_repeated_start", 42);
+          const sourceEvents = ["destroyed", "render-process-gone", "dom-ready"] as const;
+          const baseline = new Map(
+            sourceEvents.map((event) => [event, events.listenerCount(event)]),
+          );
+          const receive = (index: number) =>
+            callbacks[index]!(image as unknown as Electron.NativeImage, {
+              x: 0,
+              y: 0,
+              width: 800,
+              height: 600,
+            });
+          yield* manager.startRecording("tab_repeated_start");
+          receive(0);
+          yield* Deferred.await(oldDelivered);
+          receive(0);
+          events.emit("render-process-gone");
+          const restart = yield* Effect.forkChild(
+            Effect.exit(manager.startRecording("tab_repeated_start")),
+          );
+          yield* Deferred.await(sourceReleased);
+          finishOldDelivery();
+          const restarted = yield* Fiber.join(restart);
+          expect(Exit.isSuccess(restarted)).toBe(replacement !== "unavailable");
+          if (Exit.isFailure(restarted)) {
+            expect(Cause.squash(restarted.cause)).toMatchObject({
+              _tag: "PreviewRecordingCaptureUnavailableError",
+            });
+          }
+          receive(0);
+          yield* TestClock.adjust("5 seconds");
+          expect(capture.frame).toHaveBeenCalledTimes(1);
+          expect(capture.end).not.toHaveBeenCalled();
+          expect(guest.endFrameSubscription).toHaveBeenCalledOnce();
+          for (const event of sourceEvents) {
+            expect(events.listenerCount(event)).toBe(
+              baseline.get(event)! + (replacement === "fallback" ? 1 : 0),
+            );
+          }
+          if (replacement === "fallback") {
+            receive(1);
+            yield* Deferred.await(newDelivered);
+            expect(capture.frame).toHaveBeenLastCalledWith(
+              "tab_repeated_start",
+              "replacement",
+              expect.anything(),
+              0,
+            );
+          }
+          yield* manager.stopRecording("tab_repeated_start");
+          expect(guest.endFrameSubscription).toHaveBeenCalledTimes(
+            replacement === "fallback" ? 2 : 1,
+          );
+          expect(releaseRecordingPermission).toHaveBeenCalledTimes(2);
+          for (const event of sourceEvents) {
+            expect(events.listenerCount(event)).toBe(baseline.get(event));
+          }
+        }),
+      ),
+    );
+  }
+
+  for (const loss of ["destroyed", "render-process-gone"] as const) {
+    effectIt.effect(`ends a fallback after unrecovered guest ${loss}`, () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const host = makeTestHostWebContents();
+          const terminated = yield* Deferred.make<void>();
+          let finishTermination!: (value: boolean) => void;
+          const capture = Object.assign(
+            vi.fn(async () => ({ mode: "frame-subscription", captureId: "lost-source" })),
+            {
+              end: vi.fn(() => {
+                Deferred.doneUnsafe(terminated, Effect.void);
+                return new Promise<boolean>((resolve) => (finishTermination = resolve));
+              }),
+            },
+          );
+          host.executeJavaScript.mockImplementation(async (expression: string) =>
+            NodeVM.runInNewContext(expression, { __t3DesktopPreviewRecordingCapture: capture }),
+          );
+          const events = new NodeEvents.EventEmitter();
+          const guest = Object.assign(
+            makeTestPreviewWebContents(
+              async () => ({
+                toJPEG: () => Buffer.from("page"),
+                getSize: () => ({ width: 800, height: 600 }),
+              }),
+              42,
+              host,
+            ),
+            {
+              on: events.on.bind(events),
+              off: events.off.bind(events),
+              beginFrameSubscription: vi.fn(),
+              endFrameSubscription: vi.fn(),
+            },
+          );
+          fromId.mockReturnValue(guest);
+          yield* manager.createTab("tab_lost_source");
+          yield* manager.registerWebview("tab_lost_source", 42);
+          yield* manager.startRecording("tab_lost_source");
+          events.emit(loss);
+          if (loss === "destroyed") guest.isDestroyed = () => true;
+          yield* TestClock.adjust("4 seconds");
+          expect(capture.end).not.toHaveBeenCalled();
+          yield* TestClock.adjust("1 second");
+          yield* Deferred.await(terminated);
+          // The requester can complete STOP while its termination acknowledgement is pending.
+          yield* manager.stopRecording("tab_lost_source");
+          finishTermination(true);
+          expect(capture.end).toHaveBeenCalledExactlyOnceWith("tab_lost_source", "lost-source");
+          expect(releaseRecordingPermission).toHaveBeenCalledOnce();
+          expect(events.listenerCount("destroyed")).toBe(0);
+          expect(events.listenerCount("render-process-gone")).toBe(0);
+          expect(guest.endFrameSubscription).toHaveBeenCalledTimes(loss === "destroyed" ? 0 : 1);
+        }),
+      ),
+    );
+  }
+
+  for (const recovery of ["replacement", "restart", "dom-ready"] as const) {
+    effectIt.effect(`does not end recovered fallback after ${recovery}`, () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const host = makeTestHostWebContents();
+          const delivered = yield* Deferred.make<void>();
+          let captureId = "before-loss";
+          const capture = Object.assign(
+            vi.fn(async () => ({ mode: "frame-subscription", captureId })),
+            {
+              source: vi.fn(() => true),
+              frame: vi.fn(() => {
+                Deferred.doneUnsafe(delivered, Effect.void);
+                return true;
+              }),
+              end: vi.fn(() => true),
+            },
+          );
+          host.executeJavaScript.mockImplementation(async (expression: string) =>
+            NodeVM.runInNewContext(expression, { __t3DesktopPreviewRecordingCapture: capture }),
+          );
+          const image = {
+            isEmpty: () => false,
+            toJPEG: () => Buffer.from("recovered page"),
+            getSize: () => ({ width: 800, height: 600 }),
+          };
+          const makeGuest = (id: number) => {
+            const events = new NodeEvents.EventEmitter();
+            let receive!: (frame: Electron.NativeImage, rect: Electron.Rectangle) => void;
+            return {
+              events,
+              receive: () =>
+                receive(image as unknown as Electron.NativeImage, {
+                  x: 0,
+                  y: 0,
+                  width: 800,
+                  height: 600,
+                }),
+              guest: Object.assign(
+                makeTestPreviewWebContents(async () => image, id, host),
+                {
+                  on: events.on.bind(events),
+                  off: events.off.bind(events),
+                  beginFrameSubscription: vi.fn((_dirty, callback: typeof receive) => {
+                    receive = callback;
+                  }),
+                  endFrameSubscription: vi.fn(),
+                },
+              ),
+            };
+          };
+          const first = makeGuest(42);
+          const replacement = makeGuest(43);
+          fromId.mockImplementation((id) => (id === 42 ? first.guest : replacement.guest));
+          yield* manager.createTab("tab_recovered_source");
+          yield* manager.registerWebview("tab_recovered_source", 42);
+          yield* manager.startRecording("tab_recovered_source");
+          first.events.emit("render-process-gone");
+          yield* TestClock.adjust("1 second");
+          if (recovery === "replacement") {
+            yield* manager.registerWebview("tab_recovered_source", 43);
+          } else if (recovery === "restart") {
+            yield* manager.stopRecording("tab_recovered_source");
+            captureId = "after-loss";
+            yield* manager.startRecording("tab_recovered_source");
+          } else {
+            first.events.emit("dom-ready");
+          }
+          yield* TestClock.adjust("5 seconds");
+          expect(capture.end).not.toHaveBeenCalled();
+          const current = recovery === "replacement" ? replacement : first;
+          current.receive();
+          yield* Deferred.await(delivered);
+          expect(capture.frame).toHaveBeenCalledWith(
+            "tab_recovered_source",
+            captureId,
+            expect.anything(),
+            recovery === "replacement" ? 1 : 0,
+          );
+          yield* manager.stopRecording("tab_recovered_source");
+          expect(current.guest.endFrameSubscription).toHaveBeenCalledTimes(
+            recovery === "restart" ? 2 : 1,
+          );
+          expect(current.events.listenerCount("render-process-gone")).toBe(0);
+        }),
+      ),
+    );
+  }
+
+  effectIt.effect("rebinds recording page frames when the authoritative guest is replaced", () =>
     withManager((manager) =>
       Effect.gen(function* () {
-        const { host, takeGrant } = yield* setupRecordingRaceTabs(manager);
-
-        yield* manager.startRecording("tab_race_a");
-
-        expect(host.executeJavaScript).toHaveBeenCalledWith(
-          expect.stringContaining(DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER),
-          true,
+        const host = makeTestHostWebContents();
+        const delivered = yield* Deferred.make<void>();
+        const frames: DesktopPreviewRecordingFrame[] = [];
+        const capture = Object.assign(
+          vi.fn(async () => ({ mode: "frame-subscription", captureId: "capture-replaced" })),
+          {
+            source: vi.fn(() => true),
+            frame: vi.fn(
+              async (_tabId: string, _id: string, frame: DesktopPreviewRecordingFrame) => {
+                frames.push(frame);
+                Deferred.doneUnsafe(delivered, Effect.void);
+                return true;
+              },
+            ),
+          },
         );
-        expect(host.executeJavaScript).toHaveBeenCalledWith(
-          expect.stringContaining("tab_race_a"),
-          true,
+        host.executeJavaScript.mockImplementation(async (expression: string) =>
+          NodeVM.runInNewContext(expression, { __t3DesktopPreviewRecordingCapture: capture }),
         );
-        takeGrant();
-        yield* manager.stopRecording("tab_race_a");
+        const image = {
+          isEmpty: () => false,
+          toJPEG: () => Buffer.from("old guest"),
+          getSize: () => ({ width: 800, height: 600 }),
+        };
+        let receiveFrame!: (image: Electron.NativeImage, rect: Electron.Rectangle) => void;
+        const end = vi.fn();
+        const first = Object.assign(
+          makeTestPreviewWebContents(async () => image, 42, host),
+          {
+            beginFrameSubscription: vi.fn((_dirty: boolean, callback: typeof receiveFrame) => {
+              receiveFrame = callback;
+            }),
+            endFrameSubscription: end,
+          },
+        );
+        let receiveReplacement!: typeof receiveFrame;
+        const replacementEnd = vi.fn();
+        const replacement = Object.assign(
+          makeTestPreviewWebContents(async () => image, 43, host),
+          {
+            beginFrameSubscription: vi.fn((_dirty: boolean, callback: typeof receiveFrame) => {
+              receiveReplacement = callback;
+            }),
+            endFrameSubscription: replacementEnd,
+          },
+        );
+        fromId.mockImplementation((id) => (id === 42 ? first : replacement));
+        yield* manager.createTab("tab_replaced_frames");
+        yield* manager.registerWebview("tab_replaced_frames", 42);
+        yield* manager.startRecording("tab_replaced_frames");
+        yield* manager.registerWebview("tab_replaced_frames", 43);
+        expect(end).toHaveBeenCalledOnce();
+        receiveFrame(image as unknown as Electron.NativeImage, {
+          x: 0,
+          y: 0,
+          width: 800,
+          height: 600,
+        });
+        expect(frames).toHaveLength(0);
+        receiveReplacement(
+          {
+            ...image,
+            toJPEG: () => Buffer.from("replacement guest"),
+          } as unknown as Electron.NativeImage,
+          {
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+          },
+        );
+        yield* Deferred.await(delivered);
+        expect(frames).toHaveLength(1);
+        expect(frames[0]?.data).toBe(Buffer.from("replacement guest").toString("base64"));
+        yield* manager.stopRecording("tab_replaced_frames");
+        expect(end).toHaveBeenCalledOnce();
+        expect(replacementEnd).toHaveBeenCalledOnce();
       }),
     ),
   );
 
-  // Runs on the real clock: an earlier queueing design only settled under TestClock and stalled the
-  // losing start forever in the desktop app.
-  effectIt.live("settles both starts when two tabs race for the capture stream", () =>
+  for (const failure of ["zoom", "mute", "listeners"] as const) {
+    for (const withPictureInPicture of [false, true]) {
+      effectIt.effect(
+        `ends recording after early guest registration failure: ${failure}, PiP ${withPictureInPicture}`,
+        () =>
+          withManager((manager) =>
+            Effect.gen(function* () {
+              const host = makeTestHostWebContents();
+              const terminated = yield* Deferred.make<void>();
+              let finishTermination!: (value: boolean) => void;
+              const capture = Object.assign(
+                vi.fn(async () => ({ mode: "frame-subscription", captureId: "early-failure" })),
+                {
+                  source: vi.fn(() => true),
+                  end: vi.fn(() => {
+                    Deferred.doneUnsafe(terminated, Effect.void);
+                    return new Promise<boolean>((resolve) => (finishTermination = resolve));
+                  }),
+                },
+              );
+              host.executeJavaScript.mockImplementation(async (expression: string) =>
+                NodeVM.runInNewContext(expression, { __t3DesktopPreviewRecordingCapture: capture }),
+              );
+              const image = {
+                isEmpty: () => false,
+                toJPEG: () => Buffer.from("page"),
+                getSize: () => ({ width: 800, height: 600 }),
+              };
+              const firstEvents = new NodeEvents.EventEmitter();
+              const first = Object.assign(
+                makeTestPreviewWebContents(async () => image, 42, host),
+                {
+                  on: firstEvents.on.bind(firstEvents),
+                  off: firstEvents.off.bind(firstEvents),
+                  beginFrameSubscription: vi.fn(),
+                  endFrameSubscription: vi.fn(),
+                },
+              );
+              const replacement = Object.assign(
+                makeTestPreviewWebContents(async () => image, 43, host),
+                { beginFrameSubscription: vi.fn(), endFrameSubscription: vi.fn() },
+              );
+              fromId.mockImplementation((id) => (id === 42 ? first : replacement));
+              const { pictureInPictureWindow } = makeTestPictureInPictureWindow();
+              browserWindowConstructor.mockImplementation(function () {
+                return pictureInPictureWindow;
+              });
+              yield* manager.createTab("tab_early_failure");
+              yield* manager.registerWebview("tab_early_failure", 42);
+              yield* manager.startRecording("tab_early_failure");
+              if (withPictureInPicture) yield* manager.openPictureInPicture("tab_early_failure");
+              firstEvents.emit("render-process-gone");
+              yield* TestClock.adjust("1 second");
+
+              const originalError = new Error(`Failed ${failure}`);
+              const fail = () => {
+                throw originalError;
+              };
+              const operation =
+                failure === "zoom"
+                  ? "registerWebview.restoreZoomFactor"
+                  : failure === "mute"
+                    ? "registerWebview.restoreAudioMuted"
+                    : "attachListeners";
+              if (failure === "zoom")
+                vi.mocked(replacement.setZoomFactor).mockImplementationOnce(fail);
+              if (failure === "mute")
+                vi.mocked(replacement.setAudioMuted).mockImplementationOnce(fail);
+              // This fails after guest/IPC listeners were installed, exercising scope cleanup.
+              if (failure === "listeners")
+                vi.mocked(replacement.setWindowOpenHandler).mockImplementationOnce(fail);
+              const registration = yield* manager
+                .registerWebview("tab_early_failure", 43)
+                .pipe(Effect.exit);
+              expect(registration).toMatchObject({
+                _tag: "Failure",
+                cause: {
+                  reasons: [
+                    {
+                      _tag: "Fail",
+                      error: { _tag: "PreviewOperationError", operation, cause: originalError },
+                    },
+                  ],
+                },
+              });
+              expect(webviewSend).toHaveBeenCalledWith("preview:recording-cursor", false);
+              yield* Deferred.await(terminated);
+              expect(capture.end).toHaveBeenCalledExactlyOnceWith(
+                "tab_early_failure",
+                "early-failure",
+              );
+              expect(first.endFrameSubscription).toHaveBeenCalledOnce();
+              expect(releaseRecordingPermission).toHaveBeenCalledOnce();
+              expect(firstEvents.listenerCount("render-process-gone")).toBe(0);
+              expect(replacement.beginFrameSubscription).not.toHaveBeenCalled();
+              expect(replacement.setBackgroundThrottling).toHaveBeenLastCalledWith(
+                !withPictureInPicture,
+              );
+              expect(pictureInPictureWindow.close).not.toHaveBeenCalled();
+              if (failure === "listeners") {
+                expect(replacement.off).toHaveBeenCalledWith(
+                  "did-start-navigation",
+                  expect.any(Function),
+                );
+                expect(replacement.ipc.off).toHaveBeenCalledWith(
+                  "preview:recording-input",
+                  expect.any(Function),
+                );
+              }
+              // STOP and retry must finish even while matching termination has no acknowledgement.
+              yield* manager.stopRecording("tab_early_failure");
+              yield* manager.registerWebview("tab_early_failure", 43);
+              expect(capture.source).not.toHaveBeenCalled();
+              expect(replacement.beginFrameSubscription).not.toHaveBeenCalled();
+              finishTermination(true);
+              capture.mockResolvedValueOnce({ mode: "frame-subscription", captureId: "fresh" });
+              yield* manager.startRecording("tab_early_failure");
+              yield* TestClock.adjust("5 seconds");
+              expect(capture.end).toHaveBeenCalledOnce();
+              expect(replacement.beginFrameSubscription).toHaveBeenCalledOnce();
+              expect(replacement.endFrameSubscription).not.toHaveBeenCalled();
+              yield* manager.stopRecording("tab_early_failure");
+              expect(replacement.endFrameSubscription).toHaveBeenCalledOnce();
+              if (withPictureInPicture) yield* manager.closePictureInPicture("tab_early_failure");
+              expect(replacement.setBackgroundThrottling).toHaveBeenLastCalledWith(true);
+            }),
+          ),
+      );
+    }
+  }
+
+  for (const failure of ["duplicate", "rejected", "after-rebind"] as const) {
+    effectIt.effect(`preserves healthy recording on guest registration failure: ${failure}`, () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const host = makeTestHostWebContents();
+          const delivered = yield* Deferred.make<void>();
+          const capture = Object.assign(
+            vi.fn(async () => ({ mode: "frame-subscription", captureId: "healthy" })),
+            {
+              source: vi.fn(() => true),
+              end: vi.fn(() => true),
+              frame: vi.fn(() => {
+                Deferred.doneUnsafe(delivered, Effect.void);
+                return true;
+              }),
+            },
+          );
+          host.executeJavaScript.mockImplementation(async (expression: string) =>
+            NodeVM.runInNewContext(expression, { __t3DesktopPreviewRecordingCapture: capture }),
+          );
+          const image = {
+            isEmpty: () => false,
+            toJPEG: () => Buffer.from("healthy page"),
+            getSize: () => ({ width: 800, height: 600 }),
+          };
+          let receive!: (frame: Electron.NativeImage, rect: Electron.Rectangle) => void;
+          const makeGuest = (id: number) =>
+            Object.assign(
+              makeTestPreviewWebContents(async () => image, id, host),
+              {
+                beginFrameSubscription: vi.fn((_dirty, callback: typeof receive) => {
+                  receive = callback;
+                }),
+                endFrameSubscription: vi.fn(),
+              },
+            );
+          const first = makeGuest(42);
+          const replacement = makeGuest(43);
+          fromId.mockImplementation((id) =>
+            id === 42 ? first : failure === "rejected" ? null : replacement,
+          );
+          yield* manager.createTab("tab_healthy_registration");
+          yield* manager.registerWebview("tab_healthy_registration", 42);
+          yield* manager.startRecording("tab_healthy_registration");
+          if (failure !== "rejected")
+            Object.assign(failure === "duplicate" ? first : replacement, {
+              send: vi.fn((channel) => {
+                if (channel === "preview:annotation-theme") throw new Error("Theme failed");
+              }),
+            });
+          const exit = yield* manager
+            .registerWebview("tab_healthy_registration", failure === "duplicate" ? 42 : 43)
+            .pipe(Effect.exit);
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(capture.end).not.toHaveBeenCalled();
+          const current = failure === "after-rebind" ? replacement : first;
+          expect(current.endFrameSubscription).not.toHaveBeenCalled();
+          receive(image as unknown as Electron.NativeImage, {
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+          });
+          yield* Deferred.await(delivered);
+          expect(capture.frame).toHaveBeenCalledWith(
+            "tab_healthy_registration",
+            "healthy",
+            expect.anything(),
+            failure === "after-rebind" ? 1 : 0,
+          );
+          yield* manager.stopRecording("tab_healthy_registration");
+          expect(current.endFrameSubscription).toHaveBeenCalledOnce();
+        }),
+      ),
+    );
+  }
+
+  for (const failure of ["refusal", "rejection", "timeout", "begin", "requester"] as const) {
+    effectIt.effect(
+      `finishes guest registration and ends failed recording rebind: ${failure}`,
+      () =>
+        withManager((manager) =>
+          Effect.gen(function* () {
+            const host = makeTestHostWebContents();
+            const terminated = yield* Deferred.make<void>();
+            const controlled = yield* Deferred.make<void>();
+            const navigated = yield* Deferred.make<void>();
+            let finishTermination!: (value: boolean) => void;
+            const capture = Object.assign(
+              vi.fn(async () => ({ mode: "frame-subscription", captureId: "failed-rebind" })),
+              {
+                source: vi.fn(() => {
+                  if (failure === "refusal") return false;
+                  if (failure === "rejection") return Promise.reject(new Error("Source rejected"));
+                  if (failure === "timeout") return new Promise<boolean>(() => {});
+                  return true;
+                }),
+                end: vi.fn((_tabId: string, _captureId: string) => {
+                  Deferred.doneUnsafe(terminated, Effect.void);
+                  return new Promise<boolean>((resolve) => (finishTermination = resolve));
+                }),
+              },
+            );
+            host.executeJavaScript.mockImplementation(async (expression: string) =>
+              NodeVM.runInNewContext(expression, { __t3DesktopPreviewRecordingCapture: capture }),
+            );
+            const image = {
+              isEmpty: () => false,
+              toJPEG: () => Buffer.from("page"),
+              getSize: () => ({ width: 800, height: 600 }),
+            };
+            const firstEnd = vi.fn();
+            const first = Object.assign(
+              makeTestPreviewWebContents(async () => image, 42, host),
+              {
+                beginFrameSubscription: vi.fn(),
+                endFrameSubscription: firstEnd,
+                loadURL: vi.fn(async () => undefined),
+              },
+            );
+            const replacementEnd = vi.fn();
+            const begin = vi.fn(() => {
+              if (failure === "begin") throw new Error("Native subscribe failed");
+            });
+            const replacement = Object.assign(
+              makeTestPreviewWebContents(
+                async () => image,
+                43,
+                failure === "requester" ? makeTestHostWebContents() : host,
+              ),
+              {
+                beginFrameSubscription: begin,
+                endFrameSubscription: replacementEnd,
+                isDevToolsOpened: () => false,
+                loadURL: vi.fn(async () => {
+                  Deferred.doneUnsafe(navigated, Effect.void);
+                }),
+              },
+            );
+            replacement.debugger.sendCommand = vi.fn(async (method: string) => {
+              if (method === "Emulation.setDefaultBackgroundColorOverride") {
+                Deferred.doneUnsafe(controlled, Effect.void);
+              }
+            });
+            fromId.mockImplementation((id) => (id === 42 ? first : replacement));
+            const states: PreviewManager.PreviewTabState[] = [];
+            yield* manager.subscribeStateChanges((_tabId, state) =>
+              Effect.sync(() => states.push(state)),
+            );
+            yield* manager.navigate("tab_failed_rebind", "https://example.com/pending");
+            yield* manager.registerWebview("tab_failed_rebind", 42);
+            yield* manager.startRecording("tab_failed_rebind");
+            webviewSend.mockClear();
+            const registration = yield* manager
+              .registerWebview("tab_failed_rebind", 43)
+              .pipe(Effect.forkChild({ startImmediately: true }));
+            if (failure === "timeout") yield* TestClock.adjust("5 seconds");
+            yield* Fiber.join(registration);
+            yield* Deferred.await(terminated);
+            yield* Deferred.await(controlled);
+            yield* Deferred.await(navigated);
+            // Termination has not acknowledged yet, so registration cannot be waiting
+            // on a renderer STOP that needs its own still-held lifecycle lock.
+            expect(capture.end).toHaveBeenCalledWith("tab_failed_rebind", "failed-rebind");
+            finishTermination(true);
+            expect(states.at(-1)?.webContentsId).toBe(43);
+            expect(replacement.loadURL).toHaveBeenCalledWith("https://example.com/pending");
+            expect(webviewSend).toHaveBeenCalledWith(
+              "preview:annotation-theme",
+              expect.objectContaining({ colorScheme: "light" }),
+            );
+            expect(firstEnd).toHaveBeenCalledOnce();
+            expect(replacementEnd).toHaveBeenCalledTimes(failure === "begin" ? 1 : 0);
+            expect(replacement.setBackgroundThrottling).toHaveBeenLastCalledWith(true);
+            yield* manager.registerWebview("tab_failed_rebind", 43);
+            expect(begin).toHaveBeenCalledTimes(failure === "begin" ? 1 : 0);
+            yield* manager.stopRecording("tab_failed_rebind");
+            expect(firstEnd).toHaveBeenCalledOnce();
+            expect(replacementEnd).toHaveBeenCalledTimes(failure === "begin" ? 1 : 0);
+
+            capture.mockResolvedValueOnce({ mode: "frame-subscription", captureId: "restarted" });
+            begin.mockImplementationOnce(() => undefined);
+            yield* manager.startRecording("tab_failed_rebind");
+            yield* manager.stopRecording("tab_failed_rebind");
+            expect(capture.source).toHaveBeenCalledTimes(failure === "requester" ? 0 : 1);
+          }),
+        ),
+    );
+  }
+
+  effectIt.effect("stops without waiting for blocked requester frame consumption", () =>
     withManager((manager) =>
       Effect.gen(function* () {
-        const { host, grants, takeGrant } = yield* setupRecordingRaceTabs(manager);
+        const host = makeTestHostWebContents();
+        host.executeJavaScript.mockResolvedValueOnce({
+          mode: "frame-subscription",
+          captureId: "blocked",
+        });
+        const image = {
+          isEmpty: () => false,
+          toJPEG: () => Buffer.from("frame"),
+          getSize: () => ({ width: 800, height: 600 }),
+        };
+        let receiveFrame!: (image: Electron.NativeImage, rect: Electron.Rectangle) => void;
+        const end = vi.fn();
+        const wc = Object.assign(
+          makeTestPreviewWebContents(async () => image, 42, host),
+          {
+            beginFrameSubscription: vi.fn((_dirty: boolean, callback: typeof receiveFrame) => {
+              receiveFrame = callback;
+            }),
+            endFrameSubscription: end,
+          },
+        );
+        fromId.mockReturnValue(wc);
+        yield* manager.createTab("tab_pending_frames");
+        yield* manager.registerWebview("tab_pending_frames", 42);
+        const delivered = yield* Deferred.make<void>();
+        let releasePending!: () => void;
+        const pending = new Promise<void>((resolve) => {
+          releasePending = resolve;
+        });
+        const frames: DesktopPreviewRecordingFrame[] = [];
+        const capture = Object.assign(() => true, {
+          frame: async (_tabId: string, _id: string, frame: DesktopPreviewRecordingFrame) => {
+            frames.push(frame);
+            Deferred.doneUnsafe(delivered, Effect.void);
+            await pending;
+            return true;
+          },
+        });
+        host.executeJavaScript.mockImplementation(async (expression: string) =>
+          NodeVM.runInNewContext(expression, { __t3DesktopPreviewRecordingCapture: capture }),
+        );
+        yield* manager.startRecording("tab_pending_frames");
+        receiveFrame(image as unknown as Electron.NativeImage, {
+          x: 0,
+          y: 0,
+          width: 800,
+          height: 600,
+        });
+        yield* Deferred.await(delivered);
+        receiveFrame(image as unknown as Electron.NativeImage, {
+          x: 0,
+          y: 0,
+          width: 800,
+          height: 600,
+        });
+        yield* manager.stopRecording("tab_pending_frames");
+        expect(frames).toHaveLength(1);
+        expect(end).toHaveBeenCalledOnce();
+        releasePending();
+      }),
+    ),
+  );
 
+  effectIt.effect(
+    "coalesces the final page update before encoding while consumption is blocked",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const firstConsumed = yield* Deferred.make<void>();
+          let releaseFirst!: () => void;
+          const firstConsumption = new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+          });
+          const finalConsumed = yield* Deferred.make<void>();
+          const host = makeTestHostWebContents();
+          const frames: DesktopPreviewRecordingFrame[] = [];
+          const capture = Object.assign(
+            () => ({ mode: "frame-subscription", captureId: "coalesced" }),
+            {
+              frame: async (
+                _tabId: string,
+                _captureId: string,
+                frame: DesktopPreviewRecordingFrame,
+              ) => {
+                frames.push(frame);
+                if (frames.length === 1) {
+                  Deferred.doneUnsafe(firstConsumed, Effect.void);
+                  await firstConsumption;
+                } else Deferred.doneUnsafe(finalConsumed, Effect.void);
+                return true;
+              },
+            },
+          );
+          host.executeJavaScript.mockImplementation(async (expression: string) =>
+            NodeVM.runInNewContext(expression, { __t3DesktopPreviewRecordingCapture: capture }),
+          );
+          const makeImage = (text: string) => ({
+            isEmpty: () => false,
+            getSize: () => ({ width: 800, height: 600 }),
+            toJPEG: vi.fn(() => Buffer.from(text)),
+          });
+          const first = makeImage("first");
+          const intermediate = makeImage("intermediate");
+          const final = makeImage("final");
+          let receive!: (image: Electron.NativeImage, rect: Electron.Rectangle) => void;
+          const end = vi.fn();
+          const wc = Object.assign(
+            makeTestPreviewWebContents(async () => first, 42, host),
+            {
+              beginFrameSubscription: vi.fn((_dirty: boolean, callback: typeof receive) => {
+                receive = callback;
+              }),
+              endFrameSubscription: end,
+            },
+          );
+          fromId.mockReturnValue(wc);
+          yield* manager.createTab("tab_coalesced");
+          yield* manager.registerWebview("tab_coalesced", 42);
+          yield* manager.startRecording("tab_coalesced");
+          const send = (image: typeof first) =>
+            receive(image as unknown as Electron.NativeImage, {
+              x: 0,
+              y: 0,
+              width: 800,
+              height: 600,
+            });
+          send(first);
+          yield* Deferred.await(firstConsumed);
+          send(intermediate);
+          send(final);
+          expect(intermediate.toJPEG).not.toHaveBeenCalled();
+          expect(final.toJPEG).not.toHaveBeenCalled();
+          releaseFirst();
+          yield* Deferred.await(finalConsumed);
+          expect(frames.map((frame) => Buffer.from(frame.data, "base64").toString())).toEqual([
+            "first",
+            "final",
+          ]);
+          expect(intermediate.toJPEG).not.toHaveBeenCalled();
+          expect(final.toJPEG).toHaveBeenCalledOnce();
+          yield* manager.stopRecording("tab_coalesced");
+          expect(end).toHaveBeenCalledOnce();
+        }),
+      ),
+  );
+
+  effectIt.live("starts concurrent recordings with sources bound to each authoritative guest", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const { host } = yield* setupRecordingRaceTabs(manager);
         const exits = yield* Effect.all(
           [
             Effect.exit(manager.startRecording("tab_race_a")),
@@ -3103,95 +4283,51 @@ describe("PreviewManager", () => {
           ],
           { concurrency: 2 },
         );
-
-        const [exitA, exitB] = exits;
-        // Exactly one start owns the stream; the other fails fast instead of hanging.
-        expect(exits.filter(Exit.isSuccess)).toHaveLength(1);
-        const loserExit = Exit.isSuccess(exitA) ? exitB : exitA;
-        if (Exit.isSuccess(loserExit)) return;
-        expect(Option.getOrThrow(Cause.findErrorOption(loserExit.cause))).toMatchObject({
-          _tag: "PreviewRecordingArmConflictError",
-        });
-
-        // The single grant goes to the tab that actually won the slot, never the other one.
-        takeGrant();
-        expect(grants).toEqual([{ video: { routingId: Exit.isSuccess(exitA) ? 41 : 42 } }]);
-        expect(host.session.setDisplayMediaRequestHandler).toHaveBeenCalledOnce();
-      }),
-    ),
-  );
-
-  effectIt.effect("releases an armed slot that the renderer never redeemed", () =>
-    withManager((manager) =>
-      Effect.gen(function* () {
-        const { grants, takeGrant } = yield* setupRecordingRaceTabs(manager);
-
-        yield* manager.startRecording("tab_race_a");
-        const blocked = yield* Effect.exit(manager.startRecording("tab_race_b"));
-        if (Exit.isSuccess(blocked)) throw new Error("expected the second tab to be refused");
-        expect(Option.getOrThrow(Cause.findErrorOption(blocked.cause))).toMatchObject({
-          _tag: "PreviewRecordingArmConflictError",
-          tabId: "tab_race_b",
-          armedTabId: "tab_race_a",
-        });
-
-        // Nothing ever captured the armed tab, so the slot goes stale and stops blocking starts.
-        yield* TestClock.adjust(10_000);
-        yield* manager.startRecording("tab_race_b");
-        takeGrant();
-        expect(grants).toEqual([{ video: { routingId: 42 } }]);
-
+        expect(exits.every(Exit.isSuccess)).toBe(true);
+        expect(host.executeJavaScript.mock.calls.map(([expression]) => expression)).toEqual(
+          expect.arrayContaining([
+            expect.stringContaining('"tab_race_a", "tab:41:requester:7"'),
+            expect.stringContaining('"tab_race_b", "tab:42:requester:7"'),
+          ]),
+        );
+        expect(host.executeJavaScript.mock.calls.every((call) => call.length === 1)).toBe(true);
         yield* manager.stopRecording("tab_race_a");
         yield* manager.stopRecording("tab_race_b");
       }),
     ),
   );
 
-  effectIt.effect("denies a display-media request that arrives after the arm went stale", () =>
-    withManager((manager) =>
-      Effect.gen(function* () {
-        const { grants, takeGrant } = yield* setupRecordingRaceTabs(manager);
-
-        yield* manager.startRecording("tab_race_a");
-        yield* TestClock.adjust(10_000);
-        // The handler cannot read a clock, so the expiry fiber must have dropped the frame.
-        takeGrant();
-        expect(grants).toEqual([{}]);
-
-        yield* manager.stopRecording("tab_race_a");
-      }),
-    ),
-  );
-
-  effectIt.effect("only lets the host frame that armed a recording claim its stream", () =>
-    withManager((manager) =>
-      Effect.gen(function* () {
-        const { grants, takeGrant } = yield* setupRecordingRaceTabs(manager);
-
-        yield* manager.startRecording("tab_race_a");
-        takeGrant({ frameTreeNodeId: 999 });
-        takeGrant();
-
-        expect(grants).toEqual([{}, { video: { routingId: 41 } }]);
-        yield* manager.stopRecording("tab_race_a");
-      }),
-    ),
-  );
-
-  effectIt.effect("reclaims the arm slot from a destroyed webContents", () =>
-    withManager((manager) =>
-      Effect.gen(function* () {
-        const { grants, takeGrant, destroy } = yield* setupRecordingRaceTabs(manager);
-
-        yield* manager.startRecording("tab_race_a");
-        destroy(41);
-        yield* manager.startRecording("tab_race_b");
-        takeGrant();
-        expect(grants).toEqual([{ video: { routingId: 42 } }]);
-
-        yield* manager.stopRecording("tab_race_b");
-      }),
-    ),
+  effectIt.effect(
+    "releases recording activity after source allocation fails and allows retry",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const capturePage = vi.fn(async () => ({
+            toJPEG: () => Buffer.from("frame"),
+            getSize: () => ({ width: 800, height: 600 }),
+          }));
+          const host = makeTestHostWebContents();
+          const wc = makeTestPreviewWebContents(capturePage, 42, host);
+          const getMediaSourceId = vi
+            .fn(() => "tab:fresh")
+            .mockImplementationOnce(() => {
+              throw new Error("source unavailable");
+            });
+          Object.assign(wc, { getMediaSourceId });
+          fromId.mockReturnValue(wc);
+          yield* manager.createTab("tab_source_retry");
+          yield* manager.registerWebview("tab_source_retry", 42);
+          const failed = yield* Effect.exit(manager.startRecording("tab_source_retry"));
+          expect(Exit.isFailure(failed)).toBe(true);
+          expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
+          expect(host.executeJavaScript).not.toHaveBeenCalled();
+          yield* manager.startRecording("tab_source_retry");
+          expect(getMediaSourceId).toHaveBeenLastCalledWith(host);
+          expect(host.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining("tab:fresh"));
+          yield* manager.stopRecording("tab_source_retry");
+          expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false], [true], [false], [true]]);
+        }),
+      ),
   );
 
   effectIt.effect(
@@ -3228,6 +4364,7 @@ describe("PreviewManager", () => {
           expect(Exit.isFailure(failed)).toBe(true);
           expect(cursorAtCapture).toEqual([true]);
           expect(cursorActive).toBe(false);
+          expect(releaseRecordingPermission).toHaveBeenCalledOnce();
 
           yield* manager.startRecording("tab_cursor");
           expect(cursorAtCapture).toEqual([true, true]);
@@ -3371,12 +4508,9 @@ describe("PreviewManager", () => {
         yield* manager.startRecording("tab_recording_warmup_failure");
         expect(capturePage).toHaveBeenCalledTimes(2);
 
-        // The armed tab answers exactly one display-media request, then further requests are denied.
-        const handler = host.displayMediaHandler();
-        const streams: Array<{ video?: unknown }> = [];
-        handler?.({ frame: host.mainFrame }, (value) => streams.push(value));
-        handler?.({ frame: host.mainFrame }, (value) => streams.push(value));
-        expect(streams).toEqual([{ video: { routingId: 42 } }, {}]);
+        expect(host.executeJavaScript).toHaveBeenCalledWith(
+          expect.stringContaining("tab:42:requester:7"),
+        );
 
         yield* manager.stopRecording("tab_recording_warmup_failure");
       }),
@@ -3460,6 +4594,7 @@ describe("PreviewManager", () => {
           id: 42,
           mainFrame: { routingId: 42 },
           hostWebContents: mainWindowWebContents,
+          getMediaSourceId: vi.fn(() => "tab:42"),
           executeJavaScript: vi.fn(async () => ({ width: 1280, height: 720 })),
           isDestroyed: () => false,
           getType: () => "webview",

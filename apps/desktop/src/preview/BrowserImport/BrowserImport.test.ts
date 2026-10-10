@@ -36,6 +36,7 @@ const layerRejectedBeforeSession = Layer.succeed(
     getPartition: () => Effect.die("getPartition must not be reached"),
     isPartition: () => false,
     getSession: () => Effect.die("getSession must not be reached"),
+    authorizeRecording: () => Effect.die(new Error("authorizeRecording must not be reached")),
     clearCookies: () => Effect.die("clearCookies must not be reached"),
     clearCache: () => Effect.die("clearCache must not be reached"),
   }),
