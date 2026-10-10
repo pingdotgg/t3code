@@ -2915,6 +2915,14 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     runId: RunId,
   }),
+  /** Stops one provider-native child while its owning run keeps working. */
+  Schema.Struct({
+    type: Schema.Literal("subagent.stop"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    subagentId: NodeId,
+  }),
   Schema.Struct({
     type: Schema.Literal("run.interrupt"),
     commandId: CommandId,
