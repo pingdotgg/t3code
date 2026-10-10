@@ -4832,9 +4832,9 @@ export default function ChatView(props: ChatViewProps) {
   const { state: deviceState, loaded: deviceStateLoaded } = useDeviceState(
     activeThreadRef?.environmentId ?? null,
   );
-  const pluginViews = sidePanelPluginViews(
-    usePluginViews(activeThreadRef?.environmentId ?? null).views,
-  );
+  const sessionPluginViews = usePluginViews(activeThreadRef?.environmentId ?? null).views;
+  // Filtering returns a new array whenever some views are not side panels.
+  const pluginViews = useMemo(() => sidePanelPluginViews(sessionPluginViews), [sessionPluginViews]);
   const pluginViewLaunchers = useMemo(
     (): PluginViewLauncher[] =>
       activeThreadRef === null
