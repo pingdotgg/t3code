@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildPeriodColumns,
   chartScale,
+  hasNoSavedHistory,
   historyHatchStartIndex,
   historyStartMarkers,
   niceScale,
@@ -142,6 +143,21 @@ describe("historyStartMarkers", () => {
   it("leaves earlier starts and providers without a boundary alone", () => {
     expect(historyStartMarkers(["codex"], days, new Map([["codex", "2026-08-01"]]))).toEqual([]);
     expect(historyStartMarkers(["codex"], days, new Map())).toEqual([]);
+  });
+});
+
+describe("hasNoSavedHistory", () => {
+  const starts = new Map([["claude" as const, 3]]);
+
+  it("is true only before the provider's own boundary", () => {
+    expect(hasNoSavedHistory(2, "claude", starts)).toBe(true);
+    expect(hasNoSavedHistory(3, "claude", starts)).toBe(false);
+    expect(hasNoSavedHistory(null, "claude", starts)).toBe(false);
+  });
+
+  it("keeps a provider that reports no boundary visible under the hatch", () => {
+    // Its quiet days read as zero, so its recorded values still show.
+    expect(hasNoSavedHistory(1, "opencode", starts)).toBe(false);
   });
 });
 

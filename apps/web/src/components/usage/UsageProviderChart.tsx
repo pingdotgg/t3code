@@ -114,6 +114,19 @@ export function historyHatchStartIndex(
   return bounded.length === 0 ? 0 : Math.min(...bounded);
 }
 
+/**
+ * A provider reads as "No history" only before its own saved-history boundary.
+ * A provider that reports none (OpenCode, Antigravity) keeps its recorded
+ * values, even under the hatch where only other providers' history is missing.
+ */
+export function hasNoSavedHistory(
+  hoverIndex: number | null,
+  provider: UsageProviderKind,
+  historyStartIndexes: ReadonlyMap<UsageProviderKind, number>,
+): boolean {
+  return hoverIndex !== null && hoverIndex < (historyStartIndexes.get(provider) ?? 0);
+}
+
 /** Shape-preserving cubic tangents that cannot overshoot spiky usage data. */
 function monotoneTangents(points: readonly Point[]): readonly number[] {
   const count = points.length;
@@ -568,55 +581,50 @@ export function UsageProviderChart({
               }}
             >
               <div className="mb-1 text-muted-foreground">{formatTooltipPeriod(hoveredPeriod)}</div>
-              {hoverIndex !== null && hoverIndex < historyStartIndex ? (
-                <div className="text-foreground">No saved history</div>
-              ) : (
-                <>
-                  {providers.map((provider) => {
-                    const { label, driverKind } = PROVIDER_PRESENTATION[provider];
-                    const unknown =
-                      hoverIndex !== null && hoverIndex < (historyStartIndexes.get(provider) ?? 0);
-                    return (
-                      <div key={provider} className="flex items-center justify-between gap-3">
-                        <span className="flex items-center gap-1.5 text-muted-foreground">
-                          <ProviderInstanceIcon
-                            driverKind={driverKind}
-                            displayName={label}
-                            iconClassName="size-3"
-                          />
-                          {label}
-                        </span>
-                        <span
-                          className={cn(
-                            "tabular-nums",
-                            unknown || loadingProviders.has(provider)
-                              ? "text-muted-foreground"
-                              : "text-foreground",
-                          )}
-                        >
-                          {unknown
-                            ? "No history"
-                            : format(
-                                hoveredColumn?.bands.find((band) => band.provider === provider)
-                                  ?.value ?? 0,
-                              )}
-                        </span>
-                      </div>
-                    );
-                  })}
-                  <div className="mt-1 flex items-center justify-between gap-3 border-t border-border pt-1">
-                    <span className="text-muted-foreground">Total</span>
+              {/* Only a provider's own boundary reads as "No history"; a provider
+                  that reports none keeps its recorded values under the hatch. */}
+              {providers.map((provider) => {
+                const { label, driverKind } = PROVIDER_PRESENTATION[provider];
+                const unknown = hasNoSavedHistory(hoverIndex, provider, historyStartIndexes);
+                return (
+                  <div key={provider} className="flex items-center justify-between gap-3">
+                    <span className="flex items-center gap-1.5 text-muted-foreground">
+                      <ProviderInstanceIcon
+                        driverKind={driverKind}
+                        displayName={label}
+                        iconClassName="size-3"
+                      />
+                      {label}
+                    </span>
                     <span
                       className={cn(
                         "tabular-nums",
-                        partial ? "text-muted-foreground" : "text-foreground",
+                        unknown || loadingProviders.has(provider)
+                          ? "text-muted-foreground"
+                          : "text-foreground",
                       )}
                     >
-                      {format(hoveredColumn?.total ?? 0)}
+                      {unknown
+                        ? "No history"
+                        : format(
+                            hoveredColumn?.bands.find((band) => band.provider === provider)
+                              ?.value ?? 0,
+                          )}
                     </span>
                   </div>
-                </>
-              )}
+                );
+              })}
+              <div className="mt-1 flex items-center justify-between gap-3 border-t border-border pt-1">
+                <span className="text-muted-foreground">Total</span>
+                <span
+                  className={cn(
+                    "tabular-nums",
+                    partial ? "text-muted-foreground" : "text-foreground",
+                  )}
+                >
+                  {format(hoveredColumn?.total ?? 0)}
+                </span>
+              </div>
             </div>
           )}
         </div>
