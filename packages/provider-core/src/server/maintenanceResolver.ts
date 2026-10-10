@@ -278,12 +278,12 @@ export function npmGlobalPrefixFromCommandPath(
  * in `node_modules\.bin`.
  */
 export function windowsNpmPrefixFromPackagePath(
-  realCommandPath: string,
+  commandPath: string,
   packageName: string,
 ): string | null {
   // Only ASCII is lowercased: `İ` lowercases to two code units, which would shift
-  // indexes into `realCommandPath`. The segment and npm package names are ASCII.
-  const normalized = realCommandPath
+  // indexes into `commandPath`. The segment and npm package names are ASCII.
+  const normalized = commandPath
     .replaceAll("\\", "/")
     .replace(/[A-Z]/g, (letter) => letter.toLowerCase());
   const packageIndex = normalized.lastIndexOf(`/node_modules/${packageName.toLowerCase()}/`);
@@ -295,7 +295,7 @@ export function windowsNpmPrefixFromPackagePath(
   // current directory rather than its root.
   const head = normalized.slice(0, packageIndex);
   const isRoot = /^[a-z]:$/.test(head) || /^\/\/[^/]+\/[^/]+$/.test(head);
-  return realCommandPath.slice(0, isRoot ? packageIndex + 1 : packageIndex);
+  return commandPath.slice(0, isRoot ? packageIndex + 1 : packageIndex);
 }
 
 // `<prefix>/Cellar/<name>/<version>/…` or `<prefix>/Caskroom/<name>/<version>/…`.
@@ -637,18 +637,25 @@ const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (
   if (hasManifest) {
     return shimDir;
   }
-  const prefix = windowsNpmPrefixFromPackagePath(context.realCommandPath, packageName);
-  if (!prefix) {
+  // Prefer the path as configured, like the shim proof above, so a prefix behind
+  // a junction (nvm-windows' `C:\nvm4w\nodejs`) gets one lock key either way.
+  const commandPath = [context.resolvedCommandPath, context.realCommandPath].find(
+    (candidate) => windowsNpmPrefixFromPackagePath(candidate, packageName) !== null,
+  );
+  const prefix = commandPath && windowsNpmPrefixFromPackagePath(commandPath, packageName);
+  if (!commandPath || !prefix) {
     return null;
   }
-  // npm's shim runs `"%dp0%\node_modules\<pkg>\…"`. Requiring that target, not
-  // just a same-named `.cmd`, keeps a project's own script from passing.
-  const command = path.basename(context.realCommandPath, path.extname(context.realCommandPath));
+  // npm's shim runs `"%dp0%\node_modules\<pkg>\…"` (`%~dp0\…` in older npm).
+  // Requiring that target, not just a same-named `.cmd`, keeps a project's own
+  // script from passing.
+  const command = path.basename(commandPath, path.extname(commandPath));
   const shim = yield* fileSystem
     .readFileString(path.join(prefix, `${command}.cmd`))
     .pipe(Effect.orElseSucceed(() => ""));
-  const shimTarget = `%dp0%\\node_modules\\${packageName.replaceAll("/", "\\")}\\`;
-  return shim.toLowerCase().includes(shimTarget.toLowerCase()) ? prefix : null;
+  const shimText = shim.toLowerCase();
+  const target = `\\node_modules\\${packageName.toLowerCase().replaceAll("/", "\\")}\\`;
+  return shimText.includes(`%dp0%${target}`) || shimText.includes(`%~dp0${target}`) ? prefix : null;
 });
 
 export function makePackageManagedProviderMaintenanceResolver(

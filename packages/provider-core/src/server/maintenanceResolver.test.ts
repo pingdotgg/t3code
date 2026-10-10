@@ -454,6 +454,44 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         args: ["install", "-g", "--prefix", prefix, expect.any(String), expect.any(String)],
       });
 
+      // Older npm writes `%~dp0\…` instead of `%dp0%\…`.
+      const olderPrefix = yield* makeTempDir("t3-npm-windows-older-shim");
+      const olderExe = writePackageExe(olderPrefix);
+      NodeFS.writeFileSync(
+        NodePath.join(olderPrefix, "package-tool.cmd"),
+        npmShim.replace("%dp0%", "%~dp0"),
+      );
+      expect((yield* resolve(olderExe)).update).toMatchObject({
+        args: ["install", "-g", "--prefix", olderPrefix, expect.any(String), expect.any(String)],
+      });
+
+      // Behind a junction (nvm-windows' `C:\nvm4w\nodejs`) the configured path
+      // names the prefix, as it does for a shim, so both share one lock key.
+      const visiblePrefix = yield* makeTempDir("t3-npm-windows-junction");
+      const visibleExe = writePackageExe(visiblePrefix);
+      NodeFS.writeFileSync(NodePath.join(visiblePrefix, "package-tool.cmd"), npmShim);
+      const behindJunction = yield* resolvePackageManagedProviderMaintenance(
+        {
+          provider: driver("packageTool"),
+          npmPackageName: "@example/package-tool",
+          nativeUpdate: null,
+        },
+        {
+          binaryPath: visibleExe,
+          resolvedCommandPath: visibleExe,
+          realCommandPath: globalExe,
+          env: {},
+          platform: "win32",
+        },
+      ).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+      );
+      expect(behindJunction.update).toMatchObject({
+        args: ["install", "-g", "--prefix", visiblePrefix, expect.any(String), expect.any(String)],
+        lockKey: `npm-global:${normalizeCommandPath(visiblePrefix)}`,
+      });
+
       // A project dependency keeps npm's shim in `node_modules\.bin`, and a
       // same-named script of the project's own is not npm's shim, so it stays manual.
       const project = yield* makeTempDir("t3-npm-windows-project-exe");
