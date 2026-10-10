@@ -1,3 +1,4 @@
+import { RegistryContext, useAtomMount } from "@effect/atom-react";
 import {
   AudioModule,
   RecordingPresets,
@@ -20,9 +21,16 @@ import {
   type ReactNode,
 } from "react";
 import { AppState, Platform } from "react-native";
+import { AsyncResult } from "effect/reactivity";
 import { useSharedValue } from "react-native-reanimated";
 
+import {
+  microphoneOrder,
+  preferredMicrophoneInput,
+  rememberMicrophones,
+} from "../../lib/microphonePriority";
 import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { getNativeShowcaseScene } from "../showcase/nativeShowcaseScene";
 import {
   VOICE_RECORDING_LIMIT_SECONDS,
@@ -91,6 +99,10 @@ export function useGlobalVoiceInput() {
 }
 
 function useVoiceInputRuntime() {
+  const registry = use(RegistryContext);
+  // Dictation reads and records microphones without subscribing the provider to preferences.
+  useAtomMount(mobilePreferencesAtom);
+  useAtomMount(updateMobilePreferencesAtom);
   const [{ state, ownerKey, label }, setState] = useState({
     state: INITIAL_STATE,
     ownerKey: null as string | null,
@@ -125,6 +137,21 @@ function useVoiceInputRuntime() {
           error: status.error,
           url: status.url,
         });
+      },
+      // Read when recording starts so preference changes do not re-render every composer.
+      selectInput: (inputs) => {
+        const preferences = registry.get(mobilePreferencesAtom);
+        if (!AsyncResult.isSuccess(preferences)) return null;
+        const known = microphoneOrder(preferences.value.microphones);
+        const order = rememberMicrophones(known, inputs);
+        if (order !== known) {
+          registry.set(updateMobilePreferencesAtom, {
+            transform: (current) => ({
+              microphones: rememberMicrophones(microphoneOrder(current.microphones), inputs),
+            }),
+          });
+        }
+        return preferredMicrophoneInput(inputs, order);
       },
     });
     recorderRef.current = recorder;
