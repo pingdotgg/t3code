@@ -2516,7 +2516,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
     });
 
-    lastSubprocessPollSucceeded = snapshotSucceeded;
+    // `snapshotSucceeded` only drives backoff: the ps fallback still reads a fresh table.
+    lastSubprocessPollSucceeded = true;
     yield* Effect.forEach(runningSessions, checkSubprocessActivity, {
       concurrency: "unbounded",
       discard: true,
