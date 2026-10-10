@@ -10952,7 +10952,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : [shell.latestRunId],
           })
           .pipe(mapDispatchError(command));
-        const pending = projection.runs.filter((run) => run.streamRecovery?.state === "pending");
+        // Earlier work in this command may already have disposed a completion
+        // cohort. Cancel against that planned run, not the older persisted row.
+        const plannedEvents = yield* Ref.get(events);
+        const pending = projection.runs
+          .map(
+            (run) =>
+              plannedEvents.findLast(
+                (
+                  event,
+                ): event is Extract<OrchestrationV2DomainEvent, { readonly type: "run.updated" }> =>
+                  event.type === "run.updated" &&
+                  event.threadId === run.threadId &&
+                  event.payload.id === run.id,
+              )?.payload ?? run,
+          )
+          .filter((run) => run.streamRecovery?.state === "pending");
         if (pending.length > 0) {
           for (const run of pending)
             yield* emit(

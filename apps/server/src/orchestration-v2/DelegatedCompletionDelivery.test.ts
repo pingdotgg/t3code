@@ -21,6 +21,8 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
@@ -1047,7 +1049,189 @@ const seedStreamFailedChild = (input: Parameters<typeof seedRestartCancelledChil
     return { ...child, providerThreadId };
   });
 
-it.layer(makeLayerTest(true))("delegated tasks during stream recovery", (it) => {
+const layerStreamRecoveryTest = Layer.merge(
+  makeLayerTest(true),
+  ProviderContinuationRequests.layer,
+);
+
+it.layer(layerStreamRecoveryTest)("delegated tasks during stream recovery", (it) => {
+  it.effect("keeps a stopped main cohort disposed when cancelling its stream recovery", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+      const parentWake = yield* requests.take.pipe(Effect.forkScoped);
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:stopped-stream-main");
+      const projectId = ProjectId.make("project:stopped-stream-main");
+      const runId = RunId.make("run:stopped-stream-main");
+      const rootNodeId = NodeId.make("node:stopped-stream-main");
+      const completedTaskId = NodeId.make("node:stopped-stream-main-delivery");
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId,
+        runId,
+        rootNodeId,
+        taskId: completedTaskId,
+        deliveryState: "claimed",
+        deliveryTaskIds: [completedTaskId],
+        now,
+      });
+      const child = yield* seedRestartCancelledChild({
+        parentThreadId: threadId,
+        projectId,
+        parentRunId: runId,
+        rootNodeId,
+        name: "child-completing-after-stream-main-stop",
+        completionWake: "always",
+        continuationPending: false,
+        now,
+      });
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      const parentRun = before.runs.find((run) => run.id === runId)!;
+      assert.equal(parentRun.delegatedCompletion?.disposition, "open");
+      assert.deepEqual(parentRun.delegatedCompletion?.delivery?.taskIds, [completedTaskId]);
+      const dueAt = DateTime.add(now, { seconds: 30 });
+      const commandId = reconcileCommandId("stopped-stream-main:failure");
+      yield* eventSink.writeWithEffects({
+        commandId,
+        events: [
+          runEvent({
+            threadId: child.childThreadId,
+            runId: child.childRunId,
+            ordinal: 1,
+            status: "running",
+            now,
+          }),
+          {
+            id: EventId.make("event:stopped-stream-main:failure"),
+            type: "run.updated",
+            threadId,
+            runId,
+            occurredAt: now,
+            payload: {
+              ...parentRun,
+              status: "failed",
+              completedAt: now,
+              streamRecovery: { state: "pending", attempt: 1, dueAt: DateTime.formatIso(dueAt) },
+            },
+          },
+        ],
+        effects: [
+          {
+            id: `effect:stream-recovery:${runId}`,
+            commandId,
+            threadId,
+            request: {
+              type: "provider-runtime.recover-stream",
+              sourceRunId: runId,
+              generation: (yield* settings.getSettings).codexStreamRecoveryGeneration,
+            },
+            availableAt: dueAt,
+          },
+        ],
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make("command:stopped-stream-main:stop"),
+        threadId,
+      });
+
+      // Stop's cohort disposal and recovery cancellation are one command. The
+      // committed row must preserve both before any reconciliation runs.
+      const stopped = yield* orchestrator.getThreadProjection(threadId);
+      const stoppedRun = stopped.runs.find((run) => run.id === runId)!;
+      assert.equal(stoppedRun.delegatedCompletion?.disposition, "stopped");
+      assert.isNull(stoppedRun.delegatedCompletion?.delivery);
+      assert.equal(stoppedRun.streamRecovery?.state, "cancelled");
+      assert.equal(
+        stopped.subagents.find((task) => task.id === completedTaskId)?.completionDelivery?.state,
+        "disposed",
+      );
+      assert.equal(
+        stopped.subagents.find((task) => task.id === child.taskId)?.completionDelivery?.state,
+        "disposed",
+      );
+      const recoveryEffect = yield* outbox.get(`effect:stream-recovery:${runId}`);
+      assert.equal(
+        recoveryEffect._tag === "Some" ? recoveryEffect.value.status : undefined,
+        "cancelled",
+      );
+
+      yield* eventSink.write({
+        commandId: reconcileCommandId("stopped-stream-main:child-completed"),
+        events: [
+          {
+            id: EventId.make("event:stopped-stream-main:child-result"),
+            type: "message.updated",
+            threadId: child.childThreadId,
+            runId: child.childRunId,
+            occurredAt: now,
+            payload: {
+              id: MessageId.make("message:stopped-stream-main:child-result"),
+              threadId: child.childThreadId,
+              runId: child.childRunId,
+              nodeId: null,
+              role: "assistant",
+              text: "Completed the saved child work.",
+              attachments: [],
+              streaming: false,
+              createdBy: "agent",
+              creationSource: "server",
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+          runEvent({
+            threadId: child.childThreadId,
+            runId: child.childRunId,
+            ordinal: 1,
+            status: "completed",
+            now,
+          }),
+        ],
+      });
+      yield* orchestrator.recoverDelegatedTasks;
+      const finished = yield* orchestrator.getThreadProjection(threadId);
+      const finishedChild = finished.subagents.find((task) => task.id === child.taskId)!;
+      assert.equal(finishedChild.childThreadId, child.childThreadId);
+      assert.equal(finishedChild.status, "completed");
+      assert.equal(finishedChild.result, "Completed the saved child work.");
+      assert.equal(finishedChild.completionDelivery?.state, "disposed");
+      assert.equal(
+        finished.subagents.find((task) => task.id === completedTaskId)?.result,
+        before.subagents.find((task) => task.id === completedTaskId)?.result,
+      );
+      assert.lengthOf(
+        finished.contextTransfers.filter(
+          (transfer) =>
+            transfer.type === "subagent_result" && transfer.sourceThreadId === child.childThreadId,
+        ),
+        1,
+      );
+      assert.equal(
+        finished.runs.find((run) => run.id === runId)?.delegatedCompletion?.disposition,
+        "stopped",
+      );
+      assert.isNull(finished.runs.find((run) => run.id === runId)?.delegatedCompletion?.delivery);
+      assert.lengthOf(finished.runs, 1);
+      assert.deepEqual(finished.messages, stopped.messages);
+      yield* TestClock.adjust("30 seconds");
+      assert.equal(yield* worker.drain(1), 0);
+      yield* orchestrator.recoverDelegatedTasks;
+      const replayed = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(replayed.subagents, finished.subagents);
+      assert.deepEqual(replayed.contextTransfers, finished.contextTransfers);
+      assert.deepEqual(replayed.messages, finished.messages);
+      assert.deepEqual(replayed.runs, finished.runs);
+      yield* Fiber.interrupt(parentWake);
+      assert.isTrue(Exit.isFailure(yield* Fiber.await(parentWake)));
+    }),
+  );
+
   it.effect("keeps completed child results when the parent fails with recovery pending", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
