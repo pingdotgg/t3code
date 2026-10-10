@@ -20,11 +20,13 @@ import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   type ChatAttachment,
   CommandId,
+  isPluginContextTurnItem,
   isProviderNativeSubagentThread,
   MessageId,
   type NodeId,
   type ModelSelection,
   OrchestrationV2Command,
+  type OrchestrationV2ApprovalResolvedBy,
   type OrchestrationV2InternalCommand,
   type OrchestrationV2ServerCommand,
   type ThreadPullRequestLink,
@@ -51,6 +53,7 @@ import {
   type OrchestrationV2TurnItem,
   latestProviderTurnForAttempt,
   orchestrationV2RunWorkStartedAt,
+  PluginApprovalKind,
   ProviderInstanceId,
   ProviderInteractionMode,
   type ProviderSessionId,
@@ -88,6 +91,7 @@ import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
 import { notificationTurnItem } from "@t3tools/provider-core/server/notification";
 import { isRestartNoteSource } from "./RestartBackgroundNote.ts";
+import { notAddedPluginContextItem } from "./RunContextEnrichment.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -470,6 +474,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "queued-run.cancel":
     case "queued-run.edit":
     case "runtime-request.respond":
+    case "runtime-request.plugin-respond":
     case "thread.user-input.dismiss":
     case "checkpoint.rollback":
     case "checkpoint.rollback.fail":
@@ -490,6 +495,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
       return command.targetThreadId;
   }
 }
+
+const isPluginApprovalKind = Schema.is(PluginApprovalKind);
 
 function pendingThreadTitleGenerationEffect(
   commandId: CommandId,
@@ -7249,6 +7256,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command: Extract<OrchestrationV2Command, { readonly type: "runtime-request.respond" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    resolvedBy?: OrchestrationV2ApprovalResolvedBy,
   ) =>
     Effect.gen(function* () {
       const context = yield* projectionStore
@@ -7276,6 +7284,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandId: command.commandId,
           commandType: command.type,
           cause: runtimeRequest.responseCapability.reason,
+        });
+      }
+      if (
+        resolvedBy !== undefined &&
+        (context.item?.type !== "approval_request" || !isPluginApprovalKind(runtimeRequest.kind))
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Plugins cannot answer ${runtimeRequest.kind} requests.`,
         });
       }
       const providerSessionId =
@@ -7370,6 +7388,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     ),
                   },
                 }
+              : {}),
+            ...(approvalTurnItem.type === "approval_request" && resolvedBy !== undefined
+              ? { resolvedBy }
               : {}),
             status: resolvedNodeStatus,
             completedAt: now,
@@ -9082,6 +9103,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             },
           });
         }
+        // Plugins still answering never reach this run; close their items with it.
+        for (const contextItem of projection.turnItems
+          .filter(isPluginContextTurnItem)
+          .filter((candidate) => candidate.runId === run.id && candidate.status === "running")) {
+          yield* emitEvent({
+            type: "turn-item.updated",
+            threadId: command.threadId,
+            runId: run.id,
+            nodeId: rootNode.id,
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: now,
+            payload: notAddedPluginContextItem(contextItem, {
+              status: "interrupted",
+              reason: "The run was interrupted before the plugin answered.",
+              now,
+            }),
+          });
+        }
         yield* emitEvent({
           type: "run-attempt.updated",
           threadId: command.threadId,
@@ -10522,6 +10561,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "runtime-request.respond":
         yield* dispatchRuntimeRequestRespond(command, events, effects);
+        break;
+      case "runtime-request.plugin-respond":
+        yield* dispatchRuntimeRequestRespond(
+          {
+            type: "runtime-request.respond",
+            commandId: command.commandId,
+            threadId: command.threadId,
+            requestId: command.requestId,
+            decision: command.resolvedBy.decision,
+          },
+          events,
+          effects,
+          command.resolvedBy,
+        );
         break;
       case "thread.user-input.dismiss":
         yield* dispatchThreadUserInputDismiss(command, events, effects);

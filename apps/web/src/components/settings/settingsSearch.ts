@@ -21,6 +21,7 @@ export type SettingsPath =
   | "/settings/providers"
   | "/settings/integrations"
   | "/settings/scheduled-tasks"
+  | "/settings/plugins"
   | "/settings/source-control"
   | "/settings/storage"
   | "/settings/connections"
@@ -72,6 +73,7 @@ export interface SettingsSearchItem {
    */
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
+  readonly requiresPlugins?: boolean;
 }
 
 export interface SettingsSearchAvailability {
@@ -84,6 +86,7 @@ export interface SettingsSearchAvailability {
   readonly isWslSettingsRowVisible: boolean;
   readonly hasThreadAutoSettlement: boolean;
   readonly managedTunnelActive?: boolean;
+  readonly hasPluginEnvironment: boolean;
 }
 
 /**
@@ -99,6 +102,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/providers": "Providers",
   "/settings/integrations": "Integrations",
   "/settings/scheduled-tasks": "Scheduled Tasks",
+  "/settings/plugins": "Plugins",
   "/settings/source-control": "Source Control",
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
@@ -950,6 +954,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["pull request trusted environments shared credentials permissions read actions"],
   },
   {
+    id: "plugins",
+    title: "Plugins",
+    to: "/settings/plugins",
+    searchTerms: [
+      "extensions trusted local code add directory review approve consent digest enable disable remove resume",
+    ],
+    requiresPlugins: true,
+  },
+  {
     id: "archive",
     title: "Archived threads",
     to: "/settings/archived",
@@ -975,6 +988,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/storage": "project-defaults",
   "/settings/connections": "connections",
   "/settings/scheduled-tasks": null,
+  "/settings/plugins": null,
   "/settings/archived": "project-defaults",
 };
 
@@ -1095,7 +1109,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.localEnvironmentOnly || !availability.localEnvironmentDisabled) &&
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
-      (!item.managedTunnelOnly || availability.managedTunnelActive === true),
+      (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
+      (!item.requiresPlugins || availability.hasPluginEnvironment),
   );
 }
 

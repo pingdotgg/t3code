@@ -44,6 +44,7 @@ import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import {
   liveThoughtLine,
+  pluginContextInspection,
   resolveWorkEntryToolPresentation,
   resolveViewedImageAsset,
   workEntryViewedImagePath,
@@ -5224,7 +5225,14 @@ function buildToolCallExpandedBody(
     seen.add(text);
     blocks.push(text);
   };
-  if (workEntry.itemType === "dynamic_tool" && workEntry.toolData !== undefined) {
+  const pluginContext =
+    workEntry.structuredPayload === undefined
+      ? null
+      : pluginContextInspection(workEntry.structuredPayload);
+  if (pluginContext !== null) {
+    addBlock(`From ${pluginContext.source}`);
+    for (const block of pluginContext.blocks) addBlock(`${block.label}\n${block.text}`);
+  } else if (workEntry.itemType === "dynamic_tool" && workEntry.toolData !== undefined) {
     const input =
       workEntry.structuredPayload?.type === "dynamic_tool"
         ? workEntry.structuredPayload.input
