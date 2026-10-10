@@ -132,6 +132,18 @@ describe("readNpmTarball", () => {
         [[manifest, { path: "package/./main.js", data: "x" }], /leaves or names/],
         [[manifest, { path: "package\\..\\evil.js", data: "x" }], /not a relative path/],
         [[manifest, { path: "C:/evil.js", data: "x" }], /not a relative path/],
+        // A pax path can carry a NUL, which no file name can hold.
+        [
+          [
+            manifest,
+            {
+              path: "package/main.js",
+              data: "x",
+              pax: [new TextEncoder().encode("path=package/main\0.js")],
+            },
+          ],
+          /has a NUL byte/,
+        ],
         // An NTFS alternate stream of an ordinary file, which the consent digest never reads.
         [[manifest, { path: "package/payload:code.mjs", data: "x" }], /has a colon/],
         [[manifest, { path: "package/lib:stream/x.js", data: "x" }], /has a colon/],

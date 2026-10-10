@@ -4,7 +4,7 @@
  * land outside the package or that a digest could not describe.
  *
  * Only regular files and directories are accepted. Links, devices, absolute
- * paths, `..` or `.` segments, backslashes, colons, and two entries that would be the
+ * paths, `..` or `.` segments, backslashes, colons, NUL bytes, and two entries that would be the
  * same file on a case-insensitive disk are refused, never skipped or
  * rewritten. Like npm, the first path segment (`package/`) is dropped. The
  * whole archive is checked before the caller writes any of it. Parsing runs
@@ -125,6 +125,8 @@ const packagePath = (raw: string, limits: NpmTarballLimits) => {
   for (const segment of segments)
     if (segment === "" || segment === "." || segment === "..")
       throw unsafe(`The tarball entry ${JSON.stringify(raw)} leaves or names its own directory.`);
+  if (raw.includes("\0"))
+    throw unsafe(`The tarball entry ${JSON.stringify(raw)} has a NUL byte in its path.`);
   // On NTFS `name:stream` writes a hidden stream that listing the directory never shows.
   if (raw.includes(":"))
     throw unsafe(`The tarball entry ${JSON.stringify(raw)} has a colon in its path.`);
