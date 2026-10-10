@@ -111,7 +111,7 @@ describe("panel resize cleanup", () => {
       });
       await act(() => frame?.(0));
       expect(hostStyle.get(RESIZABLE_WIDTH_PROPERTY)).toBe("450px");
-      expect(hostStyle.get("transition-duration")).toBe("0ms");
+      expect(hostStyle.get("transition-property")).toBe("none");
       expect(result.width).toBe(400);
       // Queue another move to check that interruption cancels pending work too.
       await act(() => result.handlers.onPointerMove(pointer(25)));
@@ -126,7 +126,7 @@ describe("panel resize cleanup", () => {
       expect(style.cursor).toBe("");
       expect(style.userSelect).toBe("");
       expect(captured).toBe(false);
-      expect(hostStyle.has("transition-duration")).toBe(false);
+      expect(hostStyle.has("transition-property")).toBe(false);
       expect(cancelAnimationFrame).toHaveBeenCalledWith(42);
       if (reason === "unmount") {
         expect(setItem).not.toHaveBeenCalled();
