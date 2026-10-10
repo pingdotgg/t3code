@@ -76,6 +76,21 @@ describe("chat canvas layout", () => {
     expect(result.chat.left).toBe(48);
     expectClear(result);
   });
+  it.each([900, 1000, 1004])("allows dragging across a %spx chat canvas", (width) => {
+    const start = resolve(width, { ...preview, position: { x: width - 332, y: 200 } }).frame!;
+    const moved = resolve(width, {
+      ...preview,
+      position: { x: start.x - 300, y: start.y },
+      lastInteraction: "drag",
+    });
+    expect(moved.frame).toEqual({ ...start, x: start.x - 300 });
+    const returned = resolve(width, {
+      ...preview,
+      position: { x: start.x, y: start.y },
+      lastInteraction: "drag",
+    });
+    expect(returned.frame).toEqual(start);
+  });
   it("stops leftward dragging before the player can push chat to the right", () => {
     const centered = resolve(1344, null).chat;
     for (const x of [1100, 800, 700, 600, 400, 12, -100]) {
@@ -91,7 +106,7 @@ describe("chat canvas layout", () => {
   it("keeps a dragged player above the composer when no readable lane fits beside it", () => {
     const result = resolve(1000, { ...preview, position: { x: 12, y: 700 } });
     expect(result.chat).toEqual(resolve(1000, null).chat);
-    expect(result.frame!.x).toBe(668);
+    expect(result.frame!.x).toBe(12);
     expect(result.frame!.y + result.frame!.height).toBeLessThanOrEqual(708);
   });
   it("allows message overlap on narrow screens while excluding the composer", () => {
@@ -259,7 +274,7 @@ describe("chat canvas layout", () => {
     });
     expect(result.overlapsDetailsCard).toBe(true);
     expect(result.overlapsChat).toBe(true);
-    expect(result.frame).toEqual({ x: 272, y: 396, width: 1300, height: 400 });
+    expect(result.frame).toEqual({ x: 12, y: 396, width: 1300, height: 400 });
   });
 });
 

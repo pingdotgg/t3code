@@ -63,10 +63,13 @@ export function resolveChatCanvasLayout({
   let overlapsChat = false;
   if (preview && container.width > 0 && container.height > 0) {
     frame = resolvePreviewMiniPlayerFrame({ ...preview, container });
-    // Dragging stops at a readable chat lane on the left. Resizing can still
-    // consume that space when the container requires message overlap.
+    // Reserve a readable chat lane only while it leaves room to drag. Otherwise
+    // the container's right edge would pin the preview at every pointer position.
     const minimumPreviewX =
-      preview.lastInteraction === "resize" ? GAP : padding + minChatWidth + GAP;
+      preview.lastInteraction === "resize" ||
+      container.width <= padding + minChatWidth + frame.width + GAP * 2
+        ? GAP
+        : padding + minChatWidth + GAP;
     // New players start beside the composer, with the workspace card above them.
     if (preview.position === null) frame = { ...frame, y: container.height - frame.height - GAP };
     if (preview.lastInteraction === "resize" && composerHeight > 0) {
