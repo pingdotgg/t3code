@@ -44,8 +44,10 @@ import * as EventSink from "./EventSink.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ProviderTurnStartServiceTestkit from "./ProviderTurnStartService.testkit.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -1053,6 +1055,205 @@ const layerStreamRecoveryTest = Layer.merge(
   makeLayerTest(true),
   ProviderContinuationRequests.layer,
 );
+
+it.layer(layerStreamRecoveryTest)("delegated stream recovery dispatch failures", (it) => {
+  it.effect(
+    "settles the original task after continuation and terminal cancellation both fail",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const runtimeRecovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:stream-dispatch-failure-parent");
+        const projectId = ProjectId.make("project:stream-dispatch-failure-parent");
+        const runId = RunId.make("run:stream-dispatch-failure-parent");
+        const rootNodeId = NodeId.make("node:stream-dispatch-failure-parent");
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId,
+          runId,
+          rootNodeId,
+          taskId: NodeId.make("node:stream-dispatch-failure-sibling"),
+          deliveryState: "acknowledged",
+          now,
+        });
+        const child = yield* seedStreamFailedChild({
+          parentThreadId: threadId,
+          projectId,
+          parentRunId: runId,
+          rootNodeId,
+          name: "stream-dispatch-failure-child",
+          completionWake: "always",
+          continuationPending: true,
+          now,
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        assert.isTrue(
+          yield* orchestrator.delegatedTaskResultPending(child.childThreadId, child.taskId),
+        );
+        const originalDispatch = threads.dispatch;
+        const faults: Array<string> = [];
+        // Fail the two command writes before they reach the orchestrator. The
+        // real effect executor and SQLite outbox remain healthy throughout.
+        Object.defineProperty(threads, "dispatch", {
+          value: (command: Parameters<typeof originalDispatch>[0]) => {
+            if (
+              (command.type === "message.dispatch" &&
+                command.threadId === child.childThreadId &&
+                command.streamContinuationOfRunId === child.childRunId) ||
+              (command.type === "stream-recovery.cancel" &&
+                command.threadId === child.childThreadId &&
+                command.runId === child.childRunId)
+            ) {
+              faults.push(command.type);
+              return Effect.fail(
+                new Orchestrator.OrchestratorDispatchError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  cause: "Injected command write failure before commit.",
+                }),
+              );
+            }
+            return originalDispatch(command);
+          },
+        });
+        yield* Effect.gen(function* () {
+          yield* TestClock.adjust("30 seconds");
+          for (let attempt = 1; attempt <= 5; attempt += 1) {
+            assert.equal(yield* worker.drain(1), 1);
+            if (attempt < 5) yield* TestClock.adjust(`${100 * 2 ** (attempt - 1)} millis`);
+          }
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() =>
+              Object.defineProperty(threads, "dispatch", { value: originalDispatch }),
+            ),
+          ),
+        );
+        assert.lengthOf(
+          faults.filter((type) => type === "message.dispatch"),
+          5,
+        );
+        assert.lengthOf(
+          faults.filter((type) => type === "stream-recovery.cancel"),
+          1,
+        );
+        const cleanupEffect = yield* outbox.get(`effect:stream-recovery:${child.childRunId}`);
+        assert.equal(
+          cleanupEffect._tag === "Some" ? cleanupEffect.value.status : undefined,
+          "pending",
+        );
+        assert.equal(
+          cleanupEffect._tag === "Some" ? cleanupEffect.value.attemptCount : undefined,
+          5,
+        );
+        const dispatchFailure =
+          cleanupEffect._tag === "Some" ? cleanupEffect.value.lastError : null;
+        assert.isString(dispatchFailure);
+        assert.isTrue(
+          cleanupEffect._tag === "Some" &&
+            cleanupEffect.value.request.type === "provider-runtime.recover-stream" &&
+            cleanupEffect.value.request.cleanupOnly === true,
+        );
+        const afterFailures = yield* orchestrator.getThreadProjection(child.childThreadId);
+        assert.lengthOf(afterFailures.runs, 1);
+        assert.isFalse(
+          afterFailures.messages.some(
+            (message) =>
+              message.id === MessageId.make(`message:stream-recovery:${child.childRunId}`),
+          ),
+        );
+
+        // Re-run startup reconciliation while cleanup is pending. It must
+        // preserve the cleanup phase and spent continuation budget.
+        yield* runtimeRecovery.recover;
+        const afterStartup = yield* outbox.get(`effect:stream-recovery:${child.childRunId}`);
+        assert.equal(afterStartup._tag === "Some" ? afterStartup.value.attemptCount : undefined, 5);
+        assert.isTrue(
+          afterStartup._tag === "Some" &&
+            afterStartup.value.request.type === "provider-runtime.recover-stream" &&
+            afterStartup.value.request.cleanupOnly === true,
+        );
+        yield* TestClock.adjust("1600 millis");
+        assert.equal(yield* worker.drain(1), 1);
+        const terminalEffect = yield* outbox.get(`effect:stream-recovery:${child.childRunId}`);
+        assert.equal(
+          terminalEffect._tag === "Some" ? terminalEffect.value.status : undefined,
+          "failed",
+        );
+        assert.equal(
+          terminalEffect._tag === "Some" ? terminalEffect.value.attemptCount : undefined,
+          6,
+        );
+        assert.equal(
+          terminalEffect._tag === "Some" ? terminalEffect.value.lastError : null,
+          dispatchFailure,
+        );
+        const recoveredChild = yield* orchestrator.getThreadProjection(child.childThreadId);
+        assert.equal(recoveredChild.runs[0]?.streamRecovery?.state, "cancelled");
+        assert.lengthOf(recoveredChild.runs, 1);
+        assert.equal(
+          recoveredChild.providerThreads.find(
+            (providerThread) => providerThread.id === child.providerThreadId,
+          )?.nativeThreadRef?.nativeId,
+          "native:stream-dispatch-failure-child",
+        );
+        const parent = yield* orchestrator.getThreadProjection(threadId);
+        const task = parent.subagents.find((task) => task.id === child.taskId)!;
+        assert.equal(task.childThreadId, child.childThreadId);
+        assert.equal(task.status, "failed");
+        assert.include(task.result!, "stream disconnected before completion");
+        assert.lengthOf(
+          parent.contextTransfers.filter(
+            (transfer) =>
+              transfer.type === "subagent_result" &&
+              transfer.sourceThreadId === child.childThreadId,
+          ),
+          1,
+        );
+        assert.isFalse(
+          yield* orchestrator.delegatedTaskResultPending(child.childThreadId, child.taskId),
+        );
+        const wake = yield* requests.take;
+        assert.equal(wake.threadId, threadId);
+        assert.equal(wake.delegatedCompletion?.parentRunId, runId);
+        // Reading the result acknowledges its delivery, as task_status does.
+        // Startup may intentionally re-offer a result nobody has observed yet.
+        yield* orchestrator.dispatch({
+          type: "delegated_task.completion-delivery.acknowledge",
+          commandId: CommandId.make("command:stream-dispatch-failure-result-observed"),
+          parentThreadId: threadId,
+          taskId: child.taskId,
+          observedByRunId: runId,
+        });
+        const observed = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          observed.subagents.find((task) => task.id === child.taskId)?.completionDelivery?.state,
+          "acknowledged",
+        );
+        const duplicateWake = yield* requests.take.pipe(Effect.forkScoped);
+        yield* runtimeRecovery.recover;
+        yield* orchestrator.recoverDelegatedTasks;
+        yield* TestClock.adjust("10 minutes");
+        assert.equal(yield* worker.drain(1), 0);
+        assert.deepEqual(
+          (yield* orchestrator.getThreadProjection(threadId)).contextTransfers,
+          parent.contextTransfers,
+        );
+        assert.deepEqual(
+          (yield* orchestrator.getThreadProjection(threadId)).subagents,
+          observed.subagents,
+        );
+        assert.lengthOf((yield* orchestrator.getThreadProjection(child.childThreadId)).runs, 1);
+        yield* Fiber.interrupt(duplicateWake);
+        assert.isTrue(Exit.isFailure(yield* Fiber.await(duplicateWake)));
+      }),
+  );
+});
 
 it.layer(layerStreamRecoveryTest)("delegated tasks during stream recovery", (it) => {
   it.effect("keeps a stopped main cohort disposed when cancelling its stream recovery", () =>

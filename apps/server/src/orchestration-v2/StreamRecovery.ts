@@ -35,3 +35,21 @@ export const continueStreamFailedRun = Effect.fn("StreamRecovery.continueStreamF
     yield* threads.recoverDelegatedTask(input.threadId, input.sourceRunId);
   },
 );
+
+/** Cleanup retries never submit another continuation, even if the source is still pending. */
+export const cancelStreamFailedRun = Effect.fn("StreamRecovery.cancelStreamFailedRun")(
+  function* (input: {
+    readonly threadId: ThreadId;
+    readonly sourceRunId: RunId;
+    readonly commandId: CommandId;
+  }) {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    yield* threads.dispatch({
+      type: "stream-recovery.cancel",
+      commandId: input.commandId,
+      threadId: input.threadId,
+      runId: input.sourceRunId,
+    });
+    yield* threads.recoverDelegatedTask(input.threadId, input.sourceRunId);
+  },
+);

@@ -34,6 +34,8 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("provider-runtime.recover-stream"),
     sourceRunId: RunId,
     generation: NonNegativeInt,
+    /** Continuation attempts are exhausted; replay may only settle the source. */
+    cleanupOnly: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-runtime.continue"),
@@ -250,6 +252,8 @@ export interface EffectOutboxV2Shape {
     readonly workerId: string;
     readonly error: string;
     readonly delayMs: number;
+    /** Lease-bound, monotonic transition of a stream recovery into cleanup. */
+    readonly streamRecoveryCleanupOnly?: true;
   }) => Effect.Effect<boolean, EffectOutboxError>;
   readonly fail: (input: {
     readonly effectId: string;
@@ -519,7 +523,9 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             lease_expires_at = NULL,
             available_at = ${now},
             updated_at = ${now},
-            last_error = 'Requeued after the previous server process ended.'
+            last_error = CASE WHEN effect_type = 'provider-runtime.recover-stream'
+              THEN COALESCE(last_error, 'Requeued after the previous server process ended.')
+              ELSE 'Requeued after the previous server process ended.' END
           WHERE status = 'running'
             AND effect_type IN ${sql.in(REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS)}
           RETURNING effect_id
@@ -549,7 +555,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               lease_owner = ${workerId},
               lease_expires_at = ${leaseExpiresAt},
               updated_at = ${nowIso},
-              last_error = NULL
+              last_error = CASE WHEN effect_type = 'provider-runtime.recover-stream' THEN last_error ELSE NULL END
             WHERE effect_id = (
               SELECT candidate.effect_id
               FROM orchestration_v2_effect_outbox AS candidate
@@ -616,7 +622,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             (cause) => new EffectOutboxError({ operation: "succeed", effectId, cause }),
           ),
         ),
-      retry: ({ effectId, workerId, error, delayMs }) =>
+      retry: ({ effectId, workerId, error, delayMs, streamRecoveryCleanupOnly }) =>
         Effect.gen(function* () {
           const now = yield* DateTime.now;
           const nowIso = DateTime.formatIso(now);
@@ -631,10 +637,15 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               lease_owner = NULL,
               lease_expires_at = NULL,
               updated_at = ${nowIso},
-              last_error = ${error}
+              payload_json = ${streamRecoveryCleanupOnly === true ? sql`json_set(payload_json, '$.cleanupOnly', json('true'))` : sql`payload_json`},
+              last_error = CASE
+                WHEN effect_type = 'provider-runtime.recover-stream'
+                  AND (json_extract(payload_json, '$.cleanupOnly') = 1 OR ${streamRecoveryCleanupOnly === true ? 1 : 0})
+                THEN COALESCE(last_error, ${error}) ELSE ${error} END
             WHERE effect_id = ${effectId}
               AND status = 'running'
               AND lease_owner = ${workerId}
+              AND ${streamRecoveryCleanupOnly === true ? sql`effect_type = 'provider-runtime.recover-stream'` : sql`1 = 1`}
             RETURNING effect_id
           `;
           if (rows.length === 1) {

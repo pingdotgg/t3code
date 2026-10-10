@@ -1,3 +1,4 @@
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import type * as Scope from "effect/Scope";
@@ -407,6 +408,7 @@ const withReplay = Effect.fn("withStreamRecoveryReplay")(function* (
     readonly worker: EffectWorker.OrchestrationEffectWorkerV2["Service"];
     readonly settings: ServerSettings.ServerSettingsService["Service"];
     readonly events: EventSink.EventSinkV2["Service"];
+    readonly outbox: EffectOutbox.EffectOutboxV2["Service"];
     readonly threadId: ThreadId;
   }) => Effect.Effect<
     void,
@@ -414,10 +416,14 @@ const withReplay = Effect.fn("withStreamRecoveryReplay")(function* (
     | EffectWorker.OrchestrationEffectWorkerError
     | ServerSettingsError
     | EventSink.EventSinkWriteError
-    | EventSink.EventSinkStreamError,
+    | EventSink.EventSinkStreamError
+    | EffectOutbox.EffectOutboxError,
     Scope.Scope
   >,
-  options: Parameters<typeof makeTranscript>[2] & { readonly enabled?: boolean } = {},
+  options: Parameters<typeof makeTranscript>[2] & {
+    readonly enabled?: boolean;
+    readonly runEffectWorker?: boolean;
+  } = {},
 ) {
   const workspace = yield* checkpointWorkspace("stream-recovery");
   const transcript = yield* makeTranscript(workspace, outcomes, options);
@@ -427,6 +433,7 @@ const withReplay = Effect.fn("withStreamRecoveryReplay")(function* (
     driver: ProviderDriverKind.make("codex"),
     modelSelection: CODEX_MODEL_SELECTION,
   });
+  const databaseLayer = SqlitePersistence.layerMemory;
   const threadId = materialized.projectionThreadIds[0]!;
   const driver = yield* CodexReplay.makeReplayDriver(transcript);
   const harness = {
@@ -439,26 +446,35 @@ const withReplay = Effect.fn("withStreamRecoveryReplay")(function* (
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
       const settings = yield* ServerSettings.ServerSettingsService;
       const events = yield* EventSink.EventSinkV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
       for (const command of materialized.commands) yield* orchestrator.dispatch(command);
       const failed = yield* watchRun(
         orchestrator,
         1,
         outcomes[0] === "failed" ? "failed" : "completed",
       );
+      if (options.runEffectWorker === false) yield* worker.drain();
       assert.isTrue(Option.isSome(yield* Fiber.join(failed)));
       assert.isNull((yield* Ref.get(driver.state)).failure);
-      yield* verify({ orchestrator, worker, settings, events, threadId });
+      yield* verify({ orchestrator, worker, settings, events, outbox, threadId });
     }).pipe(
       Effect.provide(
-        layerProviderReplay(
-          {
-            name: "stream-recovery",
-            transcript,
-            commands: [],
-            runtimePolicyOverride: { cwd: workspace },
-          },
-          harness,
-          { runEffectWorker: true, recoverCodexStreamFailures: options.enabled ?? true },
+        Layer.merge(
+          layerProviderReplay(
+            {
+              name: "stream-recovery",
+              transcript,
+              commands: [],
+              runtimePolicyOverride: { cwd: workspace },
+            },
+            harness,
+            {
+              databaseLayer,
+              runEffectWorker: options.runEffectWorker ?? true,
+              recoverCodexStreamFailures: options.enabled ?? true,
+            },
+          ),
+          EffectOutbox.layer.pipe(Layer.provide(databaseLayer)),
         ),
       ),
     ),
@@ -1006,4 +1022,151 @@ it.effect("wraps a settings snapshot failure with the immediate settings cause",
       );
     }),
   ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
+);
+
+it.effect(
+  "persists cleanup under its lease and keeps failure evidence through process loss and Stop",
+  () =>
+    withReplay(
+      ["failed"],
+      ({ orchestrator, outbox, worker, threadId }) =>
+        Effect.gen(function* () {
+          const runId = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!.id;
+          const effectId = `effect:stream-recovery:${runId}`;
+          yield* TestClock.adjust("30 seconds");
+          const claimed = yield* outbox.claimNext({
+            workerId: "phase-owner",
+            leaseDurationMs: 30_000,
+          });
+          assert(claimed._tag === "Some");
+          assert.equal(claimed.value.id, effectId);
+          assert.isFalse(
+            yield* outbox.retry({
+              effectId,
+              workerId: "wrong-owner",
+              error: "must not persist",
+              delayMs: 0,
+              streamRecoveryCleanupOnly: true,
+            }),
+          );
+          const unchanged = yield* outbox.get(effectId);
+          assert(
+            unchanged._tag === "Some" &&
+              unchanged.value.request.type === "provider-runtime.recover-stream",
+          );
+          assert.isUndefined(unchanged.value.request.cleanupOnly);
+          assert.isTrue(
+            yield* outbox.retry({
+              effectId,
+              workerId: "phase-owner",
+              error: "Original continuation write failed.",
+              delayMs: 0,
+              streamRecoveryCleanupOnly: true,
+            }),
+          );
+          const cleanup = yield* outbox.claimNext({
+            workerId: "cleanup-owner",
+            leaseDurationMs: 30_000,
+          });
+          assert(
+            cleanup._tag === "Some" &&
+              cleanup.value.request.type === "provider-runtime.recover-stream",
+          );
+          assert.isTrue(cleanup.value.request.cleanupOnly);
+          assert.equal(cleanup.value.attemptCount, 2);
+          assert.equal(cleanup.value.lastError, "Original continuation write failed.");
+          yield* outbox.reconcileAfterProcessLoss;
+          const restored = yield* outbox.get(effectId);
+          assert(
+            restored._tag === "Some" &&
+              restored.value.request.type === "provider-runtime.recover-stream",
+          );
+          assert.isTrue(restored.value.request.cleanupOnly);
+          assert.equal(restored.value.attemptCount, 2);
+          assert.equal(restored.value.lastError, cleanup.value.lastError);
+          const reClaimed = yield* outbox.claimNext({
+            workerId: "after-restart",
+            leaseDurationMs: 30_000,
+          });
+          assert(reClaimed._tag === "Some");
+          yield* orchestrator.dispatch({
+            type: "thread.stop",
+            commandId: CommandId.make("stop-cleanup-phase"),
+            threadId,
+          });
+          assert.isFalse(
+            yield* outbox.retry({
+              effectId,
+              workerId: "after-restart",
+              error: "late cleanup failure",
+              delayMs: 0,
+              streamRecoveryCleanupOnly: true,
+            }),
+          );
+          const stopped = yield* outbox.get(effectId);
+          assert(stopped._tag === "Some");
+          assert.equal(stopped.value.status, "cancelled");
+          yield* TestClock.adjust("10 minutes");
+          yield* worker.drain();
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(projection.runs[0]?.streamRecovery?.state, "cancelled");
+          assert.lengthOf(projection.runs, 1);
+        }),
+      { runEffectWorker: false },
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
+);
+
+it.effect(
+  "cleans a spent recovery after process loss even when its phase write never committed",
+  () =>
+    withReplay(
+      ["failed"],
+      ({ orchestrator, outbox, worker, threadId }) =>
+        Effect.gen(function* () {
+          const runId = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!.id;
+          const effectId = `effect:stream-recovery:${runId}`;
+          yield* TestClock.adjust("30 seconds");
+          // Reconstruct a spent lease whose terminal phase update was lost. The
+          // delegated fixture separately proves five actual failed dispatches.
+          for (let attempt = 1; attempt <= 5; attempt += 1) {
+            const claimed = yield* outbox.claimNext({
+              workerId: "crashed-recovery",
+              leaseDurationMs: 30_000,
+            });
+            assert(claimed._tag === "Some");
+            assert.equal(claimed.value.id, effectId);
+            assert.equal(claimed.value.attemptCount, attempt);
+            if (attempt < 5)
+              yield* outbox.retry({
+                effectId,
+                workerId: "crashed-recovery",
+                error: "Spent continuation failure.",
+                delayMs: 0,
+              });
+          }
+          yield* outbox.reconcileAfterProcessLoss;
+          const restored = yield* outbox.get(effectId);
+          assert(
+            restored._tag === "Some" &&
+              restored.value.request.type === "provider-runtime.recover-stream",
+          );
+          assert.equal(restored.value.attemptCount, 5);
+          assert.isUndefined(restored.value.request.cleanupOnly);
+          assert.equal(yield* worker.drain(1), 1);
+          const settled = yield* outbox.get(effectId);
+          assert(settled._tag === "Some");
+          assert.equal(settled.value.status, "failed");
+          assert.equal(settled.value.attemptCount, 6);
+          assert.equal(settled.value.lastError, "Spent continuation failure.");
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(projection.runs[0]?.streamRecovery?.state, "cancelled");
+          assert.lengthOf(projection.runs, 1);
+          assert.isFalse(
+            projection.messages.some(
+              (message) => message.id === MessageId.make(`message:stream-recovery:${runId}`),
+            ),
+          );
+        }),
+      { runEffectWorker: false },
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
 );

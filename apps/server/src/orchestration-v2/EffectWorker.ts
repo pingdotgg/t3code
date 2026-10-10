@@ -1,4 +1,4 @@
-import { continueStreamFailedRun } from "./StreamRecovery.ts";
+import { cancelStreamFailedRun, continueStreamFailedRun } from "./StreamRecovery.ts";
 import { CommandId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -70,7 +70,7 @@ export interface OrchestrationEffectExecutorV2Shape {
    */
   readonly execute: (
     effect: EffectOutbox.OrchestrationEffectV2,
-    options?: { readonly willRetry: boolean },
+    options?: { readonly willRetry: boolean; readonly streamRecoveryCleanupOnly?: boolean },
   ) => Effect.Effect<void, OrchestrationEffectExecutionError>;
 }
 
@@ -111,26 +111,27 @@ export const layerExecutor: Layer.Layer<
         switch (effect.request.type) {
           case "provider-runtime.recover-stream": {
             const sourceRunId = effect.request.sourceRunId;
-            return continueStreamFailedRun({
+            const cleanupOnly =
+              effect.request.cleanupOnly === true || options?.streamRecoveryCleanupOnly === true;
+            const cleanup = cancelStreamFailedRun({
               threadId: effect.threadId,
-              sourceRunId: sourceRunId,
-              generation: effect.request.generation,
-            }).pipe(
-              Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
-              Effect.tapError(() =>
-                willRetry
-                  ? Effect.void
-                  : threads
-                      .dispatch({
-                        type: "stream-recovery.cancel",
-                        commandId: CommandId.make(`command:stream-recovery-cancel:${sourceRunId}`),
-                        threadId: effect.threadId,
-                        runId: sourceRunId,
-                      })
-                      .pipe(
-                        Effect.andThen(threads.recoverDelegatedTask(effect.threadId, sourceRunId)),
-                      ),
+              sourceRunId,
+              // A rejected cleanup receipt must not permanently prevent a later repair.
+              commandId: CommandId.make(
+                `command:stream-recovery-cancel:${sourceRunId}:attempt:${effect.attemptCount}`,
               ),
+            });
+            return (
+              cleanupOnly
+                ? cleanup
+                : continueStreamFailedRun({
+                    threadId: effect.threadId,
+                    sourceRunId,
+                    generation: effect.request.generation,
+                  })
+            ).pipe(
+              Effect.tapError(() => (willRetry || cleanupOnly ? Effect.void : cleanup)),
+              Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
               Effect.mapError(
                 (cause) =>
                   new OrchestrationEffectExecutionError({
@@ -727,8 +728,16 @@ export const layerWithOptions = (
           }).pipe(Effect.onError((cause) => requeueClaim(effect, cause)));
           if (cancelledBeforeExecution) return true;
 
+          // Attempt count also closes the crash gap if the phase transition itself
+          // failed before commit. An over-budget claim may never submit another turn.
+          const streamRecoveryCleanupOnly =
+            effect.request.type === "provider-runtime.recover-stream" &&
+            (effect.request.cleanupOnly === true || effect.attemptCount > maxAttempts);
           const execution = executor
-            .execute(effect, { willRetry: effect.attemptCount < maxAttempts })
+            .execute(effect, {
+              willRetry: effect.attemptCount < maxAttempts,
+              ...(streamRecoveryCleanupOnly ? { streamRecoveryCleanupOnly: true } : {}),
+            })
             .pipe(Effect.as("executed" as const));
           const exit = yield* Effect.exit(Effect.raceFirst(execution, cancellation)).pipe(
             Effect.ensuring(outbox.clearCancellation(effect.id)),
@@ -738,7 +747,15 @@ export const layerWithOptions = (
           }
           if (Exit.isSuccess(exit)) {
             return yield* Effect.gen(function* () {
-              const completed = yield* outbox.succeed({ effectId: effect.id, workerId });
+              const completed = yield* streamRecoveryCleanupOnly
+                ? outbox.fail({
+                    effectId: effect.id,
+                    workerId,
+                    error:
+                      effect.lastError ??
+                      "Stream recovery ended after exhausting its dispatch attempts.",
+                  })
+                : outbox.succeed({ effectId: effect.id, workerId });
               if (!completed) {
                 if (yield* wasCancelled(effect.id)) return true;
                 return yield* new OrchestrationEffectWorkerError({
@@ -766,18 +783,29 @@ export const layerWithOptions = (
             ? yield* outbox
                 .succeed({ effectId: effect.id, workerId })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
-            : effect.attemptCount >= maxAttempts
+            : effect.request.type === "provider-runtime.recover-stream" &&
+                (streamRecoveryCleanupOnly || effect.attemptCount >= maxAttempts)
               ? yield* outbox
-                  .fail({ effectId: effect.id, workerId, error })
-                  .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
-              : yield* outbox
                   .retry({
                     effectId: effect.id,
                     workerId,
                     error,
                     delayMs: Math.min(30_000, 100 * 2 ** Math.max(0, effect.attemptCount - 1)),
+                    streamRecoveryCleanupOnly: true,
                   })
-                  .pipe(Effect.onError((cause) => requeueClaim(effect, cause)));
+                  .pipe(Effect.onError((cause) => requeueClaim(effect, cause)))
+              : effect.attemptCount >= maxAttempts
+                ? yield* outbox
+                    .fail({ effectId: effect.id, workerId, error })
+                    .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
+                : yield* outbox
+                    .retry({
+                      effectId: effect.id,
+                      workerId,
+                      error,
+                      delayMs: Math.min(30_000, 100 * 2 ** Math.max(0, effect.attemptCount - 1)),
+                    })
+                    .pipe(Effect.onError((cause) => requeueClaim(effect, cause)));
           if (!updated) {
             if (yield* wasCancelled(effect.id)) return true;
             return yield* new OrchestrationEffectWorkerError({
