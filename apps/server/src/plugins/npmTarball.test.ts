@@ -5,7 +5,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import { defaultNpmTarballLimits, readNpmTarball, type NpmTarballLimits } from "./npmTarball.ts";
-import { makeTar, makeTarball, type TarEntry } from "./npmTarball.testkit.ts";
+import { makeTar, makeTarball, paxRecord, type TarEntry } from "./npmTarball.testkit.ts";
 
 const read = (entries: ReadonlyArray<TarEntry>, limits?: NpmTarballLimits) =>
   readNpmTarball(makeTarball(entries), limits);
@@ -55,6 +55,43 @@ describe("readNpmTarball", () => {
         { path: "package/link.js", type: "2", linkname: "/etc/hosts", pax: [xattr] },
       ]);
       expect(link.message).toMatch(/is a link/);
+    }),
+  );
+
+  it.effect("reads GNU headers and directories that reserve space as their writers meant", () =>
+    Effect.gen(function* () {
+      // GNU keeps an access time where POSIX keeps the path prefix.
+      const files = yield* read([
+        { path: "package/", type: "5", format: "gnu" },
+        { ...manifest, format: "gnu" },
+        // A directory's size is space to reserve; no data follows its header.
+        { path: "package/lib/", type: "5", size: 4096 },
+        { path: "package/lib/main.js", data: "main", format: "gnu" },
+      ]);
+      expect(files.map((file) => file.path)).toEqual(["package.json", "lib/main.js"]);
+      expect(new TextDecoder().decode(files[1]!.data)).toBe("main");
+    }),
+  );
+
+  it.effect("refuses a global header that renames or resizes the entries after it", () =>
+    Effect.gen(function* () {
+      for (const record of ["path=package/other.js", "size=0"]) {
+        const global: TarEntry = {
+          path: "pax_global_header",
+          type: "g",
+          data: paxRecord(new TextEncoder().encode(record)),
+        };
+        const error = yield* refusal([global, manifest, { path: "package/main.js", data: "x" }]);
+        expect(error.reason, record).toBe("npm-archive-unsafe");
+        expect(error.message).toMatch(/global header/);
+      }
+      const comment: TarEntry = {
+        path: "pax_global_header",
+        type: "g",
+        data: paxRecord(new TextEncoder().encode("comment=built by git")),
+      };
+      const files = yield* read([comment, manifest]);
+      expect(files.map((file) => file.path)).toEqual(["package.json"]);
     }),
   );
 

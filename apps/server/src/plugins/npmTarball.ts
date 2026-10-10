@@ -158,11 +158,13 @@ const parse = (tar: Uint8Array, limits: NpmTarballLimits) => {
     const size = pax.has("size") ? Number(pax.get("size")) : declared;
     if (size === undefined || !Number.isSafeInteger(size) || size < 0)
       throw unsafe("The tarball has an entry with an unreadable size.");
+    // A directory's size is space to reserve; no data follows its header.
+    const dataSize = type === "5" ? 0 : size;
     const dataStart = offset + BLOCK;
-    const dataEnd = dataStart + size;
+    const dataEnd = dataStart + dataSize;
     if (dataEnd > tar.length) throw unsafe("The tarball ends in the middle of an entry.");
     const data = tar.subarray(dataStart, dataEnd);
-    offset = dataStart + Math.ceil(size / BLOCK) * BLOCK;
+    offset = dataStart + Math.ceil(dataSize / BLOCK) * BLOCK;
 
     if ((type === "x" || type === "g" || type === "L") && size > MAX_EXTENDED_HEADER_BYTES)
       throw unsafe("The tarball has an extended header that is too large.");
@@ -170,13 +172,22 @@ const parse = (tar: Uint8Array, limits: NpmTarballLimits) => {
       pax = readPax(data);
       continue;
     }
-    if (type === "g") continue;
+    if (type === "g") {
+      // Global attributes would apply to every later entry; this reader does not apply them.
+      const global = readPax(data);
+      if (global.has("path") || global.has("size"))
+        throw unsafe("The tarball sets a path or size in a global header.");
+      continue;
+    }
     if (type === "L") {
       longName = readString(data, 0, data.length);
       continue;
     }
+    // Only POSIX ustar (magic `ustar` NUL, version `00`) has a prefix; GNU keeps an access time there.
     const prefix =
-      decoder.decode(header.subarray(257, 262)) === "ustar" ? readString(header, 345, 155) : "";
+      keyDecoder.decode(header.subarray(257, 265)) === "ustar\u000000"
+        ? readString(header, 345, 155)
+        : "";
     const name = readString(header, 0, 100);
     const raw = pax.get("path") ?? longName ?? (prefix === "" ? name : `${prefix}/${name}`);
     pax = new Map();

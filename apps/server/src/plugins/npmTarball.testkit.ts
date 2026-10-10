@@ -7,19 +7,33 @@ import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 
 export interface TarEntry {
   readonly path: string;
-  /** Tar type flag: `0` file (default), `5` directory, `1` hard link, `2` symlink, `3` device. */
+  /**
+   * Tar type flag: `0` file (default), `5` directory, `1` hard link, `2` symlink, `3` device,
+   * `g` pax global header (its `data` is the records).
+   */
   readonly type?: string;
   readonly data?: string | Uint8Array;
   readonly mode?: number;
   readonly linkname?: string;
   /** Extra pax records written before this entry, as raw `key=value` bytes. */
   readonly pax?: ReadonlyArray<Uint8Array>;
+  /** The header's size field when it is not the data's length, like a directory's reserved space. */
+  readonly size?: number;
+  /** `gnu` writes GNU's `ustar  ` magic, which keeps an access time where POSIX has the prefix. */
+  readonly format?: "gnu";
 }
 
 const BLOCK = 512;
 const encoder = new TextEncoder();
 
-const header = (name: string, type: string, size: number, mode: number, linkname = "") => {
+const header = (
+  name: string,
+  type: string,
+  size: number,
+  mode: number,
+  linkname = "",
+  format?: "gnu",
+) => {
   const block = new Uint8Array(BLOCK);
   const put = (value: string, start: number, length: number) =>
     block.set(encoder.encode(value).subarray(0, length), start);
@@ -33,8 +47,13 @@ const header = (name: string, type: string, size: number, mode: number, linkname
   octal(0, 136, 12);
   put(type, 156, 1);
   put(linkname, 157, 100);
-  put("ustar\0", 257, 6);
-  put("00", 263, 2);
+  if (format === "gnu") {
+    put("ustar  \0", 257, 8);
+    octal(0o14712345670, 345, 12);
+  } else {
+    put("ustar\0", 257, 6);
+    put("00", 263, 2);
+  }
   block.fill(0x20, 148, 156);
   const sum = block.reduce((total, byte) => total + byte, 0);
   put(`${sum.toString(8).padStart(6, "0")}\0 `, 148, 8);
@@ -48,7 +67,7 @@ const padded = (data: Uint8Array) => {
 };
 
 /** `<length> <key=value>\n`, where the length counts itself. */
-const paxRecord = (keyValue: Uint8Array) => {
+export const paxRecord = (keyValue: Uint8Array) => {
   let length = keyValue.length + 2;
   while (`${length}`.length + keyValue.length + 2 !== length)
     length = `${length}`.length + keyValue.length + 2;
@@ -74,16 +93,18 @@ export const makeTar = (entries: ReadonlyArray<TarEntry>) => {
       const pax = Buffer.concat(records.map(paxRecord));
       blocks.push(header("PaxHeader", "x", pax.length, 0o644), padded(pax));
     }
+    const hasData = type === "0" || type === "g";
     blocks.push(
       header(
         name,
         type,
-        type === "0" ? data.length : 0,
+        entry.size ?? (hasData ? data.length : 0),
         entry.mode ?? (type === "5" ? 0o755 : 0o644),
         entry.linkname,
+        entry.format,
       ),
     );
-    if (type === "0") blocks.push(padded(data));
+    if (hasData) blocks.push(padded(data));
   }
   blocks.push(new Uint8Array(BLOCK * 2));
   return Buffer.concat(blocks);
