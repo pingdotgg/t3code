@@ -894,6 +894,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     selectedThreadKeyRef.current = selectedThreadKey;
     // A replaced or unmounted native editor may not emit a blur event.
     setComposerFocused(false);
+    setComposerFullScreen(false);
   }, [selectedThreadKey, showContent]);
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
