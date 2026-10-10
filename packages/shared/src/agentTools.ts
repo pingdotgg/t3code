@@ -77,7 +77,10 @@ export function skillsDisabledPatch(
     for (const existing of Object.keys(switches)) {
       if (existing.toLowerCase() === name.toLowerCase()) delete switches[existing];
     }
-    if (disabled !== isSkillDisabled(settings.disabledSkills, name)) switches[name] = disabled;
+    // Spelled as the environment spells it, so the switch reads as the same skill.
+    const spelling =
+      settings.disabledSkills.find((entry) => entry.toLowerCase() === name.toLowerCase()) ?? name;
+    if (disabled !== isSkillDisabled(settings.disabledSkills, name)) switches[spelling] = disabled;
   }
   return projectOverridePatch(settings, projectId, "disabledSkills", switches);
 }
