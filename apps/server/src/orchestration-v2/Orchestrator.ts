@@ -407,6 +407,9 @@ function wakeWorkStartedAt(
   return previous === undefined ? {} : { workStartedAt: orchestrationV2RunWorkStartedAt(previous) };
 }
 
+/** Message ids of the compaction turn a pull request watch queued before waiting. */
+const PULL_REQUEST_WATCH_COMPACTION_PREFIX = "pr-watch-compact:";
+
 /** A native /compact or /logout turn: provider maintenance, not agent work. */
 export function isNativeMaintenanceCommand(message: {
   readonly text: string;
@@ -1270,6 +1273,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
 
   const startNextQueuedRun = (threadId: ThreadId, options?: { readonly failedRunId?: RunId }) =>
+    startQueuedRunOnce(threadId, options).pipe(
+      Effect.flatMap((result) =>
+        result === "skipped" ? startQueuedRunOnce(threadId, options) : Effect.void,
+      ),
+    );
+
+  const startQueuedRunOnce = (threadId: ThreadId, options?: { readonly failedRunId?: RunId }) =>
     Effect.gen(function* () {
       // Every terminal run checks the queue. Only a deliverable queued run
       // needs the transcript for provider handoff and legacy import context.
@@ -1371,6 +1381,43 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandType: "message.dispatch",
           cause: `Queued run ${queuedRun.id} is missing projection state.`,
         });
+      }
+
+      // A question or approval that arrived after the watch queued its compaction drops the
+      // compaction, so the answer runs next instead of waiting behind a possibly cold summary.
+      if (
+        queuedMessage.id.startsWith(PULL_REQUEST_WATCH_COMPACTION_PREFIX) &&
+        // The user may have edited the queued compaction into real work.
+        queuedMessage.attachments.length === 0 &&
+        queuedMessage.text.trim().toLowerCase() === "/compact" &&
+        projection.runtimeRequests.some((request) => request.status === "pending")
+      ) {
+        const now = yield* DateTime.now;
+        const base = {
+          threadId,
+          runId: queuedRun.id,
+          nodeId: rootNode.id,
+          providerInstanceId: queuedRun.providerInstanceId,
+          occurredAt: now,
+        };
+        yield* writeSystemEvents([
+          {
+            ...base,
+            type: "run.updated",
+            payload: { ...queuedRun, status: "cancelled", queuePosition: null, completedAt: now },
+          },
+          {
+            ...base,
+            type: "run-attempt.updated",
+            payload: { ...attempt, status: "cancelled", completedAt: now },
+          },
+          {
+            ...base,
+            type: "node.updated",
+            payload: { ...rootNode, status: "cancelled", completedAt: now },
+          },
+        ]);
+        return "skipped" as const;
       }
 
       const commandId = CommandId.make(`command:system:start-queued:${queuedRun.id}`);
@@ -2312,6 +2359,67 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: movesForward ? { ...thread, lastVisitedAt: visitedAt.value } : thread,
     });
   });
+
+  const dispatchPullRequestWatch = Effect.fn("orchestrationV2.dispatch.pullRequestWatch")(
+    function* (
+      command: Extract<OrchestrationV2Command, { readonly type: "thread.pull-request.watch" }>,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+      effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    ) {
+      if (!command.watching || command.compactBeforeWaiting !== true) {
+        return yield* dispatchThreadMutation(command, events, effects);
+      }
+      const projection = yield* loadProjectionForCommand(command, [
+        "runs",
+        "runtimeRequests",
+        "messages",
+      ]);
+      // Repeating a watch call must not buy another summary. Stopping and starting again is
+      // a new opt-in; the queued maintenance turn remains visible and cancellable normally.
+      const existing = threadPullRequestsOf(projection.thread).find((link) =>
+        threadPullRequestKeysEqual(link, command),
+      );
+      if (existing?.watch !== undefined) {
+        return yield* dispatchThreadMutation(command, events, effects);
+      }
+      const active = projection.runs.find(isBlockingRun);
+      const latest = latestExecutedRun(projection.runs);
+      if (
+        projection.runtimeRequests.some((request) => request.status === "pending") ||
+        projection.runs.some((run) => run.status === "queued") ||
+        (active !== undefined && active.status !== "running") ||
+        (active === undefined && latest?.status !== "completed") ||
+        projection.messages.some(
+          (message) => message.id === active?.userMessageId && isNativeMaintenanceCommand(message),
+        )
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause:
+            "Compacting before waiting requires a conversation with no pending input, approval, queued work, or unfinished maintenance. Watch without compaction instead.",
+        });
+      }
+      // Commit the watch and the bounded maintenance request together. The ordinary queue
+      // runs it only after this turn ends, and Stop/archiving retain their normal semantics.
+      yield* dispatchThreadMutation(command, events, effects);
+      yield* dispatchMessage(
+        {
+          type: "message.dispatch",
+          commandId: command.commandId,
+          threadId: command.threadId,
+          messageId: MessageId.make(`${PULL_REQUEST_WATCH_COMPACTION_PREFIX}${command.commandId}`),
+          text: "/compact",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "server",
+        },
+        events,
+        effects,
+      );
+    },
+  );
 
   // Checked under the thread lock: the watch or the thread can change while the host is read.
   // The watch is recorded first so the wake's own thread events carry it.
@@ -10616,7 +10724,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.pull-request.link":
       case "thread.pull-request.unlink":
       case "thread.pull-request-link.sync":
-      case "thread.pull-request.watch":
       case "thread.pull-request.sync":
       case "thread.title.regeneration.complete":
       case "thread.runtime-mode.set":
@@ -10624,6 +10731,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.model-selection.set":
       case "provider.switch":
         yield* dispatchThreadMutation(command, events, effects);
+        break;
+      case "thread.pull-request.watch":
+        yield* dispatchPullRequestWatch(command, events, effects);
         break;
       case "thread.pull-request-watch.sync":
         yield* dispatchPullRequestWatchSync(command, events, effects);

@@ -1447,8 +1447,14 @@ export const layer: Layer.Layer<
                             terminal: makeFailedTerminalEvent(
                               makeProviderFailure({
                                 cause: Cause.squash(cause),
-                                // A failed ownership read is not the provider's fault.
-                                class: Exit.isFailure(shouldStart) ? "unknown" : "provider_error",
+                                // A failed ownership read is not the provider's fault, and a
+                                // session without compaction rejects only this message, so the
+                                // queue keeps delivering what comes after it.
+                                class: Exit.isFailure(shouldStart)
+                                  ? "unknown"
+                                  : compact && input.session.compactThread === undefined
+                                    ? "validation_error"
+                                    : "provider_error",
                               }),
                               latestItemOrdinal + 1,
                             ),

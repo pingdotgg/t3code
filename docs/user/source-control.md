@@ -237,6 +237,11 @@ watch. Subagents cannot watch pull requests; the thread that delegated to them d
 it yourself, use the row menu in the **Linked pull requests** panel. In the thread details card, a
 watched pull request shows an eye; click it to stop watching.
 
+For a long wait in a large conversation, you can ask the agent to compact before waiting. It runs one
+compaction after its current turn, which spends tokens and can drop detail but may make later wakes
+cheaper. You can cancel the queued compaction like any queued message. If the agent asks you
+something before it runs, the compaction is skipped.
+
 A watched thread counts as working between wakes, so it stays in the **Working** section and does
 not auto-settle. Agents stop watching when they hand the work back to you, and the thread then
 returns to your inbox.

@@ -253,6 +253,19 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
+  it.effect("passes explicit compaction opt-in to the watch service", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.call("watch_pull_request", {
+        url: "https://github.com/t3tools/t3code/pull/9",
+        compactBeforeWaiting: true,
+      });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.watch", compactBeforeWaiting: true },
+      ]);
+    }),
+  );
+
   it.effect("refuses to watch a merged pull request and stops an existing watch", () =>
     Effect.gen(function* () {
       const watch = {
