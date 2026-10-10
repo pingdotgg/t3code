@@ -98,6 +98,10 @@ export function useThreadShell(ref: ScopedThreadRef | null): EnvironmentThreadSh
   );
 }
 
+export function useChildThreadInputs(ref: ScopedThreadRef) {
+  return useAtomValue(environmentThreadShells.childThreadInputsAtom(ref));
+}
+
 /** `markdown` with each thread link labeled by the thread's current title in `environmentId`. */
 export function useLiveThreadLinkLabels(markdown: string, environmentId: EnvironmentId): string {
   const titles = useAtomValue(
