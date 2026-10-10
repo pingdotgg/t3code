@@ -9,7 +9,7 @@ import {
   moveThreadContextDrag as moveThreadContextDragGhost,
 } from "./chat/threadContextDrag";
 import { discardComposerDraft } from "../lib/discardComposerDraft";
-import { requestCustomSnooze } from "./CustomSnoozeDialog";
+import { requestCustomSnooze, updateSnoozeFavorites } from "./CustomSnoozeDialog";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { useAtomValue } from "@effect/atom-react";
@@ -30,6 +30,8 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   canSnooze,
   effectiveSnoozed,
+  removeSnoozeFavorite,
+  snoozeFavoriteId,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import { createInboxReturnTracker } from "@t3tools/client-runtime/state/thread-inbox";
@@ -578,11 +580,12 @@ function SnoozeMenuButton(props: {
   timestampFormat: TimestampFormat;
 }) {
   const { open, onOpenChange, onSnooze, timestampFormat } = props;
+  const snoozeFavorites = useClientSettings((s) => s.snoozeFavorites);
   // Presets resolve at open time so "In 1 hour" is relative to the click,
   // not to when the row mounted.
   const presets = useMemo(
-    () => (open ? resolveSnoozePresets(new Date(), timestampFormat) : []),
-    [open, timestampFormat],
+    () => (open ? resolveSnoozePresets(new Date(), timestampFormat, snoozeFavorites) : []),
+    [open, timestampFormat, snoozeFavorites],
   );
   return (
     <Menu open={open} onOpenChange={onOpenChange}>
@@ -607,18 +610,54 @@ function SnoozeMenuButton(props: {
         <TooltipPopup>Snooze thread</TooltipPopup>
       </Tooltip>
       <MenuPopup side="bottom" align="end">
-        {presets.map((preset) => (
-          <MenuItem
-            key={preset.id}
-            onClick={(event) => {
-              event.stopPropagation();
-              onSnooze(preset);
-            }}
-          >
-            {preset.label}
-            <MenuShortcut>{preset.whenLabel}</MenuShortcut>
-          </MenuItem>
-        ))}
+        {presets.map((preset) => {
+          const favorite = snoozeFavorites.find((saved) => snoozeFavoriteId(saved) === preset.id);
+          const item = (
+            <MenuItem
+              key={preset.id}
+              className={favorite ? "flex-1" : undefined}
+              onClick={(event) => {
+                event.stopPropagation();
+                onSnooze(preset);
+              }}
+            >
+              {preset.label}
+              <MenuShortcut>{preset.whenLabel}</MenuShortcut>
+            </MenuItem>
+          );
+          if (!favorite) return item;
+          // The remove control is its own menu item, not a button nested in
+          // the snooze item: nested, a press-drag-release over it would also
+          // fire the snooze item, and arrow keys could not reach it.
+          return (
+            // The remove button takes no space until the row is hovered, a
+            // row item is keyboard-highlighted, or on touch (no hover). Its
+            // size is set here because MenuItem owns its own effects.
+            <div
+              key={preset.id}
+              className="flex items-center [&>[data-favorite-remove]]:w-0 [&>[data-favorite-remove]]:overflow-hidden [&>[data-favorite-remove]]:border-0 [&>[data-favorite-remove]]:px-0 [&>[data-favorite-remove]]:opacity-0 hover:[&>[data-favorite-remove]]:w-7 hover:[&>[data-favorite-remove]]:opacity-100 has-data-highlighted:[&>[data-favorite-remove]]:w-7 has-data-highlighted:[&>[data-favorite-remove]]:opacity-100 pointer-coarse:[&>[data-favorite-remove]]:w-7 pointer-coarse:[&>[data-favorite-remove]]:opacity-100"
+            >
+              {item}
+              <MenuItem
+                data-favorite-remove=""
+                closeOnClick={false}
+                aria-label={`Remove ${preset.label} from favorites`}
+                label={`Remove ${preset.label} from favorites`}
+                variant="ghost"
+                className="h-7 min-h-7 justify-center"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  updateSnoozeFavorites(
+                    (favorites) => removeSnoozeFavorite(favorites, favorite),
+                    "Could not remove the favorite",
+                  );
+                }}
+              >
+                <XIcon className="size-3" />
+              </MenuItem>
+            </div>
+          );
+        })}
         <MenuSeparator />
         <MenuItem
           onClick={async (event) => {
@@ -2393,6 +2432,7 @@ export default function Sidebar() {
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
+  const snoozeFavorites = useClientSettings((s) => s.snoozeFavorites);
   const workingShelfEnabled = useClientSettings((s) => s.sidebarWorkingShelfEnabled);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const {
@@ -4292,7 +4332,7 @@ export default function Sidebar() {
       const unpinMenuItem = buildBulkUnpinContextMenuItem({
         pinnedCount: pinnedSelectedThreads.length,
       });
-      const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
+      const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat, snoozeFavorites);
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
           [
@@ -4512,6 +4552,7 @@ export default function Sidebar() {
       settleThreads,
       updateThreadMetadata,
       timestampFormat,
+      snoozeFavorites,
     ],
   );
 
@@ -4602,7 +4643,7 @@ export default function Sidebar() {
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
         const isPinned = thread.pinnedAt != null;
         // Presets resolve at menu-open time (same as the popover).
-        const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
+        const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat, snoozeFavorites);
         const threadProjectGroup =
           projectGroupsRef.current.find((project) =>
             project.memberProjectRefs.some(
@@ -4855,6 +4896,7 @@ export default function Sidebar() {
       startThreadRename,
       updateThreadMetadata,
       timestampFormat,
+      snoozeFavorites,
     ],
   );
 
