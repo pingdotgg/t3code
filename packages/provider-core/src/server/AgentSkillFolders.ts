@@ -72,7 +72,7 @@ const AGENT_SKILL_FOLDERS: Readonly<Record<string, AgentSkillFolders>> = {
 };
 
 /** The folders a driver reads, or undefined for a driver this table doesn't know. */
-export const agentSkillFolders = (driver: ProviderDriverKind): AgentSkillFolders | undefined =>
+const agentSkillFolders = (driver: ProviderDriverKind): AgentSkillFolders | undefined =>
   AGENT_SKILL_FOLDERS[driver];
 
 /**

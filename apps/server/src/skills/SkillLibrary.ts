@@ -93,7 +93,7 @@ const SKIPPED_DIRECTORIES = new Set([".git", "node_modules"]);
  * The CLI's install source for one locked skill: the skill's own folder in
  * the source, at the recorded ref, as `buildUpdateInstallSource` builds it.
  */
-export function lockedInstallSource(entry: LockEntry): string {
+function lockedInstallSource(entry: LockEntry): string {
   const base = entry.sourceUrl ?? entry.source;
   const ref = entry.ref === undefined ? "" : `#${entry.ref}`;
   const folder = entry.skillPath?.replace(/\/?SKILL\.md$/i, "") ?? "";
@@ -277,11 +277,13 @@ const make = Effect.gen(function* () {
               (candidate) => path.dirname(folder) === candidate.folder && candidate.lock.has(name),
             );
             const entry = install?.lock.get(name);
-            const { files } = yield* listFiles(folder);
+            const { files, truncated } = yield* listFiles(folder);
             return {
               path: skillPath,
               folder,
               hash: yield* sha256(contents),
+              files,
+              filesTruncated: truncated,
               scripts: hasScripts(files),
               ...(install === undefined || entry === undefined
                 ? {}

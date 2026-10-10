@@ -8,6 +8,7 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
   type ServerProviderSkill,
+  type SkillFolderInfo,
 } from "@t3tools/contracts";
 import {
   resolveProviderSkillSourceKind,
@@ -168,27 +169,70 @@ export function filterSkillRows(rows: ReadonlyArray<SkillRow>, query: string) {
   );
 }
 
+/** What the server knows about a row's folders: see `skills.inspect`. */
+export interface SkillRowDetails {
+  /** The first copy's folder, to view its files; null when no folder was inspected. */
+  readonly folder: SkillFolderInfo | null;
+  /** Some copy holds a script an agent could run. */
+  readonly scripts: boolean;
+  /** Two copies of the name have different SKILL.md text. */
+  readonly conflict: boolean;
+  /** Set when the `skills` CLI installed the row's skill, so it can be updated or removed. */
+  readonly installed: NonNullable<SkillFolderInfo["installed"]> | null;
+}
+
+const NO_DETAILS: SkillRowDetails = {
+  folder: null,
+  scripts: false,
+  conflict: false,
+  installed: null,
+};
+
+export function skillRowDetails(
+  row: SkillRow,
+  folders: ReadonlyMap<string, SkillFolderInfo>,
+): SkillRowDetails {
+  const infos = row.paths.flatMap((path) => {
+    const info = folders.get(path);
+    return info === undefined ? [] : [info];
+  });
+  if (infos.length === 0) return NO_DETAILS;
+  // Two agents reaching one folder through a link report two paths for one copy.
+  const hashByFolder = new Map(infos.map((info) => [info.folder, info.hash]));
+  return {
+    folder: infos[0] ?? null,
+    scripts: infos.some((info) => info.scripts),
+    conflict: new Set(hashByFolder.values()).size > 1,
+    installed: infos.find((info) => info.installed !== undefined)?.installed ?? null,
+  };
+}
+
+/**
+ * A group's rows split by the source the `skills` CLI installed them from,
+ * so a pack of skills reads as one block with one switch. Rows with no
+ * recorded source come first, under no heading.
+ */
+export function splitRowsBySource<Row extends { readonly name: string }>(
+  rows: ReadonlyArray<Row>,
+  sourceOf: (row: Row) => string | null,
+): ReadonlyArray<{ readonly source: string | null; readonly rows: ReadonlyArray<Row> }> {
+  const bySource = new Map<string | null, Row[]>();
+  for (const row of rows) {
+    const source = sourceOf(row);
+    const list = bySource.get(source) ?? [];
+    list.push(row);
+    bySource.set(source, list);
+  }
+  return [...bySource.entries()]
+    .toSorted(([left], [right]) =>
+      left === null ? -1 : right === null ? 1 : left.localeCompare(right),
+    )
+    .map(([source, sourceRows]) => ({ source, rows: sourceRows }));
+}
+
 /** Whether `providers` covers only some of the enabled instances, so the row should name them. */
 export function skillReachesSomeProviders(row: SkillRow, enabledProviderCount: number): boolean {
   return row.providers.length < enabledProviderCount;
-}
-
-/** The environment's list with one skill switched. Sorted so equal lists compare equal. */
-export function withSkillDisabled(
-  disabledSkills: ReadonlyArray<string>,
-  name: string,
-  disabled: boolean,
-): ReadonlyArray<string> {
-  const next = new Set(
-    disabledSkills.filter((entry) => entry.toLowerCase() !== name.toLowerCase()),
-  );
-  if (disabled) next.add(name);
-  return [...next].toSorted();
-}
-
-export function isSkillDisabled(disabledSkills: ReadonlyArray<string>, name: string): boolean {
-  const lowered = name.toLowerCase();
-  return disabledSkills.some((entry) => entry.toLowerCase() === lowered);
 }
 
 // ── MCP servers ────────────────────────────────────────────────────

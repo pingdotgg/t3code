@@ -8,12 +8,21 @@ import {
   type ProjectId,
   type ServerProvider,
   type ServerSettingsPatch,
+  type SkillFolderInfo,
+  type SkillInstallTarget,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import {
+  isSkillDisabled,
+  mcpServerEnabledPatch,
+  projectOverridePatch,
+  skillsDisabledPatch,
+} from "@t3tools/shared/agentTools";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { MoreHorizontalIcon, PlusIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -34,7 +43,9 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Switch } from "../ui/switch";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { AddSkillsDialog } from "./AddSkillsDialog";
 import { McpServerDialog } from "./McpServerDialog";
+import { SkillFilesDialog } from "./SkillFilesDialog";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -42,14 +53,15 @@ import {
   collectSkillRows,
   filterSkillRows,
   groupSkillRows,
-  isSkillDisabled,
   listMcpServerRows,
   type McpServerRow,
   SKILL_GROUP_LABELS,
   skillReachesSomeProviders,
   type SkillRow,
+  type SkillRowDetails,
+  skillRowDetails,
+  splitRowsBySource,
   type ToolsTab,
-  withSkillDisabled,
 } from "./toolsSettings.logic";
 import { useScopedSettings, useScopedSettingsWriteAllowed } from "./useScopedSettings";
 
@@ -154,23 +166,6 @@ function usePersistToolsPatch() {
  * Replace one key of a project's override entry, dropping the key (or the entry) when empty.
  * The rest of the entry is resent as stored, since the patch replaces the whole entry.
  */
-function projectOverridePatch<K extends "mcpServers" | "disabledSkills">(
-  settings: {
-    readonly projectSettingsOverrides: Readonly<Record<string, Record<string, unknown>>>;
-  },
-  projectId: ProjectId,
-  key: K,
-  value: Readonly<Record<string, unknown>>,
-): ServerSettingsPatch {
-  const { [key]: _previous, ...rest } = settings.projectSettingsOverrides[projectId] ?? {};
-  const next = Object.keys(value).length === 0 ? rest : { ...rest, [key]: value };
-  return {
-    projectSettingsOverrides: {
-      [projectId]: Object.keys(next).length === 0 ? null : next,
-    },
-  } as ServerSettingsPatch;
-}
-
 export function ToolsSettings({
   tab = "skills",
   onTabChange,
@@ -223,6 +218,47 @@ function SkillsPanel() {
     [providers],
   );
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
+  // Installs go to the checkout shown, or to the environment's home folders.
+  const installTarget: SkillInstallTarget | null =
+    environmentId === null
+      ? null
+      : isProjectScope
+        ? cwd === null
+          ? null
+          : { kind: "project", cwd }
+        : { kind: "environment" };
+  const canInstall = useAtomValue(serverEnvironment.installSkills.permissionAtom(environmentId));
+  const updateSkill = useAtomCommand(serverEnvironment.updateSkill, { reportFailure: false });
+  const removeSkill = useAtomCommand(serverEnvironment.removeSkill, { reportFailure: false });
+  const [adding, setAdding] = useState(false);
+  const [viewing, setViewing] = useState<{
+    readonly name: string;
+    readonly folder: SkillFolderInfo;
+  } | null>(null);
+  const [removingSkill, setRemovingSkill] = useState<{
+    readonly name: string;
+    readonly target: SkillInstallTarget;
+  } | null>(null);
+  const [skillActionError, setSkillActionError] = useState<string | null>(null);
+  const inspected = useEnvironmentQuery(
+    environmentId === null
+      ? null
+      : serverEnvironment.inspectSkills({
+          environmentId,
+          input: cwd === null ? {} : { cwd },
+        }),
+  );
+  const foldersByPath = useMemo(
+    () => new Map((inspected.data?.folders ?? []).map((folder) => [folder.path, folder])),
+    [inspected.data],
+  );
+  const scopeLabel = isProjectScope
+    ? scope.kind === "project" || scope.kind === "checkout"
+      ? scope.group.displayName
+      : ""
+    : scope.kind === "environment"
+      ? scope.label
+      : "this environment";
 
   const refresh = async (fresh: boolean) => {
     if (environmentId === null) return;
@@ -242,6 +278,29 @@ function SkillsPanel() {
       );
     } finally {
       setRefreshing(false);
+      inspected.refresh();
+    }
+  };
+
+  const afterSkillChange = () => {
+    inspected.refresh();
+  };
+
+  const runSkillAction = async (
+    action: "update" | "remove",
+    input: { readonly name: string; readonly target: SkillInstallTarget },
+  ) => {
+    if (environmentId === null) return;
+    setSkillActionError(null);
+    const result =
+      action === "update"
+        ? await updateSkill({ environmentId, input })
+        : await removeSkill({ environmentId, input });
+    afterSkillChange();
+    if (result._tag === "Failure") {
+      setSkillActionError(
+        `Couldn't ${action} ${input.name}: ${formatEnvironmentQueryError(result.cause)}`,
+      );
     }
   };
 
@@ -259,19 +318,26 @@ function SkillsPanel() {
 
   const rows = useMemo(() => collectSkillRows(providers, cwd), [cwd, providers]);
   const groups = useMemo(() => groupSkillRows(filterSkillRows(rows, query)), [query, rows]);
+  const detailsByName = useMemo(
+    () => new Map(rows.map((row) => [row.name, skillRowDetails(row, foldersByPath)])),
+    [foldersByPath, rows],
+  );
+  const detailsOf = (row: SkillRow) =>
+    detailsByName.get(row.name) ?? skillRowDetails(row, foldersByPath);
 
-  const setSkillDisabled = (name: string, disabled: boolean) =>
-    persist(({ settings, projectId }) => {
-      if (projectId === null) {
-        return { disabledSkills: [...withSkillDisabled(settings.disabledSkills, name, disabled)] };
-      }
-      const switches = { ...settings.projectSettingsOverrides[projectId]?.disabledSkills };
-      const inheritedOff = isSkillDisabled(settings.disabledSkills, name);
-      delete switches[name];
-      // A switch that matches the environment is not an override.
-      if (disabled !== inheritedOff) switches[name] = disabled;
-      return projectOverridePatch(settings, projectId, "disabledSkills", switches);
-    });
+  const setSkillsDisabled = (skillRows: ReadonlyArray<SkillRow>, disabled: boolean) =>
+    persist(({ settings, projectId }) =>
+      skillsDisabledPatch(
+        settings,
+        projectId,
+        skillRows.map((row) => row.name),
+        disabled,
+      ),
+    );
+  const setSkillDisabled = (name: string, disabled: boolean) => {
+    const row = rows.find((candidate) => candidate.name === name);
+    if (row !== undefined) setSkillsDisabled([row], disabled);
+  };
 
   return (
     <>
@@ -310,7 +376,16 @@ function SkillsPanel() {
             </TooltipTrigger>
             <TooltipPopup side="top">Rescan skill folders</TooltipPopup>
           </Tooltip>
+          {installTarget !== null && canInstall ? (
+            <Button size="sm" variant="outline" onClick={() => setAdding(true)}>
+              <PlusIcon className="size-3.5" aria-hidden />
+              Add skills
+            </Button>
+          ) : null}
         </div>
+        {skillActionError !== null ? (
+          <p className="mt-2 text-xs text-destructive-foreground">{skillActionError}</p>
+        ) : null}
       </SettingsSection>
       {rows.length === 0 ? (
         <SettingsSection title="Skills">
@@ -330,28 +405,74 @@ function SkillsPanel() {
       ) : (
         groups.map(({ group, rows: groupRows }) => (
           <SettingsSection key={group} title={SKILL_GROUP_LABELS[group]}>
-            {groupRows.map((row) => (
-              <SkillSettingsRow
-                key={row.name}
-                row={row}
-                disabled={isSkillDisabled(disabledSkills, row.name)}
-                overridden={
-                  isProjectScope &&
-                  targets.some(
-                    (candidate) =>
-                      candidate.projectId !== null &&
-                      Object.hasOwn(
-                        target?.settings.projectSettingsOverrides[candidate.projectId]
-                          ?.disabledSkills ?? {},
-                        row.name,
-                      ),
-                  )
-                }
-                showProviders={skillReachesSomeProviders(row, enabledProviders.length)}
-                canWrite={canWrite}
-                onChange={(enabled) => setSkillDisabled(row.name, !enabled)}
-              />
-            ))}
+            {splitRowsBySource(groupRows, (row) => detailsOf(row).installed?.source ?? null).map(
+              ({ source, rows: sourceRows }) => {
+                const renderRow = (row: SkillRow) => {
+                  const details = detailsOf(row);
+                  const { folder, installed } = details;
+                  return (
+                    <SkillSettingsRow
+                      key={row.name}
+                      row={row}
+                      details={details}
+                      disabled={isSkillDisabled(disabledSkills, row.name)}
+                      overridden={
+                        isProjectScope &&
+                        targets.some(
+                          (candidate) =>
+                            candidate.projectId !== null &&
+                            Object.hasOwn(
+                              target?.settings.projectSettingsOverrides[candidate.projectId]
+                                ?.disabledSkills ?? {},
+                              row.name,
+                            ),
+                        )
+                      }
+                      showProviders={skillReachesSomeProviders(row, enabledProviders.length)}
+                      canWrite={canWrite}
+                      onChange={(enabled) => setSkillDisabled(row.name, !enabled)}
+                      onView={folder === null ? null : () => setViewing({ name: row.name, folder })}
+                      onUpdate={
+                        installed === null || !canInstall
+                          ? null
+                          : () =>
+                              void runSkillAction("update", {
+                                name: row.name,
+                                target: installed.target,
+                              })
+                      }
+                      onRemove={
+                        installed === null || !canInstall
+                          ? null
+                          : () => setRemovingSkill({ name: row.name, target: installed.target })
+                      }
+                    />
+                  );
+                };
+                if (source === null) return sourceRows.map(renderRow);
+                const allOff = sourceRows.every((row) => isSkillDisabled(disabledSkills, row.name));
+                return (
+                  <div key={`source:${source}`} className="border-t first:border-t-0">
+                    <SettingsRow
+                      title={
+                        <span className="text-muted-foreground">
+                          From <span className="font-mono text-foreground">{source}</span>
+                        </span>
+                      }
+                      control={
+                        <Switch
+                          aria-label={`Skills from ${source}`}
+                          checked={!allOff}
+                          disabled={!canWrite}
+                          onCheckedChange={(enabled) => setSkillsDisabled(sourceRows, !enabled)}
+                        />
+                      }
+                    />
+                    <div className="ps-4">{sourceRows.map(renderRow)}</div>
+                  </div>
+                );
+              },
+            )}
           </SettingsSection>
         ))
       )}
@@ -359,24 +480,79 @@ function SkillsPanel() {
         Turning a skill off hides it from Claude, Codex and OpenCode, and from the composer's skill
         menu. Other agents may still load it on their own. Changes apply to new sessions.
       </p>
+      {adding && environmentId !== null && installTarget !== null ? (
+        <AddSkillsDialog
+          open
+          onOpenChange={setAdding}
+          environmentId={environmentId}
+          target={installTarget}
+          scopeLabel={scopeLabel}
+          onInstalled={afterSkillChange}
+        />
+      ) : null}
+      {viewing !== null && environmentId !== null ? (
+        <SkillFilesDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setViewing(null);
+          }}
+          environmentId={environmentId}
+          name={viewing.name}
+          folder={viewing.folder}
+        />
+      ) : null}
+      <AlertDialog
+        open={removingSkill !== null}
+        onOpenChange={(open) => !open && setRemovingSkill(null)}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove {removingSkill?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Deletes the skill's folder and every agent's link to it, as{" "}
+              <code>npx skills remove</code> does.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (removingSkill) void runSkillAction("remove", removingSkill);
+                setRemovingSkill(null);
+              }}
+            >
+              Remove
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
     </>
   );
 }
 
 function SkillSettingsRow({
   row,
+  details,
   disabled,
   overridden,
   showProviders,
   canWrite,
   onChange,
+  onView,
+  onUpdate,
+  onRemove,
 }: {
   readonly row: SkillRow;
+  readonly details: SkillRowDetails;
   readonly disabled: boolean;
   readonly overridden: boolean;
   readonly showProviders: boolean;
   readonly canWrite: boolean;
   readonly onChange: (enabled: boolean) => void;
+  readonly onView: (() => void) | null;
+  readonly onUpdate: (() => void) | null;
+  readonly onRemove: (() => void) | null;
 }) {
   const lockedOff = row.disabledByProvider;
   return (
@@ -388,6 +564,23 @@ function SkillSettingsRow({
             <Badge variant="info" size="sm">
               This project
             </Badge>
+          ) : null}
+          {details.conflict ? (
+            <Tooltip>
+              <TooltipTrigger render={<span className="inline-flex" />}>
+                <Badge variant="warning" size="sm">
+                  Conflict
+                </Badge>
+              </TooltipTrigger>
+              <TooltipPopup side="top" className="max-w-sm">
+                Different skills share this name. The switch turns all of them on or off:
+                {row.paths.map((path) => (
+                  <span key={path} className="block truncate font-mono">
+                    {path}
+                  </span>
+                ))}
+              </TooltipPopup>
+            </Tooltip>
           ) : null}
         </span>
       }
@@ -422,6 +615,26 @@ function SkillSettingsRow({
             disabled={!canWrite || lockedOff}
             onCheckedChange={onChange}
           />
+          {onView !== null || onUpdate !== null || onRemove !== null ? (
+            <Menu>
+              <MenuTrigger
+                render={
+                  <Button size="icon-sm" variant="ghost-muted" aria-label={`${row.name} options`} />
+                }
+              >
+                <MoreHorizontalIcon className="size-4" />
+              </MenuTrigger>
+              <MenuPopup align="end">
+                {onView !== null ? <MenuItem onClick={onView}>View files</MenuItem> : null}
+                {onUpdate !== null ? <MenuItem onClick={onUpdate}>Update</MenuItem> : null}
+                {onRemove !== null ? (
+                  <MenuItem variant="destructive" onClick={onRemove}>
+                    Remove
+                  </MenuItem>
+                ) : null}
+              </MenuPopup>
+            </Menu>
+          ) : null}
         </>
       }
     />
@@ -504,26 +717,9 @@ function McpServersPanel() {
     });
 
   const setEnabled = (row: McpServerRow, enabled: boolean) =>
-    persist(({ settings, projectId: targetProject }) => {
-      if (targetProject === null) {
-        const current = settings.mcpServers[row.name];
-        return current ? { mcpServers: { [row.name]: { ...current, enabled } } } : null;
-      }
-      const entries: Record<string, McpServerProjectOverride> = {
-        ...settings.projectSettingsOverrides[targetProject]?.mcpServers,
-      };
-      const own = entries[row.name];
-      const inherited = settings.mcpServers[row.name];
-      if (own?.transport !== undefined) {
-        entries[row.name] = { ...own, enabled };
-      } else if (inherited !== undefined && inherited.enabled === enabled) {
-        // Back to the environment's value: no override needed.
-        delete entries[row.name];
-      } else {
-        entries[row.name] = { enabled };
-      }
-      return projectOverridePatch(settings, targetProject, "mcpServers", entries);
-    });
+    persist(({ settings, projectId: targetProject }) =>
+      mcpServerEnabledPatch(settings, targetProject, row.name, enabled),
+    );
 
   const remove = (row: McpServerRow) =>
     persist(({ settings, projectId: targetProject }) => {
