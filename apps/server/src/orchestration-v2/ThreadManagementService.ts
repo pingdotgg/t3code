@@ -563,7 +563,7 @@ const make = Effect.gen(function* () {
       );
 
   const listProjectThreads: ThreadManagementServiceShape["listProjectThreads"] = (input) =>
-    orchestrator.getShellSnapshot().pipe(
+    orchestrator.getShellSnapshot({ projectId: input.projectId, location: "active" }).pipe(
       Effect.mapError(
         (cause) =>
           new ThreadManagementProjectThreadsListError({
@@ -573,7 +573,6 @@ const make = Effect.gen(function* () {
       ),
       Effect.map((snapshot) =>
         snapshot.threads
-          .filter((thread) => thread.projectId === input.projectId)
           .filter(
             (thread) =>
               input.includeSubagents || thread.lineage.relationshipToParent !== "subagent",
