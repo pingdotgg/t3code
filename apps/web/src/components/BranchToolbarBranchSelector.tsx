@@ -743,6 +743,7 @@ export function BranchToolbarBranchSelector({
             render={<ComposerControl size="xs" />}
             badge={prBadge}
             pullRequests={serverThread?.pullRequests ?? []}
+            project={activeProject ?? null}
             number={prNumber}
             url={prUrl}
             status={displayedPrStatus}

@@ -2,7 +2,10 @@ import type { ThreadPullRequestLink } from "@t3tools/contracts";
 import { resolveThreadPullRequestChains } from "@t3tools/shared/threadPullRequests";
 import { describe, expect, it } from "vite-plus/test";
 
-import { pullRequestListLines } from "./pullRequestListLines";
+import {
+  groupPullRequestListLinesByRepository,
+  pullRequestListLines,
+} from "./pullRequestListLines";
 
 function link(
   number: number,
@@ -71,6 +74,40 @@ describe("pullRequestListLines", () => {
     expect(lines.map((line) => [line.link.number, line.depth, line.stack?.kind ?? null])).toEqual([
       [3, 0, "native"],
       [4, 1, null],
+    ]);
+  });
+});
+
+describe("groupPullRequestListLinesByRepository", () => {
+  function line(number: number, repository: string, host = "github.com") {
+    return {
+      link: { ...link(number, `h${number}`, "main", "2026-01-01T10:00:00Z"), host, repository },
+      depth: 0,
+      chainKey: `${host}/${repository}#${number}`,
+      stack: null,
+    };
+  }
+
+  it("collects a repository's lines under one group in first-seen order", () => {
+    const groups = groupPullRequestListLinesByRepository([
+      line(1, "acme/web"),
+      line(2, "vercel/next.js"),
+      line(3, "acme/web"),
+    ]);
+    expect(groups.map((group) => [group.label, group.lines.map((l) => l.link.number)])).toEqual([
+      ["acme/web", [1, 3]],
+      ["vercel/next.js", [2]],
+    ]);
+  });
+
+  it("keeps one path on two hosts apart and names the host", () => {
+    const groups = groupPullRequestListLinesByRepository([
+      line(1, "acme/web"),
+      line(2, "acme/web", "gitlab.com"),
+    ]);
+    expect(groups.map((group) => group.label)).toEqual([
+      "github.com/acme/web",
+      "gitlab.com/acme/web",
     ]);
   });
 });

@@ -47,3 +47,42 @@ export function pullRequestListLines(
     }));
   });
 }
+
+export interface PullRequestRepositoryGroup {
+  readonly key: string;
+  /** The repository path, prefixed with its host when another group shares that path. */
+  readonly label: string;
+  readonly lines: ReadonlyArray<PullRequestListLine>;
+}
+
+/**
+ * Groups lines by repository in the order each repository first appears, keeping each group's
+ * line order, so a stack stays contiguous under its repository.
+ */
+export function groupPullRequestListLinesByRepository(
+  lines: ReadonlyArray<PullRequestListLine>,
+): ReadonlyArray<PullRequestRepositoryGroup> {
+  const groups = new Map<
+    string,
+    { repository: string; host: string; lines: PullRequestListLine[] }
+  >();
+  for (const line of lines) {
+    const key = `${line.link.host}/${line.link.repository}`.toLowerCase();
+    const group = groups.get(key);
+    if (group) group.lines.push(line);
+    else groups.set(key, { repository: line.link.repository, host: line.link.host, lines: [line] });
+  }
+  const pathCounts = new Map<string, number>();
+  for (const group of groups.values()) {
+    const path = group.repository.toLowerCase();
+    pathCounts.set(path, (pathCounts.get(path) ?? 0) + 1);
+  }
+  return [...groups].map(([key, group]) => ({
+    key,
+    label:
+      (pathCounts.get(group.repository.toLowerCase()) ?? 0) > 1
+        ? `${group.host}/${group.repository}`
+        : group.repository,
+    lines: group.lines,
+  }));
+}
