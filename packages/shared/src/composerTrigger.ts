@@ -46,6 +46,13 @@ function isWhitespace(char: string): boolean {
 }
 
 /**
+ * A `/` that follows only skill chips on its line (`$a $b /`) still opens the
+ * command menu, so a second skill can be chained after the first. Any other
+ * text before it keeps `/` plain, so `see /usr/bin` does not pop a menu.
+ */
+const SLASH_AFTER_SKILLS_REGEX = /^(\s*(?:\p{Sc}[\p{L}\p{N}:_-]+\s+)+)\/(\S*)$/u;
+
+/**
  * Detect an active trigger (@path, $skill, /command) at the cursor position.
  *
  * Accepts an optional `isWhitespaceChar` override so callers with inline
@@ -90,6 +97,16 @@ export function detectComposerTrigger(
         rangeEnd: cursor,
       };
     }
+  }
+
+  const slashAfterSkills = SLASH_AFTER_SKILLS_REGEX.exec(linePrefix);
+  if (slashAfterSkills) {
+    return {
+      kind: "slash-command",
+      query: slashAfterSkills[2] ?? "",
+      rangeStart: lineStart + (slashAfterSkills[1] ?? "").length,
+      rangeEnd: cursor,
+    };
   }
 
   const wsCheck = isWhitespaceChar ?? isWhitespace;

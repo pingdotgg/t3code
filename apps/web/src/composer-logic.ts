@@ -256,6 +256,10 @@ export function isCollapsedCursorAdjacentToInlineToken(
   return false;
 }
 
+// A `/` after only skill chips on its line (`$a $b /`) still opens the command
+// menu, so a second skill can be chained after the first.
+const SLASH_AFTER_SKILLS_REGEX = /^(\s*(?:\p{Sc}[\p{L}\p{N}:_-]+\s+)+)\/(\S*)$/u;
+
 export function detectComposerTrigger(text: string, cursorInput: number): ComposerTrigger | null {
   const cursor = clampCursor(text, cursorInput);
   const lineStart = text.lastIndexOf("\n", Math.max(0, cursor - 1)) + 1;
@@ -272,6 +276,16 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
         rangeEnd: cursor,
       };
     }
+  }
+
+  const slashAfterSkills = SLASH_AFTER_SKILLS_REGEX.exec(linePrefix);
+  if (slashAfterSkills) {
+    return {
+      kind: "slash-command",
+      query: slashAfterSkills[2] ?? "",
+      rangeStart: lineStart + (slashAfterSkills[1] ?? "").length,
+      rangeEnd: cursor,
+    };
   }
 
   const tokenStart = tokenStartForCursor(text, cursor);

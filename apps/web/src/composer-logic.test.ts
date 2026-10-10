@@ -289,6 +289,23 @@ describe("detectComposerTrigger", () => {
     expect(trigger).toBeNull();
   });
 
+  it("opens the slash menu after a skill chip so a second skill can be chained", () => {
+    const text = "$first $second /ge";
+
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "slash-command",
+      query: "ge",
+      rangeStart: "$first $second ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("keeps a mid-line slash plain when prose precedes it", () => {
+    const text = "$first see /usr";
+
+    expect(detectComposerTrigger(text, text.length)).toBeNull();
+  });
+
   it("detects non-model slash commands while typing", () => {
     const text = "/pl";
     const trigger = detectComposerTrigger(text, text.length);

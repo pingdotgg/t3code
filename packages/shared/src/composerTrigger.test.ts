@@ -15,6 +15,21 @@ describe("detectComposerTrigger", () => {
       });
     },
   );
+
+  it("opens the slash menu after skill chips so another skill can be chained", () => {
+    const text = "$first $second /re";
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "slash-command",
+      query: "re",
+      rangeStart: "$first $second ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("keeps a mid-line slash plain when prose precedes it", () => {
+    const text = "$first see /usr";
+    expect(detectComposerTrigger(text, text.length)).toBeNull();
+  });
 });
 
 describe("serializeComposerFileLink", () => {
