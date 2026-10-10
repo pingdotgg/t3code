@@ -91,6 +91,12 @@ file from the relay directory. Runtime secrets include Clerk, APNs, and optional
 the configured API and tunnel DNS zones as retained Cloudflare resources. Personal stages reference
 the production-owned zones.
 
+The stack mints an account-owned runtime token for the Worker's tunnel and DNS bindings. Creating it
+requires the deployment token to have `Account API Tokens: Edit` on the deployment account; the
+user-level `API Tokens: Edit` permission does not authorize that call. An existing stage can reuse its
+runtime token, so a deployment token that updates `prod` can still fail with `Unauthorized` when it
+deploys a new stage.
+
 The `prod` Alchemy stage owns the retained PlanetScale database and is the shared hosted relay for
 stable and nightly clients. Every other stage references that database and provisions an isolated
 PlanetScale branch and runtime role for local development, so deploy `prod` before creating
