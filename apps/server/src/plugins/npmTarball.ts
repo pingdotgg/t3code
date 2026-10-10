@@ -246,8 +246,9 @@ export const readNpmTarball = (
   tarball: Uint8Array,
   limits: NpmTarballLimits = defaultNpmTarballLimits,
 ) =>
-  // Headers and padding take up to 1.5 KiB per file on top of the content.
-  gunzip(tarball, limits.maxBytes + (limits.maxFiles + 2) * 3 * BLOCK).pipe(
+  // Every entry, directories and extended headers too, gets 1.5 KiB for its header, padding,
+  // and a pax path; one 10 KiB tar record covers the end-of-archive padding.
+  gunzip(tarball, limits.maxBytes + limits.maxEntries * 3 * BLOCK + 20 * BLOCK).pipe(
     Effect.flatMap((tar) =>
       Effect.try({
         try: () => parse(tar, limits),

@@ -182,6 +182,21 @@ describe("readNpmTarball", () => {
     }),
   );
 
+  it.effect("reads an archive whose directories and extended headers outweigh its files", () =>
+    Effect.gen(function* () {
+      const limits = { ...defaultNpmTarballLimits, maxFiles: 2, maxBytes: 1000, maxEntries: 30 };
+      const directories = Array.from({ length: 20 }, (_, index) => ({
+        path: `package/d${index}/`,
+        type: "5",
+      }));
+      const xattr = new TextEncoder().encode(
+        `SCHILY.xattr.com.apple.provenance=${"x".repeat(900)}`,
+      );
+      const files = yield* read([...directories, { ...manifest, pax: [xattr] }], limits);
+      expect(files.map((file) => file.path)).toEqual(["package.json"]);
+    }),
+  );
+
   it.effect("bounds paths and headers before it builds anything from them", () =>
     Effect.gen(function* () {
       const limits = { ...defaultNpmTarballLimits, maxPathDepth: 8, maxPathBytes: 200 };
