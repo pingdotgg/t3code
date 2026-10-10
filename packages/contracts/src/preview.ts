@@ -238,6 +238,8 @@ export const PreviewOpenInput = Schema.Struct({
   profileId: Schema.optional(BrowserProfileId),
   /** Omit for a desktop tab. `server` requires the `serverBrowser` capability. */
   runtime: Schema.optional(PreviewRuntime),
+  /** Server tabs only; the desktop seeds its own tabs at creation. */
+  colorScheme: Schema.optional(PreviewAppearancePreference),
   /** Set by agent opens that should float for viewers; see the snapshot field. */
   reveal: Schema.optional(Schema.Boolean),
 });

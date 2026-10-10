@@ -1348,6 +1348,30 @@ it.live("drives the desktop's own page for a tab the desktop renders", () =>
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("a tab opens at its requested appearance, and system undoes Playwright's light", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      yield* Effect.yieldNow;
+      const dark = yield* manager.open({
+        threadId: scope.thread.threadId,
+        runtime: "server",
+        colorScheme: "dark",
+      });
+      expect(dark.colorScheme).toBe("dark");
+      yield* browser.attachViewer(viewerInput(dark.tabId, true));
+      expect(contexts[0]!.page.emulateMedia).toHaveBeenCalledWith({ colorScheme: "dark" });
+      desktopRendersNext = true;
+      const system = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      yield* browser.attachViewer(viewerInput(system.tabId, true));
+      expect(desktopConnections[0]!.context.page.emulateMedia).toHaveBeenCalledWith({
+        colorScheme: null,
+      });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("a desktop page the desktop takes back reconnects instead of closing", () =>
   Effect.scoped(
     Effect.gen(function* () {

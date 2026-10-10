@@ -93,6 +93,42 @@ describe("openPreviewSession", () => {
     expect(readThreadPreviewState(threadRef).recentlySeenUrls).toEqual(["https://t3.chat/"]);
   });
 
+  it("opens a server tab at the default appearance", async () => {
+    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, browserDefaultAppearance: "dark" });
+    const open = vi.fn(async (_input: PreviewOpenInput) => AsyncResult.success(snapshot));
+
+    await openPreviewSession({
+      openPreview: ({ input }) => open(input),
+      threadRef,
+      runtime: "server",
+    });
+
+    expect(open).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      viewport: FILL_PREVIEW_VIEWPORT,
+      profileId: DEFAULT_BROWSER_PROFILE_ID,
+      runtime: "server",
+      colorScheme: "dark",
+    });
+  });
+
+  it("leaves a desktop tab's appearance to the desktop", async () => {
+    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, browserDefaultAppearance: "dark" });
+    const open = vi.fn(async (_input: PreviewOpenInput) => AsyncResult.success(snapshot));
+
+    await openPreviewSession({
+      openPreview: ({ input }) => open(input),
+      threadRef,
+      runtime: "desktop",
+    });
+
+    expect(open).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      viewport: FILL_PREVIEW_VIEWPORT,
+      profileId: DEFAULT_BROWSER_PROFILE_ID,
+    });
+  });
+
   it("returns failures without mutating preview state", async () => {
     const failure = new Error("preview unavailable");
 

@@ -75,7 +75,7 @@ export async function openTerminalLinkInPreview<E>(
       // mapping, so the configured defaults are applied explicitly.
       viewport: browserDefaultOpenViewport(defaults),
       profileId: browserDefaultOpenProfileId(defaults),
-      ...(runtime === undefined ? {} : { runtime }),
+      ...(runtime === undefined ? {} : { runtime, colorScheme: defaults.appearance }),
     },
   });
   if (result._tag === "Failure") {
