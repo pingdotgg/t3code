@@ -154,13 +154,11 @@ function codexAccountEmail(account: CodexSchema.V2GetAccountResponse["account"])
 }
 
 export function mapCodexReasoningEffortDescriptor(model: {
-  readonly model: string;
   readonly supportedReasoningEfforts: ReadonlyArray<{ readonly reasoningEffort: string }>;
   readonly defaultReasoningEffort?: string;
 }) {
   const reasoningOptions = model.supportedReasoningEfforts.map(({ reasoningEffort }) =>
-    reasoningEffort ===
-    (codexModelFamily(model.model) === "gpt-6-astra" ? "medium" : model.defaultReasoningEffort)
+    reasoningEffort === model.defaultReasoningEffort
       ? {
           id: reasoningEffort,
           label: reasoningEffortLabel(reasoningEffort),
@@ -185,7 +183,11 @@ export function mapCodexReasoningEffortDescriptor(model: {
 export function mapCodexModelCapabilities(
   model: CodexSchema.V2ModelListResponse__Model,
 ): ModelCapabilities {
-  const reasoningDescriptor = mapCodexReasoningEffortDescriptor(model);
+  const reasoningDescriptor = mapCodexReasoningEffortDescriptor({
+    supportedReasoningEfforts: model.supportedReasoningEfforts,
+    defaultReasoningEffort:
+      codexModelFamily(model.model) === "gpt-6-astra" ? "medium" : model.defaultReasoningEffort,
+  });
   const serviceTiers =
     model.serviceTiers && model.serviceTiers.length > 0
       ? model.serviceTiers

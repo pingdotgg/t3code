@@ -56,7 +56,6 @@ export const chatGptModels = Effect.fn("chatGptModels")(function* (
         reasoningLevels.length > 0
       ) {
         const reasoningDescriptor = mapCodexReasoningEffortDescriptor({
-          model: model.slug,
           ...(typeof model.default_reasoning_level === "string" && model.default_reasoning_level
             ? { defaultReasoningEffort: model.default_reasoning_level }
             : {}),

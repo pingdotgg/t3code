@@ -7,6 +7,7 @@ import {
 import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { chatGptModels } from "./CodexChatGptModels.ts";
+import { mapCodexModelCapabilities } from "./CodexProvider.ts";
 
 const accountModel = {
   slug: "gpt-6.1-sol",
@@ -51,6 +52,12 @@ it.effect("exposes account reasoning controls when the model is absent from nati
         currentValue: "low",
       },
     ]);
+    assert.isUndefined(
+      buildExplicitProviderOptionSelectionsFromDescriptors(
+        getProviderOptionDescriptors({ caps: capabilities! }),
+        undefined,
+      ),
+    );
     const selections = [{ id: "reasoningEffort", value: "high" }];
     assert.deepStrictEqual(
       buildExplicitProviderOptionSelectionsFromDescriptors(
@@ -59,6 +66,40 @@ it.effect("exposes account reasoning controls when the model is absent from nati
       ),
       selections,
     );
+  }),
+);
+
+it.effect("preserves the account Astra default without changing the native override", () =>
+  Effect.gen(function* () {
+    const models = yield* chatGptModels("account-a", []).pipe(
+      Effect.provideService(
+        HttpClient.HttpClient,
+        catalogClient([{ ...accountModel, slug: "gpt-6-astra", display_name: "GPT-6-Astra" }]),
+      ),
+    );
+    const descriptor = models[0]!.capabilities!.optionDescriptors![0]!;
+    assert.strictEqual(descriptor.currentValue, "low");
+    if (descriptor.type === "select") {
+      assert.deepStrictEqual(
+        descriptor.options.filter((option) => option.isDefault),
+        [{ id: "low", label: "Low", isDefault: true }],
+      );
+    }
+    const native = mapCodexModelCapabilities({
+      model: "gpt-6-astra",
+      id: "gpt-6-astra",
+      displayName: "GPT-6-Astra",
+      description: "Test model",
+      hidden: false,
+      isDefault: false,
+      defaultReasoningEffort: "low",
+      supportedReasoningEfforts: accountModel.supported_reasoning_levels.map((level) => ({
+        reasoningEffort: level.effort,
+        description: level.description,
+      })),
+      additionalSpeedTiers: [],
+    });
+    assert.strictEqual(native.optionDescriptors![0]!.currentValue, "medium");
   }),
 );
 
