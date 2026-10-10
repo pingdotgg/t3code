@@ -4557,6 +4557,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
       const firstUpdatedAt = firstProjection.thread.updatedAt;
       assert.isNotNull(firstSnoozedAt);
 
+      yield* TestClock.adjust("1 minute");
       yield* orchestrator.dispatch({
         type: "thread.snooze",
         commandId: CommandId.make("runtime-layer-snoozed-thread-snooze-again"),
@@ -4568,7 +4569,11 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
       const thread = shell.threads.find((candidate) => candidate.id === threadId);
       assert.isDefined(thread);
       assert.equal(DateTime.formatIso(thread.snoozedUntil!), snoozedUntil);
-      assert.deepEqual(thread.snoozedAt, firstSnoozedAt);
+      // A same-time re-snooze re-acknowledges the thread without counting as activity.
+      assert.isNotNull(thread.snoozedAt);
+      assert.isTrue(
+        DateTime.toEpochMillis(thread.snoozedAt!) > DateTime.toEpochMillis(firstSnoozedAt!),
+      );
       assert.deepEqual(thread.updatedAt, firstUpdatedAt);
 
       yield* orchestrator.dispatch({
@@ -4605,6 +4610,76 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
       const awakened = yield* orchestrator.getThreadProjection(threadId);
       assert.isNull(awakened.thread.snoozedUntil);
       assert.isNull(awakened.thread.snoozedAt);
+    }),
+  );
+
+  // Clients treat a failed thread's updatedAt as its failure edge, so a
+  // background refresh bumping it would wake the thread from snooze.
+  it.effect("keeps background pull request sync out of the persisted updatedAt", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projectId = ProjectId.make("runtime-layer-pr-sync-project");
+      const threadId = ThreadId.make("runtime-layer-pr-sync-thread");
+      const key = { host: "github.com", repository: "owner/repository", number: 42 };
+
+      yield* projects.create({
+        commandId: CommandId.make("runtime-layer-pr-sync-project-create"),
+        projectId,
+        title: "PR sync projection",
+        workspaceRoot: "/tmp/runtime-layer-pr-sync-project",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-pr-sync-thread-create"),
+        threadId,
+        projectId,
+        title: "PR sync thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.link",
+        commandId: CommandId.make("runtime-layer-pr-sync-link"),
+        threadId,
+        ...key,
+        url: "https://github.com/owner/repository/pull/42",
+        source: "manual",
+      });
+      const linkedShell = yield* orchestrator.getShellSnapshot();
+      const linkedUpdatedAt = linkedShell.threads.find((t) => t.id === threadId)?.updatedAt;
+      assert.isDefined(linkedUpdatedAt);
+
+      yield* TestClock.adjust("1 minute");
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-link.sync",
+        commandId: CommandId.make("runtime-layer-pr-sync-sync"),
+        threadId,
+        ...key,
+        snapshot: {
+          state: "open",
+          title: "Ship it",
+          headBranch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: "2026-08-27T00:00:00.000Z",
+          syncedAt: "2026-08-27T00:00:00.000Z",
+          closedAt: null,
+          mergedAt: null,
+        },
+        stack: null,
+      });
+
+      const shell = yield* orchestrator.getShellSnapshot();
+      const thread = shell.threads.find((candidate) => candidate.id === threadId);
+      assert.isDefined(thread);
+      assert.equal(thread.pullRequests?.[0]?.snapshot?.title, "Ship it");
+      assert.deepEqual(thread.updatedAt, linkedUpdatedAt);
     }),
   );
 });

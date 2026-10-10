@@ -2832,13 +2832,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             thread.snoozedUntil != null &&
             snoozedUntil !== null &&
             DateTime.toEpochMillis(thread.snoozedUntil) === DateTime.toEpochMillis(snoozedUntil);
-          const existingSnoozedAt = sameWakeTime ? (thread.snoozedAt ?? null) : null;
           return {
             ...thread,
             snoozedUntil,
             limitRecovery: thread.limitRecovery ? { ...thread.limitRecovery, snooze: false } : null,
-            snoozedAt: existingSnoozedAt ?? now,
-            updatedAt: existingSnoozedAt === null ? now : thread.updatedAt,
+            // Every snooze acknowledges what the user can see now. Clients wake
+            // a snoozed thread early on activity newer than snoozedAt, so
+            // keeping an older stamp on a same-time re-snooze would leave an
+            // early-woken thread visible after a "successful" snooze.
+            snoozedAt: now,
+            updatedAt: sameWakeTime ? thread.updatedAt : now,
           };
         }
         case "thread.unsnooze": {

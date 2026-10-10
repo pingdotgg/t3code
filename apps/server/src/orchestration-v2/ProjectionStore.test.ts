@@ -331,6 +331,70 @@ it.effect("memory projection keeps restart-cancelled work through a stale run.up
   restartCancelledWorkSurvivesStaleRunUpdate.pipe(Effect.provide(ProjectionStore.layerMemory)),
 );
 
+// Clients read a failed thread's updatedAt as its failure edge, so background
+// writes must keep the orchestrator's timestamp in both stores.
+const backgroundThreadUpdatesKeepTimestamp = Effect.gen(function* () {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const createdAt = DateTime.makeUnsafe("2026-10-06T14:00:00.000Z");
+  const threadId = ThreadId.make("thread:background-updates");
+  const thread = {
+    createdBy: "user" as const,
+    creationSource: "web" as const,
+    id: threadId,
+    projectId: ProjectId.make("project:background-updates"),
+    title: "Background updates",
+    providerInstanceId,
+    modelSelection,
+    runtimeMode: "full-access" as const,
+    interactionMode: "default" as const,
+    branch: null,
+    worktreePath: null,
+    activeProviderThreadId: null,
+    lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+    forkedFrom: null,
+    createdAt,
+    updatedAt: createdAt,
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    lastVisitedAt: null,
+    deletedAt: null,
+  };
+  yield* store.apply({
+    id: EventId.make("event:background-updates:created"),
+    type: "thread.created",
+    threadId,
+    occurredAt: createdAt,
+    payload: thread,
+  });
+  yield* store.apply({
+    id: EventId.make("event:background-updates:pull-request-synced"),
+    type: "thread.pull-request-synced",
+    threadId,
+    occurredAt: DateTime.add(createdAt, { minutes: 45 }),
+    payload: thread,
+  });
+  yield* store.apply({
+    id: EventId.make("event:background-updates:active-reordered"),
+    type: "thread.active-reordered",
+    threadId,
+    occurredAt: DateTime.add(createdAt, { minutes: 50 }),
+    payload: { ...thread, activeOrderKey: "a" },
+  });
+  const projection = yield* store.getThreadProjection(threadId);
+  assert.deepEqual(projection.thread.updatedAt, createdAt);
+  assert.deepEqual(projection.updatedAt, createdAt);
+  assert.deepEqual((yield* store.getThreadShell(threadId))?.updatedAt, createdAt);
+});
+
+it.effect("memory projection keeps background thread updates out of updatedAt", () =>
+  backgroundThreadUpdatesKeepTimestamp.pipe(Effect.provide(ProjectionStore.layerMemory)),
+);
+
+it.effect("SQL projection keeps background thread updates out of updatedAt", () =>
+  backgroundThreadUpdatesKeepTimestamp.pipe(Effect.provide(layerTest)),
+);
+
 it.effect("memory recovery selection ignores unfinished items from rolled-back runs", () =>
   Effect.gen(function* () {
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;

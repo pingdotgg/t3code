@@ -102,16 +102,15 @@ export interface ThreadSnoozeShell extends QueuedThreadShell {
  */
 export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean {
   if (shell.hasPendingApprovals || shell.hasPendingUserInput) return true;
-  const runtime = shell.runtime ?? shell.session ?? null;
   const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
   // Only a FRESH failure raises the hand: a thread snoozed while already
   // failed stays snoozed — that snooze was the user saying "I saw it, not
-  // now". session.updatedAt stamps the status edge, so an error newer than
-  // the snooze is new information.
+  // now". An error newer than the snooze is new information.
+  const failedAt = failureEdgeAt(shell);
   if (
-    (runtime?.status === "error" || runtime?.status === "failed") &&
+    failedAt !== undefined &&
     (shell.snoozedAt == null ||
-      (runtime.updatedAt != null && Date.parse(runtime.updatedAt) > Date.parse(shell.snoozedAt)))
+      (failedAt != null && Date.parse(failedAt) > Date.parse(shell.snoozedAt)))
   ) {
     return true;
   }
@@ -124,6 +123,23 @@ export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean 
     return true;
   }
   return false;
+}
+
+/**
+ * When the thread's current failure happened, or undefined when it is not
+ * failed. A failed run's completion is the failure edge; V2 runtime
+ * summaries reuse the thread's updatedAt, which also moves on unrelated
+ * metadata writes (PR sync, recovery choices) and would otherwise read as a
+ * fresh failure. Legacy sessions stamp updatedAt on the status edge itself.
+ */
+function failureEdgeAt(shell: ThreadSnoozeShell): string | null | undefined {
+  const runtime = shell.runtime ?? shell.session ?? null;
+  if (runtime?.status !== "error" && runtime?.status !== "failed") return undefined;
+  const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
+  if (latestRun?.status === "failed" && latestRun.completedAt != null) {
+    return latestRun.completedAt;
+  }
+  return runtime.updatedAt ?? null;
 }
 
 /**
@@ -195,7 +211,6 @@ export function threadWokeAt(
   // than that visit's lastVisitedAt).
   if (threadRaisedHandWhileSnoozed(shell)) {
     const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
-    const runtime = shell.runtime ?? shell.session ?? null;
     if (
       shell.snoozedAt != null &&
       (latestRun?.state === "completed" || latestRun?.status === "completed") &&
@@ -204,7 +219,8 @@ export function threadWokeAt(
     ) {
       return latestRun.completedAt;
     }
-    return runtime?.updatedAt ?? shell.snoozedAt ?? null;
+    const runtime = shell.runtime ?? shell.session ?? null;
+    return failureEdgeAt(shell) ?? runtime?.updatedAt ?? shell.snoozedAt ?? null;
   }
   // No raised hand: woke iff the timer elapsed (still-snoozed → null).
   return wakeAtMs <= Date.parse(options.now) ? shell.snoozedUntil : null;

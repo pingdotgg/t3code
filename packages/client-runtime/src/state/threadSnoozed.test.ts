@@ -121,6 +121,27 @@ describe("effectiveSnoozed", () => {
     ).toBe(true);
   });
 
+  it("stays snoozed when only metadata moved after snoozing a failed run", () => {
+    // V2 runtime summaries reuse thread.updatedAt, which PR sync or recovery
+    // choices can bump long after the failure the user already saw.
+    const shell: ThreadSnoozeShell = {
+      ...makeShell({ snoozedUntil: FUTURE_WAKE }),
+      runtime: { status: "failed", updatedAt: "2026-04-10T11:00:00.000Z" },
+      latestRun: { status: "failed", completedAt: "2026-04-08T13:00:00.000Z" },
+    };
+    expect(effectiveSnoozed(shell, { now: NOW })).toBe(true);
+  });
+
+  it("wakes early when the run failed after the snooze", () => {
+    const shell: ThreadSnoozeShell = {
+      ...makeShell({ snoozedUntil: FUTURE_WAKE }),
+      runtime: { status: "failed", updatedAt: "2026-04-10T11:00:00.000Z" },
+      latestRun: { status: "failed", completedAt: "2026-04-10T10:00:00.000Z" },
+    };
+    expect(effectiveSnoozed(shell, { now: NOW })).toBe(false);
+    expect(threadWokeAt(shell, { now: NOW })).toBe("2026-04-10T10:00:00.000Z");
+  });
+
   it("stays snoozed while the session keeps working — snooze never pauses the agent", () => {
     expect(
       effectiveSnoozed(makeShell({ snoozedUntil: FUTURE_WAKE, sessionStatus: "running" }), {
