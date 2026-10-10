@@ -1832,6 +1832,17 @@ const CLAUDE_OPAQUE_BACKGROUND_TASK_KINDS: ReadonlyMap<
   Exclude<OrchestrationV2PendingBackgroundTask["kind"], "subagent">
 > = new Map([["local_bash", "command"]]);
 
+// Task types whose running tasks make Claude skip a goal's Stop hook check,
+// as Claude Code 2.1.292 decides it. local_bash (Monitor tool runs included)
+// is the roster's; the rest run on the subagent path. mcp_task, monitor_mcp
+// and monitor_ws tasks do not defer the check.
+const CLAUDE_GOAL_DEFERRING_TASK_TYPES: ReadonlySet<string> = new Set([
+  "local_agent",
+  "remote_agent",
+  "in_process_teammate",
+  "local_workflow",
+]);
+
 function isClaudeOpaqueBackgroundTaskType(taskType: string | null | undefined): boolean {
   return typeof taskType === "string" && CLAUDE_OPAQUE_BACKGROUND_TASK_KINDS.has(taskType);
 }
@@ -3295,6 +3306,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         }>({ userTurns: new Map(), reports: new Map() });
         // Subagents Claude started in the background. Only their ends wake the root.
         const backgroundedSubagentTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
+        // Subagent-path tasks whose type Claude's goal check does not wait for.
+        const goalExemptTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
         // Subagents another subagent started (spawn_depth above 1). Claude
         // reports their end to the owning subagent, so it never wakes the root.
         const nestedSubagentTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
@@ -5318,20 +5331,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   input.context.input.providerThread.nativeConversationHeadRef !== null;
                 // While a goal is set, Claude ends a turn on its own only after the
                 // goal's Stop hook passes. It defers that check while background
-                // work runs, and a hook that stops the turn reports another reason.
+                // work of the types it waits on runs (subagents stay off the roster;
+                // see CLAUDE_GOAL_DEFERRING_TASK_TYPES), and a hook that stops the
+                // turn reports another reason.
                 // SDK mode does not report an evaluator timeout or an impossible
                 // verdict, so those still read as complete.
                 const goal =
                   nativeThreadId === null ? undefined : goalsByNativeThread.get(nativeThreadId);
                 const goalChecked = goalCheckedTurns.delete(input.context.providerTurnId);
                 const terminalReason = input.result?.terminal_reason;
+                const liveQuery = yield* Ref.get(queryContext);
                 if (
                   nativeThreadId !== null &&
                   goal?.status === "active" &&
                   goalChecked &&
                   input.status === "completed" &&
                   (terminalReason === undefined || terminalReason === "completed") &&
-                  roster.size === 0
+                  roster.size === 0 &&
+                  !(
+                    liveQuery?.nativeThreadId === nativeThreadId &&
+                    (yield* liveProcessRunsBackgroundWork(liveQuery, { forGoalCheck: true }))
+                  )
                 ) {
                   goalsByNativeThread.set(nativeThreadId, {
                     objective: goal.objective,
@@ -6347,6 +6367,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 activeContext: context,
               });
             } else {
+              if (
+                message.task_type !== undefined &&
+                !CLAUDE_GOAL_DEFERRING_TASK_TYPES.has(message.task_type)
+              ) {
+                yield* Ref.update(goalExemptTaskIds, (current) =>
+                  new Set(current).add(message.task_id),
+                );
+              }
               const launch =
                 message.tool_use_id === undefined
                   ? undefined
@@ -7371,6 +7399,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // already buffered is done: the buffer outlives the process.
         const liveProcessRunsBackgroundWork = Effect.fnUntraced(function* (
           live: ClaudeLiveQueryContext,
+          options?: { readonly forGoalCheck?: boolean },
         ) {
           if (
             rosterForNativeThread(
@@ -7381,10 +7410,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return true;
           }
           const buffered = (yield* Ref.get(wakeBuffers)).get(live.nativeThreadId)?.messages ?? [];
+          const ignored = options?.forGoalCheck === true ? yield* Ref.get(goalExemptTaskIds) : null;
           for (const [taskId, subagent] of yield* Ref.get(sessionSubagentsByTaskId)) {
             if (
               subagent.task.status === "running" &&
               !live.subagentsFromEarlierProcesses.has(subagent) &&
+              !(ignored?.has(taskId) ?? false) &&
               !buffered.some(
                 (message) =>
                   message.type === "system" &&

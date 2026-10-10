@@ -10456,6 +10456,222 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
     );
 
+    // Level entries from Claude Code 2.1.292 carry no ambient flag.
+    const backgroundTasksLevel = (
+      uuid: string,
+      tasks: ReadonlyArray<{ readonly taskId: string; readonly taskType: string }>,
+    ) =>
+      claudeSdkFrame({
+        type: "system",
+        subtype: "background_tasks_changed",
+        tasks: tasks.map((task) => ({
+          task_id: task.taskId,
+          task_type: task.taskType,
+          description: "Background task",
+        })),
+        uuid,
+        session_id: WAKE_NATIVE_SESSION,
+      } as unknown as SDKMessage);
+    // Frame order captured from Claude Code 2.1.292: the Agent call, the
+    // level, the backgrounded task_started, its async ack, the model's reply,
+    // then the result while the subagent still runs.
+    const backgroundAgentLaunchFrames = (input: {
+      readonly prefix: string;
+      readonly taskId: string;
+    }) => {
+      const toolUseId = `toolu-${input.prefix}`;
+      return [
+        claudeSdkFrame({
+          type: "assistant",
+          message: {
+            model: "claude-sonnet-4-6",
+            id: `msg-${input.prefix}-launch`,
+            type: "message",
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: toolUseId,
+                name: "Agent",
+                input: {
+                  description: "Implement the fix",
+                  subagent_type: "general-purpose",
+                  run_in_background: true,
+                  prompt: "Implement the fix.",
+                },
+              },
+            ],
+          },
+          parent_tool_use_id: null,
+          uuid: `${input.prefix}-launch`,
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        backgroundTasksLevel(`${input.prefix}-level`, [
+          { taskId: input.taskId, taskType: "local_agent" },
+        ]),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_started",
+          task_id: input.taskId,
+          tool_use_id: toolUseId,
+          description: "Implement the fix",
+          subagent_type: "general-purpose",
+          is_backgrounded: true,
+          task_type: "local_agent",
+          prompt: "Implement the fix.",
+          uuid: `${input.prefix}-task-started`,
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "user",
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: toolUseId,
+                content: [{ type: "text", text: "Async agent launched successfully." }],
+              },
+            ],
+          },
+          parent_tool_use_id: null,
+          uuid: `${input.prefix}-ack`,
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      ];
+    };
+
+    it.effect("defers goal completion while a background subagent runs", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const condition = "both reviewers find no bugs";
+        const taskId = "task-goal-background-subagent";
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("goal-background-attempt"),
+            text: `/goal ${condition}`,
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          syntheticFrame("goal-background-set", `Goal set: ${condition}`),
+          ...backgroundAgentLaunchFrames({ prefix: "goal-background", taskId }),
+          makeAssistantTextFrame({
+            uuid: "goal-background-wait",
+            text: "Waiting for the background subagent before round 1.",
+          }),
+          makeResultFrame({
+            uuid: "goal-background-result",
+            result: "Waiting for the background subagent before round 1.",
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+        // Claude skips the goal check while the subagent runs.
+        assert.equal(goalStatuses(harness.events).at(-1)?.status, "active");
+
+        // The subagent ends; Claude opens a turn on its own, and the goal
+        // check at its end passes.
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: taskId,
+            tool_use_id: "toolu-goal-background",
+            status: "completed",
+            output_file: `/tmp/${taskId}.output`,
+            summary: "Fix implemented.",
+            uuid: "goal-background-notification",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.offerAndWait(backgroundTasksLevel("goal-background-level-empty", []));
+        yield* harness.offerAndWait(wakeTurnInit);
+        assert.lengthOf(harness.continuationRequests, 1);
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("goal-background-wake"),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+        yield* harness.offerAndWait(
+          makeAssistantTextFrame({ uuid: "goal-background-wake-work", text: "No bugs found." }),
+        );
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: "goal-background-wake-result",
+            result: "No bugs found.",
+            origin: { kind: "task-notification" },
+          }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        assert.deepEqual(goalStatuses(harness.events).at(-1), {
+          objective: condition,
+          status: "complete",
+          checks: 0,
+        });
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    );
+
+    // Claude's goal check waits on agents, workflows and shells by task type,
+    // ambient or not, and never on mcp_task or monitor_mcp/monitor_ws tasks.
+    // A task with no type is treated as one Claude waits on.
+    it.effect.each([
+      { taskType: "mcp_task", ambient: false, status: "complete" },
+      { taskType: "local_agent", ambient: true, status: "active" },
+      { taskType: undefined, ambient: false, status: "active" },
+    ] as const)("treats a running $taskType (ambient $ambient) as goal $status", (input) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const condition = "the docs build";
+        const taskId = `task-goal-${input.taskType}`;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`goal-${input.taskType}-attempt`),
+            text: `/goal ${condition}`,
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          syntheticFrame(`goal-${input.taskType}-set`, `Goal set: ${condition}`),
+          backgroundTasksLevel(`goal-${input.taskType}-level`, [
+            { taskId, taskType: input.taskType ?? "local_agent" },
+          ]),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: taskId,
+            description: "Watch the docs",
+            ...(input.taskType === undefined ? {} : { task_type: input.taskType }),
+            ...(input.ambient ? { skip_transcript: true, ambient: true } : {}),
+            uuid: `goal-${input.taskType}-task-started`,
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          makeAssistantTextFrame({ uuid: `goal-${input.taskType}-work`, text: "The docs build." }),
+          makeResultFrame({ uuid: `goal-${input.taskType}-result`, result: "The docs build." }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+        assert.equal(goalStatuses(harness.events).at(-1)?.status, input.status);
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    );
+
     it.effect("keeps a goal active after a command turn with no model output", () =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
