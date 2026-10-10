@@ -58,6 +58,7 @@ export function createFileMetadataAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   const cache = new WeakMap<RpcSession, Map<string, CachedMetadata>>();
+  const invalidationVersions = new WeakMap<RpcSession, number>();
   const inFlight = new WeakMap<RpcSession, Map<string, Set<{ valid: boolean }>>>();
   const retainedThreads = new Map<
     string,
@@ -238,11 +239,13 @@ export function createFileMetadataAtoms<R, E>(
   const rememberEntries = Effect.fnUntraced(function* (
     cwd: string,
     entries: ReadonlyArray<ProjectEntry>,
+    isCurrent?: (session: RpcSession) => boolean,
   ) {
     const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
     const session = yield* SubscriptionRef.get(supervisor.session);
     if (session._tag === "None") return;
     const now = yield* Clock.currentTimeMillis;
+    if (isCurrent && !isCurrent(session.value)) return;
     for (const entry of entries) {
       const path = resolveWorkspaceFilePath(entry.path, cwd);
       const previous = knownEntry(session.value, path, now);
@@ -256,6 +259,7 @@ export function createFileMetadataAtoms<R, E>(
     const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
     const session = yield* SubscriptionRef.get(supervisor.session);
     if (session._tag === "Some") {
+      invalidationVersions.set(session.value, (invalidationVersions.get(session.value) ?? 0) + 1);
       const key = normalizeProjectPathForComparison(path);
       for (const token of inFlight.get(session.value)?.get(key) ?? []) token.valid = false;
       cache.get(session.value)?.delete(key);
@@ -267,12 +271,14 @@ export function createFileMetadataAtoms<R, E>(
   const rememberFile = Effect.fnUntraced(function* (
     cwd: string,
     file: { relativePath: string; byteLength: number },
+    isCurrent?: (session: RpcSession) => boolean,
   ) {
     const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
     const session = yield* SubscriptionRef.get(supervisor.session);
     if (session._tag === "None") return;
     const path = resolveWorkspaceFilePath(file.relativePath, cwd);
     const now = yield* Clock.currentTimeMillis;
+    if (isCurrent && !isCurrent(session.value)) return;
     const previous = knownEntry(session.value, path, now)?.value;
     remember(
       session.value,
@@ -286,6 +292,30 @@ export function createFileMetadataAtoms<R, E>(
       true,
     );
   });
+
+  const seedAfterRead = <A, ReadError, ReadServices>(
+    read: Effect.Effect<A, ReadError, ReadServices>,
+    seed: (
+      result: A,
+      isCurrent: (session: RpcSession) => boolean,
+    ) => Effect.Effect<void, never, EnvironmentSupervisor.EnvironmentSupervisor>,
+  ) =>
+    Effect.gen(function* () {
+      const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+      const session = yield* SubscriptionRef.get(supervisor.session);
+      const version = session._tag === "Some" ? (invalidationVersions.get(session.value) ?? 0) : 0;
+      const result = yield* read;
+      // Seeding is optional. Any intervening invalidation or reconnect makes
+      // the old response unsuitable for the current metadata cache.
+      yield* seed(
+        result,
+        (current) =>
+          session._tag === "Some" &&
+          current === session.value &&
+          (invalidationVersions.get(current) ?? 0) === version,
+      );
+      return result;
+    });
 
   const refreshPath = (
     environmentId: EnvironmentId,
@@ -301,6 +331,7 @@ export function createFileMetadataAtoms<R, E>(
     retainThread: (ref: ScopedThreadRef) => retainThreadFamily(threadKey(ref)),
     rememberEntries,
     rememberFile,
+    seedAfterRead,
     invalidate,
     refreshPath,
   };

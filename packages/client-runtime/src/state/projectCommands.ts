@@ -121,8 +121,9 @@ export function createProjectEnvironmentAtoms<R, E>(
       tag: WS_METHODS.projectsSearchEntries,
       staleTimeMs: 15_000,
       execute: (input) =>
-        request(WS_METHODS.projectsSearchEntries, input).pipe(
-          Effect.tap((result) => fileMetadata.rememberEntries(input.cwd, result.entries)),
+        fileMetadata.seedAfterRead(
+          request(WS_METHODS.projectsSearchEntries, input),
+          (result, isCurrent) => fileMetadata.rememberEntries(input.cwd, result.entries, isCurrent),
         ),
     }),
     listEntries: createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -131,8 +132,9 @@ export function createProjectEnvironmentAtoms<R, E>(
       staleTimeMs: 30_000,
       idleTtlMs: 5 * 60_000,
       execute: (input) =>
-        request(WS_METHODS.projectsListEntries, input).pipe(
-          Effect.tap((result) => fileMetadata.rememberEntries(input.cwd, result.entries)),
+        fileMetadata.seedAfterRead(
+          request(WS_METHODS.projectsListEntries, input),
+          (result, isCurrent) => fileMetadata.rememberEntries(input.cwd, result.entries, isCurrent),
         ),
     }),
     readFile: createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -141,8 +143,9 @@ export function createProjectEnvironmentAtoms<R, E>(
       staleTimeMs: 30_000,
       idleTtlMs: 5 * 60_000,
       execute: (input) =>
-        request(WS_METHODS.projectsReadFile, input).pipe(
-          Effect.tap((result) => fileMetadata.rememberFile(input.cwd, result)),
+        fileMetadata.seedAfterRead(
+          request(WS_METHODS.projectsReadFile, input),
+          (result, isCurrent) => fileMetadata.rememberFile(input.cwd, result, isCurrent),
         ),
     }),
     optimisticFile: (target: OptimisticProjectFileTarget) =>

@@ -11,6 +11,7 @@ import {
 import { vi } from "vite-plus/test";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -42,12 +43,19 @@ const PROJECT = {
 const makeHarness = Effect.fn("TestProjectCommands.makeHarness")(function* () {
   const metadataRequests: string[][] = [];
   const file = { byteLength: 5 };
+  const readResponse = { wait: Effect.void as Effect.Effect<void> };
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: { environmentId: ENVIRONMENT_ID },
     session: yield* SubscriptionRef.make(
       Option.some({
         client: {
           [WS_METHODS.projectsEnsureScratch]: () => Effect.succeed({ projectId: PROJECT_ID }),
+          [WS_METHODS.projectsReadFile]: () =>
+            Effect.gen(function* () {
+              const byteLength = file.byteLength;
+              yield* readResponse.wait;
+              return { relativePath: "foo", byteLength, contents: "old", truncated: false };
+            }),
           [WS_METHODS.projectsWriteFile]: () =>
             Effect.sync(() => {
               file.byteLength = 10;
@@ -114,10 +122,75 @@ const makeHarness = Effect.fn("TestProjectCommands.makeHarness")(function* () {
   const openScratch = Effect.promise(() =>
     commands.openScratch.run(registry, { environmentId: ENVIRONMENT_ID, input: {} }),
   );
-  return { registry, storedProject, openScratch, commands, metadataRequests };
+  return { registry, storedProject, openScratch, commands, metadataRequests, readResponse };
 });
 
 describe("writeFile metadata", () => {
+  it.effect("reuses a current file read without another metadata request", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* AtomRegistry.getResult(
+        h.registry,
+        h.commands.readFile({
+          environmentId: ENVIRONMENT_ID,
+          input: { cwd: "/repo", relativePath: "foo" },
+        }),
+        { suspendOnWaiting: true },
+      );
+      const metadata = h.commands.fileMetadata({
+        environmentId: ENVIRONMENT_ID,
+        input: { path: "/repo/foo" },
+      });
+      expect(
+        yield* AtomRegistry.getResult(h.registry, metadata, { suspendOnWaiting: true }),
+      ).toEqual({ kind: "file", byteLength: 5 });
+      expect(h.metadataRequests).toHaveLength(0);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not restore old metadata from a read completed after a write", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const threadId = ThreadId.make("stale-read-thread");
+      h.registry.mount(h.commands.fileMetadataThread({ environmentId: ENVIRONMENT_ID, threadId }));
+      const metadata = h.commands.fileMetadata({
+        environmentId: ENVIRONMENT_ID,
+        input: { path: "/repo/foo", threadId },
+      });
+      h.registry.mount(metadata);
+      const readMetadata = () =>
+        AtomRegistry.getResult(h.registry, metadata, { suspendOnWaiting: true });
+      yield* readMetadata();
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      h.readResponse.wait = Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(Deferred.await(release)),
+      );
+      const fileRead = yield* AtomRegistry.getResult(
+        h.registry,
+        h.commands.readFile({
+          environmentId: ENVIRONMENT_ID,
+          input: { cwd: "/repo", relativePath: "foo" },
+        }),
+        { suspendOnWaiting: true },
+      ).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      const write = yield* Effect.promise(() =>
+        h.commands.writeFile.run(h.registry, {
+          environmentId: ENVIRONMENT_ID,
+          input: { cwd: "/repo", relativePath: "foo", contents: "new" },
+        }),
+      );
+      expect(write._tag).toBe("Success");
+      expect(yield* readMetadata()).toEqual({ kind: "file", byteLength: 10 });
+      yield* Deferred.succeed(release, undefined);
+      expect((yield* Fiber.join(fileRead)).byteLength).toBe(5);
+      h.registry.refresh(metadata);
+      expect(yield* readMetadata()).toEqual({ kind: "file", byteLength: 10 });
+      expect(h.metadataRequests).toHaveLength(2);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("refreshes retained canonical and original paths after an aliased write", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
