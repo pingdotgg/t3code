@@ -210,22 +210,32 @@ const make = Effect.gen(function* () {
       const providers = yield* enabledProviders;
       // A project's skill list includes the global skills, so a global change
       // rescans every project an agent has listed, not just its own folders.
-      const scans = providers.flatMap((provider) =>
-        target.kind === "environment"
-          ? (provider.workspaceSnapshots ?? []).map((snapshot) => ({
-              instanceId: provider.instanceId,
-              cwd: snapshot.cwd,
-            }))
-          : [{ instanceId: provider.instanceId, cwd: target.cwd }],
-      );
+      const scansByCwd = new Map<string, Array<ServerProvider["instanceId"]>>();
+      for (const provider of providers) {
+        const cwds =
+          target.kind === "environment"
+            ? (provider.workspaceSnapshots ?? []).map((snapshot) => snapshot.cwd)
+            : [target.cwd];
+        for (const cwd of cwds)
+          scansByCwd.set(cwd, [...(scansByCwd.get(cwd) ?? []), provider.instanceId]);
+      }
       yield* Effect.forEach(
         target.kind === "environment" ? providers : [],
         (provider) => providerRegistry.refreshInstance(provider.instanceId),
         { concurrency: "unbounded", discard: true },
       );
+      // A fresh scan drops the other agents' snapshots of its folder, and a
+      // scan whose starting snapshot changed is discarded, so one folder's
+      // agents scan one after another. Different folders scan in parallel.
       yield* Effect.forEach(
-        scans,
-        (scan) => providerRegistry.refreshWorkspaceSnapshot({ ...scan, fresh: true }),
+        scansByCwd,
+        ([cwd, instanceIds]) =>
+          Effect.forEach(
+            instanceIds,
+            (instanceId) =>
+              providerRegistry.refreshWorkspaceSnapshot({ instanceId, cwd, fresh: true }),
+            { discard: true },
+          ),
         { concurrency: "unbounded", discard: true },
       );
     });

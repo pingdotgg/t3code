@@ -101,14 +101,17 @@ export function mcpServerEnabledPatch(
   name: string,
   enabled: boolean,
 ): ServerSettingsPatch | null {
-  const inherited = settings.mcpServers[name];
+  // Own keys only: `constructor` must not read as a server the object inherits.
+  const inherited = Object.hasOwn(settings.mcpServers, name)
+    ? settings.mcpServers[name]
+    : undefined;
   if (projectId === null) {
     return inherited ? { mcpServers: { [name]: { ...inherited, enabled } } } : null;
   }
   const entries: Record<string, McpServerProjectOverride> = {
     ...settings.projectSettingsOverrides[projectId]?.mcpServers,
   };
-  const own = entries[name];
+  const own = Object.hasOwn(entries, name) ? entries[name] : undefined;
   if (own?.transport !== undefined) {
     entries[name] = { ...own, enabled };
   } else if (inherited === undefined) {

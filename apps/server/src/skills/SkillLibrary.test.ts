@@ -84,13 +84,28 @@ const withLibrary = <A, E>(
       Ref.update(refreshed, (entries) => [...entries, entry]).pipe(
         Effect.andThen(Ref.get(providers)),
       );
+    // Folders being scanned right now: a second scan of one is an overlap.
+    const scanning = yield* Ref.make<ReadonlyArray<string>>([]);
+    const scan = (instanceId: string, cwd: string) =>
+      Ref.get(scanning).pipe(
+        Effect.tap((busy) => (busy.includes(cwd) ? record(`overlap:${cwd}`) : Effect.void)),
+        Effect.andThen(Ref.update(scanning, (busy) => [...busy, cwd])),
+        Effect.andThen(Effect.yieldNow),
+        Effect.andThen(record(`workspace:${instanceId}:${cwd}`)),
+        Effect.ensuring(
+          Ref.update(scanning, (busy) => {
+            const index = busy.indexOf(cwd);
+            return index === -1 ? busy : [...busy.slice(0, index), ...busy.slice(index + 1)];
+          }),
+        ),
+      );
     const stub: Pick<
       ProviderRegistry.ProviderRegistry["Service"],
       "getProviders" | "refreshInstance" | "refreshWorkspaceSnapshot"
     > = {
       getProviders: Ref.get(providers),
       refreshInstance: (instanceId) => record(`instance:${instanceId}`),
-      refreshWorkspaceSnapshot: ({ instanceId, cwd }) => record(`workspace:${instanceId}:${cwd}`),
+      refreshWorkspaceSnapshot: ({ instanceId, cwd }) => scan(instanceId, cwd),
     };
     // SkillLibrary reads provider snapshots and asks for rescans, nothing else.
     const registry = stub as ProviderRegistry.ProviderRegistry["Service"];
@@ -263,13 +278,19 @@ it.effect(
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const target = { kind: "environment" } as const;
-        // Claude has listed this project's skills, which include the global ones.
+        // Two agents have listed this project's skills, which include the global ones.
+        const listed = {
+          workspaceSnapshots: [
+            { cwd: project, checkedAt: "2026-10-09T00:00:00Z", slashCommands: [], skills: [] },
+          ],
+        };
         yield* Ref.set(providers, [
+          { ...claude, ...listed },
           {
             ...claude,
-            workspaceSnapshots: [
-              { cwd: project, checkedAt: "2026-10-09T00:00:00Z", slashCommands: [], skills: [] },
-            ],
+            ...listed,
+            driver: ProviderDriverKind.make("codex"),
+            instanceId: ProviderInstanceId.make("codex"),
           },
         ]);
         yield* Effect.all(
@@ -283,7 +304,11 @@ it.effect(
           yield* fileSystem.readFileString(path.join(home, ".agents", ".skill-lock.json")),
         ) as { skills: Record<string, unknown> };
         expect(Object.keys(lock.skills).toSorted()).toEqual(["notes", "review"]);
-        expect(yield* Ref.get(refreshed)).toContain(`workspace:claude:${project}`);
+        const refreshes = yield* Ref.get(refreshed);
+        expect(refreshes).toContain(`workspace:claude:${project}`);
+        expect(refreshes).toContain(`workspace:codex:${project}`);
+        // A fresh scan drops other agents' snapshots of the folder, so they take turns.
+        expect(refreshes.filter((entry) => entry.startsWith("overlap:"))).toEqual([]);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   120_000,
