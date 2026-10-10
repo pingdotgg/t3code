@@ -4,6 +4,7 @@ import {
   type EnvironmentId,
   type ServerConfig,
 } from "@t3tools/contracts";
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { useEffect, useRef } from "react";
 
 import { useClientSettings, useClientSettingsHydrated } from "~/hooks/useSettings";
@@ -12,6 +13,10 @@ import { useConnectedEnvironmentIds, useEnvironments } from "~/state/environment
 import { previewEnvironment } from "~/state/preview";
 import { useEnvironmentsWithScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
+
+/** A failed report retries this many times, waiting longer each time. */
+const MAX_REPORT_RETRIES = 3;
+const REPORT_RETRY_DELAY_MS = 5_000;
 
 const selectProfiles = (settings: { readonly browserProfiles: ReadonlyArray<BrowserProfile> }) =>
   settings.browserProfiles;
@@ -44,32 +49,64 @@ export function BrowserProfileReporter() {
       }
     >(),
   );
+  /** Consecutive failed reports per connected environment. */
+  const failures = useRef(new Map<EnvironmentId, number>());
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** The latest report pass, for a retry to run with current settings. */
+  const sweep = useRef<() => void>(() => {});
+
+  useEffect(
+    () => () => {
+      if (retryTimer.current !== null) clearTimeout(retryTimer.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!hydrated) return;
-    for (const environmentId of reported.current.keys()) {
-      if (!connected.includes(environmentId)) reported.current.delete(environmentId);
-    }
-    for (const environmentId of connected) {
-      const config = serverConfigs.get(environmentId);
-      if (!config?.environment.capabilities.serverBrowser || !operable.has(environmentId)) continue;
-      const last = reported.current.get(environmentId);
-      if (
-        last?.config === config &&
-        last.profiles === profiles &&
-        last.defaultProfileId === defaultProfileId
-      ) {
-        continue;
+    const reportChanged = () => {
+      for (const environmentId of reported.current.keys()) {
+        if (!connected.includes(environmentId)) reported.current.delete(environmentId);
       }
-      const entry = { config, profiles, defaultProfileId };
-      reported.current.set(environmentId, entry);
-      void report({ environmentId, input: { profiles, defaultProfileId } }).then((result) => {
-        // Unsent: the next run of this effect tries again.
-        if (result._tag === "Failure" && reported.current.get(environmentId) === entry) {
-          reported.current.delete(environmentId);
+      for (const environmentId of failures.current.keys()) {
+        if (!connected.includes(environmentId)) failures.current.delete(environmentId);
+      }
+      for (const environmentId of connected) {
+        const config = serverConfigs.get(environmentId);
+        if (!config?.environment.capabilities.serverBrowser || !operable.has(environmentId))
+          continue;
+        const last = reported.current.get(environmentId);
+        if (
+          last?.config === config &&
+          last.profiles === profiles &&
+          last.defaultProfileId === defaultProfileId
+        ) {
+          continue;
         }
-      });
-    }
+        const entry = { config, profiles, defaultProfileId };
+        reported.current.set(environmentId, entry);
+        void report({ environmentId, input: { profiles, defaultProfileId } }).then((result) => {
+          if (result._tag === "Success") {
+            failures.current.delete(environmentId);
+            return;
+          }
+          // A newer report replaced this one, which needs no retry.
+          if (isAtomCommandInterrupted(result) || reported.current.get(environmentId) !== entry) {
+            return;
+          }
+          reported.current.delete(environmentId);
+          const attempt = (failures.current.get(environmentId) ?? 0) + 1;
+          failures.current.set(environmentId, attempt);
+          if (attempt > MAX_REPORT_RETRIES || retryTimer.current !== null) return;
+          retryTimer.current = setTimeout(() => {
+            retryTimer.current = null;
+            sweep.current();
+          }, REPORT_RETRY_DELAY_MS * attempt);
+        });
+      }
+    };
+    sweep.current = reportChanged;
+    reportChanged();
   }, [connected, defaultProfileId, hydrated, operable, profiles, report, serverConfigs]);
 
   return null;
