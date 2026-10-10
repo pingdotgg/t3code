@@ -1694,7 +1694,7 @@ export default function GitActionsControl({
               <PopoverTrigger
                 openOnHover
                 nativeButton={false}
-                render={<span className="block w-max cursor-not-allowed" />}
+                render={<span className="block w-full cursor-not-allowed" />}
               >
                 <MenuItem
                   density={presentation === "menu" ? "touch" : "default"}
