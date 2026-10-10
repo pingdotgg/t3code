@@ -193,6 +193,10 @@ it.effect("fans out, merges, opens a PR at the end, and reports to the proposing
 
       const a = yield* Queue.take(harness.launches);
       assert.equal(a.title, "a");
+      // The node's thread does not exist yet; reuseExistingThread would make the launcher
+      // look for it and fail every launch.
+      assert.isUndefined(a.reuseExistingThread);
+      assert.isDefined(a.threadId);
       assert.deepEqual(a.workspaceStrategy, { type: "worktree", baseRef: "main" });
       yield* harness.finish(a, { reply: "a found two issues", branch: "t3/a" });
 

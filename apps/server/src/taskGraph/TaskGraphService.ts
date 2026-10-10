@@ -508,7 +508,6 @@ const make = Effect.gen(function* () {
       yield* launcher.launch({
         commandId: CommandId.make(`task-graph-launch:${threadId}`),
         threadId,
-        reuseExistingThread: true,
         projectId: graph.projectId,
         title: node.title,
         modelSelection,

@@ -117,3 +117,66 @@ export function taskGraphNodeKeyFromTitle(title: string, taken: Iterable<string>
     if (!used.has(candidate)) return candidate;
   }
 }
+
+/** Box size and spacing of the inline diagram, in CSS pixels. */
+export const TASK_GRAPH_DIAGRAM = {
+  nodeWidth: 168,
+  nodeHeight: 40,
+  columnGap: 40,
+  rowGap: 10,
+} as const;
+
+export interface TaskGraphDiagramLayout {
+  readonly width: number;
+  readonly height: number;
+  readonly nodes: ReadonlyArray<{
+    readonly node: TaskGraphNode;
+    readonly x: number;
+    readonly y: number;
+  }>;
+  readonly edges: ReadonlyArray<{ readonly key: string; readonly path: string }>;
+}
+
+/**
+ * Lays a graph out left to right for the inline card: one column per
+ * dependency depth, each column centred on the tallest, and a curve from the
+ * right edge of every dependency to the left edge of the node that waits on it.
+ * Plain arithmetic, so the card never loads the editor's layout library.
+ */
+export function taskGraphDiagramLayout(
+  layers: ReadonlyArray<ReadonlyArray<TaskGraphNode>>,
+): TaskGraphDiagramLayout {
+  const { nodeWidth, nodeHeight, columnGap, rowGap } = TASK_GRAPH_DIAGRAM;
+  const columnHeight = (count: number) => count * nodeHeight + Math.max(0, count - 1) * rowGap;
+  const height = Math.max(0, ...layers.map((layer) => columnHeight(layer.length)));
+  const width = Math.max(0, layers.length * nodeWidth + (layers.length - 1) * columnGap);
+  const positions = new Map<string, { x: number; y: number }>();
+  const nodes = layers.flatMap((layer, column) => {
+    const top = (height - columnHeight(layer.length)) / 2;
+    return layer.map((node, row) => {
+      const position = {
+        x: column * (nodeWidth + columnGap),
+        y: top + row * (nodeHeight + rowGap),
+      };
+      positions.set(node.key, position);
+      return { node, ...position };
+    });
+  });
+  const edges = nodes.flatMap(({ node, x, y }) =>
+    node.dependsOn.flatMap((dependencyKey) => {
+      const from = positions.get(dependencyKey);
+      if (from === undefined) return [];
+      const startX = from.x + nodeWidth;
+      const startY = from.y + nodeHeight / 2;
+      const endY = y + nodeHeight / 2;
+      const middleX = (startX + x) / 2;
+      return [
+        {
+          key: `${dependencyKey}->${node.key}`,
+          path: `M ${startX} ${startY} C ${middleX} ${startY}, ${middleX} ${endY}, ${x} ${endY}`,
+        },
+      ];
+    }),
+  );
+  return { width, height, nodes, edges };
+}

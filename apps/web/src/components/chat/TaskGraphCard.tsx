@@ -1,14 +1,5 @@
-import type { EnvironmentId, TaskGraph, TaskGraphNode, ThreadId } from "@t3tools/contracts";
-import { taskGraphLayers } from "@t3tools/shared/taskGraph";
-import { Link } from "@tanstack/react-router";
-import {
-  ChevronDownIcon,
-  Maximize2Icon,
-  MessageSquareTextIcon,
-  PlayIcon,
-  SquareIcon,
-  WorkflowIcon,
-} from "lucide-react";
+import type { EnvironmentId, TaskGraph, ThreadId } from "@t3tools/contracts";
+import { ChevronDownIcon, Maximize2Icon, PlayIcon, SquareIcon, WorkflowIcon } from "lucide-react";
 import { lazy, Suspense, useId, useState } from "react";
 import { create } from "zustand";
 
@@ -22,11 +13,9 @@ import { Dialog, DialogPopup } from "../ui/dialog";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerBanner } from "./ComposerBanner";
+import { TaskGraphDiagram } from "./TaskGraphDiagram";
 import {
   isTaskGraphFinished,
-  pullRequestLabel,
-  TASK_GRAPH_NODE_STATUS_DOT_CLASS,
-  TASK_GRAPH_NODE_STATUS_LABEL,
   TASK_GRAPH_STATUS_LABEL,
   taskGraphProgressLabel,
   taskGraphPullRequestLinks,
@@ -51,9 +40,9 @@ const useDismissedTaskGraphs = create<{
 const openExternal = (url: string) => void readLocalApi()?.shell.openExternal(url);
 
 /**
- * The task graphs a thread proposed, docked above its composer. Drafts and
- * running graphs start expanded; finished ones collapse to a summary line and
- * can be dismissed. Fed by the live subscription, so status needs no refresh.
+ * The task graphs a thread proposed, docked above its composer, each drawn as
+ * a left-to-right diagram. Any graph collapses to a summary line, and finished
+ * ones can be dismissed. Fed by the live subscription, so status needs no refresh.
  */
 export function TaskGraphCards(props: {
   readonly environmentId: EnvironmentId;
@@ -89,13 +78,12 @@ function TaskGraphCard(props: {
 }) {
   const { graph } = props;
   const finished = isTaskGraphFinished(graph.status);
-  const [expandedOverride, setExpanded] = useState<boolean | null>(null);
-  const expanded = expandedOverride ?? !finished;
+  // Expanded by default, finished or not: a graph that ran on its own should still show its shape.
+  const [expanded, setExpanded] = useState(true);
   const [editorOpen, setEditorOpen] = useState(false);
   const commands = useTaskGraphCommands(props.environmentId, graph);
   const listId = useId();
   const pullRequests = taskGraphPullRequestLinks(graph.nodes);
-  const layers = expanded ? taskGraphLayers(graph.nodes) : [];
 
   return (
     <ComposerBanner.Attachment>
@@ -201,27 +189,14 @@ function TaskGraphCard(props: {
             </p>
           </ComposerBanner.Body>
         ) : null}
-        <ComposerBanner.Scroll id={listId} className={cn("max-h-48", !expanded && "hidden")}>
-          <ComposerBanner.Children>
-            {layers.map((layer, index) => (
-              <div key={layer[0]?.key ?? index} role="group" aria-label={`Step ${index + 1}`}>
-                {layers.length > 1 ? (
-                  <ComposerBanner.Row>
-                    <ComposerBanner.Content className="text-2xs text-muted-foreground">
-                      Step {index + 1}
-                    </ComposerBanner.Content>
-                  </ComposerBanner.Row>
-                ) : null}
-                {layer.map((node) => (
-                  <TaskGraphNodeRow
-                    key={node.key}
-                    environmentId={props.environmentId}
-                    node={node}
-                  />
-                ))}
-              </div>
-            ))}
-          </ComposerBanner.Children>
+        <ComposerBanner.Scroll id={listId} className={cn("max-h-72", !expanded && "hidden")}>
+          {expanded ? (
+            <TaskGraphDiagram
+              environmentId={props.environmentId}
+              nodes={graph.nodes}
+              onOpenPullRequest={openExternal}
+            />
+          ) : null}
         </ComposerBanner.Scroll>
       </ComposerBanner.Root>
       <Dialog open={editorOpen} onOpenChange={setEditorOpen}>
@@ -244,67 +219,5 @@ function TaskGraphCard(props: {
         </DialogPopup>
       </Dialog>
     </ComposerBanner.Attachment>
-  );
-}
-
-function TaskGraphNodeRow(props: {
-  readonly environmentId: EnvironmentId;
-  readonly node: TaskGraphNode;
-}) {
-  const { node } = props;
-  const pullRequestUrl = node.pullRequestResult?.url ?? null;
-  return (
-    <ComposerBanner.Row>
-      <ComposerBanner.Icon>
-        <ComposerBanner.Dot className={TASK_GRAPH_NODE_STATUS_DOT_CLASS[node.status]} />
-      </ComposerBanner.Icon>
-      <ComposerBanner.Content>
-        <span className="min-w-0 truncate text-foreground/80">{node.title}</span>
-        <span className="shrink-0 text-muted-foreground">
-          {TASK_GRAPH_NODE_STATUS_LABEL[node.status]}
-        </span>
-        {node.branch !== null ? (
-          <span className="min-w-0 truncate font-mono text-muted-foreground/70">{node.branch}</span>
-        ) : null}
-      </ComposerBanner.Content>
-      <ComposerBanner.Actions>
-        {node.threadId !== null ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  size="icon-xs"
-                  variant="ghost-muted"
-                  aria-label={`Open thread for ${node.title}`}
-                  render={
-                    <Link
-                      to="/$environmentId/$threadId"
-                      params={{
-                        environmentId: node.assignedEnvironmentId ?? props.environmentId,
-                        threadId: node.threadId,
-                      }}
-                    />
-                  }
-                />
-              }
-            >
-              <MessageSquareTextIcon />
-            </TooltipTrigger>
-            <TooltipPopup>Open thread</TooltipPopup>
-          </Tooltip>
-        ) : null}
-        {pullRequestUrl !== null ? (
-          <Button
-            size="xs"
-            variant="ghost-muted"
-            aria-label={`Open pull request for ${node.title}`}
-            onClick={() => openExternal(pullRequestUrl)}
-          >
-            <PullRequestGlyph.pullRequest />
-            {pullRequestLabel(pullRequestUrl)}
-          </Button>
-        ) : null}
-      </ComposerBanner.Actions>
-    </ComposerBanner.Row>
   );
 }

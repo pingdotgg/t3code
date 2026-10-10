@@ -550,7 +550,6 @@ const make = Effect.gen(function* () {
         commandId: CommandId.make(`task-graph-launch:${input.threadId}`),
         creationSource: "server",
         threadId: input.threadId,
-        reuseExistingThread: true,
         projectId: project.id,
         title: input.node.title,
         modelSelection: input.modelSelection,

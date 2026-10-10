@@ -1,10 +1,13 @@
 import type { TaskGraphNode } from "@t3tools/contracts";
 import { TaskGraphNodeKey } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { taskGraphLayers } from "@t3tools/shared/taskGraph";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   pullRequestLabel,
+  TASK_GRAPH_DIAGRAM,
+  taskGraphDiagramLayout,
   taskGraphNodeKeyFromTitle,
   taskGraphProgressLabel,
   taskGraphPullRequestLinks,
@@ -101,5 +104,44 @@ describe("task graph summaries", () => {
     expect(links).toEqual([
       { key: "a", title: "a", url: "https://github.com/o/r/pull/9", label: "#9" },
     ]);
+  });
+});
+
+describe("taskGraphDiagramLayout", () => {
+  const { nodeWidth, nodeHeight, columnGap, rowGap } = TASK_GRAPH_DIAGRAM;
+
+  it("lays a fan-out and merge left to right with one edge per dependency", () => {
+    // audit -> (fix-a, fix-b) -> review, the shape of the security audit example.
+    const layout = taskGraphDiagramLayout(
+      taskGraphLayers([
+        node("audit"),
+        node("fix-a", { dependsOn: ["audit"] }),
+        node("fix-b", { dependsOn: ["audit"] }),
+        node("review", { dependsOn: ["fix-a", "fix-b"] }),
+      ]),
+    );
+    const at = (key: string) => layout.nodes.find((entry) => entry.node.key === key)!;
+
+    expect(layout.width).toBe(3 * nodeWidth + 2 * columnGap);
+    expect(layout.height).toBe(2 * nodeHeight + rowGap);
+    expect([at("audit").x, at("fix-a").x, at("review").x]).toEqual([
+      0,
+      nodeWidth + columnGap,
+      2 * (nodeWidth + columnGap),
+    ]);
+    // Single-node columns sit centred against the two-node column.
+    expect(at("audit").y).toBe((nodeHeight + rowGap) / 2);
+    expect(at("review").y).toBe(at("audit").y);
+    expect(layout.edges.map((edge) => edge.key)).toEqual([
+      "audit->fix-a",
+      "audit->fix-b",
+      "fix-a->review",
+      "fix-b->review",
+    ]);
+    expect(layout.edges[0]!.path.startsWith(`M ${nodeWidth} `)).toBe(true);
+  });
+
+  it("is empty for an empty graph", () => {
+    expect(taskGraphDiagramLayout([])).toEqual({ width: 0, height: 0, nodes: [], edges: [] });
   });
 });
