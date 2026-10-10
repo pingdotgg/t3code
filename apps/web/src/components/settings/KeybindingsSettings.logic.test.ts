@@ -50,6 +50,16 @@ describe("KeybindingsSettings.logic", () => {
       }),
     );
   });
+  it("finds the editable shortcut for sending and starting without a project", () => {
+    expect(buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "without a project")).toContainEqual(
+      expect.objectContaining({
+        command: "composer.sendAndNewThreadWithoutProject",
+        key: "mod+alt+shift+enter",
+        source: "Default",
+        conflicts: [],
+      }),
+    );
+  });
   it.each(["pu", "pull request", "copy link", "thread id"])(
     "finds the copy link shortcut with %s",
     (query) => {

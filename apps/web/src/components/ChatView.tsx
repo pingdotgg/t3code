@@ -2744,7 +2744,7 @@ export default function ChatView(props: ChatViewProps) {
     },
     [navigate, setEnvironmentEnabled],
   );
-  const { scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
+  const { scratchWorkspaceRootFor, openScratchProject, startScratchThread } = useScratchProject();
   const activeProjectIsScratch =
     activeProject !== null &&
     isScratchProject(
@@ -8782,6 +8782,21 @@ export default function ChatView(props: ChatViewProps) {
     },
   ) => {
     e?.preventDefault();
+    const startWithoutProject = submissionIntent === "newWithoutProject";
+    const canOpenNextComposer = () =>
+      currentRouteThreadKeyRef.current === routeThreadKey &&
+      !composerDraftHasUserContent(
+        useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+      );
+    if (startWithoutProject && scratchWorkspaceRootFor(environmentId) === null) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "This environment cannot start a thread without a project",
+        }),
+      );
+      return;
+    }
     // Typed out in full rather than picked from the menu. Attachments or contexts
     // mean the user is sending a prompt, so those go through as usual.
     if (
@@ -9203,6 +9218,8 @@ export default function ChatView(props: ChatViewProps) {
             setComposerDraftThreadContexts(composerDraftTarget, [...records]),
           resetCursor: (options) => composerRef.current?.resetCursorState(options),
         });
+      } else if (startWithoutProject) {
+        await startScratchThread(environmentId, canOpenNextComposer);
       } else if (
         submissionIntent === "background" &&
         currentRouteThreadKeyRef.current === routeThreadKey
@@ -9673,6 +9690,14 @@ export default function ChatView(props: ChatViewProps) {
         resetLocalDispatch();
         releasedComposer = true;
         await starts;
+        if (
+          startWithoutProject &&
+          startedCount > 0 &&
+          failedSelections.length === 0 &&
+          canRestoreDraft()
+        ) {
+          await startScratchThread(environmentId, canRestoreDraft);
+        }
         if (startedCount > 0) {
           toastManager.add(
             stackedThreadToast({
@@ -9947,7 +9972,7 @@ export default function ChatView(props: ChatViewProps) {
             }
           : undefined;
       const backgroundThreadRef =
-        submissionIntent === "background" && isLocalDraftThread
+        (submissionIntent === "background" || startWithoutProject) && isLocalDraftThread
           ? scopeThreadRef(environmentId, threadIdForSend)
           : null;
       if (backgroundThreadRef) beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
@@ -9996,7 +10021,7 @@ export default function ChatView(props: ChatViewProps) {
           createdAt: messageCreatedAt,
         },
       });
-      if (backgroundThreadRef) {
+      if (backgroundThreadRef && !startWithoutProject) {
         markPromotedDraftThreadByRef(backgroundThreadRef);
         try {
           backgroundDraftOpened = Boolean(
@@ -10034,6 +10059,10 @@ export default function ChatView(props: ChatViewProps) {
           releaseDraftAttachments(composerAttachmentsSnapshot);
         }
         acknowledgeActiveThreadWoke();
+        if (startWithoutProject) {
+          if (backgroundThreadRef) markPromotedDraftThreadByRef(backgroundThreadRef);
+          backgroundDraftOpened = await startScratchThread(environmentId, canOpenNextComposer);
+        }
         if (backgroundThreadRef) {
           if (backgroundDraftOpened || currentRouteThreadKeyRef.current !== routeThreadKey) {
             finalizePromotedDraftThreadByRef(backgroundThreadRef);
@@ -10069,7 +10098,7 @@ export default function ChatView(props: ChatViewProps) {
     }
 
     if (failure !== null) {
-      if (submissionIntent === "background" && draftId && draftThread) {
+      if ((submissionIntent === "background" || startWithoutProject) && draftId && draftThread) {
         restoreFailedBackgroundDraftThread(
           draftId,
           draftThread,
