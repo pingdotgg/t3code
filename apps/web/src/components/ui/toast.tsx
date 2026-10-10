@@ -368,10 +368,14 @@ function ToastBodyContent({
           className={cn(
             "flex items-center gap-1.5",
             stackedActionLayout ? "w-full justify-end" : "shrink-0",
-            stackedActionLayout && additionalActions.length > 0 && "justify-between",
+            stackedActionLayout && additionalActions.length > 0 && "[&>button]:grow",
           )}
         >
-          {copyErrorText !== null ? <CopyErrorButton text={copyErrorText} /> : null}
+          {copyErrorText !== null ? (
+            <div className="flex shrink-0">
+              <CopyErrorButton text={copyErrorText} />
+            </div>
+          ) : null}
           {additionalActions.map(({ id, props: { className, ...props } }) => (
             <Button
               {...props}
