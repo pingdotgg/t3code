@@ -211,6 +211,8 @@ interface LiveSessionEntry {
    */
   readonly mcpCredentialIdByThread: ReadonlyMap<ThreadId, string>;
   readonly supportsMultipleProviderThreads: boolean;
+  /** The adapter that opened this session, to notice a settings rebuild. */
+  readonly adapter: ProviderAdapter.ProviderAdapterV2["Service"];
   readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly exposedRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly eventSubscribers: Ref.Ref<
@@ -2037,7 +2039,38 @@ export const layerWithOptions = (
                 }
               }
               const key = sessionKey(input.providerSessionId);
-              const existing = (yield* Ref.get(sessions)).get(key);
+              const live = (yield* Ref.get(sessions)).get(key);
+              // Editing a provider instance's settings rebuilds its adapter, and
+              // a session keeps the environment (API key, base URL) of the
+              // adapter that opened it. Replace a session from an older adapter
+              // so the next turn uses the current settings, unless a turn or
+              // background work is still running in it. A session shared with
+              // other threads is kept: one of them may have opened it and not
+              // started its turn yet, and closing it would fail that turn.
+              // Effects for one thread run one at a time, so the opener's own
+              // earlier open has already finished.
+              const outdated =
+                live !== undefined &&
+                live.busyTurns.size === 0 &&
+                [...live.attachedThreadIds].every((threadId) => threadId === input.threadId) &&
+                (yield* registry.get(live.runtime.instanceId).pipe(
+                  Effect.map((current) => current !== live.adapter),
+                  Effect.orElseSucceed(() => false),
+                )) &&
+                !(yield* (live.runtime.hasPendingBackgroundWork ?? Effect.succeed(false)).pipe(
+                  Effect.catchCause(() => Effect.succeed(false)),
+                ));
+              if (outdated) {
+                // A turn can still start while the checks above yield; the
+                // generation guard keeps the session then.
+                yield* releaseEntry({
+                  providerSessionId: input.providerSessionId,
+                  reason: "manual_shutdown",
+                  detail: `Provider instance ${live.runtime.instanceId} settings changed.`,
+                  onlyIfIdleGeneration: live.idleGeneration,
+                });
+              }
+              const existing = outdated ? (yield* Ref.get(sessions)).get(key) : live;
               if (existing !== undefined) {
                 const attached = existing.attachedThreadIds.has(input.threadId);
                 if (!attached && !existing.supportsMultipleProviderThreads) {
@@ -2161,6 +2194,7 @@ export const layerWithOptions = (
                 supportsMultipleProviderThreads:
                   runtime.providerSession.capabilities.sessions
                     .supportsMultipleProviderThreadsPerSession,
+                adapter,
                 runtime,
                 exposedRuntime,
                 eventSubscribers,
