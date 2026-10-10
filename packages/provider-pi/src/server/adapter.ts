@@ -393,15 +393,6 @@ interface PiSubagentRow {
   readonly turnItem: PiSubagentTurnItem;
 }
 
-/**
- * A pi-subagents async child, which outlives the turn that launched it. The
- * rows are the running ones emitted at launch, so its completion settles them
- * on the launching run whatever turn is active by then.
- */
-interface PiAsyncSubagent extends PiSubagentRow {
-  readonly agent: string;
-}
-
 // ── adapter ───────────────────────────────────────────────────
 
 export function makePiAdapterV2(
@@ -516,8 +507,12 @@ export function makePiAdapterV2(
       // turn attaches. The guard remains for sessions with no routable owner.
       let unsolicitedActivityDetected = false;
       let pendingWake: PiWake | null = null;
-      /** Unfinished pi-subagents async children, keyed by their run directory. */
-      const asyncSubagents = new Map<string, PiAsyncSubagent>();
+      /**
+       * Unfinished pi-subagents async children, keyed by the extension's run id.
+       * They outlive the turn that launched them, so each keeps the rows emitted
+       * at launch and settles on the launching run whatever turn is active.
+       */
+      const asyncSubagents = new Map<string, PiSubagentRow>();
       let rollbackBarrier: Deferred.Deferred<
         void,
         ProviderAdapter.ProviderAdapterProtocolError
@@ -1176,9 +1171,8 @@ export function makePiAdapterV2(
       /**
        * pi-subagents' async mode returns from the tool at launch, with an
        * `asyncId` and no results. The child stays running on the launching run
-       * until the extension's completion notice names its run directory. Only
-       * single-agent launches are tracked: their notice labels the run with the
-       * launched agent.
+       * until the extension's completion notice names that run id. Parallel,
+       * chain, and workflow launches are not tracked.
        */
       const trackAsyncSubagent = Effect.fnUntraced(function* (
         turn: ActivePiTurn,
@@ -1187,17 +1181,15 @@ export function makePiAdapterV2(
         resultRecord: unknown,
       ) {
         const details = recordField(resultRecord, "details");
-        const asyncDir = recordString(details, "asyncDir");
-        // pi-subagents launches, and names the run in its notice, with the trimmed agent.
-        const agent = recordString(args, "agent")?.trim();
+        const asyncId = recordString(details, "asyncId");
+        const agent = recordString(args, "agent");
         const task = recordString(args, "task");
         if (
           recordString(details, "mode") !== "single" ||
-          recordString(details, "asyncId") === undefined ||
-          asyncDir === undefined ||
+          asyncId === undefined ||
           agent === undefined ||
           task === undefined ||
-          asyncSubagents.has(asyncDir)
+          asyncSubagents.has(asyncId)
         ) {
           return;
         }
@@ -1212,16 +1204,16 @@ export function makePiAdapterV2(
           startedAt: launchedAt,
           updatedAt: launchedAt,
         });
-        asyncSubagents.set(asyncDir, { ...row, agent });
+        asyncSubagents.set(asyncId, row);
         yield* emitSubagentRow(row);
       });
 
       const settleAsyncSubagent = Effect.fnUntraced(function* (
-        asyncDir: string,
+        asyncId: string,
         status: PiAsyncSubagentOutcome,
         result: string | null,
       ) {
-        const tracked = asyncSubagents.get(asyncDir);
+        const tracked = asyncSubagents.get(asyncId);
         if (tracked === undefined) return;
         const settledAt = yield* DateTime.now;
         const completedAt = status === "idle" ? null : settledAt;
@@ -1231,8 +1223,8 @@ export function makePiAdapterV2(
           subagent: { ...tracked.subagent, ...settled },
           turnItem: { ...tracked.turnItem, ...settled },
         };
-        if (status === "idle") asyncSubagents.set(asyncDir, { ...row, agent: tracked.agent });
-        else asyncSubagents.delete(asyncDir);
+        if (status === "idle") asyncSubagents.set(asyncId, row);
+        else asyncSubagents.delete(asyncId);
         yield* emitSubagentRow(row);
       });
 
@@ -1247,63 +1239,28 @@ export function makePiAdapterV2(
           [...asyncSubagents].filter(
             ([, tracked]) => runId === undefined || tracked.subagent.runId === runId,
           ),
-          ([asyncDir, tracked]) =>
+          ([asyncId, tracked]) =>
             tracked.subagent.status === "idle"
-              ? Effect.sync(() => asyncSubagents.delete(asyncDir))
-              : settleAsyncSubagent(asyncDir, "interrupted", null),
+              ? Effect.sync(() => asyncSubagents.delete(asyncId))
+              : settleAsyncSubagent(asyncId, "interrupted", null),
           { discard: true },
         );
 
       /**
-       * pi-subagents announces finished runs in one custom message, without run
-       * ids. Its details list each run's agent and outcome in order. Its text
-       * gives each run a section that ends with a line naming the run's
-       * directory, after the child's own output, which may quote such lines. A
-       * lone background run's line is the last one, because only fixed fields
-       * follow it. A batch is read only when it names one distinct directory
-       * per run.
+       * pi-subagents announces finished runs in one custom message. From 0.77.0
+       * its details carry each run's id, which settles exactly that child. The
+       * output stays in the text, which lists every run of a batched notice.
        */
       const settleNotifiedAsyncSubagents = Effect.fnUntraced(function* (message: unknown) {
         const runs = recordField(recordField(message, "details"), "runs");
-        if (!Array.isArray(runs) || runs.length === 0) return;
-        const lines = contentText(recordField(message, "content")).split("\n");
-        const directoryLines = lines.flatMap((line, index) =>
-          line.startsWith(PI_ASYNC_RUN_DIRECTORY_PREFIX) ? [index] : [],
-        );
-        let runLines = directoryLines;
-        if (runs.length === 1) {
-          const background = lines[0]?.startsWith(PI_BACKGROUND_RUN_HEADER_PREFIX) === true;
-          runLines = background ? directoryLines.slice(-1) : [];
-        }
-        const asyncDirs = runLines.map((at) =>
-          lines[at]?.slice(PI_ASYNC_RUN_DIRECTORY_PREFIX.length),
-        );
-        if (asyncDirs.length !== runs.length || new Set(asyncDirs).size !== asyncDirs.length) {
-          return;
-        }
-        for (const [index, at] of runLines.entries()) {
-          const run = runs[index];
-          const asyncDir = asyncDirs[index];
+        if (!Array.isArray(runs)) return;
+        const result = contentText(recordField(message, "content")).slice(0, 10_000);
+        for (const run of runs) {
+          const runId = recordString(run, "runId");
           const status = piAsyncSubagentOutcome(recordString(run, "status"));
-          if (
-            asyncDir === undefined ||
-            status === undefined ||
-            asyncSubagents.get(asyncDir)?.agent !== recordString(run, "agent")
-          ) {
-            continue;
+          if (runId !== undefined && status !== undefined) {
+            yield* settleAsyncSubagent(runId, status, result);
           }
-          // A batched run's section starts at its numbered heading, the first one
-          // after the previous run's directory line. A lone notice is one section.
-          let sectionStart = 0;
-          if (runs.length > 1) {
-            const previous = runLines[index - 1] ?? 0;
-            const heading = lines.findIndex(
-              (line, lineIndex) => lineIndex > previous && line.startsWith(`${index + 1}. `),
-            );
-            sectionStart = heading < 0 ? previous + 1 : heading;
-          }
-          const section = lines.slice(sectionStart, at + 1).join("\n");
-          yield* settleAsyncSubagent(asyncDir, status, section.slice(0, 10_000));
         }
       });
 
@@ -2367,7 +2324,7 @@ export function makePiAdapterV2(
         if (resumeId != null || needsNewSession) {
           // pi-subagents announces a child only to the session file that launched it.
           if (needsNewSession || resumeId !== lastNativeThreadId) {
-            yield* interruptAsyncSubagents();
+            yield* sessionEventPermit.withPermits(1)(interruptAsyncSubagents());
           }
           lastNativeThreadId = resumeId ?? lastNativeThreadId;
           // Even a failed lifecycle operation can change Pi's native session.
@@ -3123,7 +3080,7 @@ export function makePiAdapterV2(
                   if (recordField(forkData, "cancelled") === true)
                     return yield* protocolError("A Pi extension cancelled the session fork");
                   // pi-subagents announces a child only to the session that launched it.
-                  yield* interruptAsyncSubagents();
+                  yield* sessionEventPermit.withPermits(1)(interruptAsyncSubagents());
                   const forkState = yield* request({ type: "get_state" }).pipe(
                     Effect.onError(() =>
                       Effect.sync(() => {
@@ -3339,10 +3296,6 @@ function piRollbackForkEntry(input: {
 
 /** The custom message type pi-subagents uses to announce finished background runs. */
 const PI_SUBAGENT_NOTIFY_TYPE = "subagent-notify";
-/** pi-subagents writes this line, with the run's directory, into each async run's notice. */
-const PI_ASYNC_RUN_DIRECTORY_PREFIX = "Retention-managed async directory: ";
-/** pi-subagents opens a lone background run's notice with this; foreground runs differ. */
-const PI_BACKGROUND_RUN_HEADER_PREFIX = "Background task ";
 
 type PiAsyncSubagentOutcome = "completed" | "failed" | "interrupted" | "idle";
 

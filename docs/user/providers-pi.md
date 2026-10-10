@@ -58,7 +58,8 @@ With the pi-subagents extension installed, ask the agent to run one of its agent
 background. The agent calls the extension's `subagent` tool for that agent with `async: true`. The
 run stays running in the subagent UI after the turn ends, and settles when the extension reports
 that it finished. Stop marks it interrupted in T3 Code, but the extension's detached run keeps
-going.
+going. T3 Code needs pi-subagents 0.77.0 or later to see the run finish. With an older version,
+the run shows as running until you press Stop or the Pi session ends.
 
 ## Troubleshooting
 

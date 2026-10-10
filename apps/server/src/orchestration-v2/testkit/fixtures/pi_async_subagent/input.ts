@@ -3,8 +3,9 @@ import { ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
 import type { OrchestratorFixtureInput } from "../shared.ts";
 
 /**
- * Record with `T3_PI_RECORD_EXTENSION=<pi-subagents>/index.ts`, and with
- * `PI_CODING_AGENT_DIR` pointing at a directory that holds only credentials.
+ * Record with `T3_PI_RECORD_EXTENSION=<pi-subagents 0.77.0 or later>/index.ts`,
+ * and with `PI_CODING_AGENT_DIR` pointing at a directory that holds only
+ * credentials.
  */
 export const PI_ASYNC_SUBAGENT_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("pi"),

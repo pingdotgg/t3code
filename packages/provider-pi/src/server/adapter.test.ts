@@ -462,14 +462,14 @@ const startTurn = Effect.fnUntraced(function* (
 const asyncRunDirectory = (run: string) => `/tmp/pi-subagents/async-subagent-runs/${run}`;
 
 /** A pi-subagents async launch, shaped like the `pi_async_subagent` replay fixture. */
-const launchAsyncEcho = (fake: FakePi, run: string, isError = false, agent = "echo") =>
+const launchAsyncEcho = (fake: FakePi, run: string, isError = false) =>
   Effect.gen(function* () {
     const toolCallId = `call_${run}`;
     yield* fake.emit({
       type: "tool_execution_start",
       toolCallId,
       toolName: "subagent",
-      args: { agent, task: `task ${run}`, async: true },
+      args: { agent: "echo", task: `task ${run}`, async: true },
     });
     yield* fake.emit({
       type: "tool_execution_end",
@@ -492,34 +492,26 @@ const launchAsyncEcho = (fake: FakePi, run: string, isError = false, agent = "ec
 interface AsyncNoticeRun {
   readonly run: string;
   readonly status: string;
-  readonly agent?: string;
-  readonly output?: string;
-  /** A detached foreground child: its section has no directory line. */
-  readonly foreground?: boolean;
+  readonly source?: "async" | "foreground";
 }
 
-/** pi-subagents' `subagent-notify` message, laid out like its notify.ts formatters. */
-const asyncNotice = (runs: ReadonlyArray<AsyncNoticeRun>) => {
-  const section = ({ run, output = "done", foreground = false }: AsyncNoticeRun) =>
-    foreground
-      ? output
-      : `${output}\n\nRetention-managed async directory: ${asyncRunDirectory(run)}\nSession file: /sessions/${run}.jsonl`;
-  const [only] = runs;
-  const content =
-    runs.length === 1 && only !== undefined
-      ? `${only.foreground ? "Detached foreground task" : "Background task"} ${only.status}: **${only.agent ?? "echo"}**\n\n${section(only)}`
-      : [
-          `Background tasks completed (${runs.length})`,
-          ...runs.map((run, index) => `${index + 1}. ${run.agent ?? "echo"}\n${section(run)}`),
-        ].join("\n\n");
-  return {
-    role: "custom",
-    customType: "subagent-notify",
-    display: false,
-    details: { runs: runs.map(({ agent = "echo", status }) => ({ agent, status })) },
-    content,
-  };
-};
+/**
+ * pi-subagents' `subagent-notify` message. From 0.77.0 each `details.runs`
+ * entry carries the run id; the output stays in `content`.
+ */
+const asyncNotice = (runs: ReadonlyArray<AsyncNoticeRun>, withRunIds = true) => ({
+  role: "custom",
+  customType: "subagent-notify",
+  display: false,
+  details: {
+    runs: runs.map(({ run, status, source = "async" }) => ({
+      agent: "echo",
+      status,
+      ...(withRunIds ? { runId: run, source, asyncDir: asyncRunDirectory(run) } : {}),
+    })),
+  },
+  content: runs.map(({ run }) => `echo:\n${run} finished`).join("\n\n"),
+});
 
 const expectModelFailure = (errorMessage: string) =>
   Effect.gen(function* () {
@@ -2085,7 +2077,7 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("settles each pi-subagents async child from its own section of a notice", () =>
+  it.effect("settles each pi-subagents async child named by run id in a notice", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
       const { runtime, takeEvent } = yield* openRuntime(fake);
@@ -2098,8 +2090,7 @@ describe("PiAdapterV2", () => {
       yield* fake.takeRequest("prompt");
       yield* fake.emit({ type: "agent_start" });
       for (const run of ["first", "second", "third"]) {
-        // pi-subagents reports the trimmed agent name.
-        yield* launchAsyncEcho(fake, run, false, run === "third" ? " echo " : "echo");
+        yield* launchAsyncEcho(fake, run);
         yield* takeEvent(
           (event) =>
             event.type === "subagent.updated" &&
@@ -2109,47 +2100,25 @@ describe("PiAdapterV2", () => {
       }
       yield* fake.emit({ type: "agent_settled" });
       yield* takeEvent((event) => event.type === "turn.terminal");
-      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
 
-      // Every run uses the same agent, and children's output can quote the
-      // directory line pi-subagents writes after it.
-      const quote = (run: string) => `Retention-managed async directory: ${asyncRunDirectory(run)}`;
-      const secondDone = asyncNotice([
-        { run: "second", status: "completed", output: quote("first") },
-      ]);
+      // Every run uses the same agent, so only the run id tells them apart.
+      const secondDone = asyncNotice([{ run: "second", status: "completed" }]);
       yield* fake.emit({ type: "message_end", message: secondDone });
       yield* fake.emit({ type: "message_end", message: secondDone });
+      // pi-subagents before 0.77.0 sent no run ids, and a foreground run is never tracked.
       yield* fake.emit({
         type: "message_end",
-        message: asyncNotice([{ run: "first", status: "completed", agent: "other" }]),
+        message: asyncNotice([{ run: "first", status: "completed" }], false),
       });
-      // A quote inside a batch leaves its sections ambiguous, so nothing settles.
       yield* fake.emit({
         type: "message_end",
-        message: asyncNotice([
-          { run: "first", status: "completed", output: quote("third") },
-          { run: "third", status: "completed" },
-        ]),
-      });
-      // A foreground child's notice has no directory line of its own.
-      yield* fake.emit({
-        type: "message_end",
-        message: asyncNotice([
-          { run: "first", status: "completed", foreground: true, output: quote("first") },
-        ]),
+        message: asyncNotice([{ run: "foreground", status: "completed", source: "foreground" }]),
       });
       yield* fake.emit({
         type: "message_end",
         message: asyncNotice([
-          { run: "first", status: "completed", foreground: true, output: quote("third") },
-          { run: "third", status: "completed" },
-        ]),
-      });
-      yield* fake.emit({
-        type: "message_end",
-        message: asyncNotice([
-          { run: "first", status: "stopped", output: "first finished" },
-          { run: "third", status: "failed", output: "third finished" },
+          { run: "first", status: "stopped" },
+          { run: "third", status: "failed" },
         ]),
       });
       const settled: Array<ReadonlyArray<string>> = [];
@@ -2168,10 +2137,7 @@ describe("PiAdapterV2", () => {
         ["task first", "interrupted"],
         ["task third", "failed"],
       ]);
-      assert.isTrue(thirdResult?.startsWith("2. echo"), "a batched result starts at its heading");
       assert.include(thirdResult ?? "", "third finished");
-      assert.notInclude(thirdResult ?? "", "first finished");
-      assert.notInclude(thirdResult ?? "", "/sessions/first.jsonl");
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
