@@ -1,0 +1,58 @@
+name: Mobile Android APK
+
+# Publishes the newest nightly-compatible Android build as a sideloadable APK
+# on the rolling "android-nightly" prerelease, for nightly users who can't join
+# the Play testing group. Play re-signs uploaded bundles with the app signing
+# key, so its universal APK matches the Play Store install and needs no signing
+# secrets here. EAS submits asynchronously (--no-wait), so this polls Play
+# instead of chaining off mobile-eas-production.yml; runs with nothing new exit
+# early.
+on:
+  schedule:
+    # Avoid minute zero, when GitHub scheduled jobs are busiest.
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: mobile-android-apk
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    name: Mirror Play APK
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      PACKAGE_NAME: com.t3tools.t3code
+      # eas.json submits v2-preview builds here; they speak the orchestration
+      # protocol nightly servers use, which the Play Store release can't.
+      PLAY_TRACK: alpha
+      RELEASE_TAG: android-nightly
+    steps:
+      - id: credentials
+        name: Check for Play credentials
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -n "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "GOOGLE_PLAY_SERVICE_ACCOUNT_JSON is not available; skipping APK mirror."
+          fi
+
+      - name: Checkout
+        if: steps.credentials.outputs.present == 'true'
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/scripts
+
+      - name: Mirror the newest APK
+        if: steps.credentials.outputs.present == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: node .github/scripts/mirror-play-apk.cjs
