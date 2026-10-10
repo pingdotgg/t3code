@@ -176,3 +176,44 @@ export const UsageLimitsReport = Schema.Struct({
   notices: Schema.Array(Schema.String),
 });
 export type UsageLimitsReport = typeof UsageLimitsReport.Type;
+
+const McpQuotaSnapshot = Schema.Struct({
+  status: Schema.Literals(["available", "unavailable", "error", "notReported"]),
+  checkedAt: Schema.optional(IsoDateTime),
+  ageSeconds: Schema.optional(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
+  windows: Schema.Array(
+    Schema.Struct({
+      ...ServerProviderUsageWindow.fields,
+      remainingPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+    }),
+  ),
+});
+
+/** Sanitized cached quota read for MCP; timestamps describe observations, not live probes. */
+export const ProviderUsageLimitsMcpResult = Schema.Struct({
+  readAt: IsoDateTime,
+  providers: Schema.Array(
+    Schema.Struct({
+      instanceId: ProviderInstanceId,
+      driver: ProviderDriverKind,
+      enabled: Schema.Boolean,
+      quota: McpQuotaSnapshot,
+    }),
+  ),
+  sources: Schema.Array(
+    Schema.Struct({
+      sourceId: UsageLimitSourceId,
+      status: Schema.Literals(["available", "error"]),
+      checkedAt: IsoDateTime,
+      ageSeconds: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
+      accounts: Schema.Array(
+        Schema.Struct({
+          accountId: TrimmedNonEmptyString,
+          driver: ProviderDriverKind,
+          quota: McpQuotaSnapshot,
+        }),
+      ),
+    }),
+  ),
+});
+export type ProviderUsageLimitsMcpResult = typeof ProviderUsageLimitsMcpResult.Type;

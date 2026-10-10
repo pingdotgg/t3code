@@ -2,6 +2,7 @@ import { OrchestratorMcpFailure, type ServerSettings } from "@t3tools/contracts"
 import * as Effect from "effect/Effect";
 import * as Environment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
+import * as ProviderUsageLimitsMcpService from "../../ProviderUsageLimitsMcpService.ts";
 import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -29,6 +30,7 @@ export function preferences(settings: ServerSettings) {
     },
   };
 }
+
 const access = Effect.gen(function* () {
   const context = yield* readCaller();
   const environment = yield* Environment.ServerEnvironment;
@@ -41,6 +43,11 @@ const access = Effect.gen(function* () {
   return { ...context, descriptor, settings: yield* Settings.ServerSettingsService };
 });
 export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
+  t3_provider_usage_limits: McpToolAccess.reads(() =>
+    Effect.gen(function* () {
+      return yield* (yield* ProviderUsageLimitsMcpService.ProviderUsageLimitsMcpService).read;
+    }),
+  ),
   t3_environment_read: McpToolAccess.reads(() =>
     Effect.gen(function* () {
       const { descriptor, settings } = yield* access;
