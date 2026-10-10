@@ -295,6 +295,39 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
   }));
 }
 
+export type ModelSection = {
+  /** OpenCode provider name, or null when the provider's list is not split. */
+  readonly label: string | null;
+  readonly models: ReadonlyArray<ModelOption>;
+};
+
+/**
+ * OpenCode serves models from several OpenCode providers through one instance
+ * (for example OpenCode Zen and an OpenCode Go subscription), often with the
+ * same model names. Splits an OpenCode provider's models into one section per
+ * OpenCode provider; order within a section is unchanged. Other drivers, and
+ * catalogs with a single source, stay one unlabeled section.
+ */
+export function openCodeModelSections(
+  models: ReadonlyArray<ModelOption>,
+): ReadonlyArray<ModelSection> {
+  if (models.some((model) => model.providerDriver !== "opencode")) {
+    return [{ label: null, models }];
+  }
+  const sections = new Map<string, ModelOption[]>();
+  for (const model of models) {
+    const section = sections.get(model.subtitle);
+    if (section) section.push(model);
+    else sections.set(model.subtitle, [model]);
+  }
+  if (sections.size < 2) {
+    return [{ label: null, models }];
+  }
+  return [...sections.keys()]
+    .toSorted((left, right) => (left === "" ? 1 : right === "" ? -1 : left.localeCompare(right)))
+    .map((label) => ({ label: label || "Other", models: sections.get(label)! }));
+}
+
 function modelMenuAction(option: ModelOption, selectedModel: ModelSelection | null): MenuAction {
   return {
     id: `model:${option.key}`,

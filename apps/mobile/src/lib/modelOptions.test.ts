@@ -6,6 +6,7 @@ import {
   buildModelOptions,
   groupByProvider,
   isModelSelectionUnavailable,
+  openCodeModelSections,
   resolveDefaultableModelSelection,
   resolveNewTaskModelSelection,
   resolveSelectableModelSelection,
@@ -139,6 +140,26 @@ describe("mobile model options", () => {
     expect(groupByProvider(options)).toEqual([
       { providerKey: "opencode_work", providerLabel: "OpenCode Work", models: options },
     ]);
+  });
+
+  it("splits an OpenCode catalog into one section per OpenCode provider", () => {
+    const option = (slug: string, subtitle: string, providerDriver = "opencode") =>
+      ({ key: `p:${slug}`, label: slug, subtitle, providerDriver }) as unknown as ModelOption;
+    const zenKimi = option("opencode/kimi-k2.6", "OpenCode Zen");
+    const goKimi = option("opencode-go/kimi-k2.6", "OpenCode Go");
+    const zenGlm = option("opencode/glm-5.2", "OpenCode Zen");
+    const local = option("local/qwen", "");
+
+    expect(openCodeModelSections([zenKimi, goKimi, local, zenGlm])).toEqual([
+      { label: "OpenCode Go", models: [goKimi] },
+      { label: "OpenCode Zen", models: [zenKimi, zenGlm] },
+      { label: "Other", models: [local] },
+    ]);
+    expect(openCodeModelSections([zenKimi, zenGlm])).toEqual([
+      { label: null, models: [zenKimi, zenGlm] },
+    ]);
+    const codex = [option("gpt-a", "Azure", "codex"), option("gpt-b", "GitHub", "codex")];
+    expect(openCodeModelSections(codex)).toEqual([{ label: null, models: codex }]);
   });
 
   it("does not materialize catalog defaults for missing stored options", () => {

@@ -49,7 +49,11 @@ import { MaterialIconButton } from "../../components/MaterialIconButton";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { cn } from "../../lib/cn";
-import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
+import {
+  openCodeModelSections,
+  type ModelOption,
+  type ProviderGroup,
+} from "../../lib/modelOptions";
 import { applyProviderOptionSelection } from "../../lib/providerOptions";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
@@ -567,6 +571,11 @@ type ThreadSettingsCatalogItem =
       readonly isLast: boolean;
     }
   | {
+      readonly kind: "section";
+      readonly key: string;
+      readonly label: string;
+    }
+  | {
       readonly kind: "notice";
       readonly key: string;
       readonly text: string;
@@ -699,13 +708,24 @@ function useThreadSettingsCatalogItems(
             key: `provider:${group.providerKey}`,
             provider,
           },
-          ...provider.models.map((option, index) => ({
-            kind: "model" as const,
-            key: `model:${option.key}`,
-            option,
-            isFirst: index === 0,
-            isLast: index === provider.models.length - 1,
-          })),
+          ...openCodeModelSections(provider.models).flatMap((section) => [
+            ...(section.label === null
+              ? []
+              : [
+                  {
+                    kind: "section" as const,
+                    key: `section:${group.providerKey}:${section.label}`,
+                    label: section.label,
+                  },
+                ]),
+            ...section.models.map((option, index) => ({
+              kind: "model" as const,
+              key: `model:${option.key}`,
+              option,
+              isFirst: index === 0,
+              isLast: index === section.models.length - 1,
+            })),
+          ]),
           ...(!collapsed && updateRequiredNotice
             ? [
                 {
@@ -872,6 +892,15 @@ function ThreadSettingsMainContent(props: {
             isLast={item.isLast}
             option={item.option}
           />
+        );
+      } else if (item.kind === "section") {
+        content = (
+          <Text
+            accessibilityRole="header"
+            className="mx-5 mb-1 mt-3 text-xs font-t3-medium text-foreground-muted"
+          >
+            {item.label}
+          </Text>
         );
       } else if (item.kind === "notice") {
         content = <Text className="mx-8 mt-2 text-xs text-foreground-muted">{item.text}</Text>;
