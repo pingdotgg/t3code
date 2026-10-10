@@ -19,8 +19,8 @@ import type { SubscriptionUsageSnapshot as SubscriptionUsageProps } from "./subs
 export function SubscriptionUsage(props: SubscriptionUsageProps, environment: WidgetEnvironment) {
   "widget";
   // The widget runtime evaluates this function without the app's module scope.
-  // Android has no timeline, so freshness is decided on every render; the
-  // expiry alarm and each tap trigger one while the app is closed.
+  // Android has no timeline, so freshness and countdowns are decided on every
+  // render; the refresh alarms and each tap trigger one while the app is closed.
   const now = Date.now();
   // The 4x3 default cell fits two quotas per provider with their reset text.
   const limit = 2;
@@ -65,6 +65,17 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
               ) : null}
               {shown.map((window) => {
                 const low = window.remaining <= 10;
+                // Mirrors formatResetsIn in @t3tools/shared/usageLimits, which is
+                // out of reach here; snapshots stored without resetsAt keep their text.
+                const left = Date.parse(window.resetsAt ?? "") - now;
+                const minutes = Math.floor(left / 60_000);
+                const hours = Math.floor(minutes / 60);
+                const days = Math.floor(hours / 24);
+                const reset = !Number.isFinite(left)
+                  ? window.reset
+                  : left <= 0
+                    ? "resets now"
+                    : `resets in ${days > 0 ? `${days}d ${hours % 24}h` : hours > 0 ? `${hours}h ${minutes % 60}m` : `${minutes}m`}`;
                 return (
                   <Column key={window.label} modifiers={[fillMaxWidth(), padding(0, 4, 0, 0)]}>
                     <Text
@@ -83,7 +94,7 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
                       />
                     </Column>
                     <Text color={muted} maxLines={1} style={{ fontSize: 10 }}>
-                      {window.reset}
+                      {reset}
                     </Text>
                   </Column>
                 );

@@ -1,6 +1,7 @@
 import {
   collectLimitAccounts,
   collectLimitPools,
+  formatResetsIn,
   type LimitAccount,
   type LimitPresentations,
 } from "@t3tools/shared/usageLimits";
@@ -11,7 +12,13 @@ export interface SubscriptionUsageSnapshot {
   providers: Array<{
     name: string;
     detail: string;
-    windows: Array<{ kind?: string; label: string; remaining: number; reset: string }>;
+    windows: Array<{
+      kind?: string;
+      label: string;
+      remaining: number;
+      resetsAt?: string;
+      reset: string;
+    }>;
     expiresAt: number;
     totalWindows: number;
   }>;
@@ -105,13 +112,10 @@ function subscriptionUsageProps(
                 kind: window.kind,
                 label: window.label,
                 remaining: Math.round(window.remainingPercent),
+                resetsAt: window.resets[0]?.member.window.resetsAt,
                 reset: window.resets[0]
-                  ? `Next reset ${new Date(window.resets[0].at).toLocaleString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                      hour: "numeric",
-                      minute: "2-digit",
-                    })}`
+                  ? (formatResetsIn(window.resets[0].member.window, checkedAt) ??
+                    "Reset time unavailable")
                   : "Reset time unavailable",
               }))
             : [],
@@ -155,15 +159,27 @@ export function subscriptionUsageTimeline(snapshot: SubscriptionUsageSnapshot, n
   const deadlines = [...new Set(snapshot.providers.map((p) => p.expiresAt))]
     .filter((deadline) => deadline > now)
     .sort((a, b) => a - b);
-  return [now, ...deadlines].map((date) => ({
-    date: new Date(date),
-    props: {
-      ...snapshot,
-      providers: snapshot.providers.map((provider) =>
-        provider.windows.length > 0 && provider.expiresAt <= date
-          ? { ...provider, detail: "Open T3 to refresh", windows: [], totalWindows: 0 }
-          : provider,
-      ),
-    },
-  }));
+  // Countdown entries are bounded by snapshot expiry (at most fifteen minutes).
+  const dates = new Set([now, ...deadlines]);
+  const lastDeadline = Math.min(deadlines.at(-1) ?? now, now + SNAPSHOT_MAX_AGE);
+  for (let date = now + 60_000; date <= lastDeadline; date += 60_000) dates.add(date);
+  return [...dates]
+    .sort((a, b) => a - b)
+    .map((date) => ({
+      date: new Date(date),
+      props: {
+        ...snapshot,
+        providers: snapshot.providers.map((provider) =>
+          provider.windows.length > 0 && provider.expiresAt <= date
+            ? { ...provider, detail: "Open T3 to refresh", windows: [], totalWindows: 0 }
+            : {
+                ...provider,
+                windows: provider.windows.map((window) => ({
+                  ...window,
+                  reset: formatResetsIn(window, date) ?? "Reset time unavailable",
+                })),
+              },
+        ),
+      },
+    }));
 }

@@ -35,8 +35,14 @@ const provider = {
   name: "Codex",
   detail: "Subscription remaining",
   windows: [
-    { kind: "session", label: "5 hours", remaining: 60, reset: "Next reset Sep 5, 5:00 PM" },
-    { kind: "weekly", label: "Weekly", remaining: 8, reset: "Next reset Sep 9, 9:00 AM" },
+    {
+      kind: "session",
+      label: "5 hours",
+      remaining: 60,
+      resetsAt: "2026-09-05T14:13:00.000Z",
+      reset: "resets in 2h 14m",
+    },
+    { kind: "weekly", label: "Weekly", remaining: 8, reset: "Reset time unavailable" },
   ],
   expiresAt: now + 60_000,
   totalWindows: 2,
@@ -57,7 +63,10 @@ describe("SubscriptionUsage Android layout", () => {
     const tree = render(snapshot);
     expect(tree).toContain("5 hours · 60% left");
     expect(tree).toContain('"progress":0.6');
-    expect(tree).toContain("Next reset Sep 5, 5:00 PM");
+    // The countdown is recomputed at render time; the stored text is only a fallback.
+    expect(tree).toContain("resets in 2h 13m");
+    expect(tree).not.toContain("resets in 2h 14m");
+    expect(tree).toContain("Reset time unavailable");
     expect(tree).toContain('"progress":0.08');
     expect(tree).toContain('"color":"dark-error"');
     expect(tree).toContain("As of ");
