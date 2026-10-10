@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off -- Gunzips with node:zlib, whose maxOutputLength bounds the inflated size.
 /**
  * Reads an npm package tarball into memory and refuses anything that could
  * land outside the package or that a digest could not describe.

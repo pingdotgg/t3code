@@ -1205,6 +1205,10 @@ it.layer(NodeServices.layer)("PluginNpm", (it) => {
             };
             const error = yield* npm.applyUpdate({ installationId, digest }).pipe(Effect.flip);
             expect(error.reason, what).toBe("storage");
+            // A failed journal step is the cause; a refused cleanup is retried later and has none.
+            expect(PlatformError.isPlatformError(error.cause), what).toBe(
+              what !== "old .previous cleanup",
+            );
             expect(faults.armed.fail, what).toBeUndefined();
             // Never stopped: the same process answers, and the update can be applied again.
             expect(yield* callVersion(catalog, installationId), what).toEqual(before);

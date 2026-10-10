@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off -- Gzips corrupt, truncated, and oversized archives as fixtures.
 import * as NodeZlib from "node:zlib";
 
 import { describe, expect, it } from "@effect/vitest";

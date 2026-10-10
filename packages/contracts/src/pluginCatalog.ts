@@ -167,5 +167,6 @@ export class PluginCatalogError extends Schema.TaggedError<PluginCatalogError>()
     reason: Schema.String,
     message: Schema.String,
     installationId: Schema.optionalKey(PluginInstallationId),
+    cause: Schema.optionalKey(Schema.Defect()),
   },
 ) {}

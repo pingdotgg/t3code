@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off -- Builds gzipped tarball fixtures and their sha512 integrity.
 import * as NodeCrypto from "node:crypto";
 import * as NodeZlib from "node:zlib";
 

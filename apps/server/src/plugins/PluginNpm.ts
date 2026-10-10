@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off -- Hashes a downloaded tarball with node:crypto to check its sha512 integrity.
 /**
  * Installs trusted plugins from an npm registry into directories the server
  * owns, then hands each one to the catalogue like any added directory.
@@ -71,7 +71,7 @@ import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import { ServerConfig } from "../config.ts";
-import { PluginCatalog, summarizePluginManifest } from "./PluginCatalog.ts";
+import * as PluginCatalog from "./PluginCatalog.ts";
 import { loadPluginDirectory } from "./PluginManifestLoader.ts";
 import { digestPluginSource } from "./pluginSource.ts";
 import {
@@ -83,36 +83,18 @@ import {
 
 const DEFAULT_NPM_REGISTRY = "https://registry.npmjs.org";
 
-/** `PluginCatalogError.reason` values this module adds. */
-type PluginNpmFailure =
-  | "npm-invalid-request"
-  | "npm-not-found"
-  | "npm-registry-unavailable"
-  | "npm-registry-invalid"
-  | "npm-integrity-missing"
-  | "npm-integrity-mismatch"
-  | "npm-too-large"
-  | "npm-archive-unsafe"
-  | "npm-package-mismatch"
-  | "npm-install-scripts"
-  | "npm-dependencies"
-  | "npm-plugin-id-changed"
-  | "npm-no-update";
-
-const npmError = (
-  reason: PluginNpmFailure | "not-found" | "already-added" | "source-changed" | "storage",
-  message: string,
-  installationId?: PluginInstallationId,
-) =>
-  new PluginCatalogError({
-    reason,
-    message,
-    ...(installationId === undefined ? {} : { installationId }),
-  });
-
+/** Logs a failed file step and fails with it as the cause of a `storage` error. */
 const storageError = (cause: unknown) =>
   Effect.logWarning("Plugin npm storage failed", { cause }).pipe(
-    Effect.andThen(Effect.fail(npmError("storage", "Could not write the plugin's files."))),
+    Effect.andThen(
+      Effect.fail(
+        new PluginCatalogError({
+          reason: "storage",
+          message: "Could not write the plugin's files.",
+          cause,
+        }),
+      ),
+    ),
   );
 
 const MAX_METADATA_BYTES = 1024 * 1024;
@@ -210,10 +192,11 @@ const normalizeRegistry = (input: string) => {
     url.hash !== ""
   )
     return Effect.fail(
-      npmError(
-        "npm-invalid-request",
-        "Enter the registry as an https URL (http only on this machine) without credentials, query, or fragment.",
-      ),
+      new PluginCatalogError({
+        reason: "npm-invalid-request",
+        message:
+          "Enter the registry as an https URL (http only on this machine) without credentials, query, or fragment.",
+      }),
     );
   return Effect.succeed(url.href.replace(/\/+$/, ""));
 };
@@ -290,25 +273,32 @@ const checkPackage = Effect.fnUntraced(function* (
 ) {
   const manifest = files.find((file) => file.path === "package.json");
   if (manifest === undefined || manifest.data.length > MAX_PACKAGE_JSON_BYTES)
-    return yield* npmError("npm-package-mismatch", "The package has no readable package.json.");
+    return yield* new PluginCatalogError({
+      reason: "npm-package-mismatch",
+      message: "The package has no readable package.json.",
+    });
   const packageJson = yield* decodePackageJson(new TextDecoder().decode(manifest.data)).pipe(
-    Effect.mapError(() =>
-      npmError("npm-package-mismatch", "The package's package.json is invalid."),
+    Effect.mapError(
+      () =>
+        new PluginCatalogError({
+          reason: "npm-package-mismatch",
+          message: "The package's package.json is invalid.",
+        }),
     ),
   );
   if (packageJson.name !== name || packageJson.version !== version)
-    return yield* npmError(
-      "npm-package-mismatch",
-      `The tarball contains ${packageJson.name ?? "an unnamed package"}@${packageJson.version ?? "?"}, not ${name}@${version}.`,
-    );
+    return yield* new PluginCatalogError({
+      reason: "npm-package-mismatch",
+      message: `The tarball contains ${packageJson.name ?? "an unnamed package"}@${packageJson.version ?? "?"}, not ${name}@${version}.`,
+    });
   const scripts = INSTALL_SCRIPTS.filter((script) => packageJson.scripts?.[script] !== undefined);
   if (files.some((file) => file.path === "binding.gyp"))
     scripts.push("a native build (binding.gyp)");
   if (scripts.length > 0)
-    return yield* npmError(
-      "npm-install-scripts",
-      `The package needs ${scripts.join(", ")} to run at install, and T3 never runs package scripts.`,
-    );
+    return yield* new PluginCatalogError({
+      reason: "npm-install-scripts",
+      message: `The package needs ${scripts.join(", ")} to run at install, and T3 never runs package scripts.`,
+    });
   const bundled = packageJson.bundleDependencies ?? packageJson.bundledDependencies ?? [];
   const unlisted = runtimeDependencies(packageJson).filter(
     (dependency) => !(bundled === true || (Array.isArray(bundled) && bundled.includes(dependency))),
@@ -318,10 +308,10 @@ const checkPackage = Effect.fnUntraced(function* (
       ? `The package depends on ${unlisted.join(", ")} without bundling it.`
       : findUnbundled(files, packageJson);
   if (refusal !== undefined)
-    return yield* npmError(
-      "npm-dependencies",
-      `${refusal} T3 installs no dependencies; bundle the plugin into its package.`,
-    );
+    return yield* new PluginCatalogError({
+      reason: "npm-dependencies",
+      message: `${refusal} T3 installs no dependencies; bundle the plugin into its package.`,
+    });
 });
 
 export class PluginNpm extends Context.Service<
@@ -356,7 +346,7 @@ interface PluginNpmOptions {
 }
 
 export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOptions) {
-  const catalog = yield* PluginCatalog;
+  const catalog = yield* PluginCatalog.PluginCatalog;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const http = HttpClient.withScope(yield* HttpClient.HttpClient);
@@ -436,10 +426,10 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
         return response;
       const next = URL.parse(location, target);
       if (hop >= MAX_METADATA_REDIRECTS || next === null || !isTrustedRegistryUrl(next))
-        return yield* npmError(
-          "npm-registry-invalid",
-          `The registry redirected the ${what} to an address it cannot be trusted from.`,
-        );
+        return yield* new PluginCatalogError({
+          reason: "npm-registry-invalid",
+          message: `The registry redirected the ${what} to an address it cannot be trusted from.`,
+        });
       target = next.href;
     }
   });
@@ -459,12 +449,15 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
           ? yield* getMetadata(url, what)
           : yield* http.execute(HttpClientRequest.get(url));
       if (response.status === 404)
-        return yield* npmError("npm-not-found", `The registry has no ${what}.`);
+        return yield* new PluginCatalogError({
+          reason: "npm-not-found",
+          message: `The registry has no ${what}.`,
+        });
       if (response.status < 200 || response.status >= 300)
-        return yield* npmError(
-          "npm-registry-unavailable",
-          `The registry answered ${response.status} for the ${what}.`,
-        );
+        return yield* new PluginCatalogError({
+          reason: "npm-registry-unavailable",
+          message: `The registry answered ${response.status} for the ${what}.`,
+        });
       const chunks: Array<Uint8Array> = [];
       let total = 0;
       yield* response.stream.pipe(
@@ -472,7 +465,10 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
           total += chunk.byteLength;
           if (total > maxBytes)
             return Effect.fail(
-              npmError("npm-too-large", `The ${what} is larger than ${maxBytes} bytes.`),
+              new PluginCatalogError({
+                reason: "npm-too-large",
+                message: `The ${what} is larger than ${maxBytes} bytes.`,
+              }),
             );
           chunks.push(chunk);
           return Effect.void;
@@ -484,10 +480,18 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
       Effect.timeout(timeout),
       Effect.catchTags({
         HttpClientError: () =>
-          Effect.fail(npmError("npm-registry-unavailable", `Could not download the ${what}.`)),
+          Effect.fail(
+            new PluginCatalogError({
+              reason: "npm-registry-unavailable",
+              message: `Could not download the ${what}.`,
+            }),
+          ),
         TimeoutError: () =>
           Effect.fail(
-            npmError("npm-registry-unavailable", `The registry did not send the ${what} in time.`),
+            new PluginCatalogError({
+              reason: "npm-registry-unavailable",
+              message: `The registry did not send the ${what} in time.`,
+            }),
           ),
       }),
     );
@@ -497,10 +501,10 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
     // Adding checks the registry too, but an installation saved before that check may not pass it.
     const base = URL.parse(registry);
     if (base === null || !isTrustedRegistryUrl(base))
-      return yield* npmError(
-        "npm-registry-invalid",
-        `${name} was installed from ${registry}, which serves packages over plain http. Remove it and add it again from an https registry.`,
-      );
+      return yield* new PluginCatalogError({
+        reason: "npm-registry-invalid",
+        message: `${name} was installed from ${registry}, which serves packages over plain http. Remove it and add it again from an https registry.`,
+      });
     const encodedName = name.startsWith("@") ? name.replace("/", "%2f") : name;
     const what = `${name}@${request}`;
     const body = yield* fetchBytes(
@@ -511,8 +515,12 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
       "metadata",
     );
     const metadata = yield* decodeMetadata(new TextDecoder().decode(body)).pipe(
-      Effect.mapError(() =>
-        npmError("npm-registry-invalid", `The registry's description of ${what} is invalid.`),
+      Effect.mapError(
+        () =>
+          new PluginCatalogError({
+            reason: "npm-registry-invalid",
+            message: `The registry's description of ${what} is invalid.`,
+          }),
       ),
     );
     if (
@@ -520,22 +528,22 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
       !isExactVersion(metadata.version) ||
       (isExactVersion(request) && metadata.version !== request)
     )
-      return yield* npmError(
-        "npm-registry-invalid",
-        `The registry answered ${what} with ${metadata.name}@${metadata.version}.`,
-      );
+      return yield* new PluginCatalogError({
+        reason: "npm-registry-invalid",
+        message: `The registry answered ${what} with ${metadata.name}@${metadata.version}.`,
+      });
     const integrity = (metadata.dist.integrity ?? "").split(/\s+/).find(isIntegrity);
     if (integrity === undefined)
-      return yield* npmError(
-        "npm-integrity-missing",
-        `The registry publishes no sha512 integrity for ${name}@${metadata.version}.`,
-      );
+      return yield* new PluginCatalogError({
+        reason: "npm-integrity-missing",
+        message: `The registry publishes no sha512 integrity for ${name}@${metadata.version}.`,
+      });
     const tarball = URL.parse(metadata.dist.tarball);
     if (tarball === null || (tarball.protocol !== "https:" && tarball.protocol !== "http:"))
-      return yield* npmError(
-        "npm-registry-invalid",
-        `The registry's tarball address for ${name}@${metadata.version} is not http or https.`,
-      );
+      return yield* new PluginCatalogError({
+        reason: "npm-registry-invalid",
+        message: `The registry's tarball address for ${name}@${metadata.version} is not http or https.`,
+      });
     return { version: metadata.version, integrity, tarball: tarball.href } satisfies Resolved;
   });
 
@@ -550,12 +558,14 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
     );
     const actual = `sha512-${NodeCrypto.createHash("sha512").update(tarball).digest("base64")}`;
     if (actual !== resolved.integrity)
-      return yield* npmError(
-        "npm-integrity-mismatch",
-        `The tarball for ${name}@${resolved.version} does not match the registry's integrity. Nothing was installed.`,
-      );
+      return yield* new PluginCatalogError({
+        reason: "npm-integrity-mismatch",
+        message: `The tarball for ${name}@${resolved.version} does not match the registry's integrity. Nothing was installed.`,
+      });
     const files = yield* readNpmTarball(tarball, limits).pipe(
-      Effect.mapError((error) => npmError(error.reason, error.message)),
+      Effect.mapError(
+        (error) => new PluginCatalogError({ reason: error.reason, message: error.message }),
+      ),
     );
     yield* checkPackage(files, name, resolved.version);
     const staging = yield* makeOwned(home, ".staging-");
@@ -583,15 +593,20 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
       const entry = installed.get(installationId);
       if (entry === undefined)
         return Effect.fail(
-          npmError("not-found", "That plugin was not installed from npm here.", installationId),
+          new PluginCatalogError({
+            reason: "not-found",
+            message: "That plugin was not installed from npm here.",
+            installationId,
+          }),
         );
       if (entry.swap !== undefined)
         return Effect.fail(
-          npmError(
-            "storage",
-            "An earlier update of this plugin could not be finished or undone yet. It is retried before each plugin change and when the server starts.",
+          new PluginCatalogError({
+            reason: "storage",
+            message:
+              "An earlier update of this plugin could not be finished or undone yet. It is retried before each plugin change and when the server starts.",
             installationId,
-          ),
+          }),
         );
       return Effect.succeed(entry);
     });
@@ -603,7 +618,11 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
         return row
           ? Effect.succeed(row)
           : Effect.fail(
-              npmError("not-found", "That plugin is not installed here.", installationId),
+              new PluginCatalogError({
+                reason: "not-found",
+                message: "That plugin is not installed here.",
+                installationId,
+              }),
             );
       }),
     );
@@ -633,7 +652,9 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
     const swap = entry.swap;
     if (swap === undefined) return;
     const previous = path.join(entry.home, ".previous");
-    const decide = (files?: Parameters<PluginCatalog["Service"]["settleReplace"]>[1]) =>
+    const decide = (
+      files?: Parameters<PluginCatalog.PluginCatalog["Service"]["settleReplace"]>[1],
+    ) =>
       catalog
         .settleReplace({ installationId: entry.installationId, digest: swap.digest }, files)
         .pipe(
@@ -697,11 +718,11 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
       (entry) => entry.source.registry === registry && entry.source.name === input.name,
     );
     if (existing)
-      return yield* npmError(
-        "already-added",
-        `${input.name} is already installed from this registry. Update it instead.`,
-        existing.installationId,
-      );
+      return yield* new PluginCatalogError({
+        reason: "already-added",
+        message: `${input.name} is already installed from this registry. Update it instead.`,
+        installationId: existing.installationId,
+      });
     const resolved = yield* resolve(registry, input.name, input.version);
     const home = yield* makeOwned(root, "pkg-");
     return yield* Effect.gen(function* () {
@@ -760,21 +781,27 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
       const registration = yield* loadPluginDirectory(staging).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
-        Effect.mapError((error) => npmError("npm-package-mismatch", error.message)),
+        Effect.mapError(
+          (error) =>
+            new PluginCatalogError({ reason: "npm-package-mismatch", message: error.message }),
+        ),
       );
       if (row.manifest !== null && registration.manifest.id !== row.manifest.id)
-        return yield* npmError(
-          "npm-plugin-id-changed",
-          `The new version is the plugin ${registration.manifest.id}, not ${row.manifest.id}. Install it separately.`,
-          input.installationId,
-        );
+        return yield* new PluginCatalogError({
+          reason: "npm-plugin-id-changed",
+          message: `The new version is the plugin ${registration.manifest.id}, not ${row.manifest.id}. Install it separately.`,
+          installationId: input.installationId,
+        });
       const source = yield* digestPluginSource(staging, limits).pipe(
-        Effect.mapError((error) => npmError("npm-archive-unsafe", error.message)),
+        Effect.mapError(
+          (error) =>
+            new PluginCatalogError({ reason: "npm-archive-unsafe", message: error.message }),
+        ),
       );
       return {
         version: resolved.version,
         integrity: resolved.integrity,
-        manifest: summarizePluginManifest(registration.manifest),
+        manifest: PluginCatalog.summarizePluginManifest(registration.manifest),
         source,
         stagedAt: yield* now,
       } satisfies PluginNpmStagedUpdate;
@@ -791,25 +818,25 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
     const entry = yield* findInstalled(input.installationId);
     const staged = entry.staged;
     if (staged === undefined)
-      return yield* npmError(
-        "npm-no-update",
-        "There is no downloaded update to apply. Download it again.",
-        input.installationId,
-      );
+      return yield* new PluginCatalogError({
+        reason: "npm-no-update",
+        message: "There is no downloaded update to apply. Download it again.",
+        installationId: input.installationId,
+      });
     if (staged.update.source.digest !== input.digest)
-      return yield* npmError(
-        "source-changed",
-        "The downloaded update is not the one you reviewed. Review the current one.",
-        input.installationId,
-      );
+      return yield* new PluginCatalogError({
+        reason: "source-changed",
+        message: "The downloaded update is not the one you reviewed. Review the current one.",
+        installationId: input.installationId,
+      });
     const onDisk = yield* digestPluginSource(staged.directory, limits).pipe(Effect.option);
     if (Option.isNone(onDisk) || onDisk.value.digest !== input.digest) {
       yield* discardStaged(entry);
-      return yield* npmError(
-        "source-changed",
-        "The downloaded update changed on disk after it was checked, so it was discarded.",
-        input.installationId,
-      );
+      return yield* new PluginCatalogError({
+        reason: "source-changed",
+        message: "The downloaded update changed on disk after it was checked, so it was discarded.",
+        installationId: input.installationId,
+      });
     }
     const next: PluginNpmSource = {
       ...entry.source,
@@ -822,11 +849,11 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
     // Nothing is stopped or moved before the journal is written, so a failure up to here
     // leaves the installed version running and the staged one ready to apply again.
     if (!(yield* release(previous)))
-      return yield* npmError(
-        "storage",
-        "Could not delete the files an earlier update left behind.",
-        input.installationId,
-      );
+      return yield* new PluginCatalogError({
+        reason: "storage",
+        message: "Could not delete the files an earlier update left behind.",
+        installationId: input.installationId,
+      });
     yield* writeRecord(entry.home, {
       source: entry.source,
       swap: { source: next, digest: input.digest },
