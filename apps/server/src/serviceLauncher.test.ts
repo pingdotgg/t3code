@@ -9,6 +9,7 @@ import {
   compareExactServiceVersions,
   decodeServiceState,
   isExactServiceVersion,
+  parseServiceState,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STOP_MARKER_FILE,
@@ -98,6 +99,112 @@ const writeFakeRuntime = (
   });
 
 it.layer(NodeServices.layer)("service state persistence", (it) => {
+  for (const protocol of [2, 1]) {
+    it.effect(`adopts protocol ${protocol} install state and durably rewrites it`, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-adopt-" });
+        const statePath = path.join(root, "runtime", "service-state.json");
+        const activeVersion = "0.0.43-nightly.20260919.1962";
+        yield* fs.makeDirectory(path.dirname(statePath), { recursive: true });
+        yield* fs.writeFileString(
+          statePath,
+          `{ "protocol": ${protocol}, "activeVersion": "${activeVersion}" }`,
+        );
+
+        const expected = { protocol: SERVICE_LAUNCHER_PROTOCOL, activeVersion };
+        assert.deepEqual(yield* Effect.promise(() => readServiceState(statePath)), expected);
+        assert.deepEqual(parseServiceState(yield* fs.readFileString(statePath)), expected);
+      }),
+    );
+  }
+
+  it.effect("starts the active runtime from adopted install state", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-adopt-run-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const activeVersion = "0.0.43-nightly.20260919.1962";
+      const versionDir = path.join(root, "runtime", "versions", activeVersion);
+      yield* writeFakeRuntime(
+        fs,
+        path,
+        versionDir,
+        `
+import { writeFileSync } from "node:fs";
+const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
+writeFileSync(new URL("./started", import.meta.url), context.childVersion);
+process.exit(0);
+`,
+      );
+      yield* fs.writeFileString(
+        statePath,
+        `{ "protocol": 2, "activeVersion": "${activeVersion}" }`,
+      );
+      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      yield* Effect.promise(() =>
+        launcher.run().then(
+          () => assert.fail("launcher unexpectedly completed"),
+          (error: unknown) => {
+            assert.instanceOf(error, Error);
+            assert.equal(error.message, "Active child exited unexpectedly (0).");
+          },
+        ),
+      );
+      assert.equal(yield* fs.readFileString(path.join(versionDir, "started")), activeVersion);
+    }),
+  );
+
+  const update = {
+    id: "update-1",
+    fromVersion: "1.0.0",
+    targetVersion: "1.1.0",
+    dbPath: "/tmp/state.sqlite",
+  };
+  const encodeState = (state: unknown) => `${JSON.stringify(state, null, 2)}\n`;
+  for (const [name, state] of [
+    [
+      "pending update",
+      { protocol: 2, activeVersion: "1.0.0", update: { ...update, status: "pending" } },
+    ],
+    [
+      "committed update",
+      { protocol: 2, activeVersion: "1.1.0", update: { ...update, status: "committed" } },
+    ],
+    ["future protocol", { protocol: 4, activeVersion: "1.0.0" }],
+    ["zero protocol", { protocol: 0, activeVersion: "1.0.0" }],
+    ["negative protocol", { protocol: -1, activeVersion: "1.0.0" }],
+    ["string protocol", { protocol: "2", activeVersion: "1.0.0" }],
+    ["fractional protocol", { protocol: 2.5, activeVersion: "1.0.0" }],
+    ["invalid activeVersion", { protocol: 2, activeVersion: "latest" }],
+    ["malformed JSON", undefined],
+  ] as const) {
+    it.effect(`rejects ${name} without changing the state file`, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-reject-" });
+        const statePath = path.join(root, "runtime", "service-state.json");
+        const contents = state === undefined ? "{ invalid JSON\n" : encodeState(state);
+        yield* fs.makeDirectory(path.dirname(statePath), { recursive: true });
+        yield* fs.writeFileString(statePath, contents);
+
+        yield* Effect.promise(() =>
+          readServiceState(statePath).then(
+            () => assert.fail("invalid service state was accepted"),
+            (error: unknown) => {
+              assert.instanceOf(error, Error);
+              assert.equal(error.message, "Service state is invalid or unsupported.");
+            },
+          ),
+        );
+        assert.equal(yield* fs.readFileString(statePath), contents);
+      }),
+    );
+  }
+
   it.effect("durably replaces and strictly reads one state document", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
