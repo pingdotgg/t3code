@@ -209,9 +209,12 @@ const handlers = {
     invokeTargeted<PreviewAutomationSetColorSchemeResult>("setColorScheme", input),
   ),
   preview_snapshot: McpToolAccess.readsAsCaller((input) => {
-    // Output selection and saving are MCP-only; the browser still produces a complete snapshot.
-    const { includeImage: _includeImage, save: _save, ...operationInput } = input ?? {};
-    return invokeTargeted<PreviewAutomationSnapshot>("snapshot", operationInput);
+    const { includeImage, save, ...operationInput } = input ?? {};
+    return invokeTargeted<PreviewAutomationSnapshot>("snapshot", {
+      ...operationInput,
+      // Saving still needs a capture even when the response contains only its path.
+      ...(includeImage !== true && save !== true ? { includeImage: false } : {}),
+    });
   }),
   preview_click: McpToolAccess.actsAsCaller((input) =>
     invokeTargeted<object>("click", input, input.timeoutMs),

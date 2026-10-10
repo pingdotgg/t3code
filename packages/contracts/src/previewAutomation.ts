@@ -733,12 +733,14 @@ export const PreviewAutomationSnapshot = Schema.Struct({
   consoleEntries: Schema.Array(PreviewAutomationConsoleEntry),
   networkEntries: Schema.Array(PreviewAutomationNetworkEntry),
   actionTimeline: Schema.Array(PreviewAutomationActionEvent),
-  screenshot: Schema.Struct({
-    mimeType: Schema.Literal("image/png"),
-    data: Schema.String,
-    width: Schema.Int,
-    height: Schema.Int,
-  }),
+  screenshot: Schema.optional(
+    Schema.Struct({
+      mimeType: Schema.Literal("image/png"),
+      data: Schema.String,
+      width: Schema.Int,
+      height: Schema.Int,
+    }),
+  ),
 });
 export type PreviewAutomationSnapshot = typeof PreviewAutomationSnapshot.Type;
 

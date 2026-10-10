@@ -3,6 +3,45 @@ import { describe, expect, it } from "vite-plus/test";
 import { BrowserControlInterrupted, SessionControl } from "./SessionControl.ts";
 
 describe("SessionControl", () => {
+  it("discards an expired queued action without replaying it after the active action drains", async () => {
+    const control = new SessionControl("agent");
+    const started = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    const events: string[] = [];
+    const running = control.agent("agent", async () => {
+      started.resolve();
+      await finish.promise;
+      events.push("finished");
+    });
+    await started.promise;
+    const expired = new AbortController();
+    const queued = expect(
+      control.agent("agent", async () => events.push("late click"), expired.signal),
+    ).rejects.toThrow("request expired");
+    expired.abort(new Error("request expired"));
+    const next = control.agent("agent", async () => events.push("fresh action"));
+    finish.resolve();
+    await Promise.all([running, queued, next]);
+    expect(events).toEqual(["finished", "fresh action"]);
+  });
+
+  it("rejects an already cancelled action before it reaches the queue", async () => {
+    const control = new SessionControl("agent");
+    const cancelled = AbortSignal.abort(new Error("request cancelled"));
+    let executed = false;
+    await expect(
+      control.agent(
+        "agent",
+        async () => {
+          executed = true;
+        },
+        cancelled,
+      ),
+    ).rejects.toThrow("request cancelled");
+    expect(executed).toBe(false);
+    await expect(control.agent("agent", async () => "ready")).resolves.toBe("ready");
+  });
+
   it("returns an action result before tracked navigation but drains it before already queued actions", async () => {
     const control = new SessionControl("agent");
     const committed = Promise.withResolvers<void>();

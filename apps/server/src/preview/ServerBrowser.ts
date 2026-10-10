@@ -48,6 +48,7 @@ import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import { constVoid } from "effect/Function";
@@ -259,7 +260,7 @@ interface ViewerState {
   readonly pressedKeys: Map<string, { key: string; code: string }>;
   readonly pressedButtons: Map<"left" | "middle" | "right", { x: number; y: number }>;
   readonly push: (output: ServerBrowserViewerOutput) => void;
-  readonly pause: () => Promise<void>;
+  readonly pause: (allowed: () => boolean) => Promise<void>;
   readonly resume: () => Promise<void>;
   scrolledAt: number;
   /** Last input from this viewer; page copies reach its clipboard only right after. */
@@ -1467,27 +1468,58 @@ const make = Effect.gen(function* () {
   };
 
   // Scaled captures repaint every screencast; pause them to avoid leaking that frame.
-  const withScreencastsPaused = <A>(tab: ServerTab, capture: () => Promise<A>): Promise<A> =>
-    withCaptureLock(tab, async () => {
-      tab.capturing += 1;
+  const withScreencastsPaused = <A>(
+    tab: ServerTab,
+    capture: () => Promise<A>,
+    options: { readonly signal: AbortSignal; readonly timeoutMs: number },
+  ): Promise<A> => {
+    const previous = tab.captureLock;
+    const run = ServerBrowserPage.withReadBudget(options, async (read) => {
+      await read("capture queue", () => previous);
       const recording = tab.recording;
+      let paused = false;
+      let captured = false;
       try {
-        await Promise.all([
-          ...[...tab.viewers].map((viewer) => viewer.pause()),
-          recording?.session.send("Page.stopScreencast").catch(constVoid),
-        ]);
-        return await capture();
+        await read("screencast pause", (timeoutMs) => {
+          if (tab.closing) throw new Error("The preview tab closed.");
+          const deadline = Date.now() + timeoutMs;
+          const allowed = () => !options.signal.aborted && !tab.closing && Date.now() < deadline;
+          tab.capturing += 1;
+          paused = true;
+          return Promise.all([
+            ...[...tab.viewers].map((viewer) => viewer.pause(allowed)),
+            recording?.session.send("Page.stopScreencast").catch(constVoid),
+          ]);
+        });
+        const result = await read("snapshot", capture);
+        captured = true;
+        return result;
       } finally {
-        tab.capturing -= 1;
-        // Viewers that attached during the capture start here too.
-        await Promise.all([
-          ...[...tab.viewers].map((viewer) => viewer.resume()),
-          recording && tab.recording === recording
-            ? recording.session.send("Page.startScreencast", RECORDING_SCREENCAST).catch(constVoid)
-            : undefined,
-        ]);
+        if (paused) {
+          tab.capturing -= 1;
+          // Dispatch restoration even when the read's budget is exhausted, but
+          // never let a stalled transport hold the tab or capture queue forever.
+          const resumed = Promise.all([
+            ...[...tab.viewers].map((viewer) => viewer.resume()),
+            recording && tab.recording === recording
+              ? recording.session
+                  .send("Page.startScreencast", RECORDING_SCREENCAST)
+                  .catch(constVoid)
+              : undefined,
+          ]);
+          const restored = read("screencast resume", () => resumed);
+          // Preserve the failed capture's stage instead of replacing its error
+          // with a cleanup timeout. A successful capture still waits for resume.
+          if (captured) await restored;
+          else await restored.catch(constVoid);
+        }
       }
     });
+    // A cancelled queue wait must not let later captures overtake the work
+    // it was waiting for. Only the caller's result has a bounded lifetime.
+    tab.captureLock = Promise.allSettled([previous, run]).then(constVoid);
+    return run;
+  };
 
   const stopRecording = (tab: ServerTab) =>
     withCaptureLock(tab, async () => {
@@ -1660,7 +1692,12 @@ const make = Effect.gen(function* () {
     }
   };
 
-  const runOperation = async (request: PreviewAutomationRequest): Promise<unknown> => {
+  const runOperation = async (
+    request: PreviewAutomationRequest,
+    signal: AbortSignal,
+    remainingTimeoutMs: () => number,
+  ): Promise<unknown> => {
+    signal.throwIfAborted();
     const input = request.input;
     switch (request.operation) {
       case "status":
@@ -1707,6 +1744,7 @@ const make = Effect.gen(function* () {
           found && (request.tabIdExplicit || found.control.agentId === request.agentSessionId)
             ? found
             : undefined;
+        signal.throwIfAborted();
         const navigationTimeout = Math.min(request.timeoutMs, NAVIGATION_TIMEOUT_MS);
         const profileId = existing ? undefined : resolveOpenProfile(open.profileId);
         if (!existing) {
@@ -1732,35 +1770,43 @@ const make = Effect.gen(function* () {
             "A browser dialog is pending. Read preview_status and use preview_dialog first.",
             "dialogPending",
           );
-        return tab.control.agent(request.agentSessionId, async () => {
-          if (tab.dialog)
-            throw new BrowserControlInterrupted(
-              "A browser dialog is pending. Read preview_status and use preview_dialog first.",
-              "dialogPending",
-            );
-          if (existing) {
-            if (url) await navigate(tab, url, "load", navigationTimeout);
-          } else {
-            // Await the original navigation failure even though background creation keeps the tab.
-            await tab.initialNavigation;
-          }
-          const reveal = open.open ?? open.show;
-          if (reveal !== false) {
-            await Effect.runPromise(
-              manager.requestReveal({
-                threadId: tab.threadId,
-                tabId: tab.tabId,
-                force: reveal === true,
-              }),
-            );
-          }
-          if (!existing && url) {
-            await tab.page
-              .waitForLoadState("load", { timeout: navigationTimeout })
-              .catch(constVoid);
-          }
-          return statusWithTitle(tab, request.agentSessionId);
-        });
+        return tab.control.agent(
+          request.agentSessionId,
+          async () => {
+            if (tab.dialog)
+              throw new BrowserControlInterrupted(
+                "A browser dialog is pending. Read preview_status and use preview_dialog first.",
+                "dialogPending",
+              );
+            if (existing) {
+              if (url)
+                await navigate(tab, url, "load", Math.min(navigationTimeout, remainingTimeoutMs()));
+            } else {
+              // Await the original navigation failure even though background creation keeps the tab.
+              await tab.initialNavigation;
+            }
+            signal.throwIfAborted();
+            const reveal = open.open ?? open.show;
+            if (reveal !== false) {
+              await Effect.runPromise(
+                manager.requestReveal({
+                  threadId: tab.threadId,
+                  tabId: tab.tabId,
+                  force: reveal === true,
+                }),
+              );
+            }
+            if (!existing && url) {
+              await tab.page
+                .waitForLoadState("load", {
+                  timeout: Math.min(navigationTimeout, remainingTimeoutMs()),
+                })
+                .catch(constVoid);
+            }
+            return statusWithTitle(tab, request.agentSessionId);
+          },
+          signal,
+        );
       }
       case "recordingStop": {
         if (
@@ -1792,7 +1838,7 @@ const make = Effect.gen(function* () {
             "No recording is active for this thread.",
           );
         }
-        return tab.control.agent(request.agentSessionId ?? "", () => stopRecording(tab));
+        return tab.control.agent(request.agentSessionId ?? "", () => stopRecording(tab), signal);
       }
     }
     const tab = await requireTab(request);
@@ -1834,25 +1880,34 @@ const make = Effect.gen(function* () {
             "A browser dialog is pending. Read preview_status.",
             "dialogPending",
           );
-        return executeTabOperation(tab, request);
+        return executeTabOperation(tab, request, signal, remainingTimeoutMs);
       });
     }
-    return tab.control.agent(agentSessionId, async () => {
-      if (tab.dialog)
-        throw new BrowserControlInterrupted(
-          "A browser dialog is pending. Read preview_status and use preview_dialog first.",
-          "dialogPending",
-        );
-      const generation = tab.control.generation;
-      try {
-        return await executeTabOperation(tab, request);
-      } finally {
-        if (generation !== tab.control.generation) ServerBrowserPage.invalidateRefs(tab.page);
-      }
-    });
+    return tab.control.agent(
+      agentSessionId,
+      async () => {
+        if (tab.dialog)
+          throw new BrowserControlInterrupted(
+            "A browser dialog is pending. Read preview_status and use preview_dialog first.",
+            "dialogPending",
+          );
+        const generation = tab.control.generation;
+        try {
+          return await executeTabOperation(tab, request, signal, remainingTimeoutMs);
+        } finally {
+          if (generation !== tab.control.generation) ServerBrowserPage.invalidateRefs(tab.page);
+        }
+      },
+      signal,
+    );
   };
 
-  const executeTabOperation = async (tab: ServerTab, request: PreviewAutomationRequest) => {
+  const executeTabOperation = async (
+    tab: ServerTab,
+    request: PreviewAutomationRequest,
+    signal: AbortSignal,
+    remainingTimeoutMs: () => number,
+  ) => {
     const input = request.input;
     switch (request.operation) {
       case "navigate": {
@@ -1862,7 +1917,7 @@ const make = Effect.gen(function* () {
             tab,
             resolveNavigationUrl(navigateInput),
             navigateInput.readiness ?? "load",
-            navigateInput.timeoutMs ?? request.timeoutMs,
+            Math.min(navigateInput.timeoutMs ?? request.timeoutMs, remainingTimeoutMs()),
           ),
         );
         return statusWithTitle(tab, request.agentSessionId);
@@ -1888,9 +1943,19 @@ const make = Effect.gen(function* () {
         return { tabId: tab.tabId, colorScheme };
       }
       case "snapshot": {
-        return withScreencastsPaused(tab, () =>
-          ServerBrowserPage.snapshot({ ...tab, renderScale: RENDER_SCALE }),
-        );
+        const includeImage = (input as { readonly includeImage?: boolean }).includeImage !== false;
+        const capture = () =>
+          ServerBrowserPage.snapshot({
+            ...tab,
+            renderScale: RENDER_SCALE,
+            includeImage,
+            signal,
+            timeoutMs: remainingTimeoutMs(),
+          });
+        // Text reads do not repaint the page and must not wait on capture transport.
+        return includeImage
+          ? withScreencastsPaused(tab, capture, { signal, timeoutMs: remainingTimeoutMs() })
+          : capture();
       }
       case "click": {
         const clickInput = input as PreviewAutomationClickInput;
@@ -1928,11 +1993,10 @@ const make = Effect.gen(function* () {
           ServerBrowserPage.scroll(tab.page, input as PreviewAutomationScrollInput),
         );
       case "evaluate":
-        return ServerBrowserPage.evaluate(
-          tab.cdp,
-          input as PreviewAutomationEvaluateInput,
-          request.timeoutMs,
-        );
+        return ServerBrowserPage.evaluate(tab.cdp, input as PreviewAutomationEvaluateInput, {
+          signal,
+          timeoutMs: remainingTimeoutMs(),
+        });
       case "waitFor":
         return ServerBrowserPage.waitFor(tab.page, input as PreviewAutomationWaitForInput);
       case "recordingStart": {
@@ -1943,31 +2007,50 @@ const make = Effect.gen(function* () {
   };
 
   const handleRequest = (connectionId: string, request: PreviewAutomationRequest) =>
-    Effect.tryPromise({
-      try: () => runOperation(request).finally(() => markUsed(request)),
-      catch: ServerBrowserPage.toOperationError,
-    }).pipe(
-      Effect.match({
-        onSuccess: (result) => ({ ok: true as const, result }),
-        onFailure: (error) => ({
-          ok: false as const,
-          error: {
-            _tag: error.tag,
-            message: error.message,
-            ...(error.detail === undefined ? {} : { detail: error.detail }),
-          },
+    Clock.clockWith((clock) => {
+      const timeoutMs = Math.max(1, request.timeoutMs - Math.min(500, request.timeoutMs / 10));
+      const started = clock.monotonicTimeNanosUnsafe();
+      const remainingTimeoutMs = () =>
+        Math.max(1, timeoutMs - Number(clock.monotonicTimeNanosUnsafe() - started) / 1_000_000);
+      return Effect.tryPromise({
+        try: (signal) =>
+          runOperation(request, signal, remainingTimeoutMs).finally(() => markUsed(request)),
+        catch: ServerBrowserPage.toOperationError,
+      }).pipe(
+        // Leave time to return the error before the broker deadline. The signal also
+        // revokes queued work so a timed-out click cannot execute after the queue drains.
+        Effect.timeout(timeoutMs),
+        Effect.catchTags({
+          TimeoutError: () =>
+            Effect.fail(
+              new ServerBrowserPage.ServerBrowserOperationError(
+                "PreviewAutomationTimeoutError",
+                `Preview automation ${request.operation} exceeded its execution deadline.`,
+              ),
+            ),
         }),
-      }),
-      Effect.flatMap((outcome) =>
-        broker.respond({
-          clientId: SERVER_HOST_CLIENT_ID,
-          connectionId,
-          requestId: request.requestId,
-          ...outcome,
+        Effect.match({
+          onSuccess: (result) => ({ ok: true as const, result }),
+          onFailure: (error) => ({
+            ok: false as const,
+            error: {
+              _tag: error.tag,
+              message: error.message,
+              ...(error.detail === undefined ? {} : { detail: error.detail }),
+            },
+          }),
         }),
-      ),
-      Effect.ignore,
-    );
+        Effect.flatMap((outcome) =>
+          broker.respond({
+            clientId: SERVER_HOST_CLIENT_ID,
+            connectionId,
+            requestId: request.requestId,
+            ...outcome,
+          }),
+        ),
+        Effect.ignore,
+      );
+    });
 
   const mirrorManagerEvent = (event: PreviewEvent) =>
     Effect.promise(async () => {
@@ -2219,10 +2302,12 @@ const make = Effect.gen(function* () {
             for (const item of dropped.value) if (item._tag === "frame") runFork(item.ack);
           }
         },
-        pause: () => {
-          screencastParams = screencastParams.then(() =>
-            session.send("Page.stopScreencast").then(constVoid, constVoid),
-          );
+        pause: (allowed) => {
+          screencastParams = screencastParams.then(() => {
+            // The stream queue may outlive the snapshot that asked to pause it.
+            if (!allowed()) return;
+            return session.send("Page.stopScreencast").then(constVoid, constVoid);
+          });
           return screencastParams;
         },
         resume: () => startScreencast(screencastScale),
@@ -2409,7 +2494,7 @@ const make = Effect.gen(function* () {
         environmentId,
         supportedOperations: [...PREVIEW_AUTOMATION_SERVER_OPERATIONS],
       },
-      { preferred: true },
+      { preferred: true, disconnectOnTimeout: false },
     )
     .pipe(
       Effect.flatMap((events) =>
@@ -2419,15 +2504,25 @@ const make = Effect.gen(function* () {
               hostConnectionId = event.connectionId;
               return Effect.sync(reportLiveTabs);
             }
-            return handleRequest(event.connectionId, event.request).pipe(
-              Effect.forkScoped,
-              Effect.asVoid,
-            );
+            return broker
+              .runRequest(
+                {
+                  clientId: SERVER_HOST_CLIENT_ID,
+                  connectionId: event.connectionId,
+                  requestId: event.request.requestId,
+                },
+                (remainingTimeoutMs) =>
+                  handleRequest(event.connectionId, {
+                    ...event.request,
+                    timeoutMs: remainingTimeoutMs,
+                  }),
+              )
+              .pipe(Effect.forkScoped, Effect.asVoid);
           }),
         ),
       ),
     );
-  // The broker disconnects timed-out hosts, including slow first installs. Reconnect.
+  // Re-register after transport loss; individual request deadlines keep this host alive.
   yield* hostSession.pipe(
     Effect.exit,
     Effect.andThen(Effect.sleep(HOST_RECONNECT_DELAY)),

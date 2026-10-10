@@ -57,6 +57,62 @@ describe("server browser element refs", () => {
   };
   const repeatedRows = `<ul>${Array.from({ length: 5 }, (_, i) => `<li>row ${i + 1}<button data-testid="delete-row" onclick="this.parentElement.remove()">delete</button></li>`).join("")}</ul>`;
 
+  it("captures usable element refs without an image", async () => {
+    await page.setContent("<button onclick=\"this.textContent='clicked'\">continue</button>");
+    const result = await ServerBrowserPage.snapshot({
+      page,
+      cdp,
+      renderScale: 1,
+      consoleEntries: [],
+      networkEntries: [],
+      actionTimeline: [],
+      includeImage: false,
+    });
+    expect(result.screenshot).toBeUndefined();
+    expect(result.visibleText).toBe("continue");
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      ServerBrowserPage.snapshot({
+        page,
+        cdp,
+        renderScale: 1,
+        consoleEntries: [],
+        networkEntries: [],
+        actionTimeline: [],
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ tag: "PreviewAutomationControlInterruptedError" });
+    await ServerBrowserPage.click(page, {
+      locator: buttonLocator(result.accessibilityTree, "continue"),
+    });
+    expect(await page.locator("button").textContent()).toBe("clicked");
+  });
+
+  it("bounds unresolved page promises and permits a later evaluation", async () => {
+    await expect(
+      ServerBrowserPage.evaluate(cdp, { expression: "new Promise(() => {})" }, { timeoutMs: 100 }),
+    ).rejects.toMatchObject({
+      tag: "PreviewAutomationTimeoutError",
+      detail: { stage: "Runtime.evaluate", timeoutMs: 100 },
+    });
+    expect(await ServerBrowserPage.evaluate(cdp, { expression: "1 + 1" })).toBe(2);
+  });
+
+  it("bounds synchronous page execution and permits a later evaluation", async () => {
+    await expect(
+      ServerBrowserPage.evaluate(
+        cdp,
+        { expression: "(() => { while (true) {} })()" },
+        { timeoutMs: 100 },
+      ),
+    ).rejects.toMatchObject({
+      tag: "PreviewAutomationTimeoutError",
+      detail: { stage: "Runtime.evaluate", timeoutMs: 100 },
+    });
+    expect(await ServerBrowserPage.evaluate(cdp, { expression: "1 + 1" })).toBe(2);
+  });
+
   it("clicks the fifth repeated delete control without touching row one", async () => {
     await page.setContent(repeatedRows);
     const result = await takeSnapshot();

@@ -27,6 +27,7 @@ import {
   type PreviewAutomationResponse,
   type PreviewAutomationStreamEvent,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import type * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -63,6 +64,12 @@ export interface PreviewAutomationConnectOptions {
    * browsing when every desktop disconnects.
    */
   readonly preferred?: boolean;
+  /**
+   * Evict an unanswered foreground request's host (default: true). The trusted
+   * in-process browser disables this so one slow operation cannot disconnect
+   * its shared host and abort work in other sessions.
+   */
+  readonly disconnectOnTimeout?: boolean;
 }
 
 export class PreviewAutomationBroker extends Context.Service<
@@ -76,6 +83,15 @@ export class PreviewAutomationBroker extends Context.Service<
     readonly respond: (
       response: PreviewAutomationResponse,
     ) => Effect.Effect<void, PreviewAutomationError>;
+    /** Run in-process host work only while its invocation is still live. */
+    readonly runRequest: <E, R>(
+      request: {
+        readonly clientId: string;
+        readonly connectionId: string;
+        readonly requestId: string;
+      },
+      execute: (remainingTimeoutMs: number) => Effect.Effect<void, E, R>,
+    ) => Effect.Effect<void, E, R>;
     readonly invoke: <A = unknown>(
       request: PreviewAutomationInvokeInput,
     ) => Effect.Effect<A, PreviewAutomationError>;
@@ -89,6 +105,7 @@ interface ClientConnection {
   readonly supportedOperations: ReadonlySet<PreviewAutomationOperation>;
   readonly focused: boolean;
   readonly preferred: boolean;
+  readonly disconnectOnTimeout: boolean;
   readonly liveTabs: NonNullable<PreviewAutomationHostFocus["liveTabs"]>;
   readonly focusOrder: number;
   readonly queue: Queue.Queue<PreviewAutomationStreamEvent, Cause.Done>;
@@ -97,6 +114,8 @@ interface ClientConnection {
 interface PendingRequest {
   readonly queue: ClientConnection["queue"];
   readonly deferred: Deferred.Deferred<unknown, PreviewAutomationError>;
+  readonly retired: Deferred.Deferred<void>;
+  readonly deadlineMs?: number;
   readonly context: PreviewAutomationRequestErrorContext;
 }
 
@@ -412,6 +431,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       supportedOperations: new Set(host.supportedOperations ?? PREVIEW_AUTOMATION_V1_OPERATIONS),
       focused: false,
       preferred: options?.preferred ?? false,
+      disconnectOnTimeout: options?.disconnectOnTimeout ?? true,
       liveTabs: [],
       focusOrder: 0,
       queue,
@@ -505,11 +525,50 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     }
   });
 
+  const runRequest: PreviewAutomationBroker["Service"]["runRequest"] = Effect.fn(
+    "PreviewAutomationBroker.runRequest",
+  )(function* <E, R>(
+    request: {
+      readonly clientId: string;
+      readonly connectionId: string;
+      readonly requestId: string;
+    },
+    execute: (remainingTimeoutMs: number) => Effect.Effect<void, E, R>,
+  ): Effect.fn.Return<void, E, R> {
+    // Queue delivery can wake the host before dispatch commits the deadline.
+    // Read under the same lock as dispatch so the guard sees the complete entry.
+    const current = yield* SynchronizedRef.modify(state, (current) => [current, current] as const);
+    const pending = current.pending.get(request.requestId);
+    if (
+      !pending ||
+      pending.context.clientId !== request.clientId ||
+      pending.context.connectionId !== request.connectionId ||
+      current.clients.get(request.clientId)?.queue !== pending.queue ||
+      pending.deadlineMs === undefined
+    ) {
+      return;
+    }
+    const deadlineMs = pending.deadlineMs;
+    // Retirement and the original deadline interrupt host work, while
+    // execution failures keep their error channel. Response grace only covers
+    // reply delivery; interruption still revokes native work on its deadline.
+    yield* Effect.raceFirst(
+      Deferred.await(pending.retired),
+      Effect.gen(function* () {
+        const live = yield* SynchronizedRef.modify(state, (current) => [current, current] as const);
+        const remainingTimeoutMs = deadlineMs - (yield* Clock.currentTimeMillis);
+        if (live.pending.get(request.requestId) !== pending || remainingTimeoutMs <= 0) return;
+        yield* execute(remainingTimeoutMs).pipe(Effect.timeoutOption(remainingTimeoutMs));
+      }),
+    );
+  });
+
   const invoke = Effect.fn("PreviewAutomationBroker.invoke")(function* <A = unknown>(
     input: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0],
   ): Effect.fn.Return<A, PreviewAutomationError> {
     const deferred = yield* Deferred.make<unknown, PreviewAutomationError>();
-    const route = yield* SynchronizedRef.modify(state, (current) => {
+    const retired = yield* Deferred.make<void>();
+    const acquireRoute = SynchronizedRef.modify(state, (current) => {
       const assignments = new Map(
         Array.from(current.assignments).filter(([, assignment]) => {
           const connection = current.clients.get(assignment.clientId);
@@ -597,115 +656,146 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         ...selectorDiagnostics,
       };
       const pending = new Map(current.pending);
-      pending.set(requestId, { queue: connection.queue, deferred, context });
+      pending.set(requestId, { queue: connection.queue, deferred, retired, context });
       return [
         { connection, requestId, requestContext: context, requestSequence },
         { ...current, assignments, pending, requestSequence: current.requestSequence + 1 },
       ] as const;
     });
-    if (!route) {
-      return yield* new PreviewAutomationNoAvailableHostError({
-        operation: input.operation,
-        environmentId: input.scope.environmentId,
-        threadId: input.scope.thread.threadId,
-        providerSessionId: input.scope.thread.providerSessionId,
-        providerInstanceId: input.scope.thread.providerInstanceId,
-      });
-    }
-    const { connection, requestId, requestContext, requestSequence } = route;
-    const { timeoutMs } = requestContext;
-    input.onTargetTab?.(requestContext.tabId);
-    const removePending = SynchronizedRef.update(state, (next) => {
-      if (!next.pending.has(requestId)) return next;
-      const pending = new Map(next.pending);
-      pending.delete(requestId);
-      return { ...next, pending };
-    });
-    const awaitResponse = Effect.fn("PreviewAutomationBroker.awaitResponse")(function* () {
-      const offered = yield* SynchronizedRef.modifyEffect(state, (current) => {
-        // A route can outlive its generation while another request evicts it.
-        // Serialize the live-generation check and offer with queue closure.
-        if (
-          current.clients.get(connection.clientId)?.queue !== connection.queue ||
-          !current.pending.has(requestId)
-        ) {
-          return Effect.succeed([false, current] as const);
-        }
-        return Queue.offer(connection.queue, {
-          type: "request",
-          connectionId: connection.connectionId,
-          request: {
-            requestId,
-            threadId: input.scope.thread.threadId,
-            tabId: requestContext.tabId,
-            tabIdExplicit: input.tabId !== undefined,
-            agentSessionId: hostAssignmentKey(input.scope),
-            operation: input.operation,
-            input: input.input,
-            timeoutMs,
-          },
-        }).pipe(Effect.map((offered) => [offered, current] as const));
-      });
-      if (!offered) {
-        const completion = yield* Deferred.poll(deferred);
-        if (Option.isSome(completion)) {
-          return (yield* completion.value) as A;
-        }
-        return yield* new PreviewAutomationRequestQueueClosedError(requestContext);
-      }
-      // The browser starts its operation timer after delivery. Allow its timeout
-      // response to arrive before treating the entire host as unresponsive.
-      const responseTimeoutMs =
-        input.updateCurrentTab === false ? timeoutMs : timeoutMs + HOST_RESPONSE_GRACE_MS;
-      const result = yield* Deferred.await(deferred).pipe(Effect.timeoutOption(responseTimeoutMs));
-      return yield* Option.match(result, {
-        onNone: () =>
-          Effect.gen(function* () {
-            // An unanswered request invalidates this connection. Do not replay
-            // actions: the client may have applied them before becoming unreachable.
-            // A background metadata read has a short budget and changes nothing,
-            // so a slow one must not cut the host off from the agent's next call.
-            if (input.updateCurrentTab !== false) {
-              yield* disconnect(connection.clientId, connection.queue, true);
+    // Install cleanup with registration, including interruption before delivery.
+    return yield* Effect.acquireUseRelease(
+      acquireRoute,
+      (route) =>
+        Effect.gen(function* () {
+          if (!route) {
+            return yield* new PreviewAutomationNoAvailableHostError({
+              operation: input.operation,
+              environmentId: input.scope.environmentId,
+              threadId: input.scope.thread.threadId,
+              providerSessionId: input.scope.thread.providerSessionId,
+              providerInstanceId: input.scope.thread.providerInstanceId,
+            });
+          }
+          const { connection, requestId, requestContext, requestSequence } = route;
+          const { timeoutMs } = requestContext;
+          input.onTargetTab?.(requestContext.tabId);
+          const awaitResponse = Effect.fn("PreviewAutomationBroker.awaitResponse")(function* () {
+            const deadlineMs = yield* SynchronizedRef.modifyEffect(state, (current) => {
+              // A route can outlive its generation while another request evicts it.
+              // Serialize the live-generation check and offer with queue closure.
+              if (
+                current.clients.get(connection.clientId)?.queue !== connection.queue ||
+                !current.pending.has(requestId)
+              ) {
+                return Effect.succeed([undefined, current] as const);
+              }
+              return Effect.gen(function* () {
+                const deadlineMs = (yield* Clock.currentTimeMillis) + timeoutMs;
+                const pending = new Map(current.pending);
+                pending.set(requestId, {
+                  queue: connection.queue,
+                  deferred,
+                  retired,
+                  context: requestContext,
+                  deadlineMs,
+                });
+                const offered = yield* Queue.offer(connection.queue, {
+                  type: "request",
+                  connectionId: connection.connectionId,
+                  request: {
+                    requestId,
+                    threadId: input.scope.thread.threadId,
+                    tabId: requestContext.tabId,
+                    tabIdExplicit: input.tabId !== undefined,
+                    agentSessionId: hostAssignmentKey(input.scope),
+                    operation: input.operation,
+                    input: input.input,
+                    timeoutMs,
+                  },
+                });
+                return [offered ? deadlineMs : undefined, { ...current, pending }] as const;
+              });
+            });
+            if (deadlineMs === undefined) {
+              const completion = yield* Deferred.poll(deferred);
+              if (Option.isSome(completion)) {
+                return (yield* completion.value) as A;
+              }
+              return yield* new PreviewAutomationRequestQueueClosedError(requestContext);
             }
-            return yield* new PreviewAutomationTimeoutError(requestContext);
-          }),
-        onSome: (value) => Effect.succeed(value as A),
-      });
-    });
-    const result = yield* awaitResponse().pipe(Effect.ensuring(removePending));
-    if (input.updateCurrentTab === false) return result;
-    const responseTabId = readResultTabId(result);
-    const resultTabId = responseTabId === undefined ? input.tabId : responseTabId;
-    if (resultTabId === undefined) return result;
-    const assignmentKey = hostAssignmentKey(input.scope);
-    yield* SynchronizedRef.update(state, (current) => {
-      const assignment = current.assignments.get(assignmentKey);
-      if (
-        !assignment ||
-        assignment.connectionId !== connection.connectionId ||
-        assignment.queue !== connection.queue ||
-        (assignment.tabSequence ?? -1) > requestSequence
-      ) {
-        return current;
-      }
-      const assignments = new Map(current.assignments);
-      if (resultTabId === null) {
-        const { tabId: _tabId, ...withoutTabId } = assignment;
-        assignments.set(assignmentKey, { ...withoutTabId, tabSequence: requestSequence });
-      } else {
-        assignments.set(assignmentKey, {
-          ...assignment,
-          ...(resultTabId === undefined ? {} : { tabId: resultTabId }),
-          tabSequence: requestSequence,
-        });
-      }
-      return { ...current, assignments };
-    });
-    return result;
+            // Reply grace extends response delivery, not guarded execution's original deadline.
+            const responseDeadlineMs =
+              input.updateCurrentTab === false ? deadlineMs : deadlineMs + HOST_RESPONSE_GRACE_MS;
+            const remainingResponseTimeoutMs = Math.max(
+              0,
+              responseDeadlineMs - (yield* Clock.currentTimeMillis),
+            );
+            const result = yield* Deferred.await(deferred).pipe(
+              Effect.timeoutOption(remainingResponseTimeoutMs),
+            );
+            return yield* Option.match(result, {
+              onNone: () =>
+                Effect.gen(function* () {
+                  // Remote silence can mean the connection is gone. An in-process
+                  // host stays registered so a slow operation cannot abort other work.
+                  // Never replay actions whose effects may already have been applied.
+                  // A background metadata read has a short budget and changes nothing,
+                  // so a slow one must not cut the host off from the agent's next call.
+                  if (connection.disconnectOnTimeout && input.updateCurrentTab !== false) {
+                    yield* disconnect(connection.clientId, connection.queue, true);
+                  }
+                  return yield* new PreviewAutomationTimeoutError(requestContext);
+                }),
+              onSome: (value) => Effect.succeed(value as A),
+            });
+          });
+          const result = yield* awaitResponse();
+          if (input.updateCurrentTab === false) return result;
+          const responseTabId = readResultTabId(result);
+          const resultTabId = responseTabId === undefined ? input.tabId : responseTabId;
+          if (resultTabId === undefined) return result;
+          const assignmentKey = hostAssignmentKey(input.scope);
+          yield* SynchronizedRef.update(state, (current) => {
+            const assignment = current.assignments.get(assignmentKey);
+            if (
+              !assignment ||
+              assignment.connectionId !== connection.connectionId ||
+              assignment.queue !== connection.queue ||
+              (assignment.tabSequence ?? -1) > requestSequence
+            ) {
+              return current;
+            }
+            const assignments = new Map(current.assignments);
+            if (resultTabId === null) {
+              const { tabId: _tabId, ...withoutTabId } = assignment;
+              assignments.set(assignmentKey, { ...withoutTabId, tabSequence: requestSequence });
+            } else {
+              assignments.set(assignmentKey, {
+                ...assignment,
+                ...(resultTabId === undefined ? {} : { tabId: resultTabId }),
+                tabSequence: requestSequence,
+              });
+            }
+            return { ...current, assignments };
+          });
+          return result;
+        }),
+      (route) =>
+        Effect.gen(function* () {
+          yield* SynchronizedRef.update(state, (current) => {
+            if (!route || !current.pending.has(route.requestId)) return current;
+            const pending = new Map(current.pending);
+            pending.delete(route.requestId);
+            return { ...current, pending };
+          });
+          // respond/disconnect may have removed the map entry already. The
+          // invocation still owns retirement on every exit, including interruption.
+          yield* Deferred.succeed(retired, undefined);
+        }),
+    );
   });
 
-  return PreviewAutomationBroker.of({ connect, focusHost, respond, invoke });
+  return PreviewAutomationBroker.of({ connect, focusHost, respond, runRequest, invoke });
 }).pipe(Effect.withSpan("PreviewAutomationBroker.make"));
 
 export const layer = Layer.effect(PreviewAutomationBroker, make);
