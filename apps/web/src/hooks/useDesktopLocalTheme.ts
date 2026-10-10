@@ -40,7 +40,7 @@ export function useDesktopLocalThemeSync(): void {
         else setDesktopLocalThemeSource(theme.enabled ? "configured" : "unavailable");
       })
       .catch(() => {
-        if (active) setDesktopLocalThemeSource("unavailable");
+        if (active && !eventReceived) setDesktopLocalThemeSource("unavailable");
       });
     return () => {
       active = false;

@@ -1,5 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off - the guarded file read needs open
-// flags (O_NOFOLLOW, O_NONBLOCK) the FileSystem service does not expose.
 /**
  * EnvironmentTheme - palettes this machine publishes for clients to follow.
  *

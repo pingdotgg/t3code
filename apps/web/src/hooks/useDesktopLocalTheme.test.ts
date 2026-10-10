@@ -9,7 +9,7 @@ const darkTheme = {
 } as const satisfies EnvironmentThemeFile;
 const lightTheme = { ...darkTheme, appearance: "light", canvas: "#f0e8d0" } as const;
 
-async function setup() {
+async function setup(withDefaultAdoption = false) {
   const storage = new Map<string, string>([
     ["t3code:theme", "t3-chat"],
     ["t3code:theme-appearance-mode", "light"],
@@ -32,8 +32,10 @@ async function setup() {
     },
   };
   let notify: ((theme: DesktopLocalThemeState) => void) | undefined;
+  let rejectInitial: ((error: Error) => void) | undefined;
   let resolveInitial: ((theme: DesktopLocalThemeState) => void) | undefined;
-  const initial = new Promise<DesktopLocalThemeState>((resolve) => {
+  const initial = new Promise<DesktopLocalThemeState>((resolve, reject) => {
+    rejectInitial = reject;
     resolveInitial = resolve;
   });
   const unsubscribe = vi.fn();
@@ -66,7 +68,21 @@ async function setup() {
   const { useDesktopLocalThemeSync } = await import("./useDesktopLocalTheme");
   const { useTheme } = await import("./useTheme");
   const palette = await import("../themePalette");
+  if (withDefaultAdoption) {
+    vi.doMock("../state/server", () => ({ primaryServerSettingsAtom: "settings" }));
+    vi.doMock("../state/primaryEnvironment", () => ({ primaryEnvironmentIdAtom: "environment" }));
+    vi.doMock("@effect/atom-react", () => ({
+      useAtomValue: (atom: string) =>
+        atom === "settings"
+          ? { defaultTheme: "iris", defaultThemeSetAt: "one" }
+          : "remote-environment",
+    }));
+  }
   useDesktopLocalThemeSync();
+  if (withDefaultAdoption) {
+    const { useDefaultThemeAdoption } = await import("./useDefaultTheme");
+    useDefaultThemeAdoption();
+  }
   const cleanups = effects.splice(0).map((effect) => effect());
   return {
     storage,
@@ -80,6 +96,11 @@ async function setup() {
     initial: async (theme: EnvironmentThemeFile | null) => {
       resolveInitial?.({ enabled: true, theme });
       await initial;
+      await Promise.resolve();
+    },
+    rejectInitial: async () => {
+      rejectInitial?.(new Error("IPC startup failed"));
+      await initial.catch(() => {});
       await Promise.resolve();
     },
     cleanup: () => cleanups.forEach((cleanup) => cleanup?.()),
@@ -162,15 +183,7 @@ describe("desktop-local theme following", () => {
   });
 
   it("keeps environment defaults from changing saved preferences while loading or following a local file", async () => {
-    const app = await setup();
-    vi.doMock("../state/server", () => ({ primaryServerSettingsAtom: "settings" }));
-    vi.doMock("../state/primaryEnvironment", () => ({ primaryEnvironmentIdAtom: "environment" }));
-    vi.doMock("@effect/atom-react", () => ({
-      useAtomValue: (atom: string) =>
-        atom === "settings"
-          ? { defaultTheme: "iris", defaultThemeSetAt: "one" }
-          : "remote-environment",
-    }));
+    const app = await setup(true);
     const { useDefaultThemeAdoption } = await import("./useDefaultTheme");
     useDefaultThemeAdoption();
     app.flushEffects();
@@ -194,6 +207,14 @@ describe("desktop-local theme following", () => {
     await app.initial(darkTheme);
     expect(app.classes.has("dark")).toBe(false);
     expect(app.styles).toEqual(before);
+  });
+
+  it("keeps a live source configured when startup IPC fails later", async () => {
+    const app = await setup();
+    app.publish(lightTheme);
+    await app.rejectInitial();
+    expect(app.palette.getDesktopLocalThemeSource()).toBe("configured");
+    expect(app.root.dataset.themeId).toBe(app.palette.DESKTOP_LOCAL_THEME_ID);
   });
 
   it("preserves theme editor previews and applies the newest palette on leaving the preview", async () => {

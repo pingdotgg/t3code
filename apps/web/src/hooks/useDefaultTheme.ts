@@ -90,7 +90,12 @@ export function useDefaultThemeAdoption(): void {
   const environmentThemes = useEnvironmentThemeDefinitions();
 
   useEffect(() => {
-    if (typeof window === "undefined" || environmentId === null || desktopSource !== "unavailable")
+    if (
+      typeof window === "undefined" ||
+      environmentId === null ||
+      desktopSource !== "unavailable" ||
+      getDesktopLocalThemeSource() !== "unavailable"
+    )
       return;
     const storageKey = `${APPLIED_DEFAULT_THEME_STORAGE_PREFIX}${environmentId}`;
     const definition = getThemeDefinition(defaultTheme);
