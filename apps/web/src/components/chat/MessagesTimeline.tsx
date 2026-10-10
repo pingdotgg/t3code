@@ -1889,7 +1889,7 @@ function TimelineMinimap({
                     item.attribution === "automation"
                       ? [
                           "border-t-2 border-dashed",
-                          activeDistance === 0 ? "border-info/75" : "border-info/50",
+                          activeDistance === 0 ? "border-ring/75" : "border-ring/50",
                         ]
                       : activeDistance === 0
                         ? "bg-muted-foreground/75"
@@ -1919,7 +1919,7 @@ function TimelineMinimap({
                     className={cn(
                       "absolute rounded-full opacity-0 transition-opacity duration-150 group-data-[in-view=true]/strip:opacity-100",
                       item.attribution === "automation"
-                        ? "inset-x-0 -top-0.5 border-t-2 border-dashed border-info"
+                        ? "inset-x-0 -top-0.5 border-t-2 border-dashed border-ring"
                         : "inset-0 bg-foreground/90",
                     )}
                   />
