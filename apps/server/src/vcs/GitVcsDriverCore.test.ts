@@ -903,6 +903,91 @@ it.effect("backs off and logs failed fetch attempts across linked worktrees", ()
       yield* readRemoteStatus(cwd);
       assert.equal(yield* Ref.get(fetchAttempts), 3);
       assert.lengthOf(warnings, 3);
+
+      // Fast failures, such as an offline remote, keep retrying on the capped backoff.
+      yield* TestClock.adjust("2 minutes");
+      yield* readRemoteStatus(worktreePath);
+      assert.equal(yield* Ref.get(fetchAttempts), 4);
+    }),
+  ).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
+it.effect("stops background fetches after repeated timeouts until a pull succeeds", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fetchStarts = yield* Queue.unbounded<void>();
+      const fetchAttempts = yield* Ref.make(0);
+      // Models a credential helper waiting on a dialog nobody answers.
+      const fetchHangs = yield* Ref.make(true);
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (!ChildProcess.isStandardCommand(command)) {
+            return yield* Effect.die("expected a standard Git command");
+          }
+          if (command.args.includes("fetch") && command.args.includes("--no-auto-gc")) {
+            yield* Ref.update(fetchAttempts, (count) => count + 1);
+            if (yield* Ref.get(fetchHangs)) {
+              yield* Queue.offer(fetchStarts, undefined);
+              return ChildProcessSpawner.makeHandle({
+                ...makeSuccessfulHandle(""),
+                exitCode: Effect.never,
+              });
+            }
+          }
+          return yield* delegate.spawn(command);
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const runGit = (workingDirectory: string, args: ReadonlyArray<string>) =>
+        driver.execute({
+          operation: "GitVcsDriver.test.upstreamRefreshTimeouts",
+          cwd: workingDirectory,
+          args,
+          timeoutMs: 10_000,
+        });
+      const cwd = yield* makeTmpDir();
+      const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+      yield* driver.initRepo({ cwd });
+      yield* runGit(cwd, ["config", "user.email", "test@test.com"]);
+      yield* runGit(cwd, ["config", "user.name", "Test"]);
+      yield* writeTextFile(cwd, "README.md", "# test\n");
+      yield* runGit(cwd, ["add", "."]);
+      yield* runGit(cwd, ["commit", "-m", "initial commit"]);
+      const initialBranch = (yield* runGit(cwd, ["branch", "--show-current"])).stdout.trim();
+      yield* runGit(remote, ["init", "--bare"]);
+      yield* runGit(cwd, ["remote", "add", "origin", remote]);
+      yield* runGit(cwd, ["push", "-u", "origin", initialBranch]);
+
+      const readStatusWithTimedOutFetch = Effect.gen(function* () {
+        const read = yield* driver.statusDetailsRemote(cwd).pipe(Effect.forkChild);
+        yield* Queue.take(fetchStarts);
+        yield* TestClock.adjust("5 seconds");
+        yield* Fiber.join(read);
+      });
+
+      yield* readStatusWithTimedOutFetch;
+      yield* TestClock.adjust("30 seconds");
+      yield* readStatusWithTimedOutFetch;
+      yield* TestClock.adjust("60 seconds");
+      yield* readStatusWithTimedOutFetch;
+      assert.equal(yield* Ref.get(fetchAttempts), 3);
+
+      // Past the 15 minute backoff cap, the remote is still not fetched again.
+      yield* TestClock.adjust("1 hour");
+      const stopped = yield* driver.statusDetailsRemote(cwd);
+      assert.isTrue(stopped.hasUpstream);
+      assert.equal(yield* Ref.get(fetchAttempts), 3);
+
+      // An explicit pull may wait on the dialog; once it succeeds, polling resumes.
+      yield* Ref.set(fetchHangs, false);
+      yield* driver.pullCurrentBranch(cwd);
+      assert.equal(yield* Ref.get(fetchAttempts), 3);
+      yield* TestClock.adjust("15 seconds");
+      yield* driver.statusDetailsRemote(cwd);
+      assert.equal(yield* Ref.get(fetchAttempts), 4);
     }),
   ).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
