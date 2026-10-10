@@ -128,7 +128,7 @@ it.effect("puts detected Android tools on the helper PATH without losing existin
     expect(environment.PATH).toBe("/sdk/platform-tools:/sdk/emulator:/usr/bin");
     expect(environment.ANDROID_HOME).toBe("/sdk");
     expect(environment.HOME).toBe("/test/home");
-  }).pipe(Effect.provide(NodePath.layer)),
+  }).pipe(Effect.provide(NodePath.layerPosix)),
 );
 
 it.effect(
