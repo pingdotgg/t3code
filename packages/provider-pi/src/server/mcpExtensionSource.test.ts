@@ -4,9 +4,10 @@ import * as NodePath from "node:path";
 import * as NodeOS from "node:os";
 import * as NodeModule from "node:module";
 import * as NodeVM from "node:vm";
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 
 import { PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
+import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 
 type RequestHook = (
   event: { payload: unknown },
@@ -47,123 +48,67 @@ async function loadHooks(commands: ReadonlyArray<SkillCommand> = []) {
   return handlers;
 }
 
-interface RegisteredTool {
-  readonly name: string;
-  readonly description: string;
-  readonly parameters: unknown;
-  readonly exposure?: string;
-  readonly promptSnippet?: string;
-  readonly promptGuidelines?: ReadonlyArray<string>;
-  readonly execute: (
-    id: string,
-    args: Record<string, unknown>,
-    signal?: AbortSignal,
-  ) => Promise<{
-    readonly content: ReadonlyArray<{ readonly type: string; readonly text: string }>;
-  }>;
-}
-
-type AgentStartHook = (
-  event: { systemPrompt: string },
-  ctx: { ui: { notify: (message: string, severity: string) => void } },
-) => Promise<{ systemPrompt: string }>;
-
-async function loadMcpBridge(
-  options: {
-    readonly modern?: boolean;
-    readonly toolSearchAvailable?: boolean;
-    readonly toolSearchDisabled?: boolean;
-    readonly allowsTool?: (name: string) => boolean;
-  } = {},
-) {
-  const handlers = new Map<string, AgentStartHook>();
-  const tools: RegisteredTool[] = [];
-  const requests: Array<{ readonly method: string; readonly params?: unknown }> = [];
-  let activeTools = ["read"];
-  const transports: Array<{
-    readonly url: string;
-    readonly authorization: string;
-    readonly signal: AbortSignal | undefined;
-  }> = [];
-  const servers: Array<{ readonly name: string; readonly config: Record<string, unknown> }> = [];
-  const catalog = [
-    { name: "orchestrator_capabilities", description: "Discover available providers and models." },
-    { name: "delegate_task", description: "Delegate work to another agent." },
-    { name: "task_status", description: "Check delegated work." },
-    { name: "preview_snapshot", description: "Inspect the collaborative browser." },
-  ].map((tool) => ({ ...tool, inputSchema: { type: "object", properties: {} } }));
-  const source = NodeModule.stripTypeScriptTypes(
-    PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
-      "export default async function",
-      "async function",
-    ),
-  );
-  await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
-    process: {
-      env: { T3_MCP_URL: "http://fixture.invalid/mcp", T3_MCP_BEARER_TOKEN: "fixture-token" },
-    },
-    AbortSignal,
-    Type: { Unsafe: (schema: unknown) => schema },
-    fetch: async (
-      url: string,
-      options: { body: string; headers: Record<string, string>; signal?: AbortSignal },
-    ) => {
-      transports.push({
-        url,
-        authorization: options.headers.authorization!,
-        signal: options.signal,
-      });
-      const request = JSON.parse(options.body) as { id: number; method: string; params?: unknown };
-      requests.push(request);
-      const result =
-        request.method === "tools/list"
-          ? { tools: catalog }
-          : request.method === "tools/call"
-            ? { content: [{ type: "text", text: "browser snapshot" }] }
-            : {};
-      return new Response(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }), {
-        headers: { "content-type": "application/json" },
-      });
-    },
-    pi: {
-      on: (name: string, handler: AgentStartHook) => handlers.set(name, handler),
-      registerTool: (tool: RegisteredTool) => {
-        if (options.allowsTool && !options.allowsTool(tool.name)) return;
-        const index = tools.findIndex((current) => current.name === tool.name);
-        if (index === -1) tools.push(tool);
-        else tools[index] = tool;
+describe("Pi MCP tool results", () => {
+  it("returns mixed screenshot blocks and typed script output without repeating structured text", async () => {
+    const content = [
+      { type: "text", text: "Browser screenshot" },
+      { type: "image", data: "AAAA", mimeType: "image/png", _meta: { private: true } },
+      { type: "text", text: "Screenshot captured" },
+    ] as const;
+    const result = { content, structuredContent: { count: 2 }, _meta: { private: true } };
+    const bridge = await loadMcpBridge({ modern: true, result });
+    const tool = bridge.tools.find((tool) => tool.name === "mcp__t3-code__preview_snapshot")!;
+    const output = await tool.execute("snapshot", {});
+    assert.deepEqual(output.content, [
+      content[0],
+      { type: "image", data: "AAAA", mimeType: "image/png" },
+      content[2],
+    ]);
+    assert.deepEqual(output.structuredContent, { content, structuredContent: { count: 2 } });
+    assert.deepEqual(tool.outputSchema, {
+      type: "object",
+      properties: {
+        content: { type: "array", items: { type: "object" } },
+        structuredContent: { type: "object", properties: { count: { type: "number" } } },
+        isError: { type: "boolean" },
+        _meta: { type: "object" },
       },
-      getActiveTools: () => activeTools,
-      setActiveTools: (names: string[]) => {
-        activeTools = names.filter((name) => options.allowsTool?.(name) ?? true);
-      },
-      getAllTools: () =>
-        options.toolSearchAvailable &&
-        !options.toolSearchDisabled &&
-        (options.allowsTool?.("tool_search") ?? true)
-          ? [{ name: "tool_search", sourceInfo: { path: "builtin:tool-search" } }]
-          : [],
-      ...(options.modern
-        ? {
-            registerMcpServer: (name: string, config: Record<string, unknown>) =>
-              servers.push({ name, config }),
-            unregisterMcpServer: () => servers.splice(0),
-          }
-        : {}),
-    },
+      required: ["content"],
+    });
   });
-  return {
-    handlers,
-    tools,
-    requests,
-    servers,
-    transports,
-    getActiveTools: () => activeTools,
-    restoreActiveTools: (names: string[]) => {
-      activeTools = names;
+
+  it.each([false, true])(
+    "preserves image-only results and error status, isError=%s",
+    async (isError) => {
+      const image = { type: "image", data: "AAAA", mimeType: "image/png" };
+      const result = { content: [image], isError };
+      const bridge = await loadMcpBridge({ result });
+      const output = await bridge.tools[0]!.execute("image", {});
+      assert.deepEqual(output.content[0], image);
+      assert.equal(output.content.length, isError ? 2 : 1);
+      if (isError) assert.include(output.content[1]?.text ?? "", "returned an error");
+      assert.equal(output.isError, isError ? true : undefined);
+      assert.deepEqual(output.structuredContent, result);
     },
-  };
-}
+  );
+
+  it("uses structured output as model text when content is empty", async () => {
+    const result = { content: [], structuredContent: { count: 2 } };
+    const bridge = await loadMcpBridge({ result });
+    const output = await bridge.tools[0]!.execute("structured", {});
+    assert.deepEqual(output.content, [{ type: "text", text: '{"count":2}' }]);
+    assert.deepEqual(output.structuredContent, result);
+  });
+
+  it("propagates cancellation without returning a successful result", async () => {
+    const bridge = await loadMcpBridge();
+    const controller = new AbortController();
+    controller.abort();
+    await expect(bridge.tools[0]!.execute("cancelled", {}, controller.signal)).rejects.toThrow(
+      "aborted",
+    );
+  });
+});
 
 describe("Pi MCP tool exposure", () => {
   it("keeps orchestration direct and optional bridge tools discoverable on modern Pi", async () => {
