@@ -134,6 +134,20 @@ describe("resolveTranscriptCommit", () => {
     });
   });
 
+  it("adds word spacing for other space-delimited languages", () => {
+    const atEnd = draft({ text: "Schön", selection: { start: 5, end: 5 } });
+    expect(resolveTranscriptCommit(atEnd, atEnd, "Grüße", "de-DE")).toMatchObject({
+      kind: "commit",
+      text: "Schön Grüße",
+    });
+
+    const combiningMark = draft({ text: "नमस्ते", selection: { start: 6, end: 6 } });
+    expect(resolveTranscriptCommit(combiningMark, combiningMark, "दुनिया", "hi-IN")).toMatchObject({
+      kind: "commit",
+      text: "नमस्ते दुनिया",
+    });
+  });
+
   it("does not add English boundary spaces to CJK or selected inline text", () => {
     const cjk = draft({ text: "修正キャッシュ", selection: { start: 8, end: 8 } });
     expect(resolveTranscriptCommit(cjk, cjk, "テストも", "ja-JP")).toMatchObject({
