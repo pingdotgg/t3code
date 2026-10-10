@@ -1,64 +1,93 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { preferredMicrophoneInput, rememberMicrophones } from "./microphonePriority";
+import {
+  type MicrophoneEntry,
+  microphoneEntryKey,
+  microphoneOrder,
+  preferredMicrophoneInput,
+  rememberMicrophones,
+} from "./microphonePriority";
 
 const iPhone = { uid: "Built-In Microphone", name: "iPhone Microphone", type: "MicrophoneBuiltIn" };
-const airPods = { uid: "airpods", name: "Dak’s AirPods Pro", type: "BluetoothHFP" };
-const bluetoothCar = { uid: "civic", name: "Honda Civic", type: "BluetoothHFP" };
+const airPods = { uid: "airpods", name: "Julius’s AirPods Pro", type: "BluetoothHFP" };
+const bose = { uid: "bose", name: "Julius’s Bose QC", type: "BluetoothHFP" };
+const civic = { uid: "civic", name: "Honda Civic", type: "BluetoothHFP" };
 const carPlay = { uid: "carplay", name: "CarPlay", type: "CarAudio" };
 const usb = { uid: "usb", name: "Shure MV7", type: "USBAudio" };
 
-const uids = (microphones: ReadonlyArray<{ readonly uid: string }>) =>
-  microphones.map((microphone) => microphone.uid);
+const keys = (order: ReadonlyArray<MicrophoneEntry>) => order.map(microphoneEntryKey);
 
-describe("rememberMicrophones", () => {
-  it("remembers new microphones in the default order, CarPlay below the iPhone", () => {
-    expect(uids(rememberMicrophones([], [carPlay, iPhone, airPods]))).toEqual([
-      "airpods",
-      "Built-In Microphone",
-      "carplay",
+describe("microphoneOrder", () => {
+  it("lists every kind once, CarPlay below the built-in microphone by default", () => {
+    expect(keys(microphoneOrder())).toEqual([
+      "kind:wired",
+      "kind:bluetooth",
+      "kind:builtIn",
+      "kind:carPlay",
     ]);
   });
 
-  it("files a new device after the last one of its kind, keeping the user's order", () => {
-    const reordered = rememberMicrophones([], [iPhone, airPods]).toReversed();
-    expect(uids(reordered)).toEqual(["Built-In Microphone", "airpods"]);
-
-    expect(uids(rememberMicrophones(reordered, [bluetoothCar, iPhone]))).toEqual([
-      "Built-In Microphone",
+  it("keeps a saved order and files missing kinds after their devices", () => {
+    const saved: MicrophoneEntry[] = [
+      { kind: "builtIn" },
+      { kind: "bluetooth", uid: "airpods", name: "AirPods" },
+      { kind: "builtIn" },
+    ];
+    expect(keys(microphoneOrder(saved))).toEqual([
+      "kind:wired",
+      "kind:builtIn",
       "airpods",
-      "civic",
-    ]);
-    expect(uids(rememberMicrophones(reordered, [usb]))).toEqual([
-      "usb",
-      "Built-In Microphone",
-      "airpods",
-    ]);
-  });
-
-  it("updates a renamed device in place and returns the same list when nothing changed", () => {
-    const remembered = rememberMicrophones([], [iPhone, airPods]);
-    expect(rememberMicrophones(remembered, [iPhone, airPods])).toBe(remembered);
-    expect(rememberMicrophones(remembered, [{ uid: "virtual", name: "x", type: "Virtual" }])).toBe(
-      remembered,
-    );
-
-    const renamed = rememberMicrophones(remembered, [{ ...airPods, name: "AirPods Max" }]);
-    expect(renamed.map((microphone) => microphone.name)).toEqual([
-      "AirPods Max",
-      "iPhone Microphone",
+      "kind:bluetooth",
+      "kind:carPlay",
     ]);
   });
 });
 
-describe("preferredMicrophoneInput", () => {
-  it("records from the first connected remembered microphone", () => {
-    const remembered = rememberMicrophones([], [iPhone, airPods, bluetoothCar]).toReversed();
-    expect(preferredMicrophoneInput([airPods, iPhone], remembered)).toBe(iPhone);
-    expect(preferredMicrophoneInput([airPods, bluetoothCar], remembered)).toBe(bluetoothCar);
+describe("rememberMicrophones", () => {
+  it("lists a new device just above its kind and leaves built-in and CarPlay as kinds", () => {
+    const order = microphoneOrder();
+    expect(keys(rememberMicrophones(order, [iPhone, carPlay, airPods]))).toEqual([
+      "kind:wired",
+      "airpods",
+      "kind:bluetooth",
+      "kind:builtIn",
+      "kind:carPlay",
+    ]);
   });
 
-  it("leaves microphones it does not know to iOS", () => {
-    expect(preferredMicrophoneInput([usb], rememberMicrophones([], [iPhone]))).toBeNull();
+  it("refreshes renamed devices and returns the same order when nothing changed", () => {
+    const order = rememberMicrophones(microphoneOrder(), [airPods]);
+    expect(rememberMicrophones(order, [airPods, iPhone])).toBe(order);
+
+    const renamed = rememberMicrophones(order, [{ ...airPods, name: "AirPods Max" }]);
+    expect(renamed.find((entry) => microphoneEntryKey(entry) === "airpods")).toEqual({
+      kind: "bluetooth",
+      uid: "airpods",
+      name: "AirPods Max",
+    });
+  });
+});
+
+describe("preferredMicrophoneInput", () => {
+  // Built-in, Bose, Wired, other Bluetooth, AirPods, CarPlay.
+  const order: MicrophoneEntry[] = [
+    { kind: "builtIn" },
+    { kind: "bluetooth", uid: "bose", name: bose.name },
+    { kind: "wired" },
+    { kind: "bluetooth" },
+    { kind: "bluetooth", uid: "airpods", name: airPods.name },
+    { kind: "carPlay" },
+  ];
+
+  it("ranks unlisted devices of a kind at that kind, ahead of a device listed below it", () => {
+    expect(preferredMicrophoneInput([airPods, civic], order)).toBe(civic);
+    expect(preferredMicrophoneInput([airPods, bose], order)).toBe(bose);
+    expect(preferredMicrophoneInput([airPods, usb], order)).toBe(usb);
+    expect(preferredMicrophoneInput([airPods, carPlay], order)).toBe(airPods);
+    expect(preferredMicrophoneInput([airPods, iPhone], order)).toBe(iPhone);
+  });
+
+  it("leaves inputs of unknown kinds to iOS", () => {
+    expect(preferredMicrophoneInput([{ uid: "x", name: "x", type: "Virtual" }], order)).toBeNull();
   });
 });

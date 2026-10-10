@@ -9,7 +9,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
-import type { MicrophoneKind, RememberedMicrophone } from "../../lib/microphonePriority";
+import {
+  isMicrophoneDevice,
+  type MicrophoneEntry,
+  type MicrophoneKind,
+  microphoneEntryKey,
+  microphoneOrder,
+} from "../../lib/microphonePriority";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
@@ -45,40 +51,71 @@ function useMicrophonePermission() {
   return { permission, request };
 }
 
-const KINDS: Record<MicrophoneKind, { readonly label: string; readonly icon: AppSymbolName }> = {
-  wired: { label: "Wired", icon: "cable.connector" },
-  bluetooth: { label: "Bluetooth", icon: "headphones" },
-  builtIn: { label: "Built-in", icon: "iphone" },
-  carPlay: { label: "CarPlay", icon: "car" },
+const KINDS: Record<
+  MicrophoneKind,
+  {
+    /** Shown under a remembered device's name. */
+    readonly label: string;
+    readonly row: string;
+    readonly rowDescription: string;
+    readonly icon: AppSymbolName;
+  }
+> = {
+  wired: {
+    label: "Wired",
+    row: "Other wired",
+    rowDescription: "Headsets and USB microphones not listed",
+    icon: "cable.connector",
+  },
+  bluetooth: {
+    label: "Bluetooth",
+    row: "Other Bluetooth",
+    rowDescription: "AirPods, headsets, and cars not listed",
+    icon: "headphones",
+  },
+  builtIn: {
+    label: "Built-in",
+    row: "Built-in microphone",
+    rowDescription: "The microphone on this device",
+    icon: "iphone",
+  },
+  carPlay: {
+    label: "CarPlay",
+    row: "CarPlay",
+    rowDescription: "The car’s microphone",
+    icon: "car",
+  },
 };
 
 /**
- * Microphones voice input has seen, in the order it prefers them. iOS only.
- * A microphone joins the list the first time it is connected during dictation.
+ * Microphone kinds and remembered devices, in the order voice input prefers
+ * them. iOS only. A device joins the list the first time it is connected
+ * during dictation; until then its kind's row ranks it.
  */
 export function SettingsMicrophoneRouteScreen() {
   const insets = useSafeAreaInsets();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const ready = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
-  const microphones = AsyncResult.isSuccess(preferencesResult)
-    ? (preferencesResult.value.microphones ?? [])
-    : [];
+  const entries = microphoneOrder(
+    AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value.microphones : undefined,
+  );
+  const hasDevices = entries.some(isMicrophoneDevice);
   const { permission, request: requestPermission } = useMicrophonePermission();
   const [editing, setEditing] = useState(false);
-  const [drag, setDrag] = useState<{ readonly uid: string; readonly translation: number } | null>(
+  const [drag, setDrag] = useState<{ readonly key: string; readonly translation: number } | null>(
     null,
   );
   const [rowHeight, setRowHeight] = useState(0);
   // Each drop remounts the rows so the new order and the cleared offsets land in one frame.
   const [drops, setDrops] = useState(0);
 
-  // Transforms apply to the stored list, so a microphone recorded meanwhile is kept.
-  const move = (uid: string, steps: number) =>
+  // Transforms apply to the stored order, so a device recorded meanwhile is kept.
+  const move = (key: string, steps: number) =>
     savePreferences({
       transform: (current) => {
-        const next = [...(current.microphones ?? [])];
-        const from = next.findIndex((microphone) => microphone.uid === uid);
+        const next = [...microphoneOrder(current.microphones)];
+        const from = next.findIndex((entry) => microphoneEntryKey(entry) === key);
         const to = Math.min(next.length - 1, Math.max(0, from + steps));
         if (from === -1 || from === to) return {};
         const [moved] = next.splice(from, 1);
@@ -86,21 +123,23 @@ export function SettingsMicrophoneRouteScreen() {
         return { microphones: next };
       },
     });
-  const forget = (uid: string) =>
+  const forget = (key: string) =>
     savePreferences({
       transform: (current) => ({
-        microphones: (current.microphones ?? []).filter((microphone) => microphone.uid !== uid),
+        microphones: microphoneOrder(current.microphones).filter(
+          (entry) => microphoneEntryKey(entry) !== key,
+        ),
       }),
     });
   // A lifted row takes a neighbour's slot once it has moved past half of that row.
   const dropSteps = (from: number, translation: number) =>
     rowHeight === 0
       ? 0
-      : Math.min(microphones.length - 1, Math.max(0, from + Math.round(translation / rowHeight))) -
+      : Math.min(entries.length - 1, Math.max(0, from + Math.round(translation / rowHeight))) -
         from;
 
   const dragFrom =
-    drag === null ? -1 : microphones.findIndex((microphone) => microphone.uid === drag.uid);
+    drag === null ? -1 : entries.findIndex((entry) => microphoneEntryKey(entry) === drag.key);
   const dragTo = drag === null ? -1 : dragFrom + dropSteps(dragFrom, drag.translation);
 
   return (
@@ -130,74 +169,68 @@ export function SettingsMicrophoneRouteScreen() {
             </Text>
           </>
         ) : null}
-        {microphones.length === 0 ? (
-          permission === "granted" && ready ? (
-            <Text className="px-2 text-sm text-foreground-muted">
-              Microphones appear here after you use voice input with them connected.
-            </Text>
-          ) : null
-        ) : (
-          <>
-            <SettingsSection
-              title="Preferred order"
-              trailing={
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={() => setEditing((value) => !value)}
-                  className="px-2 py-1 active:opacity-70"
-                >
-                  <Text className="text-sm font-t3-medium text-foreground">
-                    {editing ? "Done" : "Edit"}
-                  </Text>
-                </Pressable>
-              }
-            >
-              {microphones.map((microphone, index) => {
-                const shift =
-                  dragFrom === -1 || index === dragFrom
-                    ? 0
-                    : dragFrom < dragTo && index > dragFrom && index <= dragTo
-                      ? -rowHeight
-                      : dragFrom > dragTo && index < dragFrom && index >= dragTo
-                        ? rowHeight
-                        : 0;
-                return (
-                  <MicrophoneRow
-                    key={`${microphone.uid}:${drops}`}
-                    microphone={microphone}
-                    position={index + 1}
-                    count={microphones.length}
-                    reorderable={ready && microphones.length > 1}
-                    editing={editing}
-                    offset={index === dragFrom ? (drag?.translation ?? 0) : shift}
-                    lifted={index === dragFrom}
-                    onHeight={setRowHeight}
-                    onDragStart={() => setDrag({ uid: microphone.uid, translation: 0 })}
-                    onDragMove={(translation) => setDrag({ uid: microphone.uid, translation })}
-                    onDragEnd={(translation, cancelled) => {
-                      setDrag(null);
-                      setDrops((count) => count + 1);
-                      if (!cancelled) move(microphone.uid, dropSteps(index, translation));
-                    }}
-                    onStep={(direction) => move(microphone.uid, direction === "up" ? -1 : 1)}
-                    onForget={() => forget(microphone.uid)}
-                  />
-                );
-              })}
-            </SettingsSection>
-            <Text className="px-2 text-sm text-foreground-muted">
-              Voice input records from the first connected microphone in this list. New microphones
-              appear after you use voice input with them connected.
-            </Text>
-          </>
-        )}
+        <SettingsSection
+          title="Preferred order"
+          trailing={
+            hasDevices ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setEditing((value) => !value)}
+                className="px-2 py-1 active:opacity-70"
+              >
+                <Text className="text-sm font-t3-medium text-foreground">
+                  {editing ? "Done" : "Edit"}
+                </Text>
+              </Pressable>
+            ) : undefined
+          }
+        >
+          {entries.map((entry, index) => {
+            const key = microphoneEntryKey(entry);
+            const shift =
+              dragFrom === -1 || index === dragFrom
+                ? 0
+                : dragFrom < dragTo && index > dragFrom && index <= dragTo
+                  ? -rowHeight
+                  : dragFrom > dragTo && index < dragFrom && index >= dragTo
+                    ? rowHeight
+                    : 0;
+            return (
+              <MicrophoneRow
+                key={`${key}:${drops}`}
+                entry={entry}
+                position={index + 1}
+                count={entries.length}
+                reorderable={ready}
+                editing={editing && hasDevices}
+                offset={index === dragFrom ? (drag?.translation ?? 0) : shift}
+                lifted={index === dragFrom}
+                onHeight={setRowHeight}
+                onDragStart={() => setDrag({ key, translation: 0 })}
+                onDragMove={(translation) => setDrag({ key, translation })}
+                onDragEnd={(translation, cancelled) => {
+                  setDrag(null);
+                  setDrops((count) => count + 1);
+                  if (!cancelled) move(key, dropSteps(index, translation));
+                }}
+                onStep={(direction) => move(key, direction === "up" ? -1 : 1)}
+                onForget={isMicrophoneDevice(entry) ? () => forget(key) : undefined}
+              />
+            );
+          })}
+        </SettingsSection>
+        <Text className="px-2 text-sm text-foreground-muted">
+          Voice input records from the first connected microphone in this list. Wired and Bluetooth
+          devices are added by name after you use voice input with them connected; until then, the
+          Other row ranks them.
+        </Text>
       </ScrollView>
     </View>
   );
 }
 
 function MicrophoneRow(props: {
-  readonly microphone: RememberedMicrophone;
+  readonly entry: MicrophoneEntry;
   readonly position: number;
   readonly count: number;
   readonly reorderable: boolean;
@@ -209,10 +242,11 @@ function MicrophoneRow(props: {
   readonly onDragMove: (translation: number) => void;
   readonly onDragEnd: (translation: number, cancelled: boolean) => void;
   readonly onStep: (direction: "up" | "down") => void;
-  readonly onForget: () => void;
+  readonly onForget: (() => void) | undefined;
 }) {
-  const { lifted, offset, microphone } = props;
-  const kind = KINDS[microphone.kind];
+  const { lifted, offset, entry } = props;
+  const kind = KINDS[entry.kind];
+  const title = isMicrophoneDevice(entry) ? entry.name : kind.row;
   const style = useAnimatedStyle(() => ({
     transform: [
       {
@@ -234,10 +268,10 @@ function MicrophoneRow(props: {
         !props.reorderable && "pr-4",
       )}
     >
-      {props.editing ? (
+      {props.editing && props.onForget ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Forget ${microphone.name}`}
+          accessibilityLabel={`Forget ${title}`}
           hitSlop={8}
           onPress={props.onForget}
           className="active:opacity-70"
@@ -249,10 +283,12 @@ function MicrophoneRow(props: {
             type="monochrome"
           />
         </Pressable>
+      ) : props.editing ? (
+        <View style={{ width: REMOVE_SIZE }} />
       ) : null}
       <View
         accessible
-        accessibilityLabel={`${microphone.name}, ${kind.label}, ${props.position} of ${props.count}`}
+        accessibilityLabel={`${title}, ${kind.label}, ${props.position} of ${props.count}`}
         className="min-w-0 flex-1 flex-row items-center gap-4 py-4"
       >
         <SymbolView
@@ -264,16 +300,16 @@ function MicrophoneRow(props: {
         />
         <View className="min-w-0 flex-1 gap-0.5">
           <Text numberOfLines={1} className="text-lg text-foreground">
-            {microphone.name}
+            {title}
           </Text>
           <Text numberOfLines={1} className="text-sm text-foreground-muted">
-            {kind.label}
+            {isMicrophoneDevice(entry) ? kind.label : kind.rowDescription}
           </Text>
         </View>
       </View>
       {props.reorderable ? (
         <SettingsDragHandle
-          title={microphone.name}
+          title={title}
           canMoveUp={props.position > 1}
           canMoveDown={props.position < props.count}
           onStart={props.onDragStart}

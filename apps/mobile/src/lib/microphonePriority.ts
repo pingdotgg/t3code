@@ -1,19 +1,22 @@
 /**
- * Microphones voice input has recorded near, in the order the user prefers
- * them. iOS lists only connected inputs, and only while a recording session
- * is set up, so each microphone is remembered the first time dictation sees
- * it and then appears in Settings.
+ * The order voice input picks a microphone in. An entry is either a kind,
+ * which covers every connected microphone of that kind not listed by name, or
+ * a device remembered the first time dictation saw it connected. iOS lists
+ * only connected inputs, and only while a recording session is set up, so a
+ * device cannot be listed before then.
  */
 export const MICROPHONE_KINDS = ["wired", "bluetooth", "builtIn", "carPlay"] as const;
 
 export type MicrophoneKind = (typeof MICROPHONE_KINDS)[number];
 
-export interface RememberedMicrophone {
+export interface MicrophoneDevice {
+  readonly kind: MicrophoneKind;
   /** iOS's port identifier, stable across reconnects of the same device. */
   readonly uid: string;
   readonly name: string;
-  readonly kind: MicrophoneKind;
 }
+
+export type MicrophoneEntry = { readonly kind: MicrophoneKind } | MicrophoneDevice;
 
 interface MicrophoneInput {
   readonly uid: string;
@@ -22,7 +25,7 @@ interface MicrophoneInput {
 }
 
 // Raw values of AVAudioSession.Port. A car without CarPlay connects as a
-// Bluetooth headset, so it shares the Bluetooth kind.
+// Bluetooth headset, so it is a Bluetooth device.
 const KIND_BY_PORT_TYPE: Readonly<Record<string, MicrophoneKind>> = {
   MicrophoneWired: "wired",
   USBAudio: "wired",
@@ -33,59 +36,96 @@ const KIND_BY_PORT_TYPE: Readonly<Record<string, MicrophoneKind>> = {
   CarAudio: "carPlay",
 };
 
+// Built-in and CarPlay are listed only as kinds: a phone has one built-in
+// microphone, and CarPlay is the car.
+const DEVICE_KINDS: ReadonlySet<MicrophoneKind> = new Set(["wired", "bluetooth"]);
+
+const rank = (kind: MicrophoneKind) => MICROPHONE_KINDS.indexOf(kind);
+
 export function isMicrophoneKind(value: unknown): value is MicrophoneKind {
   return (MICROPHONE_KINDS as ReadonlyArray<unknown>).includes(value);
 }
 
-/**
- * Adds connected microphones the list has not seen and refreshes renamed ones.
- * A new microphone goes after the last one of its kind, so a preference shown
- * for AirPods carries over to a Bluetooth car. A kind seen for the first time
- * ranks by MICROPHONE_KINDS, which keeps CarPlay below the device microphone.
- * Returns `remembered` itself when nothing changed.
- */
-export function rememberMicrophones(
-  remembered: ReadonlyArray<RememberedMicrophone>,
-  inputs: ReadonlyArray<MicrophoneInput>,
-): ReadonlyArray<RememberedMicrophone> {
-  const rank = (kind: MicrophoneKind) => MICROPHONE_KINDS.indexOf(kind);
-  // Copies, not ES2023 array methods: Hermes does not ship toSorted or toSpliced.
-  const next = [...remembered];
-  let changed = false;
-  const seen = inputs
-    .flatMap((input) => {
-      const kind = KIND_BY_PORT_TYPE[input.type];
-      return kind ? [{ uid: input.uid, name: input.name, kind }] : [];
-    })
-    .sort((left, right) => rank(left.kind) - rank(right.kind));
-  for (const microphone of seen) {
-    const index = next.findIndex((entry) => entry.uid === microphone.uid);
-    if (index !== -1) {
-      if (next[index]!.name !== microphone.name) {
-        next[index] = microphone;
-        changed = true;
-      }
-      continue;
-    }
-    let at = next.length;
-    for (let candidate = next.length - 1; candidate >= 0; candidate -= 1) {
-      if (rank(next[candidate]!.kind) <= rank(microphone.kind)) break;
-      at = candidate;
-    }
-    const lastOfKind = next.map((entry) => entry.kind).lastIndexOf(microphone.kind);
-    next.splice(lastOfKind !== -1 ? lastOfKind + 1 : at, 0, microphone);
-    changed = true;
-  }
-  return changed ? next : remembered;
+export function isMicrophoneDevice(entry: MicrophoneEntry): entry is MicrophoneDevice {
+  return "uid" in entry;
 }
 
-/** The connected input listed first, or null to leave the route to iOS. */
-export function preferredMicrophoneInput<Input extends { readonly uid: string }>(
+export function microphoneEntryKey(entry: MicrophoneEntry): string {
+  return isMicrophoneDevice(entry) ? entry.uid : `kind:${entry.kind}`;
+}
+
+/**
+ * The saved order with each kind listed once. A missing kind goes after the
+ * devices of that kind, else above the first kind ranked below it by default,
+ * which puts CarPlay below the built-in microphone.
+ */
+export function microphoneOrder(
+  saved: ReadonlyArray<MicrophoneEntry> = [],
+): ReadonlyArray<MicrophoneEntry> {
+  const order: MicrophoneEntry[] = [];
+  const keys = new Set<string>();
+  for (const entry of saved) {
+    const row =
+      isMicrophoneDevice(entry) && DEVICE_KINDS.has(entry.kind) ? entry : { kind: entry.kind };
+    const key = microphoneEntryKey(row);
+    if (keys.has(key)) continue;
+    keys.add(key);
+    order.push(row);
+  }
+  for (const kind of MICROPHONE_KINDS) {
+    if (keys.has(`kind:${kind}`)) continue;
+    const lastDevice = order.map((entry) => entry.kind).lastIndexOf(kind);
+    const below = order.findIndex(
+      (entry) => !isMicrophoneDevice(entry) && rank(entry.kind) > rank(kind),
+    );
+    order.splice(lastDevice !== -1 ? lastDevice + 1 : below !== -1 ? below : order.length, 0, {
+      kind,
+    });
+  }
+  return order;
+}
+
+/**
+ * Lists connected wired and Bluetooth microphones by name and refreshes
+ * renamed ones. A new device goes just above its kind, keeping the rank it had
+ * while unlisted. Returns `order` itself when nothing changed.
+ */
+export function rememberMicrophones(
+  order: ReadonlyArray<MicrophoneEntry>,
+  inputs: ReadonlyArray<MicrophoneInput>,
+): ReadonlyArray<MicrophoneEntry> {
+  let next: MicrophoneEntry[] | null = null;
+  for (const input of inputs) {
+    const kind = KIND_BY_PORT_TYPE[input.type];
+    if (!kind || !DEVICE_KINDS.has(kind)) continue;
+    const current = next ?? order;
+    const index = current.findIndex((entry) => microphoneEntryKey(entry) === input.uid);
+    const existing = current[index];
+    if (existing && isMicrophoneDevice(existing) && existing.name === input.name) continue;
+    next ??= [...order];
+    const device = { kind, uid: input.uid, name: input.name };
+    if (index !== -1) {
+      next[index] = device;
+      continue;
+    }
+    const kindRow = next.findIndex((entry) => microphoneEntryKey(entry) === `kind:${kind}`);
+    next.splice(kindRow === -1 ? next.length : kindRow, 0, device);
+  }
+  return next ?? order;
+}
+
+/** The connected input of the first entry that has one, or null to leave the route to iOS. */
+export function preferredMicrophoneInput<Input extends MicrophoneInput>(
   inputs: ReadonlyArray<Input>,
-  remembered: ReadonlyArray<RememberedMicrophone>,
+  order: ReadonlyArray<MicrophoneEntry>,
 ): Input | null {
-  for (const microphone of remembered) {
-    const input = inputs.find((candidate) => candidate.uid === microphone.uid);
+  const listed = new Set(order.filter(isMicrophoneDevice).map((device) => device.uid));
+  for (const entry of order) {
+    const input = inputs.find((candidate) =>
+      isMicrophoneDevice(entry)
+        ? candidate.uid === entry.uid
+        : KIND_BY_PORT_TYPE[candidate.type] === entry.kind && !listed.has(candidate.uid),
+    );
     if (input) return input;
   }
   return null;

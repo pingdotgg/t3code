@@ -24,7 +24,11 @@ import { AppState, Platform } from "react-native";
 import { AsyncResult } from "effect/reactivity";
 import { useSharedValue } from "react-native-reanimated";
 
-import { preferredMicrophoneInput, rememberMicrophones } from "../../lib/microphonePriority";
+import {
+  microphoneOrder,
+  preferredMicrophoneInput,
+  rememberMicrophones,
+} from "../../lib/microphonePriority";
 import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { getNativeShowcaseScene } from "../showcase/nativeShowcaseScene";
@@ -138,16 +142,16 @@ function useVoiceInputRuntime() {
       selectInput: (inputs) => {
         const preferences = registry.get(mobilePreferencesAtom);
         if (!AsyncResult.isSuccess(preferences)) return null;
-        const known = preferences.value.microphones ?? [];
-        const microphones = rememberMicrophones(known, inputs);
-        if (microphones !== known) {
+        const known = microphoneOrder(preferences.value.microphones);
+        const order = rememberMicrophones(known, inputs);
+        if (order !== known) {
           registry.set(updateMobilePreferencesAtom, {
             transform: (current) => ({
-              microphones: rememberMicrophones(current.microphones ?? [], inputs),
+              microphones: rememberMicrophones(microphoneOrder(current.microphones), inputs),
             }),
           });
         }
-        return preferredMicrophoneInput(inputs, microphones);
+        return preferredMicrophoneInput(inputs, order);
       },
     });
     recorderRef.current = recorder;
