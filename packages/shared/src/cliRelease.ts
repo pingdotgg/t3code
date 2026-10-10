@@ -96,9 +96,16 @@ export function cliReleaseChannelOf(version: string): CliReleaseChannel {
  * One page of GitHub's list-releases endpoint, newest first. Callers walk pages
  * until a channel match turns up; a busy nightly train can push the newest
  * preview or stable release past any single page.
+ *
+ * A mirror set through `T3CODE_RELEASE_BASE_URL` serves the same JSON (an
+ * array of `{ tag_name, draft? }`, newest first, empty past the last page) at
+ * `<base>/index.json?per_page=100&page=N`.
  */
-export function cliReleaseIndexPageUrl(page: number): string {
-  return `https://api.github.com/repos/${CLI_RELEASE_REPOSITORY}/releases?per_page=100&page=${page}`;
+export function cliReleaseIndexPageUrl(page: number, baseUrl?: string): string {
+  const mirror = baseUrl?.trim().replace(/\/+$/, "");
+  return mirror
+    ? `${mirror}/index.json?per_page=100&page=${page}`
+    : `https://api.github.com/repos/${CLI_RELEASE_REPOSITORY}/releases?per_page=100&page=${page}`;
 }
 
 /**
