@@ -320,6 +320,9 @@ it.layer(NodeServices.layer)("PluginSupervisor", (it) => {
         const cooperative = yield* supervisor
           .invoke(polite.manifest.id, "cooperative", null, { timeout: "1 second" })
           .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+        // A cancel the child reads with its invoke is answered before the handler runs,
+        // and then nothing would log "cooperative-settled".
+        yield* awaitLog(subscription, polite.manifest.id, "cooperative-started");
         yield* TestClock.adjust("1 second");
         expect((yield* Fiber.join(cooperative))._tag).toBe("PluginTimeoutError");
         yield* awaitLog(subscription, polite.manifest.id, "cooperative-settled");

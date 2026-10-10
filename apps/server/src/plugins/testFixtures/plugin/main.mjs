@@ -32,6 +32,7 @@ export function activate(context) {
           // Logged after the cancel's answer is written, so it arrives after it.
           setImmediate(() => log.info("cooperative-settled"));
         });
+        log.info("cooperative-started");
       }),
   );
   handle("flood", (input) => {
