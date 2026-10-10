@@ -172,6 +172,55 @@ const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+
+  /** Repair legacy import placeholders without replacing user-chosen titles or history. */
+  const repairImportedCodexTitle = Effect.fn("repairImportedCodexTitleV2")(
+    function* (
+      threadId: ThreadId,
+      projectId: ProjectId,
+      providerInstanceId: AgentSessionImportSource["providerInstanceId"],
+      canonicalTitle: string | null,
+    ) {
+      const { thread } = yield* orchestrator.getThreadRecords(threadId, []);
+      if (
+        thread.projectId !== projectId ||
+        thread.historyOrigin !== "v1_import" ||
+        thread.providerInstanceId !== providerInstanceId ||
+        thread.deletedAt !== null ||
+        thread.titleRegeneration != null ||
+        !AgentSessionScanner.hasLegacyCodexContextTitle(thread.title)
+      ) {
+        return;
+      }
+      let replacementTitle = canonicalTitle;
+      if (replacementTitle === null) {
+        const records = yield* orchestrator.getThreadRecords(threadId, ["messages"], {
+          messageRoles: ["user"],
+        });
+        for (const message of records.messages) {
+          if (!message.id.startsWith(`${threadId}:`)) continue;
+          replacementTitle = AgentSessionScanner.deriveImportedCodexTitle(message.text);
+          if (replacementTitle !== null) break;
+        }
+      }
+      if (replacementTitle === null || replacementTitle === thread.title) return;
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: yield* idAllocator.allocate.command({
+          fixtureName: "agent-session-import",
+          commandName: "repair-codex-title",
+        }),
+        threadId,
+        title: replacementTitle,
+        expectedTitle: thread.title,
+        expectedTitleRegenerationRequestId: null,
+      });
+    },
+    Effect.catch((cause) =>
+      Effect.logWarning("Could not repair an imported Codex thread title", { cause }),
+    ),
+  );
+
   const importRecentAgentThreads = Effect.fn("importRecentAgentThreadsV2")(function* (
     input: AgentSessionImportInput,
   ) {
@@ -227,6 +276,14 @@ const make = Effect.gen(function* () {
           `import:${source.providerInstanceId}:${source.providerSessionId}`,
         );
         if (outcome._tag === "AlreadyImported") {
+          if (source.provider === "codex") {
+            yield* repairImportedCodexTitle(
+              threadId,
+              input.projectId,
+              source.providerInstanceId,
+              outcome.canonicalTitle ?? null,
+            );
+          }
           importedThreadIds.add(threadId);
           importedCount += 1;
           return;
@@ -260,6 +317,14 @@ const make = Effect.gen(function* () {
             }
             if (existing.value.thread.historyOrigin !== "v1_import") {
               return yield* new AgentSessionThreadModifiedError({ threadId });
+            }
+            if (thread.source === "codex") {
+              yield* repairImportedCodexTitle(
+                threadId,
+                input.projectId,
+                thread.providerInstanceId,
+                thread.title,
+              );
             }
             yield* runtimes.recordImportedTranscript({ threadId, source });
             return true;
