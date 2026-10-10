@@ -34,3 +34,15 @@ copies those into its virtual store instead of linking them. Metro bundles the c
 so an edit to a module's TypeScript is invisible to a running dev client until
 `vp i` re-syncs it, while Gradle and CocoaPods compile the worktree directory
 directly. A JavaScript change that "has no effect" on device is usually this.
+
+Reanimated's `DISABLE_COMMIT_PAUSING_MECHANISM` in `apps/mobile/package.json` is for
+keyboard-controller: the composers' `KeyboardStickyView` and the `KeyboardChatScrollView` that
+LegendList's `KeyboardAwareLegendList` renders for the thread feed. With commit pausing on, React
+commits hold back their keyboard updates, so opening the keyboard while a turn streams makes the
+composer jump instead of moving with the keyboard. The flag is safe only with React Native's
+`preventShadowTreeCommitExhaustion`: otherwise any running animation commits every frame, and a
+React commit slower than a frame is retried until the app stops responding. The prebuilt React
+Native core leaves that flag off, so
+[t3-react-native-flags](../../apps/mobile/modules/t3-react-native-flags) force-overrides it at
+launch on top of the stable release level. Setting a React Native release level means changing
+that module's base provider too. Remove the module together with the Reanimated flag.
