@@ -206,6 +206,19 @@ it.effect.each([
     exitCode: 0,
   },
   {
+    name: "trailing backslash-newline",
+    command: "printf '%s\\n' direct\\\n",
+    output: "direct\n",
+    exitCode: 0,
+  },
+  {
+    name: "trailing backslash-newline in Bash",
+    command: "printf '%s\\n' direct\\\n",
+    shell: "bash",
+    output: "direct\n",
+    exitCode: 0,
+  },
+  {
     name: "commands that read stdin",
     command: "read value\nprintf '%s\\n' \"$value\"",
     input: "from stdin\n",
@@ -224,7 +237,7 @@ it.effect.each([
     output: "",
     exitCode: null,
   },
-])("reports completion when a line editor submits $name", ({ command, input, output, exitCode }) =>
+])("reports setup completion for $name", ({ command, input, output, exitCode, shell }) =>
   Effect.gen(function* () {
     if ((yield* HostProcess.Platform) === "win32") return;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -272,7 +285,7 @@ it.effect.each([
                 });
                 const stdout = yield* spawner
                   .string(
-                    ChildProcess.make("/bin/sh", ["-c", submitted[0]!], {
+                    ChildProcess.make(shell ?? "/bin/sh", ["-c", submitted[0]!], {
                       stdin: Stream.make(new TextEncoder().encode(input ?? "")),
                     }),
                   )
@@ -301,7 +314,7 @@ it.effect.each([
           ServerSettings.layerTest(),
           NodeCrypto.layer,
           Layer.succeed(HostProcess.Platform, "linux"),
-          Layer.succeed(HostProcess.Environment, { SHELL: "/bin/sh" }),
+          Layer.succeed(HostProcess.Environment, { SHELL: shell ?? "/bin/sh" }),
         ),
       ),
     );

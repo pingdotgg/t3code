@@ -201,7 +201,7 @@ function wrapCommandForCompletion(
         .replaceAll("\r", "\\r")
         .replaceAll("\n", "\\n")
         .replaceAll("'", "'\\''");
-      return `( eval "$(printf '%b' '${escaped}')" ); printf '\\n${sentinel}%s\\n' "$?"`;
+      return `( __t3c_script="$(printf '%b_' '${escaped}')"; eval "\${__t3c_script%_}" ); printf '\\n${sentinel}%s\\n' "$?"`;
     }
   }
 }
