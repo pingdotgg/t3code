@@ -363,7 +363,8 @@ interface ManagedListeners {
   readonly webContents: Electron.WebContents;
 }
 
-type FrameCaptureConsumer = "picture-in-picture" | "recording";
+// Each still-image request owns a separate, short-lived rendering lease.
+type FrameCaptureConsumer = "picture-in-picture" | "recording" | symbol;
 
 interface FrameCaptureSession {
   readonly recordingInputOptions?: RecordingInputOptions;
@@ -2491,7 +2492,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const [createdAt, millis, image] = yield* Effect.all([
       currentIso,
       currentMillis,
-      capturePageWithRetry(
+      captureStillImage(
         {
           operation: "captureScreenshot.capturePage",
           tabId,
@@ -2537,6 +2538,103 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       sizeBytes: data.byteLength,
       createdAt,
     };
+  });
+
+  const captureStillImage = Effect.fn("PreviewManager.captureStillImage")(function* (
+    errorContext: PreviewOperationContext,
+    tabId: string,
+    wc: Electron.WebContents,
+  ) {
+    const consumer = Symbol("still-image");
+    return yield* Effect.acquireUseRelease(
+      startFrameCapture(tabId, consumer),
+      () =>
+        Effect.gen(function* () {
+          // A DOM mutation can precede its compositor frame even in a shown
+          // window. Keep the original guest rendering through the next paint;
+          // a hidden guest otherwise returns old pixels or never completes.
+          const probe = Effect.fn("PreviewManager.probeStillImagePaint")(function* (
+            send: (
+              method: string,
+              params?: Record<string, unknown>,
+            ) => Effect.Effect<unknown, PreviewOperationError>,
+          ) {
+            // CDP executes against the current document without Electron's
+            // did-stop-loading gate. Isolate scheduling globals from page code.
+            const tree = (yield* send("Page.getFrameTree")) as
+              | { frameTree?: { frame?: { id?: string } } }
+              | undefined;
+            const frameId = tree?.frameTree?.frame?.id;
+            if (typeof frameId !== "string")
+              return yield* new PreviewOperationError({
+                ...errorContext,
+                cause: new Error("The preview paint frame is unavailable."),
+              });
+            const world = (yield* send("Page.createIsolatedWorld", {
+              frameId,
+              worldName: "t3-preview-still-image",
+            })) as { executionContextId?: number } | undefined;
+            if (typeof world?.executionContextId !== "number")
+              return yield* new PreviewOperationError({
+                ...errorContext,
+                cause: new Error("The preview paint context is unavailable."),
+              });
+            const response = (yield* send("Runtime.evaluate", {
+              expression:
+                "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))",
+              contextId: world.executionContextId,
+              awaitPromise: true,
+              returnByValue: true,
+            })) as { result?: { value?: unknown }; exceptionDetails?: unknown } | undefined;
+            if (response?.exceptionDetails || response?.result?.value !== true)
+              return yield* new PreviewOperationError({
+                ...errorContext,
+                cause: new Error("The preview paint boundary was not confirmed."),
+              });
+          });
+          const paintReady = Effect.gen(function* () {
+            // Only use an existing owned session; never attach or displace
+            // another debugger to obtain a screenshot.
+            const control = (yield* SynchronizedRef.get(controlSessionsRef)).get(wc.id);
+            if (!control)
+              return yield* new PreviewOperationError({
+                ...errorContext,
+                cause: new Error("The preview paint session is unavailable."),
+              });
+            return yield* control.semaphore.withPermit(
+              probe((method, params) =>
+                attemptPromise(errorContext, () => control.debugger.sendCommand(method, params)),
+              ),
+            );
+          }).pipe(
+            Effect.timeout(CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS),
+            Effect.catch((error) =>
+              Effect.logWarning(
+                "Preview paint readiness was not confirmed; capturing available pixels with mutation freshness unconfirmed.",
+                { tabId, webContentsId: wc.id, error },
+              ),
+            ),
+          );
+          // capturePage temporarily marks the original guest as captured. A
+          // minimized page can otherwise keep animation frames suspended even
+          // with scheduler throttling disabled. Discard this warmup image and
+          // accept its output only after readiness settles. If the bounded
+          // probe cannot confirm paint, retain the native capture fallback.
+          const warmup = capturePageWithRetry(errorContext, tabId, wc).pipe(
+            Effect.catchTags({
+              PreviewOperationError: (error) =>
+                Effect.logWarning("Preview warmup capture failed; continuing with final capture.", {
+                  tabId,
+                  webContentsId: wc.id,
+                  error,
+                }),
+            }),
+          );
+          yield* Effect.all([paintReady, warmup], { concurrency: 2, discard: true });
+          return yield* capturePageWithRetry(errorContext, tabId, wc);
+        }),
+      () => stopFrameCapture(tabId, consumer),
+    );
   });
 
   const capturePreviewFrame = Effect.fn("PreviewManager.capturePreviewFrame")(function* (
