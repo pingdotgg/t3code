@@ -184,6 +184,9 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [PI_DRIVER_KIND]: "default",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
   [ProviderDriverKind.make("antigravity")]: ANTIGRAVITY_DEFAULT_MODEL,
+  // Cloud runtimes pick their own model; this slug only names that choice.
+  [ProviderDriverKind.make("codexCloud")]: "cloud",
+  [ProviderDriverKind.make("claudeCloud")]: "cloud",
 };
 
 /** Per-provider text generation model defaults. */
