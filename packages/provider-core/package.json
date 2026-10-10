@@ -23,6 +23,10 @@
       "types": "./src/server/collectStreamText.ts",
       "import": "./src/server/collectStreamText.ts"
     },
+    "./server/ContributionStatusStore": {
+      "types": "./src/server/ContributionStatusStore.ts",
+      "import": "./src/server/ContributionStatusStore.ts"
+    },
     "./server/driver": {
       "types": "./src/server/driver.ts",
       "import": "./src/server/driver.ts"
