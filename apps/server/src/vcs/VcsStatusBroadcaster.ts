@@ -238,6 +238,9 @@ export const make = Effect.gen(function* () {
   const remoteWriteLocks = yield* KeyedLock.make<string>();
   const withRemoteWriteLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
     remoteWriteLocks.withLock(cwd, effect);
+  // Local refreshes are read-then-write. Serialize them per cwd so two that
+  // overlap cannot commit in the reverse order of their reads.
+  const localWriteLocks = yield* KeyedLock.make<string>();
   const pollersRef = yield* SynchronizedRef.make(new Map<string, ActiveRemotePoller>());
 
   const getCachedStatus = Effect.fn("VcsStatusBroadcaster.getCachedStatus")(function* (
@@ -410,9 +413,14 @@ export const make = Effect.gen(function* () {
 
   const refreshLocalStatusCore = Effect.fn("VcsStatusBroadcaster.refreshLocalStatusCore")(
     function* (cwd: string) {
-      yield* workflow.invalidateLocalStatus(cwd);
-      const local = yield* workflow.localStatus({ cwd });
-      return yield* updateCachedLocalStatus(cwd, local, { publish: true });
+      return yield* localWriteLocks.withLock(
+        cwd,
+        Effect.gen(function* () {
+          yield* workflow.invalidateLocalStatus(cwd);
+          const local = yield* workflow.localStatus({ cwd });
+          return yield* updateCachedLocalStatus(cwd, local, { publish: true });
+        }),
+      );
     },
   );
 

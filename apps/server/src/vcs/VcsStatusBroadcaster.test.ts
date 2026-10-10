@@ -458,6 +458,47 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
+  it.effect("overlapping local refreshes commit in the order of their reads", () => {
+    const releaseFirstRead = Deferred.makeUnsafe<void>();
+    const newerLocalStatus = { ...baseLocalStatus, refName: "feature/newer" };
+    let currentLocalStatus = baseLocalStatus;
+    let localReads = 0;
+    const layer = VcsStatusBroadcaster.layer.pipe(
+      Layer.provide(FileSystem.layerNoop({ realPath: (path) => Effect.succeed(path) })),
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provide(layerBackgroundPolicy(() => true)),
+      Layer.provide(
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
+          // The first read is slow and returns the branch it started on.
+          localStatus: () =>
+            Effect.suspend(() => {
+              localReads += 1;
+              const snapshot = currentLocalStatus;
+              return localReads === 1
+                ? Deferred.await(releaseFirstRead).pipe(Effect.as(snapshot))
+                : Effect.succeed(snapshot);
+            }),
+          remoteStatus: () => Effect.succeed(baseRemoteStatus),
+          invalidateLocalStatus: () => Effect.void,
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const first = yield* broadcaster.refreshLocalStatus("/repo").pipe(Effect.forkScoped);
+      yield* TestClock.adjust(Duration.zero);
+      currentLocalStatus = newerLocalStatus;
+      const second = yield* broadcaster.refreshLocalStatus("/repo").pipe(Effect.forkScoped);
+      yield* TestClock.adjust(Duration.zero);
+      yield* Deferred.succeed(releaseFirstRead, undefined);
+      yield* Fiber.join(first);
+
+      assert.equal((yield* Fiber.join(second)).refName, "feature/newer");
+      assert.equal((yield* broadcaster.getStatus({ cwd: "/repo" })).refName, "feature/newer");
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
   it.effect(
     "a cold getStatus waiting on the remote fetch cannot overwrite a newer local status",
     () => {
