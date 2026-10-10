@@ -85,6 +85,7 @@ import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import {
   clientRuntimeModeCeiling,
   type McpInvocationScope,
@@ -872,6 +873,7 @@ const make = Effect.gen(function* () {
   const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
   const projects = yield* ProjectService.ProjectService;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
 
   /** A caller-named project, which must exist before anything is recorded against it. */
   const requireProject = (projectId: ProjectId) =>
@@ -1821,6 +1823,11 @@ const make = Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
         const providers = yield* loadProviders;
         const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
+        // Models the user hid from pickers stay out of the catalog agents choose from.
+        const modelPreferences = yield* serverSettings.getSettings.pipe(
+          Effect.map((settings) => settings.providerModelPreferences ?? {}),
+          Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+        );
         return {
           parentThreadId: parent?.thread.id ?? null,
           inheritedProviderInstanceId: parent?.thread.modelSelection.instanceId ?? null,
@@ -1837,13 +1844,19 @@ const make = Effect.gen(function* () {
               driverKind: provider.driver,
               displayName: provider?.displayName ?? null,
               models:
-                provider?.models.map((model) => ({
-                  id: model.slug,
-                  label: model.name ?? null,
-                  ...(model.capabilities?.optionDescriptors === undefined
-                    ? {}
-                    : { options: model.capabilities.optionDescriptors }),
-                })) ?? [],
+                provider?.models
+                  .filter(
+                    (model) =>
+                      model.isCustom ||
+                      !modelPreferences[provider.instanceId]?.hiddenModels.includes(model.slug),
+                  )
+                  .map((model) => ({
+                    id: model.slug,
+                    label: model.name ?? null,
+                    ...(model.capabilities?.optionDescriptors === undefined
+                      ? {}
+                      : { options: model.capabilities.optionDescriptors }),
+                  })) ?? [],
               canRunChildTask: constraints.length === 0,
               canRunCrossProviderChildTask: constraints.length === 0,
               constraints: [...constraints],
@@ -2555,4 +2568,5 @@ export const layer: Layer.Layer<
   | ScheduledTaskService.ScheduledTaskService
   | ProjectService.ProjectService
   | SecretRequests.SecretRequests
+  | ServerSettings.ServerSettingsService
 > = Layer.effect(OrchestratorMcpService, make);

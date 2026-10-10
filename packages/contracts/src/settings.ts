@@ -298,6 +298,25 @@ export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 export const ChatWidth = Schema.Literals(["comfortable", "wide", "full"]);
 export type ChatWidth = typeof ChatWidth.Type;
 
+/** Preferences shared by clients connected to the same environment. */
+export const ModelFavorite = Schema.Struct({
+  // The historical field name is retained; default instance ids also decode old provider-kind favorites.
+  provider: ProviderInstanceId,
+  model: TrimmedNonEmptyString,
+});
+export const ModelFavorites = Schema.Array(ModelFavorite);
+export const ProviderModelPreferences = Schema.Record(
+  ProviderInstanceId,
+  Schema.Struct({
+    hiddenModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+    modelOrder: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  }),
+);
+export type ModelPreferences = {
+  readonly favorites: typeof ModelFavorites.Type;
+  readonly providerModelPreferences: typeof ProviderModelPreferences.Type;
+};
+
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -412,31 +431,11 @@ export const ClientSettingsSchema = Schema.Struct({
   persistComposerContextStrip: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
-  // Model favorites. Historically keyed by provider kind, now
-  // widened to `ProviderInstanceId` so users can favorite a specific model
-  // on a custom provider instance (e.g. "Codex Personal · gpt-5") without
-  // the UI collapsing it into the same bucket as the default Codex. The
-  // widening is backward-compatible by construction: prior provider-kind
-  // strings satisfy the `ProviderInstanceId` slug schema, so previously
-  // persisted favorites decode unchanged and continue to point at the
-  // default instance for their kind (because `defaultInstanceIdForDriver(kind)`
-  // uses the same slug). The field name is kept as `provider` for storage
-  // stability; new call sites should treat the value as an instance id.
-  favorites: Schema.Array(
-    Schema.Struct({
-      provider: ProviderInstanceId,
-      model: TrimmedNonEmptyString,
-    }),
-  ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
-  providerModelPreferences: Schema.Record(
-    ProviderInstanceId,
-    Schema.Struct({
-      hiddenModels: Schema.Array(Schema.String).pipe(
-        Schema.withDecodingDefault(Effect.succeed([])),
-      ),
-      modelOrder: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
-    }),
-  ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  // Legacy client values retained for migration to the connected environment.
+  favorites: ModelFavorites.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  providerModelPreferences: ProviderModelPreferences.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   pullRequestMergeMethodOverrides: Schema.Record(
     TrimmedNonEmptyString,
     PullRequestMergeMethod,
@@ -1083,6 +1082,12 @@ export const StorageCleanupSettings = Schema.Struct({
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
 export const ServerSettings = Schema.Struct({
+  // Null means no client has migrated this preference yet; an empty value is
+  // authoritative so another device cannot resurrect cleared preferences.
+  favorites: Schema.NullOr(ModelFavorites).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  providerModelPreferences: Schema.NullOr(ProviderModelPreferences).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   worktreeCleanup: WorktreeCleanup.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   storageCleanup: StorageCleanupSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(StorageCleanupSettings)({}))),
@@ -1405,7 +1410,7 @@ export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>
 
 // ── Unified type ─────────────────────────────────────────────────────
 
-export type UnifiedSettings = ServerSettings & ClientSettings;
+export type UnifiedSettings = Omit<ServerSettings, keyof ModelPreferences> & ClientSettings;
 export const DEFAULT_UNIFIED_SETTINGS: UnifiedSettings = {
   ...DEFAULT_SERVER_SETTINGS,
   ...DEFAULT_CLIENT_SETTINGS,
@@ -1420,6 +1425,24 @@ const ModelSelectionPatch = Schema.Struct({
 });
 
 export const ServerSettingsPatch = Schema.Struct({
+  setModelFavorites: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ ...ModelFavorite.fields, favorite: Schema.Boolean })),
+  ),
+  setModelsHidden: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ ...ModelFavorite.fields, hidden: Schema.Boolean })),
+  ),
+  setProviderModelOrder: Schema.optionalKey(
+    Schema.Struct({ provider: ProviderInstanceId, modelOrder: Schema.Array(TrimmedString) }),
+  ),
+  favorites: Schema.optionalKey(ModelFavorites),
+  providerModelPreferences: Schema.optionalKey(ProviderModelPreferences),
+  // Applied under the settings service's write lock, only while still unset.
+  migrateModelPreferences: Schema.optionalKey(
+    Schema.Struct({
+      favorites: Schema.optionalKey(ModelFavorites),
+      providerModelPreferences: Schema.optionalKey(ProviderModelPreferences),
+    }),
+  ),
   worktreeCleanup: Schema.optionalKey(
     Schema.NullOr(
       Schema.Union([
@@ -1622,27 +1645,8 @@ export const ClientSettingsPatch = Schema.Struct({
   fontFamilyTerminal: Schema.optionalKey(FontFamilyPreference),
   fontSmoothing: Schema.optionalKey(Schema.Boolean),
   persistComposerContextStrip: Schema.optionalKey(Schema.Boolean),
-  favorites: Schema.optionalKey(
-    Schema.Array(
-      Schema.Struct({
-        provider: ProviderInstanceId,
-        model: TrimmedNonEmptyString,
-      }),
-    ),
-  ),
-  providerModelPreferences: Schema.optionalKey(
-    Schema.Record(
-      ProviderInstanceId,
-      Schema.Struct({
-        hiddenModels: Schema.Array(Schema.String).pipe(
-          Schema.withDecodingDefault(Effect.succeed([])),
-        ),
-        modelOrder: Schema.Array(Schema.String).pipe(
-          Schema.withDecodingDefault(Effect.succeed([])),
-        ),
-      }),
-    ),
-  ),
+  favorites: Schema.optionalKey(ModelFavorites),
+  providerModelPreferences: Schema.optionalKey(ProviderModelPreferences),
   pullRequestMergeMethodOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, PullRequestMergeMethod),
   ),

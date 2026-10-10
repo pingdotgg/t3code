@@ -40,6 +40,7 @@ function renderPicker(input: {
   const entry = providerEntry(input.instanceId, input.driver);
   return renderToStaticMarkup(
     <ProviderModelPicker
+      environmentId={null}
       activeInstanceId={instanceId}
       model={input.model}
       lockedProvider={null}
@@ -161,6 +162,7 @@ describe("ProviderModelPicker", () => {
     const activeEntry = providerEntry("codex_personal", "codex");
     const markup = renderToStaticMarkup(
       <ProviderModelPicker
+        environmentId={null}
         activeInstanceId={activeEntry.instanceId}
         model="gpt-5"
         lockedProvider={null}

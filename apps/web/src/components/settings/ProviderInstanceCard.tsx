@@ -503,8 +503,12 @@ interface ProviderInstanceCardProps {
   readonly hiddenModels: ReadonlyArray<string>;
   readonly favoriteModels: ReadonlyArray<string>;
   readonly modelOrder: ReadonlyArray<string>;
-  readonly onHiddenModelsChange: (next: ReadonlyArray<string>) => void;
+  readonly onHiddenModelsChange: (
+    next: ReadonlyArray<string>,
+    affectedModels?: ReadonlyArray<string>,
+  ) => void;
   readonly onFavoriteModelsChange: (next: ReadonlyArray<string>) => void;
+  readonly onToggleFavorite: (model: string) => void;
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
   readonly onRunUpdate?: (() => void) | undefined;
   readonly onInstallRecommended?: (() => void) | undefined;
@@ -561,6 +565,7 @@ export function ProviderInstanceCard({
   modelOrder,
   onHiddenModelsChange,
   onFavoriteModelsChange,
+  onToggleFavorite,
   onModelOrderChange,
   onRunUpdate,
   onInstallRecommended,
@@ -1173,8 +1178,8 @@ export function ProviderInstanceCard({
         <SettingsSection title="Models">
           <div className="px-3 py-3 sm:px-4">
             <p className="mb-3 text-xs text-muted-foreground">
-              Favorites, visibility, and ordering are saved on this device. Custom models are saved
-              on the selected environment.
+              Model preferences and custom models are saved on the selected environment and shared
+              across connected devices.
             </p>
             <ProviderModelsSection
               canManageCustomModels={!readOnly}
@@ -1189,6 +1194,7 @@ export function ProviderInstanceCard({
               onChange={updateCustomModels}
               onHiddenModelsChange={onHiddenModelsChange}
               onFavoriteModelsChange={onFavoriteModelsChange}
+              onToggleFavorite={onToggleFavorite}
               onModelOrderChange={onModelOrderChange}
             />
           </div>
