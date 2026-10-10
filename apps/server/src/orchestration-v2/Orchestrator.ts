@@ -11214,7 +11214,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.type === "message.dispatch" && command.streamContinuationOfRunId !== undefined
           ? serverSettings
               .withSettingsSnapshot(() => dispatchWithReceiptEffect(command))
-              .pipe(mapDispatchError(command))
+              .pipe(
+                Effect.catchTags({
+                  ServerSettingsError: (cause) =>
+                    new OrchestratorDispatchError({
+                      commandId: command.commandId,
+                      commandType: command.type,
+                      cause,
+                    }),
+                }),
+              )
           : dispatchWithReceiptEffect(command),
       );
       if (

@@ -9,10 +9,10 @@ import {
   CommandId,
   EventId,
   RuntimeRequestId,
-  type ServerSettingsError,
+  ServerSettingsError,
   MessageId,
   ProviderDriverKind,
-  type ThreadId,
+  ThreadId,
   type OrchestrationV2Run,
 } from "@t3tools/contracts";
 import * as CodexReplay from "effect-codex-app-server/replay";
@@ -864,4 +864,146 @@ it.effect.each(
         assert.equal(final.runs[0]?.streamRecovery?.state, "cancelled");
       }),
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
+);
+
+it.effect("preserves the receipt conflict tag for a stream continuation", () =>
+  withReplay(["failed"], ({ orchestrator, threadId }) =>
+    Effect.gen(function* () {
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      const otherThreadId = ThreadId.make("thread:stream-receipt-other");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-other-receipt-thread"),
+        threadId: otherThreadId,
+        projectId: projection.thread.projectId,
+        title: "Other receipt thread",
+        modelSelection: projection.thread.modelSelection,
+        runtimeMode: projection.thread.runtimeMode,
+        interactionMode: projection.thread.interactionMode,
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const commandId = CommandId.make("stream-receipt-conflict");
+      yield* orchestrator.dispatch({
+        type: "thread.visit",
+        commandId,
+        threadId,
+        visitedAt: DateTime.formatIso(projection.thread.updatedAt),
+      });
+      const result = yield* orchestrator
+        .dispatch({
+          type: "message.dispatch",
+          commandId,
+          threadId: otherThreadId,
+          messageId: MessageId.make("stream-receipt-conflict"),
+          streamContinuationOfRunId: projection.runs[0]!.id,
+          streamRecoveryGeneration: 0,
+          text: STREAM_RECOVERY_PROMPT,
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "agent",
+          creationSource: "server",
+        })
+        .pipe(Effect.result);
+      const error = result._tag === "Failure" ? result.failure : undefined;
+      assert(error !== undefined);
+      assert.equal(error._tag, "OrchestratorCommandIdConflictError");
+      if (error._tag === "OrchestratorCommandIdConflictError") {
+        assert.equal(error.receiptThreadId, threadId);
+        assert.equal(error.commandThreadId, otherThreadId);
+      }
+    }),
+  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
+);
+
+it.effect("preserves the previously rejected receipt tag for a stream continuation", () =>
+  withReplay(["failed"], ({ orchestrator, threadId }) =>
+    Effect.gen(function* () {
+      const source = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      const commandId = CommandId.make("stream-receipt-rejected");
+      const first = yield* orchestrator
+        .dispatch({
+          type: "thread.archive",
+          commandId,
+          threadId: ThreadId.make("thread:missing-stream-receipt"),
+        })
+        .pipe(Effect.result);
+      assert.equal(first._tag, "Failure");
+      if (first._tag === "Failure") assert.equal(first.failure._tag, "OrchestratorProjectionError");
+      const result = yield* orchestrator
+        .dispatch({
+          type: "message.dispatch",
+          commandId,
+          threadId,
+          messageId: MessageId.make("stream-receipt-rejected"),
+          streamContinuationOfRunId: source.id,
+          streamRecoveryGeneration: 0,
+          text: STREAM_RECOVERY_PROMPT,
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "agent",
+          creationSource: "server",
+        })
+        .pipe(Effect.result);
+      const error = result._tag === "Failure" ? result.failure : undefined;
+      assert(error !== undefined);
+      assert.equal(error._tag, "OrchestratorCommandPreviouslyRejectedError");
+      if (error._tag === "OrchestratorCommandPreviouslyRejectedError")
+        assert.equal(error.commandId, commandId);
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(threadId)).runs[0]?.streamRecovery?.state,
+        "pending",
+      );
+    }),
+  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
+);
+
+it.effect("wraps a settings snapshot failure with the immediate settings cause", () =>
+  withReplay(["failed"], ({ orchestrator, settings, threadId }) =>
+    Effect.gen(function* () {
+      const source = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      const snapshotFailure = new ServerSettingsError({
+        operation: "read-file",
+        settingsPath: "/tmp/fixture-settings.json",
+      });
+      yield* Effect.acquireUseRelease(
+        Effect.sync(() => {
+          const previous = settings.withSettingsSnapshot;
+          // Inject failure only at the external settings transaction boundary.
+          Object.assign(settings, { withSettingsSnapshot: () => Effect.fail(snapshotFailure) });
+          return previous;
+        }),
+        () =>
+          Effect.gen(function* () {
+            const commandId = CommandId.make("stream-settings-snapshot-failure");
+            const result = yield* orchestrator
+              .dispatch({
+                type: "message.dispatch",
+                commandId,
+                threadId,
+                messageId: MessageId.make("stream-settings-snapshot-failure"),
+                streamContinuationOfRunId: source.id,
+                streamRecoveryGeneration: 0,
+                text: STREAM_RECOVERY_PROMPT,
+                attachments: [],
+                dispatchMode: { type: "start_immediately" },
+                createdBy: "agent",
+                creationSource: "server",
+              })
+              .pipe(Effect.result);
+            const error = result._tag === "Failure" ? result.failure : undefined;
+            assert(error !== undefined);
+            assert.equal(error._tag, "OrchestratorDispatchError");
+            if (error._tag === "OrchestratorDispatchError") {
+              assert.equal(error.commandId, commandId);
+              assert.strictEqual(error.cause, snapshotFailure);
+            }
+          }),
+        (previous) =>
+          Effect.sync(() => Object.assign(settings, { withSettingsSnapshot: previous })),
+      );
+    }),
+  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
 );
