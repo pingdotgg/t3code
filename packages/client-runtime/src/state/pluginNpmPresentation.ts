@@ -231,7 +231,9 @@ export function presentPluginNpmUpdate(
 /** A short line for a plugin list row: where it came from and any update waiting. */
 export function pluginNpmRowLabel(pkg: PluginNpmPackage): string {
   const source = `npm · ${describePluginNpmSource(pkg)}`;
-  return pkg.stagedUpdate === null || pkg.stagedUpdate.version === pkg.source.version
-    ? source
+  // A download of the installed version still waits to be applied or discarded.
+  if (pkg.stagedUpdate === null) return source;
+  return pkg.stagedUpdate.version === pkg.source.version
+    ? `${source} · Download ready to review`
     : `${source} · Update ${pkg.stagedUpdate.version} ready to review`;
 }

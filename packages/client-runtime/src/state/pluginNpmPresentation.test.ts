@@ -400,5 +400,8 @@ describe("pluginNpmRowLabel", () => {
     expect(pluginNpmRowLabel(pkg("1.0.0", staged("1.1.0", NEXT_DIGEST, [])))).toBe(
       "npm · t3-notifier@1.0.0 · Update 1.1.0 ready to review",
     );
+    expect(pluginNpmRowLabel(pkg("1.0.0", staged("1.0.0", NEXT_DIGEST, [])))).toBe(
+      "npm · t3-notifier@1.0.0 · Download ready to review",
+    );
   });
 });
