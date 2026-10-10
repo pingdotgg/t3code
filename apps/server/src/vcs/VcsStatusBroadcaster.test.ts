@@ -458,8 +458,9 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
-  it.effect("overlapping local refreshes commit in the order of their reads", () => {
-    const releaseFirstRead = Deferred.makeUnsafe<void>();
+  it.effect("a slow local refresh cannot overwrite the post-fetch local read", () => {
+    const releaseRemote = Deferred.makeUnsafe<void>();
+    const releaseSlowRead = Deferred.makeUnsafe<void>();
     const newerLocalStatus = { ...baseLocalStatus, refName: "feature/newer" };
     let currentLocalStatus = baseLocalStatus;
     let localReads = 0;
@@ -469,32 +470,39 @@ describe("VcsStatusBroadcaster", () => {
       Layer.provide(layerBackgroundPolicy(() => true)),
       Layer.provide(
         Layer.mock(GitWorkflowService.GitWorkflowService)({
-          // The first read is slow and returns the branch it started on.
+          // The second read is slow and returns the branch it started on.
           localStatus: () =>
             Effect.suspend(() => {
               localReads += 1;
               const snapshot = currentLocalStatus;
-              return localReads === 1
-                ? Deferred.await(releaseFirstRead).pipe(Effect.as(snapshot))
+              return localReads === 2
+                ? Deferred.await(releaseSlowRead).pipe(Effect.as(snapshot))
                 : Effect.succeed(snapshot);
             }),
-          remoteStatus: () => Effect.succeed(baseRemoteStatus),
+          remoteStatus: () => Deferred.await(releaseRemote).pipe(Effect.as(baseRemoteStatus)),
           invalidateLocalStatus: () => Effect.void,
+          invalidateStatus: () => Effect.void,
         }),
       ),
     );
 
     return Effect.gen(function* () {
       const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
-      const first = yield* broadcaster.refreshLocalStatus("/repo").pipe(Effect.forkScoped);
+      // The refresh publishes its first local read, then waits on the fetch.
+      const refresh = yield* broadcaster.refreshStatus("/repo").pipe(Effect.forkScoped);
+      yield* TestClock.adjust(Duration.zero);
+      // A local refresh starts its (slow) read before the branch changes.
+      const slow = yield* broadcaster.refreshLocalStatus("/repo").pipe(Effect.forkScoped);
       yield* TestClock.adjust(Duration.zero);
       currentLocalStatus = newerLocalStatus;
-      const second = yield* broadcaster.refreshLocalStatus("/repo").pipe(Effect.forkScoped);
+      // The fetch finishes; the post-fetch read must not commit ahead of the
+      // slow read that started earlier and still holds the old branch.
+      yield* Deferred.succeed(releaseRemote, undefined);
       yield* TestClock.adjust(Duration.zero);
-      yield* Deferred.succeed(releaseFirstRead, undefined);
-      yield* Fiber.join(first);
+      yield* Deferred.succeed(releaseSlowRead, undefined);
+      yield* Fiber.join(slow);
 
-      assert.equal((yield* Fiber.join(second)).refName, "feature/newer");
+      assert.equal((yield* Fiber.join(refresh)).refName, "feature/newer");
       assert.equal((yield* broadcaster.getStatus({ cwd: "/repo" })).refName, "feature/newer");
     }).pipe(Effect.provide(layer), Effect.scoped);
   });

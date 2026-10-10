@@ -238,9 +238,13 @@ export const make = Effect.gen(function* () {
   const remoteWriteLocks = yield* KeyedLock.make<string>();
   const withRemoteWriteLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
     remoteWriteLocks.withLock(cwd, effect);
-  // Local refreshes are read-then-write. Serialize them per cwd so two that
-  // overlap cannot commit in the reverse order of their reads.
+  // Every local read that writes the cache is read-then-write. Serialize them
+  // per cwd so two that overlap cannot commit in the reverse order of their
+  // reads. Taken after the remote lock, never before it, and never around a
+  // remote fetch, so a slow network never delays a local publish.
   const localWriteLocks = yield* KeyedLock.make<string>();
+  const withLocalWriteLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
+    localWriteLocks.withLock(cwd, effect);
   const pollersRef = yield* SynchronizedRef.make(new Map<string, ActiveRemotePoller>());
 
   const getCachedStatus = Effect.fn("VcsStatusBroadcaster.getCachedStatus")(function* (
@@ -313,40 +317,26 @@ export const make = Effect.gen(function* () {
     cwd: string,
     local: VcsStatusLocalResult,
     remote: VcsStatusRemoteResult | null,
-    options?: {
-      publish?: boolean;
-      // The cached local entry seen before `local` was read. When another
-      // writer replaced it in the meantime, that newer entry is kept.
-      unlessLocalChangedSince?: CachedValue<VcsStatusLocalResult> | null;
-    },
+    options?: { publish?: boolean },
   ) {
+    const nextLocal = {
+      fingerprint: fingerprintStatusPart(local),
+      value: local,
+    } satisfies CachedValue<VcsStatusLocalResult>;
     const nextRemote = {
       fingerprint: fingerprintStatusPart(remote),
       value: remote,
     } satisfies CachedValue<VcsStatusRemoteResult | null>;
-    const [shouldPublish, nextLocal] = yield* Ref.modify(cacheRef, (cache) => {
+    const shouldPublish = yield* Ref.modify(cacheRef, (cache) => {
       const previous = cache.get(cwd) ?? { local: null, remote: null };
-      const previousLocal = previous.local;
-      const nextLocal =
-        options?.unlessLocalChangedSince !== undefined &&
-        previousLocal !== null &&
-        previousLocal !== options.unlessLocalChangedSince
-          ? previousLocal
-          : ({
-              fingerprint: fingerprintStatusPart(local),
-              value: local,
-            } satisfies CachedValue<VcsStatusLocalResult>);
       const nextCache = new Map(cache);
       nextCache.set(cwd, {
         local: nextLocal,
         remote: nextRemote,
       });
       return [
-        [
-          previous.local?.fingerprint !== nextLocal.fingerprint ||
-            previous.remote?.fingerprint !== nextRemote.fingerprint,
-          nextLocal,
-        ] as const,
+        previous.local?.fingerprint !== nextLocal.fingerprint ||
+          previous.remote?.fingerprint !== nextRemote.fingerprint,
         nextCache,
       ] as const;
     });
@@ -356,13 +346,13 @@ export const make = Effect.gen(function* () {
         cwd,
         event: {
           _tag: "snapshot",
-          local: nextLocal.value,
+          local,
           remote,
         },
       });
     }
 
-    return mergeGitStatusParts(nextLocal.value, remote);
+    return mergeGitStatusParts(local, remote);
   });
 
   const loadLocalStatus = Effect.fn("VcsStatusBroadcaster.loadLocalStatus")(function* (
@@ -396,24 +386,22 @@ export const make = Effect.gen(function* () {
       cwd,
       Effect.gen(function* () {
         const latest = yield* getCachedStatus(cwd);
-        const [local, remote] = yield* Effect.all(
-          [
-            latest?.local ? Effect.succeed(latest.local.value) : workflow.localStatus({ cwd }),
-            latest?.remote ? Effect.succeed(latest.remote.value) : workflow.remoteStatus({ cwd }),
-          ],
-          { concurrency: "unbounded" },
+        const remote = latest?.remote ? latest.remote.value : yield* workflow.remoteStatus({ cwd });
+        return yield* withLocalWriteLock(
+          cwd,
+          Effect.gen(function* () {
+            const cachedLocal = (yield* getCachedStatus(cwd))?.local;
+            const local = cachedLocal ? cachedLocal.value : yield* workflow.localStatus({ cwd });
+            return yield* updateCachedStatus(cwd, local, remote);
+          }),
         );
-        // A local refresh may have published while these reads ran.
-        return yield* updateCachedStatus(cwd, local, remote, {
-          unlessLocalChangedSince: latest?.local ?? null,
-        });
       }),
     );
   });
 
   const refreshLocalStatusCore = Effect.fn("VcsStatusBroadcaster.refreshLocalStatusCore")(
     function* (cwd: string) {
-      return yield* localWriteLocks.withLock(
+      return yield* withLocalWriteLock(
         cwd,
         Effect.gen(function* () {
           yield* workflow.invalidateLocalStatus(cwd);
@@ -456,19 +444,15 @@ export const make = Effect.gen(function* () {
 
       yield* workflow.pullCurrentBranch(cwd);
       yield* workflow.invalidateStatus(cwd);
-      // A local refresh does not take the remote lock, so one can land while
-      // the post-pull remote lookup is in flight. Keep it over our older read.
-      const localBeforeRead = (yield* getCachedStatus(cwd))?.local ?? null;
-      const [refreshedLocal, refreshedRemote] = yield* Effect.all(
-        [workflow.localStatus({ cwd }), workflow.remoteStatus({ cwd }, { refreshUpstream: false })],
-        { concurrency: "unbounded" },
+      const refreshedRemote = yield* workflow.remoteStatus({ cwd }, { refreshUpstream: false });
+      return yield* withLocalWriteLock(
+        cwd,
+        Effect.gen(function* () {
+          const refreshedLocal = yield* workflow.localStatus({ cwd });
+          yield* updateCachedStatus(cwd, refreshedLocal, refreshedRemote, { publish: true });
+          return { local: refreshedLocal, remote: refreshedRemote };
+        }),
       );
-      yield* updateCachedStatus(cwd, refreshedLocal, refreshedRemote, {
-        publish: true,
-        unlessLocalChangedSince: localBeforeRead,
-      });
-      const cached = yield* getCachedStatus(cwd);
-      return { local: cached?.local?.value ?? refreshedLocal, remote: refreshedRemote };
     }).pipe(
       Effect.catch(() =>
         Effect.logWarning("Automatic project pull failed", { cwd }).pipe(Effect.as(null)),
@@ -528,14 +512,14 @@ export const make = Effect.gen(function* () {
         const pulled = yield* maybeAutoPull(cwd, remote, [rawCwd]);
         if (pulled !== null) return mergeGitStatusParts(pulled.local, pulled.remote);
         // Local again after the fetch: it can move the base that the Changes
-        // totals compare with. A local refresh may also have published while
-        // this waited for the lock, so keep that one if it is newer.
-        const localBeforeRead = (yield* getCachedStatus(cwd))?.local ?? null;
-        const local = yield* workflow.localStatus({ cwd });
-        return yield* updateCachedStatus(cwd, local, remote, {
-          publish: true,
-          unlessLocalChangedSince: localBeforeRead,
-        });
+        // totals compare with.
+        return yield* withLocalWriteLock(
+          cwd,
+          Effect.gen(function* () {
+            const local = yield* workflow.localStatus({ cwd });
+            return yield* updateCachedStatus(cwd, local, remote, { publish: true });
+          }),
+        );
       }),
     );
   });
