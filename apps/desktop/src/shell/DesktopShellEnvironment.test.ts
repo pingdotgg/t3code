@@ -241,6 +241,79 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("hydrates proxy settings from the login shell for provider CLIs", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/opt/homebrew/bin:/usr/bin",
+            https_proxy: "http://127.0.0.1:2080",
+            no_proxy: "localhost,127.0.0.1",
+          }),
+      });
+
+      assert.equal(env.https_proxy, "http://127.0.0.1:2080");
+      assert.equal(env.no_proxy, "localhost,127.0.0.1");
+    }),
+  );
+
+  it.effect("keeps an inherited proxy group instead of mixing in login-shell values", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        HTTPS_PROXY: "http://inherited:8080",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/opt/homebrew/bin:/usr/bin",
+            https_proxy: "http://127.0.0.1:2080",
+            no_proxy: "localhost",
+          }),
+      });
+
+      assert.equal(env.HTTPS_PROXY, "http://inherited:8080");
+      assert.equal(env.https_proxy, undefined);
+      assert.equal(env.no_proxy, undefined);
+    }),
+  );
+
+  it.effect("hydrates proxy endpoints without replacing an inherited NO_PROXY", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        NO_PROXY: "localhost,127.0.0.1",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/opt/homebrew/bin:/usr/bin",
+            https_proxy: "http://127.0.0.1:2080",
+            no_proxy: "shell.example.test",
+          }),
+      });
+
+      assert.equal(env.https_proxy, "http://127.0.0.1:2080");
+      assert.equal(env.NO_PROXY, "localhost,127.0.0.1");
+      assert.equal(env.no_proxy, undefined);
+    }),
+  );
+
   it.effect("hydrates the locale from the login shell on macOS", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
