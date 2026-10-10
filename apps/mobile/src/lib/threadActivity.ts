@@ -1051,25 +1051,32 @@ export function failedFeedRunIds(
 /**
  * The assistant messages that end a stretch of output and so carry metadata:
  * each run's last one, plus the last one before a later user message in the
- * same run (a steer). Forking from one in `midRunIds` must cut inside its run.
+ * same run (a steer). `midRunIds` holds those a user message of the same run
+ * follows, replied to or not; forking from one must cut inside its run.
  */
 export function terminalFeedAssistantMessageIds(feed: ReadonlyArray<ThreadFeedEntry>) {
-  const lastIdBySegment = new Map<string, string>();
-  const lastIdByRun = new Map<RunId, string>();
+  const lastBySegment = new Map<
+    string,
+    { readonly runId: RunId; readonly segment: number; readonly id: string }
+  >();
   const segmentByRun = new Map<RunId, number>();
   for (const entry of feed) {
     if (entry.type !== "message" || !entry.message.runId) continue;
     const runId = entry.message.runId;
+    const segment = segmentByRun.get(runId) ?? 0;
     if (entry.message.role === "user") {
-      segmentByRun.set(runId, (segmentByRun.get(runId) ?? 0) + 1);
+      segmentByRun.set(runId, segment + 1);
       continue;
     }
-    lastIdByRun.set(runId, entry.message.id);
-    lastIdBySegment.set(`${runId}:${segmentByRun.get(runId) ?? 0}`, entry.message.id);
+    lastBySegment.set(`${runId}:${segment}`, { runId, segment, id: entry.message.id });
   }
-  const terminalIds = new Set(lastIdBySegment.values());
-  const runEndIds = new Set(lastIdByRun.values());
-  const midRunIds = new Set([...terminalIds].filter((id) => !runEndIds.has(id)));
+  const terminals = [...lastBySegment.values()];
+  const terminalIds = new Set(terminals.map((terminal) => terminal.id));
+  const midRunIds = new Set(
+    terminals
+      .filter((terminal) => terminal.segment < (segmentByRun.get(terminal.runId) ?? 0))
+      .map((terminal) => terminal.id),
+  );
   return { terminalIds, midRunIds };
 }
 

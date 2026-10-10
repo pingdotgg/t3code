@@ -4439,6 +4439,19 @@ describe("assistant meta in steered runs", () => {
     expect(metaFor(rows, "final")).toEqual({ meta: true, midRun: false });
   });
 
+  it("marks a response as mid-run when a steer follows it with no reply yet", () => {
+    const rows = settledRows(
+      [
+        message("prompt", 0, "user", "turn_start"),
+        message("cut-off", 2, "assistant"),
+        message("steer", 5, "user", "steer"),
+      ],
+      true,
+    );
+
+    expect(metaFor(rows, "cut-off")).toEqual({ meta: true, midRun: true });
+  });
+
   it("keeps meta on only the last assistant message of an unsteered run", () => {
     const rows = settledRows(
       [

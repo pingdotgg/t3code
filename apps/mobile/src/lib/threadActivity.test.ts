@@ -2067,6 +2067,17 @@ describe("terminalFeedAssistantMessageIds", () => {
     expect([...ids.midRunIds]).toEqual(["cut-off"]);
   });
 
+  it("marks a response as mid-run when a steer follows it with no reply yet", () => {
+    const ids = terminalFeedAssistantMessageIds([
+      message("prompt", "user", "turn_start"),
+      message("cut-off", "assistant"),
+      message("steer", "user", "steer"),
+    ]);
+
+    expect([...ids.terminalIds]).toEqual(["cut-off"]);
+    expect([...ids.midRunIds]).toEqual(["cut-off"]);
+  });
+
   it("keeps one terminal message for an unsteered run", () => {
     const ids = terminalFeedAssistantMessageIds([
       message("prompt", "user", "turn_start"),

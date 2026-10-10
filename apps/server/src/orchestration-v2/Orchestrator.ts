@@ -3576,23 +3576,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: forkableSourceRunStatusError(sourceRun),
       });
     }
-    const throughTurnItemId =
-      command.sourcePoint.type === "turn_item" ? command.sourcePoint.turnItemId : undefined;
-    if (throughTurnItemId !== undefined) {
-      const throughItem = yield* projectionStore
-        .getTurnItem({ threadId: command.sourceThreadId, itemId: throughTurnItemId })
-        .pipe(
-          Effect.mapError(
-            (cause) => new OrchestratorProjectionError({ threadId: command.sourceThreadId, cause }),
-          ),
-        );
-      if (!isForkableResponseItem(throughItem, sourceRun)) {
+    let throughTurnItemId: TurnItemId | undefined;
+    if (command.sourcePoint.type === "turn_item") {
+      const pointItemId = command.sourcePoint.turnItemId;
+      const runItems = yield* readHandoffItems(command.sourceThreadId, [sourceRun.id]);
+      const throughItem = runItems.find((item) => item.id === pointItemId) ?? null;
+      if (throughItem === null || !isForkableResponseItem(throughItem, sourceRun)) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: `Fork source item ${throughTurnItemId} is not a finished assistant response of run ${sourceRun.id}.`,
+          cause: `Fork source item ${pointItemId} is not a finished assistant response of run ${sourceRun.id}.`,
         });
       }
+      // Cutting at the run's last response changes nothing, so it forks like
+      // the run. That also keeps item ids that are no native cursor (a Claude
+      // turn's result fallback, always its last response) out of native forks.
+      const conversationContinues = runItems.some(
+        (item) =>
+          item.ordinal > throughItem.ordinal &&
+          (item.type === "user_message" || item.type === "assistant_message"),
+      );
+      throughTurnItemId = conversationContinues ? pointItemId : undefined;
     }
     const sourceProviderThread = providerThreadForRun(sourceProjection, sourceRun);
     const now = command.createdAt ?? (yield* DateTime.now);

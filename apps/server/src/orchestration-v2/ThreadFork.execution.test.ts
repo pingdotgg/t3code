@@ -420,6 +420,41 @@ it.effect.each(steeredForkCases)(
         });
       const steerFork = yield* Effect.exit(forkAt(steerItemId, "fork-at-steer"));
       assert.isTrue(steerFork._tag === "Failure", "a steer is not a response to fork from");
+
+      // The run's last response cuts nothing, so it forks exactly like the run,
+      // natively where the provider can fork at a turn end.
+      const runEndTargetId = ThreadId.make("fork-steered-run-end-target");
+      yield* orchestrator.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("fork-at-run-end-response"),
+        sourceThreadId,
+        targetThreadId: runEndTargetId,
+        sourcePoint: { type: "turn_item", runId, turnItemId: items[3]!.id },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("continue-run-end-fork"),
+        threadId: runEndTargetId,
+        messageId: MessageId.make("continue-run-end-fork"),
+        text: "Continue from the run end",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const runEndFork = yield* orchestrator.getThreadProjection(runEndTargetId);
+      assert.deepEqual(runEndFork.thread.forkedFrom, {
+        type: "run",
+        threadId: sourceThreadId,
+        runId,
+      });
+      assert.isUndefined(runEndFork.contextTransfers[0]?.sourcePoint.turnItemId);
+      assert.lengthOf(runEndFork.contextHandoffs, 0);
+      assert.equal(runEndFork.providerThreads[0]?.forkedFrom?.providerThreadId, providerThreadId);
+
       yield* forkAt(cutOffItemId, "fork-at-cut-off-response");
 
       const forked = yield* orchestrator.getThreadProjection(targetThreadId);

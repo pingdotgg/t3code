@@ -720,7 +720,7 @@ export function resolveAssistantMessageCopyState({
  */
 function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
   const lastAssistantMessageIdByResponseKey = new Map<string, string>();
-  const lastAssistantMessageIdByRunId = new Map<RunId, string>();
+  const runSegmentByMessageId = new Map<string, { runId: RunId; segment: number }>();
   const segmentByRunId = new Map<RunId, number>();
   let nullTurnResponseIndex = 0;
 
@@ -740,20 +740,25 @@ function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<Timeli
       continue;
     }
 
+    const segment = message.runId ? (segmentByRunId.get(message.runId) ?? 0) : 0;
     if (message.runId) {
-      lastAssistantMessageIdByRunId.set(message.runId, message.id);
+      runSegmentByMessageId.set(message.id, { runId: message.runId, segment });
     }
     const responseKey = message.runId
-      ? `turn:${message.runId}:${segmentByRunId.get(message.runId) ?? 0}`
+      ? `turn:${message.runId}:${segment}`
       : `unkeyed:${nullTurnResponseIndex}`;
     lastAssistantMessageIdByResponseKey.set(responseKey, message.id);
   }
 
   const terminalIds = new Set(lastAssistantMessageIdByResponseKey.values());
-  const runEndIds = new Set(lastAssistantMessageIdByRunId.values());
+  // Any later user message in the run (a steer) makes a response mid-run, even
+  // when no assistant reply follows it yet.
   const midRunIds = new Set<string>();
-  for (const [responseKey, messageId] of lastAssistantMessageIdByResponseKey) {
-    if (responseKey.startsWith("turn:") && !runEndIds.has(messageId)) midRunIds.add(messageId);
+  for (const messageId of terminalIds) {
+    const position = runSegmentByMessageId.get(messageId);
+    if (position && position.segment < (segmentByRunId.get(position.runId) ?? 0)) {
+      midRunIds.add(messageId);
+    }
   }
   return { terminalIds, midRunIds };
 }
