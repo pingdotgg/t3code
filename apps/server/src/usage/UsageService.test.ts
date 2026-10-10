@@ -132,7 +132,9 @@ const layerService = (input: {
     Layer.provideMerge(ProviderHostLive.layer),
     Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
     Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: input.prefix })),
+    Layer.provideMerge(
+      ServerConfig.layerTest(process.cwd(), NodePath.join(input.home, input.prefix)),
+    ),
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(Layer.succeed(HostProcess.Platform, input.platform ?? "linux")),
     Layer.provideMerge(ServerSettings.layerTest(input.settings)),
@@ -1203,8 +1205,7 @@ describe("UsageService", () => {
             return text;
           });
 
-          const restarted = yield* UsageService.make;
-          const summary = yield* restarted.readSummary(WINDOW);
+          const summary = yield* (yield* UsageService.make).readSummary(WINDOW);
           // The live rollout re-parses at the ultrafast rate (10 x 6); the
           // deleted one keeps its saved v4 usage at the standard rate (20 x 1).
           assert.strictEqual(totalOutputTokens(summary), 30);
@@ -1217,9 +1218,6 @@ describe("UsageService", () => {
             yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
             legacy,
           );
-          // The migrated cache is written in the background; let it land before
-          // the layer removes the state directory under it.
-          yield* restarted.awaitPersisted;
         }).pipe(
           Effect.provide(
             layerService({
