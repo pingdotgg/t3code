@@ -381,14 +381,31 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         yield* fs.writeFileString(filePath, original);
       }
       const started = yield* Deferred.make<void>();
+      const childStopped = yield* Deferred.make<{ lockExists: boolean; version: string }>();
       const build = yield* Effect.forkChild(
         buildDesktopBundles(root, "0.0.43", false).pipe(
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
             ChildProcessSpawner.make(() =>
-              Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+              Effect.acquireRelease(
+                Effect.succeed({ ...mockProcess(0), exitCode: Effect.never }).pipe(
+                  Effect.tap(() => Deferred.succeed(started, undefined)),
+                ),
+                () =>
+                  Effect.gen(function* () {
+                    const lockExists = yield* fs.exists(path.join(root, ".desktop-build.lock"));
+                    const manifest = yield* decodePackageVersion(
+                      yield* fs.readFileString(path.join(root, releasePackageFiles[0])),
+                    );
+                    yield* Deferred.succeed(childStopped, {
+                      lockExists,
+                      version: manifest.version,
+                    });
+                  }),
+              ),
             ),
           ),
+          Effect.scoped,
         ),
       );
       yield* Deferred.await(started);
@@ -397,6 +414,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       );
       assert.equal(aligned.version, "0.0.43");
       yield* Fiber.interrupt(build);
+      assert.deepEqual(yield* Deferred.await(childStopped), {
+        lockExists: true,
+        version: "0.0.43",
+      });
       assert.isFalse(yield* fs.exists(path.join(root, ".desktop-build.lock")));
       for (const relativePath of releasePackageFiles) {
         assert.equal(yield* fs.readFileString(path.join(root, relativePath)), original);

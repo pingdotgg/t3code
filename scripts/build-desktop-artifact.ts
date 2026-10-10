@@ -1897,7 +1897,7 @@ const buildDesktopBundlesUnlocked = Effect.fn("buildDesktopBundlesUnlocked")(fun
             extendEnv: true,
           }),
           { label: "vp run build:desktop", verbose },
-        );
+        ).pipe(Effect.scoped);
       }),
     (originals, exit) =>
       Effect.gen(function* () {
