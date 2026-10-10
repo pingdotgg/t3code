@@ -7710,10 +7710,13 @@ describe("AcpAdapterV2", () => {
               mockAgentPath,
               environment: (runtimeOrdinal) => {
                 runtimeOrdinalSeen = Math.max(runtimeOrdinalSeen, runtimeOrdinal);
-                return {
-                  T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1",
-                  T3_ACP_EMIT_RUNNING_MONITOR_WITH_GENERIC: "1",
-                };
+                // Only the first runtime holds the root; a respawn prompts normally.
+                return runtimeOrdinal === 1
+                  ? {
+                      T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1",
+                      T3_ACP_EMIT_RUNNING_MONITOR_WITH_GENERIC: "1",
+                    }
+                  : { T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1" };
               },
               wrapCancel: (cancel) =>
                 Effect.sync(() => {
@@ -8424,10 +8427,13 @@ describe("AcpAdapterV2", () => {
               mockAgentPath,
               environment: (runtimeOrdinal) => {
                 runtimeOrdinalSeen = Math.max(runtimeOrdinalSeen, runtimeOrdinal);
-                return {
-                  T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1",
-                  T3_ACP_EMIT_RUNNING_MONITOR_WITH_GENERIC: "1",
-                };
+                // Only the first runtime holds the root; a respawn prompts normally.
+                return runtimeOrdinal === 1
+                  ? {
+                      T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1",
+                      T3_ACP_EMIT_RUNNING_MONITOR_WITH_GENERIC: "1",
+                    }
+                  : { T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1" };
               },
               ownDetachedProcessGroup: true,
               protocolEvents,
