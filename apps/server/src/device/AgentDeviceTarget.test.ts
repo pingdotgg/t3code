@@ -1,9 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - exercises concurrent real CLI subprocesses.
-import {
-  HostProcessExecutablePath,
-  HostProcessIsExecutable,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
@@ -26,7 +22,7 @@ describe("host-bound agent commands", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const temp = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-target-" });
-      const platform = yield* HostProcessPlatform;
+      const platform = yield* HostProcess.Platform;
       const dir = path.join(
         temp,
         platform === "win32" ? "paths with spaces" : "quotes '\" $HOME `literal`",
@@ -41,7 +37,9 @@ console.log(readFileSync(args[args.indexOf('--config') + 1], 'utf8'));
 if (process.env.AGENT_DEVICE_DAEMON_BASE_URL) process.exit(2);`,
       );
       const shim = yield* ensureAgentDeviceShim({ entryPath, stateDir: dir });
-      const files = ["mini", "android"].map((host) => agentDeviceConfigPath(dir, host, path));
+      const files = yield* Effect.forEach(["mini", "android"], (host) =>
+        agentDeviceConfigPath(dir, host, path),
+      );
       for (const [index, file] of files.entries())
         yield* writeAgentDeviceConfig(file, {
           baseUrl: `http://127.0.0.1:${1000 + index}`,
@@ -73,8 +71,8 @@ if (process.env.AGENT_DEVICE_DAEMON_BASE_URL) process.exit(2);`,
       });
       expect((yield* Effect.promise(() => invoke(files[0]!))).daemonAuthToken).toBe("new");
       expect(yield* fs.readFileString(files[1]!)).toBe(second);
-      expect(agentDeviceSession("thread", "mini", "same-id")).not.toBe(
-        agentDeviceSession("thread", "android", "same-id"),
+      expect(yield* agentDeviceSession("thread", "mini", "same-id")).not.toBe(
+        yield* agentDeviceSession("thread", "android", "same-id"),
       );
       for (const args of [
         ["snapshot"],
@@ -90,8 +88,8 @@ if (process.env.AGENT_DEVICE_DAEMON_BASE_URL) process.exit(2);`,
       }
     }).pipe(
       Effect.scoped,
-      Effect.provideService(HostProcessIsExecutable, true),
-      Effect.provideService(HostProcessExecutablePath, "/packaged/t3"),
+      Effect.provideService(HostProcess.IsExecutable, true),
+      Effect.provideService(HostProcess.ExecutablePath, "/packaged/t3"),
       Effect.provide(NodeServices.layer),
     ),
   );

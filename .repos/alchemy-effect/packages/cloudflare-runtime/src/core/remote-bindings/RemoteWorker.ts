@@ -6,7 +6,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import * as NodeCrypto from "node:crypto";
 const RemoteWorkerScript = {
   worker: () =>
@@ -14,6 +14,7 @@ const RemoteWorkerScript = {
       "#cloudflare-runtime-core-worker/remote-bindings/workers/remote.worker",
     ),
 };
+import { DEFAULT_COMPATIBILITY_DATE } from "../internal/constants.ts";
 import type { ConfigError, SystemError } from "../RuntimeError.shared.ts";
 import { ApiError } from "../RuntimeError.shared.ts";
 import * as Access from "./Access.ts";
@@ -134,7 +135,7 @@ export const make: (
         cfPreviewUploadConfigToken,
         wranglerSessionConfig: { workersDev: true, minimalMode: true },
         metadata: {
-          compatibilityDate: "2025-04-28",
+          compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
           bindings: options.bindings,
           mainModule: files[0].name,
         },

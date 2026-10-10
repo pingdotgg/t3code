@@ -1,6 +1,6 @@
 {
   "name": "alchemy",
-  "version": "2.0.0-beta.76",
+  "version": "2.0.0-beta.80",
   "description": "Infrastructure as Effects for TypeScript.",
   "homepage": "https://alchemy.run",
   "license": "Apache-2.0",
@@ -23,6 +23,7 @@
   },
   "files": [
     "bin",
+    "!bin/register-dev-mode.js",
     "lib",
     "src",
     "NOTICE",
@@ -31,513 +32,503 @@
   "type": "module",
   "sideEffects": false,
   "scripts": {
+    "build": "bun scripts/build.ts",
     "clear:state": "cd ../../ && bun clear:state",
-    "dev": "tsdown --watch",
-    "build": "rm -rf lib && tsc -b --force && tsc -b tsconfig.bin.json --force && bun bundle && bun ../../scripts/copy-package-files.ts alchemy",
-    "bundle": "tsdown",
-    "bundle:watch": "tsdown --watch",
     "test": "alchemy-test --exclude test/Railway",
-    "test:benchmark": "tsx --tsconfig tsconfig.test.json test/types.benchmark.ts",
     "nuke": "cd ../../ && bun nuke"
   },
   "exports": {
-    ".": {
-      "types": "./lib/index.d.ts",
-      "bun": "./src/index.ts",
-      "worker": "./src/index.ts",
-      "import": "./lib/index.js"
-    },
-    "./*": {
-      "types": "./lib/*.d.ts",
-      "bun": "./src/*.ts",
-      "worker": "./src/*.ts",
-      "import": "./lib/*.js"
-    },
-    "./AI": {
-      "types": "./lib/AI/index.d.ts",
-      "bun": "./src/AI/index.ts",
-      "worker": "./src/AI/index.ts",
-      "import": "./lib/AI/index.js"
-    },
-    "./Auth": {
-      "types": "./lib/Auth/index.d.ts",
-      "bun": "./src/Auth/index.ts",
-      "worker": "./src/Auth/index.ts",
-      "import": "./lib/Auth/index.js"
-    },
-    "./AWS": {
-      "types": "./lib/AWS/index.d.ts",
-      "bun": "./src/AWS/index.ts",
-      "worker": "./src/AWS/index.ts",
-      "import": "./lib/AWS/index.js"
-    },
-    "./AWS/*": {
-      "types": "./lib/AWS/*/index.d.ts",
-      "bun": "./src/AWS/*/index.ts",
-      "worker": "./src/AWS/*/index.ts",
-      "import": "./lib/AWS/*/index.js"
-    },
-    "./AWS/Credentials": {
-      "types": "./lib/AWS/Credentials.d.ts",
-      "bun": "./src/AWS/Credentials.ts",
-      "worker": "./src/AWS/Credentials.ts",
-      "import": "./lib/AWS/Credentials.js"
-    },
-    "./AWS/Endpoint": {
-      "types": "./lib/AWS/Endpoint.d.ts",
-      "bun": "./src/AWS/Endpoint.ts",
-      "worker": "./src/AWS/Endpoint.ts",
-      "import": "./lib/AWS/Endpoint.js"
-    },
-    "./AWS/Region": {
-      "types": "./lib/AWS/Region.d.ts",
-      "bun": "./src/AWS/Region.ts",
-      "worker": "./src/AWS/Region.ts",
-      "import": "./lib/AWS/Region.js"
-    },
-    "./AWS/Lambda/*": {
-      "types": "./lib/AWS/Lambda/*.d.ts",
-      "bun": "./src/AWS/Lambda/*.ts",
-      "worker": "./src/AWS/Lambda/*.ts",
-      "import": "./lib/AWS/Lambda/*.js"
-    },
-    "./Command": {
-      "types": "./lib/Command/index.d.ts",
-      "bun": "./src/Command/index.ts",
-      "worker": "./src/Command/index.ts",
-      "import": "./lib/Command/index.js"
-    },
-    "./Construct": {
-      "types": "./lib/Construct/index.d.ts",
-      "bun": "./src/Construct/index.ts",
-      "worker": "./src/Construct/index.ts",
-      "import": "./lib/Construct/index.js"
-    },
-    "./Bundle": {
-      "types": "./lib/Bundle/index.d.ts",
-      "bun": "./src/Bundle/index.ts",
-      "worker": "./src/Bundle/index.ts",
-      "import": "./lib/Bundle/index.js"
-    },
-    "./Docker": {
-      "types": "./lib/Docker/index.d.ts",
-      "bun": "./src/Docker/index.ts",
-      "worker": "./src/Docker/index.ts",
-      "import": "./lib/Docker/index.js"
-    },
-    "./Kubernetes": {
-      "types": "./lib/Kubernetes/index.d.ts",
-      "bun": "./src/Kubernetes/index.ts",
-      "worker": "./src/Kubernetes/index.ts",
-      "import": "./lib/Kubernetes/index.js"
-    },
-    "./ContentType": {
-      "types": "./lib/ContentType.d.ts",
-      "bun": "./src/ContentType.ts",
-      "worker": "./src/ContentType.ts",
-      "import": "./lib/ContentType.js"
-    },
-    "./Cli": {
-      "types": "./lib/Cli/index.d.ts",
-      "bun": "./src/Cli/index.ts",
-      "worker": "./src/Cli/index.ts",
-      "import": "./lib/Cli/index.js"
-    },
-    "./Cli/InkCLI": {
-      "types": "./lib/Cli/InkCLI.d.ts",
-      "bun": "./src/Cli/InkCLI.tsx",
-      "worker": "./src/Cli/InkCLI.tsx",
-      "import": "./lib/Cli/InkCLI.js"
-    },
-    "./Cloudflare": {
-      "types": "./lib/Cloudflare/index.d.ts",
-      "bun": "./src/Cloudflare/index.ts",
-      "worker": "./src/Cloudflare/index.ts",
-      "import": "./lib/Cloudflare/index.js"
-    },
-    "./Cloudflare/Bridge": {
-      "types": "./lib/Cloudflare/Bridge.d.ts",
-      "bun": "./src/Cloudflare/Bridge.ts",
-      "worker": "./src/Cloudflare/Bridge.ts",
-      "import": "./lib/Cloudflare/Bridge.js"
-    },
-    "./Cloudflare/Live": {
-      "types": "./lib/Cloudflare/Live.d.ts",
-      "bun": "./src/Cloudflare/Live.ts",
-      "worker": "./src/Cloudflare/Live.ts",
-      "import": "./lib/Cloudflare/Live.js"
-    },
-    "./Cloudflare/*": {
-      "types": "./lib/Cloudflare/*/index.d.ts",
-      "bun": "./src/Cloudflare/*/index.ts",
-      "worker": "./src/Cloudflare/*/index.ts",
-      "import": "./lib/Cloudflare/*/index.js"
-    },
-    "./Drizzle": {
-      "types": "./lib/Drizzle/index.d.ts",
-      "bun": "./src/Drizzle/index.ts",
-      "worker": "./src/Drizzle/index.ts",
-      "import": "./lib/Drizzle/index.js"
-    },
-    "./Drizzle/*": {
-      "types": "./lib/Drizzle/*.d.ts",
-      "bun": "./src/Drizzle/*.ts",
-      "worker": "./src/Drizzle/*.ts",
-      "import": "./lib/Drizzle/*.js"
-    },
-    "./Axiom": {
-      "types": "./lib/Axiom/index.d.ts",
-      "bun": "./src/Axiom/index.ts",
-      "worker": "./src/Axiom/index.ts",
-      "import": "./lib/Axiom/index.js"
-    },
-    "./GitHub": {
-      "types": "./lib/GitHub/index.d.ts",
-      "bun": "./src/GitHub/index.ts",
-      "worker": "./src/GitHub/index.ts",
-      "import": "./lib/GitHub/index.js"
-    },
-    "./Endpoint": {
-      "types": "./lib/Endpoint/index.d.ts",
-      "bun": "./src/Endpoint/index.ts",
-      "worker": "./src/Endpoint/index.ts",
-      "import": "./lib/Endpoint/index.js"
-    },
-    "./Neon": {
-      "types": "./lib/Neon/index.d.ts",
-      "bun": "./src/Neon/index.ts",
-      "worker": "./src/Neon/index.ts",
-      "import": "./lib/Neon/index.js"
-    },
-    "./Neon/*": {
-      "types": "./lib/Neon/*/index.d.ts",
-      "bun": "./src/Neon/*/index.ts",
-      "worker": "./src/Neon/*/index.ts",
-      "import": "./lib/Neon/*/index.js"
-    },
-    "./Hetzner": {
-      "types": "./lib/Hetzner/index.d.ts",
-      "bun": "./src/Hetzner/index.ts",
-      "worker": "./src/Hetzner/index.ts",
-      "import": "./lib/Hetzner/index.js"
-    },
-    "./Hetzner/*": {
-      "types": "./lib/Hetzner/*.d.ts",
-      "bun": "./src/Hetzner/*.ts",
-      "worker": "./src/Hetzner/*.ts",
-      "import": "./lib/Hetzner/*.js"
-    },
-    "./Fly": {
-      "types": "./lib/Fly/index.d.ts",
-      "bun": "./src/Fly/index.ts",
-      "worker": "./src/Fly/index.ts",
-      "import": "./lib/Fly/index.js"
-    },
-    "./Fly/*": {
-      "types": "./lib/Fly/*.d.ts",
-      "bun": "./src/Fly/*.ts",
-      "worker": "./src/Fly/*.ts",
-      "import": "./lib/Fly/*.js"
-    },
-    "./Railway": {
-      "types": "./lib/Railway/index.d.ts",
-      "bun": "./src/Railway/index.ts",
-      "worker": "./src/Railway/index.ts",
-      "import": "./lib/Railway/index.js"
-    },
-    "./Railway/*": {
-      "types": "./lib/Railway/*.d.ts",
-      "bun": "./src/Railway/*.ts",
-      "worker": "./src/Railway/*.ts",
-      "import": "./lib/Railway/*.js"
-    },
-    "./Prisma": {
-      "types": "./lib/Prisma/index.d.ts",
-      "bun": "./src/Prisma/index.ts",
-      "worker": "./src/Prisma/index.ts",
-      "import": "./lib/Prisma/index.js"
-    },
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts",
+    "./AI": "./src/AI/index.ts",
+    "./Auth": "./src/Auth/index.ts",
+    "./Alchemist": "./src/Alchemist/index.ts",
+    "./AWS": "./src/AWS/index.ts",
+    "./AWS/*": "./src/AWS/*/index.ts",
+    "./AWS/Credentials": "./src/AWS/Credentials.ts",
+    "./AWS/Endpoint": "./src/AWS/Endpoint.ts",
+    "./AWS/Region": "./src/AWS/Region.ts",
+    "./AWS/Lambda/*": "./src/AWS/Lambda/*.ts",
+    "./Command": "./src/Command/index.ts",
+    "./Construct": "./src/Construct/index.ts",
+    "./Bundle": "./src/Bundle/index.ts",
+    "./Docker": "./src/Docker/index.ts",
+    "./Doppler": "./src/Doppler/index.ts",
+    "./Git": "./src/Git/index.ts",
+    "./Git/Hasher": "./src/Git/Hasher/index.ts",
+    "./Http": "./src/Http/index.ts",
+    "./Infisical": "./src/Infisical/index.ts",
+    "./Kubernetes": "./src/Kubernetes/index.ts",
+    "./Cli": "./src/Cli/index.ts",
+    "./Cli/CliKit": "./src/Cli/CliKit/index.ts",
+    "./Cloudflare": "./src/Cloudflare/index.ts",
+    "./Cloudflare/Bridge": "./src/Cloudflare/Bridge.ts",
+    "./Cloudflare/Live": "./src/Cloudflare/Live.ts",
+    "./Cloudflare/RpcWebSocketClient": "./src/Cloudflare/Workers/RpcWebSocketClient.ts",
+    "./Cloudflare/*": "./src/Cloudflare/*/index.ts",
+    "./Drizzle": "./src/Drizzle/index.ts",
+    "./Axiom": "./src/Axiom/index.ts",
+    "./GCP": "./src/GCP/index.ts",
+    "./GCP/*": "./src/GCP/*/index.ts",
+    "./GitHub": "./src/GitHub/index.ts",
+    "./Endpoint": "./src/Endpoint/index.ts",
+    "./Neon": "./src/Neon/index.ts",
+    "./Neon/*": "./src/Neon/*/index.ts",
+    "./Hetzner": "./src/Hetzner/index.ts",
+    "./Fly": "./src/Fly/index.ts",
+    "./ACME": "./src/ACME/index.ts",
+    "./Railway": "./src/Railway/index.ts",
+    "./Prisma": "./src/Prisma/index.ts",
+    "./Prisma/ORM": "./src/Prisma/ORM/index.ts",
     "./Prisma/ComputeApp": null,
     "./Prisma/ComputeService": null,
     "./Prisma/ComputeVersion": null,
     "./Prisma/ComputeVersionObserve": null,
-    "./Prisma/App": {
-      "types": "./lib/Prisma/App.d.ts",
-      "bun": "./src/Prisma/App.ts",
-      "worker": "./src/Prisma/App.ts",
-      "import": "./lib/Prisma/App.js"
-    },
-    "./Prisma/Deployment": {
-      "types": "./lib/Prisma/Deployment.d.ts",
-      "bun": "./src/Prisma/Deployment.ts",
-      "worker": "./src/Prisma/Deployment.ts",
-      "import": "./lib/Prisma/Deployment.js"
-    },
     "./Prisma/EnvironmentVariableValidation": null,
+    "./Prisma/Credentials": null,
     "./Prisma/Internal/*": null,
     "./Prisma/PrismaDevDatabase": null,
     "./Prisma/Refs": null,
-    "./Prisma/*": {
-      "types": "./lib/Prisma/*.d.ts",
-      "bun": "./src/Prisma/*.ts",
-      "worker": "./src/Prisma/*.ts",
-      "import": "./lib/Prisma/*.js"
-    },
-    "./Output": {
-      "types": "./lib/Output.d.ts",
-      "bun": "./src/Output.ts",
-      "worker": "./src/Output.ts",
-      "import": "./lib/Output.js"
-    },
-    "./Planetscale": {
-      "types": "./lib/Planetscale/index.d.ts",
-      "bun": "./src/Planetscale/index.ts",
-      "worker": "./src/Planetscale/index.ts",
-      "import": "./lib/Planetscale/index.js"
-    },
-    "./Planetscale/*": {
-      "types": "./lib/Planetscale/*/index.d.ts",
-      "bun": "./src/Planetscale/*/index.ts",
-      "worker": "./src/Planetscale/*/index.ts",
-      "import": "./lib/Planetscale/*/index.js"
-    },
-    "./Runtime": {
-      "types": "./lib/Runtime.d.ts",
-      "bun": "./src/Runtime.ts",
-      "worker": "./src/Runtime.ts",
-      "import": "./lib/Runtime.js"
-    },
-    "./Runtime/Bootstrap/*": {
-      "types": "./src/Runtime/Bootstrap/*.ts",
-      "bun": "./src/Runtime/Bootstrap/*.ts",
-      "node": "./src/Runtime/Bootstrap/*.ts",
-      "worker": "./src/Runtime/Bootstrap/*.ts",
-      "import": "./src/Runtime/Bootstrap/*.ts",
-      "default": "./src/Runtime/Bootstrap/*.ts"
-    },
-    "./Process": {
-      "types": "./lib/Process/index.d.ts",
-      "bun": "./src/Process/index.ts",
-      "worker": "./src/Process/index.ts",
-      "import": "./lib/Process/index.js"
-    },
-    "./Redis": {
-      "types": "./lib/Redis/index.d.ts",
-      "bun": "./src/Redis/index.ts",
-      "worker": "./src/Redis/index.ts",
-      "import": "./lib/Redis/index.js"
-    },
-    "./SQL/*": {
-      "types": "./lib/SQL/*.d.ts",
-      "bun": "./src/SQL/*.ts",
-      "worker": "./src/SQL/*.ts",
-      "import": "./lib/SQL/*.js"
-    },
-    "./SQLite": {
-      "types": "./lib/SQLite/index.d.ts",
-      "bun": "./src/SQLite/index.ts",
-      "worker": "./src/SQLite/index.ts",
-      "import": "./lib/SQLite/index.js"
-    },
-    "./TUI": {
-      "types": "./lib/TUI/index.d.ts",
-      "bun": "./src/TUI/index.ts",
-      "worker": "./src/TUI/index.ts",
-      "import": "./lib/TUI/index.js"
-    },
-    "./Server": {
-      "types": "./lib/Server/index.d.ts",
-      "bun": "./src/Server/index.ts",
-      "worker": "./src/Server/index.ts",
-      "import": "./lib/Server/index.js"
-    },
-    "./Stack": {
-      "types": "./lib/Stack.d.ts",
-      "bun": "./src/Stack.ts",
-      "worker": "./src/Stack.ts",
-      "import": "./lib/Stack.js"
-    },
-    "./State": {
-      "types": "./lib/State/index.d.ts",
-      "bun": "./src/State/index.ts",
-      "worker": "./src/State/index.ts",
-      "import": "./lib/State/index.js"
-    },
-    "./State/*": {
-      "types": "./lib/State/*.d.ts",
-      "bun": "./src/State/*.ts",
-      "worker": "./src/State/*.ts",
-      "import": "./lib/State/*.js"
-    },
-    "./Test/Bun": {
-      "types": "./lib/Test/Bun.d.ts",
-      "bun": "./src/Test/Bun.ts",
-      "worker": "./src/Test/Bun.ts",
-      "import": "./lib/Test/Bun.js"
-    },
-    "./Test/Http": {
-      "types": "./lib/Test/Http.d.ts",
-      "bun": "./src/Test/Http.ts",
-      "worker": "./src/Test/Http.ts",
-      "import": "./lib/Test/Http.js"
-    },
-    "./Test/Vitest": {
-      "types": "./lib/Test/Vitest.d.ts",
-      "bun": "./src/Test/Vitest.ts",
-      "worker": "./src/Test/Vitest.ts",
-      "import": "./lib/Test/Vitest.js"
-    },
-    "./Util": {
-      "types": "./lib/Util/index.d.ts",
-      "bun": "./src/Util/index.ts",
-      "worker": "./src/Util/index.ts",
-      "import": "./lib/Util/index.js"
-    },
-    "./Util/Clank": {
-      "types": "./lib/Util/Clank.d.ts",
-      "bun": "./src/Util/Clank.ts",
-      "worker": "./src/Util/Clank.ts",
-      "import": "./lib/Util/Clank.js"
-    },
-    "./Util/PlatformServices": {
-      "types": "./lib/Util/PlatformServices.d.ts",
-      "bun": "./src/Util/PlatformServices.ts",
-      "worker": "./src/Util/PlatformServices.ts",
-      "import": "./lib/Util/PlatformServices.js"
-    },
+    "./Planetscale": "./src/Planetscale/index.ts",
+    "./Planetscale/*": "./src/Planetscale/*/index.ts",
+    "./Stripe": "./src/Stripe/index.ts",
+    "./Runtime/Bootstrap/*": "./src/Runtime/Bootstrap/*.ts",
+    "./Process": "./src/Process/index.ts",
+    "./Redis": "./src/Redis/index.ts",
+    "./SQLite": "./src/SQLite/index.ts",
+    "./TUI": "./src/TUI/index.ts",
+    "./Secrets": "./src/Secrets/index.ts",
+    "./Server": "./src/Server/index.ts",
+    "./State": "./src/State/index.ts",
+    "./Util": "./src/Util/index.ts",
     "./bin/alchemy.js": "./bin/alchemy.js",
-    "./bin/exec.ts": "./bin/exec.ts",
     "./bin/exec.js": "./bin/exec.js"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./lib/index.d.ts",
+        "bun": "./src/index.ts",
+        "default": "./lib/index.js"
+      },
+      "./*": {
+        "types": "./lib/*.d.ts",
+        "bun": "./src/*.ts",
+        "default": "./lib/*.js"
+      },
+      "./AI": {
+        "types": "./lib/AI/index.d.ts",
+        "bun": "./src/AI/index.ts",
+        "default": "./lib/AI/index.js"
+      },
+      "./Auth": {
+        "types": "./lib/Auth/index.d.ts",
+        "bun": "./src/Auth/index.ts",
+        "default": "./lib/Auth/index.js"
+      },
+      "./Alchemist": {
+        "types": "./lib/Alchemist/index.d.ts",
+        "bun": "./src/Alchemist/index.ts",
+        "default": "./lib/Alchemist/index.js"
+      },
+      "./AWS": {
+        "types": "./lib/AWS/index.d.ts",
+        "bun": "./src/AWS/index.ts",
+        "default": "./lib/AWS/index.js"
+      },
+      "./AWS/*": {
+        "types": "./lib/AWS/*/index.d.ts",
+        "bun": "./src/AWS/*/index.ts",
+        "default": "./lib/AWS/*/index.js"
+      },
+      "./AWS/Credentials": {
+        "types": "./lib/AWS/Credentials.d.ts",
+        "bun": "./src/AWS/Credentials.ts",
+        "default": "./lib/AWS/Credentials.js"
+      },
+      "./AWS/Endpoint": {
+        "types": "./lib/AWS/Endpoint.d.ts",
+        "bun": "./src/AWS/Endpoint.ts",
+        "default": "./lib/AWS/Endpoint.js"
+      },
+      "./AWS/Region": {
+        "types": "./lib/AWS/Region.d.ts",
+        "bun": "./src/AWS/Region.ts",
+        "default": "./lib/AWS/Region.js"
+      },
+      "./AWS/Lambda/*": {
+        "types": "./lib/AWS/Lambda/*.d.ts",
+        "bun": "./src/AWS/Lambda/*.ts",
+        "default": "./lib/AWS/Lambda/*.js"
+      },
+      "./Command": {
+        "types": "./lib/Command/index.d.ts",
+        "bun": "./src/Command/index.ts",
+        "default": "./lib/Command/index.js"
+      },
+      "./Construct": {
+        "types": "./lib/Construct/index.d.ts",
+        "bun": "./src/Construct/index.ts",
+        "default": "./lib/Construct/index.js"
+      },
+      "./Bundle": {
+        "types": "./lib/Bundle/index.d.ts",
+        "bun": "./src/Bundle/index.ts",
+        "default": "./lib/Bundle/index.js"
+      },
+      "./Docker": {
+        "types": "./lib/Docker/index.d.ts",
+        "bun": "./src/Docker/index.ts",
+        "default": "./lib/Docker/index.js"
+      },
+      "./Doppler": {
+        "types": "./lib/Doppler/index.d.ts",
+        "bun": "./src/Doppler/index.ts",
+        "default": "./lib/Doppler/index.js"
+      },
+      "./Git": {
+        "types": "./lib/Git/index.d.ts",
+        "bun": "./src/Git/index.ts",
+        "default": "./lib/Git/index.js"
+      },
+      "./Git/Hasher": {
+        "types": "./lib/Git/Hasher/index.d.ts",
+        "bun": "./src/Git/Hasher/index.ts",
+        "default": "./lib/Git/Hasher/index.js"
+      },
+      "./Http": {
+        "types": "./lib/Http/index.d.ts",
+        "bun": "./src/Http/index.ts",
+        "default": "./lib/Http/index.js"
+      },
+      "./Infisical": {
+        "types": "./lib/Infisical/index.d.ts",
+        "bun": "./src/Infisical/index.ts",
+        "default": "./lib/Infisical/index.js"
+      },
+      "./Kubernetes": {
+        "types": "./lib/Kubernetes/index.d.ts",
+        "bun": "./src/Kubernetes/index.ts",
+        "default": "./lib/Kubernetes/index.js"
+      },
+      "./Cli": {
+        "types": "./lib/Cli/index.d.ts",
+        "bun": "./src/Cli/index.ts",
+        "default": "./lib/Cli/index.js"
+      },
+      "./Cli/CliKit": {
+        "types": "./lib/Cli/CliKit/index.d.ts",
+        "bun": "./src/Cli/CliKit/index.ts",
+        "default": "./lib/Cli/CliKit/index.js"
+      },
+      "./Cloudflare": {
+        "types": "./lib/Cloudflare/index.d.ts",
+        "bun": "./src/Cloudflare/index.ts",
+        "default": "./lib/Cloudflare/index.js"
+      },
+      "./Cloudflare/Bridge": {
+        "types": "./lib/Cloudflare/Bridge.d.ts",
+        "bun": "./src/Cloudflare/Bridge.ts",
+        "default": "./lib/Cloudflare/Bridge.js"
+      },
+      "./Cloudflare/Live": {
+        "types": "./lib/Cloudflare/Live.d.ts",
+        "bun": "./src/Cloudflare/Live.ts",
+        "default": "./lib/Cloudflare/Live.js"
+      },
+      "./Cloudflare/RpcWebSocketClient": {
+        "types": "./lib/Cloudflare/Workers/RpcWebSocketClient.d.ts",
+        "bun": "./src/Cloudflare/Workers/RpcWebSocketClient.ts",
+        "default": "./lib/Cloudflare/Workers/RpcWebSocketClient.js"
+      },
+      "./Cloudflare/*": {
+        "types": "./lib/Cloudflare/*/index.d.ts",
+        "bun": "./src/Cloudflare/*/index.ts",
+        "default": "./lib/Cloudflare/*/index.js"
+      },
+      "./Drizzle": {
+        "types": "./lib/Drizzle/index.d.ts",
+        "bun": "./src/Drizzle/index.ts",
+        "default": "./lib/Drizzle/index.js"
+      },
+      "./Axiom": {
+        "types": "./lib/Axiom/index.d.ts",
+        "bun": "./src/Axiom/index.ts",
+        "default": "./lib/Axiom/index.js"
+      },
+      "./GCP": {
+        "types": "./lib/GCP/index.d.ts",
+        "bun": "./src/GCP/index.ts",
+        "default": "./lib/GCP/index.js"
+      },
+      "./GCP/*": {
+        "types": "./lib/GCP/*/index.d.ts",
+        "bun": "./src/GCP/*/index.ts",
+        "default": "./lib/GCP/*/index.js"
+      },
+      "./GitHub": {
+        "types": "./lib/GitHub/index.d.ts",
+        "bun": "./src/GitHub/index.ts",
+        "default": "./lib/GitHub/index.js"
+      },
+      "./Endpoint": {
+        "types": "./lib/Endpoint/index.d.ts",
+        "bun": "./src/Endpoint/index.ts",
+        "default": "./lib/Endpoint/index.js"
+      },
+      "./Neon": {
+        "types": "./lib/Neon/index.d.ts",
+        "bun": "./src/Neon/index.ts",
+        "default": "./lib/Neon/index.js"
+      },
+      "./Neon/*": {
+        "types": "./lib/Neon/*/index.d.ts",
+        "bun": "./src/Neon/*/index.ts",
+        "default": "./lib/Neon/*/index.js"
+      },
+      "./Hetzner": {
+        "types": "./lib/Hetzner/index.d.ts",
+        "bun": "./src/Hetzner/index.ts",
+        "default": "./lib/Hetzner/index.js"
+      },
+      "./Fly": {
+        "types": "./lib/Fly/index.d.ts",
+        "bun": "./src/Fly/index.ts",
+        "default": "./lib/Fly/index.js"
+      },
+      "./ACME": {
+        "types": "./lib/ACME/index.d.ts",
+        "bun": "./src/ACME/index.ts",
+        "default": "./lib/ACME/index.js"
+      },
+      "./Railway": {
+        "types": "./lib/Railway/index.d.ts",
+        "bun": "./src/Railway/index.ts",
+        "default": "./lib/Railway/index.js"
+      },
+      "./Prisma": {
+        "types": "./lib/Prisma/index.d.ts",
+        "bun": "./src/Prisma/index.ts",
+        "default": "./lib/Prisma/index.js"
+      },
+      "./Prisma/ORM": {
+        "types": "./lib/Prisma/ORM/index.d.ts",
+        "bun": "./src/Prisma/ORM/index.ts",
+        "default": "./lib/Prisma/ORM/index.js"
+      },
+      "./Prisma/ComputeApp": null,
+      "./Prisma/ComputeService": null,
+      "./Prisma/ComputeVersion": null,
+      "./Prisma/ComputeVersionObserve": null,
+      "./Prisma/EnvironmentVariableValidation": null,
+      "./Prisma/Credentials": null,
+      "./Prisma/Internal/*": null,
+      "./Prisma/PrismaDevDatabase": null,
+      "./Prisma/Refs": null,
+      "./Planetscale": {
+        "types": "./lib/Planetscale/index.d.ts",
+        "bun": "./src/Planetscale/index.ts",
+        "default": "./lib/Planetscale/index.js"
+      },
+      "./Planetscale/*": {
+        "types": "./lib/Planetscale/*/index.d.ts",
+        "bun": "./src/Planetscale/*/index.ts",
+        "default": "./lib/Planetscale/*/index.js"
+      },
+      "./Stripe": {
+        "types": "./lib/Stripe/index.d.ts",
+        "bun": "./src/Stripe/index.ts",
+        "default": "./lib/Stripe/index.js"
+      },
+      "./Runtime/Bootstrap/*": {
+        "types": "./src/Runtime/Bootstrap/*.ts",
+        "bun": "./src/Runtime/Bootstrap/*.ts",
+        "default": "./src/Runtime/Bootstrap/*.ts"
+      },
+      "./Process": {
+        "types": "./lib/Process/index.d.ts",
+        "bun": "./src/Process/index.ts",
+        "default": "./lib/Process/index.js"
+      },
+      "./Redis": {
+        "types": "./lib/Redis/index.d.ts",
+        "bun": "./src/Redis/index.ts",
+        "default": "./lib/Redis/index.js"
+      },
+      "./SQLite": {
+        "types": "./lib/SQLite/index.d.ts",
+        "bun": "./src/SQLite/index.ts",
+        "default": "./lib/SQLite/index.js"
+      },
+      "./TUI": {
+        "types": "./lib/TUI/index.d.ts",
+        "bun": "./src/TUI/index.ts",
+        "default": "./lib/TUI/index.js"
+      },
+      "./Secrets": {
+        "types": "./lib/Secrets/index.d.ts",
+        "bun": "./src/Secrets/index.ts",
+        "default": "./lib/Secrets/index.js"
+      },
+      "./Server": {
+        "types": "./lib/Server/index.d.ts",
+        "bun": "./src/Server/index.ts",
+        "default": "./lib/Server/index.js"
+      },
+      "./State": {
+        "types": "./lib/State/index.d.ts",
+        "bun": "./src/State/index.ts",
+        "default": "./lib/State/index.js"
+      },
+      "./Util": {
+        "types": "./lib/Util/index.d.ts",
+        "bun": "./src/Util/index.ts",
+        "default": "./lib/Util/index.js"
+      },
+      "./bin/alchemy.js": "./bin/alchemy.js",
+      "./bin/exec.js": "./bin/exec.js"
+    }
   },
   "dependencies": {
     "@alchemy.run/cloudflare-runtime": "workspace:*",
     "@alchemy.run/floci": "workspace:*",
     "@alchemy.run/node-utils": "workspace:*",
-    "@aws-sdk/credential-providers": "catalog:aws",
-    "@clack/prompts": "^1.7.0",
+    "@alchemy.run/sigil": "catalog:",
+    "@distilled.cloud/acme": "workspace:*",
+    "@distilled.cloud/zerossl": "workspace:*",
     "@distilled.cloud/aws": "workspace:*",
     "@distilled.cloud/axiom": "workspace:*",
     "@distilled.cloud/cloudflare": "workspace:*",
     "@distilled.cloud/core": "workspace:*",
+    "@distilled.cloud/doppler": "workspace:*",
     "@distilled.cloud/fly-io": "workspace:*",
+    "@distilled.cloud/gcp": "workspace:*",
     "@distilled.cloud/hetzner": "workspace:*",
+    "@distilled.cloud/infisical": "workspace:*",
     "@distilled.cloud/neon": "workspace:*",
     "@distilled.cloud/planetscale": "workspace:*",
+    "@distilled.cloud/prisma": "workspace:*",
     "@distilled.cloud/railway": "workspace:*",
-    "@effect/sql-d1": "catalog:effect",
-    "@effect/sql-sqlite-do": "catalog:effect",
-    "@effect/vitest": "catalog:effect",
-    "@libsql/client": "catalog:database",
-    "@octokit/rest": "^22.0.1",
-    "@octokit/webhooks": "^14.2.0",
-    "@prisma/dev": "^0.20.0",
-    "@smithy/node-config-provider": "catalog:aws",
-    "@smithy/shared-ini-file-loader": "catalog:aws",
-    "@smithy/types": "catalog:aws",
-    "@types/aws-lambda": "catalog:aws",
-    "aws4fetch": "catalog:aws",
-    "capnweb": "^0.6.1",
-    "fast-glob": "catalog:cloudflare-runtime",
-    "fast-xml-parser": "catalog:shared",
-    "ink": "^6.3.1",
-    "jszip": "^3.10.1",
-    "libsodium-wrappers": "^0.8.3",
-    "pathe": "catalog:tooling",
-    "picomatch": "^4.0.4",
-    "react": "^19.2.0",
-    "rolldown": "catalog:build",
-    "undici": "^7.16.0",
-    "yaml": "catalog:shared"
+    "@distilled.cloud/stripe": "workspace:*",
+    "@effect/sql-d1": "catalog:",
+    "@effect/sql-sqlite-do": "catalog:",
+    "@libsql/client": "catalog:",
+    "@neon/functions": "catalog:",
+    "@octokit/rest": "catalog:",
+    "@octokit/webhooks": "catalog:",
+    "@prisma/dev": "catalog:",
+    "@types/aws-lambda": "catalog:",
+    "capnweb": "catalog:",
+    "fflate": "catalog:",
+    "libsodium-wrappers": "catalog:",
+    "pathe": "catalog:",
+    "picomatch": "catalog:",
+    "rolldown": "catalog:",
+    "tinyglobby": "catalog:",
+    "yaml": "catalog:"
   },
   "devDependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
-    "@aws/durable-execution-sdk-js": "catalog:aws",
-    "@cloudflare/containers": "catalog:cloudflare",
-    "@cloudflare/puppeteer": "catalog:cloudflare",
-    "@cloudflare/unenv-preset": "catalog:cloudflare-runtime",
-    "@cloudflare/workers-types": "catalog:cloudflare-runtime",
-    "@effect/platform-bun": "catalog:effect",
-    "@effect/platform-node": "catalog:effect",
-    "@effect/platform-node-shared": "catalog:effect",
-    "@foldkit/vite-plugin": "catalog:frontend",
-    "@octanejs/adapter-cloudflare": "catalog:frontend",
-    "@octanejs/vite-plugin": "catalog:frontend",
-    "@opennextjs/aws": "catalog:frontend",
-    "@opennextjs/cloudflare": "catalog:frontend",
-    "@oxc-project/types": "^0.146.0",
-    "@react-router/dev": "catalog:frontend",
-    "@react-router/node": "catalog:frontend",
-    "@solidjs/router": "catalog:frontend",
-    "@solidjs/start": "catalog:frontend",
-    "@solidjs/vite-plugin-nitro-2": "catalog:frontend",
-    "@sveltejs/kit": "catalog:frontend",
-    "@sveltejs/vite-plugin-svelte": "catalog:frontend",
-    "@tanstack/react-router": "catalog:frontend",
-    "@tanstack/react-start": "catalog:frontend",
-    "@types/aws-lambda": "catalog:aws",
-    "@types/bun": "catalog:tooling",
-    "@types/node": "catalog:tooling",
-    "@types/pg": "catalog:database",
-    "@types/picomatch": "^4.0.0",
-    "@types/react-dom": "^19.2.2",
-    "@types/react": "^19.2.2",
-    "@types/ws": "catalog:cloudflare-runtime",
-    "@vercel/nft": "catalog:build",
-    "@vitejs/plugin-react": "catalog:frontend",
-    "@vitejs/plugin-rsc": "catalog:frontend",
+    "@aws/durable-execution-sdk-js": "catalog:",
+    "@cloudflare/containers": "catalog:",
+    "@cloudflare/puppeteer": "catalog:",
+    "@cloudflare/workers-types": "catalog:",
+    "@effect/language-service": "catalog:",
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@effect/sql-mysql2": "catalog:",
+    "@effect/sql-pg": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@foldkit/vite-plugin": "catalog:",
+    "@octanejs/adapter-cloudflare": "catalog:",
+    "@octanejs/vite-plugin": "catalog:",
+    "@opennextjs/aws": "catalog:",
+    "@opennextjs/cloudflare": "catalog:",
+    "@oxc-project/types": "catalog:",
+    "@prisma/orm-family-sql": "catalog:",
+    "@prisma/orm-postgres": "catalog:",
+    "@react-router/dev": "catalog:",
+    "@react-router/node": "catalog:",
+    "@solidjs/router": "catalog:",
+    "@solidjs/start": "catalog:",
+    "@solidjs/vite-plugin-nitro-2": "catalog:",
+    "@sveltejs/kit": "catalog:",
+    "@sveltejs/vite-plugin-svelte": "catalog:",
+    "@tanstack/react-router": "catalog:",
+    "@tanstack/react-start": "catalog:",
+    "@types/bun": "catalog:",
+    "@types/node": "catalog:",
+    "@types/pg": "catalog:",
+    "@types/picomatch": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@types/ws": "catalog:",
+    "@vercel/nft": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "@vitejs/plugin-rsc": "catalog:",
     "alchemy-test": "workspace:*",
-    "astro": "catalog:frontend",
-    "effect": "catalog:effect",
-    "foldkit": "catalog:frontend",
-    "hono": "catalog:frontend",
-    "iovalkey": "^0.3.3",
-    "isbot": "catalog:frontend",
-    "mongodb": "catalog:database",
-    "mysql2": "catalog:database",
-    "next": "catalog:frontend",
-    "nitropack": "catalog:frontend",
-    "nuxt": "catalog:frontend",
-    "octane": "catalog:frontend",
-    "pg": "catalog:database",
-    "react-devtools-core": "^7.0.1",
-    "react-dom": "catalog:frontend",
-    "react-router": "catalog:frontend",
-    "react-server-dom-webpack": "catalog:frontend",
-    "solid-js": "catalog:frontend",
-    "svelte": "catalog:frontend",
-    "tsconfig-paths": "^4.2.0",
-    "tsdown": "^0.15.4",
-    "tsx": "catalog:tooling",
-    "typescript": "catalog:build",
-    "unenv": "catalog:cloudflare-runtime",
-    "uuid": "catalog:shared",
-    "vitest": "catalog:testing",
-    "vocs": "catalog:frontend",
-    "waku": "catalog:frontend",
-    "wrangler": "catalog:cloudflare",
-    "ws": "catalog:shared"
+    "arktype": "catalog:",
+    "astro": "catalog:",
+    "aws4fetch": "catalog:",
+    "effect": "catalog:",
+    "foldkit": "catalog:",
+    "hono": "catalog:",
+    "iovalkey": "catalog:",
+    "isbot": "catalog:",
+    "mongodb": "catalog:",
+    "mysql2": "catalog:",
+    "next": "catalog:",
+    "nitropack": "catalog:",
+    "nuxt": "catalog:",
+    "octane": "catalog:",
+    "pg": "catalog:",
+    "prisma": "catalog:",
+    "react": "catalog:",
+    "react-devtools-core": "catalog:",
+    "react-dom": "catalog:",
+    "react-router": "catalog:",
+    "react-server-dom-webpack": "catalog:",
+    "solid-js": "catalog:",
+    "svelte": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "typescript-api": "catalog:",
+    "unenv": "catalog:",
+    "uuid": "catalog:",
+    "vitest": "catalog:",
+    "vocs": "catalog:",
+    "waku": "catalog:",
+    "wrangler": "catalog:",
+    "ws": "catalog:"
   },
   "peerDependencies": {
+    "@prisma/orm-postgres": "catalog:",
     "@alchemy.run/frontend-frameworks": "workspace:*",
-    "@aws/durable-execution-sdk-js": "catalog:aws",
-    "@effect/platform-bun": "catalog:effect",
-    "@effect/platform-node": "catalog:effect",
-    "@effect/sql-mysql2": "catalog:effect",
-    "@effect/sql-pg": "catalog:effect",
-    "@vercel/nft": "catalog:build",
-    "drizzle-kit": "catalog:database",
-    "drizzle-orm": "catalog:database",
-    "effect": "catalog:effect",
-    "mongodb": "catalog:database",
-    "mysql2": "catalog:database",
-    "pg": "catalog:database",
-    "vite": "catalog:build",
-    "ws": "catalog:shared"
+    "@aws/durable-execution-sdk-js": "catalog:",
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@effect/sql-mysql2": "catalog:",
+    "@effect/sql-pg": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@vercel/nft": "catalog:",
+    "drizzle-kit": "catalog:",
+    "drizzle-orm": "catalog:",
+    "effect": "catalog:",
+    "mongodb": "catalog:",
+    "mysql2": "catalog:",
+    "pg": "catalog:",
+    "prisma": "catalog:",
+    "vite": "catalog:",
+    "ws": "catalog:"
   },
   "peerDependenciesMeta": {
+    "@prisma/orm-postgres": {
+      "optional": true
+    },
+    "prisma": {
+      "optional": true
+    },
     "@alchemy.run/frontend-frameworks": {
       "optional": true
     },
@@ -554,6 +545,9 @@
       "optional": true
     },
     "@effect/sql-pg": {
+      "optional": true
+    },
+    "@effect/vitest": {
       "optional": true
     },
     "@vercel/nft": {

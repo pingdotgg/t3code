@@ -227,8 +227,18 @@ export const serializeType = (node: ts.TypeNode, context: SerializationContext):
   }
   if (ts.isLiteralTypeNode(node)) {
     const literal = node.literal
+    const operand = ts.isPrefixUnaryExpression(literal) ? literal.operand : literal
     return {
       kind: "literal",
+      literalKind: ts.isStringLiteralLike(operand)
+        ? "string"
+        : ts.isNumericLiteral(operand)
+        ? "number"
+        : ts.isBigIntLiteral(operand)
+        ? "bigint"
+        : operand.kind === ts.SyntaxKind.NullKeyword
+        ? "null"
+        : "boolean",
       value: literal.kind === ts.SyntaxKind.TrueKeyword
         ? true
         : literal.kind === ts.SyntaxKind.FalseKeyword
@@ -397,11 +407,14 @@ const serializeClassMember = (
       kind: "property",
       name: nameText(node.name),
       type: node.type === undefined ? { kind: "unknown" } : serializeType(node.type, context),
-      modifiers: visibility
+      modifiers: node.questionToken === undefined ? visibility : [...(visibility ?? []), "optional"].sort()
     }
   }
   if (ts.isMethodDeclaration(node)) {
-    return serializeSignature(node, context, "method", nameText(node.name))
+    return {
+      ...serializeSignature(node, context, "method", nameText(node.name)),
+      modifiers: node.questionToken === undefined ? visibility : [...(visibility ?? []), "optional"].sort()
+    }
   }
   if (ts.isConstructorDeclaration(node)) {
     return serializeSignature(node, context, "constructor", "constructor")
@@ -543,7 +556,7 @@ const serializeDeclaration = (node: ts.Declaration, context: SerializationContex
 const declarationKind = (declarations: ReadonlyArray<DeclarationModel>): string =>
   [...new Set(declarations.map((declaration) => declaration.kind))].sort().join("+")
 
-const documentation = (symbol: ts.Symbol, checker: ts.TypeChecker, module: string): Documentation => {
+const documentation = (symbol: ts.Symbol, checker: ts.TypeChecker): Documentation => {
   const tags = new Map(
     symbol.getJsDocTags(checker).map((tag) => [
       tag.name,
@@ -551,12 +564,15 @@ const documentation = (symbol: ts.Symbol, checker: ts.TypeChecker, module: strin
     ])
   )
   const summary = ts.displayPartsToString(symbol.getDocumentationComment(checker)).trim()
+  const stability = tags.get("stability")
   return {
     summary: summary === "" ? undefined : summary,
     deprecated: tags.get("deprecated"),
     since: tags.get("since"),
     category: tags.get("category"),
-    stability: module.includes("/unstable/") ? "unstable" : "stable"
+    stability: tags.has("unstable") ? "unstable" : stability === "experimental" || stability === "unstable"
+      ? stability
+      : "stable"
   }
 }
 
@@ -819,7 +835,7 @@ const extractSnapshot = (
       declarations: serialized,
       displaySignature: displayDeclarations(pendingEntity.declarations),
       fingerprint: fingerprintDeclarations(serialized),
-      documentation: documentation(pendingEntity.symbol, checker, route.module),
+      documentation: documentation(pendingEntity.symbol, checker),
       source: sourceLocation(path, options.repoRoot, declaration)
     })
   }
@@ -846,7 +862,15 @@ const extractSnapshot = (
 export const snapshotCacheKey = (
   sha: string,
   modules?: ReadonlyArray<string>
-): string => fingerprint(["snapshot-v4", sha, ts.version, modules === undefined ? "all" : [...modules].sort()])
+): string =>
+  fingerprint([
+    "snapshot-v4",
+    "class-member-optionality-v1",
+    "literal-type-category-v1",
+    sha,
+    ts.version,
+    modules === undefined ? "all" : [...modules].sort()
+  ])
 
 export class Snapshotter extends Context.Service<Snapshotter, {
   readonly extract: (options: ExtractSnapshotOptions) => Effect.Effect<

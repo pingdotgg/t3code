@@ -11,7 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import type { HttpClient } from "effect/unstable/http/HttpClient";
+import type { HttpClient } from "effect/http/HttpClient";
 import { deepEqual, isResolved } from "../../Diff.ts";
 import * as Namespace from "../../Namespace.ts";
 import * as Output from "../../Output.ts";
@@ -1060,16 +1060,13 @@ export interface ServiceRuntimeContext extends HostRuntimeContext {
  * ```
  *
  * ### Bundling & Tree-shaking
- * `main` is bundled with rolldown at deploy time. Top-level calls in the
- * `effect`, `@effect/*`, `alchemy`, `@alchemy.run/*`, and
- * `@distilled.cloud/*` packages receive `#__PURE__` annotations by
- * default, so anything the service doesn't use from those packages is
- * tree-shaken out of the bundle. Any other package — including your own
- * app — is left untouched unless you list it explicitly.
+ * `main` is bundled with rolldown at deploy time. Unused code is
+ * tree-shaken. `effect`, alchemy, and `@distilled.cloud` are marked
+ * pure so unused parts prune more aggressively. Your app is not
+ * marked pure.
  *
- * **Example:** Treat additional packages as pure
- * Pass package names (or picomatch globs) via `build.pure.packages` to
- * annotate them in addition to the defaults.
+ * **Example:** Mark additional packages as pure
+ * Only list packages with no top-level side effects.
  * ```typescript
  * {
  *   main: import.meta.url,
@@ -1079,18 +1076,7 @@ export interface ServiceRuntimeContext extends HostRuntimeContext {
  * }
  * ```
  *
- * Listing a package annotates calls whose result is bound (variable
- * initializers, exports) — safe anywhere. If a listed package also
- * declares `"sideEffects": false` (or `[]`) in its `package.json`, that
- * combination opts it into full annotation: top-level calls whose result
- * is discarded (e.g. `router.on("/path", handler)` registrations) are
- * also marked pure and deleted under minification when unused. Only list
- * a `sideEffects: false` package if its modules really are free of
- * meaningful top-level side effects. The `effect`, `alchemy`, and
- * `@distilled.cloud` defaults declare exactly that, on purpose — their
- * modules are designed to be fully tree-shakeable.
- *
- * **Example:** Disable pure annotations
+ * **Example:** Turn it off
  * ```typescript
  * {
  *   main: import.meta.url,
@@ -2586,6 +2572,7 @@ const observeServiceConvergence = (input: {
   clusterArn: string;
   serviceName: string;
   expectedTaskDefinitionArn?: string;
+  expectedDeploymentId?: string;
   mode: ServiceConvergenceMode;
 }): Effect.Effect<
   ServiceConvergenceSnapshot,
@@ -2680,6 +2667,8 @@ const observeServiceConvergence = (input: {
     const deploymentConverged =
       deployments.length === 1 &&
       primary !== undefined &&
+      (input.expectedDeploymentId === undefined ||
+        primary.id === input.expectedDeploymentId) &&
       primary.taskDefinition === input.expectedTaskDefinitionArn &&
       (deploymentController === "ECS"
         ? primary.rolloutState === "COMPLETED"
@@ -2708,6 +2697,7 @@ const waitForServiceConvergence = (input: {
   clusterArn: string;
   serviceName: string;
   expectedTaskDefinitionArn?: string;
+  expectedDeploymentId?: string;
   mode: ServiceConvergenceMode;
   timeout?: Duration.Input;
 }): Effect.Effect<
@@ -2723,6 +2713,16 @@ const waitForServiceConvergence = (input: {
     30 * 60 * 1_000,
   );
   const attempts = Math.max(1, Math.ceil(timeoutMillis / pollIntervalMillis));
+  const expectedDeploymentFailed = (snapshot: ServiceConvergenceSnapshot) =>
+    input.mode === "stable" &&
+    snapshot.service?.deployments?.some(
+      (deployment) =>
+        (input.expectedDeploymentId !== undefined
+          ? deployment.id === input.expectedDeploymentId
+          : deployment.status === "PRIMARY" &&
+            deployment.taskDefinition === input.expectedTaskDefinitionArn) &&
+        deployment.rolloutState === "FAILED",
+    ) === true;
 
   return observeServiceConvergence(input).pipe(
     Effect.repeat({
@@ -2731,10 +2731,7 @@ const waitForServiceConvergence = (input: {
         Schedule.recurs(attempts),
       ]),
       until: (snapshot) =>
-        snapshot.converged ||
-        snapshot.service?.deployments?.some(
-          (deployment) => deployment.rolloutState === "FAILED",
-        ) === true,
+        snapshot.converged || expectedDeploymentFailed(snapshot),
     }),
     Effect.flatMap((snapshot) => {
       if (snapshot.converged) {
@@ -2765,12 +2762,9 @@ const waitForServiceConvergence = (input: {
           pendingCount: service?.pendingCount,
           deploymentCount: service?.deployments?.length ?? 0,
           unhealthyTargetCount,
-          message:
-            service?.deployments?.some(
-              (deployment) => deployment.rolloutState === "FAILED",
-            ) === true
-              ? `ECS service ${input.serviceName} reported a failed deployment`
-              : `ECS service ${input.serviceName} did not become ${input.mode} before timeout`,
+          message: expectedDeploymentFailed(snapshot)
+            ? `ECS service ${input.serviceName} reported a failed deployment`
+            : `ECS service ${input.serviceName} did not become ${input.mode} before timeout`,
         }),
       );
     }),
@@ -3579,6 +3573,9 @@ export const ServiceProvider = () =>
               clusterArn,
               serviceName,
               expectedTaskDefinitionArn: task.taskDefinitionArn,
+              expectedDeploymentId: service.deployments?.find(
+                (deployment) => deployment.status === "PRIMARY",
+              )?.id,
               mode: "stable",
               timeout: news.deploymentStabilizationTimeout,
             });
@@ -3610,7 +3607,7 @@ export const ServiceProvider = () =>
           // Sync — apply in-place mutable fields via updateService. Force a new
           // deployment so a changed task definition (same revision-less ARN) or
           // load-balancer wiring rolls out.
-          yield* ecs
+          const updated = yield* ecs
             .updateService({
               ...mutableInput(news, task, network, securityGroups),
               // While autoscaling manages the desired count, leave it
@@ -3657,6 +3654,9 @@ export const ServiceProvider = () =>
             clusterArn,
             serviceName,
             expectedTaskDefinitionArn: task.taskDefinitionArn,
+            expectedDeploymentId: updated.service?.deployments?.find(
+              (deployment) => deployment.status === "PRIMARY",
+            )?.id,
             mode: "stable",
             timeout: news.deploymentStabilizationTimeout,
           });
@@ -3725,13 +3725,12 @@ export const ServiceProvider = () =>
               desiredCount: 0,
             })
             .pipe(
-              Effect.retry({
-                while: (error) => error._tag === "ServiceNotActiveException",
-                schedule: Schedule.max([
-                  Schedule.spaced("5 seconds"),
-                  Schedule.recurs(8),
-                ]),
-              }),
+              // `ServiceNotActiveException` means the service is DRAINING or
+              // INACTIVE — an earlier, interrupted delete already issued
+              // `deleteService`. Neither status ever returns to ACTIVE, so
+              // there is nothing to scale: fall through to the drain/delete
+              // waits below, which treat both as progress toward "gone".
+              Effect.catchTag("ServiceNotActiveException", () => Effect.void),
               Effect.catchTag("ServiceNotFoundException", () => Effect.void),
               Effect.catchTag("ClusterNotFoundException", () => Effect.void),
             );

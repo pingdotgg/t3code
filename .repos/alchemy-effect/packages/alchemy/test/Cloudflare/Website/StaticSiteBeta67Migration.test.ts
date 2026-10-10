@@ -10,12 +10,14 @@
  * recreated.
  */
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
+import { Credentials } from "@/Cloudflare/Credentials.ts";
 import * as Cloudflare from "@/Cloudflare/index.ts";
 import * as Test from "@/Test/Alchemy";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import { spawn } from "node:child_process";
 import * as pathe from "pathe";
 import {
@@ -26,7 +28,7 @@ import {
 const { test } = Test.make({ providers: Cloudflare.providers() });
 
 const repoRoot = pathe.resolve(import.meta.dirname, "../../../../..");
-const workspaceCli = pathe.join(repoRoot, "packages/alchemy/bin/alchemy.ts");
+const workspaceCli = pathe.join(repoRoot, "packages/alchemy/bin/alchemy.js");
 
 const STACK = "B67MigrationTest";
 const STAGE = "b67mig";
@@ -41,11 +43,12 @@ const run = (options: {
   cmd: string;
   args: string[];
   cwd: string;
+  env?: Record<string, string>;
 }): Effect.Effect<string, Error> =>
   Effect.callback<string, Error>((resume) => {
     const child = spawn(options.cmd, options.args, {
       cwd: options.cwd,
-      env: { ...process.env, NO_COLOR: "1" },
+      env: { ...process.env, NO_COLOR: "1", ...options.env },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let output = "";
@@ -93,6 +96,29 @@ test.provider.skipIf(!!process.env.FAST)(
       const path = yield* Path.Path;
       const { accountId } = yield* yield* CloudflareEnvironment;
 
+      // The published beta.67 predates the per-provider profile store, so
+      // it cannot read the credentials this process resolved from the
+      // profile. Environment credentials are the contract that is stable
+      // across versions: hand it the resolved credentials under `CI=1`.
+      const credentials = yield* yield* Credentials;
+      const legacyCliEnv: Record<string, string> = {
+        CI: "1",
+        CLOUDFLARE_ACCOUNT_ID: accountId,
+        ...(credentials.type === "apiKey"
+          ? {
+              CLOUDFLARE_API_KEY: Redacted.value(credentials.apiKey),
+              CLOUDFLARE_EMAIL: credentials.email,
+            }
+          : {
+              // An OAuth access token is a bearer token like an API token.
+              CLOUDFLARE_API_TOKEN: Redacted.value(
+                credentials.type === "apiToken"
+                  ? credentials.apiToken
+                  : credentials.accessToken,
+              ),
+            }),
+      };
+
       const dir = yield* fs.makeTempDirectory({ prefix: "alchemy-b67-mig-" });
       const stateFile = (fqn: string) =>
         // LocalState layout: .alchemy/state/<stack>/<stage>/<encodeFqn>.json
@@ -111,12 +137,21 @@ test.provider.skipIf(!!process.env.FAST)(
             private: true,
             dependencies: {
               alchemy: "2.0.0-beta.67",
-              // beta.67's peers, pinned to the workspace's resolved
-              // versions (bun does not auto-install them for the src/
-              // resolution path the alchemy CLI runs under).
-              effect: "4.0.0-beta.102",
-              "@effect/platform-node": "4.0.0-beta.102",
-              "@effect/platform-bun": "4.0.0-beta.102",
+              // Match the beta.67 release lockfile, independently of the
+              // current workspace's Effect version.
+              effect: "4.0.0-beta.100",
+              "@effect/platform-node": "4.0.0-beta.100",
+              "@effect/platform-bun": "4.0.0-beta.100",
+            },
+            // Prerelease ranges otherwise pull newer adapters that import
+            // APIs absent from the legacy Effect runtime (e.g. ByteSize).
+            overrides: {
+              effect: "4.0.0-beta.100",
+              "@effect/platform-node": "4.0.0-beta.100",
+              "@effect/platform-bun": "4.0.0-beta.100",
+              "@effect/platform-node-shared": "4.0.0-beta.100",
+              "@effect/sql-d1": "4.0.0-beta.100",
+              "@effect/vitest": "4.0.0-beta.100",
             },
           },
           null,
@@ -158,6 +193,7 @@ test.provider.skipIf(!!process.env.FAST)(
           "--yes",
         ],
         cwd: dir,
+        env: legacyCliEnv,
       });
 
       // beta.67 persisted the Worker at the legacy `Site/Worker` FQN.
@@ -212,5 +248,13 @@ test.provider.skipIf(!!process.env.FAST)(
       yield* waitForWorkerToBeDeleted(workerName, accountId);
       yield* fs.remove(dir, { recursive: true });
     }),
-  { timeout: 600_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:website",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: 600_000,
+  },
 );

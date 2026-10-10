@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { PersistenceDecodeError, PersistenceSqlError, toPersistenceSqlError } from "./Errors.ts";
 
@@ -42,7 +42,7 @@ it.effect("names a real SQLite condition without copying query data", () =>
     assert.equal(error.cause, cause);
     assert.notInclude(error.message, payload);
     assert.notInclude(error.message, "private_column");
-  }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
 
 it("reads the condition through a wrapping driver error", () => {

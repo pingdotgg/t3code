@@ -6,7 +6,7 @@ const openDatabaseAsync = vi.hoisted(() => vi.fn());
 
 vi.mock("expo-sqlite", () => ({ openDatabaseAsync }));
 
-import { decodeLegacyCacheRecord, make } from "./mobile-database";
+import * as MobileDatabase from "./mobile-database";
 
 describe("mobile database legacy cache migration", () => {
   it.effect("keeps acquisition failures typed on database operations", () =>
@@ -14,7 +14,7 @@ describe("mobile database legacy cache migration", () => {
       Effect.gen(function* () {
         openDatabaseAsync.mockRejectedValueOnce(new Error("SQLite unavailable"));
 
-        const database = yield* make;
+        const database = yield* MobileDatabase.make;
         const result = yield* Effect.result(database.loadPreferencesJson);
 
         expect(result).toMatchObject({
@@ -33,7 +33,7 @@ describe("mobile database legacy cache migration", () => {
       snapshot: {},
     });
 
-    expect(decodeLegacyCacheRecord("connection-thread-snapshots", payload)).toEqual({
+    expect(MobileDatabase.decodeLegacyCacheRecord("connection-thread-snapshots", payload)).toEqual({
       environmentId: "environment-1",
       kind: "thread",
       cacheKey: "thread-1",
@@ -50,7 +50,7 @@ describe("mobile database legacy cache migration", () => {
       snapshot: {},
     });
 
-    expect(decodeLegacyCacheRecord("shell-snapshots", payload)).toEqual({
+    expect(MobileDatabase.decodeLegacyCacheRecord("shell-snapshots", payload)).toEqual({
       environmentId: "environment-1",
       kind: "shell",
       cacheKey: "snapshot",
@@ -60,9 +60,9 @@ describe("mobile database legacy cache migration", () => {
   });
 
   it("skips malformed legacy records", () => {
-    expect(decodeLegacyCacheRecord("connection-vcs-refs", "{not-json")).toBeNull();
+    expect(MobileDatabase.decodeLegacyCacheRecord("connection-vcs-refs", "{not-json")).toBeNull();
     expect(
-      decodeLegacyCacheRecord(
+      MobileDatabase.decodeLegacyCacheRecord(
         "connection-vcs-refs",
         JSON.stringify({ schemaVersion: 1, environmentId: "environment-1" }),
       ),

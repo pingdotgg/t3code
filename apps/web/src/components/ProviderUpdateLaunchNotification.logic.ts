@@ -8,6 +8,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import {
+  isAtomCommandInterrupted,
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
@@ -141,6 +142,8 @@ export function isProviderUpdateCandidate(
 ): provider is ProviderUpdateCandidate {
   return (
     provider.enabled &&
+    provider.compatibilityAdvisory?.latestVersionStatus !== "broken" &&
+    provider.compatibilityAdvisory?.latestVersionStatus !== "unsupported" &&
     provider.versionAdvisory?.status === "behind_latest" &&
     provider.versionAdvisory.latestVersion !== null
   );
@@ -161,6 +164,8 @@ export function isProviderSettingsUpdateCandidate(
 ): provider is ProviderSettingsUpdateCandidate {
   return (
     provider.enabled &&
+    provider.compatibilityAdvisory?.latestVersionStatus !== "broken" &&
+    provider.compatibilityAdvisory?.latestVersionStatus !== "unsupported" &&
     provider.versionAdvisory?.status === "behind_latest" &&
     provider.versionAdvisory.canUpdate === true &&
     provider.versionAdvisory.updateCommand !== null
@@ -324,6 +329,61 @@ export function getProviderUpdateProgressToastView(input: {
   }
 
   return getProviderUpdateRunningToastView(input.providerCount);
+}
+
+/** One provider update sent by the cross-machine "Update all", with its result. */
+export interface ProviderUpdateRun {
+  readonly machineLabel: string;
+  readonly driver: ProviderDriverKind;
+  readonly instanceId: ProviderInstanceId;
+  readonly result: AtomCommandResult<
+    { readonly providers: ReadonlyArray<ServerProvider> },
+    unknown
+  >;
+}
+
+/**
+ * Summarize a cross-machine "Update all" as one toast, or null when every
+ * request was interrupted. Each update that did not succeed gets its own line,
+ * so a failure on one machine is not hidden by successes on the others.
+ */
+export function getProviderUpdateRunToastView(
+  runs: ReadonlyArray<ProviderUpdateRun>,
+): Pick<ProviderUpdateToastView, "type" | "title" | "description"> | null {
+  const settled = runs.filter((run) => !isAtomCommandInterrupted(run.result));
+  if (settled.length === 0) {
+    return null;
+  }
+  const failureLines = settled.flatMap((run) => {
+    const label = `${run.machineLabel} · ${PROVIDER_DISPLAY_NAMES[run.driver] ?? run.driver}`;
+    if (run.result._tag === "Failure") {
+      const error = squashAtomCommandFailure(run.result);
+      return [`${label}: ${error instanceof Error ? error.message : "Provider update failed."}`];
+    }
+    const updateState = run.result.value.providers.find(
+      (provider) => provider.instanceId === run.instanceId,
+    )?.updateState;
+    return updateState?.status === "succeeded"
+      ? []
+      : [`${label}: ${updateState?.message ?? "Provider update did not finish."}`];
+  });
+  if (failureLines.length === 0) {
+    return {
+      type: "success",
+      title: settled.length === 1 ? "Provider updated" : `${settled.length} providers updated`,
+      description: getProviderUpdatedDescription(settled.length),
+    };
+  }
+  return {
+    type: "error",
+    title:
+      failureLines.length < settled.length
+        ? `${failureLines.length} of ${settled.length} provider updates failed`
+        : settled.length === 1
+          ? "Provider update failed"
+          : "Provider updates failed",
+    description: failureLines.join("\n"),
+  };
 }
 
 export function collectUpdatedProviderSnapshots(input: {

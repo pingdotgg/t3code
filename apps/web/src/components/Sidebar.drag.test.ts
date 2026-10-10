@@ -254,6 +254,42 @@ describe("sidebar collision detection", () => {
 
 describe("sidebar drag projection", () => {
   it.each([
+    ["a2", "a1"],
+    ["p", "a1"],
+    ["s", sidebarMarkerId("pinned-header")],
+    ["z", sidebarMarkerId("settled-header")],
+  ])("restores every row and marker when dragging %s out after hovering %s", (active, over) => {
+    const items = [
+      pinnedHeader,
+      thread("p", "pinned"),
+      divider,
+      marker("active-placeholder"),
+      thread("a1", "active"),
+      thread("a2", "active"),
+      marker("snoozed-header"),
+      thread("z", "snoozed"),
+      settledHeader,
+      marker("settled-placeholder"),
+      thread("s", "settled"),
+    ];
+    const input = {
+      items,
+      settledOrder: ["z", "s"],
+      settledExpanded: true,
+      boundaryLabelHeight: 24,
+      snoozedThreadCount: 1,
+    };
+    const reordered = preview(input, active, over);
+    expect([...reordered.values()].some((transform) => transform?.y !== 0)).toBe(true);
+
+    const restored = preview({ ...input, enabled: false }, active, over);
+    for (const transform of restored.values()) expect(transform).toEqual(stationary);
+
+    // Returning to the sidebar resumes the same live reorder preview.
+    expect(preview({ ...input, enabled: true }, active, over)).toEqual(reordered);
+  });
+
+  it.each([
     ["a1", "a2"],
     ["a1", sidebarMarkerId("settled-header")],
     ["z", "a2"],
@@ -619,6 +655,28 @@ describe("sidebar drag projection", () => {
       sidebarMarkerId("settled-placeholder"),
     );
     expect(result.get(sidebarMarkerId("snoozed-header"))).toEqual({ ...stationary, y: -46 });
+  });
+
+  it("previews a time-ordered inbox drop at its time slot, above the Working shelf", () => {
+    const items = [
+      pinnedHeader,
+      thread("p", "pinned"),
+      divider,
+      thread("a1", "active"),
+      thread("a2", "active"),
+      marker("working-header"),
+      thread("w", "working"),
+      settledHeader,
+      marker("settled-placeholder"),
+    ];
+    const input = { items, settledOrder: [], settledExpanded: false };
+    // By pointer, the unpinned row lands between a1 and a2.
+    expect(preview(input, "p", "a1").get("a2")?.y).toBe(0);
+    // By time, it lands below a2, and the shelf does not move.
+    const byTime = preview({ ...input, activeOrder: ["a1", "a2", "p"] }, "p", "a1");
+    expect(byTime.get("a2")?.y).toBe(-83);
+    expect(byTime.get(sidebarMarkerId("working-header"))).toEqual(stationary);
+    expect(byTime.get("w")).toEqual(stationary);
   });
 
   it("derives missing card geometry from the measured root scale", () => {

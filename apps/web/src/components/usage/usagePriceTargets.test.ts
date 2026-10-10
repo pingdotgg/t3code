@@ -12,6 +12,7 @@ const target = (id: string, overrides: Partial<UsagePriceTarget> = {}): UsagePri
   environmentId: EnvironmentId.make(id),
   label: id,
   prices: { example: price },
+  aliases: {},
   unavailable: null,
   ...overrides,
 });
@@ -138,6 +139,37 @@ describe("model price writes", () => {
     expect(onResult).toHaveBeenCalledWith("old", {
       status: "failed",
       error: "Update server to edit prices",
+    });
+  });
+
+  it("sends mappings beside prices and fails servers that cannot store them", async () => {
+    const write = vi.fn(async () => ({ _tag: "Success" as const }));
+    const onResult = vi.fn();
+    const changes = [
+      { model: "example", alias: "example-model" },
+      { model: "example", price: null },
+    ];
+    await writeUsagePrices({
+      targets: [target("current"), target("old", { aliases: null })],
+      changes: new Map([
+        [EnvironmentId.make("current"), changes],
+        [EnvironmentId.make("old"), changes],
+      ]),
+      write,
+      onResult,
+    });
+    expect(write).toHaveBeenCalledExactlyOnceWith({
+      environmentId: "current",
+      input: {
+        patch: {
+          usagePriceOverrides: { example: null },
+          usageModelAliases: { example: "example-model" },
+        },
+      },
+    });
+    expect(onResult).toHaveBeenCalledWith("old", {
+      status: "failed",
+      error: "Update server to map models",
     });
   });
 });

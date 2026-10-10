@@ -1,6 +1,6 @@
 import { WS_METHODS } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import type { RpcServer } from "effect/unstable/rpc";
+import type { RpcServer } from "effect/rpc";
 
 const MAX_PENDING_CHUNKS = 8;
 const MAX_PENDING_BYTES = 64 * 1024;
@@ -22,6 +22,7 @@ export function withTerminalOutputWindow(
           if (
             message._tag === "Request" &&
             (message.tag === WS_METHODS.terminalAttach ||
+              message.tag === WS_METHODS.terminalObserve ||
               message.tag === WS_METHODS.subscribeTerminalEvents)
           ) {
             const key = `${clientId}:${message.id}`;

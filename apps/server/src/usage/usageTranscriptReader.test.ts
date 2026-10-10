@@ -7,6 +7,7 @@ import * as NodePath from "node:path";
 
 import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
 
+import { TEST_FORMATS } from "./usageTestFormats.ts";
 import { readTranscriptRecords } from "./usageTranscriptReader.ts";
 
 let dir: string;
@@ -49,6 +50,14 @@ function codexModelLine(model: string): string {
   })}\n`;
 }
 
+function codexTierLine(serviceTier: string): string {
+  return `${JSON.stringify({
+    type: "event_msg",
+    timestamp: "2026-08-01T10:00:01Z",
+    payload: { type: "thread_settings_applied", thread_settings: { service_tier: serviceTier } },
+  })}\n`;
+}
+
 function codexUsageLine(outputTokens: number, secondsOffset: number): string {
   return `${JSON.stringify({
     type: "event_msg",
@@ -64,39 +73,44 @@ describe("readTranscriptRecords resume", () => {
   it("parses only appended lines when resuming a grown file", async () => {
     const path = NodePath.join(dir, "claude.jsonl");
     await NodeFSP.writeFile(path, claudeLine(1, 5) + claudeLine(2, 7));
-    const first = await readTranscriptRecords(path, "claude");
+    const first = await readTranscriptRecords(path, TEST_FORMATS.claude);
     assert.isNotNull(first);
     assert.strictEqual(first.records.length, 2);
     assert.isFalse(first.resumed);
 
     await NodeFSP.appendFile(path, claudeLine(3, 11));
-    const second = await readTranscriptRecords(path, "claude", first.position);
+    const second = await readTranscriptRecords(path, TEST_FORMATS.claude, first.position);
     assert.isNotNull(second);
     assert.isTrue(second.resumed);
     assert.strictEqual(second.records.length, 1);
     assert.strictEqual(second.records[0]?.totals.outputTokens, 11);
 
     // The stitched result matches a from-scratch parse of the whole file.
-    const full = await readTranscriptRecords(path, "claude");
+    const full = await readTranscriptRecords(path, TEST_FORMATS.claude);
     assert.isNotNull(full);
     assert.deepStrictEqual([...first.records, ...second.records], [...full.records]);
   });
 
   it("carries the Codex reducer state across the resume boundary", async () => {
     const path = NodePath.join(dir, "rollout.jsonl");
-    await NodeFSP.writeFile(path, codexMetaLine() + codexModelLine("gpt-5.2-codex"));
-    const first = await readTranscriptRecords(path, "codex");
+    await NodeFSP.writeFile(
+      path,
+      codexMetaLine() + codexModelLine("gpt-5.2-codex") + codexTierLine("ultrafast"),
+    );
+    const first = await readTranscriptRecords(path, TEST_FORMATS.codex);
     assert.isNotNull(first);
     assert.strictEqual(first.records.length, 0);
 
-    // The appended usage event has no turn_context or session_meta of its own;
-    // model and session must come from the state captured before the boundary.
+    // The appended usage event has no turn_context, thread settings, or
+    // session_meta of its own; model, tier, and session must come from the
+    // state captured before the boundary.
     await NodeFSP.appendFile(path, codexUsageLine(9, 5));
-    const second = await readTranscriptRecords(path, "codex", first.position);
+    const second = await readTranscriptRecords(path, TEST_FORMATS.codex, first.position);
     assert.isNotNull(second);
     assert.isTrue(second.resumed);
     assert.strictEqual(second.records.length, 1);
     assert.strictEqual(second.records[0]?.model, "gpt-5.2-codex");
+    assert.strictEqual(second.records[0]?.speed, "ultrafast");
     assert.strictEqual(second.records[0]?.sessionId, "codex-session-1");
   });
 
@@ -106,14 +120,14 @@ describe("readTranscriptRecords resume", () => {
       path,
       codexMetaLine() + codexModelLine("gpt-5.2-codex") + codexUsageLine(9, 5),
     );
-    const first = await readTranscriptRecords(path, "codex");
+    const first = await readTranscriptRecords(path, TEST_FORMATS.codex);
     assert.isNotNull(first);
     assert.strictEqual(first.records.length, 1);
 
     // Codex re-emits an unchanged token_count on stream boundaries; the copy
     // lands after the resume point and must still be dropped.
     await NodeFSP.appendFile(path, codexUsageLine(9, 5) + codexUsageLine(21, 8));
-    const second = await readTranscriptRecords(path, "codex", first.position);
+    const second = await readTranscriptRecords(path, TEST_FORMATS.codex, first.position);
     assert.isNotNull(second);
     assert.isTrue(second.resumed);
     assert.deepStrictEqual(
@@ -126,7 +140,7 @@ describe("readTranscriptRecords resume", () => {
     const path = NodePath.join(dir, "claude.jsonl");
     const unterminated = claudeLine(2, 7).trimEnd();
     await NodeFSP.writeFile(path, claudeLine(1, 5) + unterminated);
-    const first = await readTranscriptRecords(path, "claude");
+    const first = await readTranscriptRecords(path, TEST_FORMATS.claude);
     assert.isNotNull(first);
     assert.strictEqual(first.records.length, 1);
     assert.strictEqual(first.tailRecords.length, 1);
@@ -135,7 +149,7 @@ describe("readTranscriptRecords resume", () => {
     // Completing the line and appending another re-reads from the resume
     // point, so the once-tail record arrives exactly once as a line record.
     await NodeFSP.appendFile(path, `\n${claudeLine(3, 11)}`);
-    const second = await readTranscriptRecords(path, "claude", first.position);
+    const second = await readTranscriptRecords(path, TEST_FORMATS.claude, first.position);
     assert.isNotNull(second);
     assert.isTrue(second.resumed);
     assert.deepStrictEqual(
@@ -148,12 +162,12 @@ describe("readTranscriptRecords resume", () => {
   it("re-parses from the start when the guard bytes no longer match", async () => {
     const path = NodePath.join(dir, "claude.jsonl");
     await NodeFSP.writeFile(path, claudeLine(1, 5));
-    const first = await readTranscriptRecords(path, "claude");
+    const first = await readTranscriptRecords(path, TEST_FORMATS.claude);
     assert.isNotNull(first);
 
     // Same path, larger size, different content: a replaced file, not growth.
     await NodeFSP.writeFile(path, claudeLine(4, 13) + claudeLine(5, 17));
-    const second = await readTranscriptRecords(path, "claude", first.position);
+    const second = await readTranscriptRecords(path, TEST_FORMATS.claude, first.position);
     assert.isNotNull(second);
     assert.isFalse(second.resumed);
     assert.deepStrictEqual(
@@ -165,11 +179,11 @@ describe("readTranscriptRecords resume", () => {
   it("re-parses from the start when the file shrank below the resume point", async () => {
     const path = NodePath.join(dir, "claude.jsonl");
     await NodeFSP.writeFile(path, claudeLine(1, 5) + claudeLine(2, 7));
-    const first = await readTranscriptRecords(path, "claude");
+    const first = await readTranscriptRecords(path, TEST_FORMATS.claude);
     assert.isNotNull(first);
 
     await NodeFSP.writeFile(path, claudeLine(3, 11));
-    const second = await readTranscriptRecords(path, "claude", first.position);
+    const second = await readTranscriptRecords(path, TEST_FORMATS.claude, first.position);
     assert.isNotNull(second);
     assert.isFalse(second.resumed);
     assert.deepStrictEqual(
@@ -196,7 +210,7 @@ describe("readTranscriptRecords resume", () => {
     })}\n`;
     await NodeFSP.writeFile(path, bigLine + claudeLine(2, 7));
 
-    const parsed = await readTranscriptRecords(path, "claude");
+    const parsed = await readTranscriptRecords(path, TEST_FORMATS.claude);
     assert.isNotNull(parsed);
     assert.deepStrictEqual(
       parsed.records.map((record) => record.totals.outputTokens),
@@ -205,6 +219,8 @@ describe("readTranscriptRecords resume", () => {
   });
 
   it("returns null for an unreadable file", async () => {
-    assert.isNull(await readTranscriptRecords(NodePath.join(dir, "missing.jsonl"), "claude"));
+    assert.isNull(
+      await readTranscriptRecords(NodePath.join(dir, "missing.jsonl"), TEST_FORMATS.claude),
+    );
   });
 });

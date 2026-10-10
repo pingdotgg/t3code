@@ -2,10 +2,10 @@ import * as Cloudflare from "@/Cloudflare";
 import { Stack } from "@/Stack";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as ChildProcess from "effect/process/ChildProcess";
+import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 export class Sandbox extends Cloudflare.Container<
   Sandbox,
@@ -33,14 +33,14 @@ export const SandboxLive = Sandbox.make(
         const request = yield* HttpServerRequest;
         // upgrade to web socket
         const socket = yield* request.upgrade;
-        const writeMessage = yield* socket.writer;
+        const writer = yield* socket.writer;
         const cmd = yield* cp.spawn(ChildProcess.make("ffmpeg", ["-version"]));
         const [exitCode] = yield* Effect.all(
           [
             cmd.exitCode,
             // pipe stdout to the websocket
             cmd.stdout.pipe(
-              Stream.tap(writeMessage),
+              Stream.tap((chunk) => writer.write(chunk)),
               Stream.decodeText,
               Stream.mkString,
             ),

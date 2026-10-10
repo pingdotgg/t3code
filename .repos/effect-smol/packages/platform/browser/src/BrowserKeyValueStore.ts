@@ -13,7 +13,7 @@
  */
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
-import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore"
+import * as KeyValueStore from "effect/persistence/KeyValueStore"
 import { IndexedDb } from "./IndexedDb.ts"
 
 /**
@@ -103,6 +103,18 @@ export const layerIndexedDb = (options?: {
               }, () => store.get(key))
             }),
             (found) => found?.value && found.value instanceof Uint8Array ? found.value : undefined
+          ),
+        has: (key: string) =>
+          Effect.map(
+            Effect.suspend(() => {
+              const store = getKvsEntriesStore(db, "readonly")
+              return idbRequest<number>({
+                method: "has",
+                message: "Failed to check key in backing store",
+                key
+              }, () => store.count(key))
+            }),
+            (count) => count > 0
           ),
         set: (key: string, value: string | Uint8Array) =>
           Effect.asVoid(Effect.suspend(() => {

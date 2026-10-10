@@ -104,7 +104,6 @@ type PluginWorker = Exclude<CloudflareVitePluginOptions["worker"], undefined>;
 /** Mirror of alchemy's `DevContext` (the slots this source reads). */
 export interface DevContext extends SourceContext {
   readonly worker: {
-    readonly name: string;
     readonly bindings: PluginWorker["bindings"];
     readonly durableObjectNamespaces: PluginWorker["durableObjectNamespaces"];
     readonly hyperdrives: PluginWorker["hyperdrives"];
@@ -305,7 +304,7 @@ const sha256Object = (input: unknown): Effect.Effect<string> =>
 
 // ─────────────────────────────────────────────────────────────────────
 // Glob / gitignore matching (self-contained approximation of the
-// fast-glob + gitignore semantics alchemy's `hashDirectory` uses)
+// glob + gitignore semantics alchemy's `hashDirectory` uses)
 // ─────────────────────────────────────────────────────────────────────
 
 const escapeRegex = (char: string): string =>
@@ -1011,7 +1010,7 @@ const makeAstroSourceProvider = (
           compatibilityDate: ctx.compatibility.date,
           compatibilityFlags: ctx.compatibility.flags,
           worker: {
-            name: ctx.worker.name,
+            name: ctx.workerName,
             bindings: ctx.worker.bindings,
             durableObjectNamespaces: ctx.worker.durableObjectNamespaces,
             hyperdrives: ctx.worker.hyperdrives,

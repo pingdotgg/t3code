@@ -1,0 +1,63 @@
+---
+title: ACME
+description: Manage TLS certificates independently of your hosting provider, at deploy time or from an application.
+---
+
+ACME (Automatic Certificate Management Environment) is the protocol used by
+certificate authorities such as Let's Encrypt and ZeroSSL to issue TLS
+certificates. Alchemy manages the account and certificate separately from the
+service that terminates TLS. You can issue a certificate once and pass its PEM
+chain and private key to Fly or another consumer.
+
+## Choose when to issue
+
+| | During deployment | From an application |
+| --- | --- | --- |
+| API | `ACME.Certificate` | `ACME.IssueCertificate` |
+| Account | `ACME.Account` | Bind an existing `ACME.Account` |
+| DNS-01 validation | Serializable solver descriptor | Runtime DNS client wrapped as a solver |
+| Certificate storage | Stack state | Your application's responsibility |
+| Renewal | Evaluated on each deployment | Your application's scheduler |
+| Revocation | Optional on resource deletion | Explicit `revoke` call |
+
+Start with a deploy-time certificate unless your application needs to issue
+certificates without redeploying. Both paths support wildcard names and use
+DNS-01 validation; HTTP-01 and TLS-ALPN-01 are not implemented.
+
+## Guides
+
+- [Getting started](/acme/getting-started) — deploy a Let's Encrypt staging
+  certificate using an existing Cloudflare zone.
+- [Certificate authorities](/acme/certificate-authorities) — choose staging or
+  production, configure ZeroSSL external account binding, and understand account keys.
+- [DNS validation](/acme/dns-validation) — configure Cloudflare, validate wildcard
+  names, tune propagation, and implement a custom solver.
+- [Renewal & revocation](/acme/renewal) — schedule deployments, understand
+  replacement and deletion, and protect persisted keys.
+- [Runtime issuance](/acme/runtime) — deploy an authenticated Worker that issues
+  and revokes certificates, then integrate your own storage and renewal scheduler.
+- [Using certificates](/acme/using-certificates) — upload a certificate to Fly
+  or pass its outputs to another TLS consumer.
+- [Troubleshooting](/acme/troubleshooting) — diagnose DNS failures, CA rejection,
+  rate limits, and runtime connectivity.
+
+## Security and lifecycle
+
+Account and deploy-time certificate private keys are stored in stack state.
+`Redacted` masks ordinary logs; it does **not** encrypt your state backend.
+Protect the state store, backups, deployment credentials, and any runtime that
+receives the account key.
+
+Renewal needs execution: a certificate resource checks its expiry when you deploy,
+not in a background process. Runtime-issued certificates are not tracked as stack
+resources. In either mode, monitor expiry and arrange renewal before relying on a
+certificate in production.
+
+## API reference
+
+The generated references document each property and method:
+
+- [Account](/providers/acme/account)
+- [Certificate](/providers/acme/certificate)
+- [IssueCertificate](/providers/acme/issuecertificate)
+- [IssueCertificateHttp](/providers/acme/issuecertificatehttp)

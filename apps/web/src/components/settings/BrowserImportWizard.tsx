@@ -457,7 +457,7 @@ function SelectableTile({
       aria-pressed={selected}
       onClick={onSelect}
       className={cn(
-        "flex w-full cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+        "flex w-full cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
         selected
           ? "border-primary bg-primary/8"
           : "border-border/60 hover:border-border hover:bg-muted/40",
@@ -490,9 +490,11 @@ function ImportingStep() {
         <DialogTitle>Importing cookies</DialogTitle>
         <DialogDescription>This may take a moment.</DialogDescription>
       </DialogHeader>
-      <DialogPanel className="flex items-center gap-3 py-6">
-        <Spinner className="size-4 text-muted-foreground" />
-        <span className="text-sm text-muted-foreground">Importing…</span>
+      <DialogPanel>
+        <div className="flex items-center gap-3 py-2">
+          <Spinner size="md" tone="muted" />
+          <span className="text-sm text-muted-foreground">Importing…</span>
+        </div>
       </DialogPanel>
     </>
   );
@@ -515,11 +517,13 @@ function CheckingStep({
             : "Checking whether the browser has closed."}
         </DialogDescription>
       </DialogHeader>
-      <DialogPanel className="flex items-center gap-3 py-6">
-        <Spinner className="size-4 text-muted-foreground" />
-        <span className="text-sm text-muted-foreground">
-          {check === "fullDiskAccess" ? "Checking access…" : "Checking…"}
-        </span>
+      <DialogPanel>
+        <div className="flex items-center gap-3 py-2">
+          <Spinner size="md" tone="muted" />
+          <span className="text-sm text-muted-foreground">
+            {check === "fullDiskAccess" ? "Checking access…" : "Checking…"}
+          </span>
+        </div>
       </DialogPanel>
     </>
   );

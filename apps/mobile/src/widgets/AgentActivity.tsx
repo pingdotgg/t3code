@@ -88,6 +88,8 @@ export function AgentActivity(
         return isLightScheme ? "#dc2626" : "#fca5a5"; // red-600 / red-300
       case "completed":
         return isLightScheme ? "#059669" : "#6ee7b7"; // emerald-600 / emerald-300
+      case "stale":
+        return secondaryForeground;
       case "starting":
       case "running":
       default:
@@ -103,20 +105,28 @@ export function AgentActivity(
     if (phase === "running" || phase === "starting") return 2;
     return 3;
   };
-  const ordered = [...props.activities].sort(
-    (a, b) => phasePriority(a.phase) - phasePriority(b.phase),
-  );
+  // Past the stale date the system stops vouching for the content, so every
+  // in-flight row degrades to "stale" rather than claiming an agent is still
+  // working. Terminal phases keep their own state.
+  const activities: ReadonlyArray<AgentActivityRowProps> = environment.isStale
+    ? props.activities.map((row) =>
+        row.phase === "completed" || row.phase === "failed"
+          ? row
+          : { ...row, phase: "stale", status: "Out of date" },
+      )
+    : props.activities;
+  const ordered = [...activities].sort((a, b) => phasePriority(a.phase) - phasePriority(b.phase));
   const row0 = ordered[0];
   const row1 = ordered[1];
   const row2 = ordered[2];
   const row3 = ordered[3];
   const row4 = ordered[4];
 
-  const attentionRows = props.activities.filter(
+  const attentionRows = activities.filter(
     (row) => row.phase === "waiting_for_approval" || row.phase === "waiting_for_input",
   );
   const attentionRow = attentionRows[0];
-  const failedRow = props.activities.find((row) => row.phase === "failed");
+  const failedRow = activities.find((row) => row.phase === "failed");
   const heroRow = attentionRow ?? failedRow ?? row0;
   const tint = phaseTint(heroRow?.phase);
   // Headline count leans on the accent when a human is actually blocked.
@@ -141,12 +151,20 @@ export function AgentActivity(
   // the two parts in-line so the attention half can carry the accent color;
   // `summary` is the short form for tight spots (expanded center, watch card).
   const agentWord = props.activeCount === 1 ? "agent" : "agents";
-  const agentsLabel = allDone ? outcomeLabel : `${props.activeCount} active ${agentWord}`;
+  const agentsLabel = allDone
+    ? outcomeLabel
+    : environment.isStale
+      ? "Agent status out of date"
+      : `${props.activeCount} active ${agentWord}`;
   const attentionSuffix =
     attentionRows.length > 0
       ? `${attentionRows.length} need${attentionRows.length === 1 ? "s" : ""} attention`
       : "";
-  const activeLabel = allDone ? doneLabel : `${props.activeCount} active`;
+  const activeLabel = allDone
+    ? doneLabel
+    : environment.isStale
+      ? "Out of date"
+      : `${props.activeCount} active`;
   const summary = attentionSuffix || activeLabel;
 
   // Any registered scheme variant routes back to this app; taps are delivered

@@ -154,6 +154,48 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("recovers colon-bearing descriptions with invocation metadata intact", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+
+      for (const [description, comment] of [
+        ["Browser automation + AI test authoring via kane-cli: run browser objectives, ...", ""],
+        ['Read C:\\skills\\guide#tag: continue with "quoted".', " # trailing: comment"],
+      ] as const) {
+        yield* writeSkill(
+          path.join(configDir, "skills"),
+          "kane-cli",
+          [
+            "---",
+            "name: frontmatter-alias",
+            `description: ${description}${comment}`,
+            "allowed-tools: [Read, Write]",
+            "disable-model-invocation: yes",
+            "user-invocable: no",
+            "---",
+          ].join("\n"),
+        );
+
+        const skills = yield* discoverClaudeSkills({ homePath: configDir }, undefined);
+
+        assert.deepEqual(skills, [
+          {
+            name: "kane-cli",
+            path: path.join(configDir, "skills", "kane-cli", "SKILL.md"),
+            enabled: true,
+            scope: "user",
+            description,
+            userInvocationOnly: true,
+            userInvocable: false,
+          },
+        ]);
+      }
+    }),
+  );
+
   it.effect("falls back to the directory name and skips malformed frontmatter", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -163,7 +205,17 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       const skillsDir = path.join(configDir, "skills");
 
       yield* writeSkill(skillsDir, "no-frontmatter", "# Just a heading\n");
-      yield* writeSkill(skillsDir, "broken-yaml", "---\nname: [unclosed\n---\n");
+      for (const [directoryName, field] of [
+        ["broken-yaml", "name: [unclosed"],
+        ["broken-tools", "allowed-tools: [Read, Write"],
+        ["broken-quoted", 'name: "unclosed: text'],
+      ] as const) {
+        yield* writeSkill(
+          skillsDir,
+          directoryName,
+          ["---", "description: Run: browser objectives.", field, "---"].join("\n"),
+        );
+      }
       // A stray file (not a directory with SKILL.md) must be skipped.
       yield* fs.makeDirectory(skillsDir, { recursive: true });
       yield* fs.writeFileString(path.join(skillsDir, "README.md"), "not a skill");

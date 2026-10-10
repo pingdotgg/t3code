@@ -1,5 +1,5 @@
 import { it as effectIt } from "@effect/vitest";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -464,6 +464,45 @@ describe("findAccessibleWindow", () => {
     expect(findAccessibleWindow(windows, { ...captured, title: "" }, "wayland")).toBeUndefined();
   });
 
+  it("accepts one PID-scoped untitled window whose bounds match", () => {
+    const windows = [{ name: null, bounds: captured.bounds }];
+
+    expect(
+      findAccessibleWindow(windows, captured, "wayland", { allowUntitledUniqueBounds: true }),
+    ).toBe(windows[0]);
+    expect(findAccessibleWindow(windows, captured, "wayland")).toBeUndefined();
+  });
+
+  it("rejects ambiguous PID-scoped untitled windows even when bounds match", () => {
+    const windows = [
+      { name: null, bounds: captured.bounds },
+      { name: "", bounds: { ...captured.bounds, x: 0, y: 0 } },
+    ];
+
+    expect(
+      findAccessibleWindow(windows, captured, "wayland", { allowUntitledUniqueBounds: true }),
+    ).toBeUndefined();
+  });
+
+  it("does not fall back to a differently titled PID-scoped window with matching bounds", () => {
+    const windows = [{ name: "Preferences", bounds: captured.bounds }];
+
+    expect(
+      findAccessibleWindow(windows, captured, "wayland", { allowUntitledUniqueBounds: true }),
+    ).toBeUndefined();
+  });
+
+  it("does not use unique bounds when a titled match is already ambiguous", () => {
+    const windows = [
+      { name: "Editor", bounds: captured.bounds },
+      { name: "Editor", bounds: { ...captured.bounds, x: 0, y: 0 } },
+    ];
+
+    expect(
+      findAccessibleWindow(windows, captured, "wayland", { allowUntitledUniqueBounds: true }),
+    ).toBeUndefined();
+  });
+
   it.each(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])(
     "ignores a leading Wayland title spinner frame %s",
     (frame) => {
@@ -664,7 +703,7 @@ describe("isWaylandSession", () => {
     "falls back to a live runtime directory socket when session variables are stripped",
     () =>
       Effect.gen(function* () {
-        if ((yield* HostProcessPlatform) !== "linux") return;
+        if ((yield* HostProcess.Platform) !== "linux") return;
         yield* Effect.promise(async () => {
           const { mkdtemp, rm, writeFile } = await import("node:fs/promises");
           const { createServer } = await import("node:net");

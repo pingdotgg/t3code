@@ -114,7 +114,15 @@ class T3ContextChip(
     fun color(
       value: String,
       fallback: Int
-    ): Int = runCatching { Color.parseColor(value) }.getOrDefault(fallback)
+    ): Int = runCatching {
+      // React Native hex colors put alpha last; Android's parser puts it first.
+      val androidColor = if (value.length == 9 && value.startsWith("#")) {
+        "#${value.takeLast(2)}${value.substring(1, 7)}"
+      } else {
+        value
+      }
+      Color.parseColor(androidColor)
+    }.getOrDefault(fallback)
 
     private fun blend(accent: Int, base: Int, weight: Float): Int = Color.rgb(
       (Color.red(accent) * weight + Color.red(base) * (1 - weight)).toInt(),

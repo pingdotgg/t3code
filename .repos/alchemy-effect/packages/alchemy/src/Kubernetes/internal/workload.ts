@@ -20,6 +20,7 @@ import type {
   WorkloadImageSource,
 } from "../ClusterAdapter.ts";
 import type { ClusterLike, Connection, ConnectionAuth } from "../Connection.ts";
+import type { ConnectionRegistry } from "./registry.ts";
 
 /**
  * Structural deep merge: objects merge recursively; arrays and primitives
@@ -50,9 +51,17 @@ export const deepMerge = <T>(base: T, override: unknown): T => {
   return out as T;
 };
 
+/**
+ * The image build platform of a workload: its own `architecture`, else the
+ * connection's node architecture, else `linux/amd64`.
+ */
 export const imagePlatformOf = (
   architecture: "amd64" | "arm64" | undefined,
-): string => (architecture === "arm64" ? "linux/arm64" : "linux/amd64");
+  connection?: Connection | undefined,
+): string =>
+  (architecture ?? connection?.architecture) === "arm64"
+    ? "linux/arm64"
+    : "linux/amd64";
 
 /**
  * Best-effort {@link Connection} of a `cluster` prop value — `undefined`
@@ -218,6 +227,10 @@ export const computeStaticWorkloadImageHash = Effect.fn(function* (
 
 export interface ResolveWorkloadImageOptions {
   adapter: ClusterAdapterService;
+  /** The target connection — its `registry`, if any, receives builds. */
+  connection: Connection;
+  /** Publisher for connection-level registries. */
+  connectionRegistry: ConnectionRegistry;
   id: string;
   source: WorkloadImageSource;
   platform: string;
@@ -232,9 +245,10 @@ export interface ResolveWorkloadImageOptions {
 
 /**
  * Resolve the container image for a workload: through the cluster
- * adapter's managed registry when it has one (build/mirror + push), or —
- * on registry-less clusters — pass a pre-built `image` reference through
- * verbatim. `main`/`context` sources require a managed registry.
+ * adapter's managed registry when it has one (build/mirror + push). Other
+ * clusters run a pre-built `image` reference verbatim and build `main` /
+ * `context` sources into the connection's `registry`, which those sources
+ * require.
  */
 export const resolveWorkloadImage = Effect.fn(function* (
   options: ResolveWorkloadImageOptions,
@@ -267,12 +281,29 @@ export const resolveWorkloadImage = Effect.fn(function* (
     };
   }
 
+  const registry = options.connection.registry;
+  if (registry !== undefined) {
+    return yield* options.connectionRegistry.resolve({
+      id: options.id,
+      registry,
+      source,
+      platform: options.platform,
+      port: options.port,
+      isExternal: options.isExternal,
+      bootstrap: options.bootstrap,
+      state: options.state,
+      session: options.session,
+    });
+  }
+
   return yield* Effect.die(
     new Error(
-      `'${options.id}': this cluster has no managed image registry, so ` +
-        "'main' and 'context' image sources cannot be built and pushed. " +
-        "Use a pre-built 'image' reference the cluster can pull, or target " +
-        "a cluster whose platform provides a registry (e.g. AWS.EKS → ECR).",
+      `'${options.id}': 'main' and 'context' image sources are built and ` +
+        "pushed to a container registry, and this cluster connection has " +
+        "none. Add a `registry` to the connection (e.g. " +
+        '`Kubernetes.KubeConfig({ context, registry: { server: "ghcr.io/acme" } })`), ' +
+        "use `Kubernetes.LocalCluster`, which includes one, or run a " +
+        "pre-built `image` reference the cluster can pull.",
     ),
   );
 });
@@ -280,6 +311,8 @@ export const resolveWorkloadImage = Effect.fn(function* (
 /** Plan-time content hash for `diff` — adapter-aware. */
 export const workloadImageHash = Effect.fn(function* (options: {
   adapter: ClusterAdapterService;
+  connection: Connection;
+  connectionRegistry: ConnectionRegistry;
   source: WorkloadImageSource;
   platform: string;
   port?: number | undefined;
@@ -288,6 +321,18 @@ export const workloadImageHash = Effect.fn(function* (options: {
 }) {
   if (options.adapter.registry !== undefined) {
     return yield* options.adapter.registry.hash({
+      source: options.source,
+      platform: options.platform,
+      port: options.port,
+      isExternal: options.isExternal,
+      bootstrap: options.bootstrap,
+    });
+  }
+  if (
+    options.connection.registry !== undefined &&
+    imageSourceKind(options.source) === "main"
+  ) {
+    return yield* options.connectionRegistry.hash({
       source: options.source,
       platform: options.platform,
       port: options.port,
@@ -318,13 +363,14 @@ export const makeServerBootstrap =
 import { BunServices } from "@effect/platform-bun";
 import { BunHttpServer } from "alchemy/Http";
 import { Stack } from "alchemy/Stack";
+import { Stage } from "alchemy/Stage";
 import { makeEntrypointLayer, reifyBoundConfigProvider } from "alchemy/Runtime";
 import { provideProcessTelemetry } from "alchemy/Telemetry";
 import * as Context from "effect/Context";
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 
@@ -358,19 +404,23 @@ const program = tag.pipe(
     ),
   ),
   Effect.provide(
-    layer.pipe(Layer.provideMerge(Layer.effect(
-      Stack,
-      Effect.all([
-        Config.string("ALCHEMY_STACK_NAME"),
-        Config.string("ALCHEMY_STAGE")
-      ]).pipe(
-        Effect.map(([name, stage]) => ({
-          name,
-          stage,
-          bindings: {},
-          resources: {}
-        }))
-      )
+    layer.pipe(Layer.provideMerge(Layer.mergeAll(
+      Layer.effect(
+        Stack,
+        Effect.all([
+          Config.String("ALCHEMY_STACK_NAME"),
+          Config.String("ALCHEMY_STAGE")
+        ]).pipe(
+          Effect.map(([name, stage]) => ({
+            name,
+            stage,
+            bindings: {},
+            resources: {}
+          }))
+        )
+      ),
+      // Module-scope declarations shared with the Stack may read the stage.
+      Layer.effect(Stage, Config.String("ALCHEMY_STAGE")),
     )),
       Layer.provideMerge(BunHttpServer()),
       Layer.provideMerge(platform),
@@ -403,13 +453,14 @@ export const makeJobBootstrap =
     `
 import { BunServices } from "@effect/platform-bun";
 import { Stack } from "alchemy/Stack";
+import { Stage } from "alchemy/Stage";
 import { makeEntrypointLayer, reifyBoundConfigProvider } from "alchemy/Runtime";
 import { provideProcessTelemetry } from "alchemy/Telemetry";
 import * as Context from "effect/Context";
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 
@@ -438,19 +489,23 @@ const program = tag.pipe(
     ),
   ),
   Effect.provide(
-    layer.pipe(Layer.provideMerge(Layer.effect(
-      Stack,
-      Effect.all([
-        Config.string("ALCHEMY_STACK_NAME"),
-        Config.string("ALCHEMY_STAGE")
-      ]).pipe(
-        Effect.map(([name, stage]) => ({
-          name,
-          stage,
-          bindings: {},
-          resources: {}
-        }))
-      )
+    layer.pipe(Layer.provideMerge(Layer.mergeAll(
+      Layer.effect(
+        Stack,
+        Effect.all([
+          Config.String("ALCHEMY_STACK_NAME"),
+          Config.String("ALCHEMY_STAGE")
+        ]).pipe(
+          Effect.map(([name, stage]) => ({
+            name,
+            stage,
+            bindings: {},
+            resources: {}
+          }))
+        )
+      ),
+      // Module-scope declarations shared with the Stack may read the stage.
+      Layer.effect(Stage, Config.String("ALCHEMY_STAGE")),
     )),
       Layer.provideMerge(platform),
       Layer.provideMerge(

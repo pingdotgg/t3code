@@ -26,7 +26,7 @@ export function CodeAppearanceSection() {
   );
 
   return (
-    <SettingsSection card title="Code & Diffs">
+    <SettingsSection title="Code & Diffs">
       <CodeAppearancePreview
         fontSize={appearance.codeFontSize}
         wordBreak={appearance.codeWordBreak}

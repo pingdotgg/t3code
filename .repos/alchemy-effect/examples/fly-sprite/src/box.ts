@@ -3,12 +3,12 @@ import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Redacted from "effect/Redacted";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * HTTP Sprite. Yield FileSystem in init, not inside fetch.
- * Config.redacted is written onto the Sprite at deploy time.
+ * Config.Redacted is written onto the Sprite at deploy time.
  */
 export default class Box extends Fly.Sprite<Box>()(
   "Box",
@@ -18,10 +18,10 @@ export default class Box extends Fly.Sprite<Box>()(
     port: 3000,
   },
   Effect.gen(function* () {
-    const marker = yield* Config.string("SPRITE_MARKER").pipe(
+    const marker = yield* Config.String("SPRITE_MARKER").pipe(
       Config.withDefault("hello-from-fly-sprite"),
     );
-    const apiKey = yield* Config.redacted("API_KEY").pipe(
+    const apiKey = yield* Config.Redacted("API_KEY").pipe(
       Config.withDefault(Redacted.make("unused")),
     );
     const fs = yield* FileSystem.FileSystem;

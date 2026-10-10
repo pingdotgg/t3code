@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
   buildSshAskpassHelperDescriptor,
@@ -50,7 +50,7 @@ describe("ssh auth", () => {
       assert.equal(yield* fs.exists(askpassPath), true);
       assert.include(yield* fs.readFileString(askpassPath), 'printf "%s\\n" "$T3_SSH_AUTH_SECRET"');
     }).pipe(
-      Effect.provide(Layer.merge(NodeServices.layer, Layer.succeed(HostProcessPlatform, "linux"))),
+      Effect.provide(Layer.merge(NodeServices.layer, Layer.succeed(HostProcess.Platform, "linux"))),
       Effect.scoped,
     ),
   );
@@ -61,7 +61,7 @@ describe("ssh auth", () => {
         directory: "C:\\temp\\t3code-ssh-askpass",
       }).pipe(
         Effect.provide(
-          Layer.merge(NodeServices.layer, Layer.succeed(HostProcessPlatform, "win32")),
+          Layer.merge(NodeServices.layer, Layer.succeed(HostProcess.Platform, "win32")),
         ),
       );
 

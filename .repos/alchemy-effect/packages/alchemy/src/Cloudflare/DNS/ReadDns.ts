@@ -27,7 +27,7 @@ import type { Zone } from "../Zone/Zone.ts";
  * ```typescript
  * import * as Cloudflare from "alchemy/Cloudflare";
  * import * as Effect from "effect/Effect";
- * import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+ * import * as HttpServerResponse from "effect/http/HttpServerResponse";
  *
  * const Zone = Cloudflare.Zone.Zone("MyZone", { name: "example.com" });
  *

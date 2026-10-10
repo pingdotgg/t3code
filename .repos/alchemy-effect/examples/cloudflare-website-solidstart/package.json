@@ -12,21 +12,21 @@
     "destroy": "alchemy destroy"
   },
   "dependencies": {
-    "@solidjs/meta": "catalog:frontend",
-    "@solidjs/router": "^0.15.0",
-    "@solidjs/start": "2.0.0-alpha.2",
-    "solid-js": "^1.9.5",
+    "@solidjs/meta": "catalog:",
+    "@solidjs/router": "catalog:solid-v1",
+    "@solidjs/start": "catalog:solid-v1",
+    "solid-js": "catalog:",
     "alchemy": "workspace:*",
-    "effect": "catalog:effect",
-    "vite": "^7.0.0",
-    "@solidjs/vite-plugin-nitro-2": "catalog:frontend"
+    "effect": "catalog:",
+    "vite": "catalog:solid-v1",
+    "@solidjs/vite-plugin-nitro-2": "catalog:"
   },
   "engines": {
     "node": ">=22"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "catalog:frontend",
-    "tailwindcss": "catalog:frontend"
+    "@tailwindcss/vite": "catalog:",
+    "tailwindcss": "catalog:"
   },
   "repository": {
     "type": "git",

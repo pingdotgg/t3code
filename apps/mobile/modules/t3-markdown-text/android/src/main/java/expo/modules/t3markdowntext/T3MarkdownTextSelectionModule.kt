@@ -8,6 +8,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.os.Build
 import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.Spanned
@@ -164,6 +165,17 @@ private class SanitizingSelectionActionModeCallback(
   }
 }
 
+internal fun applySelectionHandleColor(textView: TextView, color: Int) {
+  if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+  textView.textSelectHandle?.mutate()?.apply { setTint(color) }?.let(textView::setTextSelectHandle)
+  textView.textSelectHandleLeft?.mutate()?.apply {
+    setTint(color)
+  }?.let(textView::setTextSelectHandleLeft)
+  textView.textSelectHandleRight?.mutate()?.apply {
+    setTint(color)
+  }?.let(textView::setTextSelectHandleRight)
+}
+
 class T3MarkdownTextSelectionModule : Module() {
   private val chipImages = LruCache<String, Map<String, Any>>(128)
 
@@ -183,8 +195,22 @@ class T3MarkdownTextSelectionModule : Module() {
       }
     }.fontMetricsInt
 
+  private fun setSelectionHandleColor(reactTag: Int, color: Int) {
+    val reactContext = appContext.reactContext as? ReactContext ?: return
+    reactContext.runOnUiQueueThread {
+      val textView = runCatching {
+        UIManagerHelper.getUIManagerForReactTag(reactContext, reactTag)?.resolveView(reactTag)
+      }.getOrNull() as? TextView ?: return@runOnUiQueueThread
+      applySelectionHandleColor(textView, color)
+    }
+  }
+
   override fun definition() = ModuleDefinition {
     Name("T3MarkdownTextSelection")
+
+    Function("setSelectionHandleColor") { reactTag: Int, color: Int ->
+      setSelectionHandleColor(reactTag, color)
+    }
 
     Function("renderContextChip") { payloadJson: String ->
       val resources = appContext.reactContext?.resources ?: return@Function null

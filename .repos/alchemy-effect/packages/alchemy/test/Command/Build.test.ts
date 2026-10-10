@@ -95,7 +95,7 @@ test.provider(
       const distExistsAfterDestroy = yield* fs.exists(fixture.outdir);
       expect(distExistsAfterDestroy).toBe(false);
     }),
-  { timeout: 60000 },
+  { tags: ["unit", "local"], timeout: 60000 },
 );
 
 test.provider(
@@ -132,38 +132,41 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { timeout: 60000 },
+  { tags: ["unit", "local"], timeout: 60000 },
 );
 
-test.provider("rebuilds memoized output if outdir is missing", (stack) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
+test.provider(
+  "rebuilds memoized output if outdir is missing",
+  (stack) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const fixture = yield* makeTemporaryFixture();
-    expect(yield* fs.exists(fixture.outdir)).toBe(false);
+      const fixture = yield* makeTemporaryFixture();
+      expect(yield* fs.exists(fixture.outdir)).toBe(false);
 
-    const deploy = () =>
-      stack.deploy(
-        Command.Build("test-build", {
-          command: "bash build.sh",
-          cwd: fixture.cwd,
-          outdir: "dist",
-        }),
-      );
+      const deploy = () =>
+        stack.deploy(
+          Command.Build("test-build", {
+            command: "bash build.sh",
+            cwd: fixture.cwd,
+            outdir: "dist",
+          }),
+        );
 
-    yield* deploy();
-    expect(yield* fs.exists(fixture.outdir)).toBe(true);
+      yield* deploy();
+      expect(yield* fs.exists(fixture.outdir)).toBe(true);
 
-    yield* fs.remove(fixture.outdir, { recursive: true });
-    expect(yield* fs.exists(fixture.outdir)).toBe(false);
+      yield* fs.remove(fixture.outdir, { recursive: true });
+      expect(yield* fs.exists(fixture.outdir)).toBe(false);
 
-    yield* deploy();
-    expect(yield* fs.exists(fixture.outdir)).toBe(true);
+      yield* deploy();
+      expect(yield* fs.exists(fixture.outdir)).toBe(true);
 
-    yield* stack.destroy();
-  }),
+      yield* stack.destroy();
+    }),
+  { tags: ["unit", "local"] },
 );
 
 test.provider(
@@ -237,5 +240,5 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { timeout: 60000 },
+  { tags: ["unit", "local"], timeout: 60000 },
 );

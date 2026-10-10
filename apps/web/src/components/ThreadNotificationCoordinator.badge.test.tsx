@@ -1,4 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -22,9 +23,7 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("./ui/toast", () => ({ toastManager: { add: state.toast } }));
 vi.mock("../state/shell", () => ({ environmentShell: { stateValueAtom: (id: string) => id } }));
 vi.mock("../state/environments", () => ({
-  useEnvironments: () => ({
-    environments: state.environmentIds.map((environmentId) => ({ environmentId })),
-  }),
+  useEnvironmentIds: () => state.environmentIds,
 }));
 vi.mock("../hooks/useSettings", () => ({
   useClientSettings: (
@@ -63,15 +62,74 @@ const thread = {
   archivedAt: null as string | null,
   hasPendingApprovals: false,
   hasPendingUserInput: false,
-  session: null,
+  session: null as { status: string } | null,
   latestTurn: { turnId: "turn", state: "running", completedAt: null as string | null },
 };
 let renderer: ReactTestRenderer | undefined;
 let focused = false;
 let visibility = "visible";
 
+const SHELL_NOW = DateTime.makeUnsafe("2026-09-13T07:00:00.000Z");
+
+function toV2ThreadShell(input: typeof thread) {
+  const latestTurn = input.latestTurn;
+  return {
+    id: input.id,
+    projectId: "project",
+    title: input.title,
+    providerInstanceId: "codex",
+    modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    activeProviderThreadId: null,
+    lineage: {
+      rootThreadId: input.id,
+      parentThreadId: null,
+      relationshipToParent: null,
+    },
+    forkedFrom: null,
+    createdBy: "user",
+    creationSource: "web",
+    latestRunId: latestTurn.turnId,
+    activeRunId: null,
+    status:
+      latestTurn.state === "completed"
+        ? "completed"
+        : latestTurn.state === "error" || input.session?.status === "error"
+          ? "failed"
+          : "running",
+    pendingRuntimeRequest: input.hasPendingUserInput
+      ? { id: "request-1", kind: "user_input", createdAt: SHELL_NOW }
+      : input.hasPendingApprovals
+        ? { id: "request-1", kind: "command", createdAt: SHELL_NOW }
+        : null,
+    latestVisibleMessage: null,
+    latestUserMessageAt: null,
+    hasActionableProposedPlan: false,
+    itemCount: 0,
+    visibleItemCount: 0,
+    createdAt: SHELL_NOW,
+    updatedAt: SHELL_NOW,
+    latestRunRequestedAt: SHELL_NOW,
+    latestRunStartedAt: SHELL_NOW,
+    latestRunCompletedAt: latestTurn.completedAt
+      ? DateTime.makeUnsafe(latestTurn.completedAt)
+      : undefined,
+    archivedAt: input.archivedAt ? DateTime.makeUnsafe(input.archivedAt) : null,
+    settledOverride: null,
+    settledAt: null,
+    lastVisitedAt: null,
+    deletedAt: null,
+  };
+}
+
 function shell(overrides: Partial<typeof thread> = {}) {
-  return { status: "live", snapshot: Option.some({ threads: [{ ...thread, ...overrides }] }) };
+  return {
+    status: "live",
+    snapshot: Option.some({ threads: [toV2ThreadShell({ ...thread, ...overrides })] }),
+  };
 }
 function complete(environment = "one", completedAt = "2026-09-13T08:00:00Z") {
   state.shells.set(

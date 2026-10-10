@@ -15,12 +15,12 @@ import type * as Path from "effect/Path";
 import type { PlatformError } from "effect/PlatformError";
 import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 import type { Artifacts } from "../../Artifacts.ts";
 import type * as Bundle from "../../Bundle/Bundle.ts";
-import type { WorkflowExport } from "../Workflows/Workflow.ts";
 import type { AssetReadResult, ValidationError } from "./Assets.ts";
-import type { DurableObjectExport } from "./DurableObject.ts";
+import type { WorkerExport } from "./WorkerRuntimeContext.ts";
+import { getToolingCompatibility } from "./Compatibility.ts";
 import { makeInlineScriptSource } from "./Sources/InlineScript.ts";
 import { makePrebuiltSource } from "./Sources/Prebuilt.ts";
 import { isPythonMain, makePythonSource } from "./Sources/Python.ts";
@@ -76,8 +76,12 @@ export interface SourceBuildOutput {
  * once per stack.
  */
 export interface SourceContext {
+  /** Resolved runtime storage directory, excluded from source inputs. */
+  readonly dotAlchemy?: string;
   /** Logical id of the Worker resource. */
   readonly id: string;
+  /** Namespace-qualified id (`ns/Worker`) — the display prefix for log lines. */
+  readonly fqn: string;
   /** Physical script name. */
   readonly workerName: string;
   readonly compatibility: {
@@ -89,7 +93,7 @@ export interface SourceContext {
     | { readonly kind: "external" }
     | {
         readonly kind: "effect";
-        readonly exports: Record<string, DurableObjectExport | WorkflowExport>;
+        readonly exports: Record<string, WorkerExport>;
       };
   readonly stack: { readonly name: string; readonly stage: string };
   /**
@@ -151,6 +155,8 @@ export type SourceDevHandle =
   | {
       readonly mode: "server";
       readonly url: URL;
+      /** Register an HTTP forwarding Worker when the server does not run in workerd. */
+      readonly serviceBinding?: "http";
     };
 
 /**
@@ -384,15 +390,22 @@ export const resolveSource = (
  * persisted output state rather than the name generator).
  */
 export const makeSourceContext = (params: {
+  dotAlchemy?: string;
   id: string;
+  fqn: string;
   workerName: string;
   props: WorkerProps;
   compatibility: { date: string; flags: string[] };
   stack: { name: string; stage: string };
 }): SourceContext => ({
+  dotAlchemy: params.dotAlchemy,
   id: params.id,
+  fqn: params.fqn,
   workerName: params.workerName,
-  compatibility: params.compatibility,
+  compatibility: getToolingCompatibility(
+    params.compatibility,
+    params.props.main,
+  ),
   entry: params.props.isExternal
     ? { kind: "external" }
     : { kind: "effect", exports: params.props.exports ?? {} },

@@ -45,6 +45,10 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 describe("searchSettings", () => {
+  it.each(["send shortcut", "multiline", "new line"])("finds Send shortcut for %s", (query) => {
+    expect(searchSettings(query).map((item) => item.id)).toContain("send-shortcut");
+  });
+
   it("matches titles, sections, and remembered setting details", () => {
     expect(searchSettings("word", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
     expect(searchSettings("network", ITEMS).map((item) => item.id)).toEqual(["network-access"]);
@@ -150,6 +154,7 @@ describe("searchSettings", () => {
       hasCloudPublicConfig: false,
       hasEnvironment: false,
       hasProviderSettingsEnvironment: false,
+      hasMacProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
@@ -161,9 +166,11 @@ describe("searchSettings", () => {
       "network-access",
       "publish-agent-activity",
       "provider-health-check-interval",
+      "cursor-keychain-usage",
       "source-control-writer-model",
       "source-control-writing-style",
       "t3-connect",
+      "hold-webhooks-while-offline",
       "tailscale-https",
       "wsl-backend",
       "auto-settle-inactive-threads",
@@ -173,11 +180,31 @@ describe("searchSettings", () => {
     expect(available.map((item) => item.id).filter((id) => gatedIds.has(id))).toEqual([]);
   });
 
+  it("offers Cursor Keychain settings only when a macOS provider environment is available", () => {
+    const availability = {
+      hasCloudPublicConfig: false,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: true,
+      hasMacProviderSettingsEnvironment: false,
+      canManageLocalBackend: false,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: false,
+    };
+    const itemIds = (macAvailable: boolean) =>
+      filterAvailableSettingsSearchItems({
+        ...availability,
+        hasMacProviderSettingsEnvironment: macAvailable,
+      }).map((item) => item.id);
+    expect(itemIds(false)).not.toContain("cursor-keychain-usage");
+    expect(itemIds(true)).toContain("cursor-keychain-usage");
+  });
+
   it("keeps the local toggle searchable without offering hidden host publishing controls", () => {
     const availability = {
       hasCloudPublicConfig: true,
       hasEnvironment: true,
       hasProviderSettingsEnvironment: true,
+      hasMacProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: false,
@@ -195,11 +222,30 @@ describe("searchSettings", () => {
     expect(browser).toContain("publish-agent-activity");
   });
 
+  it("offers webhook holding only while the managed tunnel is on, like its row", () => {
+    const availability = {
+      hasCloudPublicConfig: true,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: true,
+      hasMacProviderSettingsEnvironment: false,
+      canManageLocalBackend: true,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: false,
+    };
+    const itemIds = (managedTunnelActive: boolean) =>
+      filterAvailableSettingsSearchItems({ ...availability, managedTunnelActive }).map(
+        (item) => item.id,
+      );
+    expect(itemIds(false)).not.toContain("hold-webhooks-while-offline");
+    expect(itemIds(true)).toContain("hold-webhooks-while-offline");
+  });
+
   it("shows automatic settlement settings when the server supports them", () => {
     const available = filterAvailableSettingsSearchItems({
       hasCloudPublicConfig: false,
       hasEnvironment: false,
       hasProviderSettingsEnvironment: false,
+      hasMacProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: true,
@@ -210,6 +256,32 @@ describe("searchSettings", () => {
       "auto-settle-merged-threads",
       "days-before-auto-settle",
     ]);
+  });
+
+  it("finds keybinding commands by label, command id, and default key", () => {
+    expect(searchSettings("toggle sidebar")[0]?.id).toBe("keybinding-sidebar.toggle");
+    expect(searchSettings("sidebar.toggle")[0]?.id).toBe("keybinding-sidebar.toggle");
+    expect(searchSettings("mod+b")[0]?.id).toBe("keybinding-sidebar.toggle");
+    expect(searchSettings("copy link")[0]).toMatchObject({
+      id: "keybinding-thread.copyReference",
+      to: "/settings/keybindings",
+    });
+  });
+
+  it("ranks keybinding commands after other settings", () => {
+    const ids = searchSettings("model").map((item) => item.id);
+    expect(ids[0]).toBe("default-model");
+    expect(ids.indexOf("keybinding-modelPicker.toggle")).toBeGreaterThan(
+      ids.indexOf("text-generation-model"),
+    );
+  });
+
+  it("sends commands without a default binding to the section", () => {
+    expect(searchSettings("thread.stop")[0]).toMatchObject({
+      id: "keybinding-thread.stop",
+      targetId: "keybindings",
+    });
+    expect(searchSettings("sidebar.toggle")[0]?.targetId).toBeUndefined();
   });
 
   it("keeps catalog result ids unique", () => {
@@ -229,6 +301,10 @@ describe("searchSettings", () => {
     });
     expect(searchSettings("word wrap")[0]).toMatchObject({
       id: "word-wrap",
+      to: "/settings/appearance",
+    });
+    expect(searchSettings("composer context")[0]).toMatchObject({
+      id: "composer-context",
       to: "/settings/appearance",
     });
     expect(searchSettings("environment identification")[0]).toMatchObject({
@@ -300,6 +376,7 @@ describe("searchSettings", () => {
       hasCloudPublicConfig: false,
       hasEnvironment: true,
       hasProviderSettingsEnvironment: true,
+      hasMacProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: true,
@@ -394,6 +471,7 @@ describe("auto-settlement search availability", () => {
       hasCloudPublicConfig: false,
       hasEnvironment: true,
       hasProviderSettingsEnvironment: true,
+      hasMacProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
       hasThreadAutoSettlement: availability.eligibleEnvironmentIds.length > 0,

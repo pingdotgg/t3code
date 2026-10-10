@@ -11,7 +11,7 @@ import * as PlatformError from "effect/PlatformError";
 import { vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
@@ -21,7 +21,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return { ...actual, readdir: vi.fn(actual.readdir) };
 });
 
-const TestLayer = Layer.empty.pipe(
+const layerTest = Layer.empty.pipe(
   Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
   Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(VcsProcess.layer),
@@ -84,13 +84,13 @@ const searchWorkspaceEntries = (input: {
   });
 
 const appendSeparator = (input: string) =>
-  Effect.map(HostProcessPlatform, (platform) =>
+  Effect.map(HostProcess.Platform, (platform) =>
     input.endsWith("/") || input.endsWith("\\")
       ? input
       : `${input}${platform === "win32" ? "\\" : "/"}`,
   );
 
-it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
+it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
@@ -143,7 +143,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           yield* writeTextFile(cwd, ".git/HEAD");
-          const platform = yield* HostProcessPlatform;
+          const platform = yield* HostProcess.Platform;
           if (platform !== "win32") yield* fileSystem.symlink(outside, path.join(cwd, "external"));
           const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
           for (const directoryPath of [

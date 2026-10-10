@@ -117,5 +117,8 @@ test.provider(
       yield* stack.destroy();
       yield* assertGone(configId);
     }),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:aws", "provider:aws:opensearchserverless", "live"],
+    timeout: 120_000,
+  },
 );

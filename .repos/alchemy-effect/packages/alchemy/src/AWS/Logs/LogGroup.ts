@@ -266,8 +266,14 @@ export const LogGroupProvider = () =>
           const { accountId, region } = yield* AWSEnvironment.current;
           const logGroupName =
             output?.logGroupName ?? (yield* toLogGroupName(id, news));
-          const arn = (output?.logGroupArn ??
-            `arn:aws:logs:${region}:${accountId}:log-group:${logGroupName}`) as LogGroupArn;
+          // `output.logGroupArn` may be state written by an older provider
+          // version (or anything else) that persisted `describeLogGroups`'
+          // trailing `:*` form — normalize before it reaches the tagging
+          // APIs, which reject that suffix with "Invalid resourceArn".
+          const arn = normalizeLogGroupArn(
+            (output?.logGroupArn ??
+              `arn:aws:logs:${region}:${accountId}:log-group:${logGroupName}`) as LogGroupArn,
+          );
           const internalTags = yield* createInternalTags(id);
           const desiredTags = { ...internalTags, ...news.tags };
           // Wire unit is whole days (retentionInDays).

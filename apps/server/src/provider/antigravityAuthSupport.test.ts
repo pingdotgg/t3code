@@ -1,23 +1,22 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderInstanceId } from "@t3tools/contracts";
-import {
-  HostProcessExecutablePath,
-  HostProcessIsExecutable,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as Ndjson from "effect/unstable/encoding/Ndjson";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as Ndjson from "effect/encoding/Ndjson";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as AcpErrors from "effect-acp/errors";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
@@ -36,7 +35,7 @@ import {
   makeAntigravityStdoutTransform,
   parseAntigravityAuthorizationUrl,
   prepareAntigravityProfile,
-  resolveAntigravityProfileDirectory,
+  resolveAntigravityInstanceDirectories,
 } from "./antigravityAuthSupport.ts";
 
 const authorizationUrl =
@@ -246,20 +245,44 @@ describe("Antigravity process environment", () => {
     }
   });
 
-  it("keeps accounts separate even when instance IDs differ only by case", () => {
-    const first = resolveAntigravityProfileDirectory(
-      "/userdata",
-      ProviderInstanceId.make("antigravity"),
-    );
-    const second = resolveAntigravityProfileDirectory(
-      "/userdata",
-      ProviderInstanceId.make("Antigravity"),
-    );
-    expect(first.toLowerCase()).not.toBe(second.toLowerCase());
-    expect(
-      resolveAntigravityProfileDirectory("/userdata", ProviderInstanceId.make("antigravity")),
-    ).toBe(first);
-  });
+  it.effect("keeps accounts separate even when instance IDs differ only by case", () =>
+    Effect.gen(function* () {
+      const first = yield* resolveAntigravityInstanceDirectories(
+        "/userdata",
+        ProviderInstanceId.make("antigravity"),
+      );
+      const second = yield* resolveAntigravityInstanceDirectories(
+        "/userdata",
+        ProviderInstanceId.make("Antigravity"),
+      );
+      // Existing sign-ins live at this path; it must not move.
+      expect(first.profile).toBe(
+        "/userdata/providers/antigravity/ac0a3dfd6dddb20962cecff6ee5fe65e19d3923be20e52c5ab52ff877f7e4c32",
+      );
+      expect(first.profile.toLowerCase()).not.toBe(second.profile.toLowerCase());
+      expect(first.runtimeTemp.toLowerCase()).not.toBe(second.runtimeTemp.toLowerCase());
+    }).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodePath.layerPosix))),
+  );
+
+  it.effect("keeps the unpacked Windows runtime under MAX_PATH for long user names", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      // Deepest member of the official agy_acp_server_1.1.1 windows-x86_64 bundle.
+      const deepestMember =
+        "google3\\cloud\\developer_experience\\antigravity_extensions\\acp_server\\_private__agy_acp_server_bin.lazy_imports_info.json";
+      const directories = yield* resolveAntigravityInstanceDirectories(
+        "C:\\Users\\a-twenty-char-person\\.t3\\userdata",
+        ProviderInstanceId.make("antigravity"),
+      );
+      const extracted = (tempDirectory: string) =>
+        path.join(tempDirectory, "run-AbC123", "_MEI000012ab2", deepestMember);
+      // MAX_PATH is 260 including the terminating NUL.
+      expect(extracted(directories.runtimeTemp).length).toBeLessThan(260);
+      expect(
+        extracted(path.join(directories.profile, "antigravity-acp", "tmp")).length,
+      ).toBeGreaterThanOrEqual(260);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodePath.layerWin32))),
+  );
 });
 
 describe("Antigravity authorization URL", () => {
@@ -547,8 +570,8 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       expect(profile.browserCommand).not.toContain("/packaged/t3");
       expect(yield* fs.exists(profile.acpDirectory)).toBe(true);
     }).pipe(
-      Effect.provideService(HostProcessIsExecutable, true),
-      Effect.provideService(HostProcessExecutablePath, "/packaged/t3"),
+      Effect.provideService(HostProcess.IsExecutable, true),
+      Effect.provideService(HostProcess.ExecutablePath, "/packaged/t3"),
     ),
   );
 
@@ -574,7 +597,7 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         });
       }
       expect(yield* fs.exists(profileDirectory)).toBe(false);
-    }).pipe(Effect.provideService(HostProcessIsExecutable, true)),
+    }).pipe(Effect.provideService(HostProcess.IsExecutable, true)),
   );
 
   it.effect("preflights the no-browser helper and creates private directories only", () =>
@@ -589,7 +612,7 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       expect(profile.geminiHome).toBe(path.join(temporaryDirectory, "profile"));
       expect(yield* fs.exists(profile.acpDirectory)).toBe(true);
       expect(yield* fs.exists(profile.tokenPath)).toBe(false);
-      if ((yield* HostProcessPlatform) !== "win32") {
+      if ((yield* HostProcess.Platform) !== "win32") {
         expect((yield* fs.stat(profile.geminiHome)).mode & 0o777).toBe(0o700);
         expect((yield* fs.stat(profile.acpDirectory)).mode & 0o777).toBe(0o700);
       }

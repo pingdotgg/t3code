@@ -9,7 +9,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { and, eq, isNull, or } from "drizzle-orm";
+import { and, eq, isNull, or, sql } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
 import { relayEnvironmentLinks } from "../persistence/schema.ts";
@@ -41,25 +41,12 @@ export class EnvironmentLinkUpsertPersistenceError extends Schema.TaggedError<En
 export class EnvironmentLinkUserListPersistenceError extends Schema.TaggedError<EnvironmentLinkUserListPersistenceError>()(
   "EnvironmentLinkUserListPersistenceError",
   {
-    operation: Schema.Literals(["list-users", "list-delivery-users"]),
     environmentId: Schema.String,
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Environment link user query '${this.operation}' failed for environment '${this.environmentId}'`;
-  }
-}
-
-export class EnvironmentPublicKeyListPersistenceError extends Schema.TaggedError<EnvironmentPublicKeyListPersistenceError>()(
-  "EnvironmentPublicKeyListPersistenceError",
-  {
-    environmentId: Schema.String,
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    return `Failed to list public keys for environment '${this.environmentId}'`;
+    return `Environment link user query 'list-delivery-users' failed for environment '${this.environmentId}'`;
   }
 }
 
@@ -88,6 +75,18 @@ export class EnvironmentLinkLookupPersistenceError extends Schema.TaggedError<En
   }
 }
 
+export class EnvironmentLinkEnvironmentLookupPersistenceError extends Schema.TaggedError<EnvironmentLinkEnvironmentLookupPersistenceError>()(
+  "EnvironmentLinkEnvironmentLookupPersistenceError",
+  {
+    environmentId: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to look up active managed links for environment '${this.environmentId}'`;
+  }
+}
+
 export class EnvironmentLinkRevokePersistenceError extends Schema.TaggedError<EnvironmentLinkRevokePersistenceError>()(
   "EnvironmentLinkRevokePersistenceError",
   {
@@ -110,9 +109,6 @@ export class EnvironmentLinks extends Context.Service<
       readonly proof: RelayEnvironmentLinkProofPayload;
       readonly endpoint: RelayManagedEndpoint;
     }) => Effect.Effect<void, EnvironmentLinkUpsertPersistenceError>;
-    readonly listUsersForEnvironment: (input: {
-      readonly environmentId: string;
-    }) => Effect.Effect<ReadonlyArray<string>, EnvironmentLinkUserListPersistenceError>;
     readonly listDeliveryUsersForEnvironment: (input: {
       readonly environmentId: string;
       readonly environmentPublicKey: string;
@@ -120,9 +116,6 @@ export class EnvironmentLinks extends Context.Service<
       ReadonlyArray<AgentAwarenessDeliveryUserRecord>,
       EnvironmentLinkUserListPersistenceError
     >;
-    readonly listPublicKeysForEnvironment: (input: {
-      readonly environmentId: string;
-    }) => Effect.Effect<ReadonlyArray<string>, EnvironmentPublicKeyListPersistenceError>;
     readonly listForUser: (input: {
       readonly userId: string;
     }) => Effect.Effect<
@@ -133,6 +126,30 @@ export class EnvironmentLinks extends Context.Service<
       readonly userId: string;
       readonly environmentId: string;
     }) => Effect.Effect<RelayLinkedEnvironmentRecord | null, EnvironmentLinkLookupPersistenceError>;
+    /**
+     * Active relay-managed links for an environment, narrowed to one user or to
+     * links proven by one environment key. The environment id alone is public
+     * and any account can link it, so callers acting on it must narrow.
+     */
+    readonly findActiveManagedForEnvironment: (input: {
+      readonly environmentId: string;
+      readonly userId?: string;
+      readonly environmentPublicKey?: string;
+    }) => Effect.Effect<
+      ReadonlyArray<
+        RelayLinkedEnvironmentRecord & {
+          readonly userId: string;
+          readonly holdWebhooksWhileOffline: boolean;
+        }
+      >,
+      EnvironmentLinkEnvironmentLookupPersistenceError
+    >;
+    /** Sets the webhook-hold opt-in on the active links proven by one environment key. */
+    readonly setHoldWebhooksWhileOffline: (input: {
+      readonly environmentId: string;
+      readonly environmentPublicKey: string;
+      readonly holdWebhooksWhileOffline: boolean;
+    }) => Effect.Effect<void, EnvironmentLinkEnvironmentLookupPersistenceError>;
     readonly revokeForUser: (input: {
       readonly userId: string;
       readonly environmentId: string;
@@ -140,23 +157,17 @@ export class EnvironmentLinks extends Context.Service<
   }
 >()("t3code-relay/environments/EnvironmentLinks") {}
 
-function agentAwarenessDeliveryUserCondition(environmentId: string) {
-  return and(
-    eq(relayEnvironmentLinks.environmentId, environmentId),
-    isNull(relayEnvironmentLinks.revokedAt),
-    or(
-      eq(relayEnvironmentLinks.notificationsEnabled, true),
-      eq(relayEnvironmentLinks.liveActivitiesEnabled, true),
-    ),
-  );
-}
-
 function agentAwarenessDeliveryUserKeyCondition(input: {
   readonly environmentId: string;
   readonly environmentPublicKey: string;
 }) {
   return and(
-    agentAwarenessDeliveryUserCondition(input.environmentId),
+    eq(relayEnvironmentLinks.environmentId, input.environmentId),
+    isNull(relayEnvironmentLinks.revokedAt),
+    or(
+      eq(relayEnvironmentLinks.notificationsEnabled, true),
+      eq(relayEnvironmentLinks.liveActivitiesEnabled, true),
+    ),
     eq(relayEnvironmentLinks.environmentPublicKey, input.environmentPublicKey),
   );
 }
@@ -172,12 +183,24 @@ const make = Effect.gen(function* () {
       const now = DateTime.formatIso(yield* DateTime.now);
       const { request, proof } = input;
       const environmentId = proof.environmentId;
+      // The webhook-hold opt-in belongs to the environment: a new or re-made
+      // link carries it over from the environment's other active links. Only
+      // links proven by the same key count; an environment id is public, so
+      // anyone can link one and switch the opt-in on for their own link.
+      const inheritedHoldWebhooks = sql<boolean>`EXISTS (
+        SELECT 1 FROM ${relayEnvironmentLinks} AS other
+        WHERE other.environment_id = ${environmentId}
+          AND other.environment_public_key = ${proof.environmentPublicKey}
+          AND other.revoked_at IS NULL
+          AND other.hold_webhooks_while_offline
+      )`;
       const { endpoint } = input;
       yield* db
         .insert(relayEnvironmentLinks)
         .values({
           userId: input.userId,
           environmentId,
+          holdWebhooksWhileOffline: inheritedHoldWebhooks,
           environmentLabel: proof.descriptor.label,
           environmentPublicKey: proof.environmentPublicKey,
           endpointHttpBaseUrl: endpoint.httpBaseUrl,
@@ -205,6 +228,7 @@ const make = Effect.gen(function* () {
             createdByDeviceId: request.deviceId ?? null,
             revokedAt: null,
             updatedAt: now,
+            holdWebhooksWhileOffline: inheritedHoldWebhooks,
           },
         })
         .pipe(
@@ -219,27 +243,6 @@ const make = Effect.gen(function* () {
           ),
         );
     }),
-
-    listUsersForEnvironment: Effect.fn("relay.environment_links.list_users_for_environment")(
-      function* (input) {
-        yield* Effect.annotateCurrentSpan({ "relay.environment_id": input.environmentId });
-        return yield* db
-          .select({ userId: relayEnvironmentLinks.userId })
-          .from(relayEnvironmentLinks)
-          .where(agentAwarenessDeliveryUserCondition(input.environmentId))
-          .pipe(
-            Effect.map((rows) => rows.map((row) => row.userId)),
-            Effect.mapError(
-              (cause) =>
-                new EnvironmentLinkUserListPersistenceError({
-                  operation: "list-users",
-                  environmentId: input.environmentId,
-                  cause,
-                }),
-            ),
-          );
-      },
-    ),
 
     listDeliveryUsersForEnvironment: Effect.fn(
       "relay.environment_links.list_delivery_users_for_environment",
@@ -264,34 +267,6 @@ const make = Effect.gen(function* () {
           Effect.mapError(
             (cause) =>
               new EnvironmentLinkUserListPersistenceError({
-                operation: "list-delivery-users",
-                environmentId: input.environmentId,
-                cause,
-              }),
-          ),
-        );
-    }),
-
-    listPublicKeysForEnvironment: Effect.fn(
-      "relay.environment_links.list_public_keys_for_environment",
-    )(function* (input) {
-      yield* Effect.annotateCurrentSpan({ "relay.environment_id": input.environmentId });
-      return yield* db
-        .select({ environmentPublicKey: relayEnvironmentLinks.environmentPublicKey })
-        .from(relayEnvironmentLinks)
-        .where(
-          and(
-            eq(relayEnvironmentLinks.environmentId, input.environmentId),
-            isNull(relayEnvironmentLinks.revokedAt),
-          ),
-        )
-        .pipe(
-          Effect.map((rows) => [
-            ...new Set(rows.map((row) => row.environmentPublicKey).filter((key) => key.length > 0)),
-          ]),
-          Effect.mapError(
-            (cause) =>
-              new EnvironmentPublicKeyListPersistenceError({
                 environmentId: input.environmentId,
                 cause,
               }),
@@ -389,6 +364,89 @@ const make = Effect.gen(function* () {
             (cause) =>
               new EnvironmentLinkLookupPersistenceError({
                 userId: input.userId,
+                environmentId: input.environmentId,
+                cause,
+              }),
+          ),
+        );
+    }),
+
+    findActiveManagedForEnvironment: Effect.fn(
+      "relay.environment_links.find_active_managed_for_environment",
+    )(function* (input) {
+      yield* Effect.annotateCurrentSpan({ "relay.environment_id": input.environmentId });
+      return yield* db
+        .select({
+          userId: relayEnvironmentLinks.userId,
+          environmentId: relayEnvironmentLinks.environmentId,
+          environmentLabel: relayEnvironmentLinks.environmentLabel,
+          environmentPublicKey: relayEnvironmentLinks.environmentPublicKey,
+          endpointHttpBaseUrl: relayEnvironmentLinks.endpointHttpBaseUrl,
+          endpointWsBaseUrl: relayEnvironmentLinks.endpointWsBaseUrl,
+          endpointProviderKind: relayEnvironmentLinks.endpointProviderKind,
+          createdAt: relayEnvironmentLinks.createdAt,
+          holdWebhooksWhileOffline: relayEnvironmentLinks.holdWebhooksWhileOffline,
+        })
+        .from(relayEnvironmentLinks)
+        .where(
+          and(
+            eq(relayEnvironmentLinks.environmentId, input.environmentId),
+            isNull(relayEnvironmentLinks.revokedAt),
+            eq(relayEnvironmentLinks.endpointProviderKind, "cloudflare_tunnel"),
+            eq(relayEnvironmentLinks.managedTunnelsEnabled, true),
+            input.userId === undefined ? undefined : eq(relayEnvironmentLinks.userId, input.userId),
+            input.environmentPublicKey === undefined
+              ? undefined
+              : eq(relayEnvironmentLinks.environmentPublicKey, input.environmentPublicKey),
+          ),
+        )
+        // At most one row per user who linked this environment.
+        .pipe(
+          Effect.map((rows) =>
+            rows.map((row) => ({
+              userId: row.userId,
+              environmentId: row.environmentId as RelayClientEnvironmentRecord["environmentId"],
+              label:
+                row.environmentLabel.trim().length > 0 ? row.environmentLabel : row.environmentId,
+              endpoint: {
+                httpBaseUrl: row.endpointHttpBaseUrl,
+                wsBaseUrl: row.endpointWsBaseUrl,
+                providerKind:
+                  row.endpointProviderKind as RelayClientEnvironmentRecord["endpoint"]["providerKind"],
+              },
+              environmentPublicKey: row.environmentPublicKey,
+              linkedAt: row.createdAt,
+              holdWebhooksWhileOffline: row.holdWebhooksWhileOffline,
+            })),
+          ),
+          Effect.mapError(
+            (cause) =>
+              new EnvironmentLinkEnvironmentLookupPersistenceError({
+                environmentId: input.environmentId,
+                cause,
+              }),
+          ),
+        );
+    }),
+
+    setHoldWebhooksWhileOffline: Effect.fn(
+      "relay.environment_links.set_hold_webhooks_while_offline",
+    )(function* (input) {
+      yield* Effect.annotateCurrentSpan({ "relay.environment_id": input.environmentId });
+      yield* db
+        .update(relayEnvironmentLinks)
+        .set({ holdWebhooksWhileOffline: input.holdWebhooksWhileOffline })
+        .where(
+          and(
+            eq(relayEnvironmentLinks.environmentId, input.environmentId),
+            eq(relayEnvironmentLinks.environmentPublicKey, input.environmentPublicKey),
+            isNull(relayEnvironmentLinks.revokedAt),
+          ),
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new EnvironmentLinkEnvironmentLookupPersistenceError({
                 environmentId: input.environmentId,
                 cause,
               }),

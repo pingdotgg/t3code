@@ -4,10 +4,10 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import Agent from "./Agent.ts";
 import { Gateway } from "./AiGateway.ts";
 import { Bucket } from "./Bucket.ts";
@@ -38,8 +38,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
       bundleAnalyzer: true,
     },
     compatibility: {
-      date: "2026-03-17",
-      flags: ["nodejs_compat"],
+      date: "2026-08-31",
     },
   },
   Effect.gen(function* () {
@@ -196,7 +195,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
           if (request.method === "POST") {
             const code = yield* request.text;
             const worker = yield* loader.load({
-              compatibilityDate: "2026-01-28",
+              compatibilityDate: "2026-08-31",
               mainModule: "worker.js",
               modules: {
                 "worker.js": `

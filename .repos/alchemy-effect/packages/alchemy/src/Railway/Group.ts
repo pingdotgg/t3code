@@ -1,11 +1,18 @@
-import type {
-  EnvironmentResponse,
-  ProjectResponse,
-  ProjectResponseBucketsEdgesItemNode,
-  ProjectResponseGroupsEdgesItemNode,
-  ProjectResponseServicesEdgesItemNode,
+import {
+  waitUntilDeleted,
+  projectServices as fetchProjectServices,
+  projectBuckets as fetchProjectBuckets,
+  projectGroups as fetchProjectGroups,
+  environmentVolumes,
+} from "./GraphQL.ts";
+import { Query, type UnwrapPlan } from "@distilled.cloud/core/query";
+import {
+  Railway,
+  type Bucket as RailwayBucket,
+  type Group as RailwayGroup,
+  type Service as RailwayService,
+  type VolumeInstance as RailwayVolumeInstance,
 } from "@distilled.cloud/railway";
-import * as railway from "@distilled.cloud/railway";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
@@ -18,6 +25,84 @@ import { createRailwayName, matchesAlchemyPhysicalName } from "./Metadata.ts";
 import { ownedProjects, type Project } from "./Project.ts";
 import type { Providers } from "./Providers.ts";
 import { withEnvironmentConfigLock } from "./transient.ts";
+
+const groupSelection = (group: Query<RailwayGroup>) => ({
+  id: group.id,
+  name: group.name,
+  color: group.color,
+  icon: group.icon,
+  isCollapsed: group.isCollapsed,
+});
+const serviceSelection = (service: Query<RailwayService>) => ({
+  id: service.id,
+  groupId: service.groupId,
+  deletedAt: service.deletedAt,
+});
+const bucketSelection = (bucket: Query<RailwayBucket>) => ({
+  id: bucket.id,
+  groupId: bucket.groupId,
+});
+const volumeSelection = (volume: Query<RailwayVolumeInstance>) => ({
+  id: volume.id,
+  volumeId: volume.volumeId,
+  deletedAt: volume.deletedAt,
+  state: volume.state,
+  volume: { id: volume.volume.id },
+});
+type ProjectResponseBucketsEdgesItemNode = UnwrapPlan<
+  ReturnType<typeof bucketSelection>
+>;
+type ProjectResponseGroupsEdgesItemNode = UnwrapPlan<
+  ReturnType<typeof groupSelection>
+>;
+type ProjectResponseServicesEdgesItemNode = UnwrapPlan<
+  ReturnType<typeof serviceSelection>
+>;
+type EnvironmentVolumeNode = UnwrapPlan<ReturnType<typeof volumeSelection>>;
+type ProjectResponse = {
+  readonly deletedAt: string | null;
+  readonly services: readonly ProjectResponseServicesEdgesItemNode[];
+  readonly buckets: readonly ProjectResponseBucketsEdgesItemNode[];
+  readonly groups: readonly ProjectResponseGroupsEdgesItemNode[];
+};
+type EnvironmentResponse = {
+  readonly deletedAt: string | null;
+  readonly config: unknown;
+  readonly canvasGroupRefs: unknown;
+  readonly volumeInstances: readonly EnvironmentVolumeNode[];
+};
+
+const readProjectDeletedAt = Query.fn((id: string) => ({
+  deletedAt: Railway.project({ id }).deletedAt,
+}));
+
+const readEnvironment = Query.fn((id: string, projectId: string) => {
+  const environment = Railway.environment({ id, projectId });
+  return {
+    deletedAt: environment.deletedAt,
+    config: environment.config,
+    canvasGroupRefs: environment.canvasGroupRefs,
+  };
+});
+
+const environmentPatchCommit = Query.fn(
+  (input: { environmentId: string; commitMessage: string; patch: unknown }) =>
+    Railway.environmentPatchCommit(input),
+);
+
+const canvasViewMergePreview = Query.fn(
+  (sourceEnvironmentId: string, targetEnvironmentId: string) => ({
+    mutations: Railway.canvasViewMergePreview({
+      sourceEnvironmentId,
+      targetEnvironmentId,
+    }).mutations,
+  }),
+);
+
+const canvasViewMerge = Query.fn(
+  (sourceEnvironmentId: string, targetEnvironmentId: string) =>
+    Railway.canvasViewMerge({ sourceEnvironmentId, targetEnvironmentId }),
+);
 
 /**
  * A resource-valued prop: the resource itself, or an Effect that produces
@@ -234,6 +319,7 @@ const GroupResource = Resource<Group>("Railway.Group");
  * ```
  *
  * @resource
+ * @product Project
  */
 export const Group: typeof GroupResource = Object.assign(
   (
@@ -482,8 +568,7 @@ const optionalString = (value: string | null | undefined) =>
 const volumeIdsOf = (env: EnvironmentResponse | undefined): string[] => {
   if (env === undefined) return [];
   const ids: string[] = [];
-  for (const edge of env.volumeInstances.edges) {
-    const node = edge.node;
+  for (const node of env.volumeInstances) {
     if (node.deletedAt != null || node.state === "DELETED") continue;
     ids.push(node.volumeId, node.volume.id, node.id);
   }
@@ -514,21 +599,37 @@ const resolveName = (id: string, name: string | undefined, existing?: string) =>
   });
 
 const getProject = (projectId: string) =>
-  railway.project({ id: projectId }).pipe(
+  Effect.gen(function* () {
+    const project = yield* readProjectDeletedAt(projectId);
+    const services = yield* fetchProjectServices(projectId, serviceSelection);
+    const buckets = yield* fetchProjectBuckets(projectId, bucketSelection);
+    const groups = yield* fetchProjectGroups(projectId, groupSelection);
+    return {
+      deletedAt: project.deletedAt,
+      services,
+      buckets,
+      groups,
+    } satisfies ProjectResponse;
+  }).pipe(
     Effect.map((project) => (project.deletedAt != null ? undefined : project)),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
+    Effect.catchTag("RailwayNotFound", () =>
       Effect.succeed(undefined as ProjectResponse | undefined),
     ),
   );
 
 const getEnvironment = (environmentId: string, projectId: string) =>
-  railway
-    .environment({ id: environmentId, projectId })
-    .pipe(
-      Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
-        Effect.succeed(undefined),
-      ),
+  Effect.gen(function* () {
+    const environment = yield* readEnvironment(environmentId, projectId);
+    const volumes = yield* environmentVolumes(
+      environmentId,
+      projectId,
+      volumeSelection,
     );
+    return {
+      ...environment,
+      volumeInstances: volumes,
+    } satisfies EnvironmentResponse;
+  }).pipe(Effect.catchTag("RailwayNotFound", () => Effect.succeed(undefined)));
 
 const getEnvironmentConfig = (environmentId: string, projectId: string) =>
   getEnvironment(environmentId, projectId).pipe(
@@ -543,7 +644,11 @@ const listEnvironmentIds = (project: {
   projectId: string;
   environmentId: string;
 }) =>
-  railway.environments.items({ projectId: project.projectId, first: 50 }).pipe(
+  Query.items(
+    Railway.environments({ projectId: project.projectId, first: 50 }).pipe(
+      Query.map((env) => ({ id: env.id, deletedAt: env.deletedAt })),
+    ),
+  ).pipe(
     Stream.filter((env) => env.deletedAt == null),
     Stream.map((env) => env.id),
     Stream.runCollect,
@@ -554,7 +659,7 @@ const listEnvironmentIds = (project: {
       }
       return Array.from(set);
     }),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
+    Effect.catchTag("RailwayNotFound", () =>
       Effect.succeed(
         project.environmentId.length > 0 ? [project.environmentId] : [],
       ),
@@ -568,7 +673,7 @@ const commitPatch = (input: {
 }) =>
   withEnvironmentConfigLock(
     input.environmentId,
-    railway.environmentPatchCommit({
+    environmentPatchCommit({
       environmentId: input.environmentId,
       commitMessage: input.commitMessage,
       patch: input.patch,
@@ -580,52 +685,32 @@ const commitPatch = (input: {
   );
 
 const previewCanvas = (environmentId: string) =>
-  railway
-    .canvasViewMergePreview({
-      sourceEnvironmentId: environmentId,
-      targetEnvironmentId: environmentId,
-    })
-    .pipe(
-      Effect.catchTag(
-        [
-          "RailwayNotFound",
-          "NotFound",
-          "RailwayValidationError",
-          "RailwayInternalError",
-        ],
-        () => Effect.succeed(undefined),
-      ),
-    );
+  canvasViewMergePreview(environmentId, environmentId).pipe(
+    Effect.catchTag(
+      ["RailwayNotFound", "RailwayValidationError", "RailwayInternalError"],
+      () => Effect.succeed(undefined),
+    ),
+  );
 
 const mergeCanvas = (
   sourceEnvironmentId: string,
   targetEnvironmentId: string,
 ) =>
-  railway
-    .canvasViewMerge({
-      sourceEnvironmentId,
-      targetEnvironmentId,
-    })
-    .pipe(
-      Effect.catchTag(
-        [
-          "RailwayNotFound",
-          "NotFound",
-          "RailwayValidationError",
-          "RailwayInternalError",
-        ],
-        () => Effect.succeed(false),
-      ),
-    );
+  canvasViewMerge(sourceEnvironmentId, targetEnvironmentId).pipe(
+    Effect.catchTag(
+      ["RailwayNotFound", "RailwayValidationError", "RailwayInternalError"],
+      () => Effect.succeed(false),
+    ),
+  );
 
 const projectGroups = (project: ProjectResponse | undefined) =>
-  project?.groups.edges.map((edge) => edge.node) ?? [];
+  project?.groups ?? [];
 
 const projectServices = (project: ProjectResponse | undefined) =>
-  project?.services.edges.map((edge) => edge.node) ?? [];
+  project?.services ?? [];
 
 const projectBuckets = (project: ProjectResponse | undefined) =>
-  project?.buckets.edges.map((edge) => edge.node) ?? [];
+  project?.buckets ?? [];
 
 const matchProjectGroup = (
   groups: readonly ProjectResponseGroupsEdgesItemNode[],
@@ -775,18 +860,16 @@ const waitUntilGone = (input: {
   groupId: string;
   name: string;
 }) =>
-  observe({
-    projectId: input.projectId,
-    environmentId: input.environmentId,
-    groupId: input.groupId,
-    name: input.name,
-  }).pipe(
-    Effect.map((group) => group === undefined),
-    Effect.repeat({
-      schedule: Schedule.spaced("1 second"),
-      until: (gone) => gone,
-      times: 4,
-    }),
+  waitUntilDeleted(
+    "Group",
+    input.groupId,
+    observe({
+      projectId: input.projectId,
+      environmentId: input.environmentId,
+      groupId: input.groupId,
+      name: input.name,
+    }).pipe(Effect.map((group) => group === undefined)),
+    4,
   );
 
 const groupPatch = (input: {
@@ -924,10 +1007,9 @@ export const GroupProvider = () =>
     list: Effect.fn(function* () {
       const projects = yield* ownedProjects();
       const rows = yield* Effect.forEach(projects, (project) =>
-        railway.project({ id: project.projectId }).pipe(
+        fetchProjectGroups(project.projectId, groupSelection).pipe(
           Effect.map((live) =>
-            live.groups.edges.flatMap((edge) => {
-              const group = edge.node;
+            live.flatMap((group) => {
               const name = group.name ?? "";
               if (!matchesAlchemyPhysicalName(name)) return [];
               return [
@@ -950,7 +1032,7 @@ export const GroupProvider = () =>
               ];
             }),
           ),
-          Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
+          Effect.catchTag("RailwayNotFound", () =>
             Effect.succeed([] as Group["Attributes"][]),
           ),
         ),
@@ -1185,11 +1267,7 @@ export const GroupProvider = () =>
             groupId: null,
           })),
         }),
-      }).pipe(
-        Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
-          Effect.succeed(""),
-        ),
-      );
+      }).pipe(Effect.catchTag("RailwayNotFound", () => Effect.succeed("")));
       if (projectId.length > 0) {
         yield* waitUntilGone({
           projectId,
