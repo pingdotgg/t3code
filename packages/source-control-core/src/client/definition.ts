@@ -74,6 +74,12 @@ export interface SourceControlClientDefinition {
   readonly publishDescription: string;
   /** Where a publish lands, given the host the server is signed in to, if it reported one. */
   readonly publishHost: (signedInHost: string | null) => string;
+  /**
+   * Who a new project's repository is published under, given the signed-in account: an owner to
+   * name, `null` owner to let the host's CLI pick the signed-in user, or null when the host needs
+   * a choice an account cannot make, such as Azure DevOps' project.
+   */
+  readonly newRepositoryOwner: (account: string | null) => { readonly owner: string | null } | null;
   /** Which of a repository's clone URLs a new clone uses. */
   readonly defaultCloneTransport: "https" | "ssh";
   /** The web URL of a change request, or null when this client cannot build one for the host. */
@@ -224,6 +230,7 @@ export const UNKNOWN_SOURCE_CONTROL_CLIENT: SourceControlClientDefinition = {
   publicHost: null,
   publishDescription: "Your signed-in server",
   publishHost: (signedInHost) => signedInHost ?? "your server",
+  newRepositoryOwner: () => null,
   defaultCloneTransport: "ssh",
   changeRequestUrl: () => null,
   changeRequestActions: new Set(),

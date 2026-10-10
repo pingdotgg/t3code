@@ -27,6 +27,7 @@ export const definition = defineSourceControlClient({
   publicHost: "gitlab.com",
   publishDescription: "gitlab.com",
   publishHost: () => "gitlab.com",
+  newRepositoryOwner: (account) => ({ owner: account }),
   defaultCloneTransport: "ssh",
   changeRequestUrl: ({ host, repository, number }) =>
     `https://${host}/${repository}/-/merge_requests/${number}`,

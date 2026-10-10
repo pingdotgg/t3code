@@ -14,7 +14,8 @@ function Checkbox({ className, ...props }: CheckboxPrimitive.Root.Props) {
       data-slot="checkbox"
       {...props}
     >
-      {/* Leave a contrasting inner gap inside the 2px focus outline. */}
+      {/* Leave a contrasting inner gap inside the 2px focus outline. The glyphs name their color so
+          rows that mute stray icons, such as list items, leave the indicator's color alone. */}
       <CheckboxPrimitive.Indicator
         className="-inset-px absolute flex items-center justify-center rounded-[.25rem] text-primary-foreground data-unchecked:hidden data-checked:bg-primary data-indeterminate:text-foreground in-[[data-slot=checkbox]:focus-visible]:inset-shadow-[0_0_0_3px_var(--background)] in-[[data-slot=checkbox]:focus-visible]:outline-2 in-[[data-slot=checkbox]:focus-visible]:outline-solid in-[[data-slot=checkbox]:focus-visible]:-outline-offset-2 in-[[data-slot=checkbox]:focus-visible]:outline-inherit"
         data-slot="checkbox-indicator"
@@ -22,7 +23,7 @@ function Checkbox({ className, ...props }: CheckboxPrimitive.Root.Props) {
           <span {...props}>
             {state.indeterminate ? (
               <svg
-                className="size-3.5 sm:size-3"
+                className="size-3.5 text-current sm:size-3"
                 fill="none"
                 height="24"
                 stroke="currentColor"
@@ -37,7 +38,7 @@ function Checkbox({ className, ...props }: CheckboxPrimitive.Root.Props) {
               </svg>
             ) : (
               <svg
-                className="size-3.5 sm:size-3"
+                className="size-3.5 text-current sm:size-3"
                 fill="none"
                 height="24"
                 stroke="currentColor"

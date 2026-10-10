@@ -10,9 +10,11 @@ import {
   getCloneDestinationPath,
   getCloneDirectoryName,
   getDefaultCloneUrl,
-  getNewProjectGitHubRepository,
-  getNewProjectGitHubTarget,
   getNewProjectPathPreview,
+  getNewProjectPublishTarget,
+  getNewProjectPublishTargets,
+  getNewProjectRepository,
+  type NewProjectPublishTarget,
   normalizePastedCloneUrl,
   addProjectRemoteSourceLabel,
   addProjectRemoteSourcePathHint,
@@ -195,7 +197,6 @@ import {
   CommandPaletteVirtualizedResults,
   scrollCommandPaletteRowIntoView,
 } from "./CommandPaletteResults";
-import { GitHubIcon } from "./Icons";
 import { sourceControlIcon } from "~/sourceControlPresentation";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { Checkbox } from "./ui/checkbox";
@@ -221,6 +222,7 @@ import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindin
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/command";
 import { Button } from "./ui/button";
 import { Kbd, KbdGroup } from "./ui/kbd";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
@@ -277,6 +279,14 @@ type AddProjectCloneFlow =
 function remoteProjectSourceIcon(source: AddProjectRemoteSource, className: string): ReactNode {
   if (source === "url") return <LinkIcon className={className} />;
   const Icon = sourceControlIcon(sourceControlClients.get(source));
+  return <Icon className={className} />;
+}
+
+function sourceControlHostIcon(
+  definition: NewProjectPublishTarget["definition"],
+  className: string,
+): ReactNode {
+  const Icon = sourceControlIcon(definition);
   return <Icon className={className} />;
 }
 
@@ -762,7 +772,11 @@ function OpenCommandPaletteDialog(props: {
     /** Machine of the Add project sources view under this step; null from the palette root. */
     readonly sourcesEnvironmentId: EnvironmentId | null;
   } | null>(null);
-  const [newProjectPublishesToGitHub, setNewProjectPublishesToGitHub] = useState(false);
+  const [newProjectPublishes, setNewProjectPublishes] = useState(false);
+  // The host picked beside the publish toggle; null takes the first ready host, GitHub when ready.
+  const [newProjectPublishKind, setNewProjectPublishKind] =
+    useState<SourceControlProviderKind | null>(null);
+  const [newProjectHostPickerOpen, setNewProjectHostPickerOpen] = useState(false);
   const [isCreatingNewProject, setIsCreatingNewProject] = useState(false);
   // State lags a render behind, so a repeated Enter could start a second create.
   const newProjectSubmittingRef = useRef(false);
@@ -1482,7 +1496,8 @@ function OpenCommandPaletteDialog(props: {
       setAddProjectEnvironmentId(environmentId);
       setAddProjectCloneFlow(null);
       setNewProjectFlow({ environmentId, sourcesEnvironmentId });
-      setNewProjectPublishesToGitHub(false);
+      setNewProjectPublishes(false);
+      setNewProjectPublishKind(null);
       pushPaletteView({
         addonIcon: <FolderGit2Icon className={ADDON_ICON_CLASS} />,
         groups: [],
@@ -2417,8 +2432,12 @@ function OpenCommandPaletteDialog(props: {
     ],
   );
 
-  const newProjectGitHubTarget =
-    newProjectFlow === null ? null : getNewProjectGitHubTarget(sourceControlDiscovery.data ?? null);
+  const newProjectPublishTargets =
+    newProjectFlow === null ? [] : getNewProjectPublishTargets(sourceControlDiscovery.data ?? null);
+  const newProjectPublishTarget = getNewProjectPublishTarget(
+    newProjectPublishTargets,
+    newProjectPublishKind,
+  );
   const newProjectName = query.trim();
   const canSubmitNewProject =
     newProjectFlow !== null &&
@@ -2436,7 +2455,7 @@ function OpenCommandPaletteDialog(props: {
       const created = await createNewProject({
         environmentId: newProjectFlow.environmentId,
         name: newProjectName,
-        github: newProjectPublishesToGitHub ? newProjectGitHubTarget : null,
+        publishTo: newProjectPublishes ? newProjectPublishTarget : null,
       });
       if (created) setOpen(false);
     } finally {
@@ -2742,7 +2761,7 @@ function OpenCommandPaletteDialog(props: {
   const newProjectsRoot = newProjectFlow ? newProjectsRootFor(newProjectFlow.environmentId) : null;
   const newProjectPathPreview =
     newProjectsRoot === null ? null : getNewProjectPathPreview(newProjectsRoot, newProjectName);
-  const newProjectGitHubToggleValue = "new-project:github";
+  const newProjectPublishToggleValue = "new-project:publish";
   // The name step's way out to folders and clones, for the selected machine.
   // It replaces the name step (and a sources view for another machine under
   // it), so Back returns to wherever New project was opened from.
@@ -2829,7 +2848,7 @@ function OpenCommandPaletteDialog(props: {
           ],
         };
   const newProjectOptionGroups: CommandPaletteView["groups"] =
-    newProjectGitHubTarget === null || newProjectPathPreview === null
+    newProjectPublishTarget === null || newProjectPathPreview === null
       ? []
       : [
           {
@@ -2838,22 +2857,81 @@ function OpenCommandPaletteDialog(props: {
             items: [
               {
                 kind: "action",
-                value: newProjectGitHubToggleValue,
+                value: newProjectPublishToggleValue,
                 searchTerms: [],
-                title: "Create private repository on GitHub",
+                title:
+                  newProjectPublishTargets.length > 1
+                    ? "Create private repository"
+                    : `Create private repository on ${newProjectPublishTarget.definition.label}`,
                 description:
                   newProjectName.length > 0
-                    ? getNewProjectGitHubRepository(newProjectGitHubTarget, newProjectPathPreview)
-                    : (newProjectGitHubTarget.account ?? "Your GitHub account"),
-                icon: <GitHubIcon className={ITEM_ICON_CLASS} />,
+                    ? getNewProjectRepository(newProjectPublishTarget, newProjectPathPreview)
+                    : (newProjectPublishTarget.owner ??
+                      `Your ${newProjectPublishTarget.definition.label} account`),
+                icon: sourceControlHostIcon(newProjectPublishTarget.definition, ITEM_ICON_CLASS),
                 titleTrailingContent: (
-                  <span className="pointer-events-none ms-auto flex">
-                    <Checkbox checked={newProjectPublishesToGitHub} tabIndex={-1} aria-hidden />
+                  <span className="ms-auto flex items-center gap-2">
+                    {newProjectPublishTargets.length > 1 ? (
+                      // The row toggles on click, so the picker keeps its clicks to itself. The
+                      // row also cancels pointerdown to keep focus in the input, which drops the
+                      // mousedown Select opens on, so the picker opens on click instead.
+                      <span
+                        className="flex"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          // React bubbles the popup's clicks here through its portal; only the
+                          // trigger opens the picker.
+                          if (!event.currentTarget.contains(event.target as Node)) return;
+                          if (!isCreatingNewProject) setNewProjectHostPickerOpen(true);
+                        }}
+                      >
+                        <Select
+                          disabled={isCreatingNewProject}
+                          open={newProjectHostPickerOpen}
+                          onOpenChange={setNewProjectHostPickerOpen}
+                          value={newProjectPublishTarget.definition.kind}
+                          onValueChange={(kind) => {
+                            if (kind !== null) setNewProjectPublishKind(kind);
+                          }}
+                        >
+                          <SelectTrigger
+                            size="xs"
+                            variant="ghost"
+                            aria-label="Host for the new repository"
+                          >
+                            <SelectValue>
+                              {(kind: SourceControlProviderKind) =>
+                                sourceControlClients.get(kind).label
+                              }
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectPopup align="end" alignItemWithTrigger={false}>
+                            {newProjectPublishTargets.map((target) => (
+                              <SelectItem
+                                key={target.definition.kind}
+                                hideIndicator
+                                value={target.definition.kind}
+                              >
+                                <span className="inline-flex items-center gap-1.5">
+                                  {sourceControlHostIcon(target.definition, "size-3.5")}
+                                  {target.definition.label}
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </SelectPopup>
+                        </Select>
+                      </span>
+                    ) : null}
+                    <span className="pointer-events-none flex">
+                      <Checkbox checked={newProjectPublishes} tabIndex={-1} aria-hidden />
+                    </span>
                   </span>
                 ),
+                // The create in flight keeps the choice it started with.
+                ...(isCreatingNewProject ? { disabled: true } : {}),
                 keepOpen: true,
                 run: async () => {
-                  setNewProjectPublishesToGitHub((publishes) => !publishes);
+                  setNewProjectPublishes((publishes) => !publishes);
                 },
               },
             ],
@@ -3327,7 +3405,7 @@ function OpenCommandPaletteDialog(props: {
     newProjectFlow !== null
       ? highlightedItemValue === null
         ? "Create"
-        : highlightedItemValue === newProjectGitHubToggleValue
+        : highlightedItemValue === newProjectPublishToggleValue
           ? "Toggle"
           : "Select"
       : addProjectCloneFlow?.step === "repository"

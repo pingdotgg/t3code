@@ -25,6 +25,7 @@ import {
 } from "../state/projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
 import { sourceControlClients } from "../sourceControlClients.ts";
+import type { SourceControlClientDefinition } from "../sourceControlClients.ts";
 
 /** A host to clone from, or `url` for a pasted clone URL. */
 export type AddProjectRemoteSource = SourceControlProviderKind | "url";
@@ -225,27 +226,49 @@ export function getNewProjectPathPreview(newProjectsRoot: string, name: string):
   return getCloneDestinationPath(newProjectsRoot, newProjectFolderName(name));
 }
 
-/**
- * The GitHub account a new project would be published under, or null when
- * GitHub is not ready on that environment. A ready GitHub with an unknown
- * account still publishes; `gh` picks the signed-in user.
- */
-export function getNewProjectGitHubTarget(
-  discovery: SourceControlDiscoveryResult | null,
-): { readonly account: string | null } | null {
-  const kind = SourceControlProviderKind.make("github");
-  if (!buildAddProjectRemoteSourceReadiness(discovery)(kind).ready) return null;
-  const github = discovery?.sourceControlProviders.find((provider) => provider.kind === kind);
-  return { account: github ? Option.getOrNull(github.auth.account) : null };
+/** A host a new project can be published to, and who the repository goes under there. */
+export interface NewProjectPublishTarget {
+  readonly definition: SourceControlClientDefinition;
+  /** Null lets the host's CLI place it under the signed-in user. */
+  readonly owner: string | null;
 }
 
-/** `owner/folder` for publishing a new project, or just the folder for `gh` to place. */
-export function getNewProjectGitHubRepository(
-  target: { readonly account: string | null },
+/**
+ * The hosts a new project can be published to on that environment, in definition order so
+ * GitHub leads. A host is offered when it is ready and its account names where the repository
+ * goes.
+ */
+export function getNewProjectPublishTargets(
+  discovery: SourceControlDiscoveryResult | null,
+): ReadonlyArray<NewProjectPublishTarget> {
+  const readiness = buildAddProjectRemoteSourceReadiness(discovery);
+  return sourceControlClients.definitions.flatMap((definition) => {
+    if (!readiness(definition.kind).ready) return [];
+    const provider = discovery?.sourceControlProviders.find(
+      (candidate) => candidate.kind === definition.kind,
+    );
+    const placement = definition.newRepositoryOwner(
+      provider ? Option.getOrNull(provider.auth.account) : null,
+    );
+    return placement === null ? [] : [{ definition, owner: placement.owner }];
+  });
+}
+
+/** The chosen host's target, or the first one when the choice is not on offer. */
+export function getNewProjectPublishTarget(
+  targets: ReadonlyArray<NewProjectPublishTarget>,
+  kind: SourceControlProviderKind | null,
+): NewProjectPublishTarget | null {
+  return targets.find((target) => target.definition.kind === kind) ?? targets[0] ?? null;
+}
+
+/** `owner/folder` for publishing a new project, or just the folder for the host to place. */
+export function getNewProjectRepository(
+  target: Pick<NewProjectPublishTarget, "owner">,
   workspaceRoot: string,
 ): string {
   const folderName = workspaceRoot.split(/[\\/]/).filter(Boolean).at(-1) ?? "";
-  return target.account ? `${target.account}/${folderName}` : folderName;
+  return target.owner ? `${target.owner}/${folderName}` : folderName;
 }
 
 /**

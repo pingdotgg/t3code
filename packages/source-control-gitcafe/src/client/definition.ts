@@ -28,6 +28,7 @@ export const definition = defineSourceControlClient({
   publicHost: null,
   publishDescription: "git.cafe",
   publishHost: () => "git.cafe",
+  newRepositoryOwner: (account) => (account ? { owner: account } : null),
   defaultCloneTransport: "ssh",
   changeRequestUrl: ({ host, repository, number }) =>
     `https://${host}/${repository}/pulls/${number}`,

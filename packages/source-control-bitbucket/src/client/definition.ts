@@ -26,6 +26,8 @@ export const definition = defineSourceControlClient({
   publicHost: "bitbucket.org",
   publishDescription: "bitbucket.org",
   publishHost: () => "bitbucket.org",
+  // A new repository belongs to a workspace, which the signed-in account does not name.
+  newRepositoryOwner: () => null,
   defaultCloneTransport: "ssh",
   changeRequestUrl: ({ host, repository, number }) =>
     `https://${host}/${repository}/pull-requests/${number}`,

@@ -44,6 +44,7 @@ export const definition = defineSourceControlClient({
   publicHost: null,
   publishDescription: "Your signed-in server",
   publishHost: (signedInHost) => signedInHost ?? "your server",
+  newRepositoryOwner: (account) => (account ? { owner: account } : null),
   defaultCloneTransport: "https",
   // The server's resolved web URL wins; otherwise an HTTP remote on the same host names the
   // origin, which may carry a port. SSH remotes say nothing about the web origin.
