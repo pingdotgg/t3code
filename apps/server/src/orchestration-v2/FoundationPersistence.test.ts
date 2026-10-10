@@ -3052,9 +3052,9 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         completedAt: null,
       });
       // The parent run settled while its background subagent kept working,
-      // then the server died. Recovery already cancels the parent's subagent
-      // item, entity, and node; the child's runless root turn lives on another
-      // thread and must be settled too.
+      // Stop ended the subagent's item, then the server died. Recovery cancels
+      // the parent's subagent entity and node; the child's runless root turn
+      // lives on another thread and must be settled too.
       yield* eventSink.commitCommand({
         commandId: CommandId.make("command:foundation-native-subagent"),
         threadId: parentId,
@@ -3186,7 +3186,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
               parentItemId: null,
               ordinal: 1,
               type: "subagent",
-              status: "running",
+              status: "interrupted",
               title: null,
               startedAt: now,
               completedAt: null,
@@ -3222,6 +3222,10 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
 
       const parentProjection = yield* projectionStore.getThreadProjection(parentId);
       assert.equal(parentProjection.subagents[0]?.status, "cancelled");
+      assert.equal(
+        parentProjection.nodes.find((node) => node.id === subagentId)?.status,
+        "cancelled",
+      );
       const childProjection = yield* projectionStore.getThreadProjection(childId);
       const childRoot = childProjection.nodes.find((candidate) => candidate.id === childRootId);
       assert.equal(childRoot?.status, "cancelled");
