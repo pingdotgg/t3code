@@ -6,7 +6,7 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { Smartphone, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { useRightPanelStore, type RightPanelSurface } from "~/rightPanelStore";
@@ -45,6 +45,15 @@ export function DevicePanel(props: {
   const close = useAtomCommand(deviceEnvironment.close);
   const [operationError, setOperationError] = useState<string | null>(null);
   const [pendingDevice, setPendingDevice] = useState<DeviceSummary | null>(null);
+  // Operation state belongs to one scoped thread; drop it when the panel moves on.
+  const scopeKey = `${environmentId}\u0000${threadId}`;
+  const [operationScopeKey, setOperationScopeKey] = useState(scopeKey);
+  if (operationScopeKey !== scopeKey) {
+    setOperationScopeKey(scopeKey);
+    setOperationError(null);
+    setPendingDevice(null);
+  }
+  const isCurrentScope = useScopeGuard(scopeKey);
   const pendingDeviceKey = pendingDevice ? deviceKey(pendingDevice) : null;
 
   const hostDisabled = state.hostStatus === "disabled";
@@ -79,6 +88,7 @@ export function DevicePanel(props: {
     if (!device) return;
     setOperationError(null);
     setPendingDevice(device);
+    const stillCurrent = isCurrentScope();
     try {
       const result = await open({
         environmentId,
@@ -89,16 +99,20 @@ export function DevicePanel(props: {
           platform: device.platform,
         },
       });
-      if (result._tag === "Failure") setOperationError(formatEnvironmentQueryError(result.cause));
-      else
+      // The server opened the device for the starting thread, so its tab opens
+      // there even after a switch; only this panel's own state is scope-guarded.
+      if (result._tag === "Failure") {
+        if (stillCurrent()) setOperationError(formatEnvironmentQueryError(result.cause));
+      } else {
         useRightPanelStore.getState().openDevice(props.threadRef, {
           hostId: result.value.hostId,
           deviceId: result.value.deviceId,
           platform: device.platform,
           name: device.name,
         });
+      }
     } finally {
-      setPendingDevice(null);
+      if (stillCurrent()) setPendingDevice(null);
     }
   };
 
@@ -122,6 +136,7 @@ export function DevicePanel(props: {
     }
     if (!activeSession) return;
     setOperationError(null);
+    const stillCurrent = isCurrentScope();
     void close({
       environmentId,
       input: {
@@ -131,8 +146,11 @@ export function DevicePanel(props: {
         shutdown: powerOff,
       },
     }).then((result) => {
-      if (result._tag === "Failure") setOperationError(formatEnvironmentQueryError(result.cause));
-      else useRightPanelStore.getState().closeSurface(props.threadRef, props.surface.id);
+      if (result._tag === "Failure") {
+        if (stillCurrent()) setOperationError(formatEnvironmentQueryError(result.cause));
+      } else {
+        useRightPanelStore.getState().closeSurface(props.threadRef, props.surface.id);
+      }
     });
   };
 
@@ -311,6 +329,27 @@ export function DevicePanel(props: {
       </div>
     </PreviewPanelShell>
   );
+}
+
+/**
+ * Binds async work to the committed scope. Call the returned function when the
+ * work starts; the check it returns is false once the panel moved to another
+ * thread (even back again) or unmounted, so late results are dropped.
+ */
+function useScopeGuard(scopeKey: string) {
+  const scopeRef = useRef<{ readonly key: string } | null>(null);
+  useLayoutEffect(() => {
+    // A fresh token per commit of a scope, so returning to a thread is a new scope.
+    const scope = { key: scopeKey };
+    scopeRef.current = scope;
+    return () => {
+      scopeRef.current = null;
+    };
+  }, [scopeKey]);
+  return () => {
+    const started = scopeRef.current;
+    return () => started !== null && scopeRef.current === started;
+  };
 }
 
 function groupDevices(state: DeviceServiceState) {
