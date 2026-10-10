@@ -30,6 +30,9 @@ const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHO
 // so a test can interrupt a root that is still prompting.
 const holdFirstGenericPromptUntilCancel =
   process.env.T3_ACP_HOLD_FIRST_GENERIC_PROMPT_UNTIL_CANCEL === "1";
+// Leaves a background monitor running when the generic prompt returns, so the
+// root settles held by background work.
+const emitRunningMonitorWithGeneric = process.env.T3_ACP_EMIT_RUNNING_MONITOR_WITH_GENERIC === "1";
 const emitPostSettleMonitorFlow = process.env.T3_ACP_EMIT_POST_SETTLE_MONITOR_FLOW === "1";
 const emitInTurnTaskOutputThenLateDuplicate =
   process.env.T3_ACP_EMIT_IN_TURN_TASKOUTPUT_THEN_LATE_DUPLICATE === "1";
@@ -1960,6 +1963,19 @@ const program = Effect.gen(function* () {
           },
         });
 
+        if (emitRunningMonitorWithGeneric && promptCount === 1) {
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "tool-call-monitor-hold",
+              title: "Monitor: held background work",
+              kind: "execute",
+              status: "in_progress",
+              rawInput: {},
+            },
+          });
+        }
         if (holdFirstGenericPromptUntilCancel && promptCount === 1) {
           while (!cancelledSessions.has(requestedSessionId)) {
             yield* Effect.sleep("25 millis");

@@ -7677,6 +7677,9 @@ describe("AcpAdapterV2", () => {
             restartRuntimeOnEveryInterrupt: true,
             terminateRuntimeProcessGroupOnInterrupt: true,
             preserveRuntimeOnSettledInterrupt: true,
+            // A running monitor holds the settled root; a subagent alone no longer does.
+            extractBackgroundTaskId: (toolCall) =>
+              toolCall.toolCallId === "tool-call-monitor-hold" ? "task-monitor-hold" : undefined,
             extractSubagentUpdate: (toolCall) =>
               toolCall.toolCallId !== "tool-call-generic-1"
                 ? undefined
@@ -7707,7 +7710,10 @@ describe("AcpAdapterV2", () => {
               mockAgentPath,
               environment: (runtimeOrdinal) => {
                 runtimeOrdinalSeen = Math.max(runtimeOrdinalSeen, runtimeOrdinal);
-                return { T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1" };
+                return {
+                  T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1",
+                  T3_ACP_EMIT_RUNNING_MONITOR_WITH_GENERIC: "1",
+                };
               },
               wrapCancel: (cancel) =>
                 Effect.sync(() => {
@@ -8388,6 +8394,9 @@ describe("AcpAdapterV2", () => {
             restartRuntimeAfterInterrupt: true,
             terminateRuntimeProcessGroupOnInterrupt: true,
             preserveRuntimeOnSettledInterrupt: true,
+            // A running monitor holds the settled root; a subagent alone no longer does.
+            extractBackgroundTaskId: (toolCall) =>
+              toolCall.toolCallId === "tool-call-monitor-hold" ? "task-monitor-hold" : undefined,
             extractSubagentUpdate: (toolCall) =>
               toolCall.toolCallId !== "tool-call-generic-1"
                 ? undefined
@@ -8415,7 +8424,10 @@ describe("AcpAdapterV2", () => {
               mockAgentPath,
               environment: (runtimeOrdinal) => {
                 runtimeOrdinalSeen = Math.max(runtimeOrdinalSeen, runtimeOrdinal);
-                return { T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1" };
+                return {
+                  T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1",
+                  T3_ACP_EMIT_RUNNING_MONITOR_WITH_GENERIC: "1",
+                };
               },
               ownDetachedProcessGroup: true,
               protocolEvents,
@@ -8677,6 +8689,9 @@ describe("AcpAdapterV2", () => {
           restartRuntimeAfterInterrupt: true,
           terminateRuntimeProcessGroupOnInterrupt: true,
           preserveRuntimeOnSettledInterrupt: true,
+          // A running monitor holds the settled root; a subagent alone no longer does.
+          extractBackgroundTaskId: (toolCall) =>
+            toolCall.toolCallId === "tool-call-monitor-hold" ? "task-monitor-hold" : undefined,
           extractSubagentUpdate: (toolCall) =>
             toolCall.toolCallId !== "tool-call-generic-1"
               ? undefined
@@ -8702,7 +8717,10 @@ describe("AcpAdapterV2", () => {
           makeRuntime: makeMockRuntime({
             childProcessSpawner,
             mockAgentPath,
-            environment: { T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1" },
+            environment: {
+              T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1",
+              T3_ACP_EMIT_RUNNING_MONITOR_WITH_GENERIC: "1",
+            },
             ownDetachedProcessGroup: true,
             protocolEvents,
             wrapRuntime: (runtime) => ({
@@ -8873,6 +8891,9 @@ describe("AcpAdapterV2", () => {
             restartRuntimeAfterInterrupt: true,
             terminateRuntimeProcessGroupOnInterrupt: true,
             preserveRuntimeOnSettledInterrupt: true,
+            // A running monitor holds the settled root; a subagent alone no longer does.
+            extractBackgroundTaskId: (toolCall) =>
+              toolCall.toolCallId === "tool-call-monitor-hold" ? "task-monitor-hold" : undefined,
             extractSubagentUpdate: (toolCall) =>
               toolCall.toolCallId !== "tool-call-generic-1"
                 ? undefined
@@ -8898,7 +8919,10 @@ describe("AcpAdapterV2", () => {
             makeRuntime: makeMockRuntime({
               childProcessSpawner,
               mockAgentPath,
-              environment: { T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1" },
+              environment: {
+                T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1",
+                T3_ACP_EMIT_RUNNING_MONITOR_WITH_GENERIC: "1",
+              },
               protocolEvents,
               wrapCancel: (cancel) =>
                 Effect.sync(() => {
