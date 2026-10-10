@@ -2082,6 +2082,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return {
       isRepo: true,
       hasOriginRemote: hasPrimaryRemote,
+      ...(repositoryPaths?.worktreeRoot ? { repositoryRoot: repositoryPaths.worktreeRoot } : {}),
       isDefaultBranch,
       branch: refName,
       upstreamRef,
@@ -2136,6 +2137,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     statusDetails(input.cwd).pipe(
       Effect.map((details) => ({
         isRepo: details.isRepo,
+        ...(details.repositoryRoot ? { repositoryRoot: details.repositoryRoot } : {}),
         hasPrimaryRemote: details.hasOriginRemote,
         isDefaultRef: details.isDefaultBranch,
         refName: details.branch,
@@ -2956,6 +2958,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     return {
       cwd: input.cwd,
+      repositoryRoot: cwd,
       generatedAt: yield* DateTime.now,
       sources,
     };

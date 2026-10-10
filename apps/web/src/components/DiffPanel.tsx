@@ -236,9 +236,6 @@ export default function DiffPanel({
       : null,
   );
   const activeCwd = activeThread?.worktreePath ?? activeProject?.workspaceRoot;
-  const activeRepositoryRoot = activeThread?.worktreePath
-    ? undefined
-    : activeProject?.repositoryIdentity?.rootPath;
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(activeThread?.environmentId ?? null),
   );
@@ -256,6 +253,9 @@ export default function DiffPanel({
         })
       : null,
   );
+  const activeRepositoryRoot =
+    gitStatusQuery.data?.repositoryRoot ??
+    (activeThread?.worktreePath ? undefined : activeProject?.repositoryIdentity?.rootPath);
   const diffSelection = useDiffPanelStore((state) =>
     selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef),
   );
@@ -1152,6 +1152,29 @@ export default function DiffPanel({
                   }}
                 >
                   <AnnotatableCodeView
+                    {...(activeThread && activeCwd
+                      ? {
+                          workspace: {
+                            environmentId: activeThread.environmentId,
+                            cwd:
+                              selectedRunId === null
+                                ? (branchDiffPreview.data?.cwd ?? activeCwd)
+                                : activeCwd,
+                            repositoryRoot:
+                              selectedRunId === null
+                                ? (branchDiffPreview.data?.repositoryRoot ??
+                                  (shouldRetryBranchDiffAtEnvironmentCwd
+                                    ? undefined
+                                    : activeRepositoryRoot))
+                                : activeRepositoryRoot,
+                            revision: workspaceMutationId,
+                            refreshToken:
+                              selectedRunId === null && branchDiffPreview.data
+                                ? DateTime.formatIso(branchDiffPreview.data.generatedAt)
+                                : null,
+                          },
+                        }
+                      : {})}
                     key={collapseScopeKey ?? reviewSectionId}
                     viewerRef={setCodeView}
                     codeViewKey={`${codeViewMountKey}:${lazySource ? filePatchScope : "preview"}`}

@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import * as AzureDevOpsCli from "../sourceControl/AzureDevOpsCli.ts";
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import {
   LOCATION_CACHE_CAPACITY,
@@ -190,6 +191,94 @@ describe("getChangeRequest", () => {
       });
 
       expect(detail.changedFiles).toBe(2);
+    }),
+  );
+});
+
+describe("getDiffFileContents", () => {
+  it.effect("reads single-sided configuration at the requested commit across later pushes", () =>
+    Effect.gen(function* () {
+      let latest = ITERATION;
+      const files = new Map([
+        ["selected", "root=true\n[*]\ntab_width=4"],
+        ["head", "root=true\n[*]\ntab_width=8"],
+        ["pushed", "root=true\n[*]\ntab_width=6"],
+      ]);
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+            getPullRequest: () => Effect.succeed(PULL_REQUEST),
+            listIterations: () => Effect.succeed([latest]),
+            readItemContent: ({ path, commit }) => {
+              expect(path).toBe(".editorconfig");
+              return Effect.succeed({ contents: files.get(commit)!, isBinary: false });
+            },
+          }),
+        ),
+      );
+      const input = {
+        cwd: "/w",
+        repository: "acme/web",
+        host: "dev.azure.com",
+        number: 7,
+        changeType: "new" as const,
+        oldPath: ".editorconfig",
+        newPath: ".editorconfig",
+      };
+      const readContents = provider.getDiffFileContents;
+      if (readContents === undefined)
+        return yield* Effect.die("file content read was not implemented");
+      const selected = yield* readContents({ ...input, commit: "selected" });
+      expect(selected).toMatchObject({ oldContents: "", newContents: files.get("selected") });
+      expect((yield* readContents(input)).newContents).toBe(files.get("head"));
+      latest = { ...ITERATION, id: 4, headCommit: "pushed" };
+      expect((yield* readContents({ ...input, commit: "selected" })).newContents).toBe(
+        files.get("selected"),
+      );
+      expect((yield* readContents(input)).newContents).toBe(files.get("pushed"));
+    }),
+  );
+
+  it.effect("does not replace a missing pinned configuration with the latest snapshot", () =>
+    Effect.gen(function* () {
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+            getPullRequest: () => Effect.succeed(PULL_REQUEST),
+            listIterations: () => Effect.succeed([ITERATION]),
+            readItemContent: ({ commit }) =>
+              commit === "selected"
+                ? Effect.fail(
+                    new AzureDevOpsCli.AzureDevOpsPullRequestNotFoundError({
+                      command: "az",
+                      cwd: "/w",
+                      operation: "execute",
+                      argumentCount: 0,
+                      cause: "file not found at selected commit",
+                    }),
+                  )
+                : Effect.succeed({ contents: "root=true\n[*]\ntab_width=8", isBinary: false }),
+          }),
+        ),
+      );
+      const readContents = provider.getDiffFileContents;
+      if (readContents === undefined)
+        return yield* Effect.die("file content read was not implemented");
+      const error = yield* readContents({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "dev.azure.com",
+        number: 7,
+        commit: "selected",
+        changeType: "new",
+        oldPath: ".editorconfig",
+        newPath: ".editorconfig",
+      }).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "PullRequestProviderError",
+        operation: "getDiffFileContents",
+        reason: "not-found",
+      });
     }),
   );
 });

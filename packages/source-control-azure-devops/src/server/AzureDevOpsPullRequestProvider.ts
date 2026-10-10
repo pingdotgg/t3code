@@ -529,11 +529,21 @@ export const make = Effect.gen(function* () {
       }).pipe(Effect.mapError(fail("getDiff"))),
 
     // The patch is built from whole files, so opening the lines around a hunk is the same two
-    // reads over again rather than a wider request. Read against the latest iteration: nothing in
-    // the request says which push the reader is looking at, and expansion is stale after a
-    // mid-review push on every host here anyway.
+    // reads over again rather than a wider request. Unpinned expansion follows the latest iteration;
+    // single-sided snapshot reads (including EditorConfig) can name their exact commit.
     getDiffFileContents: (input) =>
       Effect.gen(function* () {
+        if (input.commit !== undefined && input.changeType === "new") {
+          const location = yield* locationOf(input);
+          if (location === null) return { oldContents: "", newContents: "" };
+          const item = yield* readItemContent({
+            cwd: input.cwd,
+            location,
+            path: input.newPath,
+            commit: input.commit,
+          });
+          return { oldContents: "", newContents: item.contents, binary: item.isBinary };
+        }
         const scope = yield* diffScope(input);
         const iteration = scope?.iterations.at(-1);
         if (scope === null || iteration === undefined) return { oldContents: "", newContents: "" };
