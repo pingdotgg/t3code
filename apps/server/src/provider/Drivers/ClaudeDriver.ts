@@ -203,7 +203,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         capacity: 1,
         timeToLive: CAPABILITIES_PROBE_TTL,
         lookup: () =>
-          probeClaudeCapabilities(effectiveConfig, processEnv, cwd).pipe(
+          Effect.all([
+            probeClaudeCapabilities(effectiveConfig, processEnv, cwd),
+            ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath),
+          ]).pipe(
+            Effect.map(([capabilities, workspaceId]) =>
+              capabilities && workspaceId ? { ...capabilities, workspaceId } : capabilities,
+            ),
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
             Effect.provideService(Path.Path, path),
           ),
       });

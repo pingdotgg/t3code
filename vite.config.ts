@@ -251,10 +251,25 @@ export default defineConfig({
         rules: { "t3code/no-mobile-uniwind-theme-escape-hatches": "error" },
       },
       {
+        // React commits state set in a raw ResizeObserver callback after the paint, so derived
+        // layout lands a frame late. observeResize flushes every observed resize in one render.
+        files: ["apps/web/src/**"],
+        excludeFiles: [
+          "apps/web/src/lib/observeResize.ts",
+          "**/*.{test,spec}.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+        ],
+        rules: { "t3code/no-raw-resize-observer": "error" },
+      },
+      {
         // Every class in web code must be one Tailwind generates: a typo or a class nothing
         // declares ships silently unstyled. JS hooks use data attributes, not class names.
         files: ["apps/web/src/**"],
         rules: { "shadcn/no-unknown-classes": "error" },
+      },
+      {
+        // State indicators paint inward; decorative rings keep their own geometry.
+        files: ["apps/web/src/**"],
+        rules: { "t3code/no-outset-state-indicators": "error" },
       },
       {
         // Colors come from theme tokens so status tones follow custom themes. components/ui

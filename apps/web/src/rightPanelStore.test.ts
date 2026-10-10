@@ -1187,4 +1187,27 @@ describe("rightPanelStore", () => {
       ),
     ).toEqual(["terminal:term-1", "browser:tab-b", "browser:tab-c"]);
   });
+
+  it("moves a surface to a new index and keeps it there through browser reconciliation", () => {
+    const store = useRightPanelStore.getState();
+    store.openTerminal(refA, "term-1");
+    store.openBrowser(refA, "tab-a");
+    store.open(refA, "diff");
+    const revision = store.getUserActionRevision(refA);
+    const surfaceIds = () =>
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.map(
+        (surface) => surface.id,
+      );
+
+    store.moveSurface(refA, "browser:tab-a", 0);
+    expect(surfaceIds()).toEqual(["browser:tab-a", "terminal:term-1", "diff"]);
+    store.moveSurface(refA, "browser:tab-a", 2);
+    expect(surfaceIds()).toEqual(["terminal:term-1", "diff", "browser:tab-a"]);
+    store.moveSurface(refA, "browser:tab-a", 0);
+
+    store.reconcileBrowserSurfaces(refA, ["tab-a", "tab-b"]);
+    expect(surfaceIds()).toEqual(["browser:tab-a", "terminal:term-1", "diff", "browser:tab-b"]);
+    // Reordering is not a choice about what the panel shows.
+    expect(store.getUserActionRevision(refA)).toBe(revision);
+  });
 });

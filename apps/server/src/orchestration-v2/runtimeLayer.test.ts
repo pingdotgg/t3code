@@ -3211,6 +3211,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           threadId,
           messageId: MessageId.make("restart-automatic-message"),
           text: "Continue where you left off.",
+          notification: {
+            source: { kind: "system" as const },
+            outcome: "updated" as const,
+            summary: "T3 Code restarted and resumed this turn",
+            detail: "Continue where you left off.",
+          },
           attachments: [],
           modelSelection,
           dispatchMode: { type: "start_immediately" as const },
@@ -3221,6 +3227,17 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const admitted = yield* orchestrator.getThreadProjection(threadId);
         assert.lengthOf(admitted.runs, 2);
         assert.equal(admitted.runs[1]?.restartContinuationOfRunId, original.id);
+        // The timeline shows a work log row; the prompt stays in its detail.
+        const continuationItems = admitted.turnItems.filter(
+          (item) => item.runId === admitted.runs[1]?.id,
+        );
+        assert.isFalse(continuationItems.some((item) => item.type === "user_message"));
+        assert.deepInclude(
+          continuationItems.flatMap((item) =>
+            item.type === "notification" ? [[item.summary, item.detail]] : [],
+          ),
+          ["T3 Code restarted and resumed this turn", "Continue where you left off."],
+        );
         // A differently identified stale delivery still must not create another run.
         yield* orchestrator.dispatch({
           ...command,

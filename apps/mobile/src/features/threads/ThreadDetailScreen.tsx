@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useThreadReportedModelSelection } from "../../state/entities";
+import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
 import { useNavigation } from "@react-navigation/native";
 import type { WorktreeSetupCardProps } from "./worktree-setup-card";
@@ -400,6 +400,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const controlInsets = deriveBottomControlInsets(nativeMetrics);
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
   const selectedThreadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
+  const childThreadInputs = useChildThreadInputs({
+    environmentId: props.environmentId,
+    threadId: props.selectedThread.id,
+  });
   const composerError = useAtomValue(threadComposerErrorsAtom)[selectedThreadKey]?.message ?? null;
   const queuedCount = useThreadQueuedCount({
     environmentId: props.environmentId,
@@ -506,6 +510,24 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     }
     if (threadSyncLabel !== null) {
       return { kind: "syncing", label: threadSyncLabel };
+    }
+    const childInput = childThreadInputs[0];
+    if (childInput && contentPresentationKind === "ready") {
+      return {
+        kind: "child-input",
+        label:
+          childThreadInputs.length === 1
+            ? "Subagent needs input"
+            : `${childThreadInputs.length} subagents need input`,
+        accessibilityLabel: `Open question from ${childInput.title}`,
+        onPress: () => {
+          Keyboard.dismiss();
+          navigation.navigate("Thread", {
+            environmentId: props.environmentId,
+            threadId: childInput.id,
+          });
+        },
+      };
     }
     if (props.isCompacting && contentPresentationKind === "ready") {
       return { kind: "compacting" };

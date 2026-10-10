@@ -561,6 +561,8 @@ export const OrchestrationV2Run = Schema.Struct({
   contextHandoffId: Schema.NullOr(ContextHandoffId),
   /** Links server-generated restart continuations to the interrupted run. */
   restartContinuationOfRunId: Schema.optional(RunId),
+  /** The delegated task this run answers, including a follow-up in an existing child thread. */
+  delegatedTaskId: Schema.optional(NodeId),
   /**
    * Set on wake runs (background notifications, delegated task results,
    * restart continuations): when the work they continue started. Read it
@@ -1095,6 +1097,8 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
     CommandNotificationSource,
     Schema.Struct({ kind: Schema.Literal("monitor") }),
     Schema.Struct({ kind: Schema.Literal("background_task") }),
+    /** T3 Code itself, such as a restart continuing an interrupted turn. */
+    Schema.Struct({ kind: Schema.Literal("system") }),
   ],
   (kind) => Schema.Struct({ kind }),
   () => ({ kind: "background_task" }),

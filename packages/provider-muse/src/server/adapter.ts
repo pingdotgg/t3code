@@ -22,6 +22,7 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import type { MuseSettings } from "../settings.ts";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -250,6 +251,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
   const providerHost = yield* ProviderHost.ProviderHost;
   const fileSystem = yield* FileSystem.FileSystem;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const agentScope = yield* AgentScope;
 
   const protocolError = (detail: string, payload?: unknown) =>
     new ProviderAdapter.ProviderAdapterProtocolError({
@@ -1367,15 +1369,24 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       const launchHost = Effect.fnUntraced(function* () {
         const epoch = ++hostEpoch;
         const mcpSession = yield* mcpSessions.read(input.threadId);
+        const environment = McpProviderSession.withAgentDeviceEnvironment(
+          options.environment,
+          mcpSession,
+        );
+        const launch = yield* agentScope.wrap({
+          command: options.settings.binaryPath || "muse",
+          args: [],
+          name: "muse",
+          threadId: input.threadId,
+          env: environment,
+        });
         const created = yield* Effect.acquireRelease(
           createMuseSdkHostEffect(
             {
-              binaryPath: options.settings.binaryPath || "muse",
+              binaryPath: launch.command,
+              launchArgs: launch.args,
               cwd,
-              environment: McpProviderSession.withAgentDeviceEnvironment(
-                options.environment,
-                mcpSession,
-              ),
+              environment,
               runtimeMode: input.runtimePolicy.runtimeMode,
             },
             options.createHost,

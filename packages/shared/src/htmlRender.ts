@@ -325,7 +325,9 @@ export function htmlRenderThemeMessage(theme: HtmlRenderTheme) {
 // reply reads as a box within the thread, so it stays hidden.
 const BASE_CSS =
   "html{background:var(--background);color:var(--foreground);font-family:var(--font-sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%;scrollbar-width:none}" +
-  "html::-webkit-scrollbar{display:none}body{margin:0}code,kbd,pre,samp{font-family:var(--font-mono)}";
+  "html::-webkit-scrollbar{display:none}body{margin:0}code,kbd,pre,samp{font-family:var(--font-mono)}" +
+  // Focus outlines paint inside the element, so the frame edge never clips them.
+  ":where(:focus-visible){outline:2px solid var(--ring)}:focus-visible{outline-width:2px!important;outline-offset:-2px!important}";
 
 function rootRule(theme: HtmlRenderTheme): string {
   const declarations = Object.entries(theme.variables)
