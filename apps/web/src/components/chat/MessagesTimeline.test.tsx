@@ -8,6 +8,8 @@ import {
   ProjectId,
   RunId,
   ThreadId,
+  TurnItemId,
+  type OrchestrationV2ProjectedTurnItem,
 } from "@t3tools/contracts";
 import {
   act,
@@ -20,6 +22,8 @@ import {
 import { renderToStaticMarkup } from "react-dom/server";
 import { createRoot } from "react-dom/client";
 import { create, type ReactTestRenderer } from "react-test-renderer";
+import { deriveTimelineEntriesFromVisibleTurnItems } from "../../session-logic";
+import { makeStreamingTimelineFixture } from "../../test-fixtures";
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
 import { useComposerFocusState } from "./useComposerFocusState";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -527,6 +531,104 @@ describe("MessagesTimeline", () => {
     } finally {
       await act(() => renderer?.unmount());
     }
+  });
+
+  it("shows a plugin's context, or why it was not added, when its row is expanded", async () => {
+    activityTestState.expanded = true;
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const source = makeStreamingTimelineFixture().visibleTurnItems[0]!;
+    const record = (
+      id: string,
+      status: "completed" | "failed",
+      title: string,
+      output: unknown,
+    ): OrchestrationV2ProjectedTurnItem => ({
+      ...source,
+      sourceItemId: TurnItemId.make(id),
+      item: {
+        id: TurnItemId.make(id),
+        threadId: source.item.threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: source.item.ordinal,
+        status,
+        title,
+        startedAt: source.item.startedAt,
+        completedAt: source.item.completedAt,
+        updatedAt: source.item.updatedAt,
+        type: "dynamic_tool",
+        toolName: "plugin_context",
+        toolSource: { key: "plugin:test.context", name: "Context fixture", kind: "integration" },
+        input: {
+          plugin: {
+            id: "test.context",
+            name: "Context fixture",
+            installationId: "INSTALLATION_INPUT",
+            generation: 3,
+          },
+        },
+        output,
+      },
+    });
+    const inspect = async (item: OrchestrationV2ProjectedTurnItem) => {
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(() => {
+          renderer = create(
+            <MessagesTimeline
+              {...buildProps()}
+              timelineEntries={deriveTimelineEntriesFromVisibleTurnItems({
+                visibleTurnItems: [item],
+                optimisticMessages: [],
+              })}
+            />,
+          );
+        });
+        const collapsed = JSON.stringify(renderer!.toJSON());
+        const row = renderer!.root.find(
+          (node) => typeof node.props.onClick === "function" && "aria-expanded" in node.props,
+        );
+        await act(() => row.props.onClick());
+        const inspector = renderer!.root.find(
+          (node) => node.props["data-v2-item-inspector"] === "dynamic_tool",
+        );
+        return {
+          collapsed,
+          inspector: inspector
+            .findAll((node) => typeof node.type === "string")
+            .flatMap((node) => node.children.filter((child) => typeof child === "string"))
+            .join(""),
+        };
+      } finally {
+        await act(() => renderer?.unmount());
+      }
+    };
+
+    const added = await inspect(
+      record("added", "completed", "Added context from Context fixture", {
+        context: [{ title: "Project codename", text: "The project codename is PERIWINKLE-42." }],
+      }),
+    );
+    expect(added.collapsed).not.toContain("PERIWINKLE-42");
+    expect(added.inspector).toContain("From Context fixture (test.context)");
+    expect(added.inspector).toContain("Project codename");
+    expect(added.inspector).toContain("The project codename is PERIWINKLE-42.");
+    // The context replaces the record's input, which only names the installation.
+    expect(added.inspector).not.toContain("INSTALLATION_INPUT");
+
+    const failed = await inspect(
+      record("failed", "failed", "Context from Context fixture not added", {
+        reason: "the notes index is offline",
+      }),
+    );
+    expect(failed.inspector).toContain("Not added");
+    expect(failed.inspector).toContain("the notes index is offline");
   });
 
   it("leads an unanswered question row with the question text", async () => {

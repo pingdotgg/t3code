@@ -9,6 +9,7 @@ import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRu
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import {
   turnItemDetailRevision,
+  toolCallLines,
   turnItemHasDetail,
   turnItemNeedsDetailFetch,
 } from "@t3tools/client-runtime/work-log/item-detail";
@@ -22,6 +23,7 @@ import {
   toolItemForDisplay,
   workEntryDisplayIndicatesToolFailure,
   liveActivityToolStatus,
+  pluginContextInspection,
   toolGroupAction,
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
@@ -783,6 +785,23 @@ function toWorkLogEntry(
   }
 }
 
+/**
+ * The call an expanded work row shows in the foreground, or null when the row
+ * shows its full detail instead. Plugin context shows what it added (or why
+ * not), so its plugin input is not presented as a tool call.
+ */
+export function expandedWorkRowCall(item: OrchestrationV2TurnItem, isRead: boolean) {
+  if (!isRead && item.type === "command_execution") return toolCallLines({ command: item.input });
+  if (!isRead && item.type === "dynamic_tool") {
+    return pluginContextInspection(item) ? null : toolCallLines({ args: item.input });
+  }
+  if (item.type === "file_search") return toolCallLines({ args: { pattern: item.pattern } });
+  if (item.type === "web_search") {
+    return toolCallLines({ args: { query: item.patterns?.join(", ") } });
+  }
+  return null;
+}
+
 /** Expanded detail for a row, from its wire item or the full item from getTurnItem. */
 export function formatItemFullDetail(
   row: OrchestrationV2ProjectedTurnItem,
@@ -814,13 +833,23 @@ function toFeedActivity(
     item.type === "dynamic_tool" && toolGroupAction(workEntry) === "read"
       ? collectToolFilePaths(item)
       : null;
-  const getFullDetail = memoizeValue(() =>
-    readPaths
-      ? readPaths.join("\n") || null
-      : item.type === "notification"
-        ? item.detail?.trim() || null
-        : formatItemFullDetail(row, item),
-  );
+  const getFullDetail = memoizeValue(() => {
+    if (readPaths) {
+      return readPaths.join("\n") || null;
+    }
+    if (item.type === "notification") {
+      return item.detail?.trim() || null;
+    }
+    // Like web's inspector: the context the provider received, or why none was added.
+    const pluginContext = pluginContextInspection(item);
+    if (pluginContext) {
+      return [
+        `From ${pluginContext.source}`,
+        ...pluginContext.blocks.map((block) => `${block.label}\n${block.text}`),
+      ].join("\n\n");
+    }
+    return formatItemFullDetail(row, item);
+  });
   const getCopyText = memoizeValue(() =>
     [summary, detail, getFullDetail()]
       .filter(
