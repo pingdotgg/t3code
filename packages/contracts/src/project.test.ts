@@ -163,6 +163,10 @@ const decodeFaviconPath = Schema.decodeUnknownEffect(ProjectFaviconPath);
 effectIt.effect("project favicon paths accept only supported image files", () =>
   Effect.gen(function* () {
     assert.strictEqual(yield* decodeFaviconPath("brand/icon.svg"), "brand/icon.svg");
+    assert.strictEqual(
+      yield* decodeFaviconPath("Resources/AppIcon.icns"),
+      "Resources/AppIcon.icns",
+    );
     assert.strictEqual((yield* Effect.exit(decodeFaviconPath(".env")))._tag, "Failure");
   }),
 );
