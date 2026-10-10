@@ -2821,6 +2821,67 @@ describe("PiAdapterV2", () => {
     ),
   );
 
+  it.effect.each([
+    { toolName: "bash", exitCode: 0, legacy: false },
+    { toolName: "powershell", exitCode: 2, legacy: false },
+    { toolName: "bash", exitCode: 1, legacy: true },
+    { toolName: "powershell", exitCode: 0, legacy: true },
+  ])(
+    "normalizes $toolName command results, exit=$exitCode legacy=$legacy",
+    ({ toolName, exitCode, legacy }) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* startTurn(runtime, providerThread);
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({
+          type: "tool_execution_start",
+          toolCallId: "shell-call",
+          toolName,
+          args: { command: "echo hello" },
+        });
+        const running = yield* takeEvent(
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "command_execution",
+        );
+        assert.isTrue(
+          running.type === "turn_item.updated" &&
+            running.turnItem.type === "command_execution" &&
+            running.turnItem.status === "running" &&
+            running.turnItem.input === "echo hello",
+        );
+        yield* fake.emit({
+          type: "tool_execution_end",
+          toolCallId: "shell-call",
+          toolName,
+          isError: exitCode !== 0,
+          result: {
+            content: [{ type: "text", text: "hello" }],
+            details: { exitCode: legacy ? exitCode : 99 },
+            ...(legacy ? {} : { structuredContent: { exit_code: exitCode } }),
+          },
+        });
+        const completed = yield* takeEvent(
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "command_execution",
+        );
+        assert.isTrue(
+          completed.type === "turn_item.updated" &&
+            completed.turnItem.type === "command_execution" &&
+            completed.turnItem.title === toolName &&
+            completed.turnItem.input === "echo hello" &&
+            completed.turnItem.output === "hello" &&
+            completed.turnItem.exitCode === exitCode &&
+            completed.turnItem.status === (exitCode === 0 ? "completed" : "failed"),
+        );
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("emits session-start dialogs before a turn exists", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
