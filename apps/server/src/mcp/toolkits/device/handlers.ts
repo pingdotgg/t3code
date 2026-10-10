@@ -9,7 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "../../../config.ts";
 import { ensureAgentDeviceShim } from "../../../device/AgentDeviceShim.ts";
 import { nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
@@ -179,7 +179,7 @@ const handlers = {
       const targetArgs = [...agentDeviceTargetArgs(device), ...agentArgs];
       const config = yield* ServerConfig.ServerConfig;
       const path = yield* Path.Path;
-      const platform = yield* HostProcessPlatform;
+      const platform = yield* HostProcess.Platform;
       const shimDir = yield* ensureAgentDeviceShim({
         entryPath: yield* devices.agentCli,
         stateDir: config.stateDir,
@@ -211,15 +211,20 @@ const handlers = {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
       const sessions = yield* devices.sessionsForThread(scope.thread.threadId);
-      const target =
-        input.deviceId !== undefined
-          ? { hostId: input.hostId ?? LOCAL_DEVICE_HOST_ID, deviceId: input.deviceId }
-          : sessions
-              .filter((session) => input.hostId === undefined || session.hostId === input.hostId)
-              .at(-1);
+      // Only devices this thread opened: another thread's device is not this agent's to watch.
+      const hostId =
+        input.deviceId === undefined ? input.hostId : (input.hostId ?? LOCAL_DEVICE_HOST_ID);
+      const target = sessions.findLast(
+        (session) =>
+          (hostId === undefined || session.hostId === hostId) &&
+          (input.deviceId === undefined || session.deviceId === input.deviceId),
+      );
       if (!target) {
         return yield* new DeviceToolUnavailableError({
-          reason: "No device is open in this thread. Call device_open first.",
+          reason:
+            input.deviceId === undefined
+              ? "No device is open in this thread. Call device_open first."
+              : `Device ${input.deviceId} on host ${hostId} is not open in this thread. Call device_open first.`,
         });
       }
       const shot = yield* devices.screenshot(target);

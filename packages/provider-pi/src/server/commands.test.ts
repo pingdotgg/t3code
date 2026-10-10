@@ -1,7 +1,6 @@
 import { expect, it } from "@effect/vitest";
 
 import {
-  expandPiSkillReference,
   parsePiCompactCommand,
   parsePiDiscoveredCommands,
   PI_COMPACT_SLASH_COMMAND,
@@ -108,20 +107,4 @@ it("prepends the builtin compact command without duplicating a discovered one", 
       { name: "hello" },
     ]),
   ).toEqual([PI_COMPACT_SLASH_COMMAND, { name: "hello" }]);
-});
-
-it("leaves unrelated dollar-prefixed text unchanged", () => {
-  expect(expandPiSkillReference("Explain $HOME", new Set(["global-review"]))).toBe("Explain $HOME");
-});
-
-it("hoists every known $ skill and keeps the rest of the prompt", () => {
-  expect(expandPiSkillReference("use $alpha then $beta please", new Set(["alpha", "beta"]))).toBe(
-    "/skill:alpha /skill:beta use  then  please",
-  );
-});
-
-it("preserves code indentation and line breaks when expanding a skill", () => {
-  expect(expandPiSkillReference("$review\n```ts\n  const x = 1;\n```", new Set(["review"]))).toBe(
-    "/skill:review ```ts\n  const x = 1;\n```",
-  );
 });

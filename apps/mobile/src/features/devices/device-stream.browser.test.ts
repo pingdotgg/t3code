@@ -38,6 +38,7 @@ async function setup() {
     static OPEN = 1;
     readyState = 1;
     onopen: (() => void) | null = null;
+    onmessage: ((event: { data: ArrayBuffer }) => void) | null = null;
     close = vi.fn();
     send = vi.fn();
     constructor() {
@@ -86,6 +87,8 @@ it("bridges shared first-frame readiness, image failure, and a successful fresh 
   const { elements, messages, sockets, configuration } = await setup();
   sockets[0]!.onopen?.();
   expect(messages()).not.toContainEqual({ type: "status", status: "streaming" });
+  expect(messages()).not.toContainEqual({ type: "input", connected: true });
+  sockets[0]!.onmessage?.({ data: new Uint8Array([0x83]).buffer });
   expect(messages()).toContainEqual({ type: "input", connected: true });
   const image = elements.find((element) => element.tag === "img")!;
   image.naturalWidth = 400;

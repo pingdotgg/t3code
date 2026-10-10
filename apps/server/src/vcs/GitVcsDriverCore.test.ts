@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - realpathSync.native resolves Windows 8.3 short names, which the Effect realPath does not.
 import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it, describe } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -1864,7 +1864,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* writeTextFile(cwd, " leading.txt", "whitespace path\n");
         yield* writeTextFile(cwd, "l.txt", "other\n");
         yield* writeTextFile(cwd, "binary.dat", "binary\0data");
-        if ((yield* HostProcessPlatform) !== "win32") {
+        if ((yield* HostProcess.Platform) !== "win32") {
           yield* writeTextFile(cwd, "tab\tand\nnewline.txt", "unusual path\n");
         }
         yield* git(cwd, ["add", "."]);
@@ -1906,7 +1906,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           additions: 0,
           deletions: 0,
         });
-        if ((yield* HostProcessPlatform) !== "win32") {
+        if ((yield* HostProcess.Platform) !== "win32") {
           assert.deepInclude(branch.files ?? [], {
             path: "tab\tand\nnewline.txt",
             previousPath: null,
@@ -2890,7 +2890,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
     });
 
     // NTFS rejects a newline in a file name, so there is nothing to preserve there.
-    it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       "preserves newline characters in worktree paths when listing refs",
       () =>
         Effect.gen(function* () {
@@ -3965,7 +3965,7 @@ describe("Windows long path configuration", () => {
     const layer = GitVcsDriver.layer.pipe(
       Layer.provide(layerServerConfig),
       Layer.provideMerge(NodeServices.layer),
-      Layer.provide(Layer.succeed(HostProcessPlatform, platform)),
+      Layer.provide(Layer.succeed(HostProcess.Platform, platform)),
     );
     return yield* Effect.gen(function* () {
       const driver = yield* GitVcsDriver.GitVcsDriver;

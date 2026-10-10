@@ -1,6 +1,7 @@
-import { type RefObject, useEffect, useLayoutEffect, useState } from "react";
+import { type RefObject, useLayoutEffect, useState } from "react";
 
 import { type ResizableWidthHandlers, useResizableWidth } from "./useResizableWidth";
+import { observeResize } from "../lib/observeResize";
 
 export interface PreviewPanelInlineSize {
   readonly width: number;
@@ -28,15 +29,11 @@ export function usePreviewPanelInlineSize(
     readonly enabled?: boolean | undefined;
     readonly widthStorageKey?: string | undefined;
     readonly defaultWidth?: number | undefined;
-    /** Use the caller's existing row measurement instead of observing the panel's parent. */
-    readonly containerWidth?: number | undefined;
+    /** Measure this row instead of the panel's parent. */
+    readonly container?: HTMLElement | null | undefined;
   } = {},
 ): PreviewPanelInlineSize {
-  const maxWidth = useViewportClampedMaxWidth(
-    hostRef,
-    options.enabled ?? true,
-    options.containerWidth,
-  );
+  const maxWidth = useViewportClampedMaxWidth(hostRef, options.enabled ?? true, options.container);
   return useResizableWidth({
     storageKey: options.widthStorageKey ?? PREVIEW_PANEL_WIDTH_STORAGE_KEY,
     defaultWidth: options.defaultWidth ?? PREVIEW_PANEL_DEFAULT_WIDTH,
@@ -54,46 +51,40 @@ export function usePreviewPanelInlineSize(
 function useViewportClampedMaxWidth(
   hostRef: RefObject<HTMLElement | null> | undefined,
   enabled: boolean,
-  containerWidth?: number,
+  container: HTMLElement | null | undefined,
 ): number {
-  const [vw, setVw] = useState(() => (typeof window === "undefined" ? 1280 : window.innerWidth));
-  const [measuredContainerWidth, setContainerWidth] = useState<number | undefined>(undefined);
-  useEffect(() => {
+  const [maxWidth, setMaxWidth] = useState(() =>
+    getPreviewPanelMaxWidth(typeof window === "undefined" ? 1280 : window.innerWidth),
+  );
+  useLayoutEffect(() => {
     if (typeof window === "undefined") return;
+    const row = container ?? (enabled ? hostRef?.current?.parentElement : null) ?? null;
+    // Measure before first paint: the persisted width must be clamped against
+    // the row on the initial render, not one observer tick later (the panel
+    // would flash over-wide on every mount). Only the derived cap is stored: the
+    // row resizes every frame of a sidebar drag, but the cap rarely moves, and an
+    // unchanged cap skips re-rendering the panel's owner.
+    const measure = () => {
+      setMaxWidth(getPreviewPanelMaxWidth(window.innerWidth, row?.clientWidth));
+    };
+    measure();
     let frame = 0;
     const onResize = () => {
       if (frame !== 0) return;
       frame = window.requestAnimationFrame(() => {
         frame = 0;
-        setVw(window.innerWidth);
+        measure();
       });
     };
     window.addEventListener("resize", onResize);
+    const stopObserving = row ? observeResize(row, measure) : undefined;
     return () => {
       window.removeEventListener("resize", onResize);
       if (frame !== 0) window.cancelAnimationFrame(frame);
+      stopObserving?.();
     };
-  }, []);
-  useLayoutEffect(() => {
-    if (!enabled) return;
-    const parent = hostRef?.current?.parentElement;
-    if (!parent) return;
-    // Measure before first paint: the persisted width must be clamped against
-    // the row on the initial render, not one observer tick later (the panel
-    // would flash over-wide on every mount). clientWidth is integral, so
-    // sub-pixel resize deltas bail out of re-rendering.
-    const measure = () => {
-      setContainerWidth(parent.clientWidth);
-    };
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(parent);
-    return () => {
-      observer.disconnect();
-    };
-  }, [hostRef, enabled]);
-  return getPreviewPanelMaxWidth(vw, containerWidth ?? measuredContainerWidth);
+  }, [container, hostRef, enabled]);
+  return maxWidth;
 }
 export function getPreviewPanelMaxWidth(viewportWidth: number, containerWidth?: number): number {
   const fractionCap = Math.floor(viewportWidth * PREVIEW_PANEL_MAX_WIDTH_FRACTION);

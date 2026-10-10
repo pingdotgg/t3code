@@ -33,6 +33,11 @@ export class BearerConnectionProfile extends Schema.TaggedClass<BearerConnection
      * Connect credential instead of a stored bearer token.
      */
     authorization: Schema.optionalKey(Schema.Literal("t3-connect")),
+    /**
+     * "tailscale" on a learned route the server found on its Tailscale
+     * interface. A bare 100.64.0.0/10 address could belong to any VPN.
+     */
+    network: Schema.optionalKey(Schema.Literal("tailscale")),
   },
 ) {}
 

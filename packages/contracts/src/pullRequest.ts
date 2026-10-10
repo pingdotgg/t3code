@@ -209,6 +209,12 @@ export const PullRequestComment = Schema.Struct({
   reviewState: Schema.NullOr(Schema.String),
   /** Absent from a host with no reactions at all, which is a different thing from none on this. */
   reactions: Schema.optional(Schema.Array(PullRequestReaction)),
+  /**
+   * The host's own answer to whether this reader may rewrite this remark. Absent where the host
+   * doesn't say, which leaves the page to guess from authorship. A remark on a line appears both
+   * here and in its review thread; a host that sets this sets it on both copies alike.
+   */
+  canEdit: Schema.optional(Schema.Boolean),
 });
 export type PullRequestComment = typeof PullRequestComment.Type;
 
@@ -232,6 +238,12 @@ export const PullRequestThreadComment = Schema.Struct({
   editedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   url: Schema.NullOr(Schema.String),
   reactions: Schema.optional(Schema.Array(PullRequestReaction)),
+  /**
+   * The host's own answer to whether this reader may rewrite this remark. Absent where the host
+   * doesn't say, which leaves the page to guess from authorship. A remark on a line appears both
+   * here and in its review thread; a host that sets this sets it on both copies alike.
+   */
+  canEdit: Schema.optional(Schema.Boolean),
 });
 export type PullRequestThreadComment = typeof PullRequestThreadComment.Type;
 
@@ -257,6 +269,12 @@ export const PullRequestReviewThread = Schema.Struct({
   commentCount: Schema.optional(NonNegativeInt),
   /** Opaque cursor for the next comment page. Absent once this thread is whole. */
   nextCommentsCursor: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * The host's own answer to whether this reader may resolve this thread. It can only narrow the
+   * reader's repository-wide `resolve` permission, never widen it. Absent where the host
+   * doesn't say per thread.
+   */
+  canResolve: Schema.optional(Schema.Boolean),
 });
 export type PullRequestReviewThread = typeof PullRequestReviewThread.Type;
 
@@ -481,6 +499,11 @@ export const PullRequestViewerPermissions = Schema.Struct({
    * changed on this host at all.
    */
   labels: Schema.optional(Schema.Boolean),
+  /**
+   * This viewer may rewrite the change request's title and description. Absent where the host
+   * doesn't say, which leaves the page to guess from authorship and merge access.
+   */
+  editChangeRequest: Schema.optional(Schema.Boolean),
 });
 export type PullRequestViewerPermissions = typeof PullRequestViewerPermissions.Type;
 
@@ -825,6 +848,17 @@ export const PullRequestInvalidateInput = Schema.Struct({
   filesViewedOnly: Schema.optional(Schema.Boolean),
 });
 export type PullRequestInvalidateInput = typeof PullRequestInvalidateInput.Type;
+
+/**
+ * The state a read routed to another environment saw, reported to the environment the read was
+ * for so its thread links can catch up. A hint only: that environment confirms with the host
+ * before writing anything.
+ */
+export const PullRequestReportStateInput = Schema.Struct({
+  reference: PullRequestRef,
+  state: PullRequestState,
+});
+export type PullRequestReportStateInput = typeof PullRequestReportStateInput.Type;
 
 export const PullRequestDetail = Schema.Struct({
   provider: SourceControlProviderKind,

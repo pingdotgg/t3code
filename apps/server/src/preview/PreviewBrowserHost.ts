@@ -7,7 +7,7 @@
  * gets the command instead, and only the operator's explicit
  * `T3CODE_SERVER_BROWSER_SANDBOX=0` launches without it.
  */
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
@@ -90,11 +90,13 @@ export class PreviewBrowserLibrariesError extends Schema.TaggedError<PreviewBrow
 export type PreviewBrowserHostError = PreviewBrowserSandboxError | PreviewBrowserLibrariesError;
 
 const MISSING_LIBRARY = /^\s*(\S+) => not found$/gm;
+/** glibc's loader abort, naming the first library it could not load. */
+const LOADER_ERROR = /error while loading shared libraries: ([^:\s]+)/;
 
 /**
  * After a launch fails, names the host setup it is missing: the sandbox, from
- * Chrome's own abort message, or shared libraries, from `ldd`. Undefined when
- * neither explains it. Linux only; other hosts never need either.
+ * Chrome's own abort message, or shared libraries the loader refuses. Undefined
+ * when neither explains it. Linux only; other hosts never need either.
  */
 export const diagnoseLaunchFailure = Effect.fn("PreviewBrowserHost.diagnoseLaunchFailure")(
   function* (input: {
@@ -106,7 +108,7 @@ export const diagnoseLaunchFailure = Effect.fn("PreviewBrowserHost.diagnoseLaunc
     if (input.output.includes(NO_SANDBOX_SIGNATURE)) {
       return new PreviewBrowserSandboxError({ setupCommand });
     }
-    if ((yield* HostProcessPlatform) !== "linux") return undefined;
+    if ((yield* HostProcess.Platform) !== "linux") return undefined;
     const libraries = yield* missingLibraries(input.executable);
     return libraries.length === 0
       ? undefined
@@ -114,18 +116,29 @@ export const diagnoseLaunchFailure = Effect.fn("PreviewBrowserHost.diagnoseLaunc
   },
 );
 
-/** Shared libraries the loader cannot find for `executable`, by `ldd`. */
+/**
+ * Shared libraries the loader cannot find for `executable`. The browser's own
+ * `--version` decides whether any are missing; `ldd` only lists them after the
+ * real loader fails, because it can report libraries a host provides another
+ * way (NixOS's nix-ld).
+ */
 export const missingLibraries = Effect.fn("PreviewBrowserHost.missingLibraries")(function* (
   executable: string,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const report = yield* spawner
-    .string(ChildProcess.make("ldd", [executable], { stdin: "ignore", stderr: "ignore" }))
-    .pipe(
-      Effect.timeout("5 seconds"),
-      Effect.orElseSucceed(() => ""),
-    );
-  return [...report.matchAll(MISSING_LIBRARY)].map((match) => match[1]!);
+  const run = (command: string, args: ReadonlyArray<string>) =>
+    spawner
+      .string(ChildProcess.make(command, args, { stdin: "ignore" }), { includeStderr: true })
+      .pipe(
+        Effect.timeout("5 seconds"),
+        Effect.orElseSucceed(() => ""),
+      );
+  const loaderError = LOADER_ERROR.exec(yield* run(executable, ["--version"]))?.[1];
+  if (loaderError === undefined) return [];
+  const listed = [...(yield* run("ldd", [executable])).matchAll(MISSING_LIBRARY)].map(
+    (match) => match[1]!,
+  );
+  return listed.length > 0 ? listed : [loaderError];
 });
 
 /**
@@ -134,7 +147,7 @@ export const missingLibraries = Effect.fn("PreviewBrowserHost.missingLibraries")
  * root, so the server checks it at startup.
  */
 export const sandboxBlocked = Effect.gen(function* () {
-  if ((yield* HostProcessPlatform) !== "linux") return false;
+  if ((yield* HostProcess.Platform) !== "linux") return false;
   const fs = yield* FileSystem.FileSystem;
   const restricted = yield* fs.readFileString(USERNS_RESTRICTION).pipe(
     Effect.map((value) => value.trim() === "1"),

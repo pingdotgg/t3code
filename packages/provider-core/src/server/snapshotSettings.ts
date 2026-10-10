@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Stream from "effect/Stream";
 
-import type { ProviderHostShape } from "./ProviderHost.ts";
+import * as ProviderHost from "./ProviderHost.ts";
 
 export interface ProviderSnapshotSettings<Settings> {
   readonly provider: Settings;
@@ -27,17 +27,23 @@ export function haveProviderSnapshotSettingsChanged<Settings>(
   return !Equal.equals(previous, next);
 }
 
-export function makeProviderSnapshotSettingsSource<Settings>(
+/** The instance's settings paired with the host's server settings, as snapshots read them. */
+export const makeProviderSnapshotSettingsSource = <Settings>(
   provider: Settings,
-  settings: ProviderHostShape["settings"],
-): {
-  readonly getSettings: Effect.Effect<ProviderSnapshotSettings<Settings>, ServerSettingsError>;
-  readonly streamSettings: Stream.Stream<ProviderSnapshotSettings<Settings>>;
-} {
-  const mapSettings = (settings: ServerSettings) =>
-    makeProviderSnapshotSettings(provider, settings);
-  return {
-    getSettings: settings.get.pipe(Effect.map(mapSettings)),
-    streamSettings: settings.changes.pipe(Stream.map(mapSettings)),
-  };
-}
+): Effect.Effect<
+  {
+    readonly getSettings: Effect.Effect<ProviderSnapshotSettings<Settings>, ServerSettingsError>;
+    readonly streamSettings: Stream.Stream<ProviderSnapshotSettings<Settings>>;
+  },
+  never,
+  ProviderHost.ProviderHost
+> =>
+  Effect.gen(function* () {
+    const { settings } = yield* ProviderHost.ProviderHost;
+    const mapSettings = (current: ServerSettings) =>
+      makeProviderSnapshotSettings(provider, current);
+    return {
+      getSettings: settings.get.pipe(Effect.map(mapSettings)),
+      streamSettings: settings.changes.pipe(Stream.map(mapSettings)),
+    };
+  });
