@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Bundler integration fixtures use Node filesystem APIs outside an Effect runtime.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";

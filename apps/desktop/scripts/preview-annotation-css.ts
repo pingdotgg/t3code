@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Bundler hooks run outside an Effect runtime and use Node file dependencies.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
