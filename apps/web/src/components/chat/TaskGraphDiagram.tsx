@@ -1,9 +1,10 @@
 import type { EnvironmentId, TaskGraphNode } from "@t3tools/contracts";
 import { taskGraphLayers } from "@t3tools/shared/taskGraph";
 import { Link } from "@tanstack/react-router";
+import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { PreviewCard, PreviewCardPopup, PreviewCardTrigger } from "../ui/preview-card";
 import {
   pullRequestLabel,
   TASK_GRAPH_DIAGRAM,
@@ -22,6 +23,8 @@ export function TaskGraphDiagram(props: {
   readonly onOpenPullRequest: (url: string) => void;
 }) {
   const layout = taskGraphDiagramLayout(taskGraphLayers(props.nodes));
+  const titles = new Map(props.nodes.map((node) => [node.key, node.title]));
+  const titleOf = (key: string) => titles.get(key) ?? key;
 
   return (
     <div className="relative p-2" style={{ width: layout.width + 16, height: layout.height + 16 }}>
@@ -49,6 +52,7 @@ export function TaskGraphDiagram(props: {
           x={x + 8}
           y={y + 8}
           onOpenPullRequest={props.onOpenPullRequest}
+          titleOf={titleOf}
         />
       ))}
     </div>
@@ -61,6 +65,7 @@ function TaskGraphDiagramNode(props: {
   readonly x: number;
   readonly y: number;
   readonly onOpenPullRequest: (url: string) => void;
+  readonly titleOf: (key: string) => string;
 }) {
   const { node } = props;
   const pullRequestUrl = node.pullRequestResult?.url ?? null;
@@ -122,11 +127,74 @@ function TaskGraphDiagramNode(props: {
       </div>
     </div>
   );
-  if (node.error === null) return box;
   return (
-    <Tooltip>
-      <TooltipTrigger render={box} />
-      <TooltipPopup className="max-w-sm whitespace-pre-wrap">{node.error}</TooltipPopup>
-    </Tooltip>
+    <PreviewCard>
+      <PreviewCardTrigger delay={250} render={box} />
+      <PreviewCardPopup side="top" align="center" className="w-96 max-w-[calc(100vw-2rem)]">
+        <TaskGraphNodeDetails node={node} titleOf={props.titleOf} />
+      </PreviewCardPopup>
+    </PreviewCard>
+  );
+}
+
+/** What a hovered box expands to: the task itself, what it waits on, and how it went. */
+function TaskGraphNodeDetails(props: {
+  readonly node: TaskGraphNode;
+  readonly titleOf: (key: string) => string;
+}) {
+  const { node } = props;
+  const pullRequestError =
+    node.pullRequestResult?.status === "failed" ? node.pullRequestResult.error : null;
+  return (
+    <div className="grid gap-2 p-3 text-xs">
+      <div className="flex min-w-0 items-center gap-1.5">
+        <span
+          aria-hidden
+          className={cn(
+            "size-1.5 shrink-0 rounded-full",
+            TASK_GRAPH_NODE_STATUS_DOT_CLASS[node.status],
+          )}
+        />
+        <span className="min-w-0 truncate font-medium text-sm text-foreground">{node.title}</span>
+        <span className="shrink-0 text-muted-foreground">
+          {TASK_GRAPH_NODE_STATUS_LABEL[node.status]}
+        </span>
+      </div>
+      <p className="max-h-48 overflow-y-auto whitespace-pre-wrap text-pretty text-foreground/85">
+        {node.prompt}
+      </p>
+      {node.dependsOn.length > 0 ? (
+        <TaskGraphNodeDetail label="After">
+          {node.dependsOn.map(props.titleOf).join(", ")}
+        </TaskGraphNodeDetail>
+      ) : null}
+      {node.branch !== null ? (
+        <TaskGraphNodeDetail label="Branch">
+          <span className="font-mono">{node.branch}</span>
+        </TaskGraphNodeDetail>
+      ) : null}
+      {node.summary !== null ? (
+        <TaskGraphNodeDetail label="Result">
+          <span className="line-clamp-6 whitespace-pre-wrap">{node.summary}</span>
+        </TaskGraphNodeDetail>
+      ) : null}
+      {node.error !== null ? (
+        <p className="whitespace-pre-wrap text-destructive">{node.error}</p>
+      ) : null}
+      {pullRequestError !== null ? (
+        <p className="whitespace-pre-wrap text-destructive">
+          Pull request failed: {pullRequestError}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function TaskGraphNodeDetail(props: { readonly label: string; readonly children: ReactNode }) {
+  return (
+    <div className="grid grid-cols-[3.5rem_minmax(0,1fr)] gap-2">
+      <span className="text-muted-foreground">{props.label}</span>
+      <span className="min-w-0 text-foreground/85">{props.children}</span>
+    </div>
   );
 }
