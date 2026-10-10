@@ -46,18 +46,16 @@ export function shouldNavigateAfterThreadPark(input: {
 const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
 
-export function resolveSidebarRowAccessibility(input: {
+// Accessible name for a sidebar row: "title, status, project". The title is the
+// row's identity and must lead when users scan tasks; status and project tell
+// same-titled rows apart. Only static context belongs here; row actions stay
+// separate controls with their own names.
+export function resolveSidebarRowAccessibleName(input: {
   readonly title: string;
   readonly statusLabel: string | null;
   readonly projectDisplayName: string | null;
-  readonly isActive: boolean;
-}): { readonly label: string; readonly current: "page" | undefined } {
-  return {
-    // The title is the row's identity and must lead when users scan tasks.
-    // Only static context belongs here; nested action labels remain separate controls.
-    label: [input.title, input.statusLabel, input.projectDisplayName].filter(Boolean).join(", "),
-    current: input.isActive ? "page" : undefined,
-  };
+}): string {
+  return [input.title, input.statusLabel, input.projectDisplayName].filter(Boolean).join(", ");
 }
 
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a
