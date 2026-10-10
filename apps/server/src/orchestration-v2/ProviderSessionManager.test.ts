@@ -1093,40 +1093,56 @@ it.effect("ProviderSessionManagerV2 opens a duplicate session only once", () =>
   }),
 );
 
-it.effect("ProviderSessionManagerV2 opens a session without the last agent's OOM kill", () =>
-  Effect.gen(function* () {
-    const state = yield* Ref.make(emptyState);
-    const threadId = ThreadId.make("thread-provider-session-manager-oom-clear");
-    // The thread's previous agent was OOM-killed. The next session may run
-    // without a scope (Cursor, OpenCode), so it must not inherit that answer.
-    const oomKilledThreads = new Set<string>([threadId]);
-    const agentScope = {
-      ...AgentScope.defaultValue(),
-      oomKilled: (id: string) => Effect.sync(() => oomKilledThreads.has(id)),
-      clear: (id: string) => Effect.sync(() => void oomKilledThreads.delete(id)),
-    };
+it.effect(
+  "ProviderSessionManagerV2 starts a thread's session without its last agent's OOM kill",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const owner = ThreadId.make("thread-provider-session-manager-oom-owner");
+      const joiner = ThreadId.make("thread-provider-session-manager-oom-joiner");
+      // Both threads' previous agents were OOM-killed. A new session may run
+      // without a scope (Cursor, OpenCode, a shared Codex session), so it must
+      // not inherit that answer.
+      const oomKilledThreads = new Set<string>([owner, joiner]);
+      const agentScope = {
+        ...AgentScope.defaultValue(),
+        oomKilled: (id: string) => Effect.sync(() => oomKilledThreads.has(id)),
+        clear: (id: string) => Effect.sync(() => void oomKilledThreads.delete(id)),
+      };
 
-    const effect = Effect.gen(function* () {
-      const eventSink = yield* EventSink.EventSinkV2;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-      const now = yield* DateTime.now;
-      const providerSessionId = yield* idAllocator.allocate.providerSession({
-        providerInstanceId: modelSelection.instanceId,
-        threadId,
-      });
-      yield* eventSink.write({
-        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
-      });
-      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
-      assert.isFalse(yield* agentScope.oomKilled(threadId));
-    });
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: owner,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: owner, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: joiner, now }),
+          ],
+        });
+        yield* manager.open({ threadId: owner, providerSessionId, modelSelection, runtimePolicy });
+        assert.isFalse(yield* agentScope.oomKilled(owner));
 
-    yield* effect.pipe(
-      Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })),
-      Effect.provideService(AgentScope, agentScope),
-    );
-  }),
+        yield* manager.open({ threadId: joiner, providerSessionId, modelSelection, runtimePolicy });
+        assert.isFalse(yield* agentScope.oomKilled(joiner));
+
+        // Reopening a session the thread already uses keeps its answer.
+        oomKilledThreads.add(owner);
+        yield* manager.open({ threadId: owner, providerSessionId, modelSelection, runtimePolicy });
+        assert.isTrue(yield* agentScope.oomKilled(owner));
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })),
+        Effect.provideService(AgentScope, agentScope),
+      );
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 cleans up an open interrupted mid-handshake", () =>
