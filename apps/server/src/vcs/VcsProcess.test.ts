@@ -414,6 +414,45 @@ describe("VcsProcess.run", () => {
     }).pipe(provideLive),
   );
 
+  it.effect("classifies a gh HTTP 404 as not found without retaining stderr", () =>
+    Effect.gen(function* () {
+      // What `gh api` prints when the host does not serve an endpoint, such as the stacks
+      // preview on a GitHub Enterprise Server release.
+      const providerStderr = 'gh: Not Found (HTTP 404)\n{"message":"Not Found","status":"404"}';
+      const error = yield* VcsProcess.make.pipe(
+        Effect.provideService(
+          ProcessRunner.ProcessRunner,
+          ProcessRunner.ProcessRunner.of({
+            run: () =>
+              Effect.succeed({
+                stdout: "",
+                stderr: providerStderr,
+                code: ChildProcessSpawner.ExitCode(1),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              }),
+          }),
+        ),
+        Effect.flatMap((service) =>
+          service.run({
+            operation: "test.not-found",
+            command: "gh",
+            args: ["api", "repos/owner/repository/stacks?pull_request=7"],
+            cwd: "/workspace",
+          }),
+        ),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(VcsProcessExitError);
+      expect(error).toMatchObject({ command: "gh", failureKind: "not-found" });
+      expect(error.message).not.toContain(providerStderr);
+    }),
+  );
+
   it.effect("retains spawn causes without exposing process arguments in the error message", () =>
     Effect.gen(function* () {
       const secretArgument = "--token=super-secret-token";
