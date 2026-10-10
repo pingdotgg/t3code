@@ -160,7 +160,9 @@ const parse = (tar: Uint8Array, limits: NpmTarballLimits) => {
       throw tooLarge(`The package has more than ${limits.maxEntries} archive entries.`);
     const type = String.fromCharCode(header[156]!);
     const declared = readOctal(header, 124, 12);
-    const size = pax.has("size") ? Number(pax.get("size")) : declared;
+    const extended = type === "x" || type === "g" || type === "L";
+    // A pax size belongs to the next file, never to an extended header before it.
+    const size = !extended && pax.has("size") ? Number(pax.get("size")) : declared;
     if (size === undefined || !Number.isSafeInteger(size) || size < 0)
       throw unsafe("The tarball has an entry with an unreadable size.");
     // A directory's size is space to reserve; no data follows its header.
@@ -171,7 +173,7 @@ const parse = (tar: Uint8Array, limits: NpmTarballLimits) => {
     const data = tar.subarray(dataStart, dataEnd);
     offset = dataStart + Math.ceil(dataSize / BLOCK) * BLOCK;
 
-    if ((type === "x" || type === "g" || type === "L") && size > MAX_EXTENDED_HEADER_BYTES)
+    if (extended && size > MAX_EXTENDED_HEADER_BYTES)
       throw unsafe("The tarball has an extended header that is too large.");
     if (type === "x") {
       pax = readPax(data);

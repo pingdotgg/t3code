@@ -67,9 +67,22 @@ describe("readNpmTarball", () => {
         // A directory's size is space to reserve; no data follows its header.
         { path: "package/lib/", type: "5", size: 4096 },
         { path: "package/lib/main.js", data: "main", format: "gnu" },
+        // A GNU long name keeps its own size; a pax size before it is the next file's.
+        {
+          path: "././@LongLink",
+          type: "L",
+          data: "package/lib/long-name.js",
+          pax: [new TextEncoder().encode("size=4")],
+        },
+        { path: "package/lib/short", data: "long", format: "gnu" },
       ]);
-      expect(files.map((file) => file.path)).toEqual(["package.json", "lib/main.js"]);
+      expect(files.map((file) => file.path)).toEqual([
+        "package.json",
+        "lib/main.js",
+        "lib/long-name.js",
+      ]);
       expect(new TextDecoder().decode(files[1]!.data)).toBe("main");
+      expect(new TextDecoder().decode(files[2]!.data)).toBe("long");
     }),
   );
 

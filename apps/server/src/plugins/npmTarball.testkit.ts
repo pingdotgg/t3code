@@ -9,7 +9,7 @@ export interface TarEntry {
   readonly path: string;
   /**
    * Tar type flag: `0` file (default), `5` directory, `1` hard link, `2` symlink, `3` device,
-   * `x` pax header and `g` pax global header (their `data` is the records).
+   * `x` pax header and `g` pax global header (their `data` is the records), `L` GNU long name.
    */
   readonly type?: string;
   readonly data?: string | Uint8Array;
@@ -93,7 +93,7 @@ export const makeTar = (entries: ReadonlyArray<TarEntry>) => {
       const pax = Buffer.concat(records.map(paxRecord));
       blocks.push(header("PaxHeader", "x", pax.length, 0o644), padded(pax));
     }
-    const hasData = type === "0" || type === "x" || type === "g";
+    const hasData = type === "0" || type === "x" || type === "g" || type === "L";
     blocks.push(
       header(
         name,
