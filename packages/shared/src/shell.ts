@@ -18,11 +18,22 @@ const WINDOWS_PATH_DELIMITER = ";";
 const POSIX_PATH_DELIMITER = ":";
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
 
+/**
+ * Set to "1" only in the environment of shell probes that resolve the user's
+ * environment, so rc files and profiles can skip heavy interactive setup. The
+ * T3 Code analogue of VS Code's `VSCODE_RESOLVING_ENVIRONMENT`.
+ */
+export const RESOLVING_ENVIRONMENT_ENV_NAME = "T3CODE_RESOLVING_ENVIRONMENT";
+
 type ExecFileSyncLike = (
   file: string,
   args: ReadonlyArray<string>,
-  options: { encoding: "utf8"; timeout: number },
+  options: { encoding: "utf8"; timeout: number; env?: NodeJS.ProcessEnv },
 ) => string;
+
+function resolvingEnvironmentProbeEnv(): NodeJS.ProcessEnv {
+  return { ...process.env, [RESOLVING_ENVIRONMENT_ENV_NAME]: "1" };
+}
 
 function canExecuteFile(filePath: string): boolean {
   try {
@@ -302,6 +313,7 @@ export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
   const output = execFile(shell, ["-ilc", buildEnvironmentCaptureCommand(names)], {
     encoding: "utf8",
     timeout: 5000,
+    env: resolvingEnvironmentProbeEnv(),
   });
 
   const environment: Partial<Record<string, string>> = {};
@@ -368,9 +380,10 @@ export function readEnvironmentFromWindowsShell(
     "-Command",
     command,
   ];
+  const env = resolvingEnvironmentProbeEnv();
   for (const shell of WINDOWS_SHELL_CANDIDATES) {
     try {
-      const output = execFile(shell, args, { encoding: "utf8", timeout: 5000 });
+      const output = execFile(shell, args, { encoding: "utf8", timeout: 5000, env });
 
       const environment: Partial<Record<string, string>> = {};
       for (const name of names) {

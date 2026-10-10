@@ -151,6 +151,18 @@ Cursor's executable is `cursor-agent`, although its login command is
 `agent login`. Codex connected through ChatGPT and Antigravity can use their
 managed runtimes without a `PATH` entry.
 
+On macOS and Linux, T3 Code reads `PATH` at startup by running your shell as an
+interactive login shell, so your shell startup files run in full. On Windows it
+may load your PowerShell profile. During these probes, T3 Code sets
+`T3CODE_RESOLVING_ENVIRONMENT=1`, so your startup files can tell a probe apart
+from a terminal you type in. VS Code sets `VSCODE_RESOLVING_ENVIRONMENT` for the
+same purpose.
+
+In a POSIX shell, test it with `[ -n "$T3CODE_RESOLVING_ENVIRONMENT" ]`. In a
+PowerShell profile, use `$env:T3CODE_RESOLVING_ENVIRONMENT`. Anything your
+startup files skip during a probe is missing from the environment T3 Code uses,
+so keep the setup that puts your tools on `PATH`.
+
 T3 Code warns when a provider version has known compatibility problems with your
 release. Check **Settings → Providers** on that environment for the recommended
 version or range. When its package manager supports installing a specific version,

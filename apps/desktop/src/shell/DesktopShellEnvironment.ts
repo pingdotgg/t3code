@@ -1,4 +1,4 @@
-import { listLoginShellCandidates } from "@t3tools/shared/shell";
+import { listLoginShellCandidates, RESOLVING_ENVIRONMENT_ENV_NAME } from "@t3tools/shared/shell";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -95,6 +95,7 @@ const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
 const LOGIN_SHELL_TIMEOUT = Duration.seconds(5);
 const LAUNCHCTL_TIMEOUT = Duration.seconds(2);
 const PROCESS_TERMINATE_GRACE = Duration.seconds(1);
+const RESOLVING_ENVIRONMENT_ENV = { [RESOLVING_ENVIRONMENT_ENV_NAME]: "1" };
 
 const trimNonEmpty = (value: string | null | undefined): Option.Option<string> =>
   Option.fromNullishOr(value).pipe(
@@ -247,6 +248,8 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
   readonly args: ReadonlyArray<string>;
   readonly timeout: Duration.Duration;
   readonly shell?: boolean;
+  /** Extra variables layered over the inherited process environment. */
+  readonly env?: Record<string, string>;
 }): Effect.fn.Return<string, never, ChildProcessSpawner.ChildProcessSpawner> {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const output = yield* Effect.scoped(
@@ -254,6 +257,7 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
       const child = yield* spawner.spawn(
         ChildProcess.make(input.command, input.args, {
           shell: input.shell ?? false,
+          ...(input.env ? { env: input.env, extendEnv: true } : {}),
           stdin: "ignore",
           stdout: "pipe",
           stderr: "pipe",
@@ -317,6 +321,7 @@ const readLoginShellEnvironment = (
         command: shell,
         args: ["-ilc", capturePosixEnvironmentCommand(names)],
         timeout: LOGIN_SHELL_TIMEOUT,
+        env: RESOLVING_ENVIRONMENT_ENV,
       }).pipe(Effect.map((output) => extractEnvironment(output, names)));
 
 const readLaunchctlPath = runCommandOutput({
@@ -347,6 +352,7 @@ const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEn
         command,
         args,
         timeout: LOGIN_SHELL_TIMEOUT,
+        env: RESOLVING_ENVIRONMENT_ENV,
       });
       const environment = extractEnvironment(output, names);
       if (Object.keys(environment).length > 0) {
