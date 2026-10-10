@@ -1,5 +1,5 @@
 import { it } from "@effect/vitest";
-import { HostProcessHostname } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -54,7 +54,7 @@ const resolveTargets = (input: {
   readonly hostname: string;
 }) =>
   Effect.flatMap(RemoteOpenTargets.RemoteOpenTargets, (service) => service.resolveTargets()).pipe(
-    Effect.provideService(HostProcessHostname, input.hostname),
+    Effect.provideService(HostProcess.Hostname, input.hostname),
     Effect.provide(
       RemoteOpenTargets.layer.pipe(
         Layer.provide(Layer.mergeAll(layerNet(input.sshd), layerSpawner(input.tailscale))),

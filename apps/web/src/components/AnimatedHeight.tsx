@@ -1,6 +1,7 @@
 "use client";
 
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { observeResize } from "../lib/observeResize";
 
 const HEIGHT_TRANSITION_FALLBACK_MS = 250;
 
@@ -69,10 +70,9 @@ export function AnimatedHeight({
     };
 
     updateHeightAfterPaint();
-    const resizeObserver = new ResizeObserver(updateHeightAfterPaint);
-    resizeObserver.observe(element);
+    const stopObserving = observeResize(element, updateHeightAfterPaint);
     return () => {
-      resizeObserver.disconnect();
+      stopObserving();
       cancelPendingFrames();
     };
   }, [holdHeight]);
