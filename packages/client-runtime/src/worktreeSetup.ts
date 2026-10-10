@@ -4,6 +4,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import { Atom } from "effect/reactivity";
 import * as Schema from "effect/Schema";
 
 const decodeWorktreeSetupSnapshot = Schema.decodeUnknownOption(WorktreeSetupSnapshot);
@@ -28,6 +29,16 @@ export function findRecordedWorktreeSetup(
 }
 
 /**
+ * Forks still preparing their new worktree, keyed by scoped thread key. A
+ * client opens such a fork as soon as its thread exists and sets this until
+ * the fork request settles, so the fork shows setup progress and holds sends
+ * until its checkout exists.
+ */
+export const forkWorkspacePreparingAtom = Atom.family((_threadKey: string) =>
+  Atom.make(false).pipe(Atom.keepAlive),
+);
+
+/**
  * Which setup snapshot the timeline shows, if any. The live stream wins while
  * it has a newer sequence; the recorded activity covers everything else. A
  * running setup always shows. The setup belongs to the thread's first turn:
@@ -36,8 +47,9 @@ export function findRecordedWorktreeSetup(
  * leaves no trace once the turn is live (the setup is a means to the reply,
  * not part of the conversation), while a failed script, a failed setup, or a
  * cancelled one stays so the outcome, exit code, and terminal are reachable.
- * Before the turn is live everything stays so nothing collapses in the
- * handoff gap. Visibility never depends on whether a turn happens to be
+ * Setups with an agent stage stay until the turn is live so nothing collapses
+ * in the handoff gap. A fork has no agent handoff, so its clean finish retires
+ * immediately. Visibility never depends on whether a turn happens to be
  * running, which would make the row come and go.
  */
 export function resolveVisibleWorktreeSetup(input: {
@@ -55,7 +67,9 @@ export function resolveVisibleWorktreeSetup(input: {
   if (snapshot.phase === "running") return snapshot;
   if (input.followUpSent) return null;
   if (snapshot.phase !== "done") return snapshot;
-  if (!input.turnStarted) return snapshot;
+  if (!input.turnStarted && snapshot.stages.some((stage) => stage.id === "agent")) {
+    return snapshot;
+  }
   return snapshot.stages.some((stage) => stage.status === "failed") ? snapshot : null;
 }
 

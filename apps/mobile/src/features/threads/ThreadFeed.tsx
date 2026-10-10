@@ -1,4 +1,5 @@
 import { ThreadContextDivider } from "./thread-context-divider";
+import { ThreadForkSheet } from "./ThreadForkSheet";
 import { ThreadHandoffRow } from "./thread-handoff-row";
 import { SecretRequestCard } from "./SecretRequestCard";
 import {
@@ -10,6 +11,7 @@ import * as Haptics from "expo-haptics";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { useViewabilityAmount, type LegendListRef } from "@legendapp/list/react-native";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { forkWorkspacePreparingAtom } from "@t3tools/client-runtime/worktree-setup";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import {
@@ -319,6 +321,8 @@ async function waitForThreadShell(
 
 function AssistantForkButton(props: {
   readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly workspaceRoot: string | null;
   readonly iconColor: ColorValue;
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
   readonly sourceTitle: string;
@@ -331,6 +335,7 @@ function AssistantForkButton(props: {
   const forkFromRun = useAtomCommand(threadEnvironment.forkFromRun, "fork from response");
   const navigation = useNavigation();
   const [busy, setBusy] = useState(false);
+  const [choosingWorkspace, setChoosingWorkspace] = useState(false);
   const canFork = canForkProjectedAssistantItem({
     projectedItem: props.projectedItem,
     capabilities: support.providerSession?.capabilities,
@@ -340,54 +345,99 @@ function AssistantForkButton(props: {
   if (!canFork || runId === null) return null;
 
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel="Fork from this response"
-      disabled={busy}
-      onPress={() => {
-        const targetThreadId = ThreadId.make(uuidv4());
-        setBusy(true);
-        void Haptics.selectionAsync();
-        void forkFromRun({
-          environmentId: props.environmentId,
-          input: {
-            sourceThreadId: props.projectedItem.sourceThreadId,
-            targetThreadId,
-            runId,
-            title: `${props.sourceTitle} fork`,
-            creationSource: "mobile",
-          },
-        })
-          .then(async (result) => {
-            if (result._tag !== "Success") return;
-            const targetThreadReady = await waitForThreadShell(props.environmentId, targetThreadId);
-            if (!targetThreadReady) {
-              Alert.alert(
-                "Fork created",
-                "Its thread data did not reach this client. Reconnect and try opening it from the thread list.",
-              );
-              return;
-            }
-            navigation.navigate("Thread", {
+    <>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Fork from this response"
+        disabled={busy}
+        onPress={() => {
+          void Haptics.selectionAsync();
+          setChoosingWorkspace(true);
+        }}
+        className="h-7 w-7 items-center justify-center disabled:opacity-40"
+      >
+        {busy ? (
+          <ActivityIndicator size="small" />
+        ) : (
+          <SymbolView
+            name="arrow.triangle.branch"
+            size={13}
+            tintColor={props.iconColor}
+            type="monochrome"
+          />
+        )}
+      </Pressable>
+      {choosingWorkspace ? (
+        <ThreadForkSheet
+          environmentId={props.environmentId}
+          threadId={props.threadId}
+          workspaceRoot={props.workspaceRoot}
+          onClose={() => setChoosingWorkspace(false)}
+          onSelect={(workspaceStrategy) => {
+            setChoosingWorkspace(false);
+            const targetThreadId = ThreadId.make(uuidv4());
+            const preparingAtom = forkWorkspacePreparingAtom(
+              scopedThreadKey(props.environmentId, targetThreadId),
+            );
+            const preparesWorktree = workspaceStrategy.type === "worktree";
+            const openFork = () =>
+              navigation.navigate("Thread", {
+                environmentId: props.environmentId,
+                threadId: targetThreadId,
+              });
+            setBusy(true);
+            void Haptics.selectionAsync();
+            if (preparesWorktree) appAtomRegistry.set(preparingAtom, true);
+            const pendingResult = forkFromRun({
               environmentId: props.environmentId,
-              threadId: targetThreadId,
-            });
-          })
-          .finally(() => setBusy(false));
-      }}
-      className="h-7 w-7 items-center justify-center disabled:opacity-40"
-    >
-      {busy ? (
-        <ActivityIndicator size="small" />
-      ) : (
-        <SymbolView
-          name="arrow.triangle.branch"
-          size={13}
-          tintColor={props.iconColor}
-          type="monochrome"
+              input: {
+                sourceThreadId: props.projectedItem.sourceThreadId,
+                targetThreadId,
+                runId,
+                title: `${props.sourceTitle} fork`,
+                creationSource: "mobile",
+                workspaceStrategy,
+              },
+            }).finally(() => appAtomRegistry.set(preparingAtom, false));
+            void (async () => {
+              // The fork request settles only once its new worktree is ready.
+              // Open the fork as soon as its thread exists so it shows setup
+              // progress meanwhile, like a new thread started in a new worktree.
+              const openedEarly =
+                preparesWorktree &&
+                (await Promise.race([
+                  waitForThreadShell(props.environmentId, targetThreadId),
+                  pendingResult.then(() => false),
+                ]));
+              if (openedEarly) openFork();
+              const result = await pendingResult;
+              if (result._tag !== "Success") {
+                // The server deletes a fork whose worktree could not be prepared.
+                if (openedEarly)
+                  navigation.navigate("Thread", {
+                    environmentId: props.environmentId,
+                    threadId: props.threadId,
+                  });
+                return;
+              }
+              if (openedEarly) return;
+              const targetThreadReady = await waitForThreadShell(
+                props.environmentId,
+                targetThreadId,
+              );
+              if (!targetThreadReady) {
+                Alert.alert(
+                  "Fork created",
+                  "Its thread data did not reach this client. Reconnect and try opening it from the thread list.",
+                );
+                return;
+              }
+              openFork();
+            })().finally(() => setBusy(false));
+          }}
         />
-      )}
-    </Pressable>
+      ) : null}
+    </>
   );
 }
 
@@ -1964,6 +2014,8 @@ function renderFeedEntry(
             {message.projectedItem ? (
               <AssistantForkButton
                 environmentId={props.environmentId}
+                threadId={props.threadId}
+                workspaceRoot={props.workspaceRoot ?? null}
                 iconColor={iconSubtleColor}
                 projectedItem={message.projectedItem}
                 sourceTitle={props.threadTitle}

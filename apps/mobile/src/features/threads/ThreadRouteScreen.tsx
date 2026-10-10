@@ -1,7 +1,11 @@
+import { useAtomValue } from "@effect/atom-react";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
 import { useWorktreeSetup } from "./use-worktree-setup";
-import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
+import {
+  forkWorkspacePreparingAtom,
+  worktreeSetupAgentStarted,
+} from "@t3tools/client-runtime/worktree-setup";
 import {
   StackActions,
   useFocusEffect,
@@ -805,10 +809,16 @@ function ThreadRouteContent(
     );
   }, [navigation, routeThreadIdentity, selectedThreadCreation, selectedThreadProject]);
   const setupTurnStartedAt = composer.selectedThreadActivityRun?.startedAt ?? null;
+  const forkWorkspacePreparing = useAtomValue(
+    forkWorkspacePreparingAtom(
+      selectedThread ? scopedThreadKey(selectedThread.environmentId, selectedThread.id) : "",
+    ),
+  );
   const { snapshot: worktreeSetupSnapshot, visible: worktreeSetup } = useWorktreeSetup({
     environmentId: selectedThread?.environmentId ?? null,
     threadId: selectedThread?.id ?? null,
     preparing:
+      forkWorkspacePreparing ||
       composer.selectedThreadActivityRun?.status === "preparing" ||
       selectedThread?.runtime?.status === "preparing" ||
       selectedThread?.worktreePath != null ||
@@ -825,7 +835,8 @@ function ThreadRouteContent(
   const awaitingBootstrapTurn =
     worktreeSetup !== null
       ? worktreeSetup.phase === "running" && !worktreeSetupAgentStarted(worktreeSetup)
-      : (selectedThreadDetail?.runs.some((run) => run.status === "preparing") ?? false);
+      : forkWorkspacePreparing ||
+        (selectedThreadDetail?.runs.some((run) => run.status === "preparing") ?? false);
   const cancelWorktreeSetup = useAtomCommand(vcsEnvironment.cancelWorktreeSetup);
   const handleCancelWorktreeSetup = useCallback(() => {
     if (!selectedThread) return;

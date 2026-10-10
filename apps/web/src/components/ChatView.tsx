@@ -1,5 +1,6 @@
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
+import { ForkThreadDialog } from "./chat/ForkThreadDialog";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import {
   resolveBackgroundDraftWorkspaceOptions,
@@ -163,7 +164,7 @@ import {
   useState,
 } from "react";
 import { flushSync } from "react-dom";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate, useRouter } from "@tanstack/react-router";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
 import { isMacPlatform } from "../lib/utils";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
@@ -445,6 +446,7 @@ import { MessagesTimeline, type MessagesTimelineHistoryControls } from "./chat/M
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { resolveTimelineIsAtEnd, worktreeSetupAgentStarted } from "./chat/MessagesTimeline.logic";
+import { forkWorkspacePreparingAtom } from "@t3tools/client-runtime/worktree-setup";
 import {
   overlayComposerIsResting,
   resolveComposerTimelineInset,
@@ -1780,6 +1782,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
+  const router = useRouter();
   const citationLocation = useLocation({
     select: (location) => ({
       href: location.href,
@@ -1882,6 +1885,10 @@ export default function ChatView(props: ChatViewProps) {
     ownerKey: string;
   } | null>(null);
   const [heldWorktreeSetup, setHeldWorktreeSetup] = useState<WorktreeSetupSnapshot | null>(null);
+  const [forkSource, setForkSource] = useState<{ sourceThreadId: ThreadId; runId: RunId } | null>(
+    null,
+  );
+  useEffect(() => setForkSource(null), [routeThreadKey]);
   // Set by "Work locally": the draft whose restored message should be resent
   // once the cancelled dispatch has settled and the draft is in local mode.
   // Keyed by draft id so a bootstrap rotating the thread id keeps it, while
@@ -3979,10 +3986,12 @@ export default function ChatView(props: ChatViewProps) {
   // Keep the sending environment during local draft setup; revisiting a
   // canonical thread subscribes by its durable identity.
   const setupTarget = worktreeSetupActive ? worktreeSetupRef : routeThreadRef;
+  const forkWorkspacePreparing = useAtomValue(forkWorkspacePreparingAtom(routeThreadKey));
+  const localWorktreePreparing = isLocallyPreparingWorktree || forkWorkspacePreparing;
   const worktreeSetupQuery = useEnvironmentQuery(
     worktreeSetupActive ||
       (activeThread?.id === routeThreadRef.threadId &&
-        (isLocallyPreparingWorktree || activeRunPreparing || activeThread.worktreePath !== null))
+        (localWorktreePreparing || activeRunPreparing || activeThread.worktreePath !== null))
       ? vcsEnvironment.worktreeSetup({
           environmentId: setupTarget.environmentId,
           input: { threadId: setupTarget.threadId },
@@ -4004,7 +4013,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [routeThreadKey]);
   const { snapshot: liveWorktreeSetup, isPreparingWorktree } = resolveWorktreeSetupProgress({
     threadId: setupTarget.threadId,
-    localPreparing: isLocallyPreparingWorktree,
+    localPreparing: localWorktreePreparing,
     runStatus: activeActivityRun?.status,
     latest: latestWorktreeSetup,
     held: heldWorktreeSetup,
@@ -8653,27 +8662,80 @@ export default function ChatView(props: ChatViewProps) {
   const onForkFromRun = useCallback(
     async (input: { readonly sourceThreadId: ThreadId; readonly runId: RunId }) => {
       if (!activeThread || activeEnvironmentUnavailable) return;
+      setForkSource(input);
+    },
+    [activeThread, activeEnvironmentUnavailable, setForkSource],
+  );
+  const onForkWorkspaceSelected = useCallback(
+    async (
+      workspaceStrategy: import("@t3tools/contracts").OrchestrationV2ThreadLaunchWorkspaceStrategy,
+    ) => {
+      if (!activeThread || activeEnvironmentUnavailable) return;
+      if (forkSource === null) return;
       const targetThreadId = newThreadId();
       const targetThreadRef = scopeThreadRef(environmentId, targetThreadId);
-      const result = await forkThreadFromRun({
+      const sourceThreadRef = scopeThreadRef(environmentId, activeThread.id);
+      const preparingAtom = forkWorkspacePreparingAtom(scopedThreadKey(targetThreadRef));
+      const preparesWorktree = workspaceStrategy.type === "worktree";
+      if (preparesWorktree) appAtomRegistry.set(preparingAtom, true);
+      const pendingResult = forkThreadFromRun({
         environmentId,
         input: {
-          sourceThreadId: input.sourceThreadId,
+          sourceThreadId: forkSource.sourceThreadId,
           targetThreadId,
-          runId: input.runId,
+          runId: forkSource.runId,
           title: `${activeThread.title} fork`,
+          workspaceStrategy,
         },
-      });
+      }).finally(() => appAtomRegistry.set(preparingAtom, false));
+      // The fork request settles only once its new worktree is ready. Open the
+      // fork as soon as its thread exists so it shows setup progress meanwhile,
+      // like a new thread started in a new worktree.
+      const openedEarly =
+        preparesWorktree &&
+        (await Promise.race([
+          waitForThreadShell(targetThreadRef),
+          pendingResult.then(() => false),
+        ]));
+      if (openedEarly) {
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(targetThreadRef),
+        });
+      }
+      const result = await pendingResult;
       if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          setThreadError(
-            activeThread.id,
-            error instanceof Error ? error.message : "Failed to fork this response.",
-          );
+        setForkSource(null);
+        if (isAtomCommandInterrupted(result)) return;
+        const error = squashAtomCommandFailure(result);
+        const message = error instanceof Error ? error.message : "Failed to fork this response.";
+        if (!openedEarly) {
+          setThreadError(activeThread.id, message);
+          return;
+        }
+        // The server deletes a fork whose worktree could not be prepared.
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not fork this response",
+            description: message,
+          }),
+        );
+        const forkPathname = router.buildLocation({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(targetThreadRef),
+        }).pathname;
+        if (router.state.location.pathname === forkPathname) {
+          await navigate({
+            to: "/$environmentId/$threadId",
+            params: buildThreadRouteParams(sourceThreadRef),
+            replace: true,
+          });
         }
         return;
       }
+      setForkSource(null);
+      if (openedEarly) return;
       const targetThreadReady = await waitForThreadShell(targetThreadRef);
       if (!targetThreadReady) {
         setThreadError(
@@ -8692,7 +8754,10 @@ export default function ChatView(props: ChatViewProps) {
       activeThread,
       environmentId,
       forkThreadFromRun,
+      forkSource,
       navigate,
+      router,
+      setForkSource,
       setThreadError,
     ],
   );
@@ -11293,6 +11358,15 @@ export default function ChatView(props: ChatViewProps) {
       ref={setWorkspaceLayoutElement}
       className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
     >
+      {forkSource && activeThread ? (
+        <ForkThreadDialog
+          worktreePath={activeThread.worktreePath}
+          branch={activeThread.branch}
+          isGitRepo={isGitRepo}
+          onClose={() => setForkSource(null)}
+          onSelect={onForkWorkspaceSelected}
+        />
+      ) : null}
       <Dialog
         open={
           deviceSetupThread !== null &&

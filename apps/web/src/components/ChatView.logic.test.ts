@@ -2099,6 +2099,28 @@ describe("worktree setup visibility", () => {
     expect(visible(stillRunning, true)).toEqual(stillRunning);
   });
 
+  it("retires successful fork setup without waiting for a provider turn", () => {
+    const running = { ...base, stages: [stage("checkout", "running")] };
+    const done = {
+      ...settledDone,
+      sequence: 2,
+      stages: [stage("checkout", "done"), stage("setup-script", "done")],
+    };
+    const visible = (live: WorktreeSetupSnapshot | null, recorded: WorktreeSetupSnapshot | null) =>
+      resolveVisibleWorktreeSetup({ live, recorded, turnStarted: false, followUpSent: false });
+
+    expect(visible(running, null)).toBe(running);
+    expect(visible(done, running)).toBeNull();
+    expect(visible(null, done)).toBeNull();
+
+    const scriptFailed = { ...done, stages: [stage("setup-script", "failed")] };
+    expect(visible(scriptFailed, null)).toBe(scriptFailed);
+    const failed = { ...done, phase: "failed" as const };
+    expect(visible(failed, null)).toBe(failed);
+    const cancelled = { ...done, phase: "cancelled" as const };
+    expect(visible(cancelled, null)).toBe(cancelled);
+  });
+
   it("prefers whichever snapshot is newer by sequence", () => {
     const pick = (live: WorktreeSetupSnapshot | null, recorded: WorktreeSetupSnapshot | null) =>
       resolveVisibleWorktreeSetup({ live, recorded, turnStarted: false, followUpSent: false });

@@ -14,7 +14,17 @@ const running: WorktreeSetupSnapshot = {
   baseRef: "main",
   worktreePath: null,
   setupScript: null,
-  stages: [],
+  stages: [
+    {
+      id: "agent",
+      status: "pending",
+      startedAt: null,
+      endedAt: null,
+      percent: null,
+      detail: null,
+      tail: [],
+    },
+  ],
   error: null,
 };
 

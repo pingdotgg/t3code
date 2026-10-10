@@ -126,6 +126,7 @@ import {
   forkableSourceRunStatusError,
   isForkableSourceRunStatus,
   ThreadForkServiceV2,
+  runForSourcePoint,
 } from "./ThreadForkService.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -265,6 +266,7 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorThreadAboveModeLimitError,
 ]);
 export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;
+export const isOrchestratorV2Error = Schema.is(OrchestratorV2Error);
 
 export interface OrchestratorV2DispatchResult {
   readonly sequence: number;
@@ -605,39 +607,6 @@ function nextQueuedRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
 ): OrchestrationV2Run | undefined {
   return queuedRunsInDeliveryOrder(projection)[0];
-}
-
-function latestStableRun(
-  projection: Pick<OrchestrationV2ThreadProjection, "runs">,
-): OrchestrationV2Run | null {
-  return (
-    projection.runs
-      .filter((run) => run.status === "completed" && run.checkpointId !== null)
-      .toSorted((left, right) => right.ordinal - left.ordinal)[0] ?? null
-  );
-}
-
-function runForSourcePoint(
-  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "checkpoints">,
-  sourcePoint: Extract<
-    OrchestrationV2Command,
-    { readonly type: "thread.fork" | "thread.merge_back" }
-  >["sourcePoint"],
-): OrchestrationV2Run | null {
-  switch (sourcePoint.type) {
-    case "latest_stable":
-      return latestStableRun(projection);
-    case "run":
-      return projection.runs.find((run) => run.id === sourcePoint.runId) ?? null;
-    case "checkpoint": {
-      const checkpoint = projection.checkpoints.find(
-        (candidate) => candidate.id === sourcePoint.checkpointId,
-      );
-      return checkpoint?.runId === null || checkpoint === undefined
-        ? null
-        : (projection.runs.find((run) => run.id === checkpoint.runId) ?? null);
-    }
-  }
 }
 
 function providerThreadForRun(
@@ -3562,6 +3531,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         transferId,
         targetThreadId: command.targetThreadId,
         ...(command.title === undefined ? {} : { title: command.title }),
+        ...(command.workspace === undefined ? {} : { workspace: command.workspace }),
         createdBy: command.createdBy,
         creationSource: command.creationSource,
         createdAt: now,

@@ -19,6 +19,8 @@ import {
   unavailable,
 } from "../../threadAccess.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
+import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
+import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
@@ -116,22 +118,44 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   t3_thread_fork: writesThread((input) =>
     Effect.gen(function* () {
-      const { threads, projection } = yield* readThread(input.threadId);
+      const { projection } = yield* readThread(input.threadId);
       const commandId = yield* newCommandId();
       const targetThreadId = ThreadId.make(`${commandId}:fork`);
-      const result = yield* threads
-        .dispatch({
-          type: "thread.fork",
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      return yield* launches
+        .fork({
           commandId,
-          sourceThreadId: projection.thread.id,
           targetThreadId,
+          sourceThreadId: projection.thread.id,
           sourcePoint: input.sourcePoint,
+          projectId: projection.thread.projectId,
           ...(input.title === undefined ? {} : { title: input.title }),
+          ...(input.workspaceStrategy === undefined
+            ? {}
+            : { workspaceStrategy: input.workspaceStrategy }),
           createdBy: "agent",
           creationSource: "mcp",
         })
-        .pipe(Effect.mapError(dispatchFailure));
-      return { sequence: result.sequence, targetThreadId };
+        .pipe(
+          Effect.catchTags({
+            ThreadForkWorkspaceInvalidError: (error) =>
+              Effect.fail(
+                new OrchestratorMcpFailure({
+                  code: "invalid_request",
+                  message: error.message,
+                }),
+              ),
+            ThreadLaunchError: (error) =>
+              Effect.fail(
+                Orchestrator.isOrchestratorV2Error(error.cause)
+                  ? dispatchFailure(error.cause)
+                  : new OrchestratorMcpFailure({
+                      code: "orchestration_error",
+                      message: error.message,
+                    }),
+              ),
+          }),
+        );
     }),
   ),
   t3_thread_merge_back: McpToolAccess.writesThreads(

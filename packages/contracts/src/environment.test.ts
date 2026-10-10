@@ -96,4 +96,14 @@ describe("ExecutionEnvironmentDescriptor", () => {
       }).capabilities.serverResolvedCommandContext,
     ).toBe(true);
   });
+
+  it("requires an advertised fork workspace capability", () => {
+    expect(decodeDescriptor(descriptor).capabilities.threadForkWorkspaceSelection).toBeUndefined();
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, threadForkWorkspaceSelection: true },
+      }).capabilities.threadForkWorkspaceSelection,
+    ).toBe(true);
+  });
 });
