@@ -22,17 +22,19 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/http";
-import { ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as OpenCode2TextGeneration from "./v2/textGeneration.ts";
 import { makeOpenCodeTextGeneration } from "./textGeneration.ts";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as OpenCodeAdapterV2 from "./adapter.ts";
 import * as OpenCode2AdapterV2 from "./v2/adapter.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
+import { openCodeUsageReader, type OpenCodeUsageReaderEnv } from "./usage.ts";
 import { readOpenCodeGoUsageLimits } from "./usageLimits.ts";
 import {
   checkOpenCodeProviderStatus,
@@ -123,9 +125,9 @@ function byOpenCodeRuntime<A, E, R, PE>(
  */
 function selectOpenCodeRuntimeAdapter(input: {
   readonly probe: OpenCodeRuntimeProbe;
-  readonly v1: ProviderAdapter.ProviderAdapterV2Shape;
-  readonly v2: ProviderAdapter.ProviderAdapterV2Shape;
-}): ProviderAdapter.ProviderAdapterV2Shape {
+  readonly v1: ProviderAdapter.ProviderAdapterV2["Service"];
+  readonly v2: ProviderAdapter.ProviderAdapterV2["Service"];
+}): ProviderAdapter.ProviderAdapterV2["Service"] {
   const pick = <PE>(probed: Effect.Effect<ProbedOpenCode | undefined, PE>) =>
     byOpenCodeRuntime(probed, { v1: Effect.succeed(input.v1), v2: Effect.succeed(input.v2) });
   const hot = pick(Effect.map(input.probe.lastSuccess, Option.getOrUndefined));
@@ -177,10 +179,15 @@ export type OpenCodeDriverEnv =
   | Crypto.Crypto
   | FileSystem.FileSystem
   | HttpClient.HttpClient
+  | ProviderLatestVersions.ProviderLatestVersions
   | OpenCodeRuntime.OpenCodeRuntime
   | Path.Path;
 
-export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv> = {
+export const OpenCodeDriver: ProviderDriver<
+  OpenCodeSettings,
+  OpenCodeDriverEnv,
+  OpenCodeUsageReaderEnv
+> = {
   driverKind: DRIVER_KIND,
   metadata: {
     displayName: "OpenCode",
@@ -188,6 +195,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
   },
   configSchema: OpenCodeSettings,
   defaultConfig: (): OpenCodeSettings => decodeOpenCodeSettings({}),
+  usage: openCodeUsageReader,
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -195,9 +203,10 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       const pathService = yield* Path.Path;
       const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
       const httpClient = yield* HttpClient.HttpClient;
+      const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
       const crypto = yield* Crypto.Crypto;
       const host = yield* ProviderHost.ProviderHost;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
+      const processEnv = yield* mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
@@ -445,7 +454,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
               ),
             );
 
-      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, host.settings);
+      const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<OpenCodeSettings>>(
         {
           resolveMaintenance,
@@ -465,6 +474,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
                 }),
               ),
               Effect.provideService(HttpClient.HttpClient, httpClient),
+              Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
               Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
             ),
         },

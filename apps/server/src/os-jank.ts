@@ -1,4 +1,4 @@
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   listLoginShellCandidates,
   mergePathEntries,
@@ -53,8 +53,8 @@ export const fixPath = Effect.fn("fixPath")(function* (): Effect.fn.Return<
   never,
   FileSystem.FileSystem | Path.Path
 > {
-  const platform = yield* HostProcessPlatform;
-  const env = yield* HostProcessEnvironment;
+  const platform = yield* HostProcess.Platform;
+  const env = yield* HostProcess.Environment;
 
   if (platform === "win32") {
     const repairedEnvironment = yield* resolveWindowsEnvironment(env).pipe(
@@ -93,11 +93,12 @@ export const fixPath = Effect.fn("fixPath")(function* (): Effect.fn.Return<
 
 export const expandHomePath = Effect.fn(function* (input: string) {
   const { join } = yield* Path.Path;
+  const home = yield* HostProcess.HomeDirectory;
   if (input === "~") {
-    return NodeOS.homedir();
+    return home;
   }
   if (input.startsWith("~/") || input.startsWith("~\\")) {
-    return join(NodeOS.homedir(), input.slice(2));
+    return join(home, input.slice(2));
   }
   return input;
 });
@@ -105,7 +106,7 @@ export const expandHomePath = Effect.fn(function* (input: string) {
 export const resolveBaseDir = Effect.fn(function* (raw: string | undefined) {
   const { join, resolve } = yield* Path.Path;
   if (!raw || raw.trim().length === 0) {
-    return join(NodeOS.homedir(), ".t3");
+    return join(yield* HostProcess.HomeDirectory, ".t3");
   }
   return resolve(yield* expandHomePath(raw.trim()));
 });

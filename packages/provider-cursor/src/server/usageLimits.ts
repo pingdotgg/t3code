@@ -1,7 +1,6 @@
-import * as NodeOS from "node:os";
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 import type { CursorSettings } from "../settings.ts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { CURSOR_USAGE_WINDOWS } from "@t3tools/shared/usageLimits";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -9,13 +8,15 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import {
   clampPercent,
   makeUnavailableUsageLimits,
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
-import { readMacCursorAccessToken } from "./keychainToken.ts";
+import * as CursorKeychain from "./CursorKeychain.ts";
 
 const CursorCredentials = Schema.Struct({ accessToken: Schema.optional(Schema.String) });
 const DEFAULT_CURSOR_API_ENDPOINT = "https://api2.cursor.sh";
@@ -64,13 +65,12 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
   settings: Pick<CursorSettings, "apiEndpoint">,
   environment: NodeJS.ProcessEnv = process.env,
   allowKeychain = false,
-  keychainToken: () => Promise<string | null> = readMacCursorAccessToken,
 ) {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   return yield* Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const platform = yield* HostProcessPlatform;
+    const platform = yield* HostProcess.Platform;
     const endpoint = (
       settings.apiEndpoint?.trim() ||
       environment.CURSOR_API_ENDPOINT?.trim() ||
@@ -104,10 +104,12 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
           message: "Cursor account usage requires the default Cursor endpoint when using Keychain.",
         });
       }
-      token = (yield* Effect.tryPromise(keychainToken))?.trim();
+      const keychain = yield* CursorKeychain.CursorKeychain;
+      token = (yield* keychain.accessToken)?.trim();
     } else if (!token) {
       const home =
-        (platform === "win32" ? environment.USERPROFILE : environment.HOME) || NodeOS.homedir();
+        (platform === "win32" ? environment.USERPROFILE : environment.HOME) ||
+        (yield* HostProcess.HomeDirectory);
       const directory =
         platform === "win32"
           ? path.join(environment.APPDATA || path.join(home, "AppData", "Roaming"), "Cursor")

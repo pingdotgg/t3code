@@ -1,5 +1,5 @@
 import { it as effectIt } from "@effect/vitest";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -703,7 +703,7 @@ describe("isWaylandSession", () => {
     "falls back to a live runtime directory socket when session variables are stripped",
     () =>
       Effect.gen(function* () {
-        if ((yield* HostProcessPlatform) !== "linux") return;
+        if ((yield* HostProcess.Platform) !== "linux") return;
         yield* Effect.promise(async () => {
           const { mkdtemp, rm, writeFile } = await import("node:fs/promises");
           const { createServer } = await import("node:net");

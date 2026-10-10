@@ -24,7 +24,7 @@ import * as RpcClientError from "effect/rpc/RpcClientError";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
-import { makeWsRpcProtocolClient, type WsRpcProtocolClient } from "./protocol.ts";
+import { makeWsRpcProtocolClient, PING_TIMEOUT, type WsRpcProtocolClient } from "./protocol.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import type {
   ConnectionAttemptError,
@@ -170,7 +170,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
 
     const connected = yield* Deferred.make<void>();
     const disconnected = yield* Deferred.make<never, ConnectionTransientError>();
-    // Set when the socket closes because pongs stopped, so the failure says so
+    // Set when the socket closes because the server stopped answering, so the failure says so
     // instead of looking like the server closed the connection.
     const pingTimedOut = yield* Ref.make(false);
     const hooks = RpcClient.ConnectionHooks.of({
@@ -201,6 +201,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     const layerProtocol = Layer.effect(
       RpcClient.Protocol,
       RpcClient.makeProtocolSocket({
+        pingTimeout: PING_TIMEOUT,
         retryTransientErrors: false,
         retryPolicy: Schedule.recurs(0),
       }),

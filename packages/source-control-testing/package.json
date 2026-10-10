@@ -1,0 +1,23 @@
+{
+  "name": "@t3tools/source-control-testing",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./TestSourceControlHost": {
+      "types": "./src/TestSourceControlHost.ts",
+      "import": "./src/TestSourceControlHost.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "@t3tools/source-control-core": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  }
+}
