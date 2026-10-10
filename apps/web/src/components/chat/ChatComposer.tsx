@@ -1564,7 +1564,7 @@ export interface ChatComposerProps {
   /** Picking /usage-limits from the menu is the action itself; the draft keeps nothing of it. */
   onUsageLimitsCommand?: (() => void) | undefined;
   onFallbackSelectionChange?:
-    | ((selection: OrchestrationV2FallbackSelection | null) => void)
+    | ((selection: OrchestrationV2FallbackSelection | null) => void | Promise<void>)
     | undefined;
   environmentUnavailable: {
     readonly label: string;
@@ -1728,6 +1728,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadId,
     activeThreadEnvironmentId: _activeThreadEnvironmentId,
     activeThread,
+    activeThreadShell,
     promptHistoryMessages,
     isServerThread: _isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
@@ -2447,6 +2448,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
   const [draftFallbackSelection, setDraftFallbackSelection] =
     useState<OrchestrationV2FallbackSelection | null>(null);
+
+  useEffect(() => {
+    setDraftFallbackSelection(null);
+  }, [draftId]);
   const isMobileViewport = useMediaQuery("max-sm");
   const {
     isComposerFocused,
@@ -5611,7 +5616,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       />
 
       <FallbackModelPicker
-        fallbackSelection={activeThreadShell?.fallbackModelSelection ?? draftFallbackSelection}
+        fallbackSelection={
+          activeThreadShell
+            ? (activeThreadShell.fallbackModelSelection ?? null)
+            : draftFallbackSelection
+        }
         activeInstanceId={
           providerCatalogPending
             ? (activeThreadModelSelection?.instanceId ?? selectedInstanceId)
@@ -5626,9 +5635,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         modelOptionsByInstance={modelOptionsByInstance}
         size={composerControlsCollapsed ? "xs" : "sm"}
         disabled={providerCatalogPending || isSendBusy}
-        onFallbackSelect={(selection) => {
+        onFallbackSelect={async (selection) => {
+          const previous = draftFallbackSelection;
           setDraftFallbackSelection(selection);
-          props.onFallbackSelectionChange?.(selection);
+          try {
+            await props.onFallbackSelectionChange?.(selection);
+          } catch {
+            setDraftFallbackSelection(previous);
+          }
         }}
       />
 

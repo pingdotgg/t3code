@@ -1852,6 +1852,10 @@ export default function ChatView(props: ChatViewProps) {
   const [restingComposerControlsVisible, setRestingComposerControlsVisible] = useState(false);
   const [draftFallbackSelection, setDraftFallbackSelection] =
     useState<OrchestrationV2FallbackSelection | null>(null);
+
+  useEffect(() => {
+    setDraftFallbackSelection(null);
+  }, [draftId]);
   const citeAssistantText = useCallback(
     (citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => {
       const inserted = composerRef.current?.citeAssistantText(citation, sourceAnchor) ?? false;
@@ -7833,7 +7837,9 @@ export default function ChatView(props: ChatViewProps) {
                     environmentId,
                     input: {
                       threadId: activeThreadShell.id,
-                      manualContinuationOfRunId: activeThreadShell.latestRun?.runId,
+                      ...(activeThreadShell.latestRun?.runId
+                        ? { manualContinuationOfRunId: activeThreadShell.latestRun.runId }
+                        : {}),
                       modelSelection: fallbackTargetForBanner,
                       message: {
                         messageId: newMessageId(),
@@ -11761,16 +11767,18 @@ export default function ChatView(props: ChatViewProps) {
                                   : undefined
                               }
                               onFallbackSelectionChange={async (fallbackSelection) => {
+                                const previous = draftFallbackSelection;
                                 setDraftFallbackSelection(fallbackSelection);
                                 if (activeThreadShell) {
                                   const result = await updateThreadMetadata({
                                     environmentId,
                                     input: {
                                       threadId: activeThreadShell.id,
-                                      fallbackModelSelection,
+                                      fallbackModelSelection: fallbackSelection,
                                     },
                                   });
                                   if (result._tag === "Failure") {
+                                    setDraftFallbackSelection(previous);
                                     if (!isAtomCommandInterrupted(result)) {
                                       toastManager.add(
                                         stackedThreadToast({

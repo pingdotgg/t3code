@@ -595,6 +595,9 @@ export function resolveFallbackModelSelection(
     });
 
     const chosen = sorted[0];
+    if (!chosen) {
+      return null;
+    }
     const defaultModel =
       chosen.models?.find((m) => m.isDefault)?.slug ??
       chosen.models?.[0]?.slug ??
