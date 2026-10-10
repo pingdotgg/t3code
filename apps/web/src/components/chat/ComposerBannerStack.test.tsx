@@ -36,10 +36,10 @@ it("only offers notice details when the description cannot fit", async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
-      constructor(callback: () => void) {
-        resize = callback;
+      constructor(private readonly callback: (entries: { target: unknown }[]) => void) {}
+      observe(target: unknown) {
+        resize = () => this.callback([{ target }]);
       }
-      observe() {}
       disconnect() {}
     },
   );

@@ -81,7 +81,7 @@ describe("GhosttyTerminalSurface visibility", () => {
   function createHarness() {
     vi.useFakeTimers();
     const frames = new Map<number, FrameRequestCallback>();
-    const resizeCallbacks = new Set<() => void>();
+    const resizeTargets = new Map<(entries: { target: Element }[]) => void, Set<Element>>();
     const paint = vi.fn((_operation: string, _args: ReadonlyArray<unknown>) => {});
     let frameId = 0;
     const requestFrame = vi.fn((callback: FrameRequestCallback) => {
@@ -169,12 +169,17 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.stubGlobal(
       "ResizeObserver",
       class {
-        constructor(private readonly callback: () => void) {
-          resizeCallbacks.add(callback);
+        constructor(private readonly callback: (entries: { target: Element }[]) => void) {
+          resizeTargets.set(callback, new Set());
         }
-        observe() {}
+        observe(target: Element) {
+          resizeTargets.get(this.callback)?.add(target);
+        }
+        unobserve(target: Element) {
+          resizeTargets.get(this.callback)?.delete(target);
+        }
         disconnect() {
-          resizeCallbacks.delete(this.callback);
+          resizeTargets.delete(this.callback);
         }
       },
     );
@@ -199,7 +204,9 @@ describe("GhosttyTerminalSurface visibility", () => {
         for (const callback of queued) callback(0);
       },
       resize() {
-        for (const callback of resizeCallbacks) callback();
+        for (const [callback, targets] of resizeTargets) {
+          callback([...targets].map((target) => ({ target })));
+        }
       },
       pointer(
         type: string,

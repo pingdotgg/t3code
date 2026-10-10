@@ -5,6 +5,7 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ComposerBanner, type ComposerBannerVariant } from "./ComposerBanner";
+import { observeResize } from "~/lib/observeResize";
 
 // Match the duration-220 exit transition before removing a dismissed notice.
 const DISMISS_TRANSITION_MS = 220;
@@ -270,13 +271,12 @@ function NoticeDescription({ children }: { children: ReactNode }) {
       );
     };
     measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(description);
+    const stopObserving = observeResize(description, measure);
     // A child can reveal new text without resizing its clipped box.
     const mutations = new MutationObserver(measure);
     mutations.observe(description, { childList: true, subtree: true, characterData: true });
     return () => {
-      observer.disconnect();
+      stopObserving();
       mutations.disconnect();
     };
   }, []);

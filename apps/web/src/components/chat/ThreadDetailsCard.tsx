@@ -10,6 +10,7 @@ import {
   resolveThreadDetailsCardDensity,
   resolveThreadDetailsCardLayout,
 } from "./threadDetailsCardLayout";
+import { observeResize } from "../../lib/observeResize";
 
 /** One card owns its placement and folds content only when that content cannot fit. */
 export function ThreadDetailsCard({
@@ -115,9 +116,7 @@ export function ThreadDetailsCard({
       });
     };
     measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
+    return observeResize(element, measure);
   }, [contentElement, density, measurementKey]);
   const card = (
     <div

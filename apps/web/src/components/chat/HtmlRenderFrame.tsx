@@ -14,6 +14,7 @@ import type { ChatFileAttachment } from "~/types";
 import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { observeResize } from "~/lib/observeResize";
 
 // A frame may load its URL a little after mounting.
 const MIN_URL_LIFE_MS = 5 * 60_000;
@@ -38,11 +39,9 @@ export function HtmlRenderFrame(props: {
     const box = boxRef.current;
     if (!box) return;
     setWidth(box.clientWidth);
-    const observer = new ResizeObserver(([entry]) => {
+    return observeResize(box, ([entry]) => {
       if (entry) setWidth(entry.contentRect.width);
     });
-    observer.observe(box);
-    return () => observer.disconnect();
   }, []);
   // Client fonts can wrap a page taller than the server measured it; a frame
   // left short would scroll inside the thread and take the reader's scroll.
