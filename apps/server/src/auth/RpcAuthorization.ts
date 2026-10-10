@@ -62,6 +62,16 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverProbe]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverRefreshProviders]: AuthOrchestrationReadScope,
+  // A skill's listing and SKILL.md text are file contents, so they take the scope the other file
+  // reads take, not the orchestration read scope that thread readers hold.
+  [WS_METHODS.serverListSkills]: AuthFilesystemReadScope,
+  [WS_METHODS.serverGetSkill]: AuthFilesystemReadScope,
+  // `git ls-files` in the project's folder.
+  [WS_METHODS.serverSkillsTracked]: AuthFilesystemReadScope,
+  // Instruction files are read like any other file of the machine.
+  [WS_METHODS.serverListInstructions]: AuthFilesystemReadScope,
+  [WS_METHODS.serverReadInstruction]: AuthFilesystemReadScope,
+  [WS_METHODS.serverInstructionsTracked]: AuthFilesystemReadScope,
   [WS_METHODS.serverUpdateProvider]: AuthProvidersManageScope,
   [WS_METHODS.providerAuthStart]: AuthProvidersManageScope,
   [WS_METHODS.providerConsumeResetCredit]: AuthProvidersManageScope,

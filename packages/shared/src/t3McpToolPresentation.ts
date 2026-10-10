@@ -48,6 +48,14 @@ export type T3McpToolSummaryAction =
   | "project-update"
   | "project-delete"
   | "project-clone"
+  | "skill-list"
+  | "skill-read"
+  | "skill-enable"
+  | "skill-disable"
+  | "instruction-list"
+  | "instruction-read"
+  | "instruction-enable"
+  | "instruction-disable"
   | "environment-read"
   | "environment-update"
   | "attachment-prepare"
@@ -304,6 +312,26 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_project_update: tool(["Update", "Updating", "Updated", "a project"], "project-update"),
   t3_project_delete: tool(["Delete", "Deleting", "Deleted", "a project"], "project-delete"),
   t3_project_clone: tool(["Clone", "Cloning", "Cloned", "a repository"], "project-clone"),
+  t3_skill_list: tool(["List", "Listing", "Listed", "skills"], "skill-list"),
+  t3_skill_get: tool(["Read", "Reading", "Read", "a skill"], "skill-read"),
+  t3_skill_enable: tool(["Enable", "Enabling", "Enabled", "skills for agents"], "skill-enable"),
+  t3_skill_disable: tool(
+    ["Disable", "Disabling", "Disabled", "skills for agents"],
+    "skill-disable",
+  ),
+  t3_instructions_list: tool(
+    ["List", "Listing", "Listed", "instruction files"],
+    "instruction-list",
+  ),
+  t3_instructions_get: tool(["Read", "Reading", "Read", "an instruction file"], "instruction-read"),
+  t3_instructions_enable: tool(
+    ["Enable", "Enabling", "Enabled", "instruction files for agents"],
+    "instruction-enable",
+  ),
+  t3_instructions_disable: tool(
+    ["Disable", "Disabling", "Disabled", "instruction files for agents"],
+    "instruction-disable",
+  ),
   t3_attachment_prepare_upload: tool(
     ["Prepare", "Preparing", "Prepared", "an attachment upload"],
     "attachment-prepare",

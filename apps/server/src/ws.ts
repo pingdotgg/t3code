@@ -100,6 +100,8 @@ import {
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
   WS_METHODS,
+  WsBaseRpcGroup,
+  WsInstructionRpcGroup,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
@@ -190,6 +192,12 @@ import { parseBase64DataUrl } from "./imageMime.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as InstructionCatalog from "./instructions/InstructionCatalog.ts";
+import * as InstructionManager from "./instructions/InstructionManager.ts";
+import * as InstructionTracking from "./instructions/InstructionTracking.ts";
+import * as SkillCatalog from "./skills/SkillCatalog.ts";
+import * as SkillManager from "./skills/SkillManager.ts";
+import * as SkillTracking from "./skills/SkillTracking.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration-v2/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
@@ -540,6 +548,10 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
+// Handlers are registered per group: one `toLayer` over every RPC is near the compiler's
+// instantiation limit. `ServerWsRpcGroup` is only what the RPC server serves.
+const ServerWsBaseRpcGroup = WsBaseRpcGroup.middleware(RpcInstrumentation);
+const ServerWsInstructionRpcGroup = WsInstructionRpcGroup.middleware(RpcInstrumentation);
 // When a resuming client's cursor is more than this many events behind the
 // current head, skip the per-event catch-up replay and send a fresh shell
 // snapshot instead. Replaying each intervening event costs a shell refetch;
@@ -1187,7 +1199,7 @@ const layerWsRpc = (
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
 ) =>
-  ServerWsRpcGroup.toLayer(
+  ServerWsBaseRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const sql = yield* SqlClient.SqlClient;
@@ -1284,6 +1296,9 @@ const layerWsRpc = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const skillCatalog = yield* SkillCatalog.SkillCatalog;
+      const skillManager = yield* SkillManager.SkillManager;
+      const skillTracking = yield* SkillTracking.SkillTracking;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -1812,7 +1827,7 @@ const layerWsRpc = (
         return result;
       });
 
-      const handlers = ServerWsRpcGroup.of({
+      const handlers = ServerWsBaseRpcGroup.of({
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -2172,6 +2187,13 @@ const layerWsRpc = (
               }),
             ),
           ),
+        [WS_METHODS.serverListSkills]: (input) => skillCatalog.list(input),
+        [WS_METHODS.serverGetSkill]: (input) => skillCatalog.get(input),
+        [WS_METHODS.serverEnableSkills]: (input) => skillManager.enable(input),
+        [WS_METHODS.serverDisableSkills]: (input) => skillManager.disable(input),
+        [WS_METHODS.serverPlaceSkills]: (input) => skillManager.place(input),
+        [WS_METHODS.serverDeleteSkills]: (input) => skillManager.delete(input),
+        [WS_METHODS.serverSkillsTracked]: (input) => skillTracking.tracked(input),
         [WS_METHODS.serverRefreshProviders]: (input) =>
           Effect.gen(function* () {
             // Only explicit catalog refreshes bypass T3's caches. Workspace
@@ -3119,6 +3141,30 @@ const layerWsRpc = (
     }),
   );
 
+const layerWsInstructionRpc = ServerWsInstructionRpcGroup.toLayer(
+  Effect.gen(function* () {
+    const instructionCatalog = yield* InstructionCatalog.InstructionCatalog;
+    const instructionManager = yield* InstructionManager.InstructionManager;
+    const instructionTracking = yield* InstructionTracking.InstructionTracking;
+    return ServerWsInstructionRpcGroup.of({
+      [WS_METHODS.serverListInstructions]: (input) => instructionCatalog.list(input),
+      [WS_METHODS.serverReadInstruction]: (input) => instructionCatalog.read(input),
+      [WS_METHODS.serverWriteInstruction]: (input) => instructionManager.write(input),
+      [WS_METHODS.serverEnableInstruction]: (input) => instructionManager.enable(input),
+      [WS_METHODS.serverDisableInstruction]: (input) => instructionManager.disable(input),
+      [WS_METHODS.serverSetClaudeInstructionFiles]: (input) =>
+        instructionManager.setClaudeSetting(input).pipe(Effect.as({})),
+      [WS_METHODS.serverShareInstruction]: (input) =>
+        instructionManager.share(input).pipe(Effect.as({})),
+      [WS_METHODS.serverAdoptInstruction]: (input) =>
+        instructionManager.adopt(input).pipe(Effect.as({})),
+      [WS_METHODS.serverDeleteInstruction]: (input) =>
+        instructionManager.delete(input).pipe(Effect.as({})),
+      [WS_METHODS.serverInstructionsTracked]: (input) => instructionTracking.tracked(input),
+    });
+  }),
+);
+
 // A defect in a handler's effect fails only its own request. RpcServer's default
 // sends a socket-level Defect frame instead, and the client ends every pending
 // request on the socket with it. DefectReporter logs these defects.
@@ -3188,6 +3234,7 @@ export const layer = Layer.unwrap(
               previewAutomationBroker,
               serverBrowser,
             ).pipe(
+              Layer.merge(layerWsInstructionRpc),
               Layer.provideMerge(RpcSerialization.layerJson),
               // Request fibers run in the handlers' context, so this reporter sees
               // their defects, not the rest of the server's.

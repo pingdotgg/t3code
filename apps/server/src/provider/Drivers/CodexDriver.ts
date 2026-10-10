@@ -45,6 +45,7 @@ import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import {
   checkCodexProviderStatus,
   makePendingCodexProvider,
+  openCodexSkillSettingsWriter,
   probeCodexSkillsForCwd,
   withCodexAppServerClient,
 } from "../CodexProvider.ts";
@@ -52,7 +53,11 @@ import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
 import { applyCodexModelCatalog } from "../codexModelCatalog.ts";
-import type { ProviderDriver, ProviderInstance } from "@t3tools/provider-core/server/driver";
+import type {
+  ProviderDriver,
+  ProviderInstance,
+  SkillSettingsWriter,
+} from "@t3tools/provider-core/server/driver";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import {
@@ -305,6 +310,46 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv, Path.Pat
               ),
             );
 
+      // Skill switches are written by Codex itself: one app-server for as long as the caller's
+      // scope, which a bulk request shares between all its changes.
+      const openSkillSettingsWriter: NonNullable<ProviderInstance["openSkillSettingsWriter"]> =
+        openCodexSkillSettingsWriter({
+          binaryPath: effectiveConfig.binaryPath,
+          homePath: effectiveConfig.homePath,
+          launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+          // Writes the user's config; any directory serves, same as the status probe.
+          cwd: process.cwd(),
+          environment: processEnv,
+        }).pipe(
+          Effect.map(
+            (write): SkillSettingsWriter =>
+              (change) =>
+                write(change).pipe(
+                  Effect.timeout("20 seconds"),
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderDriverError({
+                        driver: DRIVER_KIND,
+                        instanceId,
+                        detail: "Codex could not change the skill's setting.",
+                        cause,
+                      }),
+                  ),
+                ),
+          ),
+          Effect.timeout("20 seconds"),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.mapError(
+            (cause) =>
+              new ProviderDriverError({
+                driver: DRIVER_KIND,
+                instanceId,
+                detail: "Codex could not be started to change the skill's setting.",
+                cause,
+              }),
+          ),
+        );
+
       // Redemption spends something on the user's account. It serialises on
       // the account (instances sharing a Codex home share the credit), keeps
       // one idempotency key until Codex reports an outcome, and is bounded so
@@ -380,6 +425,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv, Path.Pat
         snapshot,
         snapshotForCwd,
         consumeResetCredit,
+        openSkillSettingsWriter,
         orchestrationAdapter,
         textGeneration,
       } satisfies ProviderInstance;

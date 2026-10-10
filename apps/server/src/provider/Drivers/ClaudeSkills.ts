@@ -14,7 +14,11 @@
  * @module provider/Drivers/ClaudeSkills
  */
 
-import type { ClaudeSettings, ServerProviderSkill } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  type ClaudeSettings,
+  type ServerProviderSkill,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -24,8 +28,11 @@ import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { parse as parseYamlDocument } from "yaml";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { skillFoldersFor } from "@t3tools/provider-core/server/AgentSkillFolders";
 
 type ClaudeSkillScope = "user" | "project";
+
+const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 
@@ -34,6 +41,7 @@ type SkillFrontmatter =
   | { readonly kind: "malformed" }
   | {
       readonly kind: "parsed";
+      readonly name?: string;
       readonly description?: string;
       readonly userInvocationOnly?: boolean;
       readonly userInvocable?: boolean;
@@ -68,7 +76,11 @@ function parseFrontmatterBoolean(value: unknown): boolean | undefined {
   }
 }
 
-function parseSkillFrontmatter(contents: string): SkillFrontmatter {
+/**
+ * How Claude Code reads a SKILL.md header. `malformed` skills don't load there; the Skills
+ * settings page reads headers the same way, so it reports what Claude would skip.
+ */
+export function parseSkillFrontmatter(contents: string): SkillFrontmatter {
   const match = FRONTMATTER_PATTERN.exec(contents);
   if (!match) {
     return { kind: "missing" };
@@ -103,8 +115,10 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
 
   const record = parsed as Record<string, unknown>;
   const description = typeof record.description === "string" ? record.description.trim() : "";
+  const name = typeof record.name === "string" ? record.name.trim() : "";
   return {
     kind: "parsed",
+    ...(name ? { name } : {}),
     ...(description ? { description } : {}),
     ...(parseFrontmatterBoolean(record["disable-model-invocation"]) === true
       ? { userInvocationOnly: true }
@@ -202,11 +216,16 @@ const findRepositoryRoot = Effect.fn("findRepositoryRoot")(function* (
  * boolean) makes it drop every override in that file, so this schema does the
  * same rather than applying the valid siblings the CLI ignores.
  */
-const SkillOverrideValue = Schema.Literals(["on", "name-only", "user-invocable-only", "off"]);
+export const SkillOverrideValue = Schema.Literals([
+  "on",
+  "name-only",
+  "user-invocable-only",
+  "off",
+]);
 
 // Lenient because these settings files are hand-edited and Claude Code itself
 // tolerates comments and trailing commas in them.
-const SkillOverrideSettings = fromLenientJson(
+export const SkillOverrideSettings = fromLenientJson(
   Schema.Struct({
     skillOverrides: Schema.optional(Schema.Record(Schema.String, SkillOverrideValue)),
   }),
@@ -235,16 +254,29 @@ function parseSkillOverride(value: typeof SkillOverrideValue.Type): SkillOverrid
   }
 }
 
-const readSkillOverrides = Effect.fn("readSkillOverrides")(function* (
+/**
+ * One settings file Claude Code merges for `skillOverrides`: where it is, and what it says about
+ * each skill. `overrides` is undefined when the file is absent or the CLI would ignore the whole
+ * map (a file that doesn't parse, or an entry with a value that isn't one of the four), which is
+ * why `invalid` tells the two apart for a caller that means to write the file.
+ */
+export interface SkillOverrideLayer {
+  readonly path: string;
+  readonly overrides: ReadonlyMap<string, typeof SkillOverrideValue.Type> | undefined;
+  readonly invalid: boolean;
+}
+
+/** The settings files that carry `skillOverrides`, lowest precedence first (see above). */
+export const readSkillOverrideLayers = Effect.fn("readSkillOverrideLayers")(function* (
   configDirPath: string,
   cwd: string | undefined,
   environment: NodeJS.ProcessEnv,
-): Effect.fn.Return<ReadonlyMap<string, SkillOverride>, never, FileSystem.FileSystem | Path.Path> {
+): Effect.fn.Return<ReadonlyArray<SkillOverrideLayer>, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
-  const overridesByName = new Map<string, SkillOverride>();
   const repositoryRoot = cwd === undefined ? undefined : yield* findRepositoryRoot(cwd);
+  const layers: SkillOverrideLayer[] = [];
 
   for (const settingsPath of skillOverrideSettingsPaths(
     path,
@@ -258,6 +290,7 @@ const readSkillOverrides = Effect.fn("readSkillOverrides")(function* (
       .readFileString(settingsPath)
       .pipe(Effect.orElseSucceed(() => undefined));
     if (contents === undefined) {
+      layers.push({ path: settingsPath, overrides: undefined, invalid: false });
       continue;
     }
 
@@ -270,16 +303,28 @@ const readSkillOverrides = Effect.fn("readSkillOverrides")(function* (
       ),
       Effect.orElseSucceed(() => undefined),
     );
-    const overrides = parsed?.skillOverrides;
-    if (!overrides) {
-      continue;
-    }
+    layers.push({
+      path: settingsPath,
+      overrides: parsed?.skillOverrides && new Map(Object.entries(parsed.skillOverrides)),
+      invalid: parsed === undefined,
+    });
+  }
 
-    for (const [name, value] of Object.entries(overrides)) {
+  return layers;
+});
+
+const readSkillOverrides = Effect.fn("readSkillOverrides")(function* (
+  configDirPath: string,
+  cwd: string | undefined,
+  environment: NodeJS.ProcessEnv,
+): Effect.fn.Return<ReadonlyMap<string, SkillOverride>, never, FileSystem.FileSystem | Path.Path> {
+  const overridesByName = new Map<string, SkillOverride>();
+  const layers = yield* readSkillOverrideLayers(configDirPath, cwd, environment);
+  for (const layer of layers) {
+    for (const [name, value] of layer.overrides ?? []) {
       overridesByName.set(name, parseSkillOverride(value));
     }
   }
-
   return overridesByName;
 });
 
@@ -289,7 +334,7 @@ const readSkillOverrides = Effect.fn("readSkillOverrides")(function* (
  * `CLAUDE_CONFIG_DIR` by `makeClaudeEnvironment`), then a `CLAUDE_CONFIG_DIR`
  * already present in the process environment, then `~/.claude`.
  */
-const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(function* (
+export const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   environment: NodeJS.ProcessEnv,
   cwd?: string,
@@ -332,9 +377,16 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
   const configDirPath = yield* resolveClaudeConfigDirPath(config, environment ?? process.env, cwd);
   const skillOverrides = yield* readSkillOverrides(configDirPath, cwd, environment ?? process.env);
 
+  // The user folder follows the config dir, which is `~/.claude` unless overridden; the project
+  // folder comes from the shared table.
   const roots: ReadonlyArray<{ directory: string; scope: ClaudeSkillScope }> = [
     { directory: path.join(configDirPath, "skills"), scope: "user" },
-    ...(cwd ? [{ directory: path.join(cwd, ".claude", "skills"), scope: "project" as const }] : []),
+    ...(cwd
+      ? skillFoldersFor(CLAUDE_DRIVER, "project").map((folder) => ({
+          directory: path.join(cwd, folder),
+          scope: "project" as const,
+        }))
+      : []),
   ];
 
   const skillsByName = new Map<string, ServerProviderSkill>();

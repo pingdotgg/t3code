@@ -157,6 +157,48 @@ describe("Cursor skills", () => {
       ),
   );
 
+  // The Skills settings page reads the same folders from a shared table, so a change to the
+  // table that reorders or adds a folder would change what the `$` picker offers.
+  it("reads the project's folders before the home folders, each in a fixed order", async () =>
+    await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const userHome = yield* fileSystem
+          .makeTempDirectoryScoped({ directory: NodeOS.tmpdir(), prefix: "cursor-order-home-" })
+          .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
+        const workspace = yield* fileSystem
+          .makeTempDirectoryScoped({ directory: NodeOS.tmpdir(), prefix: "cursor-order-work-" })
+          .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
+        const subfolders = [".cursor/skills", ".agents/skills", ".codex/skills", ".claude/skills"];
+        const folders = [
+          ...subfolders.map((folder) => ({ label: `project ${folder}`, base: workspace, folder })),
+          ...subfolders.map((folder) => ({ label: `home ${folder}`, base: userHome, folder })),
+        ];
+        const writeProbe = Effect.fn("writeProbe")(function* (directory: string, label: string) {
+          yield* fileSystem.makeDirectory(path.join(directory, "probe"), { recursive: true });
+          yield* fileSystem.writeFileString(
+            path.join(directory, "probe", "SKILL.md"),
+            `---\ndescription: ${label}\n---\n`,
+          );
+        });
+        for (const { label, base, folder } of folders) {
+          yield* writeProbe(path.join(base, folder), label);
+        }
+        for (const folder of [".gemini/skills", ".pi/skills", ".opencode/skills"]) {
+          yield* writeProbe(path.join(workspace, folder), "ignored");
+        }
+
+        // Each folder wins until its skill is removed, so the order is the folders' order.
+        for (const { label, base, folder } of folders) {
+          const found = yield* discoverCursorSkills(workspace, { HOME: userHome });
+          expect(found.map((skill) => [skill.name, skill.description])).toEqual([["probe", label]]);
+          yield* fileSystem.remove(path.join(base, folder, "probe"), { recursive: true });
+        }
+        expect(yield* discoverCursorSkills(workspace, { HOME: userHome })).toEqual([]);
+      }),
+    ));
+
   it("rewrites only discovered skill mentions into Cursor slash invocations", () => {
     expect(hasCursorSkillMention("use $Review_Pr:V2 here")).toBe(true);
     expect(hasCursorSkillMention("please $review this")).toBe(true);

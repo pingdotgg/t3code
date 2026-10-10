@@ -57,6 +57,10 @@ describe("searchSettings", () => {
     expect(searchSettings("long lines", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
   });
 
+  it.each(["instructions", "CLAUDE.md", "AGENTS.md"])("finds the Skills page for %s", (query) => {
+    expect(searchSettings(query).map((item) => item.id)).toContain("skills");
+  });
+
   it("matches normalized title substrings", () => {
     expect(searchSettings("  WORD   WRAP  ", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
     expect(searchSettings("glass").map((item) => item.id)).toEqual(["setting-glass-opacity"]);

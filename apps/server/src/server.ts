@@ -88,6 +88,13 @@ import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
+import * as InstructionCatalog from "./instructions/InstructionCatalog.ts";
+import * as InstructionManager from "./instructions/InstructionManager.ts";
+import * as InstructionTracking from "./instructions/InstructionTracking.ts";
+import * as SkillCatalog from "./skills/SkillCatalog.ts";
+import { RegisteredProjects } from "./skills/SkillLibrary.ts";
+import * as SkillManager from "./skills/SkillManager.ts";
+import * as SkillTracking from "./skills/SkillTracking.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
@@ -544,6 +551,22 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
   }),
 );
 
+// The skill list finds the projects a library skill is used in among the registered ones.
+const layerSkillCatalog = SkillCatalog.layer.pipe(
+  Layer.provide(
+    Layer.effect(
+      RegisteredProjects,
+      Effect.gen(function* () {
+        const store = yield* ProjectStore.ProjectStoreV2;
+        return store.list().pipe(
+          Effect.map((rows) => rows.map((row) => row.workspaceRoot)),
+          Effect.orElseSucceed((): string[] => []),
+        );
+      }),
+    ).pipe(Layer.provide(ProjectStore.layer)),
+  ),
+);
+
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
   // Asks T3 Connect to deliver webhooks it held while this environment was offline.
@@ -576,8 +599,22 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ProviderUsageLimitsIngestion.layer,
   layerProviderInstallationRefresh,
   ReplayMarkers.layer,
+  // It reads through SkillCatalog, checks folders against ProjectService and refreshes the
+  // composer's skill lists through ProviderRegistry, all provided below; being here makes it one
+  // instance, so skill writes run one request at a time.
+  SkillManager.layer,
+  // Reads through SkillCatalog and runs git through VcsProcess.
+  SkillTracking.layer,
+  // Instruction files. The manager checks folders against ProjectService, so, like SkillManager,
+  // being here makes it one instance and instruction writes run one request at a time. All three
+  // read through one InstructionCatalog, which reads the file index and the provider snapshots.
+  Layer.mergeAll(InstructionManager.layer, InstructionTracking.layer).pipe(
+    Layer.provideMerge(InstructionCatalog.layer),
+  ),
 ).pipe(
   // Core Services
+  // It checks a project's folder against ProjectService, which the next layer provides.
+  Layer.provideMerge(layerSkillCatalog),
   Layer.provideMerge(layerOrchestrationApplication),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
   Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),

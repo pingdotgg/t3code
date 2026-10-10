@@ -11,6 +11,8 @@ import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 export const writeFileStringAtomically = (input: {
   readonly filePath: string;
   readonly contents: string;
+  /** Permissions for the new file, for a rewrite that must not widen who can read it. */
+  readonly mode?: number;
 }) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -32,7 +34,11 @@ export const writeFileStringAtomically = (input: {
       );
       const tempPath = path.join(tempDirectory, "contents.tmp");
 
-      yield* fs.writeFileString(tempPath, input.contents);
+      yield* fs.writeFileString(
+        tempPath,
+        input.contents,
+        input.mode === undefined ? undefined : { mode: input.mode },
+      );
       yield* fs.rename(tempPath, targetPath);
     }),
   );

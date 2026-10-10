@@ -21,6 +21,10 @@ import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../../../secrets/SecretRequests.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
+import * as InstructionCatalog from "../../../instructions/InstructionCatalog.ts";
+import * as InstructionManager from "../../../instructions/InstructionManager.ts";
+import * as SkillCatalog from "../../../skills/SkillCatalog.ts";
+import * as SkillManager from "../../../skills/SkillManager.ts";
 import * as VcsStatusBroadcaster from "../../../vcs/VcsStatusBroadcaster.ts";
 import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
@@ -55,6 +59,10 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({}),
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
   Layer.mock(ThreadSearch.ThreadSearch)({}),
+  Layer.mock(SkillCatalog.SkillCatalog)({}),
+  Layer.mock(SkillManager.SkillManager)({}),
+  Layer.mock(InstructionCatalog.InstructionCatalog)({}),
+  Layer.mock(InstructionManager.InstructionManager)({}),
 );
 
 const ToolsListPayload = Schema.fromJsonString(

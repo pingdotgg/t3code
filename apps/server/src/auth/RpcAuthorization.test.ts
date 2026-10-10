@@ -2,6 +2,7 @@ import {
   AuthEnvironmentMaintainScope,
   AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
+  AuthFilesystemWriteScope,
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
@@ -57,6 +58,48 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.scheduledTasksRotateWebhookToken,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    }
+  });
+
+  it("reads skill folders, SKILL.md text and git tracking under the filesystem read scope", () => {
+    for (const method of [
+      WS_METHODS.serverListSkills,
+      WS_METHODS.serverGetSkill,
+      WS_METHODS.serverSkillsTracked,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthFilesystemReadScope);
+    }
+  });
+
+  it("changes skills, which writes links, settings files and folders, under filesystem write", () => {
+    for (const method of [
+      WS_METHODS.serverEnableSkills,
+      WS_METHODS.serverDisableSkills,
+      WS_METHODS.serverPlaceSkills,
+      WS_METHODS.serverDeleteSkills,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthFilesystemWriteScope);
+    }
+  });
+
+  it("reads and changes instruction files under the filesystem scopes", () => {
+    for (const method of [
+      WS_METHODS.serverListInstructions,
+      WS_METHODS.serverReadInstruction,
+      WS_METHODS.serverInstructionsTracked,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthFilesystemReadScope);
+    }
+    for (const method of [
+      WS_METHODS.serverWriteInstruction,
+      WS_METHODS.serverEnableInstruction,
+      WS_METHODS.serverDisableInstruction,
+      WS_METHODS.serverSetClaudeInstructionFiles,
+      WS_METHODS.serverShareInstruction,
+      WS_METHODS.serverAdoptInstruction,
+      WS_METHODS.serverDeleteInstruction,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthFilesystemWriteScope);
     }
   });
 

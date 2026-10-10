@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput } from "./git.ts";
 import {
+  AuthFilesystemWriteScope,
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
@@ -35,6 +36,22 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.vcsCreateRef]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsSwitchRef]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsInit]: AuthSourceControlWriteScope,
+
+  // Skill changes create and remove links, write the agents' settings files, and move and delete
+  // skill folders, so they take the scope the other file writes take.
+  [WS_METHODS.serverEnableSkills]: AuthFilesystemWriteScope,
+  [WS_METHODS.serverDisableSkills]: AuthFilesystemWriteScope,
+  [WS_METHODS.serverPlaceSkills]: AuthFilesystemWriteScope,
+  [WS_METHODS.serverDeleteSkills]: AuthFilesystemWriteScope,
+
+  // Instruction changes write, link, rename and delete the files agents read.
+  [WS_METHODS.serverWriteInstruction]: AuthFilesystemWriteScope,
+  [WS_METHODS.serverEnableInstruction]: AuthFilesystemWriteScope,
+  [WS_METHODS.serverDisableInstruction]: AuthFilesystemWriteScope,
+  [WS_METHODS.serverSetClaudeInstructionFiles]: AuthFilesystemWriteScope,
+  [WS_METHODS.serverShareInstruction]: AuthFilesystemWriteScope,
+  [WS_METHODS.serverAdoptInstruction]: AuthFilesystemWriteScope,
+  [WS_METHODS.serverDeleteInstruction]: AuthFilesystemWriteScope,
 
   [WS_METHODS.scheduledTasksUpsert]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksSetEnabled]: AuthOrchestrationOperateScope,

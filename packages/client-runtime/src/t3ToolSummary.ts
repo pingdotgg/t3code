@@ -323,6 +323,30 @@ export function summarizeT3ToolCalls(
         quantity(countEntities(entityIds("cwd")), "repository", "repositories"),
       );
       break;
+    case "skill-list":
+      label = phrase("Listed", "list", `skills ${times}`);
+      break;
+    case "skill-read":
+      label = phrase("Read", "read", quantity(selected.length, "skill"));
+      break;
+    case "skill-enable":
+      label = phrase("Enabled", "enable", `skills for agents ${times}`);
+      break;
+    case "skill-disable":
+      label = phrase("Disabled", "disable", `skills for agents ${times}`);
+      break;
+    case "instruction-list":
+      label = phrase("Listed", "list", `instruction files ${times}`);
+      break;
+    case "instruction-read":
+      label = phrase("Read", "read", quantity(selected.length, "instruction file"));
+      break;
+    case "instruction-enable":
+      label = phrase("Enabled", "enable", `instruction files for agents ${times}`);
+      break;
+    case "instruction-disable":
+      label = phrase("Disabled", "disable", `instruction files for agents ${times}`);
+      break;
     case "environment-read":
       label = phrase("Checked", "check", `environment preferences ${times}`);
       break;

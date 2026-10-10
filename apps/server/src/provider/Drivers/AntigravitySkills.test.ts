@@ -342,6 +342,53 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
   );
 });
 
+it.layer(NodeServices.layer)("Antigravity skill folders", (it) => {
+  // The Skills settings page reads the same folders from a shared table, so a change to the
+  // table that reorders or adds a folder would change what the `$` picker offers.
+  it.effect("reads the home and project folders in a fixed, interleaved order", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const input = yield* makeWorkspace();
+      const folders = [
+        { label: "home config", base: input.userHome, folder: ".gemini/config/skills" },
+        { label: "project .gemini", base: input.cwd, folder: ".gemini/skills" },
+        { label: "home cli", base: input.userHome, folder: ".gemini/antigravity-cli/skills" },
+        { label: "project .agents", base: input.cwd, folder: ".agents/skills" },
+        { label: "project .agent", base: input.cwd, folder: ".agent/skills" },
+      ];
+      const ignored = [
+        { base: input.userHome, folder: ".agents/skills" },
+        { base: input.cwd, folder: ".claude/skills" },
+        { base: input.cwd, folder: ".codex/skills" },
+      ];
+      for (const { label, base, folder } of folders) {
+        yield* writeSkill(
+          path.join(base, folder, "probe"),
+          `---\nname: probe\ndescription: ${label}\n---\n`,
+        );
+      }
+      for (const { base, folder } of ignored) {
+        yield* writeSkill(
+          path.join(base, folder, "probe"),
+          "---\nname: probe\ndescription: ignored\n---\n",
+        );
+      }
+
+      // Each folder wins until its skill is removed, so the order is the folders' order.
+      for (const { label, base, folder } of folders) {
+        const found = yield* discoverAntigravitySkills(input);
+        assert.deepEqual(
+          found.map((skill) => [skill.name, skill.description]),
+          [["probe", label]],
+        );
+        yield* fileSystem.remove(path.join(base, folder, "probe"), { recursive: true });
+      }
+      assert.deepEqual(yield* discoverAntigravitySkills(input), []);
+    }),
+  );
+});
+
 it("resolves the home the agent expands ~ against", () => {
   assert.equal(
     resolveAntigravityUserHome(
