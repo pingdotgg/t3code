@@ -12,6 +12,7 @@ import {
   resolveRestingComposerControlsLayout,
   resolveRestingComposerControlsNaturalWidth,
   shouldAnimateComposerRestingTransition,
+  shouldTopDrawerHoldComposerExpanded,
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
   shouldUseRestingComposerLayout,
@@ -178,6 +179,29 @@ describe("shouldUseRestingComposerLayout", () => {
     expect(shouldUseRestingComposerLayout({ ...resting, hasExpandedChrome: true })).toBe(false);
   });
 
+  it("rests after scrolling past a collapsed empty question, but keeps open questions and answers in progress expanded", () => {
+    for (const [pendingQuestion, expectedResting] of [
+      [{ isCollapsed: true, customAnswer: "", selectedOptionValues: [] }, true],
+      [{ isCollapsed: false, customAnswer: "", selectedOptionValues: [] }, false],
+      [
+        { isCollapsed: true, customAnswer: "Use incremental migration", selectedOptionValues: [] },
+        false,
+      ],
+      [{ isCollapsed: true, customAnswer: "", selectedOptionValues: ["Incremental"] }, false],
+    ] as const) {
+      expect(
+        shouldUseRestingComposerLayout({
+          ...resting,
+          hasExpandedChrome: shouldTopDrawerHoldComposerExpanded({
+            showTopDrawer: true,
+            hasPendingApproval: false,
+            pendingQuestion: { ...pendingQuestion, hasAttachments: false },
+          }),
+        }),
+      ).toBe(expectedResting);
+    }
+  });
+
   it.each([false, true])(
     "keeps multiline drafts expanded when scroll collapsed is %s",
     (isScrollCollapsed) => {
@@ -190,6 +214,87 @@ describe("shouldUseRestingComposerLayout", () => {
       ).toBe(false);
     },
   );
+});
+
+describe("shouldTopDrawerHoldComposerExpanded", () => {
+  const collapsedEmptyQuestion = {
+    isCollapsed: true,
+    customAnswer: "",
+    selectedOptionValues: [],
+    hasAttachments: false,
+  };
+  const drawer = {
+    showTopDrawer: true,
+    hasPendingApproval: false,
+    pendingQuestion: collapsedEmptyQuestion,
+  };
+
+  it("does not hold the composer expanded when no drawer is shown", () => {
+    expect(
+      shouldTopDrawerHoldComposerExpanded({
+        showTopDrawer: false,
+        hasPendingApproval: false,
+        pendingQuestion: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps approvals expanded even with a collapsed empty question", () => {
+    expect(shouldTopDrawerHoldComposerExpanded({ ...drawer, hasPendingApproval: true })).toBe(true);
+  });
+
+  it("keeps an expanded question expanded", () => {
+    expect(
+      shouldTopDrawerHoldComposerExpanded({
+        ...drawer,
+        pendingQuestion: { ...collapsedEmptyQuestion, isCollapsed: false },
+      }),
+    ).toBe(true);
+  });
+
+  it("lets a collapsed question with no answer or selection rest", () => {
+    expect(shouldTopDrawerHoldComposerExpanded(drawer)).toBe(false);
+  });
+
+  it("lets a collapsed question with only whitespace in its answer rest", () => {
+    expect(
+      shouldTopDrawerHoldComposerExpanded({
+        ...drawer,
+        pendingQuestion: { ...collapsedEmptyQuestion, customAnswer: " \t\n " },
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps a collapsed question with a typed answer expanded", () => {
+    expect(
+      shouldTopDrawerHoldComposerExpanded({
+        ...drawer,
+        pendingQuestion: { ...collapsedEmptyQuestion, customAnswer: "Use incremental migration" },
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps a collapsed question with a selected option expanded", () => {
+    expect(
+      shouldTopDrawerHoldComposerExpanded({
+        ...drawer,
+        pendingQuestion: { ...collapsedEmptyQuestion, selectedOptionValues: ["Incremental"] },
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps a collapsed question with an attachment-only answer expanded", () => {
+    expect(
+      shouldTopDrawerHoldComposerExpanded({
+        ...drawer,
+        pendingQuestion: { ...collapsedEmptyQuestion, hasAttachments: true },
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps a drawer with neither an approval nor a question expanded", () => {
+    expect(shouldTopDrawerHoldComposerExpanded({ ...drawer, pendingQuestion: null })).toBe(true);
+  });
 });
 
 describe("shouldAnimateComposerRestingTransition", () => {

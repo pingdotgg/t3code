@@ -58,6 +58,40 @@ export function shouldUseRestingComposerLayout(input: {
 }
 
 /**
+ * Whether the drawer above the composer holds it expanded, closing the
+ * scroll-rest gates the way other surface chrome does.
+ *
+ * Approvals, plan follow-ups, and an open question are answered from the full
+ * composer. A question the user folded with its chevron is asking to get out of
+ * the way: its header row stays docked above the resting composer, and the next
+ * composer interaction expands it again with the draft intact. An answer already
+ * in progress, typed, picked, or attached, keeps the composer open so scrolling
+ * back to reread the thread does not fold it away mid-answer.
+ */
+export function shouldTopDrawerHoldComposerExpanded(input: {
+  showTopDrawer: boolean;
+  hasPendingApproval: boolean;
+  /** The active pending question, null when none is waiting. */
+  pendingQuestion: {
+    isCollapsed: boolean;
+    customAnswer: string;
+    selectedOptionValues: readonly string[];
+    /** Whether the answer has any images or files attached. */
+    hasAttachments: boolean;
+  } | null;
+}): boolean {
+  if (!input.showTopDrawer) return false;
+  const question = input.pendingQuestion;
+  if (input.hasPendingApproval || question === null) return true;
+  return (
+    !question.isCollapsed ||
+    question.customAnswer.trim().length > 0 ||
+    question.selectedOptionValues.length > 0 ||
+    question.hasAttachments
+  );
+}
+
+/**
  * How much taller the empty expanded composer is than its resting row on
  * desktop widths, from the layout classes in ChatComposer: the body loses
  * 8px of top padding, the prompt clamps from min-h-17.5 (70px) to 32px, and

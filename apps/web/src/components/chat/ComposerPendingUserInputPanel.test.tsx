@@ -1,6 +1,9 @@
+// @vitest-environment jsdom
+
 import { RuntimeRequestId } from "@t3tools/contracts";
-import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { act, type ComponentProps, useState } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import type { PendingUserInput } from "../../session-logic";
@@ -24,48 +27,128 @@ const prompt: PendingUserInput = {
   dismissible: true,
 };
 
-function renderPanel(pendingUserInput: PendingUserInput = prompt) {
-  return renderToStaticMarkup(
+let root: Root;
+let container: HTMLDivElement;
+const noop = () => {};
+
+beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+});
+
+afterEach(async () => {
+  await act(async () => root.unmount());
+  container.remove();
+  vi.unstubAllGlobals();
+});
+
+function Panel({
+  pendingUserInput = prompt,
+  collapsed = false,
+  onCollapsedChange = noop,
+}: {
+  pendingUserInput?: PendingUserInput;
+  collapsed?: boolean;
+  onCollapsedChange?: (collapsed: boolean) => void;
+}) {
+  return (
     <ComposerPendingUserInputPanel
       pendingUserInputs={[pendingUserInput]}
       respondingRequestIds={[]}
       answers={{}}
       questionIndex={0}
+      collapsed={collapsed}
+      onCollapsedChange={onCollapsedChange}
       onToggleOption={() => {}}
       onAdvance={() => {}}
       onDismiss={() => {}}
-    />,
+    />
   );
 }
 
+async function renderPanel(props: ComponentProps<typeof Panel> = {}) {
+  await act(async () => root.render(<Panel {...props} />));
+}
+
+function disclosure() {
+  const toggle = container.querySelector<HTMLButtonElement>("[data-pending-user-input-toggle]");
+  if (!toggle) throw new Error("Question disclosure was not rendered");
+  return toggle;
+}
+
+function questionBody() {
+  return container.querySelector<HTMLElement>('[data-slot="collapsible-panel"]');
+}
+
 describe("ComposerPendingUserInputPanel", () => {
-  it("renders the header as a disclosure control for the question body", () => {
-    const markup = renderPanel();
+  it("collapses and reopens the question body through the controlled disclosure", async () => {
+    const onCollapsedChange = vi.fn();
+    function ControlledPanel() {
+      const [collapsed, setCollapsed] = useState(false);
+      return (
+        <Panel
+          collapsed={collapsed}
+          onCollapsedChange={(nextCollapsed) => {
+            onCollapsedChange(nextCollapsed);
+            setCollapsed(nextCollapsed);
+          }}
+        />
+      );
+    }
+    await act(async () => root.render(<ControlledPanel />));
 
-    const toggle = markup.match(/<button[^>]*data-pending-user-input-toggle="[^"]*"[^>]*>/)?.[0];
-    expect(toggle).toBeDefined();
-    expect(toggle).toContain('data-pending-user-input-toggle="expanded"');
-    expect(toggle).toContain('aria-expanded="true"');
-    expect(toggle).toContain('type="button"');
+    const toggle = disclosure();
+    expect(toggle.getAttribute("data-pending-user-input-toggle")).toBe("expanded");
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle.type).toBe("button");
+    expect(toggle.getAttribute("aria-controls")).toBe(questionBody()?.id);
+    expect(questionBody()?.textContent).toContain("Incremental");
 
-    const controlledId = toggle?.match(/aria-controls="([^"]+)"/)?.[1];
-    expect(controlledId).toBeDefined();
-    expect(markup).toMatch(new RegExp(`<div[^>]*\\sid="${controlledId}"`));
+    await act(async () => toggle.click());
+
+    expect(onCollapsedChange).toHaveBeenNthCalledWith(1, true);
+    expect(disclosure().getAttribute("aria-expanded")).toBe("false");
+    expect(questionBody()).toBeNull();
+    expect(container.textContent).not.toContain("Incremental");
+
+    await act(async () => disclosure().click());
+
+    expect(onCollapsedChange).toHaveBeenNthCalledWith(2, false);
+    expect(onCollapsedChange).toHaveBeenCalledTimes(2);
+    expect(disclosure().getAttribute("aria-expanded")).toBe("true");
+    expect(questionBody()?.textContent).toContain("Which approach should the migration take?");
+    expect(questionBody()?.textContent).toContain("Incremental");
+    expect(questionBody()?.textContent).toContain("Big bang");
   });
 
-  it("offers dismiss only for async questions", () => {
-    expect(renderPanel()).toContain("data-pending-user-input-dismiss");
-    expect(renderPanel({ ...prompt, dismissible: false })).not.toContain(
-      "data-pending-user-input-dismiss",
-    );
+  it("shows the body according to the collapsed prop", async () => {
+    await renderPanel({ collapsed: true });
+    expect(questionBody()).toBeNull();
+    expect(container.textContent).not.toContain("Incremental");
+
+    await renderPanel({ collapsed: false });
+    expect(questionBody()?.textContent).toContain("Incremental");
+
+    await renderPanel({ collapsed: true });
+    expect(questionBody()).toBeNull();
+    expect(container.textContent).not.toContain("Incremental");
   });
 
-  it("starts expanded so the question and its options are visible", () => {
-    const markup = renderPanel();
+  it("offers dismiss only for async questions", async () => {
+    await renderPanel();
+    expect(container.querySelector("[data-pending-user-input-dismiss]")).not.toBeNull();
+    await renderPanel({ pendingUserInput: { ...prompt, dismissible: false } });
+    expect(container.querySelector("[data-pending-user-input-dismiss]")).toBeNull();
+  });
 
-    expect(markup).toContain("Approach");
-    expect(markup).toContain("Which approach should the migration take?");
-    expect(markup).toContain("Incremental");
-    expect(markup).toContain("Big bang");
+  it("shows the question and its options when expanded", async () => {
+    await renderPanel();
+
+    expect(container.textContent).toContain("Approach");
+    expect(questionBody()?.textContent).toContain("Which approach should the migration take?");
+    expect(questionBody()?.textContent).toContain("Incremental");
+    expect(questionBody()?.textContent).toContain("Big bang");
   });
 });

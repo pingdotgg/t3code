@@ -200,6 +200,7 @@ import {
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
   shouldUseRestingComposerLayout,
+  shouldTopDrawerHoldComposerExpanded,
 } from "../composerFooterLayout";
 import { measureRestingComposerControls } from "./restingComposerControlsMeasurement";
 import {
@@ -1575,6 +1576,7 @@ export interface ChatComposerProps {
     isLastQuestion: boolean;
     canAdvance: boolean;
     customAnswer: string;
+    selectedOptionValues: readonly string[];
     activeQuestion: {
       id: string;
       initialAnswer?: string | undefined;
@@ -2879,6 +2881,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerSuggestionsVisible = composerMenuOpen && !isComposerApprovalState;
   const composerSuggestionListVisible = composerSuggestionsVisible && composerMenuItems.length > 0;
   const activePendingUserInput = pendingUserInputs[0] ?? null;
+  // The question card's chevron folds it to its header so a tall prompt stops
+  // covering the thread. The fold belongs to one question: a new prompt, or the
+  // prompt advancing to its next question (sending from the composer does that
+  // without a click), opens the card again.
+  const [collapsedPendingQuestionKey, setCollapsedPendingQuestionKey] = useState<string | null>(
+    null,
+  );
+  const activePendingQuestionKey =
+    activePendingUserInput && activePendingProgress?.activeQuestion
+      ? `${activePendingUserInput.requestId}:${activePendingProgress.activeQuestion.id}`
+      : null;
+  const isActivePendingQuestionCollapsed =
+    activePendingQuestionKey !== null && collapsedPendingQuestionKey === activePendingQuestionKey;
+  const setActivePendingQuestionCollapsed = useCallback(
+    (collapsed: boolean) => {
+      setCollapsedPendingQuestionKey(collapsed ? activePendingQuestionKey : null);
+    },
+    [activePendingQuestionKey],
+  );
   const isChoiceOnlyPendingQuestion =
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
   const showComposerTopDrawer =
@@ -5212,7 +5233,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // it, so they do not hold the composer open; only surface-internal chrome
   // does.
   const composerHasExpandedChrome =
-    showComposerTopDrawer ||
+    shouldTopDrawerHoldComposerExpanded({
+      showTopDrawer: showComposerTopDrawer,
+      hasPendingApproval: isComposerApprovalState,
+      pendingQuestion: activePendingProgress && {
+        isCollapsed: isActivePendingQuestionCollapsed,
+        customAnswer: activePendingProgress.customAnswer,
+        selectedOptionValues: activePendingProgress.selectedOptionValues,
+        // Attachments come from the question's own draft while one is active.
+        hasAttachments:
+          questionAttachmentTarget !== null &&
+          (composerImages.length > 0 || composerFiles.length > 0),
+      },
+    }) ||
     isTasksDrawerOpen ||
     composerMenuOpen ||
     isStashMenuOpen ||
@@ -6811,6 +6844,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     }
                     answers={activePendingDraftAnswers}
                     questionIndex={activePendingQuestionIndex}
+                    collapsed={isActivePendingQuestionCollapsed}
+                    onCollapsedChange={setActivePendingQuestionCollapsed}
                     onToggleOption={onSelectActivePendingUserInputOption}
                     onAdvance={onAdvanceActivePendingUserInput}
                     onDismiss={onDismissActivePendingUserInput}
@@ -6832,6 +6867,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       }
                       answers={activePendingDraftAnswers}
                       questionIndex={activePendingQuestionIndex}
+                      collapsed={isActivePendingQuestionCollapsed}
+                      onCollapsedChange={setActivePendingQuestionCollapsed}
                       onToggleOption={onSelectActivePendingUserInputOption}
                       onAdvance={onAdvanceActivePendingUserInput}
                       onDismiss={onDismissActivePendingUserInput}

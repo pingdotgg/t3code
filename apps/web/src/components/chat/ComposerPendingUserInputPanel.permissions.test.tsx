@@ -50,6 +50,8 @@ it("cancels an answer's pending auto-submit on revocation and resumes after a ne
       onToggleOption={onToggleOption}
       onAdvance={onAdvance}
       onDismiss={onDismiss}
+      collapsed={false}
+      onCollapsedChange={() => {}}
     />
   );
   let renderer: ReactTestRenderer | undefined;
