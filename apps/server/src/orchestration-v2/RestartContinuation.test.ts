@@ -643,6 +643,31 @@ const cutMidTurn = (extra: Record<string, unknown> = {}) => {
   } as unknown as OrchestrationV2ThreadProjection;
 };
 
+it.effect("stops continuing after three automatic restart continuations in a row", () =>
+  Effect.gen(function* () {
+    const first = RunId.make("run:first-continuation");
+    const second = RunId.make("run:second-continuation");
+    const cut = cutMidTurn({ restartContinuationOfRunId: second });
+    const withTwoLinks = {
+      ...cut,
+      runs: [
+        ...cut.runs,
+        { ...cut.runs[0]!, id: second, restartContinuationOfRunId: first },
+        { ...cut.runs[0]!, id: first, restartContinuationOfRunId: undefined },
+      ],
+    } as unknown as OrchestrationV2ThreadProjection;
+    assert.lengthOf(yield* continuationTexts(withTwoLinks), 1);
+
+    const withThreeLinks = {
+      ...withTwoLinks,
+      runs: withTwoLinks.runs.map((run) =>
+        run.id === first ? { ...run, restartContinuationOfRunId: RunId.make("run:root") } : run,
+      ),
+    } as unknown as OrchestrationV2ThreadProjection;
+    assert.lengthOf(yield* continuationTexts(withThreeLinks), 0);
+  }),
+);
+
 const queuedFollowUp = {
   id: RunId.make("run:queued"),
   ordinal: 2,
