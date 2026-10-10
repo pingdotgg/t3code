@@ -655,8 +655,11 @@ describe("terminatePosixOwnedProcessTree", () => {
 
   it.live("rotates more than 64 live parents without scanning retained tombstones", () =>
     Effect.gen(function* () {
+      // The server fixture's process group is the runner's real pid, so a synthetic
+      // parent sharing it would be skipped as the server's own group.
+      const parentPidBase = process.pid < 500_000 ? 500_000 : 1_000;
       const parents = Array.from({ length: 130 }, (_, index) =>
-        identity(1_000 + index, 100, 1_000 + index, 1_000 + index),
+        identity(parentPidBase + index, 100, parentPidBase + index, parentPidBase + index),
       );
       let childListReads = 0;
       let identityCalls = 0;
