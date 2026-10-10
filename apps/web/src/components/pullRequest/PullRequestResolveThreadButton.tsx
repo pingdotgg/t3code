@@ -11,11 +11,13 @@ import { pullRequestEnvironment } from "~/state/pullRequests";
 
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
+import { canResolvePullRequestThread } from "./pullRequestEditing.logic";
 
 /**
  * Resolve or unresolve a review thread from a conversation entry rather than from its line in the
  * Code tab. Callers render it on the thread's first comment only, so a thread with five replies
- * offers one control, not five. Renders nothing where the host or this account cannot resolve.
+ * offers one control, not five. Renders nothing where the host or this account cannot resolve the
+ * thread.
  */
 export function PullRequestResolveThreadButton({
   environmentId,
@@ -51,7 +53,8 @@ export function PullRequestResolveThreadButton({
   const setThreadResolution = useAtomCommand(pullRequestEnvironment.setThreadResolution, {
     reportFailure: false,
   });
-  if (!detail.capabilities.review.resolve || !detail.viewerPermissions.resolve) return null;
+  if (!detail.capabilities.review.resolve || !canResolvePullRequestThread(detail, thread))
+    return null;
 
   const toggle = async () => {
     if (pending) return;
