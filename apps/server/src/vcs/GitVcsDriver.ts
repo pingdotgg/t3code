@@ -108,6 +108,8 @@ export interface GitPreparedCommitContext {
 }
 
 export interface ExecuteGitProgress {
+  /** Runs once the Git process has started. */
+  readonly onSpawned?: Effect.Effect<void, never>;
   readonly onStdoutLine?: (line: string) => Effect.Effect<void, never>;
   readonly onStderrLine?: (line: string) => Effect.Effect<void, never>;
   readonly onHookStarted?: (hookName: string) => Effect.Effect<void, never>;

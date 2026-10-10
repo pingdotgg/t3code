@@ -537,6 +537,22 @@ function isUnbornHeadStderr(stderr: string): boolean {
   );
 }
 
+// Git's own (C-locale) refusal of a `git worktree add` target, matched as a
+// whole `fatal:` line; a quoted path may itself contain newlines. "branch": `-b`
+// named an existing branch, so Git created nothing. "target": the path or
+// branch was taken before Git touched the path. Stricter than
+// `classifyGitFailure`, which only names the cause: this decides what the
+// rollback may leave alone, so it also knows the missing-worktree refusals and
+// paths containing quotes or newlines.
+function parseWorktreeAddRefusal(stderr: string): "branch" | "target" | null {
+  if (/^fatal: a branch named '.+' already exists\r?$/m.test(stderr)) return "branch";
+  return /^fatal: '[\s\S]+?' (?:already exists|is a missing but (?:already registered|locked) worktree;|is already (?:checked out|used by worktree) at '[\s\S]+?')\r?$/m.test(
+    stderr,
+  )
+    ? "target"
+    : null;
+}
+
 // Matches `git worktree remove` on a path git no longer tracks: "is not a
 // working tree" when the registration is gone, "cannot remove working tree"
 // when older gits fail validation on a registered-but-deleted directory.
@@ -1000,6 +1016,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                 }),
             ),
           );
+        if (input.progress?.onSpawned) yield* input.progress.onSpawned;
 
         const [stdout, stderr, exitCode] = yield* Effect.all(
           [
@@ -3401,6 +3418,35 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  // One mutex per checkout target (worktree path or new branch), counting
+  // holders and waiters so idle targets leave the map.
+  const worktreeTargetLocks = new Map<
+    string,
+    { readonly semaphore: Semaphore.Semaphore; users: number }
+  >();
+  const withWorktreeTargetLock = <A, E, R>(target: string, effect: Effect.Effect<A, E, R>) =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const existing = worktreeTargetLocks.get(target);
+        const lock = existing ?? { semaphore: Semaphore.makeUnsafe(1), users: 0 };
+        lock.users += 1;
+        worktreeTargetLocks.set(target, lock);
+        return { lock, contended: existing !== undefined };
+      }),
+      ({ lock, contended }) =>
+        (contended
+          ? Effect.logInfo("createWorktree waiting for another checkout of the same target", {
+              target,
+            })
+          : Effect.void
+        ).pipe(Effect.andThen(lock.semaphore.withPermit(effect))),
+      ({ lock }) =>
+        Effect.sync(() => {
+          lock.users -= 1;
+          if (lock.users === 0) worktreeTargetLocks.delete(target);
+        }),
+    );
+
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input, options) {
@@ -3432,28 +3478,122 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const onCheckoutProgress = progress?.onCheckoutProgress;
 
     const checkoutWorkers = (yield* readConfigValue(input.cwd, "checkout.workers")) ?? "0";
-    yield* executeGit(
-      "GitVcsDriver.createWorktree",
-      input.cwd,
-      ["-c", `checkout.workers=${checkoutWorkers}`, ...args],
-      {
-        fallbackErrorDetail: "git worktree add failed",
-        timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
-        ...(onCheckoutProgress
-          ? {
-              // Git only prints checkout progress when stderr is a tty or the
-              // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
-              env: { GIT_PROGRESS_DELAY: "0", LC_ALL: "C" },
-              progress: {
-                onStderrLine: (line) => {
-                  const parsed = parseGitCheckoutProgressLine(line);
-                  return parsed ? onCheckoutProgress(parsed) : Effect.void;
-                },
-              },
+    // A failed or timed-out add can still leave a complete worktree and the new
+    // branch behind, which makes a retry with the same branch and path fail.
+    // The rollback never deletes a directory itself: it only asks Git to remove
+    // a worktree Git registered at a path that did not exist before the add, and
+    // only deletes a branch that did not exist before the add and that Git did
+    // not report as already existing. Git's own refusals only skip steps.
+    const addWorktree = Effect.gen(function* () {
+      const newBranch =
+        input.newRefName && !(yield* branchExists(input.cwd, input.newRefName))
+          ? input.newRefName
+          : null;
+      const pathExisted = yield* fileSystem
+        .exists(worktreePath)
+        .pipe(Effect.orElseSucceed(() => true));
+      const rollBackStep = <E>(step: string, effect: Effect.Effect<unknown, E>) =>
+        effect.pipe(
+          Effect.ignore({ log: "Warn", message: `createWorktree rollback: ${step} failed` }),
+        );
+      const pathExists = fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => true));
+      const rollBack = (refusal: "branch" | "target" | null) =>
+        Effect.gen(function* () {
+          // A refused add never touched the path.
+          if (refusal === null && !pathExisted) {
+            // Git would follow a symlink to whatever worktree it points at.
+            const isSymlink = fileSystem.readLink(worktreePath).pipe(
+              Effect.as(true),
+              Effect.orElseSucceed(() => false),
+            );
+            if ((yield* pathExists) && !(yield* isSymlink)) {
+              const removeArgs = ["worktree", "remove", "--force", "--force", worktreePath];
+              yield* rollBackStep(
+                "remove worktree",
+                executeGit("GitVcsDriver.createWorktree.rollBack", input.cwd, removeArgs, {
+                  timeoutMs: WORKTREE_REMOVE_TIMEOUT_MS,
+                }),
+              );
             }
-          : {}),
-      },
-    );
+            yield* rollBackStep("prune", pruneWorktrees({ cwd: input.cwd }));
+            if (yield* pathExists) {
+              yield* Effect.logWarning("createWorktree rollback: left the path in place", {
+                worktreePath,
+              });
+            }
+          }
+          if (newBranch !== null && refusal !== "branch") {
+            yield* rollBackStep(
+              "delete branch",
+              deleteLocalBranch({ cwd: input.cwd, refName: newBranch, force: true }),
+            );
+          }
+        });
+      const addArgs = ["-c", `checkout.workers=${checkoutWorkers}`, ...args];
+      let spawned = false;
+      // Only the add itself is interruptible, so its outcome and the single
+      // rollback that follows it cannot be separated by an interruption.
+      const result = yield* Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          // C-locale messages let the rollback recognize Git's own refusals.
+          const exit = yield* Effect.exit(
+            restore(
+              executeGitWithStableDiagnostics("GitVcsDriver.createWorktree", input.cwd, addArgs, {
+                allowNonZeroExit: true,
+                timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
+                // Git only prints checkout progress when stderr is a tty or the
+                // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
+                ...(onCheckoutProgress ? { env: { GIT_PROGRESS_DELAY: "0" } } : {}),
+                progress: {
+                  onSpawned: Effect.sync(() => {
+                    spawned = true;
+                  }),
+                  ...(onCheckoutProgress
+                    ? {
+                        onStderrLine: (line: string) => {
+                          const parsed = parseGitCheckoutProgressLine(line);
+                          return parsed ? onCheckoutProgress(parsed) : Effect.void;
+                        },
+                      }
+                    : {}),
+                },
+              }),
+            ),
+          );
+          if (Exit.isFailure(exit)) {
+            // A Git process that never started created nothing.
+            if (spawned) yield* rollBack(null);
+            return yield* Effect.failCause(exit.cause);
+          }
+          if (exit.value.exitCode !== 0) {
+            yield* rollBack(parseWorktreeAddRefusal(exit.value.stderr));
+          }
+          return exit.value;
+        }),
+      );
+      if (result.exitCode === 0) return;
+      const reason = classifyGitFailure(result.stderr);
+      return yield* new GitCommandError({
+        ...gitCommandContext({
+          operation: "GitVcsDriver.createWorktree",
+          cwd: input.cwd,
+          args: addArgs,
+        }),
+        ...(reason === null ? {} : { reason }),
+        detail: "git worktree add failed",
+        ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+        stdoutLength: result.stdout.length,
+        stderrLength: result.stderr.length,
+      });
+    });
+    // The snapshot above is only trustworthy while no other checkout of the same
+    // path or new branch runs, or a losing add would roll back the winner's work.
+    // Sorted so callers that share both targets lock them in the same order.
+    const targets = [
+      `path:${path.resolve(worktreePath)}`,
+      ...(input.newRefName ? [`branch:${path.resolve(input.cwd)}:${input.newRefName}`] : []),
+    ].toSorted();
+    yield* targets.reduce((locked, target) => withWorktreeTargetLock(target, locked), addWorktree);
 
     if (progress?.onWorktreeClaimed) {
       yield* progress.onWorktreeClaimed(worktreePath);
