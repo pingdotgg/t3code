@@ -779,6 +779,9 @@ const make = Effect.gen(function* () {
                 projectId: input.projectId,
                 title: input.title,
                 modelSelection: input.modelSelection,
+                ...(input.fallbackModelSelection === undefined
+                  ? {}
+                  : { fallbackModelSelection: input.fallbackModelSelection }),
                 runtimeMode: input.runtimeMode,
                 interactionMode: input.interactionMode,
                 branch: initialBranch,

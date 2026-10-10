@@ -530,31 +530,82 @@ export function applyClaudePromptEffortPrefix(
   return `Ultrathink:\n${trimmed}`;
 }
 
+export interface FallbackCatalogCandidate {
+  readonly instanceId: ProviderInstanceId | string;
+  readonly driver?: ProviderDriverKind | string | undefined;
+  readonly driverKind?: ProviderDriverKind | string | undefined;
+  readonly enabled?: boolean | undefined;
+  readonly installed?: boolean | undefined;
+  readonly availability?: string | undefined;
+  readonly models?:
+    | ReadonlyArray<{ readonly slug: string; readonly isDefault?: boolean | undefined }>
+    | undefined;
+}
+
 export function resolveFallbackModelSelection(
   fallback: OrchestrationV2FallbackSelection | null | undefined,
   current: ModelSelection,
+  catalog?: ReadonlyArray<FallbackCatalogCandidate> | null | undefined,
 ): ModelSelection | null {
   if (!fallback) return null;
-  if (fallback.mode === "specific") return fallback.modelSelection;
+  const currentInstanceId = String(current.instanceId);
+
+  if (fallback.mode === "specific") {
+    if (catalog && catalog.length > 0) {
+      const match = catalog.find(
+        (c) => String(c.instanceId) === String(fallback.modelSelection.instanceId),
+      );
+      if (!match) return null;
+      if (
+        match.enabled === false ||
+        match.installed === false ||
+        match.availability === "unavailable"
+      ) {
+        return null;
+      }
+    }
+    return fallback.modelSelection;
+  }
+
   if (fallback.mode === "auto") {
-    const candidates: Array<{ driver: string; model: string }> = [
-      {
-        driver: "claudeAgent",
-        model: DEFAULT_MODEL_BY_PROVIDER.claudeAgent ?? "claude-sonnet-5-5",
-      },
-      { driver: "codex", model: DEFAULT_MODEL_BY_PROVIDER.codex ?? "gpt-6.1-sol" },
-      {
-        driver: "antigravity",
-        model: DEFAULT_MODEL_BY_PROVIDER.antigravity ?? "gemini-3.8-flash-high",
-      },
-      { driver: "grok", model: DEFAULT_MODEL_BY_PROVIDER.grok ?? "grok-build" },
-    ];
-    const currentInstance = String(current.instanceId);
-    const chosen = candidates.find((c) => c.driver !== currentInstance) ?? candidates[0];
+    if (!catalog || catalog.length === 0) {
+      return null;
+    }
+    const eligible = catalog.filter((c) => {
+      if (String(c.instanceId) === currentInstanceId) return false;
+      if (c.enabled === false) return false;
+      if (c.installed === false) return false;
+      if (c.availability === "unavailable") return false;
+      return true;
+    });
+
+    if (eligible.length === 0) {
+      return null;
+    }
+
+    const driverPreference = ["claudeAgent", "codex", "antigravity", "grok"];
+    const sorted = [...eligible].sort((a, b) => {
+      const driverA = String(a.driver ?? a.driverKind ?? "");
+      const driverB = String(b.driver ?? b.driverKind ?? "");
+      const idxA = driverPreference.indexOf(driverA);
+      const idxB = driverPreference.indexOf(driverB);
+      const scoreA = idxA === -1 ? 999 : idxA;
+      const scoreB = idxB === -1 ? 999 : idxB;
+      return scoreA - scoreB;
+    });
+
+    const chosen = sorted[0];
+    const defaultModel =
+      chosen.models?.find((m) => m.isDefault)?.slug ??
+      chosen.models?.[0]?.slug ??
+      DEFAULT_MODEL_BY_PROVIDER[(chosen.driver ?? chosen.driverKind) as ProviderDriverKind] ??
+      "default";
+
     return {
-      instanceId: ProviderInstanceId.make(chosen.driver),
-      model: chosen.model,
+      instanceId: ProviderInstanceId.make(String(chosen.instanceId)),
+      model: defaultModel,
     };
   }
+
   return null;
 }

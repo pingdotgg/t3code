@@ -156,7 +156,8 @@ export const FallbackModelPicker = memo(function FallbackModelPicker(
                 <div className="flex items-center gap-1.5 px-2 pt-1.5 pb-1 font-medium text-[11px] text-muted-foreground">
                   <ProviderInstanceIcon
                     driverKind={entry.driverKind}
-                    instanceId={entry.instanceId}
+                    displayName={entry.displayName}
+                    accentColor={entry.accentColor}
                     className="size-3.5"
                   />
                   <span>{entry.displayName}</span>

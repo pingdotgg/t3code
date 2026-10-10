@@ -109,6 +109,7 @@ it.effect.each(["on time", "after restart"])(
             Ref.get(current).pipe(
               Effect.map((shell) => (shell.status === "failed" ? [shell] : [])),
             ),
+          getFallbackRecoveryCandidates: () => Effect.succeed([]),
         }),
         Layer.mock(ServerSettings.ServerSettingsService)({
           getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),

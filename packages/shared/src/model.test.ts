@@ -20,6 +20,8 @@ import {
   normalizeCustomModelSlug,
   normalizeModelSlug,
   modelSelectionsEqual,
+  resolveFallbackModelSelection,
+  type FallbackCatalogCandidate,
 } from "./model.ts";
 
 it("keeps the Codex catalog display formatting", () => {
@@ -361,5 +363,88 @@ describe("provider-reported option display", () => {
     { ...selection, options: [{ id: "variant", value: "none" }] },
   ])("ignores reports after changing the model, instance, or option: %j", (selected) => {
     expect(getProviderOptionCurrentLabel(descriptor, selected, reported)).toBe("Unknown");
+  });
+});
+
+describe("resolveFallbackModelSelection", () => {
+  const current = {
+    instanceId: ProviderInstanceId.make("codex"),
+    model: "gpt-6.1-sol",
+  };
+
+  it("returns null when fallback is not configured", () => {
+    expect(resolveFallbackModelSelection(null, current)).toBeNull();
+    expect(resolveFallbackModelSelection(undefined, current)).toBeNull();
+  });
+
+  it("resolves specific mode selection", () => {
+    const specific = {
+      mode: "specific" as const,
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claude_work"),
+        model: "claude-sonnet-5-5",
+      },
+    };
+    expect(resolveFallbackModelSelection(specific, current)).toEqual(specific.modelSelection);
+  });
+
+  it("checks catalog availability in specific mode when catalog is provided", () => {
+    const specific = {
+      mode: "specific" as const,
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claude_work"),
+        model: "claude-sonnet-5-5",
+      },
+    };
+    const catalog: ReadonlyArray<FallbackCatalogCandidate> = [
+      {
+        instanceId: "claude_work",
+        driverKind: "claudeAgent",
+        enabled: false,
+      },
+    ];
+    expect(resolveFallbackModelSelection(specific, current, catalog)).toBeNull();
+  });
+
+  it("returns null in auto mode when catalog is missing or has no eligible alternative", () => {
+    const auto = { mode: "auto" as const };
+    expect(resolveFallbackModelSelection(auto, current, null)).toBeNull();
+    expect(resolveFallbackModelSelection(auto, current, [])).toBeNull();
+    expect(
+      resolveFallbackModelSelection(auto, current, [
+        { instanceId: "codex", driverKind: "codex", enabled: true },
+      ]),
+    ).toBeNull();
+  });
+
+  it("selects the best alternative in auto mode from configured instances preserving preference", () => {
+    const auto = { mode: "auto" as const };
+    const catalog: ReadonlyArray<FallbackCatalogCandidate> = [
+      {
+        instanceId: "grok_default",
+        driver: "grok",
+        enabled: true,
+        installed: true,
+        models: [{ slug: "grok-build", isDefault: true }],
+      },
+      {
+        instanceId: "claude_custom",
+        driverKind: "claudeAgent",
+        enabled: true,
+        installed: true,
+        models: [{ slug: "claude-sonnet-custom", isDefault: true }],
+      },
+      {
+        instanceId: "codex",
+        driverKind: "codex",
+        enabled: true,
+        installed: true,
+      },
+    ];
+    const resolved = resolveFallbackModelSelection(auto, current, catalog);
+    expect(resolved).toEqual({
+      instanceId: ProviderInstanceId.make("claude_custom"),
+      model: "claude-sonnet-custom",
+    });
   });
 });

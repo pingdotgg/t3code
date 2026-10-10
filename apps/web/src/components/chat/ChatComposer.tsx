@@ -5627,11 +5627,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         size={composerControlsCollapsed ? "xs" : "sm"}
         disabled={providerCatalogPending || isSendBusy}
         onFallbackSelect={(selection) => {
-          if (props.onFallbackSelectionChange) {
-            props.onFallbackSelectionChange(selection);
-          } else {
-            setDraftFallbackSelection(selection);
-          }
+          setDraftFallbackSelection(selection);
+          props.onFallbackSelectionChange?.(selection);
         }}
       />
 

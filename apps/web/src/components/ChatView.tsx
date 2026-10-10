@@ -65,6 +65,7 @@ import {
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
+  type OrchestrationV2FallbackSelection,
   type ProjectScript,
   type ProjectId,
   type ProviderApprovalDecision,
@@ -1849,6 +1850,8 @@ export default function ChatView(props: ChatViewProps) {
   const [restingComposerControlsHost, setRestingComposerControlsHost] =
     useState<HTMLDivElement | null>(null);
   const [restingComposerControlsVisible, setRestingComposerControlsVisible] = useState(false);
+  const [draftFallbackSelection, setDraftFallbackSelection] =
+    useState<OrchestrationV2FallbackSelection | null>(null);
   const citeAssistantText = useCallback(
     (citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => {
       const inserted = composerRef.current?.citeAssistantText(citation, sourceAnchor) ?? false;
@@ -7813,16 +7816,18 @@ export default function ChatView(props: ChatViewProps) {
             const fallbackTarget = resolveFallbackModelSelection(
               activeThreadShell.fallbackModelSelection ?? { mode: "auto" },
               activeThreadShell.modelSelection,
+              providerInstanceEntries,
             );
             if (fallbackTarget) {
               onProviderModelSelect(fallbackTarget.instanceId, fallbackTarget.model, {
                 focusComposer: false,
               });
-              await startThreadTurn({
+              const result = await startThreadTurn({
                 environmentId,
                 input: {
                   threadId: activeThreadShell.id,
                   manualContinuationOfRunId: activeThreadShell.latestRun?.runId,
+                  modelSelection: fallbackTarget,
                   message: {
                     messageId: newMessageId(),
                     role: "user",
@@ -7831,8 +7836,10 @@ export default function ChatView(props: ChatViewProps) {
                   },
                   runtimeMode,
                   interactionMode,
+                  dispatchMode: "start",
                 },
               });
+              if (result._tag === "Failure") throw squashAtomCommandFailure(result);
             }
           },
           onChange: async (limitRecovery) => {
@@ -9959,6 +9966,9 @@ export default function ChatView(props: ChatViewProps) {
                       projectId: activeProject.id,
                       title,
                       modelSelection: threadCreateModelSelection,
+                      ...(draftFallbackSelection
+                        ? { fallbackModelSelection: draftFallbackSelection }
+                        : {}),
                       runtimeMode,
                       interactionMode: sendInteractionMode,
                       branch: activeThreadBranch,
@@ -11745,14 +11755,28 @@ export default function ChatView(props: ChatViewProps) {
                                   : undefined
                               }
                               onFallbackSelectionChange={async (fallbackSelection) => {
+                                setDraftFallbackSelection(fallbackSelection);
                                 if (activeThreadShell) {
-                                  await updateThreadMetadata({
+                                  const result = await updateThreadMetadata({
                                     environmentId,
                                     input: {
                                       threadId: activeThreadShell.id,
                                       fallbackModelSelection,
                                     },
                                   });
+                                  if (result._tag === "Failure") {
+                                    if (!isAtomCommandInterrupted(result)) {
+                                      toastManager.add(
+                                        stackedThreadToast({
+                                          type: "error",
+                                          title: "Failed to update fallback agent selection",
+                                          description: chatActionErrorMessage(
+                                            squashAtomCommandFailure(result),
+                                          ),
+                                        }),
+                                      );
+                                    }
+                                  }
                                 }
                               }}
                               environmentUnavailable={activeEnvironmentUnavailableState}

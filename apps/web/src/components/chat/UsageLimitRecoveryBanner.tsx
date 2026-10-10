@@ -19,8 +19,9 @@ type RecoveryProps = {
 };
 
 export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBannerStackItem {
-  const { runId, resetAt, stoppedAt } = props;
+  const { runId, resetAt, stoppedAt, onFallbackNow } = props;
   const canSchedule = resetAt !== null && Date.parse(resetAt) > Date.parse(stoppedAt);
+  const hasActions = canSchedule || Boolean(onFallbackNow);
   return {
     id: `usage-limit-recovery:${runId}`,
     variant: "warning",
@@ -30,12 +31,22 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
     description: resetAt
       ? `Resets ${new Date(resetAt).toLocaleString()}`
       : "Reset time unavailable; retry manually",
-    actions: canSchedule ? <RecoveryActions key={`${runId}:${resetAt}`} {...props} /> : null,
+    actions: hasActions ? (
+      <RecoveryActions key={`${runId}:${resetAt}`} {...props} canSchedule={canSchedule} />
+    ) : null,
   };
 }
 
-function RecoveryActions(props: RecoveryProps) {
-  const { runId, resetAt, recovery, snoozedUntil, onChange, onFallbackNow } = props;
+function RecoveryActions(props: RecoveryProps & { canSchedule?: boolean }) {
+  const {
+    runId,
+    resetAt,
+    recovery,
+    snoozedUntil,
+    onChange,
+    onFallbackNow,
+    canSchedule = true,
+  } = props;
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -98,18 +109,27 @@ function RecoveryActions(props: RecoveryProps) {
           Switch to Fallback Agent
         </Button>
       ) : null}
-      <Button size="xs" variant="ghost" disabled={pending} onClick={() => void toggle("resume")}>
-        {pending ? "Saving..." : scheduled ? "Cancel auto-resume" : "Resume at reset"}
-      </Button>
-      {!snoozed ? (
-        <Button
-          size="xs"
-          variant="ghost"
-          disabled={pending || Date.parse(resetAt!) <= nowMs}
-          onClick={() => void toggle("snooze")}
-        >
-          {pending ? "Saving..." : "Snooze until reset"}
-        </Button>
+      {canSchedule ? (
+        <>
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={pending}
+            onClick={() => void toggle("resume")}
+          >
+            {pending ? "Saving..." : scheduled ? "Cancel auto-resume" : "Resume at reset"}
+          </Button>
+          {!snoozed ? (
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={pending || (resetAt !== null && Date.parse(resetAt) <= nowMs)}
+              onClick={() => void toggle("snooze")}
+            >
+              {pending ? "Saving..." : "Snooze until reset"}
+            </Button>
+          ) : null}
+        </>
       ) : null}
       {error ? (
         <p role="alert" className="basis-full text-xs text-destructive">
