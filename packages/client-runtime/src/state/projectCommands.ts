@@ -86,6 +86,20 @@ export function createProjectEnvironmentAtoms<R, E>(
   };
   return {
     fileMetadata: fileMetadata.metadata,
+    fileMetadataThread: fileMetadata.retainThread,
+    invalidateFileMetadata: createEnvironmentCommand(runtime, {
+      label: "environment-data:filesystem:invalidate-metadata",
+      execute: (input: { paths: ReadonlyArray<string> }, registry, environmentId) =>
+        Effect.forEach([...new Set(input.paths)], (path) =>
+          fileMetadata
+            .invalidate(path)
+            .pipe(
+              Effect.tap(() =>
+                Effect.sync(() => fileMetadata.refreshPath(environmentId, path, registry)),
+              ),
+            ),
+        ),
+    }),
     searchEntries: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:search-entries",
       tag: WS_METHODS.projectsSearchEntries,
@@ -189,14 +203,10 @@ export function createProjectEnvironmentAtoms<R, E>(
         ),
       onSuccess: ({ environmentId, input }, registry) =>
         Effect.sync(() => {
-          registry.refresh(
-            fileMetadata.metadata({
-              environmentId,
-              input: {
-                path: splitFilePathPosition(resolvePathLinkTarget(input.relativePath, input.cwd))
-                  .path,
-              },
-            }),
+          fileMetadata.refreshPath(
+            environmentId,
+            splitFilePathPosition(resolvePathLinkTarget(input.relativePath, input.cwd)).path,
+            registry,
           );
         }),
     }),

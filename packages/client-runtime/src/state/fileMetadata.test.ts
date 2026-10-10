@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  ThreadId,
   AuthFilesystemReadScope,
   EnvironmentAuthorizationError,
   type FilesystemEntryMetadata,
@@ -86,12 +87,12 @@ const makeHarness = Effect.fnUntraced(function* () {
   const atoms = createFileMetadataAtoms(runtime);
   const registry = AtomRegistry.make();
   yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
-  const atom = (path: string, environmentId = ENVIRONMENT_ID) =>
-    atoms.metadata({ environmentId, input: { path } });
-  const read = (path: string, environmentId = ENVIRONMENT_ID) =>
-    AtomRegistry.getResult(registry, atom(path, environmentId), { suspendOnWaiting: true }).pipe(
-      Effect.tap(() => Effect.yieldNow),
-    );
+  const atom = (path: string, environmentId = ENVIRONMENT_ID, threadId?: ThreadId) =>
+    atoms.metadata({ environmentId, input: { path, ...(threadId ? { threadId } : {}) } });
+  const read = (path: string, environmentId = ENVIRONMENT_ID, threadId?: ThreadId) =>
+    AtomRegistry.getResult(registry, atom(path, environmentId, threadId), {
+      suspendOnWaiting: true,
+    }).pipe(Effect.tap(() => Effect.yieldNow));
   const seed = (path: string, kind: "file" | "directory") =>
     atoms
       .rememberEntries("/workspace", [{ path, kind }])
@@ -112,6 +113,132 @@ const makeHarness = Effect.fnUntraced(function* () {
 });
 
 describe("file metadata", () => {
+  it.effect("tree refreshes preserve MIME hints retained by an open thread", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const threadId = ThreadId.make("rich-metadata-thread");
+      h.registry.mount(h.atoms.retainThread({ environmentId: ENVIRONMENT_ID, threadId }));
+      const value = { kind: "file" as const, byteLength: 5, mimeType: "text/x-python" };
+      h.values.set("/workspace/run", value);
+      yield* h.read("/workspace/run", ENVIRONMENT_ID, threadId);
+      yield* TestClock.adjust("1 hour");
+      yield* h.seed("run", "file");
+      h.registry.refresh(h.atom("/workspace/run", ENVIRONMENT_ID, threadId));
+      expect(yield* h.read("/workspace/run", ENVIRONMENT_ID, threadId)).toEqual(value);
+      expect(h.batches).toHaveLength(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("an offscreen invalidation waits until that path is read again", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const threadId = ThreadId.make("offscreen-thread");
+      h.registry.mount(h.atoms.retainThread({ environmentId: ENVIRONMENT_ID, threadId }));
+      yield* h.read("/workspace/file", ENVIRONMENT_ID, threadId);
+      yield* h.atoms
+        .invalidate("/workspace/file")
+        .pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, h.supervisor));
+      h.atoms.refreshPath(ENVIRONMENT_ID, "/workspace/file", h.registry);
+      yield* Effect.yieldNow;
+      expect(h.batches).toHaveLength(1);
+      h.values.set("/workspace/file", { kind: "directory" });
+      expect(yield* h.read("/workspace/file", ENVIRONMENT_ID, threadId)).toEqual({
+        kind: "directory",
+      });
+      expect(h.batches).toHaveLength(2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("retains more than 1024 visited paths until the thread closes", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const threadId = ThreadId.make("large-thread");
+      const release = h.registry.mount(
+        h.atoms.retainThread({ environmentId: ENVIRONMENT_ID, threadId }),
+      );
+      const paths = Array.from({ length: 1300 }, (_, i) => `/workspace/visited-${i}`);
+      yield* Effect.forEach(paths, (path) => h.read(path, ENVIRONMENT_ID, threadId), {
+        concurrency: "unbounded",
+      });
+      expect(h.batches).toHaveLength(21);
+      yield* TestClock.adjust("1 hour");
+      for (const path of paths) h.registry.refresh(h.atom(path, ENVIRONMENT_ID, threadId));
+      yield* Effect.forEach(paths, (path) => h.read(path, ENVIRONMENT_ID, threadId), {
+        concurrency: "unbounded",
+      });
+      expect(h.batches).toHaveLength(21);
+      release();
+      yield* Effect.yieldNow;
+      h.registry.refresh(h.atom(paths[0]!, ENVIRONMENT_ID, threadId));
+      yield* h.read(paths[0]!, ENVIRONMENT_ID, threadId);
+      expect(h.batches).toHaveLength(22);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("closing one thread does not release another thread's retained paths", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const a = ThreadId.make("thread-a");
+      const b = ThreadId.make("thread-b");
+      const releaseA = h.registry.mount(
+        h.atoms.retainThread({ environmentId: ENVIRONMENT_ID, threadId: a }),
+      );
+      h.registry.mount(h.atoms.retainThread({ environmentId: ENVIRONMENT_ID, threadId: b }));
+      yield* h.read("/workspace/shared", ENVIRONMENT_ID, a);
+      yield* h.read("/workspace/shared", ENVIRONMENT_ID, b);
+      expect(h.batches).toHaveLength(1);
+      releaseA();
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("1 hour");
+      h.registry.refresh(h.atom("/workspace/shared", ENVIRONMENT_ID, b));
+      yield* h.read("/workspace/shared", ENVIRONMENT_ID, b);
+      expect(h.batches).toHaveLength(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("invalidates a changed retained path without refetching other paths", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const threadId = ThreadId.make("changing-thread");
+      h.registry.mount(h.atoms.retainThread({ environmentId: ENVIRONMENT_ID, threadId }));
+      h.values.set("/workspace/file", { kind: "file", byteLength: 5 });
+      const file = h.atom("/workspace/file", ENVIRONMENT_ID, threadId);
+      h.registry.mount(file);
+      yield* h.read("/workspace/file", ENVIRONMENT_ID, threadId);
+      yield* h.read("/workspace/unchanged", ENVIRONMENT_ID, threadId);
+      const before = h.batches.length;
+      h.values.set("/workspace/file", { kind: "file", byteLength: 10 });
+      yield* h.atoms
+        .invalidate("/workspace/file")
+        .pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, h.supervisor));
+      h.atoms.refreshPath(ENVIRONMENT_ID, "/workspace/file", h.registry);
+      expect(yield* h.read("/workspace/file", ENVIRONMENT_ID, threadId)).toEqual({
+        kind: "file",
+        byteLength: 10,
+      });
+      h.registry.refresh(h.atom("/workspace/unchanged", ENVIRONMENT_ID, threadId));
+      yield* h.read("/workspace/unchanged", ENVIRONMENT_ID, threadId);
+      expect(h.batches.slice(before)).toEqual([["/workspace/file"]]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a reconnect discards retained metadata from the previous session", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const threadId = ThreadId.make("reconnected-thread");
+      h.registry.mount(h.atoms.retainThread({ environmentId: ENVIRONMENT_ID, threadId }));
+      h.values.set("/workspace/file", { kind: "file" });
+      yield* h.read("/workspace/file", ENVIRONMENT_ID, threadId);
+      h.values.set("/workspace/file", { kind: "directory" });
+      yield* SubscriptionRef.set(h.session, Option.some(h.makeSession()));
+      h.registry.refresh(h.atom("/workspace/file", ENVIRONMENT_ID, threadId));
+      expect(yield* h.read("/workspace/file", ENVIRONMENT_ID, threadId)).toEqual({
+        kind: "directory",
+      });
+      expect(h.batches).toHaveLength(2);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("keeps batches and cached paths separate across environments", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
