@@ -13,7 +13,6 @@ import {
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
   deleteSelectedThreadEntries,
-  filterSidebarProjectScopeItems,
   filterSidebarV2VisibleThreads,
   formatWorkingDurationLabel,
   getFallbackThreadIdAfterDelete,
@@ -27,7 +26,6 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
-  reduceSidebarProjectScopeMenuState,
   resolveAdjacentThreadId,
   resolveProjectStatusIndicator,
   resolveSidebarSweepKeys,
@@ -1045,65 +1043,6 @@ describe("searchSidebarThreads", () => {
       threads[0],
       threads[2],
     ]);
-  });
-});
-
-describe("filterSidebarProjectScopeItems", () => {
-  const items = [
-    { value: "all", label: "All projects" },
-    { value: "alpha", label: "Alpha workspace" },
-    { value: "beta", label: "Beta tools" },
-  ] as const;
-  const filter = (query: string) =>
-    filterSidebarProjectScopeItems({
-      items,
-      query,
-      matches: (item, candidate) =>
-        item.label.toLocaleLowerCase().includes(candidate.toLocaleLowerCase()),
-    });
-
-  it("shows the default row first while the query is empty", () => {
-    expect(filter("")).toEqual(items);
-    expect(filter("   ")).toEqual(items);
-  });
-
-  it("hides the default row while filtering", () => {
-    expect(filter("all")).toEqual([]);
-  });
-
-  it("returns matching projects in source order and supports no-match results", () => {
-    expect(filter("WORK")).toEqual([items[1]]);
-    expect(filter("missing")).toEqual([]);
-  });
-});
-
-describe("reduceSidebarProjectScopeMenuState", () => {
-  const queriedOpenState = { open: true, query: "alpha" };
-
-  it("clears the query when the combobox closes through onOpenChange", () => {
-    expect(
-      reduceSidebarProjectScopeMenuState(queriedOpenState, {
-        type: "open-changed",
-        open: false,
-      }),
-    ).toEqual({ open: false, query: "" });
-  });
-
-  it("clears the query when project settings closes the combobox", () => {
-    expect(
-      reduceSidebarProjectScopeMenuState(queriedOpenState, {
-        type: "project-settings-opened",
-      }),
-    ).toEqual({ open: false, query: "" });
-  });
-
-  it("keeps the popup open while the query changes", () => {
-    expect(
-      reduceSidebarProjectScopeMenuState(
-        { open: true, query: "" },
-        { type: "query-changed", query: "beta" },
-      ),
-    ).toEqual({ open: true, query: "beta" });
   });
 });
 
