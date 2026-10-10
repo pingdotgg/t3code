@@ -63,7 +63,12 @@ export function evaluatePullRequestWatch(
 
     const required = detail.checks.filter((check) => check.required === true);
     const gate = required.length > 0 ? required : detail.checks;
-    const passedNow = gate.every((check) => check.status !== "pending" && !isFailedCheck(check));
+    // A closed-event workflow may skip every validation job. That is terminal, not validation.
+    const validated = detail.checks.some(
+      (check) => check.status === "success" || check.status === "neutral",
+    );
+    const passedNow =
+      validated && gate.every((check) => check.status !== "pending" && !isFailedCheck(check));
     const gateNames = gate.map((check) => check.name);
     // A watch saved before passedChecks existed takes the current names, so it does not wake.
     const told = passed && passedChecks.length === 0 ? gateNames : passedChecks;

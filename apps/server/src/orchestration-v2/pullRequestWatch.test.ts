@@ -4,6 +4,12 @@ import type {
   ThreadPullRequestWatch,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as Schema from "effect/Schema";
+import {
+  ForgejoComment,
+  forgejoChecks,
+  forgejoComment,
+} from "@t3tools/source-control-forgejo/server/forgejoPullRequestJson";
 
 import {
   PULL_REQUEST_WATCH_WAKE_LIMIT,
@@ -12,6 +18,7 @@ import {
 } from "./pullRequestWatch.ts";
 
 const STARTED = "2026-10-02T12:00:00.000Z";
+const decodeForgejoComment = Schema.decodeSync(ForgejoComment);
 
 const watch = (overrides: Partial<ThreadPullRequestWatch> = {}): ThreadPullRequestWatch => ({
   startedAt: STARTED,
@@ -287,5 +294,139 @@ describe("pullRequestWatchMessage", () => {
       outcome: "failed",
       summary: "#12: checks failed, new comments",
     });
+  });
+});
+
+describe("Forgejo watch boundary", () => {
+  const headSha = "aaaaaaaaaa";
+  const createdAt = "2026-10-10T19:52:40Z";
+  const editedAt = "2026-10-10T20:04:50Z";
+  const status = (context: string, value: string) => ({
+    context,
+    status: value,
+    description: null,
+    target_url: null,
+    updated_at: editedAt,
+  });
+  const seen = watch({
+    headSha,
+    remarksThrough: "2026-10-10T19:52:40.000Z",
+    remarkIds: ["29061"],
+    wakes: 2,
+  });
+  const decodedComment = (updatedAt: string) =>
+    forgejoComment(
+      decodeForgejoComment({
+        id: 29061,
+        body: "Performance: five rounds complete",
+        user: { login: "forgejo-actions" },
+        created_at: createdAt,
+        updated_at: updatedAt,
+      }),
+    );
+
+  it("wakes when a benchmark finishes alongside conditionally skipped deployment jobs", () => {
+    const checks = forgejoChecks([
+      status("CI / checks", "success"),
+      status("CI / test", "success"),
+      status("CI / perf", "success"),
+      status("CI / deploy-main", "skipped"),
+      status("CI / deploy-vu-production", "skipped"),
+      status("CI / teardown-preview", "skipped"),
+    ]);
+    const finalDetail = detail({ headSha, checks });
+    const completed = evaluatePullRequestWatch(seen, finalDetail, []);
+    assert.deepEqual(completed.changes, [{ kind: "checks-passed", count: 6, required: false }]);
+    assert.isTrue(completed.next.passed);
+    assert.deepEqual(evaluatePullRequestWatch(completed.next, finalDetail, []).changes, []);
+    const stillRunning = evaluatePullRequestWatch(
+      seen,
+      detail({
+        headSha,
+        checks: forgejoChecks([
+          status("CI / perf", "pending"),
+          status("CI / deploy-main", "skipped"),
+        ]),
+      }),
+      [],
+    );
+    assert.deepEqual(stillRunning.changes, []);
+    assert.isFalse(stillRunning.next.passed);
+  });
+
+  it.each(["pending", "cancelled", "failure", "error", "unrecognised"])(
+    "does not report passing while the benchmark status is %s",
+    (value) => {
+      const report = evaluatePullRequestWatch(
+        seen,
+        detail({
+          headSha,
+          checks: forgejoChecks([
+            status("CI / test", "success"),
+            status("CI / perf", value),
+            status("CI / deploy-main", "skipped"),
+          ]),
+        }),
+        [],
+      );
+      assert.isFalse(report.next.passed);
+      assert.isFalse(report.changes.some((change) => change.kind === "checks-passed"));
+      if (["cancelled", "failure", "error"].includes(value)) {
+        assert.strictEqual(report.changes[0]?.kind, "checks-failed");
+      }
+    },
+  );
+
+  it("does not claim validation for an empty or entirely skipped workflow", () => {
+    for (const checks of [
+      [],
+      forgejoChecks([status("CI / test", "skipped"), status("CI / perf", "skipped")]),
+    ]) {
+      assert.deepEqual(evaluatePullRequestWatch(seen, detail({ headSha, checks }), []).changes, []);
+    }
+  });
+
+  it("does not carry a passed result over to a pushed head with queued checks", () => {
+    const previous = evaluatePullRequestWatch(
+      seen,
+      detail({ headSha, checks: forgejoChecks([status("CI / test", "success")]) }),
+      [],
+    );
+    const pushed = evaluatePullRequestWatch(
+      previous.next,
+      detail({ headSha: "new-head", checks: forgejoChecks([status("CI / test", "pending")]) }),
+      [],
+    );
+    assert.isFalse(pushed.next.passed);
+    assert.deepEqual(pushed.changes, []);
+    assert.strictEqual(pushed.next.headSha, "new-head");
+  });
+
+  it("wakes once for the edit of an already-seen benchmark comment", () => {
+    const finalComment = decodedComment(editedAt);
+    assert.strictEqual(finalComment.editedAt, "2026-10-10T20:04:50.000Z");
+    assert.isUndefined(decodedComment(createdAt).editedAt);
+    const finalDetail = detail({ headSha, checks: [] });
+    const completed = evaluatePullRequestWatch(seen, finalDetail, [finalComment]);
+    assert.deepEqual(completed.changes, [{ kind: "remarks", remarks: [finalComment] }]);
+    assert.strictEqual(completed.next.remarksThrough, "2026-10-10T20:04:50.000Z");
+    assert.deepEqual(
+      evaluatePullRequestWatch(completed.next, finalDetail, [finalComment]).changes,
+      [],
+    );
+    assert.deepEqual(
+      evaluatePullRequestWatch(seen, finalDetail, [decodedComment(createdAt)]).changes,
+      [],
+    );
+    const secondEdit = decodedComment("2026-10-10T20:05:50Z");
+    const second = evaluatePullRequestWatch(completed.next, finalDetail, [secondEdit]);
+    assert.deepEqual(second.changes, [{ kind: "remarks", remarks: [secondEdit] }]);
+    assert.deepEqual(evaluatePullRequestWatch(second.next, finalDetail, [secondEdit]).changes, []);
+    assert.deepEqual(
+      evaluatePullRequestWatch(seen, finalDetail, [
+        { ...finalComment, author: { login: "agent-user", name: null, avatarUrl: null } },
+      ]).changes,
+      [],
+    );
   });
 });

@@ -68,6 +68,7 @@ export const ForgejoComment = Schema.Struct({
   body: Schema.String,
   user: Schema.NullOr(ForgejoUser),
   created_at: Schema.String,
+  updated_at: Schema.optional(Schema.NullOr(Schema.String)),
   html_url: Schema.optional(Schema.String),
 });
 export const ForgejoReview = Schema.Struct({
@@ -149,12 +150,15 @@ export function forgejoChangeRequest(pr: typeof ForgejoPullRequest.Type) {
 }
 
 export function forgejoComment(comment: typeof ForgejoComment.Type): PullRequestComment {
+  const createdAt = toIsoUtc(comment.created_at);
+  const editedAt = comment.updated_at == null ? undefined : toIsoUtc(comment.updated_at);
   return {
     id: String(comment.id),
     kind: "issue-comment",
     author: forgejoActor(comment.user),
     body: comment.body,
-    createdAt: toIsoUtc(comment.created_at),
+    createdAt,
+    ...(editedAt === undefined || editedAt === createdAt ? {} : { editedAt }),
     url: comment.html_url || null,
     path: null,
     reviewState: null,
@@ -220,8 +224,10 @@ export function forgejoChecks(
         description: status.description || null,
         url: status.target_url || null,
         status:
-          status.status === "success"
-            ? "success"
+          status.status === "success" ||
+          status.status === "skipped" ||
+          status.status === "cancelled"
+            ? status.status
             : status.status === "failure" || status.status === "error"
               ? "failure"
               : "pending",
