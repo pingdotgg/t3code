@@ -104,7 +104,9 @@ export function SettingsPluginsRouteScreen() {
             <Text className="px-2 text-base text-foreground-muted">
               {availableTargets.length === 0
                 ? "Connect an environment to see its plugins."
-                : "Update T3 Code on the selected environments to see their plugins."}
+                : selectedTargets.length === 0
+                  ? "Select an environment to see its plugins."
+                  : "Update T3 Code on the selected environments to see their plugins."}
             </Text>
           )}
         </ScrollView>
