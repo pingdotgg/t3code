@@ -9,6 +9,24 @@ type DraftProjectSelectionResolution =
   | { readonly kind: "select"; readonly project: EnvironmentProject }
   | { readonly kind: "pick" };
 
+export function resolveNewTaskEnvironmentId(
+  projects: ReadonlyArray<Pick<EnvironmentProject, "environmentId">>,
+  selectedEnvironmentId: EnvironmentId | null,
+  connectedEnvironmentIds: ReadonlySet<EnvironmentId>,
+): EnvironmentId | null {
+  if (
+    selectedEnvironmentId !== null &&
+    projects.some((project) => project.environmentId === selectedEnvironmentId)
+  ) {
+    return selectedEnvironmentId;
+  }
+  return (
+    projects.find((project) => connectedEnvironmentIds.has(project.environmentId))?.environmentId ??
+    projects[0]?.environmentId ??
+    null
+  );
+}
+
 export function getProjectScopeSelectionTarget(
   scope: HomeProjectScope,
   preferredEnvironmentId: EnvironmentId | null,

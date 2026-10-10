@@ -57,18 +57,15 @@ describe("new thread project environment", () => {
   });
 
   it.each([{}, { defaultEnvironmentId: null }])(
-    "preserves the context for Automatic %j whether connected or offline",
+    "keeps a connected context for Automatic %j",
     (override) => {
-      for (const connected of [connectedEnvironmentIds, new Set([mac.environmentId])]) {
-        expect(
-          resolveNewThreadProjectRef({
-            ...input,
-            settingsByEnvironment: settings(override),
-            contextProjectRef: padRef,
-            connectedEnvironmentIds: connected,
-          }),
-        ).toEqual({ projectRef: padRef, environmentSelection: "auto" });
-      }
+      expect(
+        resolveNewThreadProjectRef({
+          ...input,
+          settingsByEnvironment: settings(override),
+          contextProjectRef: padRef,
+        }),
+      ).toEqual({ projectRef: padRef, environmentSelection: "auto" });
     },
   );
 
@@ -86,6 +83,61 @@ describe("new thread project environment", () => {
           ...overrides,
         }),
       ).toEqual({ projectRef, environmentSelection: "auto" });
+    },
+  );
+
+  it.each([{}, { defaultEnvironmentId: null }])(
+    "prefers a connected copy over an offline context for Automatic %j",
+    (override) => {
+      expect(
+        resolveNewThreadProjectRef({
+          ...input,
+          settingsByEnvironment: settings(override),
+          contextProjectRef: padRef,
+          connectedEnvironmentIds: new Set([mac.environmentId]),
+        }),
+      ).toEqual({ projectRef: macRef, environmentSelection: "auto" });
+    },
+  );
+
+  it("keeps a manual offline pick ahead of connected copies", () => {
+    expect(
+      resolveNewThreadProjectRef({
+        ...input,
+        manualProjectRef: padRef,
+        connectedEnvironmentIds: new Set([mac.environmentId]),
+      }),
+    ).toEqual({ projectRef: padRef, environmentSelection: "manual" });
+  });
+
+  it("uses the first connected copy when context and primary are offline", () => {
+    const server = { environmentId: EnvironmentId.make("server"), id: ProjectId.make("server") };
+    expect(
+      resolveNewThreadProjectRef({
+        ...input,
+        settingsByEnvironment: settings(),
+        members: [mac, pad, server],
+        contextProjectRef: padRef,
+        connectedEnvironmentIds: new Set([server.environmentId]),
+      }).projectRef,
+    ).toEqual({ environmentId: server.environmentId, projectId: server.id });
+  });
+
+  it.each([
+    [{ contextProjectRef: padRef }, padRef],
+    [{ contextProjectRef: null, primaryEnvironmentId: pad.environmentId }, padRef],
+    [{ contextProjectRef: null, primaryEnvironmentId: null }, macRef],
+  ] as const)(
+    "keeps context, primary, then member order when nothing is connected (%#)",
+    (overrides, projectRef) => {
+      expect(
+        resolveNewThreadProjectRef({
+          ...input,
+          settingsByEnvironment: settings(),
+          connectedEnvironmentIds: new Set<EnvironmentId>(),
+          ...overrides,
+        }).projectRef,
+      ).toEqual(projectRef);
     },
   );
 

@@ -385,12 +385,9 @@ export function resolveNewThreadProjectRef(input: {
     (member) => member.environmentId === input.primaryEnvironmentId,
   );
   const connectedFallbackMember =
-    defaultEnvironmentId != null
-      ? ([contextMember, primaryMember].find(
-          (member) => member && input.connectedEnvironmentIds.has(member.environmentId),
-        ) ??
-        input.members.find((member) => input.connectedEnvironmentIds.has(member.environmentId)))
-      : undefined;
+    [contextMember, primaryMember].find(
+      (member) => member && input.connectedEnvironmentIds.has(member.environmentId),
+    ) ?? input.members.find((member) => input.connectedEnvironmentIds.has(member.environmentId));
   const fallbackMember =
     connectedFallbackMember ?? contextMember ?? primaryMember ?? input.members[0];
   return {
