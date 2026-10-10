@@ -334,7 +334,12 @@ export function DraftHeroHeadline({
                 ) : entry ? (
                   <ProjectFavicon project={entry.group} className="size-4 shrink-0" />
                 ) : null}
-                <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
+                <Tooltip>
+                  <TooltipTrigger render={<span className="min-w-0 flex-1 truncate text-sm" />}>
+                    {item.label}
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">{item.label}</TooltipPopup>
+                </Tooltip>
                 {entry && showProjectEnvironments ? (
                   <ProjectEnvironmentBadge
                     group={entry.group}
