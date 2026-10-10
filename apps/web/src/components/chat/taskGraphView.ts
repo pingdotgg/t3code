@@ -293,6 +293,27 @@ export interface TaskGraphDiagramLayout {
 }
 
 /**
+ * How far right the card scrolls so the first column with work left leads,
+ * with a gap's width of the column before it still in view. Zero while the
+ * first column has work left; the last column once everything is done. Failed
+ * tasks count as work left, so they stay in view.
+ */
+export function taskGraphDiagramScrollLeft(
+  layers: ReadonlyArray<ReadonlyArray<TaskGraphNode>>,
+): number {
+  const open = layers.findIndex((layer) =>
+    layer.some(
+      (node) =>
+        node.status !== "succeeded" && node.status !== "skipped" && node.status !== "cancelled",
+    ),
+  );
+  const column = open === -1 ? layers.length - 1 : open;
+  if (column <= 0) return 0;
+  const { nodeWidth, columnGap } = TASK_GRAPH_DIAGRAM;
+  return column * (nodeWidth + columnGap) - columnGap;
+}
+
+/**
  * Lays a graph out left to right for the inline card: one column per
  * dependency depth, each column centred on the tallest, and a curve from the
  * right edge of every dependency to the left edge of the node that waits on it.

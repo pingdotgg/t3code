@@ -2,7 +2,7 @@ import type { EnvironmentId, TaskGraphNode } from "@t3tools/contracts";
 import { taskGraphLayers } from "@t3tools/shared/taskGraph";
 import { Link } from "@tanstack/react-router";
 import { CornerDownRightIcon, FolderIcon, GitBranchIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 
 import { cn } from "~/lib/utils";
 import { usePrimarySettings } from "../../hooks/useSettings";
@@ -14,6 +14,7 @@ import {
   TASK_GRAPH_NODE_STATUS_DOT_CLASS,
   TASK_GRAPH_NODE_STATUS_LABEL,
   taskGraphDiagramLayout,
+  taskGraphDiagramScrollLeft,
   taskGraphNodeStatusText,
   taskGraphNodeWaitDetail,
   taskGraphWorkspaceLabel,
@@ -22,7 +23,8 @@ import type { TaskGraphLabels } from "./useTaskGraphLabels";
 
 /**
  * The graph as boxes and curves, left to right, for the card above the
- * composer. Static: status changes recolour dots, nothing animates.
+ * composer. Static: status changes recolour dots, nothing animates. Once the
+ * first columns are done, the card scrolls to where work is left.
  */
 export function TaskGraphDiagram(props: {
   readonly environmentId: EnvironmentId;
@@ -32,14 +34,25 @@ export function TaskGraphDiagram(props: {
   /** Opens the editor on a task; bound to double-click and Enter on its box. */
   readonly onEditNode: (key: string) => void;
 }) {
-  const layout = taskGraphDiagramLayout(taskGraphLayers(props.nodes));
+  const layers = taskGraphLayers(props.nodes);
+  const layout = taskGraphDiagramLayout(layers);
+  const scrollLeft = taskGraphDiagramScrollLeft(layers);
+  const rootRef = useRef<HTMLDivElement>(null);
+  // Runs only when the leading column changes, so status updates never undo a manual scroll.
+  useEffect(() => {
+    rootRef.current?.closest('[data-slot="scroll-area-viewport"]')?.scrollTo({ left: scrollLeft });
+  }, [scrollLeft, rootRef]);
   const titles = new Map(props.nodes.map((node) => [node.key, node.title]));
   const titleOf = (key: string) => titles.get(key) ?? key;
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const formatTime = (iso: string) => formatUpcomingTimestamp(iso, timestampFormat);
 
   return (
-    <div className="relative p-2" style={{ width: layout.width + 16, height: layout.height + 16 }}>
+    <div
+      ref={rootRef}
+      className="relative p-2"
+      style={{ width: layout.width + 16, height: layout.height + 16 }}
+    >
       <svg
         aria-hidden
         className="absolute inset-2 overflow-visible"

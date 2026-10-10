@@ -9,6 +9,7 @@ import {
   pullRequestLabel,
   TASK_GRAPH_DIAGRAM,
   taskGraphDiagramLayout,
+  taskGraphDiagramScrollLeft,
   taskGraphJoinMachines,
   taskGraphNodeKeyFromTitle,
   taskGraphNodeMachine,
@@ -286,5 +287,33 @@ describe("task graph joins across machines", () => {
     expect(canContinueTaskGraphWorktree(nodes, nodes[0]!)).toBe(false);
     expect(canContinueTaskGraphWorktree(nodes, nodes[0]!, "b")).toBe(true);
     expect(canContinueTaskGraphWorktree(nodes, nodes[2]!)).toBe(false);
+  });
+});
+
+describe("taskGraphDiagramScrollLeft", () => {
+  const column = TASK_GRAPH_DIAGRAM.nodeWidth + TASK_GRAPH_DIAGRAM.columnGap;
+  const at = (statuses: ReadonlyArray<ReadonlyArray<TaskGraphNode["status"]>>) =>
+    taskGraphDiagramScrollLeft(
+      statuses.map((layer, depth) =>
+        layer.map((status, row) => node(`n${depth}-${row}`, { status })),
+      ),
+    );
+
+  it("leads with the first column that has work left", () => {
+    expect(at([["pending"], ["pending"]])).toBe(0);
+    expect(at([["succeeded"], ["succeeded", "running"], ["pending"]])).toBe(
+      column - TASK_GRAPH_DIAGRAM.columnGap,
+    );
+    expect(at([["succeeded"], ["skipped", "cancelled"], ["waiting"]])).toBe(
+      2 * column - TASK_GRAPH_DIAGRAM.columnGap,
+    );
+  });
+
+  it("keeps a failed task in view and shows the end once everything is done", () => {
+    expect(at([["failed"], ["skipped"]])).toBe(0);
+    expect(at([["succeeded"], ["succeeded"], ["succeeded"]])).toBe(
+      2 * column - TASK_GRAPH_DIAGRAM.columnGap,
+    );
+    expect(at([])).toBe(0);
   });
 });
