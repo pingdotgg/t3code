@@ -3339,6 +3339,11 @@ const knownDomainEventTypes: ReadonlySet<string> = new Set(
   }),
 );
 
+/** Whether `type` is an {@link OrchestrationV2DomainEvent} discriminant in this build. */
+export function isKnownOrchestrationV2EventType(type: string): boolean {
+  return knownDomainEventTypes.has(type);
+}
+
 /**
  * A thread event whose type this build does not know, or a turn-item.updated
  * carrying a turn item type it does not know. Newer servers add both; older

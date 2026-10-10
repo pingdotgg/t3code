@@ -796,6 +796,10 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
           afterSequence,
           throughSequence,
           limit: THREAD_RESUME_MAX_REPLAY_EVENTS + 1,
+          // A row a newer build wrote (e.g. after a downgrade) must not fail
+          // every resubscribe. The live tail resumes from `highWater`, so a
+          // dropped row never hides later events.
+          skipUnknownEventTypes: true,
         })
         .pipe(
           Stream.map((stored) => ({
@@ -1150,6 +1154,10 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
         applicationEvents.readApplicationEvents({
           afterSequence: input.afterSequence,
           throughSequence: highWater,
+          // A row a newer build wrote (e.g. after a downgrade) must not fail
+          // every shell resubscribe. The live tail below resumes from
+          // highWater, so a dropped row never hides later events.
+          skipUnknownEventTypes: true,
         }),
       );
       return composeShellStreamWithEnrichment({

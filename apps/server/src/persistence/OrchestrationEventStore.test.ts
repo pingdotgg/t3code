@@ -393,6 +393,305 @@ layer("OrchestrationEventStore", (it) => {
       );
     }),
   );
+
+  it.effect("readAgentEvents with skipUnknownEventTypes drops rows of an unknown event type", () =>
+    Effect.gen(function* () {
+      const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread:skip-unknown");
+      const baseline = yield* store.latestApplicationSequence;
+      const now = yield* DateTime.now;
+      const knownEvent = (id: string, ordinal: number): OrchestrationV2DomainEvent => ({
+        id: EventId.make(id),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make(`tool:${id}`),
+          type: "command_execution",
+          threadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal,
+          status: "running",
+          title: "Known command",
+          input: "echo hi",
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+        },
+      });
+      // appendAgentEvents only accepts known types, so a row a newer build
+      // wrote is inserted directly.
+      const insertUnknown = (eventId: string, streamVersion: number) => sql`
+        INSERT INTO orchestration_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type,
+          occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+        ) VALUES (
+          ${eventId}, 'thread', ${threadId}, ${streamVersion},
+          'thread.future-feature-added', '2026-01-05T00:00:01.000Z', 'server',
+          '{"anything":true}', '{}', 2
+        )
+      `;
+
+      const [before] = yield* store.appendAgentEvents({
+        events: [knownEvent("event:skip-unknown:before", 1)],
+      });
+      yield* insertUnknown("event:skip-unknown:middle", 1);
+      const [after] = yield* store.appendAgentEvents({
+        events: [knownEvent("event:skip-unknown:after", 2)],
+      });
+      yield* insertUnknown("event:skip-unknown:trailing", 3);
+
+      const replayed = yield* store
+        .readAgentEvents({ threadId, afterSequence: baseline, skipUnknownEventTypes: true })
+        .pipe(Stream.runCollect);
+      assert.deepEqual(
+        Array.from(replayed, (event) => event.sequence),
+        [before!.sequence, after!.sequence],
+      );
+
+      const strictResult = yield* Effect.result(
+        store.readAgentEvents({ threadId, afterSequence: baseline }).pipe(Stream.runCollect),
+      );
+      assert.equal(strictResult._tag, "Failure");
+      if (strictResult._tag === "Failure") {
+        assert.isTrue(isPersistenceDecodeError(strictResult.failure));
+      }
+    }),
+  );
+
+  it.effect(
+    "readAgentEvents with skipUnknownEventTypes still fails a known type with a broken payload",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread:skip-unknown-broken-known");
+        const baseline = yield* store.latestApplicationSequence;
+
+        yield* sql`
+          INSERT INTO orchestration_events (
+            event_id, aggregate_kind, stream_id, stream_version, event_type,
+            occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+          ) VALUES (
+            ${"event:skip-unknown-broken-known:broken"}, 'thread', ${threadId}, 0,
+            ${"turn-item.updated"}, '2026-01-05T00:00:03.000Z', 'server',
+            ${'{"this":"is not a valid command_execution payload"}'}, '{}', 2
+          )
+        `;
+
+        const result = yield* Effect.result(
+          store
+            .readAgentEvents({ threadId, afterSequence: baseline, skipUnknownEventTypes: true })
+            .pipe(Stream.runCollect),
+        );
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure") {
+          assert.isTrue(isPersistenceDecodeError(result.failure));
+        }
+      }),
+  );
+
+  // Shell resume (ws.ts subscribeOrchestrationV2Shell) replays with
+  // readApplicationEvents rather than readAgentEvents, over a stream that
+  // mixes project and thread rows. These two tests are the store-level
+  // equivalent of the readAgentEvents skip-unknown tests above; they do not
+  // reach the ws.ts subscription itself (the "synchronized" completion
+  // marker, project-metadata snapshot fallback, or shell-stream projection),
+  // which would need a layer providing ThreadManagementService,
+  // ProjectStoreV2, ProjectService, and ProjectEnrichmentService.
+  it.effect(
+    "readApplicationEvents with skipUnknownEventTypes drops a shell-resume row with an unknown event type",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const baseline = yield* store.latestApplicationSequence;
+        const now = "2026-01-05T00:00:00.000Z";
+        const projectEvent = (suffix: string) => ({
+          type: "project.created" as const,
+          eventId: EventId.make(`evt-shell-skip-unknown-${suffix}`),
+          aggregateKind: "project" as const,
+          aggregateId: ProjectId.make(`project-shell-skip-unknown-${suffix}`),
+          occurredAt: now,
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          payload: {
+            projectId: ProjectId.make(`project-shell-skip-unknown-${suffix}`),
+            title: `Shell skip-unknown ${suffix}`,
+            workspaceRoot: `/tmp/project-shell-skip-unknown-${suffix}`,
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+
+        const before = yield* store.appendProjectEvent(projectEvent("before"));
+        // Row a newer build wrote that this build has never learned -- what a
+        // downgrade leaves behind. Same shape as the thread-replay fixture
+        // above, on the aggregate shell replay also reads.
+        yield* sql`
+          INSERT INTO orchestration_events (
+            event_id, aggregate_kind, stream_id, stream_version, event_type,
+            occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+          ) VALUES (
+            ${"event:shell-skip-unknown:future"}, 'thread', ${"thread:shell-skip-unknown"}, 0,
+            'thread.turn-item.exotic-future-feature', ${now}, 'server',
+            '{"anything":true}', '{}', 2
+          )
+        `;
+        const after = yield* store.appendProjectEvent(projectEvent("after"));
+
+        const throughSequence = yield* store.latestApplicationSequence;
+        const replayed = yield* store
+          .readApplicationEvents({
+            afterSequence: baseline,
+            throughSequence,
+            skipUnknownEventTypes: true,
+          })
+          .pipe(Stream.runCollect);
+        assert.deepEqual(
+          Array.from(replayed, (event) => event.sequence),
+          [before.sequence, after.sequence],
+        );
+
+        // Without the opt-in the exact same range still fails outright -- the
+        // same line the thread replay fix drew, now on the shell's own reader.
+        const strictResult = yield* Effect.result(
+          store
+            .readApplicationEvents({ afterSequence: baseline, throughSequence })
+            .pipe(Stream.runCollect),
+        );
+        assert.equal(strictResult._tag, "Failure");
+        if (strictResult._tag === "Failure") {
+          assert.isTrue(isPersistenceDecodeError(strictResult.failure));
+        }
+      }),
+  );
+
+  it.effect(
+    "readApplicationEvents with skipUnknownEventTypes pages past a full page of unknown rows",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const now = "2026-01-05T00:00:01.000Z";
+        const threadId = "thread:shell-skip-unknown-page-boundary";
+        const projectEvent = (suffix: string) => ({
+          type: "project.created" as const,
+          eventId: EventId.make(`evt-shell-skip-unknown-page-${suffix}`),
+          aggregateKind: "project" as const,
+          aggregateId: ProjectId.make(`project-shell-skip-unknown-page-${suffix}`),
+          occurredAt: now,
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          payload: {
+            projectId: ProjectId.make(`project-shell-skip-unknown-page-${suffix}`),
+            title: `Shell skip-unknown page ${suffix}`,
+            workspaceRoot: `/tmp/project-shell-skip-unknown-page-${suffix}`,
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+
+        const before = yield* store.appendProjectEvent(projectEvent("before"));
+        // A full raw page (READ_PAGE_SIZE) of rows a newer build wrote, none
+        // of which this build knows -- the skip has to carry the cursor past
+        // an entire page, not just one row at a time. If pagination counted
+        // decoded (post-filter) rows instead of raw SQL rows, a page that
+        // decodes to zero kept events would look like the last page and this
+        // read would never reach "after".
+        yield* Effect.forEach(
+          Array.from({ length: OrchestrationEventStore.READ_PAGE_SIZE }, (_, index) => index),
+          (index) => sql`
+            INSERT INTO orchestration_events (
+              event_id, aggregate_kind, stream_id, stream_version, event_type,
+              occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+            ) VALUES (
+              ${`event:shell-skip-unknown-page:${index}`}, 'thread', ${threadId}, ${index},
+              'thread.turn-item.exotic-future-feature', ${now}, 'server',
+              '{"anything":true}', '{}', 2
+            )
+          `,
+          { discard: true },
+        );
+        const after = yield* store.appendProjectEvent(projectEvent("after"));
+
+        const throughSequence = yield* store.latestApplicationSequence;
+        // Start after "before" so the first page holds only unknown rows.
+        const replayed = yield* store
+          .readApplicationEvents({
+            afterSequence: before.sequence,
+            throughSequence,
+            skipUnknownEventTypes: true,
+          })
+          .pipe(Stream.runCollect);
+        assert.deepEqual(
+          Array.from(replayed, (event) => event.sequence),
+          [after.sequence],
+        );
+
+        // Same range, strict: still fails outright without the opt-in.
+        const strictResult = yield* Effect.result(
+          store
+            .readApplicationEvents({ afterSequence: before.sequence, throughSequence })
+            .pipe(Stream.runCollect),
+        );
+        assert.equal(strictResult._tag, "Failure");
+        if (strictResult._tag === "Failure") {
+          assert.isTrue(isPersistenceDecodeError(strictResult.failure));
+        }
+      }),
+  );
+
+  it.effect(
+    "readApplicationEvents with skipUnknownEventTypes still fails a known type with a broken payload",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const baseline = yield* store.latestApplicationSequence;
+
+        yield* sql`
+          INSERT INTO orchestration_events (
+            event_id, aggregate_kind, stream_id, stream_version, event_type,
+            occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+          ) VALUES (
+            ${"event:shell-skip-unknown-broken-known:broken"}, 'project',
+            ${"project:shell-skip-unknown-broken-known"}, 0,
+            'project.created', '2026-01-05T00:00:03.000Z', 'server',
+            ${'{"this":"is not a valid project.created payload"}'}, '{}', 2
+          )
+        `;
+
+        const throughSequence = yield* store.latestApplicationSequence;
+        const result = yield* Effect.result(
+          store
+            .readApplicationEvents({
+              afterSequence: baseline,
+              throughSequence,
+              skipUnknownEventTypes: true,
+            })
+            .pipe(Stream.runCollect),
+        );
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure") {
+          assert.isTrue(isPersistenceDecodeError(result.failure));
+        }
+      }),
+  );
 });
 
 it.effect.each(["high-water", "replay"] as const)(
