@@ -20,6 +20,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "../worktreesDirectory.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 export class ReviewService extends Context.Service<
   ReviewService,
@@ -73,13 +74,14 @@ export const make = Effect.gen(function* () {
     const worktreesDirectories = yield* settings.getSettings.pipe(
       Effect.orElseSucceed(() => ({ worktreesDirectory: "", previousWorktreesDirectories: [] })),
     );
+    const home = yield* HostProcess.HomeDirectory;
     const [candidate, workspaceRoot, worktreesRoots] = yield* Effect.all([
       canonicalizePath(cwd),
       canonicalizePath(config.cwd),
       // A managed root that cannot be resolved, or resolves to a filesystem
       // root through a symlink, is skipped rather than failing every review.
       Effect.forEach(
-        managedWorktreesDirectories(worktreesDirectories, config.worktreesDir, path),
+        managedWorktreesDirectories(worktreesDirectories, config.worktreesDir, path, home),
         (directory) => canonicalizePath(directory).pipe(Effect.orElseSucceed(() => null)),
       ).pipe(
         Effect.map((roots) =>
