@@ -3,13 +3,12 @@ import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDr
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
-import { FolderPlusIcon, MessageSquareDashedIcon } from "lucide-react";
+import { FolderPlusIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
 import { shortcutLabelForCommand } from "~/keybindings";
-import { projectIconColorClassName } from "~/projectIconColors";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useScratchProject } from "~/hooks/useScratchProject";
@@ -30,20 +29,27 @@ import { ProjectEnvironmentBadge } from "../ProjectEnvironmentBadge";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { sortLogicalProjectsForSidebar } from "../Sidebar.logic";
 import {
-  Menu,
-  MenuItem,
-  MenuPopup,
-  MenuRadioGroup,
-  MenuRadioItem,
-  MenuSeparator,
-  MenuTrigger,
-} from "../ui/menu";
+  Combobox,
+  ComboboxEmpty,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxPopup,
+  ComboboxSearchInput,
+  ComboboxTrigger,
+  useComboboxFilter,
+} from "../ui/combobox";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 
-// Menu value for "No project"; real entries are keyed by logical project key.
-const NO_PROJECT_VALUE = "no-project";
+// Picker value for the "Add project" row; real entries are keyed by logical
+// project key.
+const ADD_PROJECT_VALUE = "add-project";
+
+interface PickerItem {
+  readonly value: string;
+  readonly label: string;
+}
 
 interface DraftHeroHeadlineProps {
   readonly draftId: DraftId | null;
@@ -147,11 +153,15 @@ export function DraftHeroHeadline({
   const hasResolvedProject = activeProjectTitle !== null;
   const canChooseProject = projectPickerEntries.length > 0;
   const shouldShowProjectMenu = canChooseProject;
-  // The project that hosts threads without a project appears once, as the
-  // "No project" item, not as a project row.
-  const menuEntries = projectPickerEntries.filter(
-    ({ targetProject }) =>
-      !isScratchProject(targetProject, scratchWorkspaceRootFor(targetProject.environmentId)),
+  // The project that hosts threads without a project is not a row: the line
+  // under the headline is the way into it.
+  const menuEntries = useMemo(
+    () =>
+      projectPickerEntries.filter(
+        ({ targetProject }) =>
+          !isScratchProject(targetProject, scratchWorkspaceRootFor(targetProject.environmentId)),
+      ),
+    [projectPickerEntries, scratchWorkspaceRootFor],
   );
   const activeProject =
     activeProjectRef === null
@@ -167,6 +177,30 @@ export function DraftHeroHeadline({
   const scratchWorkspaceRoot = scratchWorkspaceRootFor(scratchTargetEnvironmentId);
   const isScratchDraft =
     activeProject !== null && isScratchProject(activeProject, scratchWorkspaceRoot);
+
+  // {value, label} items let Base UI drive the combobox selection while the
+  // popup search filters the same collection. "Add project" is an action, not
+  // a project, so it only trails the unfiltered list.
+  const pickerItems = useMemo<readonly PickerItem[]>(
+    () => [
+      ...menuEntries.map(({ group }) => ({ value: group.projectKey, label: group.displayName })),
+      { value: ADD_PROJECT_VALUE, label: "Add project" },
+    ],
+    [menuEntries],
+  );
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerQuery, setPickerQuery] = useState("");
+  const pickerFilter = useComboboxFilter();
+  const filteredPickerItems = useMemo(() => {
+    const query = pickerQuery.trim();
+    if (query.length === 0) return pickerItems;
+    return pickerItems.filter(
+      (item) =>
+        item.value !== ADD_PROJECT_VALUE &&
+        pickerFilter.contains(item, query, (candidate) => candidate.label),
+    );
+  }, [pickerFilter, pickerItems, pickerQuery]);
+  const selectedPickerItem = pickerItems.find((item) => item.value === activeProjectKey) ?? null;
 
   // The picker can change the draft's target while the no-project home is
   // still being opened; a stale continuation must not retarget it again.
@@ -234,7 +268,32 @@ export function DraftHeroHeadline({
   };
 
   const projectSelector = shouldShowProjectMenu ? (
-    <Menu>
+    <Combobox
+      items={pickerItems}
+      filteredItems={filteredPickerItems}
+      autoHighlight
+      itemToStringLabel={(item) => item.label}
+      isItemEqualToValue={(a, b) => a.value === b.value}
+      open={pickerOpen}
+      onOpenChange={(open) => {
+        setPickerOpen(open);
+        setPickerQuery("");
+      }}
+      value={selectedPickerItem}
+      onValueChange={(item) => {
+        if (!item) return;
+        setPickerOpen(false);
+        if (item.value === ADD_PROJECT_VALUE) {
+          openAddProject();
+          return;
+        }
+        const entry = projectEntryByKey.get(item.value);
+        if (!entry || item.value === activeProjectKey) {
+          return;
+        }
+        selectProject(entry.targetProject, entry.group.projectKey);
+      }}
+    >
       <Tooltip>
         <TooltipTrigger
           render={
@@ -242,7 +301,7 @@ export function DraftHeroHeadline({
             // project title) so the hero sentence reads naturally: an
             // aria-label here would replace the title with an action phrase
             // mid-sentence and baffle screen-reader users.
-            <MenuTrigger
+            <ComboboxTrigger
               render={<InlineButton tone="picker" />}
               data-draft-project-trigger=""
               className="pointer-events-auto max-w-64 align-baseline"
@@ -257,65 +316,43 @@ export function DraftHeroHeadline({
           <TooltipPopup side="top">{activeProjectDisplayName}</TooltipPopup>
         ) : null}
       </Tooltip>
-      <MenuPopup align="center" className="max-h-80 overflow-y-auto">
-        <MenuRadioGroup
-          value={isScratchDraft ? NO_PROJECT_VALUE : activeProjectKey}
-          onValueChange={(value) => {
-            if (value === NO_PROJECT_VALUE) {
-              void startScratch();
-              return;
-            }
-            const entry = projectEntryByKey.get(value as string);
-            if (!entry || value === activeProjectKey) {
-              return;
-            }
-            selectProject(entry.targetProject, entry.group.projectKey);
-          }}
-        >
-          {scratchWorkspaceRoot === null ? null : (
-            <MenuRadioItem value={NO_PROJECT_VALUE} closeOnClick>
-              <span className="flex min-w-0 items-center gap-2">
-                {/* Boxed like ProjectFavicon so the label lines up with project rows. */}
-                <span
-                  aria-hidden="true"
-                  className={`inline-flex size-4 shrink-0 ${projectIconColorClassName("gray")}`}
-                >
-                  <MessageSquareDashedIcon className="size-full" />
-                </span>
-                No project
-              </span>
-            </MenuRadioItem>
-          )}
-          {menuEntries.map(({ group }) => {
+      <ComboboxPopup align="center" className="w-72 overflow-hidden">
+        <ComboboxSearchInput
+          aria-label="Search projects"
+          placeholder="Search projects..."
+          value={pickerQuery}
+          onChange={(event) => setPickerQuery(event.target.value)}
+        />
+        <ComboboxEmpty>No matching projects.</ComboboxEmpty>
+        <ComboboxList>
+          {(item: PickerItem) => {
+            const entry = projectEntryByKey.get(item.value);
             return (
-              <MenuRadioItem key={group.projectKey} value={group.projectKey} closeOnClick>
-                <span className="flex min-w-0 items-center gap-2">
-                  <ProjectFavicon project={group} className="size-4 shrink-0" />
-                  <Tooltip>
-                    <TooltipTrigger render={<span className="block min-w-0 truncate" />}>
-                      {group.displayName}
-                    </TooltipTrigger>
-                    <TooltipPopup side="top">{group.displayName}</TooltipPopup>
-                  </Tooltip>
-                  {showProjectEnvironments ? (
-                    <ProjectEnvironmentBadge
-                      group={group}
-                      primaryEnvironmentId={primaryEnvironmentId}
-                      machineByEnvironmentId={environmentMachineById}
-                    />
-                  ) : null}
-                </span>
-              </MenuRadioItem>
+              <ComboboxItem key={item.value} hideIndicator value={item}>
+                {item.value === ADD_PROJECT_VALUE ? (
+                  <FolderPlusIcon className="size-4 shrink-0" />
+                ) : entry ? (
+                  <ProjectFavicon project={entry.group} className="size-4 shrink-0" />
+                ) : null}
+                <Tooltip>
+                  <TooltipTrigger render={<span className="min-w-0 flex-1 truncate text-sm" />}>
+                    {item.label}
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">{item.label}</TooltipPopup>
+                </Tooltip>
+                {entry && showProjectEnvironments ? (
+                  <ProjectEnvironmentBadge
+                    group={entry.group}
+                    primaryEnvironmentId={primaryEnvironmentId}
+                    machineByEnvironmentId={environmentMachineById}
+                  />
+                ) : null}
+              </ComboboxItem>
             );
-          })}
-        </MenuRadioGroup>
-        {projectPickerEntries.length > 0 ? <MenuSeparator /> : null}
-        <MenuItem onClick={openAddProject}>
-          <FolderPlusIcon />
-          Add project
-        </MenuItem>
-      </MenuPopup>
-    </Menu>
+          }}
+        </ComboboxList>
+      </ComboboxPopup>
+    </Combobox>
   ) : (
     <button
       type="button"
