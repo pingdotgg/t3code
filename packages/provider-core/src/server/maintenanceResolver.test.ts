@@ -308,19 +308,30 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
   });
 
   it("derives the Windows npm prefix from a binary path inside the package", () => {
-    expect(
-      windowsNpmPrefixFromPackagePath(
-        "C:\\Users\\Theo\\AppData\\Roaming\\npm\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe",
-        "@anthropic-ai/claude-code",
-      ),
-    ).toBe("C:\\Users\\Theo\\AppData\\Roaming\\npm");
-    // `--prefix C:` would mean the drive's current directory, not its root.
-    expect(
-      windowsNpmPrefixFromPackagePath(
-        "C:\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe",
-        "@anthropic-ai/claude-code",
-      ),
-    ).toBe("C:\\");
+    // The shim proof uses the shim's directory as the prefix; both must agree so
+    // updates share one lock key. At a root that keeps the separator, and npm
+    // would read a bare `C:` as the drive's current directory.
+    for (const prefix of [
+      "C:\\Users\\Theo\\AppData\\Roaming\\npm",
+      "C:\\",
+      "\\\\server\\share\\",
+    ]) {
+      const shimDir = NodePath.win32.dirname(NodePath.win32.join(prefix, "claude.cmd"));
+      expect(shimDir).toBe(prefix);
+      expect(
+        windowsNpmPrefixFromPackagePath(
+          NodePath.win32.join(
+            prefix,
+            "node_modules",
+            "@anthropic-ai",
+            "claude-code",
+            "bin",
+            "claude.exe",
+          ),
+          "@anthropic-ai/claude-code",
+        ),
+      ).toBe(shimDir);
+    }
     expect(
       windowsNpmPrefixFromPackagePath(
         "C:\\npm\\node_modules\\other\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe",

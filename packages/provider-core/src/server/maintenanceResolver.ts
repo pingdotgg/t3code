@@ -286,10 +286,12 @@ export function windowsNpmPrefixFromPackagePath(
   if (packageIndex <= 0 || normalized.slice(0, packageIndex).includes("/node_modules/")) {
     return null;
   }
-  // npm reads a bare `C:` as the drive's current directory, so keep the root separator.
-  return /^[a-z]:$/i.test(normalized.slice(0, packageIndex))
-    ? realCommandPath.slice(0, packageIndex + 1)
-    : realCommandPath.slice(0, packageIndex);
+  // Roots keep their separator, as `path.dirname` of a shim there does, so both
+  // proofs give the same lock key. npm also reads a bare `C:` as the drive's
+  // current directory rather than its root.
+  const head = normalized.slice(0, packageIndex);
+  const isRoot = /^[a-z]:$/.test(head) || /^\/\/[^/]+\/[^/]+$/.test(head);
+  return realCommandPath.slice(0, isRoot ? packageIndex + 1 : packageIndex);
 }
 
 // `<prefix>/Cellar/<name>/<version>/…` or `<prefix>/Caskroom/<name>/<version>/…`.
