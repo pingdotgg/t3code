@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { OrchestrationV2ThreadProjection, ScopedThreadRef } from "@t3tools/contracts";
-import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
+import { resolveWorkspaceFilePath } from "@t3tools/shared/path";
 import { Atom } from "effect/reactivity";
 import { createContext, useEffect, useRef, type ReactNode } from "react";
 
@@ -50,12 +50,12 @@ export function FileMetadataThreadProvider(props: {
       const old = oldById.get(checkpoint.id);
       oldById.delete(checkpoint.id);
       if (old?.files === checkpoint.files && old?.status === checkpoint.status) continue;
-      for (const file of checkpoint.files) paths.add(resolvePathLinkTarget(file.path, cwd));
-      for (const file of old?.files ?? []) paths.add(resolvePathLinkTarget(file.path, cwd));
+      for (const file of checkpoint.files) paths.add(resolveWorkspaceFilePath(file.path, cwd));
+      for (const file of old?.files ?? []) paths.add(resolveWorkspaceFilePath(file.path, cwd));
     }
     // Rewinds can remove checkpoints as well as add them.
     for (const checkpoint of oldById.values())
-      for (const file of checkpoint.files) paths.add(resolvePathLinkTarget(file.path, cwd));
+      for (const file of checkpoint.files) paths.add(resolveWorkspaceFilePath(file.path, cwd));
     if (paths.size > 0)
       void invalidate({ environmentId: threadRef.environmentId, input: { paths: [...paths] } });
   }, [threadRef, cwd, checkpoints, invalidate]);

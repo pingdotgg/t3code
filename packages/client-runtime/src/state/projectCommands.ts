@@ -31,7 +31,7 @@ import {
 } from "../operations/commands.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { createFileMetadataAtoms } from "./fileMetadata.ts";
-import { resolvePathLinkTarget, splitFilePathPosition } from "@t3tools/shared/fileLinks";
+import { resolveWorkspaceFilePath } from "@t3tools/shared/path";
 
 export type {
   CreateProjectInput,
@@ -196,16 +196,14 @@ export function createProjectEnvironmentAtoms<R, E>(
       execute: (input) =>
         requestGuarded(WS_METHODS.projectsWriteFile, input).pipe(
           Effect.tap(() =>
-            fileMetadata.invalidate(
-              splitFilePathPosition(resolvePathLinkTarget(input.relativePath, input.cwd)).path,
-            ),
+            fileMetadata.invalidate(resolveWorkspaceFilePath(input.relativePath, input.cwd)),
           ),
         ),
       onSuccess: ({ environmentId, input }, registry) =>
         Effect.sync(() => {
           fileMetadata.refreshPath(
             environmentId,
-            splitFilePathPosition(resolvePathLinkTarget(input.relativePath, input.cwd)).path,
+            resolveWorkspaceFilePath(input.relativePath, input.cwd),
             registry,
           );
         }),

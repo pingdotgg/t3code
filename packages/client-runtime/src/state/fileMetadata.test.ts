@@ -119,6 +119,25 @@ const makeHarness = Effect.fnUntraced(function* () {
 });
 
 describe("file metadata", () => {
+  it.effect("does not seed a different path from a literal name with a numeric suffix", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.seed("report:123", "directory");
+      h.values.set("/workspace/report", { kind: "file", byteLength: 5 });
+      expect(yield* h.read("/workspace/report")).toEqual({ kind: "file", byteLength: 5 });
+      expect(yield* h.read("/workspace/report:123")).toEqual({ kind: "directory" });
+      yield* h.atoms
+        .rememberFile("/workspace", {
+          relativePath: "/workspace/read:12:3",
+          byteLength: 100,
+        })
+        .pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, h.supervisor));
+      expect(yield* h.read("/workspace/read:12:3")).toEqual({ kind: "file", byteLength: 100 });
+      expect(yield* h.read("/workspace/read")).toBeNull();
+      expect(h.batches).toEqual([["/workspace/report"], ["/workspace/read"]]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("retries only paths invalidated while their response is in flight", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();

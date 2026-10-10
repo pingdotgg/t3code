@@ -7,8 +7,7 @@ import {
   type ThreadId,
   WS_METHODS,
 } from "@t3tools/contracts";
-import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
-import { resolvePathLinkTarget, splitFilePathPosition } from "@t3tools/shared/fileLinks";
+import { normalizeProjectPathForComparison, resolveWorkspaceFilePath } from "@t3tools/shared/path";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -245,7 +244,7 @@ export function createFileMetadataAtoms<R, E>(
     if (session._tag === "None") return;
     const now = yield* Clock.currentTimeMillis;
     for (const entry of entries) {
-      const path = splitFilePathPosition(resolvePathLinkTarget(entry.path, cwd)).path;
+      const path = resolveWorkspaceFilePath(entry.path, cwd);
       const previous = knownEntry(session.value, path, now);
       if (previous?.value?.kind === entry.kind) continue;
       // Listing kinds avoid another request; size and MIME hints are optional.
@@ -272,7 +271,7 @@ export function createFileMetadataAtoms<R, E>(
     const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
     const session = yield* SubscriptionRef.get(supervisor.session);
     if (session._tag === "None") return;
-    const path = splitFilePathPosition(resolvePathLinkTarget(file.relativePath, cwd)).path;
+    const path = resolveWorkspaceFilePath(file.relativePath, cwd);
     const now = yield* Clock.currentTimeMillis;
     const previous = knownEntry(session.value, path, now)?.value;
     remember(
