@@ -29,6 +29,8 @@ squashfs-root/
 .plans/
 /audits/
 dist-electron/
+# Legacy annotation output from builds on older branches.
+/apps/desktop/src/preview/AnnotationStyles.generated.ts
 .electron-runtime/
 .showcase/
 apps/mobile/.showcase/

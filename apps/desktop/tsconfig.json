@@ -5,5 +5,5 @@
     "types": ["node", "electron"],
     "lib": ["ESNext", "DOM", "esnext.disposable"]
   },
-  "include": ["src", "vite.config.ts", "../../scripts/lib"]
+  "include": ["src", "vite.config.ts", "scripts/preview-annotation-css*.ts", "../../scripts/lib"]
 }
