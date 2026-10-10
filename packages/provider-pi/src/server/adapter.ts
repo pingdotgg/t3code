@@ -23,8 +23,11 @@
  * Terminal-only decoration such as status, widget, title, and editor-text
  * updates has no matching T3 surface and is ignored.
  */
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { readToolOutputImage } from "@t3tools/shared/toolOutput";
+import * as Predicate from "effect/Predicate";
 import {
   defaultInstanceIdForDriver,
   ProviderDriverKind,
@@ -246,6 +249,104 @@ function contentText(content: unknown): string {
     .join("");
 }
 
+const MAX_STRUCTURED_TOOL_OUTPUT_BYTES = 64 * 1024;
+
+/** Preserve complete structured JSON only when its size and traversal remain bounded. */
+function isBoundedStructuredToolValue(value: unknown): boolean {
+  let bytes = MAX_STRUCTURED_TOOL_OUTPUT_BYTES;
+  let nodes = 4_096;
+  const visit = (entry: unknown, depth: number): boolean => {
+    if (depth > 32 || --nodes < 0 || bytes < 0) return false;
+    if (Array.isArray(entry)) {
+      bytes -= 2 + entry.length;
+      return entry.every((item) => visit(item, depth + 1));
+    }
+    if (Predicate.isObject(entry)) {
+      bytes -= 2;
+      for (const key in entry) {
+        if (!Object.hasOwn(entry, key)) continue;
+        if (key.length > bytes) return false;
+        bytes -= Buffer.byteLength(JSON.stringify(key), "utf8") + 2;
+        if (!visit(entry[key], depth + 1)) return false;
+      }
+      return bytes >= 0;
+    }
+    if (typeof entry === "string" && entry.length > bytes) return false;
+    bytes -= Buffer.byteLength(JSON.stringify(entry) ?? "null", "utf8");
+    return bytes >= 0;
+  };
+  return visit(value, 0);
+}
+
+/** Keep model content and distinct typed values; server ingestion owns image byte policy. */
+function piToolOutput(result: unknown, toolName: string): unknown {
+  const rawContent = recordField(result, "content");
+  const content = Array.isArray(rawContent)
+    ? rawContent
+    : typeof rawContent === "string"
+      ? [{ type: "text", text: rawContent }]
+      : [];
+  let structured = recordField(result, "structuredContent");
+  // Pi MCP tools return the full CallToolResult to scripts. The model content
+  // is already captured, so store only its distinct structured payload.
+  const details = recordField(result, "details");
+  const isMcpResult =
+    toolName.startsWith("mcp__") &&
+    recordString(details, "server") !== undefined &&
+    recordString(details, "tool") !== undefined &&
+    Array.isArray(recordField(structured, "content"));
+  if (isMcpResult) {
+    structured = recordField(structured, "structuredContent");
+  }
+  if (typeof structured === "string" && structured === contentText(content)) {
+    structured = undefined;
+  }
+  // Native read repeats its image and first text note as structured output.
+  // Drop only that exact mirror; an extension's extra metadata stays distinct.
+  if (toolName === "read" && Predicate.isObject(structured)) {
+    const image = readToolOutputImage(structured);
+    const note =
+      recordString(
+        content.find((block) => recordField(block, "type") === "text"),
+        "text",
+      ) ?? "";
+    if (
+      image !== null &&
+      Object.keys(structured).every((key) => ["type", "data", "mimeType", "note"].includes(key)) &&
+      recordString(structured, "note") === note &&
+      content.some((block) => {
+        const match = readToolOutputImage(block);
+        return match !== null && match.mimeType === image.mimeType && match.data === image.data;
+      })
+    ) {
+      structured = undefined;
+    }
+  }
+  if (structured !== undefined && !isBoundedStructuredToolValue(structured)) {
+    return {
+      content: [
+        ...content,
+        {
+          type: "text",
+          text: "Structured output omitted because it exceeds the stored result limit.",
+        },
+      ],
+    };
+  }
+  if (
+    !isMcpResult &&
+    structured === undefined &&
+    content.every((block) => recordField(block, "type") === "text")
+  ) {
+    const text = contentText(content);
+    return text.length > 0 ? text : undefined;
+  }
+  return {
+    content,
+    ...(structured === undefined ? {} : { structuredContent: structured }),
+  };
+}
+
 function providerRef(
   nativeId: string,
   strength: "strong" | "weak" = "strong",
@@ -387,6 +488,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
   options: PiAdapterV2Options,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const agentScope = yield* AgentScope;
   const fileSystem = yield* FileSystem.FileSystem;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
@@ -440,9 +542,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         extensionPath,
         runtimeMode: input.runtimePolicy.runtimeMode,
       });
-      const connection: PiRpcConnection = yield* makePiRpcConnection({
+      const scopedLaunch = yield* agentScope.wrap({
         command: options.settings.binaryPath || "pi",
         args: launch.args,
+        name: "pi",
+        threadId: input.threadId,
+        env: launch.env,
+      });
+      const connection: PiRpcConnection = yield* makePiRpcConnection({
+        command: scopedLaunch.command,
+        args: scopedLaunch.args,
         cwd,
         env: launch.env,
       }).pipe(
@@ -1038,6 +1147,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             return;
           }
         }
+        const output = piToolOutput(resultRecord, toolName);
         yield* emit({
           type: "turn_item.updated",
           driver: PI_PROVIDER,
@@ -1048,7 +1158,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             ...mcpToolPresentation({ toolName }),
             toolName,
             input: args ?? {},
-            ...(outputText.length > 0 ? { output: outputText } : {}),
+            ...(output === undefined ? {} : { output }),
           },
         });
         if (toolName === "subagent") {
@@ -3271,12 +3381,12 @@ export const PiAdapterV2Driver: ProviderAdapterDriver<PiSettings, PiAdapterV2Dri
   defaultConfig: (): PiSettings => DEFAULT_PI_SETTINGS,
   create: Effect.fn("PiAdapterV2Driver.create")(
     function* (input: ProviderAdapterDriverCreateInput<PiSettings>) {
-      const hostEnvironment = yield* HostProcessEnvironment;
+      const hostEnvironment = yield* HostProcess.Environment;
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       return yield* makePiAdapterV2({
         instanceId: input.instanceId,
         settings: { ...input.config, enabled: input.enabled },
-        environment: mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
+        environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
         continuationRequests,
       });
     },
@@ -3299,7 +3409,7 @@ const layer: Layer.Layer<ProviderAdapter.ProviderAdapterV2, never, PiAdapterV2Dr
   Layer.effect(
     ProviderAdapter.ProviderAdapterV2,
     Effect.gen(function* () {
-      const hostEnvironment = yield* HostProcessEnvironment;
+      const hostEnvironment = yield* HostProcess.Environment;
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       return yield* makePiAdapterV2({
         instanceId: PI_DEFAULT_INSTANCE_ID,
