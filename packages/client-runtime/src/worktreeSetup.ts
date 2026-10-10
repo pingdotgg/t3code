@@ -36,8 +36,9 @@ export function findRecordedWorktreeSetup(
  * leaves no trace once the turn is live (the setup is a means to the reply,
  * not part of the conversation), while a failed script, a failed setup, or a
  * cancelled one stays so the outcome, exit code, and terminal are reachable.
- * Before the turn is live everything stays so nothing collapses in the
- * handoff gap. Visibility never depends on whether a turn happens to be
+ * Setups with an agent stage stay until the turn is live so nothing collapses
+ * in the handoff gap. A fork has no agent handoff, so its clean finish retires
+ * immediately. Visibility never depends on whether a turn happens to be
  * running, which would make the row come and go.
  */
 export function resolveVisibleWorktreeSetup(input: {
@@ -55,7 +56,9 @@ export function resolveVisibleWorktreeSetup(input: {
   if (snapshot.phase === "running") return snapshot;
   if (input.followUpSent) return null;
   if (snapshot.phase !== "done") return snapshot;
-  if (!input.turnStarted) return snapshot;
+  if (!input.turnStarted && snapshot.stages.some((stage) => stage.id === "agent")) {
+    return snapshot;
+  }
   return snapshot.stages.some((stage) => stage.status === "failed") ? snapshot : null;
 }
 
