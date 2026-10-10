@@ -206,6 +206,35 @@ export function resolveInitialMainWindowBounds(
   return DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE;
 }
 
+// macOS only refreshes a window's normal bounds on a programmatic maximize, so
+// after a green-button, title-bar, or tiling maximize they can still point at
+// another display. Keep them on the display the window actually fills,
+// centered in its work area, so a maximized restart reopens there.
+export function resolveMaximizedNormalBounds(
+  normalBounds: DesktopAppSettings.DesktopWindowBounds,
+  display: Pick<Electron.Display, "bounds" | "workArea">,
+): DesktopAppSettings.DesktopWindowBounds {
+  if (windowFitsWithinDisplay(normalBounds, display.bounds)) {
+    return normalBounds;
+  }
+  const { workArea } = display;
+  // Never below the persistable minimum, or a small work area drops the save.
+  const width = Math.max(
+    DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.width,
+    Math.min(normalBounds.width, workArea.width),
+  );
+  const height = Math.max(
+    DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.height,
+    Math.min(normalBounds.height, workArea.height),
+  );
+  return {
+    x: workArea.x + Math.round((workArea.width - width) / 2),
+    y: workArea.y + Math.round((workArea.height - height) / 2),
+    width,
+    height,
+  };
+}
+
 // A self-contained "Connecting to WSL" splash, shown immediately in wsl-only
 // mode while the WSL backend (which serves the renderer) cold-boots. Inlined as
 // a data URL so it needs no bundled asset and no backend — pure CSS, no JS.
@@ -446,16 +475,23 @@ export const make = Effect.gen(function* () {
       if (window.isDestroyed()) {
         return null;
       }
+      const fillsDisplay = window.isFullScreen() || window.isMaximized();
       const bounds =
-        window.isFullScreen() || window.isMaximized() || window.isMinimized()
-          ? window.getNormalBounds()
-          : window.getBounds();
-      return DesktopAppSettings.normalizeMainWindowBounds({
+        fillsDisplay || window.isMinimized() ? window.getNormalBounds() : window.getBounds();
+      const rounded = {
         x: Math.round(bounds.x),
         y: Math.round(bounds.y),
         width: Math.round(bounds.width),
         height: Math.round(bounds.height),
-      });
+      };
+      return DesktopAppSettings.normalizeMainWindowBounds(
+        fillsDisplay
+          ? resolveMaximizedNormalBounds(
+              rounded,
+              Electron.screen.getDisplayMatching(window.getBounds()),
+            )
+          : rounded,
+      );
     };
     const fallbackWindowBounds = boundsPersistenceEnabled ? null : readPersistableBounds();
     const fallbackWindowMaximized = persistedSettings.mainWindowMaximized;
