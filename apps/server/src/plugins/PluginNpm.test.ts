@@ -19,6 +19,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 import { HttpClient } from "effect/http";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -1957,6 +1958,41 @@ it.layer(NodeServices.layer)("PluginNpm", (it) => {
             expect(record, name).toEqual({ source: applied.package.source });
             expect((yield* callVersion(catalog, installationId)).version, name).toBe("1.1.0");
           }
+        }),
+      ),
+    );
+
+    it.effect("reports the applied version when the plugin cannot be enabled again", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const { catalog, npm, registry, plugin } = yield* setup();
+          registry.publish("reenable", "1.0.0", { tarball: plugin("reenable", "1.0.0") });
+          registry.publish("reenable", "1.1.0", { tarball: plugin("reenable", "1.1.0") });
+          const added = yield* npm.add({ name: "reenable", version: "1.0.0" });
+          const installationId = added.installation.installationId;
+          yield* catalog.consent({ installationId, digest: added.installation.source!.digest });
+          yield* catalog.enable({ installationId });
+          const { package: staged } = yield* npm.stageUpdate({ installationId, version: "1.1.0" });
+          const update = staged.stagedUpdate!;
+          // Enabling the new files fails after their consent is saved.
+          yield* sql`
+            CREATE TRIGGER refuse_enable BEFORE UPDATE ON plugin_installations
+            WHEN json_extract(NEW.record_json, '$.generation') > json_extract(OLD.record_json, '$.generation')
+            BEGIN SELECT RAISE(ABORT, 'refused'); END
+          `;
+
+          const applied = yield* npm.applyUpdate({
+            installationId,
+            digest: update.source.digest,
+          });
+          expect(applied.package.source).toMatchObject({
+            version: "1.1.0",
+            integrity: update.integrity,
+          });
+          expect(applied.package.stagedUpdate).toBeNull();
+          expect(applied.installation.consent?.digest).toBe(update.source.digest);
+          expect(applied.installation.enabled).toBe(false);
         }),
       ),
     );

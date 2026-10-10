@@ -906,6 +906,9 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
         }),
       ),
     );
+    // A step after the commit, such as enabling the plugin again, failed: the update still applied.
+    if (Exit.isFailure(replaced) && entry.source === next)
+      return { installation: yield* catalogRow(input.installationId), package: toPackage(entry) };
     const { installation } = yield* replaced;
     return { installation, package: toPackage(entry) };
   });
