@@ -3118,6 +3118,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const pendingRuntimeRequests = yield* Ref.make(
           new Map<string, PendingClaudeRuntimeRequest>(),
         );
+        // Permission and question callbacks in flight, including the moment
+        // before their request is registered. A steer never interrupts one.
+        const toolCallbacksInFlight = yield* Ref.make(0);
         // Background-task wake support. Claude can settle a turn while a
         // local_bash background task keeps running; the CLI later re-invokes
         // the model (a "wake turn") on the same query stream with no active
@@ -7176,8 +7179,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
         });
 
+        const trackedCanUseTool = (...args: Parameters<CanUseTool>) =>
+          Ref.update(toolCallbacksInFlight, (count) => count + 1).pipe(
+            Effect.andThen(canUseToolEffect(...args)),
+            Effect.ensuring(Ref.update(toolCallbacksInFlight, (count) => count - 1)),
+          );
         const canUseTool: CanUseTool = (toolName, toolInput, callbackOptions) =>
-          runPromise(canUseToolEffect(toolName, toolInput, callbackOptions));
+          runPromise(trackedCanUseTool(toolName, toolInput, callbackOptions));
 
         const onUserDialog: NonNullable<ClaudeQueryOptions["onUserDialog"]> = (
           request,
@@ -7202,7 +7210,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ageMinutes,
                 estimatedTokens,
               });
-              const result = yield* canUseToolEffect(
+              const result = yield* trackedCanUseTool(
                 "AskUserQuestion",
                 {
                   questions: [
@@ -7816,7 +7824,38 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               next.add(turnInput.providerTurnId);
               return next;
             });
-            yield* existing.query.offer(userMessage);
+            const unmarkSteered = Ref.update(steeredTurns, (current) => {
+              const next = new Set(current);
+              next.delete(turnInput.providerTurnId);
+              return next;
+            });
+            // Claude holds a `now` message until a running tool returns. As in
+            // Claude Code's Esc then send, interrupt (without closing), then
+            // offer: the abort is absorbed as active steering and the steer
+            // runs after it. Only a user's own message may cut a tool short,
+            // and only a root-thread one: a subagent's calls (no run) would
+            // take the whole subagent down with them.
+            if (
+              [...currentTurn.toolCalls.values()].some((toolCall) => toolCall.runId !== null) &&
+              turnInput.message.createdBy === "user" &&
+              turnInput.message.scheduledTaskId === undefined &&
+              (yield* Ref.get(toolCallbacksInFlight)) === 0
+            ) {
+              // An unanswered interrupt falls back to the plain steer below.
+              yield* existing.query.interrupt.pipe(
+                Effect.timeout("5 seconds"),
+                Effect.ignore({ log: "Warn" }),
+              );
+              // The turn may have finished before the interrupt reached it.
+              if ((yield* Ref.get(activeTurn))?.providerTurnId !== turnInput.providerTurnId) {
+                yield* unmarkSteered;
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CLAUDE_PROVIDER,
+                  detail: `Claude provider turn ${turnInput.providerTurnId} ended before the steer.`,
+                });
+              }
+            }
+            yield* existing.query.offer(userMessage).pipe(Effect.tapError(() => unmarkSteered));
           },
           (effect, turnInput) =>
             effect.pipe(
