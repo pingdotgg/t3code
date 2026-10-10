@@ -77,8 +77,10 @@ export function getRowBottom(state: TimelineListMeasurementState, index: number)
 /**
  * Whether the timeline's real rows extend past the viewport left above the
  * composer. The list's own content length includes the composer inset
- * spacer, so this measures from the last row instead. Unknown row geometry
- * or an unmeasured viewport counts as fitting.
+ * spacer, so this measures from the last row instead. A last row that is
+ * positioned but not yet measured counts as at least 1px tall, so a thread
+ * reopened above its unrendered end still overflows. Otherwise unknown row
+ * geometry or an unmeasured viewport counts as fitting.
  */
 export function timelineContentOverflowsViewport(
   state: TimelineListMeasurementState | undefined,
@@ -91,7 +93,12 @@ export function timelineContentOverflowsViewport(
   if (typeof scrollLength !== "number" || !Number.isFinite(scrollLength) || scrollLength <= 0) {
     return false;
   }
-  const lastBottom = getRowBottom(state, state.data.length - 1);
+  const lastIndex = state.data.length - 1;
+  // Not in getRowBottom: anchored-turn metrics must stay unknown until the row is measured.
+  const lastTop = state.positionAtIndex(lastIndex);
+  const lastBottom =
+    getRowBottom(state, lastIndex) ??
+    (typeof lastTop === "number" && Number.isFinite(lastTop) ? lastTop + 1 : null);
   if (lastBottom === null) {
     return false;
   }
