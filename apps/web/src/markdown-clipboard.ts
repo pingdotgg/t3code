@@ -346,22 +346,46 @@ export function serializeTableElementToMarkdown(table: Element): string {
   return serializeTable(table).trim();
 }
 
-function csvCell(value: string): string {
+/** Collapses a cell to one line so it cannot break the row or column grid. */
+function delimitedCell(value: string, format: "tsv" | "csv"): string {
   const normalized = value.replace(/\s+/g, " ").trim();
+  if (format === "tsv") return normalized;
   return /[",\n]/.test(normalized) ? `"${normalized.replaceAll('"', '""')}"` : normalized;
 }
 
-export function serializeTableElementToCsv(table: Element): string {
-  const rows = [...table.querySelectorAll(":scope > thead > tr, :scope > tbody > tr, :scope > tr")];
-  const lines: string[] = [];
-  for (const row of rows) {
-    const cells = [...row.children].filter(
-      (cell) => cell.tagName === "TH" || cell.tagName === "TD",
-    );
-    if (cells.length === 0) continue;
-    lines.push(cells.map((cell) => csvCell(cell.textContent ?? "")).join(","));
-  }
-  return lines.join("\n");
+function delimitedRows(rows: ReadonlyArray<ReadonlyArray<string>>, format: "tsv" | "csv"): string {
+  const separator = format === "tsv" ? "\t" : ",";
+  return rows
+    .map((cells) => cells.map((cell) => delimitedCell(cell, format)).join(separator))
+    .join("\n");
+}
+
+/**
+ * Cell text with `<br>` kept as a word boundary and images as their alt text,
+ * both of which `textContent` drops.
+ */
+function tableCellText(node: Node): string {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
+  if (node.nodeType !== Node.ELEMENT_NODE) return "";
+  const element = node as Element;
+  if (element.tagName === "BR") return " ";
+  if (element.tagName === "IMG") return element.getAttribute("alt") ?? "";
+  return [...node.childNodes].map(tableCellText).join("");
+}
+
+/**
+ * Tab-separated rows are what spreadsheets put on the clipboard, and what Slack
+ * and spreadsheet apps turn back into a real table on paste.
+ */
+export function serializeTableElementToDelimited(table: Element, format: "tsv" | "csv"): string {
+  const rows = [...table.querySelectorAll(":scope > thead > tr, :scope > tbody > tr, :scope > tr")]
+    .map((row) =>
+      [...row.children]
+        .filter((cell) => cell.tagName === "TH" || cell.tagName === "TD")
+        .map(tableCellText),
+    )
+    .filter((cells) => cells.length > 0);
+  return delimitedRows(rows, format);
 }
 
 function sanitizedHtmlFrom(container: Element): string {
