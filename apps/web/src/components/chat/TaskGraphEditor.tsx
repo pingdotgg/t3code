@@ -85,7 +85,8 @@ type Selection =
   | { readonly kind: "none" }
   | { readonly kind: "node"; readonly key: string }
   | { readonly kind: "edge"; readonly dependency: string; readonly dependent: string }
-  // `after` is the task that was selected when Add task was clicked; the new task branches off it.
+  // `after` is the task selected when Add task was clicked; the new task branches off it.
+  // With nothing selected, the new task becomes the parent of the current top tasks.
   | { readonly kind: "new"; readonly after: string | null };
 
 const NO_SELECTION: Selection = { kind: "none" };
@@ -340,10 +341,23 @@ function SelectionPanel(props: {
 
   if (selection.kind === "new") {
     const after = graph.nodes.find((node) => node.key === selection.after) ?? null;
+    // Started tasks can no longer be made to wait, so only unstarted top tasks move under the parent.
+    const children =
+      after === null
+        ? graph.nodes.filter(
+            (node) => node.dependsOn.length === 0 && isUnstartedTaskGraphNode(node),
+          )
+        : [];
     return (
       <TaskNodeForm
         key={`new:${after?.key ?? ""}`}
-        heading={after === null ? "New task" : `New task after ${after.title}`}
+        heading={
+          after !== null
+            ? `New task after ${after.title}`
+            : children.length > 0
+              ? "New parent task"
+              : "New task"
+        }
         initial={{
           title: "",
           prompt: "",
@@ -354,7 +368,7 @@ function SelectionPanel(props: {
           startAt: null,
         }}
         placement={{ graph, labels: props.labels, dependency: after }}
-        opensByDefault
+        opensByDefault={children.length === 0}
         disabled={!canEdit}
         submitLabel="Add task"
         keyFor={(title) =>
@@ -386,6 +400,11 @@ function SelectionPanel(props: {
                 ...(values.startAt === null ? {} : { startAt: values.startAt }),
               },
             },
+            ...children.map((child) => ({
+              type: "update_node" as const,
+              key: child.key,
+              dependsOn: [key],
+            })),
           ]);
           if (accepted) props.onSelect({ kind: "node", key });
         }}
@@ -455,6 +474,10 @@ function SelectionPanel(props: {
       </p>
       <p>Tasks that nothing depends on open a pull request unless you turn it off.</p>
       <p>Select a task or dependency to change it.</p>
+      <p>
+        Add task puts the new task after the selected one. With nothing selected, it becomes the
+        parent of the tasks at the start.
+      </p>
     </div>
   );
 }
