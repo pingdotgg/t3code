@@ -3,9 +3,9 @@ import {
   AuthPreviewOperateScope,
   type EditorId,
   type EnvironmentId,
-  type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { filePreviewDelimiter } from "@t3tools/shared/delimitedPreview";
 import { AuthFilesystemWriteScope } from "@t3tools/contracts";
 import {
@@ -30,7 +30,7 @@ import {
 } from "@pierre/diffs/edit";
 import type { WorkerPoolManager } from "@pierre/diffs/worker";
 import { EditProvider, File, Virtualizer, useWorkerPool } from "@pierre/diffs/react";
-import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
+import { DiffWorkerPoolProvider } from "~/components/DiffWorkerPoolProvider";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import {
   isAtomCommandInterrupted,
@@ -63,21 +63,23 @@ import { ScrollArea } from "~/components/ui/scroll-area";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileReviewComment } from "~/reviewCommentContext";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { assetEnvironment } from "~/state/assets";
 import { usePreviewAvailable } from "~/browser/previewRuntime";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { useEnvironmentScope } from "~/state/session";
+import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
-import { AttachmentFilePreview } from "./AttachmentFilePreview";
-import { AudioPreview } from "./AudioPreview";
-import { BrowserDocumentFrame, isPdfPreviewFile } from "./BrowserDocumentFrame";
-import { DelimitedTablePreview } from "./DelimitedTablePreview";
-import FileBrowserPanel from "./FileBrowserPanel";
-import { FileBreadcrumbs } from "./FileBreadcrumbs";
-import { FileMarkdownPreview } from "./FileMarkdownPreview";
+import { AttachmentFilePreview } from "~/components/files/AttachmentFilePreview";
+import { AudioPreview } from "~/components/files/AudioPreview";
+import { BrowserDocumentFrame, isPdfPreviewFile } from "~/components/files/BrowserDocumentFrame";
+import { DelimitedTablePreview } from "~/components/files/DelimitedTablePreview";
+import FileBrowserPanel from "~/components/files/FileBrowserPanel";
+import { FileBreadcrumbs } from "~/components/files/FileBreadcrumbs";
+import { FileMarkdownPreview } from "~/components/files/FileMarkdownPreview";
 import {
   type FileCommentAnnotationEntry,
   type FileCommentAnnotationGroup,
@@ -86,8 +88,8 @@ import {
   nextFileCommentId,
   normalizeFileCommentRange,
   remapFileCommentAnnotations,
-} from "./fileCommentAnnotations";
-import { installFileEditorDismissal } from "./fileEditorDismissal";
+} from "~/components/files/fileCommentAnnotations";
+import { installFileEditorDismissal } from "~/components/files/fileEditorDismissal";
 import {
   FILE_LINK_REVEAL_ATTRIBUTE,
   FILE_LINK_REVEAL_UNSAFE_CSS,
@@ -95,11 +97,11 @@ import {
   FileSurfaceAction,
   FileSurfaceFailure,
   FileSurfaceLoading,
-} from "./fileSurfaceChrome";
-import SourceFilePreview from "./ReadOnlySourcePreview";
-import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
-import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
-import { projectFileCacheKey } from "./fileContentRevision";
+} from "~/components/files/fileSurfaceChrome";
+import SourceFilePreview from "~/components/files/ReadOnlySourcePreview";
+import { resolveCenteredFileLineScrollTop } from "~/components/files/fileLineReveal";
+import { DiffCommentAnnotation } from "~/components/diffs/DiffCommentAnnotation";
+import { projectFileCacheKey } from "~/components/files/fileContentRevision";
 import {
   filePreviewReadErrorMessage,
   isMarkdownPreviewFile,
@@ -107,31 +109,27 @@ import {
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
   workspaceAssetResource,
-} from "./filePreviewMode";
-import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
+} from "~/components/files/filePreviewMode";
+import { useFileSaveCoordinator } from "~/components/files/useFileSaveCoordinator";
 import {
   getOptimisticProjectFileQueryData,
   getProjectFileContents,
   setProjectFileQueryData,
   useProjectFileQuery,
-} from "./projectFilesQueryState";
+} from "~/components/files/projectFilesQueryState";
 
-interface FilePreviewPanelProps {
-  environmentId: EnvironmentId;
+import { usePanelHost } from "../panelHost";
+
+interface FilesSidePanelProps {
   cwd: string;
   projectName: string;
   relativePath: string | null;
   attachment?: ChatFileAttachment;
-  threadRef: ScopedThreadRef;
-  composerDraftTarget: ScopedThreadRef | DraftId;
-  keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   revealLine: number | null;
   revealRequestId: number;
-  onOpenFile: (relativePath: string) => void;
   onPendingChange: (relativePath: string, pending: boolean) => void;
   selectedFilePending: boolean;
-  workspaceMutationId: string | null;
 }
 
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
@@ -1025,23 +1023,25 @@ function initialExplorerOpen(): boolean {
   }
 }
 
-export default function FilePreviewPanel({
-  environmentId,
+// Renders both the Files explorer surface and single file surfaces.
+export default function FilesSidePanel({
   cwd,
   projectName,
   relativePath: requestedPath,
   attachment,
-  threadRef,
-  composerDraftTarget,
-  keybindings,
   availableEditors,
   revealLine,
   revealRequestId,
-  onOpenFile,
   onPendingChange,
   selectedFilePending,
-  workspaceMutationId,
-}: FilePreviewPanelProps) {
+}: FilesSidePanelProps) {
+  const { threadRef, composerDraftTarget, workspaceMutationId } = usePanelHost();
+  const environmentId = threadRef.environmentId;
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const onOpenFile = useCallback(
+    (path: string) => useRightPanelStore.getState().openFile(threadRef, path),
+    [threadRef],
+  );
   const relativePath =
     attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
   // A draft's composer target is its draft id; a thread the server knows is a ref.
