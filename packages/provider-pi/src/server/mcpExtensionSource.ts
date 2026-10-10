@@ -318,6 +318,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     const approved = await ctx.ui.confirm(
       \`Allow \${event.toolName}?\`,
       toolInputSummary(event.input),
+      { signal: ctx.signal },
     );
     if (!approved) {
       return { block: true, reason: \`\${event.toolName} was declined in T3 Code.\` };

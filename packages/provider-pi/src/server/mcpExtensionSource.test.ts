@@ -249,7 +249,16 @@ describe("Pi tool discovery permissions", () => {
   it("allows discovery without confirmation and still gates the discovered tool", async () => {
     type ToolCallHook = (
       event: { toolName: string; input: unknown },
-      ctx: { ui: { confirm: (title: string, detail: string) => Promise<boolean> } },
+      ctx: {
+        signal: AbortSignal;
+        ui: {
+          confirm: (
+            title: string,
+            detail: string,
+            options: { signal: AbortSignal },
+          ) => Promise<boolean>;
+        };
+      },
     ) => Promise<{ block: true; reason: string } | undefined>;
     let toolCall: ToolCallHook | undefined;
     let searchPath = "builtin:tool-search";
@@ -270,9 +279,12 @@ describe("Pi tool discovery permissions", () => {
     });
     assert.isDefined(toolCall);
     const confirmations: string[] = [];
+    const controller = new AbortController();
     const ctx = {
+      signal: controller.signal,
       ui: {
-        confirm: async (title: string) => {
+        confirm: async (title: string, _detail: string, options: { signal: AbortSignal }) => {
+          assert.strictEqual(options.signal, controller.signal);
           confirmations.push(title);
           return false;
         },

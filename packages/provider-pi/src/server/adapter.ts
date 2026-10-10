@@ -56,6 +56,7 @@ import * as Option from "effect/Option";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -456,6 +457,8 @@ interface PendingPiPrompt {
   readonly method: "select" | "confirm" | "input" | "editor";
   readonly questionId: string;
   readonly approvalKey: string;
+  readonly expiresAt: number | null;
+  expirationFiber: Fiber.Fiber<void> | null;
   runtimeRequest: OrchestrationV2RuntimeRequest;
   readonly node: OrchestrationV2ExecutionNode;
   readonly turnItem: OrchestrationV2TurnItem;
@@ -1270,6 +1273,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
 
       const cancelPrompt = (pending: PendingPiPrompt, resolvedAt: DateTime.Utc) =>
         Effect.gen(function* () {
+          if (pending.expirationFiber !== null) yield* Fiber.interrupt(pending.expirationFiber);
           yield* connection
             .send({
               type: "extension_ui_response",
@@ -1368,6 +1372,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const state = threadState;
         const turn = state?.activeTurn ?? null;
         const createdAt = yield* DateTime.now;
+        const timeout = recordNumber(event, "timeout");
+        // Pi treats zero as no timeout and negative durations as immediate expiry.
+        const expiresAt =
+          timeout === undefined || timeout === 0
+            ? null
+            : DateTime.toEpochMillis(createdAt) + Math.max(0, timeout);
         const requestId = yield* idAllocator.allocate.runtimeRequest({
           driver: PI_PROVIDER,
           ...(turn === null ? {} : { providerTurnId: turn.providerTurn.id }),
@@ -1440,15 +1450,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 requestId,
                 questions: [piQuestion(nativeRequestId, method, title, event)],
               };
-        pendingPrompts.set(String(requestId), {
+        const pending: PendingPiPrompt = {
           nativeRequestId,
           method,
           questionId: nativeRequestId,
           approvalKey,
+          expiresAt,
+          expirationFiber: null,
           runtimeRequest,
           node,
           turnItem,
-        });
+        };
+        pendingPrompts.set(String(requestId), pending);
         yield* emit({
           type: "runtime_request.updated",
           driver: PI_PROVIDER,
@@ -1457,6 +1470,22 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         });
         yield* emit({ type: "node.updated", driver: PI_PROVIDER, node });
         yield* emit({ type: "turn_item.updated", driver: PI_PROVIDER, turnItem });
+        if (expiresAt !== null) {
+          const now = yield* DateTime.now;
+          pending.expirationFiber = yield* Effect.sleep(
+            Duration.millis(Math.max(0, expiresAt - DateTime.toEpochMillis(now))),
+          ).pipe(
+            Effect.andThen(
+              Queue.offer(connection.events, {
+                type: "t3.ui_request_expired",
+                requestId: String(requestId),
+                pending,
+              }),
+            ),
+            Effect.asVoid,
+            Effect.forkIn(scope),
+          );
+        }
       });
 
       const emitExtensionError = Effect.fnUntraced(function* (event: PiRpcRecord) {
@@ -2132,6 +2161,15 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             }
             return;
           }
+          case "t3.ui_request_expired": {
+            const requestId = recordString(event, "requestId");
+            if (requestId === undefined) return;
+            const pending = pendingPrompts.get(requestId);
+            if (pending === undefined || pending !== event["pending"]) return;
+            pendingPrompts.delete(requestId);
+            yield* cancelPrompt(pending, yield* DateTime.now);
+            return;
+          }
           case "t3.flush_extension_errors": {
             // Startup extension failures are informational and do not block
             // Pi, so attach them to the next real turn instead of creating a
@@ -2211,7 +2249,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   rollbackBarrier,
                   protocolError("Pi transport closed during rollback"),
                 );
-              const hadPendingWake = pendingWake !== null;
               pendingWake = null;
               const interrupted = state?.activeTurn?.interrupted === true;
               if (state?.activeTurn != null) {
@@ -2223,7 +2260,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                       class: "transport_error",
                     });
                 yield* finalizeTurn(state, false);
-              } else if (hadPendingWake) {
+              } else {
                 yield* cancelPendingPrompts(yield* DateTime.now);
               }
               if (unsolicitedActivityDetected) {
@@ -2844,6 +2881,17 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 `No pending Pi extension request ${requestInput.requestId}`,
               );
             }
+            const answeredAt = yield* DateTime.now;
+            if (
+              pending.expiresAt !== null &&
+              DateTime.toEpochMillis(answeredAt) >= pending.expiresAt
+            ) {
+              pendingPrompts.delete(String(requestInput.requestId));
+              yield* cancelPrompt(pending, answeredAt);
+              return yield* protocolError(
+                `Pi extension request ${requestInput.requestId} has expired`,
+              );
+            }
             const response = piUiResponse(pending, requestInput.decision, requestInput.answers);
             yield* connection.send({
               type: "extension_ui_response",
@@ -2853,6 +2901,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             // Dropped only once Pi has the answer, so a failed send leaves the
             // request retryable and still cancellable during teardown.
             pendingPrompts.delete(String(requestInput.requestId));
+            if (pending.expirationFiber !== null) yield* Fiber.interrupt(pending.expirationFiber);
             if (pending.method === "confirm" && requestInput.decision === "acceptForSession") {
               sessionApprovals.add(pending.approvalKey);
             }
