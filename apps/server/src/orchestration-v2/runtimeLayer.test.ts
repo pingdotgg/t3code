@@ -841,6 +841,128 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
     }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 
+  it.effect("resolves a rollback addressed by run ordinal past rolled-back runs", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+
+      for (const status of ["missing", "ready"] as const) {
+        const name = `runtime-rollback-ordinal-${status}`;
+        const threadId = ThreadId.make(name);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${name}-create`),
+          threadId,
+          projectId: ProjectId.make(`${name}-project`),
+          title: "Rollback by run ordinal",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: `/tmp/t3-${name}`,
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${name}-message`),
+          threadId,
+          messageId: MessageId.make(`${name}-message`),
+          text: "Create the provider thread and checkpoint scope.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+        });
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        const scope = projection.checkpointScopes[0]!;
+        const run = projection.runs[0]!;
+        const now = yield* DateTime.now;
+        const checkpoint = (slot: number, checkpointStatus: "missing" | "ready") => ({
+          id: EventId.make(`${name}-checkpoint-${slot}`),
+          type: "checkpoint.captured" as const,
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: CheckpointId.make(`${name}-checkpoint-${slot}`),
+            threadId,
+            scopeId: scope.id,
+            runId: null,
+            nodeId: scope.nodeId,
+            parentCheckpointId: null,
+            ordinalWithinScope: slot,
+            appRunOrdinal: null,
+            ref: CheckpointRef.make(`refs/t3/${name}/${slot}`),
+            status: checkpointStatus,
+            files: [],
+            capturedAt: now,
+          },
+        });
+        // Run 1 was rewound and the next run's baseline took its slot. That
+        // baseline has a null app run ordinal and must not be the target.
+        yield* eventSink.write({
+          commandId: CommandId.make(`${name}-seed`),
+          events: [
+            checkpoint(0, status),
+            checkpoint(1, "ready"),
+            {
+              id: EventId.make(`${name}-run-rolled-back`),
+              type: "run.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: { ...run, status: "rolled_back", completedAt: now },
+            },
+          ],
+        });
+        const commandId = CommandId.make(`${name}-rollback`);
+        const threadStartCheckpointId = CheckpointId.make(`${name}-checkpoint-0`);
+        const previousSequence = yield* orchestrator.getThreadEventSequence(threadId);
+        const rollback = orchestrator.dispatch({
+          type: "checkpoint.rollback",
+          commandId,
+          threadId,
+          runOrdinal: 1,
+          restoreFiles: false,
+        });
+
+        if (status === "ready") {
+          const accepted = yield* rollback;
+          assert.deepEqual(
+            accepted.storedEvents.map((stored) =>
+              stored.event.type === "checkpoint.rollback-requested"
+                ? stored.event.payload.checkpointId
+                : stored.event.type,
+            ),
+            ["thread.metadata-updated", threadStartCheckpointId],
+          );
+          assert.deepEqual(
+            (yield* outbox.listByCommandId(commandId)).map((effect) =>
+              effect.request.type === "provider-thread.rollback"
+                ? effect.request.checkpointId
+                : effect.request.type,
+            ),
+            [threadStartCheckpointId],
+          );
+        } else {
+          const error = yield* rollback.pipe(Effect.flip);
+          assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
+          assert.equal(
+            error.cause,
+            `Checkpoint ${threadStartCheckpointId} is missing and cannot be restored.`,
+          );
+          assert.equal(yield* orchestrator.getThreadEventSequence(threadId), previousSequence);
+          assert.deepEqual(
+            yield* eventSink.readByCommandId({ commandId }).pipe(Stream.runCollect),
+            [],
+          );
+          assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+        }
+      }
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
+  );
+
   it.effect("resolves delivery intent against the active run and starts after it completes", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

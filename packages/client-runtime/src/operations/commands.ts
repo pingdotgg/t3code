@@ -281,6 +281,13 @@ const supportsServerResolvedCommandContext = Effect.fn(
   return config.environment.capabilities.serverResolvedCommandContext === true;
 });
 
+const supportsCheckpointRollbackByRunOrdinal = Effect.fn(
+  "EnvironmentCommands.supportsCheckpointRollbackByRunOrdinal",
+)(function* () {
+  const config = yield* getInitialServerConfig();
+  return config.environment.capabilities.checkpointRollbackByRunOrdinal === true;
+});
+
 const persistAttachments = Effect.fn("EnvironmentCommands.persistAttachments")(function* (
   threadId: ThreadId,
   messageId: MessageId,
@@ -897,6 +904,21 @@ export const revertThreadCheckpoint = Effect.fn("EnvironmentCommands.revertThrea
         threadId: input.threadId,
         scopeId: CheckpointScopeId.make(input.scopeId),
         checkpointId: CheckpointId.make(input.checkpointId),
+      });
+    }
+    // Rolled-back runs are missing from the bounded projection, so only the
+    // server can skip them to find the checkpoint before a resent prompt.
+    if (
+      input.checkpointId === undefined &&
+      input.turnCount !== undefined &&
+      (yield* supportsCheckpointRollbackByRunOrdinal())
+    ) {
+      return yield* dispatch({
+        type: "checkpoint.rollback",
+        ...(input.restoreFiles === undefined ? {} : { restoreFiles: input.restoreFiles }),
+        commandId: yield* allocateCommandId(input),
+        threadId: input.threadId,
+        runOrdinal: input.turnCount,
       });
     }
     const projection = yield* getProjection(input.threadId);

@@ -79,6 +79,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly projection?: OrchestrationV2ThreadProjection;
   readonly projectionRequests?: ThreadId[];
   readonly advertiseServerResolvedCommandContext?: boolean;
+  readonly advertiseCheckpointRollbackByRunOrdinal?: boolean;
 }) {
   const client = {
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
@@ -129,6 +130,9 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
           ...(input.advertiseServerResolvedCommandContext === false
             ? {}
             : { serverResolvedCommandContext: true }),
+          ...(input.advertiseCheckpointRollbackByRunOrdinal === true
+            ? { checkpointRollbackByRunOrdinal: true }
+            : {}),
         },
       },
     } as never),
@@ -276,6 +280,41 @@ describe("V2 environment commands", () => {
         },
       ]);
     }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  it.effect.each([undefined, false])(
+    "lets the server resolve Edit from here's run ordinal, restoreFiles=%s",
+    (restoreFiles) =>
+      Effect.gen(function* () {
+        // The bounded projection omits rolled-back runs, so the client cannot
+        // skip them itself.
+        const commands: OrchestrationV2Command[] = [];
+        const projectionRequests: ThreadId[] = [];
+        const supervisor = yield* makeSupervisor({
+          commands,
+          projects: [],
+          projectionRequests,
+          advertiseCheckpointRollbackByRunOrdinal: true,
+        });
+
+        yield* revertThreadCheckpoint({
+          commandId: CommandId.make("rollback-run-ordinal"),
+          threadId: v2ThreadId,
+          turnCount: 6,
+          ...(restoreFiles === undefined ? {} : { restoreFiles }),
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+        expect(projectionRequests).toEqual([]);
+        expect(commands).toEqual([
+          {
+            type: "checkpoint.rollback",
+            commandId: "rollback-run-ordinal",
+            threadId: v2ThreadId,
+            runOrdinal: 6,
+            ...(restoreFiles === undefined ? {} : { restoreFiles }),
+          },
+        ]);
+      }).pipe(Effect.provide(layerTestCrypto)),
   );
 
   it.effect("preserves plan implementation provenance on V2 runs", () =>

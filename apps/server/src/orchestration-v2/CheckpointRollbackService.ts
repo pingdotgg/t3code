@@ -3,6 +3,7 @@ import {
   CheckpointScopeId,
   latestProviderTurnForAttempt,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ThreadProjection,
   ProviderThreadId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -27,6 +28,28 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+
+/**
+ * The checkpoint that restores the end of run `runOrdinal`, or of the nearest
+ * earlier run a rollback has not discarded; 0 is the thread-start checkpoint.
+ * A discarded run's slot can hold a later run's baseline, whose null app run
+ * ordinal means thread start, so only checkpoints captured for the run match.
+ */
+export function checkpointForRunOrdinal(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "checkpoints">,
+  runOrdinal: number,
+) {
+  const rolledBackOrdinals = new Set(
+    projection.runs.filter((run) => run.status === "rolled_back").map((run) => run.ordinal),
+  );
+  let ordinal = runOrdinal;
+  while (ordinal > 0 && rolledBackOrdinals.has(ordinal)) ordinal -= 1;
+  return projection.checkpoints.findLast((checkpoint) =>
+    ordinal === 0
+      ? checkpoint.ordinalWithinScope === 0 && checkpoint.appRunOrdinal === null
+      : checkpoint.appRunOrdinal === ordinal,
+  );
+}
 
 export const ROLLBACK_FAILED_MESSAGE =
   "The provider could not roll back this conversation. Try again; if it keeps failing, check the provider and server logs.";

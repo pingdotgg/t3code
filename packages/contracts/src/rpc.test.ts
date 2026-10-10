@@ -67,4 +67,14 @@ describe("WebSocket RPC contracts", () => {
       ),
     ).toBe(true);
   });
+
+  it("accepts a rollback addressed by run ordinal", () => {
+    const dispatchCommand = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
+    if (dispatchCommand === undefined) throw new Error("dispatchCommand is not registered");
+    const decode = Schema.decodeUnknownExit(dispatchCommand.payloadSchema);
+    const command = { type: "checkpoint.rollback", commandId: "rollback-1", threadId: "thread-1" };
+
+    expect(Exit.isSuccess(decode({ ...command, runOrdinal: 6 }))).toBe(true);
+    expect(Exit.isFailure(decode({ ...command, runOrdinal: -1 }))).toBe(true);
+  });
 });

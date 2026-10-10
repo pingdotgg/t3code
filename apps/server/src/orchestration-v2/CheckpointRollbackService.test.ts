@@ -2,13 +2,23 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
 import {
   CheckpointId,
+  CheckpointRef,
   CheckpointScopeId,
+  EventId,
+  MessageId,
+  NodeId,
+  type OrchestrationV2Checkpoint,
+  type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
+  ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  RunId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -16,6 +26,7 @@ import * as Option from "effect/Option";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Layer from "effect/Layer";
 
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { resolveCodexRollbackTurnCount } from "./Adapters/CodexAdapterV2.ts";
 import { isCheckpointRestoreIsolated } from "./CheckpointRestoreSafety.ts";
 import * as CheckpointService from "./CheckpointService.ts";
@@ -29,6 +40,10 @@ import * as ProjectStore from "./ProjectStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import {
+  buildBoundedThreadProjection,
+  THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+} from "./threadHistoryPaging.ts";
 
 // A root that does not exist never overlaps, so other owners decide isolation.
 const unrelatedProject = Option.some({
@@ -525,4 +540,328 @@ it.effect.skipIf(!symlinksSupported)(
       );
       assert.isFalse(isolated);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)))(
+  "checkpointForRunOrdinal",
+  (it) => {
+    const seedThread = Effect.fn("seedThread")(function* (input: {
+      readonly name: string;
+      readonly runs: ReadonlyArray<
+        readonly [ordinal: number, status: OrchestrationV2Run["status"]]
+      >;
+      /**
+       * A run's checkpoint belongs to that run's root node. A baseline belongs
+       * to `owner`, the run whose root node owned the scope when it was captured.
+       */
+      readonly checkpoints: ReadonlyArray<
+        | readonly [
+            ordinalWithinScope: number,
+            appRunOrdinal: number,
+            status: OrchestrationV2Checkpoint["status"],
+          ]
+        | readonly [
+            ordinalWithinScope: number,
+            appRunOrdinal: null,
+            status: OrchestrationV2Checkpoint["status"],
+            owner: number,
+          ]
+      >;
+      /** Turn items for run 2, enough to push run 1 out of the bounded window. */
+      readonly run2Items?: number;
+    }) {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make(`thread:${input.name}`);
+      const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+      const runId = (ordinal: number) => RunId.make(`run:${input.name}:${ordinal}`);
+      const nodeId = (ordinal: number) => NodeId.make(`node:${input.name}:${ordinal}`);
+      yield* store.apply({
+        id: EventId.make(`event:${input.name}:thread`),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make(`project:${input.name}`),
+          title: input.name,
+          providerInstanceId: modelSelection.instanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      let itemOrdinal = 0;
+      for (const [ordinal, status] of input.runs) {
+        yield* store.apply({
+          id: EventId.make(`event:${input.name}:run:${ordinal}`),
+          type: "run.created",
+          threadId,
+          runId: runId(ordinal),
+          nodeId: nodeId(ordinal),
+          occurredAt: now,
+          payload: {
+            id: runId(ordinal),
+            threadId,
+            ordinal,
+            providerInstanceId: modelSelection.instanceId,
+            modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make(`message:${input.name}:${ordinal}`),
+            rootNodeId: nodeId(ordinal),
+            activeAttemptId: null,
+            status,
+            requestedAt: now,
+            startedAt: now,
+            completedAt: now,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        });
+        const itemCount = ordinal === 2 ? (input.run2Items ?? 1) : 1;
+        for (let index = 0; index < itemCount; index += 1) {
+          itemOrdinal += 1;
+          const itemId = TurnItemId.make(`item:${input.name}:${ordinal}:${index}`);
+          yield* store.apply({
+            id: EventId.make(`event:${input.name}:item:${ordinal}:${index}`),
+            type: "turn-item.updated",
+            threadId,
+            runId: runId(ordinal),
+            nodeId: nodeId(ordinal),
+            occurredAt: now,
+            payload: {
+              id: itemId,
+              threadId,
+              runId: runId(ordinal),
+              nodeId: nodeId(ordinal),
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: itemOrdinal,
+              status: "completed",
+              title: "command",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "command_execution",
+              input: "true",
+            },
+          });
+        }
+      }
+      for (const [ordinalWithinScope, appRunOrdinal, status, owner] of input.checkpoints) {
+        yield* store.apply({
+          id: EventId.make(`event:${input.name}:checkpoint:${ordinalWithinScope}`),
+          type: "checkpoint.captured",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: CheckpointId.make(`checkpoint:${input.name}:${ordinalWithinScope}`),
+            threadId,
+            scopeId: CheckpointScopeId.make(`scope:${input.name}`),
+            runId: appRunOrdinal === null ? null : runId(appRunOrdinal),
+            nodeId: nodeId(appRunOrdinal ?? owner ?? 0),
+            parentCheckpointId: null,
+            ordinalWithinScope,
+            appRunOrdinal,
+            ref: CheckpointRef.make(`refs/t3/${input.name}/${ordinalWithinScope}`),
+            status,
+            files: [],
+            capturedAt: now,
+          },
+        });
+      }
+      return threadId;
+    });
+
+    /** Resolves from the records the rollback command reads (`dispatchCheckpointRollback`). */
+    const resolve = (threadId: ThreadId, runOrdinal: number) =>
+      Effect.gen(function* () {
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        const records = yield* store.getThreadRecords(threadId, ["runs", "checkpoints"], {
+          turnItemTypes: [],
+          messageRoles: ["user"],
+        });
+        const checkpoint = CheckpointRollbackService.checkpointForRunOrdinal(records, runOrdinal);
+        return checkpoint === undefined
+          ? undefined
+          : { id: String(checkpoint.id), status: checkpoint.status };
+      });
+
+    /** The projection clients receive from orchestration.getThreadProjection. */
+    const bounded = (threadId: ThreadId) =>
+      Effect.gen(function* () {
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        const snapshot = yield* store.getThreadSnapshotWindow(threadId, {
+          rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+        });
+        const { projection } = buildBoundedThreadProjection({
+          projection: snapshot.projection,
+          snapshotSequence: snapshot.snapshotSequence,
+        });
+        return {
+          runOrdinals: projection.runs.map((run) => run.ordinal),
+          checkpointSlots: projection.checkpoints.map(
+            (checkpoint) => checkpoint.ordinalWithinScope,
+          ),
+        };
+      });
+
+    it.effect("restores the run before a prompt resent after a rewind", () =>
+      Effect.gen(function* () {
+        // The reporter's thread: run 6 was rewound, run 7 resent its prompt and
+        // captured its baseline in slot 6, and a later run 8 was rewound too.
+        const threadId = yield* seedThread({
+          name: "issue",
+          runs: [
+            [1, "completed"],
+            [2, "completed"],
+            [3, "completed"],
+            [4, "completed"],
+            [5, "completed"],
+            [6, "rolled_back"],
+            [7, "interrupted"],
+            [8, "rolled_back"],
+          ],
+          checkpoints: [
+            [0, null, "ready", 1],
+            [5, 5, "ready"],
+            [6, null, "ready", 7],
+            [7, 7, "ready"],
+            [8, 8, "stale"],
+          ],
+          run2Items: 100,
+        });
+
+        // Clients cannot resolve this: the bounded projection omits run 6 and,
+        // with run 1 outside the window, the thread-start baseline run 1 owns.
+        assert.deepStrictEqual(yield* bounded(threadId), {
+          runOrdinals: [2, 3, 4, 5, 7, 8],
+          checkpointSlots: [5, 6, 7, 8],
+        });
+        // Edit from here on run 7 sends run ordinal 6.
+        assert.deepStrictEqual(yield* resolve(threadId, 6), {
+          id: "checkpoint:issue:5",
+          status: "ready",
+        });
+      }),
+    );
+
+    it.effect("skips consecutive rewound runs", () =>
+      Effect.gen(function* () {
+        // Rewinding run 6 discarded runs 6 and 7. Run 8's baseline replaced run
+        // 7's checkpoint; run 6's stale checkpoint is still in its slot.
+        const threadId = yield* seedThread({
+          name: "two-rewinds",
+          runs: [
+            [4, "completed"],
+            [5, "completed"],
+            [6, "rolled_back"],
+            [7, "rolled_back"],
+            [8, "completed"],
+          ],
+          checkpoints: [
+            [0, null, "ready", 4],
+            [5, 5, "ready"],
+            [6, 6, "stale"],
+            [7, null, "ready", 8],
+            [8, 8, "ready"],
+          ],
+        });
+
+        assert.deepStrictEqual((yield* bounded(threadId)).runOrdinals, [4, 5, 8]);
+        assert.deepStrictEqual(yield* resolve(threadId, 7), {
+          id: "checkpoint:two-rewinds:5",
+          status: "ready",
+        });
+      }),
+    );
+
+    it.effect("does not skip a failed run that is still in the conversation", () =>
+      Effect.gen(function* () {
+        const threadId = yield* seedThread({
+          name: "failed-predecessor",
+          runs: [
+            [5, "completed"],
+            [6, "failed"],
+            [7, "completed"],
+          ],
+          checkpoints: [
+            [0, null, "ready", 5],
+            [5, 5, "ready"],
+            [6, null, "ready", 7],
+            [7, 7, "ready"],
+          ],
+        });
+
+        assert.isUndefined(yield* resolve(threadId, 6));
+      }),
+    );
+
+    it.effect("restores thread start when every earlier run was rewound", () =>
+      Effect.gen(function* () {
+        const threadId = yield* seedThread({
+          name: "all-rewound",
+          runs: [
+            [1, "rolled_back"],
+            [2, "rolled_back"],
+            [3, "completed"],
+          ],
+          checkpoints: [
+            [0, null, "ready", 1],
+            [1, 1, "stale"],
+            [2, null, "ready", 3],
+            [3, 3, "ready"],
+          ],
+        });
+
+        assert.deepStrictEqual(yield* resolve(threadId, 2), {
+          id: "checkpoint:all-rewound:0",
+          status: "ready",
+        });
+      }),
+    );
+
+    it.effect("never resolves to the baseline left in a rewound run's slot", () =>
+      Effect.gen(function* () {
+        // The server treats a null app run ordinal as thread start, so the
+        // slot 6 baseline would wipe the thread. Run 5's missing checkpoint is
+        // returned instead and the rollback command rejects it.
+        const threadId = yield* seedThread({
+          name: "baseline-guard",
+          runs: [
+            [5, "completed"],
+            [6, "rolled_back"],
+            [7, "completed"],
+          ],
+          checkpoints: [
+            [0, null, "ready", 5],
+            [5, 5, "missing"],
+            [6, null, "ready", 7],
+            [7, 7, "ready"],
+          ],
+        });
+
+        assert.deepStrictEqual(yield* resolve(threadId, 6), {
+          id: "checkpoint:baseline-guard:5",
+          status: "missing",
+        });
+      }),
+    );
+  },
 );

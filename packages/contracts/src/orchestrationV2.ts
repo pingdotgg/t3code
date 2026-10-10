@@ -2991,8 +2991,20 @@ export const OrchestrationV2Command = Schema.Union([
     restoreFiles: Schema.optional(Schema.Boolean),
     commandId: CommandId,
     threadId: ThreadId,
-    scopeId: CheckpointScopeId,
-    checkpointId: CheckpointId,
+    /**
+     * When present, the target checkpoint must belong to this scope. Applies
+     * to either selector.
+     */
+    scopeId: Schema.optional(CheckpointScopeId),
+    /** Selects the target checkpoint; takes precedence over `runOrdinal`. */
+    checkpointId: Schema.optional(CheckpointId),
+    /**
+     * Selects the checkpoint at the end of this run, or of the nearest earlier
+     * run a rollback has not discarded. 0 is thread start. Servers that accept
+     * it advertise `checkpointRollbackByRunOrdinal`. A command with neither
+     * selector decodes but is rejected before anything is written.
+     */
+    runOrdinal: Schema.optional(NonNegativeInt),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.fork"),

@@ -82,6 +82,7 @@ import {
   isCheckpointRestoreIsolated,
   SHARED_WORKSPACE_RESTORE_MESSAGE,
 } from "./CheckpointRestoreSafety.ts";
+import { checkpointForRunOrdinal } from "./CheckpointRollbackService.ts";
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { CommandPolicyV2, resolveMessageDispatchIntent } from "./CommandPolicy.ts";
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
@@ -9493,21 +9494,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }),
       );
 
-      const targetCheckpoint = projection.checkpoints.find(
-        (candidate) => candidate.id === command.checkpointId,
-      );
+      const targetCheckpoint =
+        command.checkpointId !== undefined
+          ? projection.checkpoints.find((candidate) => candidate.id === command.checkpointId)
+          : command.runOrdinal !== undefined
+            ? checkpointForRunOrdinal(projection, command.runOrdinal)
+            : undefined;
       if (targetCheckpoint === undefined) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: `Checkpoint ${command.checkpointId} was not found.`,
+          cause:
+            command.checkpointId === undefined
+              ? `No checkpoint restores run ordinal ${command.runOrdinal ?? "unknown"}.`
+              : `Checkpoint ${command.checkpointId} was not found.`,
         });
       }
       if (targetCheckpoint.status !== "ready") {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: `Checkpoint ${command.checkpointId} is ${targetCheckpoint.status} and cannot be restored.`,
+          cause: `Checkpoint ${targetCheckpoint.id} is ${targetCheckpoint.status} and cannot be restored.`,
         });
       }
       const targetScope = projection.checkpointScopes.find(
@@ -9520,11 +9527,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Checkpoint scope ${targetCheckpoint.scopeId} was not found.`,
         });
       }
-      if (targetScope.id !== command.scopeId) {
+      if (command.scopeId !== undefined && targetScope.id !== command.scopeId) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: `Checkpoint ${command.checkpointId} belongs to scope ${targetScope.id}, not ${command.scopeId}.`,
+          cause: `Checkpoint ${targetCheckpoint.id} belongs to scope ${targetScope.id}, not ${command.scopeId}.`,
         });
       }
       if (command.restoreFiles !== false) {
