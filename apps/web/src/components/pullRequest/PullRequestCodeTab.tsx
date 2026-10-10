@@ -85,6 +85,7 @@ import { PendingReviewCommentCard, ReviewThreadCard } from "./PullRequestReviewA
 import {
   isFileDiffCollapsed,
   isLineInFileDiff,
+  retainReviewDiffSlices,
   toggleFileDiffFoldForViewed,
   type DiffFoldOverride,
 } from "./pullRequestDiff.logic";
@@ -432,17 +433,27 @@ function PullRequestCodeTab({
     isViewed: isFileViewed,
     isStale: isFileViewedStale,
   } = filesViewed;
-  // The button goes around the host's cache, so everything the tab reads from it starts over:
-  // the diff from its first page, and with it the ticks, which a push since the last read can
-  // have marked as standing against an older version of the file.
+  // Reread from the first page. It stays on screen so the reader does not jump; later pages
+  // belong to the snapshot being replaced, so they are fetched again. Each of those pages is
+  // its own cached query, so the walk asks for it again instead of replaying the old snapshot.
+  const refreshGeneration = useRef(0);
+  const refreshedCursor = useRef<string | null | undefined>(undefined);
   const appliedRefreshToken = useRef(refreshToken);
   useEffect(() => {
     if (appliedRefreshToken.current === refreshToken) return;
     appliedRefreshToken.current = refreshToken;
-    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
+    refreshGeneration.current += 1;
+    refreshedCursor.current = undefined;
+    setSliceState((previous) => retainReviewDiffSlices(previous, scopeKey));
     refreshFirstDiffPage();
     refreshFilesViewed();
   }, [refreshToken, scopeKey, refreshFirstDiffPage, refreshFilesViewed]);
+  useEffect(() => {
+    if (refreshGeneration.current === 0 || cursor === null) return;
+    if (refreshedCursor.current === cursor) return;
+    refreshedCursor.current = cursor;
+    diffQuery.refresh();
+  }, [cursor, diffQuery.refresh]);
   const nextCursor = loadedSlices.at(-1)?.nextCursor ?? null;
   // What a slice withheld: the host declining to inline part of it, or a patch the viewer could
   // not structure and so dropped. Neither says anything about there being more to fetch.

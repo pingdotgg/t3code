@@ -2,11 +2,14 @@ import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/Th
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import {
+  type DiffPanelOpenContext,
   resolveBackgroundDraftWorkspaceOptions,
   resolveDraftHeroState,
-  shouldDockDraftHeroForSubmission,
   resolveVisibleWorktreeSetup,
   resolveWorktreeSetupProgress,
+  shouldApplyProactiveChangesScope,
+  shouldDockDraftHeroForSubmission,
+  shouldResetDiffSelectionToChanges,
 } from "./ChatView.logic";
 import * as DateTime from "effect/DateTime";
 import { restorePlanFollowUpComposer } from "./ChatView.logic";
@@ -2302,15 +2305,29 @@ export default function ChatView(props: ChatViewProps) {
   );
   const diffOpen = activeRightPanelKind === "diff";
   const explicitDiffOpenRef = useRef<ScopedThreadRef | null>(null);
+  const diffPanelOpenContextRef = useRef<DiffPanelOpenContext | null>(null);
   useLayoutEffect(() => {
     const explicitThreadRef = explicitDiffOpenRef.current;
     explicitDiffOpenRef.current = null;
-    // Generic openings always show Changes, including tab fallbacks and thread changes.
-    // A timeline click instead opens the specific turn/file the user requested.
-    if (diffOpen && activeThreadRef && explicitThreadRef !== activeThreadRef) {
+    const previous = diffPanelOpenContextRef.current;
+    diffPanelOpenContextRef.current = { threadKey: activeThreadKey, diffOpen };
+    // Generic openings show Changes: the first time the diff is on screen, a tab
+    // fallback, or a switch to another thread. A timeline click keeps its turn.
+    // An agent turn replaces the thread shell without closing the diff, and that
+    // refresh must leave Uncommitted or the selected turn alone.
+    if (
+      activeThreadRef &&
+      shouldResetDiffSelectionToChanges({
+        diffOpen,
+        activeThreadRef,
+        explicitThreadRef,
+        previous,
+        threadKey: activeThreadKey,
+      })
+    ) {
       useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
     }
-  }, [activeThreadRef, diffOpen]);
+  }, [activeThreadKey, activeThreadRef, diffOpen]);
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, activeThreadRef),
   );
@@ -5823,10 +5840,14 @@ export default function ChatView(props: ChatViewProps) {
         diffAction === "defer" || shouldDeferLink ? previousRunningTurnId : activeRunningTurnId,
     };
     if (diffAction !== "open" || newlyCompletedTurnId === null) return;
+    const alreadyReviewingDiff = openSurface?.kind === "diff";
     if (!panels.openProactive(activeThreadRef, { id: "diff", kind: "diff" }, userActionRevision)) {
       return;
     }
-    useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
+    // A completed turn may open Changes. A review already on screen keeps its scope.
+    if (shouldApplyProactiveChangesScope({ openedDiff: true, alreadyReviewingDiff })) {
+      useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
+    }
     onDiffPanelOpen?.();
   }, [
     turnDiffSummaries,
