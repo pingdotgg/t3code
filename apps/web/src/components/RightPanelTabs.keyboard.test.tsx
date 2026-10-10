@@ -194,9 +194,21 @@ describe("right panel new-tab shortcut", () => {
     expect((await press("t", { metaKey: true, isComposing: true })).defaultPrevented).toBe(false);
     const dialog = document.createElement("div");
     dialog.dataset.slot = "dialog-popup";
+    dialog.dataset.open = "";
     container.append(dialog);
     expect((await press("t", { metaKey: true })).defaultPrevented).toBe(false);
     expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it("opens past a closed popup that stays mounted", async () => {
+    await renderPanel();
+    const popover = document.createElement("div");
+    popover.dataset.slot = "popover-popup";
+    popover.dataset.closed = "";
+    popover.hidden = true;
+    container.append(popover);
+    expect((await press("t", { metaKey: true })).defaultPrevented).toBe(true);
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
   });
 
   it("supports arrow keys with an existing tab in sheet mode and clears the menu on close", async () => {
