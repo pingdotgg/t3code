@@ -26,6 +26,7 @@ import {
 } from "@t3tools/provider-core/server/textGenerationUtils";
 import { codexModelFamily, getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const CODEX_TIMEOUT_MS = 180_000;
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -214,7 +215,12 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         env: {
           ...effectiveEnvironment,
           ...(effectiveConfig.homePath
-            ? { CODEX_HOME: expandHomePath(effectiveConfig.homePath) }
+            ? {
+                CODEX_HOME: expandHomePath(
+                  effectiveConfig.homePath,
+                  yield* HostProcess.HomeDirectory,
+                ),
+              }
             : {}),
         },
         cwd,

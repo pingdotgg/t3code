@@ -7,6 +7,7 @@ import { vi } from "vite-plus/test";
 
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
+import * as CursorSdk from "./CursorSdk.ts";
 
 const cursorSdkMock = vi.hoisted(() => {
   const closeExecutionOrder: Array<string> = [];
@@ -102,6 +103,7 @@ vi.mock("./sdk.ts", () => ({
       list: vi.fn(async () => []),
     },
   },
+  createAgentPlatform: vi.fn(),
 }));
 
 const layerTest = CursorAgentSdk.layer.pipe(
@@ -124,6 +126,7 @@ const layerTest = CursorAgentSdk.layer.pipe(
       canonical: undefined,
     }),
   ),
+  Layer.provide(CursorSdk.layer),
   Layer.provide(NodeServices.layer),
 );
 

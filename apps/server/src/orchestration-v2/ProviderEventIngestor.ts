@@ -31,7 +31,7 @@ import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeProviderFailureTurnItem } from "@t3tools/provider-core/server/failure";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { stripUnservedToolOutputImageBytes } from "./toolOutputImageBytes.ts";
@@ -41,7 +41,7 @@ export class ProviderEventNormalizeError extends Schema.TaggedError<ProviderEven
   {
     providerSessionId: ProviderSessionId,
     threadId: ThreadId,
-    providerEvent: ProviderAdapterV2Event,
+    providerEvent: ProviderAdapter.ProviderAdapterV2Event,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -93,7 +93,7 @@ export const layerAnalytics = Layer.effect(
 );
 
 function providerTurnAnalyticsProperties(input: {
-  readonly driver: ProviderAdapterV2Event["driver"];
+  readonly driver: ProviderAdapter.ProviderAdapterV2Event["driver"];
   readonly providerTurn: OrchestrationV2ProviderTurn;
   readonly context?: ProviderTurnAnalyticsContext;
 }): Readonly<Record<string, unknown>> {
@@ -257,7 +257,7 @@ export interface ProviderEventIngestInput {
   readonly runId?: RunId;
   readonly nodeId?: NodeId;
   readonly rawEventId?: RawEventId;
-  readonly event: ProviderAdapterV2Event;
+  readonly event: ProviderAdapter.ProviderAdapterV2Event;
   readonly analyticsContext?: ProviderTurnAnalyticsContext;
 }
 
@@ -657,7 +657,6 @@ export const layer: Layer.Layer<
               yield* makeDomainEvent(input, {
                 type: "turn-item.updated",
                 payload: makeProviderFailureTurnItem({
-                  idAllocator,
                   driver: input.event.driver,
                   threadId: input.threadId,
                   runId: input.runId ?? null,

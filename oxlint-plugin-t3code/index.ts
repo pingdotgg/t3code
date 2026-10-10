@@ -7,6 +7,7 @@ import noInlineSchemaCompile from "./rules/no-inline-schema-compile.ts";
 import noManualEffectRuntimeInTests from "./rules/no-manual-effect-runtime-in-tests.ts";
 import noMobileUniwindThemeEscapeHatches from "./rules/no-mobile-uniwind-theme-escape-hatches.ts";
 import noNativeTitleTooltip from "./rules/no-native-title-tooltip.ts";
+import noOutsetStateIndicators from "./rules/no-outset-state-indicators.ts";
 import noRawMcpRegistration from "./rules/no-raw-mcp-registration.ts";
 import noRawResizeObserver from "./rules/no-raw-resize-observer.ts";
 import noTestInLoop from "./rules/no-test-in-loop.ts";
@@ -28,6 +29,7 @@ export default definePlugin({
     "no-manual-effect-runtime-in-tests": noManualEffectRuntimeInTests,
     "no-mobile-uniwind-theme-escape-hatches": noMobileUniwindThemeEscapeHatches,
     "no-native-title-tooltip": noNativeTitleTooltip,
+    "no-outset-state-indicators": noOutsetStateIndicators,
     "no-raw-mcp-registration": noRawMcpRegistration,
     "no-raw-resize-observer": noRawResizeObserver,
     "no-test-in-loop": noTestInLoop,

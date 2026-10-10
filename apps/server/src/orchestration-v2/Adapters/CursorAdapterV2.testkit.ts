@@ -1,4 +1,4 @@
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { InteractionUpdate, RunResult } from "@cursor/sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -15,7 +15,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
@@ -28,7 +28,7 @@ import {
   cursorSdkModelSelection,
   makeCursorAgentOptions,
 } from "@t3tools/provider-cursor/testing";
-import type { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type { RuntimePolicyV2Override } from "../RuntimePolicy.ts";
 
 const CursorAgentSdkReplayTranscript = Schema.Struct({
@@ -213,7 +213,7 @@ function replayRunnerError(
 
 export function makeCursorAgentSdkReplayRunner(
   transcript: CursorAgentSdkReplayTranscript,
-): CursorAgentSdk.CursorAgentSdkRunnerShape {
+): CursorAgentSdk.CursorAgentSdkRunner["Service"] {
   let cursor = 0;
   let failure: CursorAgentSdkReplayError | null = null;
   let cursorAdvanced = makeSignal();
@@ -491,7 +491,7 @@ export function makeCursorAgentSdkReplayRunner(
 function layerCursorAgentSdkReplay(
   transcript: CursorAgentSdkReplayTranscript,
   options?: {
-    readonly runner?: CursorAgentSdk.CursorAgentSdkRunnerShape;
+    readonly runner?: CursorAgentSdk.CursorAgentSdkRunner["Service"];
     readonly assertCompleteOnFinalize?: boolean;
   },
 ): Layer.Layer<CursorAgentSdk.CursorAgentSdkRunner> {
@@ -512,14 +512,14 @@ function layerCursorAgentSdkReplay(
 export function layer(
   transcript: CursorAgentSdkReplayTranscript,
   options?: {
-    readonly runner?: CursorAgentSdk.CursorAgentSdkRunnerShape;
+    readonly runner?: CursorAgentSdk.CursorAgentSdkRunner["Service"];
     readonly assertCompleteOnFinalize?: boolean;
   },
 ) {
   // Skill discovery also scans user roots under HOME; an empty HOME keeps
   // replays from picking up the host's own skills.
   const layerHostEnvironment = Layer.effect(
-    HostProcessEnvironment,
+    HostProcess.Environment,
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cursor-replay-home-" });
@@ -537,7 +537,7 @@ export function layer(
     Layer.provide(
       Layer.mergeAll(
         layerCursorAgentSdkReplay(transcript, options),
-        layerTestProviderHost().pipe(Layer.provide(NodeServices.layer)),
+        TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
         layerHostEnvironment,
         NodeServices.layer,
         IdAllocator.layer,
@@ -625,7 +625,7 @@ function recordingRuntimePolicy(input: {
   readonly cwd: string;
   readonly interactionMode: "default" | "plan";
   readonly override?: Pick<RuntimePolicyV2Override, "approvalPolicy" | "sandboxPolicy">;
-}): ProviderAdapterV2RuntimePolicy {
+}): ProviderAdapter.ProviderAdapterV2RuntimePolicy {
   return {
     runtimeMode: "full-access",
     interactionMode: input.interactionMode,
@@ -719,6 +719,7 @@ export const recordCursorAgentSdkReplayTranscript = Effect.fn(
         : { override: input.runtimePolicyOverride }),
     }),
     threadId,
+    mcpSession: undefined,
   });
   const sendOptions = {
     model: cursorSdkModelSelection(input.modelSelection),
@@ -806,7 +807,7 @@ export const recordCursorAgentSdkReplayTranscript = Effect.fn(
         heldUntilCancel = [];
       }
     });
-  const runner = CursorAgentSdk.makeCursorAgentSdkRunner(() => recordFrame);
+  const runner = yield* CursorAgentSdk.makeCursorAgentSdkRunner(() => recordFrame);
 
   const awaitSignal = (signal: Deferred.Deferred<void>, description: string) =>
     Deferred.await(signal).pipe(

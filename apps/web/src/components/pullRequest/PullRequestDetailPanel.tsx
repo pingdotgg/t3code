@@ -380,7 +380,7 @@ function PullRequestBaseFreshnessWarning({
             type="button"
             aria-label={summary}
             className={cn(
-              "inline-flex min-w-0 shrink-0 cursor-help items-center gap-1 rounded-sm text-warning-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              "inline-flex min-w-0 shrink-0 cursor-help items-center gap-1 rounded-sm text-warning-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
               className,
             )}
           />
@@ -823,7 +823,7 @@ export function PullRequestDetailPanel({
   const canMergeSinglePullRequest = allowsSinglePullRequestMerge({
     supportsStackActions,
     hasStack: nativeStack !== null,
-    stackPending: !nativeStackQuery.isSuccess || nativeStackQuery.isPending,
+    stackPending: !nativeStackQuery.isFresh,
     stackError: nativeStackQuery.error,
   });
   const activityPending = activityQuery.isPending && activity === null;
@@ -1648,10 +1648,10 @@ export function PullRequestDetailPanel({
         actions={
           handoffSummary ? (
             <TooltipProvider delay={150} closeDelay={150} timeout={400}>
-              {checkoutControl}
               {handoffSummary.state === "open" && handoffSummary.mergeability === "conflicting"
                 ? resolveConflictsControl
                 : null}
+              {checkoutControl}
             </TooltipProvider>
           ) : undefined
         }
@@ -1864,7 +1864,6 @@ export function PullRequestDetailPanel({
                   threadRef={null}
                 />
               ) : null}
-              {checkoutControl}
               {/* Said where the Merge button is, because it is the answer to why nobody has
                   pressed it: the merge is already asked for, and the host is holding it. */}
               {autoMergeArmed && primaryAction !== "auto-merge-armed" ? (
@@ -1997,6 +1996,9 @@ export function PullRequestDetailPanel({
                   </span>
                 </Badge>
               ) : null}
+              {/* Keep checkout beside the menu so host actions arriving on its left cannot
+                  move a different action under the reader's pointer. */}
+              {checkoutControl}
               <Menu>
                 <Tooltip>
                   <TooltipTrigger

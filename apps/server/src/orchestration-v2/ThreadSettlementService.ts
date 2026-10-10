@@ -237,8 +237,14 @@ export function resolveAutoSettlementAt(input: {
     return activityAtMs === null ? thread.createdAt : DateTime.makeUnsafe(activityAtMs);
   }
   if (input.autoSettleAfterDays === null || activityAtMs === null) return null;
-  return activityAtMs < input.nowMs - input.autoSettleAfterDays * DAY_MS
-    ? DateTime.makeUnsafe(activityAtMs)
+  // A passed wake timer restarts inactivity. An earlier wake can only delay settlement.
+  const snoozedUntilMs = toMillis(thread.snoozedUntil);
+  const timerWakeAtMs =
+    snoozedUntilMs !== null && snoozedUntilMs <= input.nowMs ? snoozedUntilMs : null;
+  const inactivityAtMs =
+    latestMillis([activityAtMs, toMillis(thread.lastSnoozeWakeAt), timerWakeAtMs]) ?? activityAtMs;
+  return inactivityAtMs < input.nowMs - input.autoSettleAfterDays * DAY_MS
+    ? DateTime.makeUnsafe(inactivityAtMs)
     : null;
 }
 

@@ -23,7 +23,7 @@
  * Terminal-only decoration such as status, widget, title, and editor-text
  * updates has no matching T3 surface and is ignored.
  */
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import {
   defaultInstanceIdForDriver,
@@ -58,16 +58,16 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/process";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
-import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { parsePiCompactCommand, type PiCompactCommand } from "./commands.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriver,
@@ -390,6 +390,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const { continuationRequests } = options;
 
   const protocolError = (detail: string, payload?: unknown) =>
@@ -409,7 +410,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
     ) {
       const scope = yield* Effect.scope;
       const cwd = input.runtimePolicy.cwd ?? host.paths.cwd;
-      const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+      const mcpSession = yield* mcpSessions.read(input.threadId);
       const provideCacheFs = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem>) =>
         effect.pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -775,7 +776,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           type: "turn_item.updated",
           driver: PI_PROVIDER,
           turnItem: makeProviderRetryTurnItem({
-            idAllocator,
             driver: PI_PROVIDER,
             threadId: turn.turnInput.threadId,
             runId: turn.turnInput.runId,
@@ -3262,6 +3262,7 @@ export type PiAdapterV2DriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
+  | McpProviderSessions.McpProviderSessions
   | ProviderHost.ProviderHost;
 
 export const PiAdapterV2Driver: ProviderAdapterDriver<PiSettings, PiAdapterV2DriverEnv> = {
@@ -3270,12 +3271,12 @@ export const PiAdapterV2Driver: ProviderAdapterDriver<PiSettings, PiAdapterV2Dri
   defaultConfig: (): PiSettings => DEFAULT_PI_SETTINGS,
   create: Effect.fn("PiAdapterV2Driver.create")(
     function* (input: ProviderAdapterDriverCreateInput<PiSettings>) {
-      const hostEnvironment = yield* HostProcessEnvironment;
+      const hostEnvironment = yield* HostProcess.Environment;
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       return yield* makePiAdapterV2({
         instanceId: input.instanceId,
         settings: { ...input.config, enabled: input.enabled },
-        environment: mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
+        environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
         continuationRequests,
       });
     },
@@ -3298,7 +3299,7 @@ const layer: Layer.Layer<ProviderAdapter.ProviderAdapterV2, never, PiAdapterV2Dr
   Layer.effect(
     ProviderAdapter.ProviderAdapterV2,
     Effect.gen(function* () {
-      const hostEnvironment = yield* HostProcessEnvironment;
+      const hostEnvironment = yield* HostProcess.Environment;
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       return yield* makePiAdapterV2({
         instanceId: PI_DEFAULT_INSTANCE_ID,
