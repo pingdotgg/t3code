@@ -134,6 +134,7 @@ describe("boundedThreadSnapshotLoader", () => {
       const loader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader;
       const result = yield* loader.load(PREPARED, THREAD_ID);
       expect(new URL(urls[0]!).searchParams.get("compactTurnItems")).toBe("1");
+      expect(new URL(urls[0]!).searchParams.get("compactCheckpointItems")).toBe("1");
       expect(result._tag).toBe("present");
       if (result._tag !== "present") return;
       expect(result.snapshot.projection.turnItems.map((item) => String(item.id))).toEqual([

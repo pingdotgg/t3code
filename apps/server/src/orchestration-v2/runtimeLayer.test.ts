@@ -2095,6 +2095,36 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           number === 3 ? [1, 2, 3] : [1, 2],
         );
       }
+      const beforeSync = (yield* orchestrator.getThreadRecords(threadId, [])).thread;
+      const syncedSnapshot = {
+        state: "open" as const,
+        title: "Updated host title",
+        headBranch: "feature/pr-links",
+        baseBranch: "main",
+        isDraft: false,
+        updatedAt: "2026-07-24T00:00:00.000Z",
+        syncedAt: "2026-07-24T00:00:00.000Z",
+      };
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-link.sync",
+        commandId: CommandId.make("branch-pr-sync"),
+        threadId,
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 2,
+        snapshot: syncedSnapshot,
+        stack: null,
+      });
+      const afterSync = (yield* orchestrator.getThreadRecords(threadId, [])).thread;
+      assert.deepEqual(
+        afterSync.pullRequests?.map((link) => link.number),
+        [1, 2, 3],
+      );
+      assert.deepEqual(
+        afterSync.pullRequests?.find((link) => link.number === 2)?.snapshot,
+        syncedSnapshot,
+      );
+      assert.deepEqual(afterSync.updatedAt, beforeSync.updatedAt);
       yield* orchestrator.dispatch({
         type: "thread.pull-request.unlink",
         commandId: CommandId.make("branch-pr-unlink"),

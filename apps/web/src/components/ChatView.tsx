@@ -149,6 +149,7 @@ import { Debouncer } from "@tanstack/react-pacer";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import {
+  type ComponentProps,
   Fragment,
   lazy,
   memo,
@@ -267,7 +268,6 @@ import { resolveDiscoveredServerUrl } from "../browser/browserTargetResolver";
 import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
 import { closePreviewSession } from "./preview/closePreviewSession";
-import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { usePreviewSession } from "./preview/usePreviewSession";
 import { subscribePreviewAction } from "./preview/previewActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
@@ -282,12 +282,10 @@ import {
   pullRequestPanelContext,
   threadPullRequestPanelTarget,
 } from "./pullRequest/pullRequestDetail.logic";
-import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs } from "./RightPanelTabs";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
-import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
 import { useDeviceState } from "~/state/device";
 import { DeviceSetup } from "./device/DeviceSetup";
 import { Dialog } from "./ui/dialog";
@@ -297,7 +295,6 @@ import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { isEditableFocused } from "../lib/editableFocus";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { resolveChatShortcutCommand, shortcutLabelForCommand } from "../keybindings";
-import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
   AlarmClockIcon,
   CheckCircle2Icon,
@@ -461,7 +458,8 @@ import {
   RightPanelMaximizeControl,
 } from "./chat/PanelLayoutControls";
 import { expandedImageKey, type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
-import { ThreadDetailsPanel, type ThreadDetailsPanelProps } from "./chat/ThreadDetailsPanel";
+import type { ThreadDetailsPanelProps } from "./chat/ThreadDetailsPanel";
+import { ThreadDetailsCard } from "./chat/ThreadDetailsCard";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
   type EnvironmentOption,
@@ -504,6 +502,7 @@ import {
   DRAFT_HERO_TRANSITION_EASING,
   MOBILE_COMPOSER_VIEW_TRANSITION_NAME,
   MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME,
+  isMobileComposerTransitionEnabled,
   runMobileComposerTransition,
 } from "./chat/draftHeroTransition";
 import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
@@ -546,7 +545,7 @@ import {
   getAntigravitySendBlockReason,
   observeProactivePanelUserChoice,
   resolveProactiveTurnDiffAction,
-  resolveThreadMetadataUpdateForNextTurn,
+  resolveThreadSettingsUpdatesForNextTurn,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
@@ -709,6 +708,62 @@ const DevicePanel = lazy(() =>
   import("./device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
+// Panels that only some threads open load on first use, keeping them out of the
+// chunks that must arrive before the composer can paint.
+const LazyPullRequestDetailPanel = lazy(() =>
+  import("./pullRequest/PullRequestDetailPanel").then((module) => ({
+    default: module.PullRequestDetailPanel,
+  })),
+);
+function PullRequestDetailPanel(props: ComponentProps<typeof LazyPullRequestDetailPanel>) {
+  return (
+    <Suspense fallback={<PullRequestDetailGhost />}>
+      <LazyPullRequestDetailPanel {...props} />
+    </Suspense>
+  );
+}
+const ThreadPullRequestsPanel = lazy(() =>
+  import("./pullRequest/ThreadPullRequestsPanel").then((module) => ({
+    default: module.ThreadPullRequestsPanel,
+  })),
+);
+const LazyThreadTerminalDrawer = lazy(() => import("./ThreadTerminalDrawer"));
+function ThreadTerminalDrawer(props: ComponentProps<typeof LazyThreadTerminalDrawer>) {
+  // Keep existing terminal sessions mounted when hidden, but an empty closed drawer
+  // has no terminal to render or synchronize and need not load its renderer.
+  if (props.visible === false && props.terminalIds.length === 0) return null;
+  return (
+    <Suspense fallback={null}>
+      <LazyThreadTerminalDrawer {...props} />
+    </Suspense>
+  );
+}
+const ThreadPreviewMiniPlayer = lazy(() =>
+  import("./preview/ThreadPreviewMiniPlayer").then((module) => ({
+    default: module.ThreadPreviewMiniPlayer,
+  })),
+);
+const ThreadDetailsPanelContent = lazy(() =>
+  import("./chat/ThreadDetailsPanel").then((module) => ({
+    default: module.ThreadDetailsPanelContent,
+  })),
+);
+function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
+  return (
+    <ThreadDetailsCard
+      threadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
+      anchor={props.anchor}
+      handle={props.handle}
+      onPresentationChange={props.onPresentationChange}
+    >
+      {(density) => (
+        <Suspense fallback={null}>
+          <ThreadDetailsPanelContent {...props} density={density} />
+        </Suspense>
+      )}
+    </ThreadDetailsCard>
+  );
+}
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
@@ -6281,16 +6336,15 @@ export default function ChatView(props: ChatViewProps) {
       runtimeMode: RuntimeMode;
       interactionMode: ProviderInteractionMode;
     }): Promise<AtomCommandResult<void, unknown>> => {
-      if (!serverThread) {
+      const updates = serverThread
+        ? resolveThreadSettingsUpdatesForNextTurn(serverThread, input)
+        : null;
+      if (!updates) {
         return AsyncResult.success(undefined);
       }
 
       let result: AtomCommandResult<void, unknown> = AsyncResult.success(undefined);
-      const metadataUpdate = resolveThreadMetadataUpdateForNextTurn({
-        currentModelSelection: serverThread.modelSelection,
-        currentBranch: serverThread.branch,
-        ...(input.branch ? { nextBranch: input.branch } : {}),
-      });
+      const { metadataUpdate } = updates;
       if (metadataUpdate) {
         result = mapAtomCommandResult(
           await updateThreadMetadata({
@@ -6307,13 +6361,13 @@ export default function ChatView(props: ChatViewProps) {
         }
       }
 
-      if (input.runtimeMode !== serverThread.runtimeMode) {
+      if (updates.runtimeMode !== null) {
         result = mapAtomCommandResult(
           await setThreadRuntimeMode({
             environmentId,
             input: {
               threadId: input.threadId,
-              runtimeMode: input.runtimeMode,
+              runtimeMode: updates.runtimeMode,
               createdAt: input.createdAt,
             },
           }),
@@ -6324,13 +6378,13 @@ export default function ChatView(props: ChatViewProps) {
         }
       }
 
-      if (input.interactionMode !== serverThread.interactionMode) {
+      if (updates.interactionMode !== null) {
         result = mapAtomCommandResult(
           await setThreadInteractionMode({
             environmentId,
             input: {
               threadId: input.threadId,
-              interactionMode: input.interactionMode,
+              interactionMode: updates.interactionMode,
               createdAt: input.createdAt,
             },
           }),
@@ -6360,6 +6414,10 @@ export default function ChatView(props: ChatViewProps) {
   // re-pins on its own (independent of the refs), so the timeline needs a
   // render-visible flag to switch it off once the user scrolls away.
   const [timelineLiveFollowEnabled, setTimelineLiveFollowEnabled] = useState(true);
+  const isTimelineFollowingEnd = useCallback(
+    () => timelineScrollModeRef.current === "following-end",
+    [],
+  );
   const pendingTimelineAnchorRef = useRef<MessageId | null>(null);
   const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
   const settledTimelineAnchorRef = useRef<MessageId | null>(null);
@@ -9418,11 +9476,33 @@ export default function ChatView(props: ChatViewProps) {
       }
     }
 
-    if (
+    const dockDraftHeroThreadKey =
       multipleModelSelections === null &&
-      shouldDockDraftHeroForSubmission({ isDraftHeroState, activeThreadKey, submissionIntent }) &&
-      activeThreadKey
-    ) {
+      shouldDockDraftHeroForSubmission({ isDraftHeroState, activeThreadKey, submissionIntent })
+        ? activeThreadKey
+        : null;
+    // A plain send can dispatch before the dock and optimistic render.
+    // Mobile view transitions still snapshot the hero before it changes.
+    const dispatchBeforeRender =
+      multipleModelSelections === null &&
+      submissionIntent !== "background" &&
+      composerAttachmentsSnapshot.length === 0 &&
+      !compactBeforeSend &&
+      (!isServerThread ||
+        serverThread === null ||
+        resolveThreadSettingsUpdatesForNextTurn(serverThread, {
+          ...(localCheckoutBranchMismatch
+            ? { branch: localCheckoutBranchMismatch.currentBranch }
+            : {}),
+          runtimeMode,
+          interactionMode: sendInteractionMode,
+        }) === null) &&
+      !(dockDraftHeroThreadKey && isMobileComposerTransitionEnabled(panelAnimationsActive));
+    if (dockDraftHeroThreadKey && dispatchBeforeRender) {
+      // Batched with the optimistic turn below; the rect is read before React renders any of it.
+      captureDraftHeroComposerRect();
+      setDockedDraftHeroThreadKey(dockDraftHeroThreadKey);
+    } else if (dockDraftHeroThreadKey) {
       let resolveDockStarted: (() => void) | undefined;
       const dockStarted = new Promise<void>((resolve) => {
         resolveDockStarted = resolve;
@@ -9431,7 +9511,7 @@ export default function ChatView(props: ChatViewProps) {
         () => {
           flushSync(() => {
             captureDraftHeroComposerRect();
-            setDockedDraftHeroThreadKey(activeThreadKey);
+            setDockedDraftHeroThreadKey(dockDraftHeroThreadKey);
           });
           resolveDockStarted?.();
         },
@@ -9865,54 +9945,7 @@ export default function ChatView(props: ChatViewProps) {
       ctxSelectedModelSelection.options,
     );
 
-    let failure: AtomCommandResult<unknown, unknown> | null = null;
-
-    if (failure === null && isServerThread) {
-      const settingsResult = await persistThreadSettingsForNextTurn({
-        threadId: threadIdForSend,
-        createdAt: messageCreatedAt,
-        ...(localCheckoutBranchMismatch
-          ? { branch: localCheckoutBranchMismatch.currentBranch }
-          : {}),
-        runtimeMode,
-        interactionMode: sendInteractionMode,
-      });
-      if (settingsResult._tag === "Failure") {
-        failure = settingsResult;
-      }
-    }
-
-    const turnAttachmentsResult = await settlePromise(async () => {
-      const turnAttachments = await turnAttachmentsPromise;
-      const liveFileBlockReason = readLiveAttachmentCapabilities().fileBlockReason;
-      if (liveFileBlockReason !== null) {
-        throw new Error(liveFileBlockReason);
-      }
-      return turnAttachments;
-    });
-    if (failure === null && turnAttachmentsResult._tag === "Failure") {
-      failure = turnAttachmentsResult;
-    }
-
-    if (failure === null && compactBeforeSend) {
-      const compactResult = await startThreadTurn({
-        environmentId,
-        input: {
-          threadId: threadIdForSend,
-          message: { messageId: newMessageId(), role: "user", text: "/compact", attachments: [] },
-          modelSelection: ctxSelectedModelSelection,
-          runtimeMode,
-          interactionMode: sendInteractionMode,
-        },
-      });
-      if (compactResult._tag === "Failure") {
-        failure = compactResult;
-      }
-    }
-
-    let backgroundDraftOpened = false;
-    let turnStartSucceeded = false;
-    if (failure === null && turnAttachmentsResult._tag === "Success") {
+    const startTurnForSend = (turnAttachments: Awaited<typeof turnAttachmentsPromise>) => {
       const bootstrap =
         isLocalDraftThread || baseBranchForWorktree
           ? {
@@ -9942,12 +9975,7 @@ export default function ChatView(props: ChatViewProps) {
                 : {}),
             }
           : undefined;
-      const backgroundThreadRef =
-        submissionIntent === "background" && isLocalDraftThread
-          ? scopeThreadRef(environmentId, threadIdForSend)
-          : null;
-      if (backgroundThreadRef) beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
-      const startPromise = startThreadTurn({
+      return startThreadTurn({
         environmentId,
         input: {
           threadId: threadIdForSend,
@@ -9955,10 +9983,10 @@ export default function ChatView(props: ChatViewProps) {
             messageId: messageIdForSend,
             role: "user",
             text: outgoingMessageText,
-            attachments: turnAttachmentsResult.value,
+            attachments: turnAttachments,
             ...(() => {
               const context = buildOutgoingMessageContext(
-                turnAttachmentsResult.value.map((attachment, index) =>
+                turnAttachments.map((attachment, index) =>
                   "id" in attachment && attachment.id !== undefined
                     ? attachment.id
                     : composerAttachmentsSnapshot[index]!.id,
@@ -9992,6 +10020,67 @@ export default function ChatView(props: ChatViewProps) {
           createdAt: messageCreatedAt,
         },
       });
+    };
+    // Nothing above awaited, so React has not rendered the state queued for
+    // this send yet and the command reaches the socket first.
+    const earlyTurnStart = dispatchBeforeRender ? startTurnForSend([]) : null;
+
+    let failure: AtomCommandResult<unknown, unknown> | null = null;
+
+    if (failure === null && isServerThread && !dispatchBeforeRender) {
+      const settingsResult = await persistThreadSettingsForNextTurn({
+        threadId: threadIdForSend,
+        createdAt: messageCreatedAt,
+        ...(localCheckoutBranchMismatch
+          ? { branch: localCheckoutBranchMismatch.currentBranch }
+          : {}),
+        runtimeMode,
+        interactionMode: sendInteractionMode,
+      });
+      if (settingsResult._tag === "Failure") {
+        failure = settingsResult;
+      }
+    }
+
+    const turnAttachmentsResult = dispatchBeforeRender
+      ? AsyncResult.success<Awaited<typeof turnAttachmentsPromise>>([])
+      : await settlePromise(async () => {
+          const turnAttachments = await turnAttachmentsPromise;
+          const liveFileBlockReason = readLiveAttachmentCapabilities().fileBlockReason;
+          if (liveFileBlockReason !== null) {
+            throw new Error(liveFileBlockReason);
+          }
+          return turnAttachments;
+        });
+    if (failure === null && turnAttachmentsResult._tag === "Failure") {
+      failure = turnAttachmentsResult;
+    }
+
+    if (failure === null && compactBeforeSend) {
+      const compactResult = await startThreadTurn({
+        environmentId,
+        input: {
+          threadId: threadIdForSend,
+          message: { messageId: newMessageId(), role: "user", text: "/compact", attachments: [] },
+          modelSelection: ctxSelectedModelSelection,
+          runtimeMode,
+          interactionMode: sendInteractionMode,
+        },
+      });
+      if (compactResult._tag === "Failure") {
+        failure = compactResult;
+      }
+    }
+
+    let backgroundDraftOpened = false;
+    let turnStartSucceeded = false;
+    if (failure === null && turnAttachmentsResult._tag === "Success") {
+      const backgroundThreadRef =
+        submissionIntent === "background" && isLocalDraftThread
+          ? scopeThreadRef(environmentId, threadIdForSend)
+          : null;
+      if (backgroundThreadRef) beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
+      const startPromise = earlyTurnStart ?? startTurnForSend(turnAttachmentsResult.value);
       if (backgroundThreadRef) {
         markPromotedDraftThreadByRef(backgroundThreadRef);
         try {
@@ -11094,7 +11183,9 @@ export default function ChatView(props: ChatViewProps) {
         }
       />
     ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
-      <ThreadPullRequestsPanel threadRef={activeThreadRef} />
+      <Suspense fallback={null}>
+        <ThreadPullRequestsPanel threadRef={activeThreadRef} />
+      </Suspense>
     ) : renderedRightPanelSurface?.kind === "device" ? (
       <Suspense fallback={null}>
         <DevicePanel
@@ -11466,6 +11557,7 @@ export default function ChatView(props: ChatViewProps) {
                 }
                 routeThreadKey={displayedTimelineKey}
                 displayThreadKey={displayedTimelineKey}
+                paintOnly={paintOnlyDisplayedTimeline}
                 onOpenTurnDiff={paintOnlyDisplayedTimeline ? noopHeldTurnDiff : onOpenTurnDiff}
                 onOpenThread={onOpenRelatedThread}
                 parentThreadLink={paintOnlyDisplayedTimeline ? null : parentThreadLink}
@@ -11506,6 +11598,7 @@ export default function ChatView(props: ChatViewProps) {
                 onAnchorSizeChanged={onTimelineAnchorSizeChanged}
                 contentInsetEndAdjustment={composerTimelineInset}
                 liveFollowEnabled={!paintOnlyDisplayedTimeline && timelineLiveFollowEnabled}
+                isFollowingEnd={isTimelineFollowingEnd}
                 onIsAtEndChange={onIsAtEndChange}
                 onContentOverflowChange={setTimelineOverflows}
                 onToolOutputCollapsedAtEnd={onToolOutputCollapsedAtEnd}
@@ -11882,11 +11975,13 @@ export default function ChatView(props: ChatViewProps) {
             activePreviewMiniPlayer &&
             previewMiniPlayerVisible &&
             (activePreviewMiniPlayer.source.kind === "device" || canOperatePreview) ? (
-              <ThreadPreviewMiniPlayer
-                key={`${activeThreadKey}:${previewMiniPlayerSourceKey(activePreviewMiniPlayer.source)}`}
-                threadRef={activeThreadRef}
-                miniPlayer={activePreviewMiniPlayer}
-              />
+              <Suspense fallback={null}>
+                <ThreadPreviewMiniPlayer
+                  key={`${activeThreadKey}:${previewMiniPlayerSourceKey(activePreviewMiniPlayer.source)}`}
+                  threadRef={activeThreadRef}
+                  miniPlayer={activePreviewMiniPlayer}
+                />
+              </Suspense>
             ) : null}
 
             <AlertDialog open={branchRestoreConfirmOpen} onOpenChange={setBranchRestoreConfirmOpen}>

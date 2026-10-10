@@ -1,5 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import { describe, vi } from "vite-plus/test";
+import * as NodeZlib from "node:zlib";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -144,6 +145,74 @@ it.layer(
     Layer.provideMerge(NodeServices.layer),
   ),
 )("static HTTP responses", (it) => {
+  it.effect("serves precompressed manifest assets and revalidates other files", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-static-compressed-" });
+      yield* fs.makeDirectory(path.join(staticDir, "assets"));
+      const body = 'export const build = "precompressed";\n'.repeat(100);
+      const asset = "assets/app-1234abcd.js";
+      const br = NodeZlib.brotliCompressSync(body);
+      const gz = NodeZlib.gzipSync(body);
+      yield* fs.writeFileString(path.join(staticDir, asset), body);
+      yield* fs.writeFile(path.join(staticDir, `${asset}.br`), br);
+      yield* fs.writeFile(path.join(staticDir, `${asset}.gz`), gz);
+      yield* fs.writeFileString(
+        path.join(staticDir, "vite-manifest.json"),
+        JSON.stringify({ "src/app.ts": { file: asset, isEntry: true } }),
+      );
+      // A hash-like filename and a compressed copy alone cannot make a custom file immutable.
+      const custom = "assets/custom-1234abcd.js";
+      yield* fs.writeFileString(path.join(staticDir, custom), body);
+      yield* fs.writeFile(path.join(staticDir, `${custom}.br`), br);
+      const request = yield* makeStaticRequest(staticDir);
+
+      for (const [acceptEncoding, encoding, length] of [
+        ["br, gzip", "br", br.byteLength],
+        ["br;q=0, gzip", "gzip", gz.byteLength],
+        ["identity", undefined, Buffer.byteLength(body)],
+      ] as const) {
+        const response = yield* request(`/${asset}`, {
+          headers: { "accept-encoding": acceptEncoding },
+        });
+        expect(response.status).toBe(200);
+        expect(response.headers["content-encoding"]).toBe(encoding);
+        expect(response.headers["content-length"]).toBe(String(length));
+        expect(response.headers["content-type"]).toContain("javascript");
+        expect(response.headers["cache-control"]).toBe("public, max-age=31536000, immutable");
+        expect(response.headers["vary"]).toBe("Accept-Encoding");
+        expect(yield* response.text).toBe(body);
+        const head = yield* request(`/${asset}`, {
+          method: "HEAD",
+          headers: { "accept-encoding": acceptEncoding },
+        });
+        expect(head.headers["content-encoding"]).toBe(encoding);
+        expect(head.headers["content-length"]).toBe(String(length));
+        expect(yield* head.text).toBe("");
+        const unchanged = yield* request(`/${asset}`, {
+          headers: {
+            "accept-encoding": acceptEncoding,
+            "if-none-match": response.headers["etag"]!,
+          },
+        });
+        expect(unchanged.status).toBe(304);
+        expect(unchanged.headers["vary"]).toBe("Accept-Encoding");
+        expect(yield* unchanged.text).toBe("");
+      }
+      const unlisted = yield* request(`/${custom}`, { headers: { "accept-encoding": "br" } });
+      expect(unlisted.headers["cache-control"]).toBe("no-cache");
+      expect(unlisted.headers["content-length"]).toBeUndefined();
+      expect(yield* unlisted.text).toBe(body);
+
+      yield* fs.remove(path.join(staticDir, `${asset}.br`));
+      const fallback = yield* request(`/${asset}`, { headers: { "accept-encoding": "br, gzip" } });
+      expect(fallback.headers["content-encoding"]).toBe("gzip");
+      expect(fallback.headers["content-length"]).toBe(String(gz.byteLength));
+      expect(yield* fallback.text).toBe(body);
+    }),
+  );
+
   it.effect("revalidates non-HTML files and returns changed contents", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

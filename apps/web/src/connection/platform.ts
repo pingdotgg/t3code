@@ -28,6 +28,7 @@ import {
   type DesktopEnvironmentBootstrap,
   type DesktopSshEnvironmentTarget,
   type EnvironmentId,
+  type ExecutionEnvironmentDescriptor,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -39,6 +40,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient } from "effect/http";
+import { Atom } from "effect/reactivity";
 
 import { APP_VERSION } from "../branding";
 import { readDesktopPrimaryBearerToken } from "../environments/primary/desktopAuth";
@@ -341,15 +343,56 @@ const layerCapabilities = Layer.effectContext(
   }),
 );
 
+let primaryDescriptorPrefetchStarted = false;
+let primaryDescriptorPrefetch: {
+  readonly httpBaseUrl: string;
+  readonly startedAt: number;
+  readonly settled: Promise<ExecutionEnvironmentDescriptor | null>;
+} | null = null;
+
+/**
+ * Reads the primary environment's descriptor alongside the boot auth check,
+ * before route chunks queue on the browser's connections. The first primary
+ * registration reuses the answer instead of fetching it again.
+ */
+export function prefetchPrimaryEnvironmentDescriptor(): void {
+  if (primaryDescriptorPrefetchStarted) return;
+  primaryDescriptorPrefetchStarted = true;
+  const read = readPrimaryEnvironmentTargetResult();
+  if (read._tag === "Failure" || read.target === null) return;
+  const httpBaseUrl = read.target.target.httpBaseUrl;
+  primaryDescriptorPrefetch = {
+    httpBaseUrl,
+    startedAt: Date.now(),
+    settled: Effect.runPromise(
+      fetchRemoteEnvironmentDescriptor({ httpBaseUrl }).pipe(
+        Effect.provide(PrimaryEnvironmentHttpLayer.layer),
+      ),
+    ).catch(() => null),
+  };
+}
+
+const PREFETCHED_DESCRIPTOR_MAX_AGE_MS = 10_000;
+
 const loadPrimaryConnectionRegistration = Effect.fn(
   "web.connectionPlatform.loadPrimaryConnectionRegistration",
 )(function* (resolved: PrimaryEnvironmentTarget) {
-  const descriptor = yield* fetchRemoteEnvironmentDescriptor({
-    httpBaseUrl: resolved.target.httpBaseUrl,
-  }).pipe(
-    Effect.provide(PrimaryEnvironmentHttpLayer.layer),
-    Effect.mapError(mapRemoteEnvironmentError),
-  );
+  const prefetch = primaryDescriptorPrefetch;
+  primaryDescriptorPrefetch = null;
+  const now = yield* Clock.currentTimeMillis;
+  const prefetched =
+    prefetch?.httpBaseUrl === resolved.target.httpBaseUrl &&
+    now - prefetch.startedAt <= PREFETCHED_DESCRIPTOR_MAX_AGE_MS
+      ? yield* Effect.promise(() => prefetch.settled)
+      : null;
+  const descriptor =
+    prefetched ??
+    (yield* fetchRemoteEnvironmentDescriptor({
+      httpBaseUrl: resolved.target.httpBaseUrl,
+    }).pipe(
+      Effect.provide(PrimaryEnvironmentHttpLayer.layer),
+      Effect.mapError(mapRemoteEnvironmentError),
+    ));
   return new PrimaryConnectionRegistration({
     target: new PrimaryConnectionTarget({
       environmentId: descriptor.environmentId,
@@ -425,6 +468,12 @@ const loadSecondaryConnectionRegistration = Effect.fn(
 // signature of their endpoint until bearer credentials approach expiry.
 const PLATFORM_POLL_INTERVAL = "3 seconds";
 const SECONDARY_BEARER_REFRESH_SKEW_MS = 5_000;
+
+/** Whether the latest platform poll ended without the primary environment, e.g. its discovery failed. */
+export const primaryEnvironmentMissingAtom = Atom.make(false).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("web-primary-environment-missing"),
+);
 
 export function secondaryBearerExpiresAtEpochMs(
   issuedAtEpochMs: number,
@@ -731,6 +780,10 @@ const layerPlatformConnectionSource = Layer.effect(
       }
 
       yield* Ref.set(cacheRef, next);
+      const primaryMissing = !next.has(PRIMARY_LOCAL_ENVIRONMENT_ID);
+      if (appAtomRegistry.get(primaryEnvironmentMissingAtom) !== primaryMissing) {
+        appAtomRegistry.set(primaryEnvironmentMissingAtom, primaryMissing);
+      }
       return registrations as ReadonlyArray<PlatformConnectionRegistration>;
     }).pipe(Effect.provide(FetchHttpClient.layer));
 

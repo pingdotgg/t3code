@@ -142,6 +142,18 @@ describe("truncateTraceAttributes", () => {
     const attributes = { short: "ok", nested: { fine: "also ok" } };
     assert.equal(truncateTraceAttributes(attributes), attributes);
   });
+
+  it("collapses whitespace in query text before clamping it", () => {
+    const query = `SELECT payload_json\n          FROM orchestration_v2_projection_runs\n          WHERE thread_id = ?`;
+    assert.equal(
+      truncateTraceAttributes({ "db.query.text": query })["db.query.text"],
+      "SELECT payload_json FROM orchestration_v2_projection_runs WHERE thread_id = ?",
+    );
+    const long = `SELECT ${"column,\n    ".repeat(100)}`;
+    const clamped = truncateTraceAttributes({ "db.query.text": long })["db.query.text"] as string;
+    assert.isTrue(clamped.startsWith("SELECT column, column,"));
+    assert.equal(clamped.length, 200 + "…[truncated]".length);
+  });
 });
 
 describe("decodeOtlpTraceRecords", () => {

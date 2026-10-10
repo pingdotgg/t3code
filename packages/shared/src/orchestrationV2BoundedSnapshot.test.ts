@@ -10,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   boundedSnapshotProjection,
+  omitCheckpointItemFiles,
   omitLocalVisibleTurnItems,
   restoreLocalVisibleTurnItems,
 } from "./orchestrationV2BoundedSnapshot.ts";
@@ -143,5 +144,69 @@ describe("compact bounded snapshot turnItems", () => {
   it("leaves unmarked snapshots untouched", () => {
     const { projection: full } = forkWindow();
     expect(boundedSnapshotProjection({ projection: full })).toBe(full);
+  });
+});
+
+describe("compact bounded snapshot checkpoint items", () => {
+  const files = [
+    { path: "a.ts", kind: "modified", additions: 2, deletions: 1 },
+    { path: "b.ts", kind: "modified", additions: 0, deletions: 4 },
+  ];
+  function checkpointItem(id: string, checkpointId: string, itemFiles: typeof files) {
+    return {
+      ...item(CHILD, id, 1),
+      type: "checkpoint",
+      checkpointId,
+      scopeId: "scope",
+      files: itemFiles,
+    } as unknown as OrchestrationV2TurnItem;
+  }
+  function withCheckpoints(
+    value: OrchestrationV2ThreadProjection,
+    checkpoints: ReadonlyArray<{ readonly id: string; readonly files: typeof files }>,
+  ): OrchestrationV2ThreadProjection {
+    return { ...value, checkpoints } as unknown as OrchestrationV2ThreadProjection;
+  }
+
+  it("sends each checkpoint's files once and restores both lists exactly", () => {
+    const repeated = checkpointItem("checkpoint-item", "checkpoint-1", files);
+    // The checkpoint entity changed after its item was written, so the item keeps its own list.
+    const diverged = checkpointItem("diverged-item", "checkpoint-2", [files[0]!]);
+    const full = withCheckpoints(
+      projection({
+        visible: [row("local", CHILD, repeated), row("local", CHILD, diverged)],
+        turnItems: [repeated, diverged],
+      }),
+      [
+        { id: "checkpoint-1", files },
+        { id: "checkpoint-2", files },
+      ],
+    );
+
+    const compact = omitCheckpointItemFiles(omitLocalVisibleTurnItems(full)!)!;
+    expect(compact.itemIds).toEqual([TurnItemId.make("checkpoint-item")]);
+    expect(
+      compact.projection.visibleTurnItems.map(
+        (value) => (value.item as unknown as { files: unknown[] }).files.length,
+      ),
+    ).toEqual([0, 1]);
+
+    const wire = JSON.parse(JSON.stringify(compact.projection));
+    expect(
+      boundedSnapshotProjection({
+        projection: wire,
+        turnItemsOmitLocalVisible: true,
+        checkpointFilesOmittedItemIds: compact.itemIds,
+      }),
+    ).toEqual(JSON.parse(JSON.stringify(full)));
+  });
+
+  it("sends nothing compact when no item repeats its checkpoint", () => {
+    const empty = checkpointItem("empty-item", "checkpoint-1", []);
+    const full = withCheckpoints(
+      projection({ visible: [row("local", CHILD, empty)], turnItems: [empty] }),
+      [{ id: "checkpoint-1", files }],
+    );
+    expect(omitCheckpointItemFiles(full)).toBe(null);
   });
 });

@@ -14,6 +14,7 @@ import {
   type GhosttyCellRange,
   type GhosttyCellMetrics,
 } from "./renderer";
+import { loadGhosttyRuntime } from "./runtime";
 import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
 import { isMonospaceFamily } from "../../appearanceFonts";
 import { observeResize } from "../../lib/observeResize";
@@ -713,14 +714,13 @@ export class GhosttyTerminalSurface {
     context.fillStyle = `rgb(${options.theme.background.r}, ${options.theme.background.g}, ${options.theme.background.b})`;
     context.fillRect(0, 0, canvas.width, canvas.height);
     const fontSize = terminalFontSize(options.font?.size);
-    try {
-      // Cell metrics must come from the faces that will render; measuring before
-      // the bundled webfonts load would size the grid from a fallback font.
-      await ensureTerminalSymbolsFont();
-    } catch {
-      // Metrics fall back to whichever faces are already available.
-    }
-    const fontFamily = await loadTerminalFontFamily(options.font?.family, fontSize);
+    // Cell metrics must come from the faces that will render; measuring before
+    // the bundled webfonts load would size the grid from a fallback font.
+    const [, fontFamily] = await Promise.all([
+      ensureTerminalSymbolsFont(),
+      loadTerminalFontFamily(options.font?.family, fontSize),
+      loadGhosttyRuntime(),
+    ]);
     const metrics = measureGhosttyCell(context, fontSize, fontFamily);
     const grid = terminalGridSize(mount.clientWidth, mount.clientHeight, metrics, CONTENT_PADDING);
     const core = await GhosttyTerminalCore.create(

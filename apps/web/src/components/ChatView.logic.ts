@@ -23,6 +23,7 @@ import {
   type ThreadId,
   type ThreadLinkedPullRequest,
   type RunId,
+  type RuntimeMode,
   type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
@@ -479,6 +480,37 @@ export function startNewThreadForProject(
   void handleNewThread(projectRef);
 
   return true;
+}
+
+/** The thread settings a send writes before its turn starts, or null when none changed. */
+export function resolveThreadSettingsUpdatesForNextTurn(
+  thread: {
+    readonly modelSelection: ModelSelection;
+    readonly branch: string | null;
+    readonly runtimeMode: RuntimeMode;
+    readonly interactionMode: ProviderInteractionMode;
+  },
+  input: {
+    readonly branch?: string;
+    readonly runtimeMode: RuntimeMode;
+    readonly interactionMode: ProviderInteractionMode;
+  },
+): {
+  readonly metadataUpdate: ReturnType<typeof resolveThreadMetadataUpdateForNextTurn>;
+  readonly runtimeMode: RuntimeMode | null;
+  readonly interactionMode: ProviderInteractionMode | null;
+} | null {
+  const metadataUpdate = resolveThreadMetadataUpdateForNextTurn({
+    currentModelSelection: thread.modelSelection,
+    currentBranch: thread.branch,
+    ...(input.branch ? { nextBranch: input.branch } : {}),
+  });
+  const runtimeMode = input.runtimeMode !== thread.runtimeMode ? input.runtimeMode : null;
+  const interactionMode =
+    input.interactionMode !== thread.interactionMode ? input.interactionMode : null;
+  return metadataUpdate === null && runtimeMode === null && interactionMode === null
+    ? null
+    : { metadataUpdate, runtimeMode, interactionMode };
 }
 
 export function resolveThreadMetadataUpdateForNextTurn(input: {

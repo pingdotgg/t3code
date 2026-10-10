@@ -4,6 +4,7 @@ import {
   PROJECT_FAVICON_MAX_DATA_URL_LENGTH,
   PROJECT_FAVICON_THUMBNAIL_SIZE,
 } from "@t3tools/client-runtime/project-favicon-cache";
+import { readFileAsDataUrl } from "../lib/imageCompression";
 
 const DATABASE_NAME = "t3code:project-favicons";
 const DATABASE_VERSION = 2;
@@ -62,7 +63,14 @@ async function downscaleProjectFavicon(
       if (!context) throw new Error("Canvas is unavailable.");
       context.clearRect(0, 0, canvas.width, canvas.height);
       context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL("image/webp", 0.85);
+      // Thumbnail encoding runs asynchronously so it cannot hold up the first keystroke.
+      const blob = await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob(resolve, "image/webp", 0.85),
+      );
+      signal.throwIfAborted();
+      if (!blob) throw new Error("Project icon thumbnail could not be encoded.");
+      const dataUrl = await readFileAsDataUrl(blob);
+      signal.throwIfAborted();
       if (dataUrl.length <= PROJECT_FAVICON_MAX_DATA_URL_LENGTH) return dataUrl;
     }
     throw new Error("Project icon thumbnail exceeds the cache limit.");

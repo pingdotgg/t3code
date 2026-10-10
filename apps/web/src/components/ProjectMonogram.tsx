@@ -2,7 +2,14 @@ import type { ProjectIconColor } from "@t3tools/contracts";
 import { projectIconColorClassName } from "../projectIconColors";
 import { cn } from "~/lib/utils";
 
-const monogramSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+// Creating a Segmenter loads ICU data (12-16 ms). Printable ASCII has one grapheme
+// per character, so only other monograms need it.
+let monogramSegmenter: Intl.Segmenter | null = null;
+function graphemeCount(text: string): number {
+  if (/^[\x20-\x7e]*$/.test(text)) return text.length;
+  monogramSegmenter ??= new Intl.Segmenter(undefined, { granularity: "grapheme" });
+  return Array.from(monogramSegmenter.segment(text)).length;
+}
 
 export function ProjectMonogram({
   text,
@@ -40,7 +47,7 @@ export function ProjectMonogram({
           className="font-mono"
           fontSize="8.25"
           fontWeight="700"
-          textLength={Array.from(monogramSegmenter.segment(text)).length === 1 ? 6 : 12}
+          textLength={graphemeCount(text) === 1 ? 6 : 12}
           lengthAdjust="spacingAndGlyphs"
           textRendering="geometricPrecision"
         >

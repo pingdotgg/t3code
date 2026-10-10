@@ -117,6 +117,34 @@ const makeCheckpointFixture = Effect.fn("makeCheckpointFixture")(function* (
   return { git, checkpointRef };
 });
 
+it.effect(
+  "checkpoint capture preserves a linked worktree's common directory containing a newline",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-newline-" });
+      const cwd = path.join(root, "main\nrepository");
+      const worktree = path.join(root, "linked");
+      yield* fileSystem.makeDirectory(cwd);
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      yield* git(["worktree", "add", "--detach", worktree, "HEAD"]);
+      yield* fileSystem.writeFileString(path.join(worktree, "file.txt"), "linked worktree\n");
+
+      yield* driver.checkpoints.captureCheckpoint({ cwd: worktree, checkpointRef });
+
+      assert.strictEqual(
+        (yield* git(["show", `${checkpointRef}:file.txt`])).stdout,
+        "linked worktree\n",
+      );
+      assert.strictEqual(
+        yield* fileSystem.readFileString(path.join(cwd, "file.txt")),
+        "unstaged\n",
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 it.effect("checkpoint capture skips untracked nested repositories without a commit", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -1175,7 +1203,7 @@ it.effect("GitVcsDriver flushes checkpoint objects and refs to disk before publi
                 : input.args.includes("commit-tree")
                   ? "commit0000\n"
                   : input.args.includes("--git-common-dir")
-                    ? ".git\n"
+                    ? ".git\nhead0000\n"
                     : "";
               return {
                 exitCode: ChildProcessSpawner.ExitCode(0),

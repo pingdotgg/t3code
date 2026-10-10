@@ -29,6 +29,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
+import { awaitBackgroundTurn } from "../serverActivation.ts";
 import { getTelemetryIdentifier } from "./Identify.ts";
 
 interface BufferedAnalyticsEvent {
@@ -276,9 +277,15 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  yield* Effect.forever(Effect.sleep(FLUSH_INTERVAL_MS).pipe(Effect.flatMap(() => flushWhenDue)), {
-    disableYield: true,
-  }).pipe(Effect.forkScoped);
+  // A starting server sends its first batch once startup work may run.
+  yield* awaitBackgroundTurn.pipe(
+    Effect.andThen(
+      Effect.forever(Effect.sleep(FLUSH_INTERVAL_MS).pipe(Effect.flatMap(() => flushWhenDue)), {
+        disableYield: true,
+      }),
+    ),
+    Effect.forkScoped,
+  );
 
   yield* Effect.addFinalizer(() => flush);
 

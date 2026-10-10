@@ -26,7 +26,7 @@ import * as GitManager from "../git/GitManager.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
-import { forkParked } from "../serverActivation.ts";
+import { forkBackground, forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 class ThreadPullRequestServiceV2 extends Context.Service<
@@ -390,7 +390,7 @@ export const make = Effect.gen(function* () {
     "ThreadPullRequestServiceV2.start",
   )(function* () {
     yield* forkParked(Stream.runForEach(orchestrator.streamDomainEvents, processEvent));
-    yield* forkParked(
+    yield* forkBackground(
       Effect.gen(function* () {
         yield* worker.enqueue({ threadId: null, refresh: false, backfill: true });
         yield* worker.drain;

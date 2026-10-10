@@ -1,7 +1,6 @@
 import type { Processor } from "unified";
 import { isWindowsAbsolutePath } from "./path.ts";
-import type { PluggableList } from "unified";
-import rehypeRaw from "rehype-raw";
+import type { Pluggable, PluggableList } from "unified";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
@@ -190,12 +189,39 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkNormalizeLinksAndTagInlineCode,
 ];
 
-export const CHAT_MARKDOWN_REHYPE_PLUGINS: PluggableList = [
-  rehypePreserveBareAnchorPlaceholders,
-  rehypeRaw,
-  rehypePreserveImageSourceMeta,
-  [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
-];
+/**
+ * The chat rehype pipeline, parsing raw HTML only when given rehype-raw. The web
+ * client loads it once a message has a tag, so parse5 stays out of its startup;
+ * a static import anywhere in this module would pull it back into that chunk.
+ */
+export function chatMarkdownRehypePlugins(rawHtml: Pluggable | null): PluggableList {
+  return [
+    rehypePreserveBareAnchorPlaceholders,
+    ...(rawHtml ? [rawHtml] : []),
+    rehypePreserveImageSourceMeta,
+    [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
+  ];
+}
+
+let rehypeRaw: Pluggable | undefined;
+let rehypeRawPromise: Promise<Pluggable> | undefined;
+
+/**
+ * Loads rehype-raw for clients that keep parse5 out of their startup bundle. A failed
+ * load stays cached: browsers cache a failed dynamic import, so a retry cannot succeed.
+ */
+export function loadRehypeRaw(): Promise<Pluggable> {
+  rehypeRawPromise ??= import("rehype-raw").then((module) => (rehypeRaw = module.default));
+  return rehypeRawPromise;
+}
+
+/** rehype-raw once {@link loadRehypeRaw} has resolved, for synchronous renders. */
+export const loadedRehypeRaw = (): Pluggable | undefined => rehypeRaw;
+
+/** Raw HTML always starts with `<` and a letter, `/`, `!` or `?`; anything else parses the same without rehype-raw. */
+export function markdownMayContainRawHtml(markdown: string): boolean {
+  return /<[A-Za-z/!?]/.test(markdown);
+}
 
 type MarkdownAstNode = {
   type?: string;

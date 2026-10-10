@@ -13,6 +13,7 @@ import {
   CONNECT_ONBOARDING_OPT_OUT_STORAGE_KEY,
   ConnectOnboardingOptOutSchema,
   EMPTY_CONNECT_ONBOARDING_OPT_OUT_STATE,
+  type ConnectOnboardingRequest,
 } from "~/cloud/connectOnboarding";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
@@ -39,21 +40,25 @@ import { WizardSteps, WizardPopup, WizardHeader, WizardPanel, WizardFooter } fro
  * current session is authorized to manage the relay link, then lists the
  * account's T3 Connect environments so every device can be connected right
  * away. A cold load with a restored session does not count as a sign-in.
+ * `useConnectOnboardingRequest` observes the sign-ins outside this lazy chunk.
  */
-export function ConnectOnboardingDialog() {
+export function ConnectOnboardingDialog(props: ConnectOnboardingRequest) {
   if (!hasCloudPublicConfig()) return null;
 
-  return <ConfiguredConnectOnboardingDialog />;
+  return <ConfiguredConnectOnboardingDialog {...props} />;
 }
 
 type OnboardingStep = "publish" | "devices";
 
 const EMPTY_SESSION_STATE_ATOM = Atom.make(AsyncResult.initial<AuthSessionState>());
 
-function ConfiguredConnectOnboardingDialog() {
+function ConfiguredConnectOnboardingDialog({
+  requestedAccount,
+  clearRequestedAccount,
+}: ConnectOnboardingRequest) {
   // Mirrors ManagedRelayAuthProvider: a pending Clerk session must not read as
   // signed-out, or its later activation would look like a fresh sign-in.
-  const { isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
+  const { isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
   const [optOutState, setOptOutState] = useLocalStorage(
     CONNECT_ONBOARDING_OPT_OUT_STORAGE_KEY,
     EMPTY_CONNECT_ONBOARDING_OPT_OUT_STATE,
@@ -83,7 +88,6 @@ function ConfiguredConnectOnboardingDialog() {
     ? ["publish", "devices"]
     : ["devices"];
 
-  const [requestedAccount, setRequestedAccount] = useState<string | null>(null);
   const [openForAccount, setOpenForAccount] = useState<string | null>(null);
   const [step, setStep] = useState<OnboardingStep>("devices");
   const [exposeEnvironment, setExposeEnvironment] = useState(true);
@@ -91,7 +95,6 @@ function ConfiguredConnectOnboardingDialog() {
   const [dontShowAgain, setDontShowAgain] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   const prefilledFromLinkStateRef = useRef(false);
-  const observedAccountRef = useRef<string | null | undefined>(undefined);
 
   useEffect(() => {
     if (step === "publish" && sessionScopesKnown && !showPublishStep && !isApplying) {
@@ -100,24 +103,6 @@ function ConfiguredConnectOnboardingDialog() {
   }, [isApplying, sessionScopesKnown, showPublishStep, step]);
 
   const optOutAccounts = optOutState.optOutAccounts;
-
-  // Every sign-in or account switch that completes during this session
-  // requests the wizard — account transitions clear the connected relay
-  // environments, so each new session starts with no devices to reach. A cold
-  // load observes undefined → account and must not re-prompt.
-  useEffect(() => {
-    if (!isLoaded) return;
-    // A loaded-but-incomplete snapshot (signed in, user id not yet populated)
-    // must not be recorded as signed-out — the next render would then look
-    // like a fresh sign-in on a cold load.
-    if (isSignedIn && !userId) return;
-    const previousAccount = observedAccountRef.current;
-    const nextAccount = isSignedIn && userId ? userId : null;
-    observedAccountRef.current = nextAccount;
-    if (previousAccount !== undefined && previousAccount !== nextAccount && nextAccount !== null) {
-      setRequestedAccount(nextAccount);
-    }
-  }, [isLoaded, isSignedIn, userId]);
 
   // A manageable session implies a primary environment, so when the scopes
   // allow publishing, wait for the connection target too — otherwise the
@@ -130,11 +115,11 @@ function ConfiguredConnectOnboardingDialog() {
   useEffect(() => {
     if (requestedAccount === null || openForAccount !== null) return;
     if (optOutAccounts.includes(requestedAccount)) {
-      setRequestedAccount(null);
+      clearRequestedAccount();
       return;
     }
     if (!sessionScopesKnown || !publishStepDecided) return;
-    setRequestedAccount(null);
+    clearRequestedAccount();
     prefilledFromLinkStateRef.current = false;
     setExposeEnvironment(true);
     setPublishAgentActivity(true);
@@ -143,6 +128,7 @@ function ConfiguredConnectOnboardingDialog() {
     setOpenForAccount(requestedAccount);
   }, [
     canManageRelay,
+    clearRequestedAccount,
     controller.linkState.target,
     openForAccount,
     optOutAccounts,
@@ -158,9 +144,9 @@ function ConfiguredConnectOnboardingDialog() {
       setOpenForAccount(null);
     }
     if (requestedAccount !== null && (!isSignedIn || userId !== requestedAccount)) {
-      setRequestedAccount(null);
+      clearRequestedAccount();
     }
-  }, [isSignedIn, openForAccount, requestedAccount, userId]);
+  }, [clearRequestedAccount, isSignedIn, openForAccount, requestedAccount, userId]);
 
   // Toggles default on, but an environment that is already linked should show
   // its actual configuration instead of silently proposing to rewrite it.

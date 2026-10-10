@@ -102,9 +102,9 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
           ? Effect.void
           : Effect.uninterruptible(
               Effect.gen(function* () {
-                const shouldSchedule = yield* flushLock.withPermit(
+                const [shouldSchedule, firstDelta] = yield* flushLock.withPermit(
                   Effect.gen(function* () {
-                    yield* Ref.update(buffered, (current) => {
+                    const firstDelta = yield* Ref.modify(buffered, (current) => {
                       const key = providerTextBufferKey(turnId, itemId);
                       const existing = current.get(key);
                       const next = new Map(current);
@@ -114,12 +114,30 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
                         text: `${existing?.text ?? ""}${delta}`,
                         dirty: true,
                       });
-                      return next;
+                      return [existing === undefined, next] as const;
                     });
-                    return yield* Ref.modify(flushScheduled, (scheduled) => [!scheduled, true]);
+                    const shouldSchedule = yield* Ref.modify(flushScheduled, (scheduled) => [
+                      !scheduled,
+                      true,
+                    ]);
+                    return [shouldSchedule, firstDelta] as const;
                   }),
                 );
-                if (shouldSchedule) {
+                if (firstDelta) {
+                  // An item's first text flushes on the next tick, so the first
+                  // token is not held for the interval; later deltas coalesce.
+                  // Another item's pending interval flush keeps its schedule.
+                  yield* (
+                    shouldSchedule
+                      ? flushDirty
+                      : drain({
+                          predicate: (message) =>
+                            message.turnId === turnId && message.itemId === itemId,
+                          completed: false,
+                          onlyDirty: true,
+                        })
+                  ).pipe(Effect.interruptible, Effect.forkIn(coalescerScope));
+                } else if (shouldSchedule) {
                   yield* Effect.sleep(Duration.millis(Math.max(1, input.flushIntervalMs))).pipe(
                     Effect.andThen(flushDirty),
                     Effect.interruptible,

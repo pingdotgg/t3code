@@ -367,6 +367,35 @@ describe("buildProjectActionItems", () => {
 });
 
 describe("buildThreadActionItems", () => {
+  it("keeps equal thread ids in different environments distinct and navigable", async () => {
+    const local = makeThread({ title: "Local work" });
+    const remote = makeThread({
+      id: local.id,
+      environmentId: EnvironmentId.make("environment-remote"),
+      title: "Remote work",
+    });
+    const runThread = vi.fn(async () => {});
+    const items = buildThreadActionItems({
+      threads: [local, remote],
+      projectTitleById: new Map(),
+      sortOrder: "updated_at",
+      icon: null,
+      getContentMatch: (thread) =>
+        thread.environmentId === remote.environmentId
+          ? { source: "assistant", snippet: "remote message", query: "message" }
+          : undefined,
+      runThread,
+    });
+    const remoteItem = items.find((item) => item.threadContentMatch);
+    const matches = new Map(remoteItem ? [[remoteItem.value, remoteItem]] : []);
+    const merged = items.map((item) => matches.get(item.value) ?? item);
+    expect(merged.map((item) => item.title)).toEqual(["Local work", "Remote work"]);
+    expect(new Set(merged.map((item) => item.value)).size).toBe(2);
+    await merged[0]?.run();
+    await merged[1]?.run();
+    expect(runThread.mock.calls).toEqual([[local], [remote]]);
+  });
+
   it("orders threads by most recent activity and formats timestamps from updatedAt", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-25T12:00:00.000Z"));
@@ -393,8 +422,8 @@ describe("buildThreadActionItems", () => {
       });
 
       expect(items.map((item) => item.value)).toEqual([
-        "thread:thread-older",
-        "thread:thread-newer",
+        "thread:environment-local:thread-older",
+        "thread:environment-local:thread-newer",
       ]);
       expect(items[0]?.timestamp).toBe("1d ago");
       expect(items[1]?.timestamp).toBe("5d ago");
@@ -435,8 +464,8 @@ describe("buildThreadActionItems", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0]?.value).toBe("threads-search");
     expect(groups[0]?.items.map((item) => item.value)).toEqual([
-      "thread:thread-title-match",
-      "thread:thread-context-match",
+      "thread:environment-local:thread-title-match",
+      "thread:environment-local:thread-context-match",
     ]);
   });
 
@@ -482,9 +511,9 @@ describe("buildThreadActionItems", () => {
     });
 
     expect(groups[0]?.items.map((item) => item.value)).toEqual([
-      "thread:recent-title",
-      "thread:old-prefix",
-      "thread:recent-content",
+      "thread:environment-local:recent-title",
+      "thread:environment-local:old-prefix",
+      "thread:environment-local:recent-content",
     ]);
   });
 
@@ -661,8 +690,8 @@ describe("buildThreadActionItems", () => {
     });
 
     expect(groups.flatMap((group) => group.items)).toEqual([
-      expect.objectContaining({ value: `thread:${titleThread.id}` }),
-      expect.objectContaining({ value: `thread:${idThread.id}` }),
+      expect.objectContaining({ value: `thread:${titleThread.environmentId}:${titleThread.id}` }),
+      expect.objectContaining({ value: `thread:${idThread.environmentId}:${idThread.id}` }),
     ]);
   });
 
@@ -702,7 +731,7 @@ describe("buildThreadActionItems", () => {
       runThread: async (_thread) => undefined,
     });
 
-    expect(items.map((item) => item.value)).toEqual(["thread:thread-active"]);
+    expect(items.map((item) => item.value)).toEqual(["thread:environment-local:thread-active"]);
   });
 });
 

@@ -71,7 +71,9 @@ import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
 import {
   createContext,
+  lazy,
   memo,
+  Suspense,
   use,
   useCallback,
   useContext,
@@ -89,8 +91,6 @@ import {
   type LegendListRef,
   type MaintainScrollAtEndOptions,
 } from "@legendapp/list/react";
-import { FileDiff } from "@pierre/diffs/react";
-import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 import {
   type TimelineEntry,
   providerErrorPresentation,
@@ -110,12 +110,6 @@ import {
   isVideoAttachment,
   type TurnDiffSummary,
 } from "../../types";
-import {
-  getRenderablePatch,
-  resolveDiffThemeName,
-  resolveFileDiffPath,
-} from "../../lib/diffRendering";
-import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -175,7 +169,6 @@ import {
 } from "./SnapShotAttachmentDetails";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
-import { McpAppFrame } from "./McpAppFrame";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { useFileContextMenuHandler } from "../../fileContextMenu";
 import { useProject, useThreadShell } from "../../state/entities";
@@ -297,11 +290,7 @@ import { TimelineSystemDivider } from "./TimelineSystemDivider";
 import { SkillChipIcon, SkillInlineText } from "./SkillInlineText";
 import * as DateTime from "effect/DateTime";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
-import {
-  buildReviewCommentRenderablePatch,
-  formatReviewCommentFence,
-  type ReviewCommentContext,
-} from "../../reviewCommentContext";
+import { formatReviewCommentFence, type ReviewCommentContext } from "../../reviewCommentContext";
 
 // ---------------------------------------------------------------------------
 // Context — shared state consumed by every row component via Context.
@@ -480,6 +469,8 @@ interface MessagesTimelineProps {
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   routeThreadKey: string;
   displayThreadKey?: string;
+  /** Another thread's held snapshot stands in while this one loads; its scroll is not remembered. */
+  paintOnly?: boolean;
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
   onOpenThread: (threadId: OrchestrationV2TurnItem["threadId"]) => void;
   parentThreadLink?: {
@@ -523,6 +514,11 @@ interface MessagesTimelineProps {
    * scroll-mode refs whenever the user drifts near the bottom.
    */
   liveFollowEnabled: boolean;
+  /**
+   * Whether the reader follows the live edge, as opposed to reading a new
+   * turn anchored at the top or history. Read when the scroll position is remembered.
+   */
+  isFollowingEnd?: () => boolean;
   /**
    * Whether the real rows extend past the viewport above the composer.
    * Reported after scrolls, row size changes, and viewport resizes.
@@ -623,6 +619,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onIsAtEndChange,
   onContentOverflowChange,
   liveFollowEnabled,
+  isFollowingEnd,
+  paintOnly = false,
   onToolOutputCollapsedAtEnd,
   onManualNavigation,
   cancelPositionRestoreRef,
@@ -1181,7 +1179,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     if (restoringThreadPosition || state?.data !== rows) return;
     const isAtEnd = resolveTimelineIsAtEnd(state);
     const position = state?.data?.length ? resolveWorkGroupScrollAnchor(state) : undefined;
-    if (position && state && isAtEnd !== undefined) {
+    if (position && state && isAtEnd !== undefined && !paintOnly) {
       const index = state.indexByKey(position.rowId);
       const row = index === undefined ? undefined : state.elementAtIndex(index);
       const element = listRef.current?.getScrollableNode();
@@ -1191,7 +1189,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
           // DOM geometry includes the header and the virtualizer's layout adjustment.
           offsetWithinRow: element.getBoundingClientRect().top - row.getBoundingClientRect().top,
           scrollOffset: element.scrollTop,
-          atEnd: isAtEnd,
+          // Live follow only ends on a user scroll gesture. Layout changes
+          // (the composer inset, a thread switch) can still move the list off
+          // the end without the reader leaving it, and a revisit must land
+          // at the end then rather than at that transient offset. A reply
+          // anchored below its message keeps the reader where they are.
+          atEnd: isAtEnd || (liveFollowEnabled && (isFollowingEnd?.() ?? true)),
           disclosures: {
             runs: paintedExpandedRunIds,
             workGroups: paintedExpandedWorkGroupIds,
@@ -1201,7 +1204,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         });
       }
     }
-    if (isAtEnd !== undefined && !citationPositioning) {
+    if (isAtEnd !== undefined && !citationPositioning && !paintOnly) {
       onIsAtEndChange(isAtEnd);
     }
     reportContentOverflow();
@@ -1250,6 +1253,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     workGroupViewState,
     rows,
     listIdentityKey,
+    liveFollowEnabled,
+    isFollowingEnd,
+    paintOnly,
     restoringThreadPosition,
     listRef,
     minimapItems,
@@ -2977,25 +2983,32 @@ function HtmlRenderTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "htm
   );
 }
 
+// MCP app frames are rare rows; their host code loads with the first one.
+const McpAppFrame = lazy(() =>
+  import("./McpAppFrame").then((module) => ({ default: module.McpAppFrame })),
+);
+
 function McpAppTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mcp-app" }> }) {
   const ctx = use(TimelineRowCtx);
   const { awaitingUser } = use(TimelineRowActivityCtx);
 
   return (
     <div className="min-w-0 px-1">
-      <McpAppFrame
-        // A recycled row must not keep another app's live document.
-        key={row.mcpApp.attachmentId}
-        environmentId={ctx.activeThreadEnvironmentId}
-        threadId={row.sourceThreadId}
-        conversationThreadId={ctx.threadRef?.threadId ?? row.sourceThreadId}
-        itemId={row.itemId}
-        revision={row.revision}
-        app={row.mcpApp}
-        onSendMessage={ctx.onSendAppMessage}
-        awaitingUser={awaitingUser}
-        onFullscreenChange={(fullscreen) => ctx.onAppFullscreenChange(row.id, fullscreen)}
-      />
+      <Suspense fallback={null}>
+        <McpAppFrame
+          // A recycled row must not keep another app's live document.
+          key={row.mcpApp.attachmentId}
+          environmentId={ctx.activeThreadEnvironmentId}
+          threadId={row.sourceThreadId}
+          conversationThreadId={ctx.threadRef?.threadId ?? row.sourceThreadId}
+          itemId={row.itemId}
+          revision={row.revision}
+          app={row.mcpApp}
+          onSendMessage={ctx.onSendAppMessage}
+          awaitingUser={awaitingUser}
+          onFullscreenChange={(fullscreen) => ctx.onAppFullscreenChange(row.id, fullscreen)}
+        />
+      </Suspense>
     </div>
   );
 }
@@ -4823,13 +4836,14 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   );
 });
 
+// The diff renderer (with shiki) loads only for messages that quote a review comment.
+const ReviewCommentDiff = lazy(() =>
+  import("./ReviewCommentDiff").then((module) => ({ default: module.ReviewCommentDiff })),
+);
+
 function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentContext }) {
   const ctx = use(TimelineRowCtx);
   const fenceLanguage = comment.fenceLanguage ?? "diff";
-  const renderablePatch = getRenderablePatch(
-    buildReviewCommentRenderablePatch(comment),
-    `review-comment:${comment.id}`,
-  );
 
   return (
     <div className="space-y-2 rounded-lg border border-border/70 bg-background/70 p-3">
@@ -4855,27 +4869,9 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
           className="text-foreground"
         />
       )}
-      {renderablePatch?.kind === "files" && (
-        <DiffWorkerPoolProvider>
-          {renderablePatch.files.map((fileDiff) => (
-            <FileDiff
-              key={resolveFileDiffPath(fileDiff)}
-              fileDiff={fileDiff}
-              options={{
-                collapsed: false,
-                diffStyle: "unified",
-                theme: resolveDiffThemeName(ctx.resolvedTheme),
-                preferredHighlighter: PREFERRED_HIGHLIGHTER,
-              }}
-            />
-          ))}
-        </DiffWorkerPoolProvider>
-      )}
-      {renderablePatch?.kind === "raw" && (
-        <pre className="overflow-x-auto rounded-md bg-muted/40 p-2 text-xs">
-          {renderablePatch.text}
-        </pre>
-      )}
+      <Suspense fallback={null}>
+        <ReviewCommentDiff comment={comment} resolvedTheme={ctx.resolvedTheme} />
+      </Suspense>
     </div>
   );
 }

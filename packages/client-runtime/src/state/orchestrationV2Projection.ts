@@ -8,6 +8,7 @@ import {
   createOrchestrationV2TurnItemVisibility,
   isOrchestrationV2TurnItemVisible,
 } from "@t3tools/shared/orchestrationV2Timeline";
+import { applyThreadPullRequestLinkSync } from "@t3tools/shared/threadPullRequests";
 
 export type ApplyOrchestrationV2ProjectionEventOptions = {
   readonly partialTimeline?: boolean;
@@ -221,10 +222,21 @@ export function applyOrchestrationV2ProjectionEvent(
     case "thread.model-selection-updated":
     case "thread.provider-switched":
       return { ...base, thread: event.payload };
+    // A host refresh is not activity, matching the server projection.
+    case "thread.pull-request-link-synced":
+      return {
+        ...projection,
+        thread: applyThreadPullRequestLinkSync(projection.thread, event.payload),
+      };
     // Visited tracking is read state, not activity: skip the updatedAt bump.
     case "thread.visited":
     case "thread.marked-unread":
       return { ...projection, thread: event.payload };
+    case "thread.visit-recorded":
+      return {
+        ...projection,
+        thread: { ...projection.thread, lastVisitedAt: event.payload.lastVisitedAt },
+      };
     case "run.created":
     case "run.updated": {
       const next = { ...base, runs: upsertEntity(base.runs, event.payload) };

@@ -173,6 +173,7 @@ import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner
 import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
+import * as ServerActivation from "./serverActivation.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
@@ -748,6 +749,8 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
     readonly requestCompletionMarker?: boolean;
     readonly acceptBoundedSnapshot?: boolean;
     readonly acceptCompactTurnItems?: boolean;
+    readonly acceptCompactCheckpointItems?: boolean;
+    readonly acceptThreadFieldEvents?: boolean;
   }) {
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
@@ -773,11 +776,37 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
           afterSequence,
         })
         .pipe(
-          Stream.map((stored) => ({
-            kind: "event" as const,
-            sequence: stored.sequence,
-            event: projectDomainEventForWire(stored.event),
-          })),
+          Stream.mapEffect((stored) =>
+            Effect.gen(function* () {
+              const event = stored.event;
+              if (
+                input.acceptThreadFieldEvents !== true &&
+                (event.type === "thread.pull-request-link-synced" ||
+                  event.type === "thread.visit-recorded")
+              ) {
+                // Older clients need the legacy full-thread event. The live stream reads
+                // committed metadata only; historical compact events use a fresh snapshot below.
+                const { thread } = yield* threadManagement.getThreadRecords(input.threadId, []);
+                return {
+                  kind: "event" as const,
+                  sequence: stored.sequence,
+                  event: projectDomainEventForWire({
+                    ...event,
+                    type:
+                      event.type === "thread.visit-recorded"
+                        ? "thread.visited"
+                        : "thread.pull-request-synced",
+                    payload: thread,
+                  }),
+                };
+              }
+              return {
+                kind: "event" as const,
+                sequence: stored.sequence,
+                event: projectDomainEventForWire(event),
+              };
+            }),
+          ),
           coalesceThreadLiveStream,
           Stream.mapError(
             (cause) =>
@@ -844,6 +873,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
         ? buildBoundedThreadStreamSnapshot({
             ...snapshot,
             compactTurnItems: input.acceptCompactTurnItems === true,
+            compactCheckpointItems: input.acceptCompactCheckpointItems === true,
           })
         : {
             kind: "snapshot" as const,
@@ -918,6 +948,16 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
         if (shell !== null) return yield* snapshotThenLive();
       }
       const replay = yield* loadReplayThrough(input.afterSequence, highWater);
+      if (
+        input.acceptThreadFieldEvents !== true &&
+        replay.some(
+          (item) =>
+            item.event.type === "thread.pull-request-link-synced" ||
+            item.event.type === "thread.visit-recorded",
+        )
+      ) {
+        return yield* snapshotThenLive();
+      }
       const plan = decideThreadResume({
         afterSequence: input.afterSequence,
         highWater,
@@ -2954,6 +2994,7 @@ const layerWsRpc = (
             Effect.gen(function* () {
               const usageLimitsCommand = input.usageLimitsCommand === true;
               const config = yield* loadServerConfig({ usageLimitsCommand });
+              yield* ServerActivation.markClientServed;
               const keybindingsUpdates = keybindings.streamChanges.pipe(
                 Stream.map((event) => ({
                   version: 1 as const,

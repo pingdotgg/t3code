@@ -1,9 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
+  lazy,
+  Suspense,
   useEffect,
   useState,
   useSyncExternalStore,
+  type ComponentType,
   type CSSProperties,
   type ReactNode,
 } from "react";
@@ -31,10 +34,8 @@ import {
   usePanelAnimationSettings,
   usePanelNavigationSuppression,
 } from "../panelAnimations";
-import LegacyThreadSidebar from "./LegacySidebar";
 import { useThreadVisitedMigration } from "../hooks/useThreadVisitedMigration";
 import ThreadSidebar from "./Sidebar";
-import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarBrandWidthProbe, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { MainAppLocationTracker } from "./sidebar/mainAppLocation";
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
@@ -56,6 +57,26 @@ import {
   useSidebarVisibility,
 } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+
+// Only the sidebar the legacy setting picks should be in the startup graph.
+// While a sidebar chunk loads, or if it fails, the column keeps its chrome
+// header; a stale deploy gets its `vite:preloadError` reload first.
+function SidebarChromeShell() {
+  return <SidebarChromeHeader isElectron={isElectron} />;
+}
+const renderNoSettingsNav = (_props: { pathname: string }) => null;
+const LegacyThreadSidebar = lazy(() =>
+  import("./LegacySidebar")
+    .then((module) => ({ default: module?.default ?? SidebarChromeShell }))
+    .catch(() => ({ default: SidebarChromeShell })),
+);
+/** The settings route loads the nav alongside its own chunks instead of after its first paint. */
+export const loadSettingsSidebarNav = () => import("./settings/SettingsSidebarNav");
+const SettingsSidebarNav = lazy<ComponentType<{ pathname: string }>>(() =>
+  loadSettingsSidebarNav()
+    .then((module) => ({ default: module?.SettingsSidebarNav ?? renderNoSettingsNav }))
+    .catch(() => ({ default: renderNoSettingsNav })),
+);
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
 
@@ -333,10 +354,14 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           {isOnSettings ? (
             <>
               <SidebarChromeHeader isElectron={isElectron} />
-              <SettingsSidebarNav pathname={pathname} />
+              <Suspense fallback={null}>
+                <SettingsSidebarNav pathname={pathname} />
+              </Suspense>
             </>
           ) : legacySidebarEnabled ? (
-            <LegacyThreadSidebar />
+            <Suspense fallback={<SidebarChromeShell />}>
+              <LegacyThreadSidebar />
+            </Suspense>
           ) : (
             <ThreadSidebar />
           )}

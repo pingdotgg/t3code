@@ -1165,4 +1165,62 @@ describe("PullRequestSyncReactor", () => {
       }),
     ),
   );
+
+  it.effect("retries a link whose first sync failed when a sibling link syncs", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const hostDown = yield* Ref.make(true);
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("one", { pullRequests: [makeLink(7, { state: "open" }), makeLink(8)] }),
+          ]),
+          summary: (input) =>
+            Ref.get(hostDown).pipe(
+              Effect.flatMap((down) =>
+                down && input.number === 8
+                  ? Effect.fail(
+                      new PullRequestOperationError({ operation: "summary", detail: "host down" }),
+                    )
+                  : Effect.succeed(makeSummary(input)),
+              ),
+            ),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          yield* Ref.set(hostDown, false);
+          yield* Ref.set(fixture.summaryCalls, []);
+          yield* Ref.set(fixture.syncCommands, []);
+
+          yield* Queue.offer(fixture.domainEvents, {
+            type: "thread.pull-request-link-synced",
+            id: EventId.make("event:one:link-synced"),
+            threadId: ThreadId.make("one"),
+            occurredAt: DateTime.makeUnsafe(NOW),
+            payload: {
+              host: "github.com",
+              repository: "owner/repository",
+              number: 7,
+              snapshot: makeLink(7, { state: "open" }).snapshot!,
+              stack: null,
+            },
+          });
+          // The thread's lookup, then the requested sweep.
+          yield* Queue.take(fixture.snapshotReads);
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.summaryCalls)).map((call) => call.number),
+            [8],
+          );
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.syncCommands)).map((command) => command.number),
+            [8],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
 });

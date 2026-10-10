@@ -63,6 +63,12 @@ export class ProviderHost extends Context.Service<
     /** Whether background work for `scope` should run now (client demand and host power). */
     readonly shouldRunBackgroundWork: (scope: BackgroundScope) => Effect.Effect<boolean>;
     /**
+     * Resolves when a provider's first status probe may run. A starting server
+     * holds it until its first client has loaded; hosts without a startup
+     * phase omit it.
+     */
+    readonly awaitStartupProbe?: Effect.Effect<void>;
+    /**
      * Absolute path of a stored chat attachment, or `null` when its id does not
      * resolve inside the attachments directory.
      */

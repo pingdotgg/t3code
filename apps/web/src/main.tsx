@@ -7,13 +7,13 @@ import "./index.css";
 import { prepareProviderAuthDelivery } from "./providerAuthDelivery";
 import { isElectron } from "./env";
 import { hasCloudPublicConfig } from "./cloud/publicConfig";
-import { getRouter } from "./router";
+import { getRouter, preloadInitialRouteChunks } from "./router";
 import {
   syncDocumentElectronPlatformClasses,
   syncDocumentWindowControlsOverlayClass,
 } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
-import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
+import { reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
 
 prepareProviderAuthDelivery();
 
@@ -21,6 +21,7 @@ prepareProviderAuthDelivery();
 const history = isElectron ? createHashHistory() : createBrowserHistory();
 
 const router = getRouter(history);
+preloadInitialRouteChunks(router);
 
 if (isElectron) {
   syncDocumentElectronPlatformClasses(navigator.platform);
@@ -30,12 +31,14 @@ if (isElectron) {
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
 
 // A failed split-chunk fetch usually means the hashed assets went stale under
-// a deploy; one guarded reload picks up the fresh index.html.
-let chunkLoadFailed = false;
+// a deploy; one guarded reload picks up the fresh index.html. This build's
+// entry URL names the build, and the error names the asset (except in
+// Safari), so each failed asset of each build gets one reload. Later
+// failures while that reload is pending keep their rejection and their reload.
 let reloadScheduled = false;
 window.addEventListener("vite:preloadError", (event) => {
-  chunkLoadFailed = true;
-  if (reloadOnceForChunkLoadError()) {
+  if (reloadScheduled) return;
+  if (reloadOnceForChunkLoadError(import.meta.url, String(event.payload))) {
     reloadScheduled = true;
     event.preventDefault();
   }
@@ -66,10 +69,8 @@ export const startup = Promise.all([
   .then(([ManagedAuthShell]) => {
     // A route chunk failure still resolves router.load(): the error is parked in
     // the lazy component and surfaces through the route error boundary. Skip the
-    // paint when a reload is on its way, and only re-arm the guard after a boot
-    // that fetched every chunk it asked for.
+    // paint when a reload is on its way.
     if (reloadScheduled) return;
-    if (!chunkLoadFailed) clearChunkReloadGuard();
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <React.StrictMode>
         {ManagedAuthShell && clerkPublishableKey ? (

@@ -3,7 +3,7 @@
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { AuthPreviewOperateScope, FILL_PREVIEW_VIEWPORT } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { type ComponentProps, useEffect, useMemo, useRef, useState } from "react";
+import { type ComponentProps, lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 
 import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 
@@ -18,7 +18,6 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { readPreviewAnnotationTheme } from "./annotationTheme";
 import { useBrowserDefaults } from "./browserDefaults";
 import { useBrowserPointerStore } from "./browserPointerStore";
-import { HostedBrowserWebview } from "./HostedBrowserWebview";
 import { openUrlInPreview } from "./openFileInPreview";
 import { rendersServerTabNatively } from "./previewRuntime";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
@@ -155,13 +154,22 @@ export function ElectronBrowserHost() {
   );
 }
 
+// Only Electron with an open preview mounts a webview; the web build never loads it.
+const HostedBrowserWebview = lazy(() =>
+  import("./HostedBrowserWebview").then((module) => ({ default: module.HostedBrowserWebview })),
+);
+
 function AuthorizedBrowserWebview(props: ComponentProps<typeof HostedBrowserWebview>) {
   const canOperatePreview = useEnvironmentScope(
     props.threadRef.environmentId,
     AuthPreviewOperateScope,
   );
   const profileId = useTabProfileId(props.profileId);
-  return canOperatePreview ? <HostedBrowserWebview {...props} profileId={profileId} /> : null;
+  return canOperatePreview ? (
+    <Suspense fallback={null}>
+      <HostedBrowserWebview {...props} profileId={profileId} />
+    </Suspense>
+  ) : null;
 }
 
 /**

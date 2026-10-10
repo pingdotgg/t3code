@@ -17,7 +17,10 @@ import { AuthFilesystemReadScope, AuthOrchestrationOperateScope } from "@t3tools
 import {
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
-  CHAT_MARKDOWN_REHYPE_PLUGINS,
+  chatMarkdownRehypePlugins,
+  loadedRehypeRaw,
+  loadRehypeRaw,
+  markdownMayContainRawHtml,
 } from "@t3tools/shared/markdownPipeline";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -76,6 +79,7 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import React, {
   Children,
+  lazy,
   Suspense,
   type CSSProperties,
   type ComponentProps,
@@ -156,7 +160,6 @@ import { GitHubIcon } from "./Icons";
 import { createIncrementalHighlightedDocument } from "../lib/incrementalHighlighting";
 import { HighlightedCodeLines } from "./chat/HighlightedCodeLines";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
-import { MermaidDiagram } from "./chat/MermaidDiagram";
 import { useTheme } from "../hooks/useTheme";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import {
@@ -1872,9 +1875,48 @@ function rehypeHeadingIds() {
 
 // Heading ids are added after sanitizing, which would prefix them a second time.
 const CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS = [
-  ...CHAT_MARKDOWN_REHYPE_PLUGINS,
+  ...chatMarkdownRehypePlugins(null),
   rehypeHeadingIds,
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+
+type RehypePlugins = NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+let rawHtmlRehypePlugins: RehypePlugins | null = null;
+let rawHtmlRehypePluginsPromise: Promise<RehypePlugins> | null = null;
+
+function withRawHtml(rehypeRaw: NonNullable<ReturnType<typeof loadedRehypeRaw>>) {
+  rawHtmlRehypePlugins ??= [...chatMarkdownRehypePlugins(rehypeRaw), rehypeHeadingIds];
+  return rawHtmlRehypePlugins;
+}
+
+// rehype-raw brings parse5, so it loads with the first message that has a tag.
+// After a failed load, messages keep rendering without their HTML: `use()` needs
+// this same settled promise on every render, and the failed import stays failed.
+function loadRawHtmlRehypePlugins(): Promise<RehypePlugins> {
+  rawHtmlRehypePluginsPromise ??= loadRehypeRaw().then(
+    withRawHtml,
+    () => CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS,
+  );
+  return rawHtmlRehypePluginsPromise;
+}
+
+function ChatMarkdownContent({
+  text,
+  parseRawHtml,
+  render,
+}: {
+  text: string;
+  parseRawHtml: boolean;
+  render: (rehypePlugins: RehypePlugins) => ReactNode;
+}) {
+  if (!parseRawHtml) return render(CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS);
+  if (!markdownMayContainRawHtml(text)) return render(CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS);
+  const rehypeRaw = loadedRehypeRaw();
+  return render(rehypeRaw ? withRawHtml(rehypeRaw) : use(loadRawHtmlRehypePlugins()));
+}
+
+const MermaidDiagram = lazy(() =>
+  import("./chat/MermaidDiagram").then((module) => ({ default: module.MermaidDiagram })),
+);
 
 const CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS = [rehypeHeadingIds] satisfies NonNullable<
   ReactMarkdownOptions["rehypePlugins"]
@@ -3428,6 +3470,17 @@ function ChatMarkdown({
   // react-markdown converts unparsed HTML nodes to text when skipHtml is false.
   // Keep that behavior explicit because literal mode depends on escaping the
   // complete source token instead of dropping it from the rendered message.
+  const renderMarkdown = (rehypePlugins: RehypePlugins) => (
+    <ReactMarkdown
+      remarkPlugins={remarkPlugins}
+      rehypePlugins={rehypePlugins}
+      skipHtml={false}
+      components={CHAT_MARKDOWN_COMPONENTS}
+      urlTransform={markdownUrlTransform}
+    >
+      {text}
+    </ReactMarkdown>
+  );
   return (
     <div
       ref={markdownRef}
@@ -3440,19 +3493,10 @@ function ChatMarkdown({
       onCopy={handleCopy}
     >
       <ChatMarkdownRendererContext value={componentState}>
-        <ReactMarkdown
-          remarkPlugins={remarkPlugins}
-          rehypePlugins={
-            parseRawHtml
-              ? CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS
-              : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS
-          }
-          skipHtml={false}
-          components={CHAT_MARKDOWN_COMPONENTS}
-          urlTransform={markdownUrlTransform}
-        >
-          {text}
-        </ReactMarkdown>
+        {/* While rehype-raw loads, the message renders with its raw HTML left out. */}
+        <Suspense fallback={renderMarkdown(CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS)}>
+          <ChatMarkdownContent text={text} parseRawHtml={parseRawHtml} render={renderMarkdown} />
+        </Suspense>
       </ChatMarkdownRendererContext>
       {localMediaPreview ? (
         <ExpandedImageDialog

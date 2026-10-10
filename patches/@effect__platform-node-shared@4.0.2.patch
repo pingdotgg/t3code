@@ -1,0 +1,15 @@
+diff --git a/dist/NodeChildProcessSpawner.js b/dist/NodeChildProcessSpawner.js
+index b3e4dea..d6379fa 100644
+--- a/dist/NodeChildProcessSpawner.js
++++ b/dist/NodeChildProcessSpawner.js
+@@ -170,6 +170,10 @@ const make = /*#__PURE__*/Effect.gen(function* () {
+             // Create a sink to write to for input file descriptors
+             let sink = Sink.drain;
+             if (nodeStream && "write" in nodeStream) {
++              // The sink only listens for errors while it writes, but the pipe
++              // outlives it: a child that exits with unread input resets it
++              // (ECONNRESET), which must not become an uncaught exception.
++              nodeStream.on("error", () => {});
+               sink = NodeSink.fromWritable({
+                 evaluate: () => nodeStream,
+                 onError: error => toPlatformError(`fromWritable(fd${fd})`, toError(error), command)

@@ -585,11 +585,13 @@ const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
 });
 
 /**
- * `compactTurnItems=1` opts into `turnItemsOmitLocalVisible`. Other values are
- * ignored, and older servers ignore the whole query.
+ * `compactTurnItems=1` opts into `turnItemsOmitLocalVisible`, and
+ * `compactCheckpointItems=1` into `checkpointFilesOmittedItemIds`. Other values
+ * are ignored, and older servers ignore the whole query.
  */
 const EnvironmentOrchestrationThreadBoundedSnapshotQuery = Schema.Struct({
   compactTurnItems: Schema.optionalKey(Schema.String),
+  compactCheckpointItems: Schema.optionalKey(Schema.String),
 });
 
 const EnvironmentOrchestrationThreadHistoryQuery = Schema.Struct({

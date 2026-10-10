@@ -447,6 +447,10 @@
       "types": "./src/threadFindText.ts",
       "import": "./src/threadFindText.ts"
     },
+    "./threadFindBlockTags": {
+      "types": "./src/threadFindBlockTags.ts",
+      "import": "./src/threadFindBlockTags.ts"
+    },
     "./threadSearch": {
       "types": "./src/threadSearch.ts",
       "import": "./src/threadSearch.ts"

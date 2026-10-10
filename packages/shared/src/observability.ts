@@ -37,7 +37,6 @@ export const DEFAULT_SIGNAL_EXPORT: SignalExport = {
 };
 
 const FLUSH_BUFFER_THRESHOLD = 256;
-const textEncoder = new TextEncoder();
 
 export type TraceAttributes = Readonly<Record<string, unknown>>;
 
@@ -317,10 +316,17 @@ export function truncateTraceAttributes(attributes: TraceAttributes): TraceAttri
   let truncated: Record<string, unknown> | undefined;
   for (const [key, value] of Object.entries(attributes)) {
     if (typeof value === "string" && ALWAYS_TRUNCATED_TRACE_ATTRIBUTES.has(key)) {
-      if (value.length <= TRACE_ATTRIBUTE_TRUNCATED_LENGTH) continue;
+      // Query text is indented source; collapsing whitespace keeps more of the
+      // statement in fewer bytes on one of the most frequent spans.
+      const head = value.slice(0, TRACE_ATTRIBUTE_TRUNCATED_LENGTH * 8);
+      const compact = head.replace(/\s+/g, " ").trim();
+      const fits =
+        head.length === value.length && compact.length <= TRACE_ATTRIBUTE_TRUNCATED_LENGTH;
+      if (fits && compact === value) continue;
       truncated ??= { ...attributes };
-      truncated[key] =
-        `${value.slice(0, TRACE_ATTRIBUTE_TRUNCATED_LENGTH)}${TRACE_ATTRIBUTE_TRUNCATION_SUFFIX}`;
+      truncated[key] = fits
+        ? compact
+        : `${compact.slice(0, TRACE_ATTRIBUTE_TRUNCATED_LENGTH)}${TRACE_ATTRIBUTE_TRUNCATION_SUFFIX}`;
       continue;
     }
     const next = truncateNestedValue(value);
@@ -391,10 +397,40 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
 
     const records = buffer;
     buffer = [];
-    let persistedCount = 0;
 
+    // Writes one chunk of `count` records. A failing disk (ENOSPC, EACCES, EIO)
+    // drops the rest of the batch: retrying it would grow the backlog, and
+    // every later push would retry all of it.
+    const writeChunk = (chunk: Buffer, count: number, remaining: number) => {
+      const startedAt = performance.now();
+      try {
+        sink.write(chunk);
+      } catch {
+        writeFailing = true;
+        droppedCount += remaining;
+        return false;
+      }
+      writeFailing = false;
+      pendingFlushStats = {
+        logicalWriteBytes: pendingFlushStats.logicalWriteBytes + chunk.length,
+        count: pendingFlushStats.count + count,
+        durationMs: pendingFlushStats.durationMs + Math.max(0, performance.now() - startedAt),
+      };
+      return true;
+    };
+
+    // UTF-8 needs at most three bytes per UTF-16 code unit. A batch whose bound
+    // fits in one file, the usual case, is encoded once instead of per record.
+    let lengthBound = 0;
+    for (const record of records) lengthBound += record.length;
+    if (lengthBound * 3 <= options.maxBytes) {
+      writeChunk(Buffer.from(records.join(""), "utf8"), records.length, records.length);
+      return;
+    }
+
+    let persistedCount = 0;
     while (persistedCount < records.length) {
-      const firstRecordBytes = textEncoder.encode(records[persistedCount]).byteLength;
+      const firstRecordBytes = Buffer.byteLength(records[persistedCount]!, "utf8");
       if (firstRecordBytes > options.maxBytes) {
         persistedCount += 1;
         continue;
@@ -403,30 +439,14 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
       let nextIndex = persistedCount + 1;
       let chunkBytes = firstRecordBytes;
       while (nextIndex < records.length) {
-        const nextRecordBytes = textEncoder.encode(records[nextIndex]).byteLength;
+        const nextRecordBytes = Buffer.byteLength(records[nextIndex]!, "utf8");
         if (chunkBytes + nextRecordBytes > options.maxBytes) break;
         chunkBytes += nextRecordBytes;
         nextIndex += 1;
       }
 
-      const chunk = records.slice(persistedCount, nextIndex).join("");
-      const startedAt = performance.now();
-      try {
-        sink.write(chunk);
-      } catch {
-        // A failing disk (ENOSPC, EACCES, EIO) drops the rest of the batch.
-        // Retrying it would grow the backlog, and every later push would
-        // retry all of it.
-        writeFailing = true;
-        droppedCount += records.length - persistedCount;
-        return;
-      }
-      writeFailing = false;
-      pendingFlushStats = {
-        logicalWriteBytes: pendingFlushStats.logicalWriteBytes + chunkBytes,
-        count: pendingFlushStats.count + nextIndex - persistedCount,
-        durationMs: pendingFlushStats.durationMs + Math.max(0, performance.now() - startedAt),
-      };
+      const chunk = Buffer.from(records.slice(persistedCount, nextIndex).join(""), "utf8");
+      if (!writeChunk(chunk, nextIndex - persistedCount, records.length - persistedCount)) return;
       persistedCount = nextIndex;
     }
   };

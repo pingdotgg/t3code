@@ -1354,10 +1354,24 @@ export function serializeSelection(doc: ProseMirrorNode, from: number, to: numbe
       depth -= 1;
     }
   }
-  return serializeEditorDoc(doc.type.create(null, content)).value;
+  return serializeEditorDocUncached(doc.type.create(null, content)).value;
 }
 
+// ProseMirror docs are immutable, so a doc serializes the same way every time.
+// One keystroke asks for the same doc several times (update and selection
+// listeners, cursor reads), and only the first pays for the walk.
+const serializedDocs = new WeakMap<ProseMirrorNode, RichDocMap>();
+
+/** The returned map is shared between callers and must not be mutated. */
 export function serializeEditorDoc(doc: ProseMirrorNode): RichDocMap {
+  const cached = serializedDocs.get(doc);
+  if (cached) return cached;
+  const map = serializeEditorDocUncached(doc);
+  serializedDocs.set(doc, map);
+  return map;
+}
+
+function serializeEditorDocUncached(doc: ProseMirrorNode): RichDocMap {
   const acc: RichAccumulator = { runs: [], value: "", flat: 0, collapsed: 0, md: 0 };
   const blocks: ProseMirrorNode[] = [];
   doc.content.forEach((node) => {

@@ -16,7 +16,7 @@ import ProjectScriptsControl, {
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
 import type { ComponentProps } from "react";
-import { ThreadDetailsCard } from "./ThreadDetailsCard";
+import type { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
@@ -62,7 +62,10 @@ export interface ThreadDetailsPanelProps extends Pick<
   onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
 }
 
-export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
+export function ThreadDetailsPanelContent(
+  props: ThreadDetailsPanelProps & { readonly density: "full" | "compact" | "essential" },
+) {
+  const { density } = props;
   const fileScripts = useT3ProjectFileScripts(
     props.environmentId,
     props.activeProjectScripts ? props.gitCwd : null,
@@ -91,99 +94,87 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   };
 
   return (
-    <ThreadDetailsCard
-      threadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
-      anchor={props.anchor}
-      handle={props.handle}
-      onPresentationChange={props.onPresentationChange}
-    >
-      {(density) => (
-        <>
-          <ThreadDetailsSection
-            headingId="thread-details-workspace-heading"
-            title="Workspace"
-            separated={false}
-            showHeading={false}
-          >
-            <div className="flex flex-col">
-              {density === "full" ? (
-                <BranchToolbar
-                  layout="panel"
-                  panelSection="workspace"
-                  availableEnvironments={props.availableEnvironments}
-                  onEnvironmentChange={props.onEnvironmentChange}
-                  autoEnvironmentLabel={props.autoEnvironmentLabel}
-                  onAutoEnvironment={props.onAutoEnvironment}
-                  {...branchToolbarProps}
-                />
-              ) : null}
-
-              {density !== "essential" && props.showOpenInPicker ? (
-                <OpenInPicker
-                  keybindings={props.keybindings}
-                  environmentId={props.environmentId}
-                  availableEditors={props.availableEditors}
-                  openInCwd={props.gitCwd}
-                  displayMode="panel"
-                />
-              ) : null}
-
-              {props.activeProjectScripts ? (
-                <ProjectScriptsControl
-                  environmentId={props.environmentId}
-                  displayMode="panel"
-                  scripts={props.activeProjectScripts}
-                  fileScripts={fileScripts}
-                  preferredScriptId={props.preferredScriptId}
-                  onRunScript={props.onRunProjectScript}
-                  onAddScript={props.onAddProjectScript}
-                  onUpdateScript={props.onUpdateProjectScript}
-                  onDeleteScript={props.onDeleteProjectScript}
-                />
-              ) : null}
-            </div>
-          </ThreadDetailsSection>
-
-          {props.gitCwd ? (
-            <ThreadDetailsSection
-              headingId="thread-details-version-control-heading"
-              title="Version Control"
-              showHeading={false}
-              separated={density === "full"}
-            >
-              <div className="flex flex-col">
-                {props.isGitRepo ? (
-                  <BranchToolbar layout="panel" panelSection="branch" {...branchToolbarProps} />
-                ) : null}
-                {props.activeProjectName ? (
-                  <GitActionsControl
-                    displayMode="panel"
-                    compact={density !== "full"}
-                    gitCwd={props.gitCwd}
-                    activeThreadRef={{
-                      environmentId: props.environmentId,
-                      threadId: props.threadId,
-                    }}
-                    {...(props.draftId ? { draftId: props.draftId } : {})}
-                    {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
-                  />
-                ) : null}
-              </div>
-            </ThreadDetailsSection>
-          ) : null}
-
-          {density === "full" && !props.draftId ? (
-            <ThreadAutomationsPanel environmentId={props.environmentId} threadId={props.threadId} />
-          ) : null}
-
-          {density === "full" && !props.draftId ? (
-            <ThreadRelationshipsPanel
-              environmentId={props.environmentId}
-              threadId={props.threadId}
+    <>
+      <ThreadDetailsSection
+        headingId="thread-details-workspace-heading"
+        title="Workspace"
+        separated={false}
+        showHeading={false}
+      >
+        <div className="flex flex-col">
+          {density === "full" ? (
+            <BranchToolbar
+              layout="panel"
+              panelSection="workspace"
+              availableEnvironments={props.availableEnvironments}
+              onEnvironmentChange={props.onEnvironmentChange}
+              autoEnvironmentLabel={props.autoEnvironmentLabel}
+              onAutoEnvironment={props.onAutoEnvironment}
+              {...branchToolbarProps}
             />
           ) : null}
-        </>
-      )}
-    </ThreadDetailsCard>
+
+          {density !== "essential" && props.showOpenInPicker ? (
+            <OpenInPicker
+              keybindings={props.keybindings}
+              environmentId={props.environmentId}
+              availableEditors={props.availableEditors}
+              openInCwd={props.gitCwd}
+              displayMode="panel"
+            />
+          ) : null}
+
+          {props.activeProjectScripts ? (
+            <ProjectScriptsControl
+              environmentId={props.environmentId}
+              displayMode="panel"
+              scripts={props.activeProjectScripts}
+              fileScripts={fileScripts}
+              preferredScriptId={props.preferredScriptId}
+              onRunScript={props.onRunProjectScript}
+              onAddScript={props.onAddProjectScript}
+              onUpdateScript={props.onUpdateProjectScript}
+              onDeleteScript={props.onDeleteProjectScript}
+            />
+          ) : null}
+        </div>
+      </ThreadDetailsSection>
+
+      {props.gitCwd ? (
+        <ThreadDetailsSection
+          headingId="thread-details-version-control-heading"
+          title="Version Control"
+          showHeading={false}
+          separated={density === "full"}
+        >
+          <div className="flex flex-col">
+            {props.isGitRepo ? (
+              <BranchToolbar layout="panel" panelSection="branch" {...branchToolbarProps} />
+            ) : null}
+            {props.activeProjectName ? (
+              <GitActionsControl
+                displayMode="panel"
+                compact={density !== "full"}
+                gitCwd={props.gitCwd}
+                activeThreadRef={{
+                  environmentId: props.environmentId,
+                  threadId: props.threadId,
+                }}
+                {...(props.draftId ? { draftId: props.draftId } : {})}
+                {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
+              />
+            ) : null}
+          </div>
+        </ThreadDetailsSection>
+      ) : null}
+
+      {density === "full" && !props.draftId ? (
+        <ThreadAutomationsPanel environmentId={props.environmentId} threadId={props.threadId} />
+      ) : null}
+
+      {density === "full" && !props.draftId ? (
+        <ThreadRelationshipsPanel environmentId={props.environmentId} threadId={props.threadId} />
+      ) : null}
+    </>
   );
 }

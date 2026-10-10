@@ -19,6 +19,24 @@ type TypeLayouts = Readonly<Record<string, TypeLayout>>;
 
 const textDecoder = new TextDecoder();
 
+/**
+ * Compile while the bytes download when the server labels the file as WASM;
+ * otherwise (some static hosts and custom protocols) fall back to buffering.
+ */
+async function compileWasm(url: string, label: string): Promise<WebAssembly.Module> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Unable to load ${label} (${response.status})`);
+  }
+  if (
+    typeof WebAssembly.compileStreaming === "function" &&
+    response.headers.get("content-type")?.split(";")[0]?.trim() === "application/wasm"
+  ) {
+    return WebAssembly.compileStreaming(response);
+  }
+  return WebAssembly.compile(await response.arrayBuffer());
+}
+
 export class GhosttyRuntime {
   readonly memory: WebAssembly.Memory;
   readonly layouts: TypeLayouts;
@@ -44,10 +62,12 @@ export class GhosttyRuntime {
   }
 
   static async load(): Promise<GhosttyRuntime> {
-    const response = await fetch(ghosttyWasmUrl);
-    if (!response.ok) {
-      throw new Error(`Unable to load libghostty-vt (${response.status})`);
-    }
+    // Both modules download and compile in parallel; the trampoline is only
+    // instantiated once the main module's memory and table exist.
+    const [module, trampolineModule] = await Promise.all([
+      compileWasm(ghosttyWasmUrl, "libghostty-vt"),
+      compileWasm(ghosttyWritePtyWasmUrl, "the libghostty-vt PTY trampoline"),
+    ]);
     let instance: WebAssembly.Instance | undefined;
     const imports = {
       env: {
@@ -60,10 +80,9 @@ export class GhosttyRuntime {
         },
       },
     };
-    const result = await WebAssembly.instantiate(await response.arrayBuffer(), imports);
-    instance = result.instance;
-    const runtime = new GhosttyRuntime(result.instance);
-    await runtime.installWritePtyTrampoline();
+    instance = await WebAssembly.instantiate(module, imports);
+    const runtime = new GhosttyRuntime(instance);
+    await runtime.installWritePtyTrampoline(trampolineModule);
     return runtime;
   }
 
@@ -193,12 +212,8 @@ export class GhosttyRuntime {
     }
   }
 
-  private async installWritePtyTrampoline(): Promise<void> {
-    const response = await fetch(ghosttyWritePtyWasmUrl);
-    if (!response.ok) {
-      throw new Error(`Unable to load the libghostty-vt PTY trampoline (${response.status})`);
-    }
-    const result = await WebAssembly.instantiate(await response.arrayBuffer(), {
+  private async installWritePtyTrampoline(module: WebAssembly.Module): Promise<void> {
+    const trampolineInstance = await WebAssembly.instantiate(module, {
       env: {
         t3_write_pty: (_terminal: number, userdata: number, pointer: number, length: number) => {
           const writer = this.ptyWriters.get(userdata);
@@ -207,7 +222,7 @@ export class GhosttyRuntime {
         },
       },
     });
-    const trampoline = result.instance.exports.ghostty_write_pty;
+    const trampoline = trampolineInstance.exports.ghostty_write_pty;
     const table = this.exports.__indirect_function_table;
     if (typeof trampoline !== "function" || !(table instanceof WebAssembly.Table)) {
       throw new Error("libghostty-vt did not expose its callback table");

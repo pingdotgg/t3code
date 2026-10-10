@@ -5,6 +5,7 @@ import { Button } from "../components/ui/button";
 import { useSettingsRestore } from "../components/settings/SettingsPanels";
 
 import { SettingsBreadcrumb } from "../components/settings/SettingsBreadcrumb";
+import { loadSettingsSidebarNav } from "../components/AppSidebarLayout";
 import { SidebarInset } from "../components/ui/sidebar";
 import { useNavigateToMainApp } from "../components/sidebar/mainAppLocation";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
@@ -190,5 +191,11 @@ export const Route = createFileRoute("/settings")({
       throw redirect({ to: "/settings/general", replace: true });
     }
   },
+  // The app sidebar renders the settings nav lazily. A failed load only drops the nav.
+  loader: () =>
+    loadSettingsSidebarNav().then(
+      () => undefined,
+      () => undefined,
+    ),
   component: SettingsRouteLayout,
 });

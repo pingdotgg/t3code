@@ -360,7 +360,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
     return Object.assign(
       {
         kind: "action" as const,
-        value: `thread:${thread.id}`,
+        value: `thread:${thread.environmentId}:${thread.id}`,
         searchTerms: [
           thread.title,
           ...threadPullRequestSearchTerms(thread),
@@ -390,12 +390,27 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
   });
 }
 
+// Search terms repeat across keystrokes (titles, branches, paths), so each one
+// is normalized once instead of once per item per key.
+const NORMALIZED_TERM_CACHE_LIMIT = 10_000;
+const normalizedTermCache = new Map<string, string>();
+
+function normalizeSearchTerm(term: string): string {
+  let normalized = normalizedTermCache.get(term);
+  if (normalized === undefined) {
+    if (normalizedTermCache.size >= NORMALIZED_TERM_CACHE_LIMIT) normalizedTermCache.clear();
+    normalized = normalizeSearchText(term);
+    normalizedTermCache.set(term, normalized);
+  }
+  return normalized;
+}
+
 function rankSearchFieldMatch(
   field: string,
   normalizedQuery: string,
   queryTokens: ReadonlyArray<string>,
 ): number {
-  const normalizedField = normalizeSearchText(field);
+  const normalizedField = normalizeSearchTerm(field);
   if (
     normalizedField.length === 0 ||
     !queryTokens.every((token) => normalizedField.includes(token))
@@ -492,7 +507,7 @@ export function filterCommandPaletteGroups(input: {
 
   return searchableGroups.flatMap((group) => {
     const items = Arr.filterMap(group.items, (item, index) => {
-      const haystack = normalizeSearchText(item.searchTerms.join(" "));
+      const haystack = item.searchTerms.map(normalizeSearchTerm).join(" ");
       if (!queryTokens.every((token) => haystack.includes(token))) {
         return Result.failVoid;
       }

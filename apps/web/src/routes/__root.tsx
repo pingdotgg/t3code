@@ -12,17 +12,16 @@ import {
   useRouter,
 } from "@tanstack/react-router";
 import { Check, Copy } from "lucide";
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
-import { CommandPalette } from "../components/CommandPalette";
+import { CommandPaletteHost } from "../components/CommandPaletteHost";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { KeybindingsConfigWarning } from "../components/KeybindingsConfigWarning";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
-import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
 import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
 import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
 import { SnapShotCoordinator } from "../components/desktop/SnapShotCoordinator";
@@ -30,7 +29,6 @@ import { DesktopAppActivationCoordinator } from "../components/desktop/DesktopAp
 import { DesktopWebLinkCoordinator } from "../components/desktop/DesktopWebLinkCoordinator";
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
-import { NightlyMobileBetaNotice } from "../components/NightlyMobileBeta";
 import { LegacyThreadMigrationToast } from "../components/LegacyThreadMigrationToast";
 import { ThreadNotificationCoordinator } from "../components/ThreadNotificationCoordinator";
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
@@ -52,6 +50,8 @@ import {
   toastManager,
 } from "../components/ui/toast";
 import { isElectron } from "../env";
+import { hasCloudPublicConfig } from "../cloud/publicConfig";
+import { useConnectOnboardingRequest } from "../cloud/connectOnboarding";
 import { cn } from "../lib/utils";
 import { applyAppearanceFontVariables } from "~/appearanceFonts";
 import { applyAppearanceContrast } from "~/appearanceContrast";
@@ -75,6 +75,8 @@ import {
   primaryServerWelcomeAtom,
 } from "../state/server";
 import { readProject, setActiveEnvironmentId, useActiveEnvironmentId } from "../state/entities";
+import { startEnvironmentShells } from "../state/shell";
+import { prefetchPrimaryEnvironmentDescriptor } from "../connection/platform";
 import {
   createKeybindingsUpdateToastController,
   type KeybindingsUpdateToastController,
@@ -83,6 +85,33 @@ import {
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
 import { installDesktopPasteAsText } from "../lib/desktopPasteAsText";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
+
+// These optional notices mount with the shell. A stale chunk still gets the
+// `vite:preloadError` reload first, and while that reload is pending Vite
+// resolves the import to undefined. A chunk that keeps failing renders nothing
+// instead of replacing the shell with the route error view.
+const renderNothing = () => null;
+const ConnectOnboardingDialog = lazy(() =>
+  import("../components/cloud/ConnectOnboardingDialog")
+    .then((module) => ({ default: module?.ConnectOnboardingDialog ?? renderNothing }))
+    .catch(() => ({ default: renderNothing })),
+);
+const NightlyMobileBetaNotice = lazy(() =>
+  import("../components/NightlyMobileBeta")
+    .then((module) => ({ default: module?.NightlyMobileBetaNotice ?? renderNothing }))
+    .catch(() => ({ default: renderNothing })),
+);
+
+// Sign-ins are observed here, outside the lazy wizard chunk, so one that
+// completes while the chunk loads still opens the wizard.
+function ConnectOnboarding() {
+  const request = useConnectOnboardingRequest();
+  return (
+    <Suspense fallback={null}>
+      <ConnectOnboardingDialog {...request} />
+    </Suspense>
+  );
+}
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
@@ -95,6 +124,7 @@ export const Route = createRootRoute({
     }
 
     if (isLocalEnvironmentDisabled() || isHostedStaticApp(new URL(window.location.href))) {
+      startEnvironmentShells();
       return {
         authGateState: {
           status: "hosted-static",
@@ -102,7 +132,11 @@ export const Route = createRootRoute({
       };
     }
 
-    const authGateState = await resolveInitialServerAuthGateState();
+    const authGate = resolveInitialServerAuthGateState();
+    prefetchPrimaryEnvironmentDescriptor();
+    const authGateState = await authGate;
+    // Connect and read cached shells while the route chunks still load.
+    if (authGateState.status === "authenticated") startEnvironmentShells();
     if (
       authGateState.status === "authenticated" &&
       getDesktopSnapShotBridge() &&
@@ -182,11 +216,11 @@ function RootRouteView() {
           <FontAppearanceSync />
           <ProviderAuthCallbackCoordinator />
           <CustomSnoozeDialogHost />
-          <CommandPalette>
+          <CommandPaletteHost>
             <AppSidebarLayout>
               <Outlet />
             </AppSidebarLayout>
-          </CommandPalette>
+          </CommandPaletteHost>
         </AnchoredToastProvider>
       </ToastProvider>
     );
@@ -202,11 +236,11 @@ function RootRouteView() {
   }
 
   const appShell = (
-    <CommandPalette>
+    <CommandPaletteHost>
       <AppSidebarLayout>
         <Outlet />
       </AppSidebarLayout>
-    </CommandPalette>
+    </CommandPaletteHost>
   );
 
   // FirstRunGate holds back everything below it — including EventRouter,
@@ -232,7 +266,7 @@ function RootRouteView() {
           {primaryEnvironmentAuthenticated ? <DesktopWebLinkCoordinator /> : null}
           {isElectron ? <RunningThreadKeepAlive /> : null}
           <RelayClientInstallDialog />
-          <ConnectOnboardingDialog />
+          {hasCloudPublicConfig() ? <ConnectOnboarding /> : null}
           <SshPasswordPromptDialog />
           <SnapShotCoordinator />
           <ThreadNotificationCoordinator />
@@ -249,7 +283,9 @@ function RootRouteView() {
           ) : null}
           {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
           {/* Hosted Nightly is "hosted-static", not authenticated, and needs it too. */}
-          <NightlyMobileBetaNotice />
+          <Suspense fallback={null}>
+            <NightlyMobileBetaNotice />
+          </Suspense>
           {appShell}
           {/* Above the router: a theme draft is judged by walking the app, so the
               editor has to survive navigation away from settings. */}

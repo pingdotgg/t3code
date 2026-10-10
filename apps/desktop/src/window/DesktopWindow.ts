@@ -5,6 +5,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 
 import * as Electron from "electron";
 
@@ -340,6 +341,10 @@ export const make = Effect.gen(function* () {
   // createMainIfBackendReady, which gates the post-readiness window
   // open in development and the macOS "activate without windows" path.
   const backendReadyRef = yield* Ref.make(false);
+  const mainWindowCreation = yield* Semaphore.make(1);
+  // Set when the main window closes while the backend starts, so readiness
+  // leaves it closed. macOS keeps the app running; activation reopens it.
+  const mainClosedBeforeReadyRef = yield* Ref.make(false);
   // The transient "Connecting to WSL" splash window, tracked separately so it
   // is never mistaken for the real main window.
   const splashWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
@@ -865,7 +870,14 @@ export const make = Effect.gen(function* () {
     window.on("closed", () => {
       clearDevelopmentLoadRetry();
       clearBoundsPersist();
-      void runPromise(electronWindow.clearMain(Option.some(window)));
+      void runPromise(
+        electronWindow.clearMain(Option.some(window)).pipe(
+          Effect.andThen(waitingForBackend),
+          Effect.flatMap((waiting) =>
+            waiting ? Ref.set(mainClosedBeforeReadyRef, true) : Effect.void,
+          ),
+        ),
+      );
     });
 
     return window;
@@ -884,7 +896,7 @@ export const make = Effect.gen(function* () {
       return existingWindow.value;
     }
     return yield* createMain;
-  }).pipe(Effect.withSpan("desktop.window.ensureMain"));
+  }).pipe(mainWindowCreation.withPermit, Effect.withSpan("desktop.window.ensureMain"));
 
   const revealOrCreateMain = Effect.gen(function* () {
     const window = yield* ensureMain;
@@ -901,9 +913,7 @@ export const make = Effect.gen(function* () {
 
   const createMainIfBackendReady = Effect.gen(function* () {
     if (yield* waitingForBackend) return;
-    const existingWindow = yield* currentMainWindow;
-    if (Option.isSome(existingWindow)) return;
-    yield* createMain;
+    yield* ensureMain;
   }).pipe(Effect.withSpan("desktop.window.createMainIfBackendReady"));
 
   const showConnectingSplash = Effect.gen(function* () {
@@ -998,6 +1008,8 @@ export const make = Effect.gen(function* () {
       // back instead of doing nothing. Once the backend is ready we fall
       // through to (re)create the real main -- including retrying a previously
       // failed open the pool swallowed -- rather than latching onto the splash.
+      // Asking for the window also undoes an earlier close, so readiness opens it.
+      yield* Ref.set(mainClosedBeforeReadyRef, false);
       const backendReady = yield* Ref.get(backendReadyRef);
       if (!backendReady) {
         const splash = yield* Ref.get(splashWindowRef);
@@ -1013,6 +1025,7 @@ export const make = Effect.gen(function* () {
     handleBackendReady: Effect.fn("desktop.window.handleBackendReady")(function* (httpBaseUrl) {
       yield* Ref.set(backendReadyRef, true);
       yield* logWindowInfo("backend ready", { source: "http", url: httpBaseUrl.href });
+      if (yield* Ref.getAndSet(mainClosedBeforeReadyRef, false)) return;
       yield* createMainIfBackendReady;
     }),
     handleBackendNotReady: Ref.set(backendReadyRef, false).pipe(

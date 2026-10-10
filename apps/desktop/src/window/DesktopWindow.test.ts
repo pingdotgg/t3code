@@ -636,7 +636,7 @@ describe("DesktopWindow", () => {
     );
   });
 
-  it.effect("does not open a development window until the backend is ready", () =>
+  it.effect("creates one window when bootstrap and backend readiness overlap", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
@@ -654,7 +654,13 @@ describe("DesktopWindow", () => {
         yield* desktopWindow.activate;
         assert.equal(yield* Ref.get(createCount), 0);
 
-        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        yield* Effect.all(
+          [
+            desktopWindow.ensureMain,
+            desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773")),
+          ],
+          { concurrency: "unbounded" },
+        );
         assert.equal(yield* Ref.get(createCount), 1);
         assert.equal(createdWindowOptions[0]?.width, 1100);
         assert.equal(createdWindowOptions[0]?.height, 780);
@@ -666,6 +672,56 @@ describe("DesktopWindow", () => {
         assert.deepEqual(fakeWindow.loadURL.mock.calls[0], ["t3code-dev://app/"]);
         assert.equal(fakeWindow.openDevTools.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("keeps a window closed during a cold start closed until activation", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+      const readyUrl = new URL("http://127.0.0.1:3773");
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        const closeMain = Effect.suspend(() => {
+          const closed = fakeWindow.windowListeners.get("closed");
+          return closed ? Effect.sync(() => closed()) : Effect.die("closed listener missing");
+        });
+
+        yield* desktopWindow.ensureMain;
+        yield* closeMain;
+        yield* desktopWindow.handleBackendReady(readyUrl);
+        assert.equal(yield* Ref.get(createCount), 1);
+        yield* desktopWindow.activate;
+        assert.equal(yield* Ref.get(createCount), 2);
+
+        // A dock click while the backend restarts reopens the window at readiness.
+        yield* desktopWindow.handleBackendNotReady;
+        yield* closeMain;
+        yield* desktopWindow.activate;
+        assert.equal(yield* Ref.get(createCount), 2);
+        yield* desktopWindow.handleBackendReady(readyUrl);
+        assert.equal(yield* Ref.get(createCount), 3);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("opens the main window at readiness when the early open failed", () =>
+    Effect.gen(function* () {
+      const main = makeFakeBrowserWindow();
+      const scenario = yield* makeSplashScenario([null, main.window]);
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        const earlyExit = yield* Effect.exit(desktopWindow.ensureMain);
+        assert.equal(earlyExit._tag, "Failure");
+
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        assert.equal(yield* Ref.get(scenario.createCalls), 2);
+        assert.equal(Option.getOrThrow(yield* Ref.get(scenario.mainWindow)), main.window);
+      }).pipe(Effect.provide(scenario.layer));
     }),
   );
 

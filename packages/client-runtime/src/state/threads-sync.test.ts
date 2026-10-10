@@ -123,6 +123,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const lastRequestCompletionMarker = yield* Ref.make(false);
   const lastAcceptBoundedSnapshot = yield* Ref.make<true | undefined>(undefined);
   const lastAcceptCompactTurnItems = yield* Ref.make<true | undefined>(undefined);
+  const lastAcceptCompactCheckpointItems = yield* Ref.make<true | undefined>(undefined);
   const wakeups = yield* Queue.unbounded<ConnectionWakeups.ConnectionWakeup>();
   const savedThreads = yield* Ref.make<ReadonlyArray<OrchestrationV2ThreadDetailSnapshot>>([]);
   const removedThreads = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
@@ -141,6 +142,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
       readonly requestCompletionMarker?: true;
       readonly acceptBoundedSnapshot?: true;
       readonly acceptCompactTurnItems?: true;
+      readonly acceptCompactCheckpointItems?: true;
     }) =>
       Stream.unwrap(
         Ref.updateAndGet(subscriptionCount, (count) => count + 1).pipe(
@@ -150,6 +152,9 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
           ),
           Effect.andThen(Ref.set(lastAcceptBoundedSnapshot, input.acceptBoundedSnapshot)),
           Effect.andThen(Ref.set(lastAcceptCompactTurnItems, input.acceptCompactTurnItems)),
+          Effect.andThen(
+            Ref.set(lastAcceptCompactCheckpointItems, input.acceptCompactCheckpointItems),
+          ),
           Effect.as(streamFrom(inputs)),
         ),
       ),
@@ -266,6 +271,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     lastRequestCompletionMarker,
     lastAcceptBoundedSnapshot,
     lastAcceptCompactTurnItems,
+    lastAcceptCompactCheckpointItems,
     supervisorState,
     supervisorSession,
     savedThreads,
@@ -1049,6 +1055,7 @@ describe("EnvironmentThreads", () => {
       expect(Option.getOrThrow(seeded.data).turnItems).toEqual([...local, retainedRequest]);
       expect(yield* Ref.get(harness.lastAcceptBoundedSnapshot)).toBe(true);
       expect(yield* Ref.get(harness.lastAcceptCompactTurnItems)).toBe(true);
+      expect(yield* Ref.get(harness.lastAcceptCompactCheckpointItems)).toBe(true);
 
       // Live updates reduce against the restored list, not the compact one.
       const updated = { ...local[1]!, output: "updated", ordinal: 2 };

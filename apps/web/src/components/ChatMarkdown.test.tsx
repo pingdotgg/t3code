@@ -3,6 +3,7 @@
 import { EnvironmentId, type AuthEnvironmentScope } from "@t3tools/contracts";
 import { createRoot } from "react-dom/client";
 import { useThreadFindHighlights } from "./chat/threadFindHighlights";
+import { loadRehypeRaw } from "@t3tools/shared/markdownPipeline";
 import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
 import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 
@@ -10,7 +11,7 @@ import { MarkdownFindContext } from "./chat/markdownFindContext";
 import { act, type ComponentProps, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { GitHubIcon } from "./Icons";
@@ -19,6 +20,8 @@ import { setMarkdownTaskChecked } from "./files/filePreviewMode";
 
 vi.mock("../hooks/useFileMetadata", () => ({ useFileMetadata: () => null }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
+// Messages with tags render synchronously once the app has loaded rehype-raw.
+beforeAll(() => loadRehypeRaw());
 vi.mock("./chat/MermaidDiagram", () => ({
   // Real Mermaid needs layout APIs jsdom lacks; a rendered diagram is an SVG.
   MermaidDiagram: () => <svg aria-label="Diagram" />,

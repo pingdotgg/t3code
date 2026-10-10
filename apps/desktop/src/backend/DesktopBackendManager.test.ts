@@ -3,6 +3,8 @@ import {
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
   DesktopTelemetryControlMessage,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -568,6 +570,36 @@ describe("DesktopBackendManager", () => {
         assert.equal((yield* Fiber.join(runFiber)).code.pipe(Option.getOrUndefined), 1);
       }),
     ),
+  );
+
+  // POSIX socketpairs reset when the reader exits with unread data; Windows uses named pipes.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "survives a backend that exits with unread bootstrap input",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const uncaught: Array<unknown> = [];
+          const onUncaught = (error: unknown) => {
+            uncaught.push(error);
+          };
+          yield* Effect.acquireRelease(
+            Effect.sync(() => process.on("uncaughtException", onUncaught)),
+            () => Effect.sync(() => process.off("uncaughtException", onUncaught)),
+          );
+
+          // Reads one byte of the bootstrap line and exits, so its pipe resets.
+          const exit = yield* DesktopBackendManager.runBackendProcess({
+            ...baseConfig,
+            executablePath: process.execPath,
+            args: ["-e", 'require("node:fs").readSync(3, Buffer.alloc(1)); process.exit(0)'],
+            cwd: process.cwd(),
+            desktopTelemetryStream: Stream.empty,
+          }).pipe(Effect.provide(Layer.merge(NodeServices.layer, layerHealthyHttpClient)));
+
+          assert.equal(exit.code.pipe(Option.getOrUndefined), 0);
+          assert.deepEqual(uncaught, []);
+        }),
+      ),
   );
 
   it.effect("continues routing desktop telemetry control messages after an invalid line", () =>

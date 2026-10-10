@@ -106,16 +106,43 @@ export function shortcutConflictKey(
   ].join("|");
 }
 
-export function effectiveShortcutsForCommand(
-  keybindings: ResolvedKeybindingsConfig,
-  command: KeybindingCommand,
-  options?: ShortcutMatchOptions,
-): KeybindingShortcut[] {
-  const platform = resolvePlatform(options);
-  const context = resolveContext(options);
-  const claimedShortcuts = new Set<string>();
-  const effective: KeybindingShortcut[] = [];
+type EffectiveShortcutsByCommand = ReadonlyMap<string, readonly KeybindingShortcut[]>;
 
+/**
+ * Resolved configs are replaced, never mutated, so the effective shortcuts for
+ * one config, platform and context never change. Labels resolve on every
+ * render and keydown, so they read this index instead of walking every binding.
+ */
+const effectiveShortcutIndex = new WeakMap<
+  ResolvedKeybindingsConfig,
+  Map<string, EffectiveShortcutsByCommand>
+>();
+
+function effectiveShortcutIndexKey(platform: string, context: ShortcutMatchContext): string {
+  // `when` clauses only test truthiness, so the truthy names identify the context.
+  let key = platform;
+  for (const name of Object.keys(context).sort()) {
+    if (context[name]) key += `|${name}`;
+  }
+  return key;
+}
+
+function effectiveShortcutsByCommand(
+  keybindings: ResolvedKeybindingsConfig,
+  platform: string,
+  context: ShortcutMatchContext,
+): EffectiveShortcutsByCommand {
+  let byContext = effectiveShortcutIndex.get(keybindings);
+  if (!byContext) {
+    byContext = new Map();
+    effectiveShortcutIndex.set(keybindings, byContext);
+  }
+  const key = effectiveShortcutIndexKey(platform, context);
+  const cached = byContext.get(key);
+  if (cached) return cached;
+
+  const claimedShortcuts = new Set<string>();
+  const byCommand = new Map<string, KeybindingShortcut[]>();
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
     if (!binding) continue;
@@ -127,12 +154,22 @@ export function effectiveShortcutsForCommand(
     }
 
     claimedShortcuts.add(conflictKey);
-    if (binding.command === command) {
-      effective.push(binding.shortcut);
-    }
+    const shortcuts = byCommand.get(binding.command);
+    if (shortcuts) shortcuts.push(binding.shortcut);
+    else byCommand.set(binding.command, [binding.shortcut]);
   }
+  byContext.set(key, byCommand);
+  return byCommand;
+}
 
-  return effective;
+export function effectiveShortcutsForCommand(
+  keybindings: ResolvedKeybindingsConfig,
+  command: KeybindingCommand,
+  options?: ShortcutMatchOptions,
+): KeybindingShortcut[] {
+  const platform = resolvePlatform(options);
+  const context = resolveContext(options);
+  return [...(effectiveShortcutsByCommand(keybindings, platform, context).get(command) ?? [])];
 }
 
 function findEffectiveShortcutForCommand(
@@ -140,7 +177,12 @@ function findEffectiveShortcutForCommand(
   command: KeybindingCommand,
   options?: ShortcutMatchOptions,
 ): KeybindingShortcut | null {
-  return effectiveShortcutsForCommand(keybindings, command, options)[0] ?? null;
+  const shortcuts = effectiveShortcutsByCommand(
+    keybindings,
+    resolvePlatform(options),
+    resolveContext(options),
+  ).get(command);
+  return shortcuts?.[0] ?? null;
 }
 
 function matchesCommandShortcut(

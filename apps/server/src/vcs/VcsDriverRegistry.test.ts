@@ -74,6 +74,10 @@ describe("VcsDriverRegistry", () => {
                   stderr: "fatal: not a git repository",
                 };
               }
+              if (command === "rev-parse --is-inside-work-tree --show-toplevel --git-common-dir") {
+                const commonDir = path.relative(input.cwd, path.join(repoDir, ".git"));
+                return processOutput(`true\n${repoDir}\n${commonDir}\n`);
+              }
               if (command === "rev-parse --is-inside-work-tree") return processOutput("true\n");
               if (command === "rev-parse --show-toplevel") return processOutput(`${repoDir}\n`);
               if (command === "rev-parse --git-common-dir") {
@@ -97,13 +101,15 @@ describe("VcsDriverRegistry", () => {
         const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
         const first = yield* registry.resolve({ cwd: repoDir, requestedKind: "git" });
         const second = yield* registry.resolve({ cwd: repoDir, requestedKind: "git" });
+        // Auto detection resolves to git, so it reuses the same entry.
+        const auto = yield* registry.resolve({ cwd: repoDir });
 
         assert.equal(first.repository.rootPath, repoDir);
         assert.equal(second.repository.rootPath, repoDir);
+        assert.equal(auto.repository.rootPath, repoDir);
+        assert.equal(first.repository.metadataPath, ".git");
         assert.deepStrictEqual(calls, [
-          "rev-parse --is-inside-work-tree",
-          "rev-parse --show-toplevel",
-          "rev-parse --git-common-dir",
+          "rev-parse --is-inside-work-tree --show-toplevel --git-common-dir",
         ]);
       }).pipe(Effect.provide(makeDiskBackedLayer(repoDir, calls)));
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -124,7 +130,10 @@ describe("VcsDriverRegistry", () => {
         yield* fs.remove(path.join(repoDir, ".git"), { recursive: true });
 
         assert.equal(yield* registry.detect({ cwd: repoDir }), null);
-        assert.equal(calls.filter((call) => call === "rev-parse --is-inside-work-tree").length, 2);
+        assert.equal(
+          calls.filter((call) => call.startsWith("rev-parse --is-inside-work-tree")).length,
+          2,
+        );
       }).pipe(Effect.provide(makeDiskBackedLayer(repoDir, calls)));
     }).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -189,7 +198,10 @@ describe("VcsDriverRegistry", () => {
         yield* fs.makeDirectory(path.join(repoDir, ".git"));
 
         assert.equal((yield* registry.detect({ cwd: repoDir }))?.repository.rootPath, repoDir);
-        assert.equal(calls.filter((call) => call === "rev-parse --is-inside-work-tree").length, 2);
+        assert.equal(
+          calls.filter((call) => call.startsWith("rev-parse --is-inside-work-tree")).length,
+          2,
+        );
       }).pipe(Effect.provide(makeDiskBackedLayer(repoDir, calls)));
     }).pipe(Effect.provide(NodeServices.layer)),
   );

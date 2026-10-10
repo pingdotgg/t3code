@@ -45,7 +45,13 @@ function detectionCacheKey(input: {
   readonly cwd: string;
   readonly requestedKind: VcsDriverKind | "auto";
 }): string {
-  return `${input.requestedKind}\0${input.cwd}`;
+  // Auto detection only tries git (see `detectResolvedKind`), so it shares the
+  // git entry: status polls ask for "auto" and checkpoints for "git".
+  const kind =
+    input.requestedKind === "auto" || input.requestedKind === "unknown"
+      ? "git"
+      : input.requestedKind;
+  return `${kind}\0${input.cwd}`;
 }
 
 function parseDetectionCacheKey(key: string): {

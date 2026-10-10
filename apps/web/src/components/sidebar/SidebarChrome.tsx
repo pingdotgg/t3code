@@ -1,7 +1,7 @@
 import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
-import { Link, useLocation, useNavigate } from "@tanstack/react-router";
+import { Link, useLocation, useNavigate, useRouter } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
@@ -143,17 +143,26 @@ function SidebarUtilityItem({
   icon,
   label,
   onClick,
+  onIntent,
 }: {
   icon: ReactNode;
   label: string;
   onClick: () => void;
+  /** Hover or focus: start loading the destination before the click. */
+  onIntent?: () => void;
 }) {
   return (
     <SidebarMenuItem className="shrink-0">
       <Tooltip>
         <TooltipTrigger
           render={
-            <SidebarMenuButton aria-label={label} onClick={onClick} size="icon">
+            <SidebarMenuButton
+              aria-label={label}
+              onClick={onClick}
+              onPointerEnter={onIntent}
+              onFocus={onIntent}
+              size="icon"
+            >
               {icon}
             </SidebarMenuButton>
           }
@@ -188,6 +197,18 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     closeMobileSidebar();
     void navigate({ to: "/settings" });
   }, [closeMobileSidebar, navigate]);
+  // These are buttons, not Links, so the router's hover preloading misses
+  // them. Opening a page renders synchronously before its chunks are fetched;
+  // fetching on intent takes the download off that path.
+  const router = useRouter();
+  const preloadSettings = useCallback(() => {
+    void router.preloadRoute({ to: "/settings/general" }).catch(() => undefined);
+  }, [router]);
+  const preloadPullRequests = useCallback(() => {
+    void router
+      .preloadRoute({ to: "/pull-requests", search: readPullRequestListPreferences() })
+      .catch(() => undefined);
+  }, [router]);
 
   const handleUsageClick = useCallback(() => {
     if (isMobile) {
@@ -216,12 +237,14 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             icon={<SettingsIcon />}
             label="Settings"
             onClick={handleSettingsClick}
+            onIntent={preloadSettings}
           />
           {pullRequestsSupported ? (
             <SidebarUtilityItem
               icon={<PullRequestGlyph.pullRequest />}
               label="Pull Requests"
               onClick={handlePullRequestsClick}
+              onIntent={preloadPullRequests}
             />
           ) : null}
           <SidebarUtilityItem

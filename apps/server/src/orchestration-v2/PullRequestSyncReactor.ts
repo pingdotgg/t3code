@@ -31,7 +31,7 @@ import * as Stream from "effect/Stream";
 import * as GitManager from "../git/GitManager.ts";
 import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
-import { forkParked } from "../serverActivation.ts";
+import { forkBackground, forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { isTerminalRunStatus } from "./ThreadManagementService.ts";
@@ -215,7 +215,9 @@ export const make = Effect.gen(function* () {
     const linkedThisSweep = new Set<string>();
     const persistence = yield* Semaphore.make(1);
 
-    const syncEntry = Effect.fn("PullRequestSyncReactor.syncEntry")(function* (
+    // One call per thread link per sweep (thousands a minute on large installs).
+    // Its rare dispatches stay traced under the group span.
+    const syncEntry = Effect.fnUntraced(function* (
       entry: LinkEntry,
       fields: SnapshotFields,
       fetchedStack: { readonly stack: ThreadPullRequestStack | null } | null,
@@ -421,6 +423,12 @@ export const make = Effect.gen(function* () {
       ),
       Effect.catchCause(logSkipped("pull request refresh after run skipped", { threadId })),
     );
+  const requestUnsyncedLinks = (links: ReadonlyArray<ThreadPullRequestLink>) =>
+    Effect.forEach(
+      visibleThreadPullRequests(links).filter((link) => link.snapshot === null),
+      requestSync,
+      { discard: true },
+    );
 
   const start: PullRequestSyncReactor["Service"]["start"] = Effect.fn(
     "PullRequestSyncReactor.start",
@@ -441,12 +449,20 @@ export const make = Effect.gen(function* () {
       Stream.runForEach(events, (event) => {
         switch (event.type) {
           case "thread.pull-request-synced":
-            return Effect.forEach(
-              visibleThreadPullRequests(event.payload.pullRequests ?? []).filter(
-                (link) => link.snapshot === null,
+            return requestUnsyncedLinks(event.payload.pullRequests ?? []);
+          // Names only the synced link, so read the thread for siblings whose first sync failed.
+          case "thread.pull-request-link-synced":
+            return projections.getThreadsWithPullRequests(event.threadId).pipe(
+              Effect.flatMap((threads) =>
+                Effect.forEach(
+                  threads,
+                  (thread) => requestUnsyncedLinks(thread.pullRequests ?? []),
+                  { discard: true },
+                ),
               ),
-              requestSync,
-              { discard: true },
+              Effect.catchCause(
+                logSkipped("pull request sibling sync skipped", { threadId: event.threadId }),
+              ),
             );
           // An agent can merge or close its pull request from a shell (`gh pr merge`), which
           // sends no merge notification. When a run that ran such a command ends, read the
@@ -470,7 +486,7 @@ export const make = Effect.gen(function* () {
         }
       }).pipe(Effect.catchCause(logSkipped("pull request sync event stream failed", {}))),
     );
-    yield* forkParked(
+    yield* forkBackground(
       Effect.gen(function* () {
         yield* worker.enqueue("all");
         yield* worker.drain;

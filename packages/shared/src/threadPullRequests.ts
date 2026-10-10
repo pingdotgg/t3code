@@ -345,3 +345,39 @@ export function threadPullRequestsOf(thread: {
         },
       ];
 }
+
+/**
+ * A thread after one link takes a fresh host snapshot, as `thread.pull-request-link-synced`
+ * records it. A link the thread no longer has leaves it unchanged. The legacy single link is
+ * kept only while a visible link still matches it.
+ */
+export function applyThreadPullRequestLinkSync<
+  Thread extends {
+    readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
+    readonly linkedPullRequest?: ThreadLinkedPullRequest | null | undefined;
+  },
+>(
+  thread: Thread,
+  sync: ThreadPullRequestKey & Pick<ThreadPullRequestLink, "snapshot" | "stack">,
+): Thread {
+  const links = threadPullRequestsOf(thread);
+  const existing = links.find((link) => threadPullRequestKeysEqual(link, sync));
+  if (existing === undefined) return thread;
+  const pullRequests = links.map((link) =>
+    link === existing ? { ...link, snapshot: sync.snapshot, stack: sync.stack } : link,
+  );
+  const linked = thread.linkedPullRequest;
+  return {
+    ...thread,
+    pullRequests,
+    linkedPullRequest:
+      linked &&
+      pullRequests.some(
+        (link) =>
+          link.source !== "stack-dismissed" &&
+          threadPullRequestKeysEqual(link, legacyThreadPullRequestKey(linked)),
+      )
+        ? linked
+        : null,
+  };
+}

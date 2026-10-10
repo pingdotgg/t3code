@@ -30,7 +30,9 @@ interface MutableDirectoryNode {
   files: TurnDiffTreeFileNode[];
 }
 
-const SORT_LOCALE_OPTIONS: Intl.CollatorOptions = { numeric: true, sensitivity: "base" };
+// One collator for every comparison: localeCompare with options builds a new
+// collator per call, which dominated building a large turn tree.
+const NAME_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
 function normalizePathSegments(pathValue: string): string[] {
   return pathValue
@@ -40,7 +42,7 @@ function normalizePathSegments(pathValue: string): string[] {
 }
 
 function compareByName(a: { name: string }, b: { name: string }): number {
-  return a.name.localeCompare(b.name, undefined, SORT_LOCALE_OPTIONS);
+  return NAME_COLLATOR.compare(a.name, b.name);
 }
 
 function readStat(file: TurnDiffFileChange): TurnDiffStat | null {
@@ -110,7 +112,20 @@ export function summarizeTurnDiffStats(files: ReadonlyArray<TurnDiffFileChange>)
   );
 }
 
+// A turn's file list is immutable, and its tree card remounts whenever the
+// timeline virtualizes it back into view, so the tree is built once per list.
+const treeByFiles = new WeakMap<ReadonlyArray<TurnDiffFileChange>, TurnDiffTreeNode[]>();
+
+/** The returned nodes are shared between callers and must not be mutated. */
 export function buildTurnDiffTree(files: ReadonlyArray<TurnDiffFileChange>): TurnDiffTreeNode[] {
+  const cached = treeByFiles.get(files);
+  if (cached) return cached;
+  const tree = buildTurnDiffTreeUncached(files);
+  treeByFiles.set(files, tree);
+  return tree;
+}
+
+function buildTurnDiffTreeUncached(files: ReadonlyArray<TurnDiffFileChange>): TurnDiffTreeNode[] {
   const root: MutableDirectoryNode = {
     name: "",
     path: "",

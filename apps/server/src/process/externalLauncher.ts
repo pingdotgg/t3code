@@ -429,23 +429,20 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
   never,
   FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
 > {
-  const available: EditorId[] = [];
-
-  for (const editor of EDITORS) {
-    if (editor.commands === null) {
-      if ((yield* resolveUsableFileManagerCommand(platform, env)) !== undefined) {
-        available.push(editor.id);
-      }
-      continue;
-    }
-
-    const command = yield* resolveEditorCommand(editor, env);
-    if (Option.isSome(command)) {
-      available.push(editor.id);
-    }
-  }
-
-  return available;
+  // Each check is a few PATH lookups over shared directory listings, plus one
+  // `xdg-mime` spawn for the Linux file manager, so they run together. The
+  // result keeps EDITORS order.
+  const found = yield* Effect.forEach(
+    EDITORS,
+    (editor) =>
+      editor.commands === null
+        ? resolveUsableFileManagerCommand(platform, env).pipe(
+            Effect.map((command) => command !== undefined),
+          )
+        : resolveEditorCommand(editor, env).pipe(Effect.map(Option.isSome)),
+    { concurrency: "unbounded" },
+  );
+  return EDITORS.flatMap((editor, index) => (found[index] ? [editor.id] : []));
 });
 
 const resolveBrowserLaunch = Effect.fn("externalLauncher.resolveBrowserLaunch")(function* (
@@ -828,7 +825,6 @@ export const make = Effect.gen(function* () {
     return scan;
   }).pipe(Effect.uninterruptible);
   const cachedAvailableEditors = Effect.flatMap(acquireEditorDiscovery, Deferred.await);
-
   return ExternalLauncher.of({
     resolveAvailableEditors: () => cachedAvailableEditors,
     resolveFileManagerRevealKind: () =>

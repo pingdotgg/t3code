@@ -37,25 +37,34 @@ export async function waitForDraftHeroTransition(): Promise<void> {
   ]);
 }
 
+/**
+ * Whether `runMobileComposerTransition` runs its update inside a view
+ * transition. Otherwise it runs the update synchronously.
+ */
+export function isMobileComposerTransitionEnabled(active: boolean): boolean {
+  if (!active || typeof document === "undefined" || typeof window === "undefined") return false;
+  const mobileViewport = window.matchMedia?.("(max-width: 639px)").matches ?? false;
+  const prefersReducedMotion =
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+  return (
+    mobileViewport &&
+    !prefersReducedMotion &&
+    Boolean((document as ComposerViewTransitionDocument).startViewTransition)
+  );
+}
+
 export async function runMobileComposerTransition(
   update: () => void | Promise<void>,
   options: { active: boolean; durationMs: number },
 ): Promise<void> {
-  if (typeof document === "undefined" || typeof window === "undefined") {
+  if (!isMobileComposerTransitionEnabled(options.active)) {
     await update();
     return;
   }
 
   const transitionDocument = document as ComposerViewTransitionDocument;
-  const mobileViewport = window.matchMedia?.("(max-width: 639px)").matches ?? false;
-  const prefersReducedMotion =
-    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-  if (
-    !options.active ||
-    !mobileViewport ||
-    prefersReducedMotion ||
-    !transitionDocument.startViewTransition
-  ) {
+  const startViewTransition = transitionDocument.startViewTransition;
+  if (!startViewTransition) {
     await update();
     return;
   }
@@ -73,7 +82,7 @@ export async function runMobileComposerTransition(
   );
   transitionDocument.documentElement.dataset.mobileComposerRouteTransition = "true";
   try {
-    const transition = transitionDocument.startViewTransition(runUpdate);
+    const transition = startViewTransition.call(transitionDocument, runUpdate);
     transitionFinished = transition.finished.catch(() => undefined);
     activeMobileComposerTransition = transitionFinished;
     try {

@@ -16,6 +16,8 @@ import {
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
+import { precompressPlugin } from "./vite/precompress";
+import { lucideDynamicIconsPlugin, startupChunksPlugin } from "./vite/startupChunks";
 import { tailwindPlugins } from "./vite/tailwind";
 
 const repoEnv = loadRepoEnv();
@@ -184,6 +186,10 @@ export default defineConfig(() => {
         presets: [reactCompilerPreset()],
       }),
       tailwindPlugins(bundledDev),
+      lucideDynamicIconsPlugin(),
+      startupChunksPlugin(),
+      // Vercel compresses the hosted app itself; the T3 server serves these copies.
+      ...(process.env.VERCEL ? [] : [precompressPlugin()]),
     ],
     optimizeDeps: {
       include: [
@@ -283,7 +289,9 @@ export default defineConfig(() => {
     build: {
       outDir: "dist",
       emptyOutDir: true,
-      manifest: true,
+      // Not under .vite/: release artifact uploads skip hidden directories, and
+      // the server reads this file to mark hashed assets immutable.
+      manifest: "vite-manifest.json",
       sourcemap: buildSourcemap,
     },
     test: {

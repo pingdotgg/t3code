@@ -28,52 +28,16 @@ import { proposedPlanTitle, stripDisplayedPlanMarkdown } from "./proposedPlanTex
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
+import rehypeRaw from "rehype-raw";
 import {
   shouldPreserveAssistantLineBreaks,
-  CHAT_MARKDOWN_REHYPE_PLUGINS,
+  chatMarkdownRehypePlugins,
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
 } from "./markdownPipeline.ts";
+import { THREAD_FIND_BLOCK_TAGS } from "./threadFindBlockTags.ts";
 
-// Inline wrappers (including Shiki token spans) must not split a search phrase.
-export const THREAD_FIND_BLOCK_TAGS = new Set([
-  "address",
-  "article",
-  "aside",
-  "blockquote",
-  "br",
-  "dd",
-  "details",
-  "div",
-  "dl",
-  "dt",
-  "figcaption",
-  "figure",
-  "footer",
-  "h1",
-  "h2",
-  "h3",
-  "h4",
-  "h5",
-  "h6",
-  "header",
-  "hr",
-  "li",
-  "main",
-  "nav",
-  "ol",
-  "p",
-  "pre",
-  "section",
-  "summary",
-  "table",
-  "tbody",
-  "td",
-  "th",
-  "thead",
-  "tr",
-  "ul",
-]);
+const CHAT_MARKDOWN_REHYPE_PLUGINS = chatMarkdownRehypePlugins(rehypeRaw);
 
 const assistantProcessor = unified()
   .use(remarkParse)

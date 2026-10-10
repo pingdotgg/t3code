@@ -838,6 +838,9 @@ export const layer: Layer.Layer<
                     .responseStreamingMode,
               ),
             );
+            // Nothing provider-side may start before the baseline exists:
+            // opening a Claude process already runs the user's SessionStart
+            // hooks and MCP servers, which can edit the workspace.
             yield* checkpointService
               .captureBaseline({
                 scope: input.checkpointScope,

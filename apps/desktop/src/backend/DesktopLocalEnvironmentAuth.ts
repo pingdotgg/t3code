@@ -23,6 +23,10 @@ import * as DesktopBackendPool from "./DesktopBackendPool.ts";
 const BOOTSTRAP_TRANSIENT_RETRY_TIMEOUT = Duration.seconds(15);
 const BOOTSTRAP_TRANSIENT_RETRY_INTERVAL = Duration.millis(500);
 const TRANSIENT_BOOTSTRAP_STATUS_CODES = new Set([502, 503, 504]);
+// The window opens while the backend starts, and a cold start can outlast the
+// retry window above. The exchange waits for readiness first, up to this
+// bound, so a backend that never becomes ready still fails it.
+const BACKEND_START_TIMEOUT = Duration.minutes(2);
 
 const isTransientBearerBootstrapError = (error: RemoteEnvironmentRequestError): boolean => {
   switch (error._tag) {
@@ -84,6 +88,10 @@ export const make = Effect.gen(function* () {
 
         const instances = yield* pool.list;
         const primary = instances.find((instance) => instance.id === PRIMARY_LOCAL_ENVIRONMENT_ID);
+        // Returns at once for a ready backend or one that is not running.
+        if (primary !== undefined) {
+          yield* primary.waitForReady(BACKEND_START_TIMEOUT);
+        }
         const configOption = primary === undefined ? Option.none() : yield* primary.currentConfig;
         if (Option.isNone(configOption)) {
           return yield* new DesktopLocalEnvironmentAuthBackendNotConfiguredError();

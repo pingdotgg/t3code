@@ -260,8 +260,11 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     );
   }
 
+  const awaitStartupProbe = host.awaitStartupProbe ?? Effect.void;
+
+  // A settings change while startup holds the first probe waits for it too.
   yield* Stream.runForEach(input.streamSettings, (nextSettings) =>
-    Effect.asVoid(applySnapshot(nextSettings)),
+    awaitStartupProbe.pipe(Effect.andThen(applySnapshot(nextSettings)), Effect.asVoid),
   ).pipe(Effect.forkScoped);
 
   yield* Effect.forever(
@@ -293,7 +296,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     ),
   ).pipe(Effect.forkScoped);
 
-  yield* applySnapshot(initialSettings, { forceRefresh: true }).pipe(
+  // Until it lands, clients see the cached or pending snapshot.
+  yield* awaitStartupProbe.pipe(
+    Effect.andThen(refreshSnapshot()),
     Effect.ignoreCause({ log: true }),
     Effect.forkScoped,
   );

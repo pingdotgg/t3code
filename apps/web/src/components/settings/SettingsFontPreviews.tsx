@@ -1,5 +1,5 @@
 import { preloadPatchFile } from "@pierre/diffs/ssr";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "../ComposerPromptEditor";
 import { EMPTY_COMPOSER_CONTEXT_RECORDS } from "../composerContextPresentation";
 import { terminalThemeFromApp } from "../ThreadTerminalDrawer";
@@ -16,6 +16,31 @@ import { GhosttyTerminalSurface } from "~/terminal/ghostty/surface";
 // exactly what the app renders.
 
 const EMPTY_SKILLS: ReadonlyArray<never> = [];
+
+/**
+ * True once the element has scrolled into view. The diff and terminal
+ * previews pull megabytes of grammars, fonts, and WASM, and sit below the
+ * fold, so they load when a reader reaches them rather than with the page.
+ */
+function useRevealed(ref: RefObject<HTMLElement | null>): boolean {
+  const [revealed, setRevealed] = useState(false);
+  useEffect(() => {
+    const element = ref.current;
+    if (revealed || element === null) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setRevealed(true);
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      observer.disconnect();
+      setRevealed(true);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [ref, revealed]);
+  return revealed;
+}
 
 // Serialized the way the composer stores inline tokens: the $skill and the
 // markdown-style file links render as chips, so the preview shows prompt
@@ -125,8 +150,11 @@ function StaticDiffHtml({ html }: { html: string }) {
 export function CodeFontPreview() {
   const { resolvedTheme } = useTheme();
   const themeName = resolveDiffThemeName(resolvedTheme);
+  const placeholderRef = useRef<HTMLDivElement>(null);
+  const revealed = useRevealed(placeholderRef);
   const [htmlByFile, setHtmlByFile] = useState<readonly string[] | null>(null);
   useEffect(() => {
+    if (!revealed) return;
     let cancelled = false;
     void loadDiffPreviewHtml(themeName).then((html) => {
       if (!cancelled) setHtmlByFile(html);
@@ -134,8 +162,8 @@ export function CodeFontPreview() {
     return () => {
       cancelled = true;
     };
-  }, [themeName]);
-  if (htmlByFile === null) return null;
+  }, [revealed, themeName]);
+  if (htmlByFile === null) return <div ref={placeholderRef} />;
   return (
     <div className="mt-1 mb-2 space-y-2">
       {htmlByFile.map((html) => (
@@ -184,6 +212,7 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
   const surfaceRef = useRef<GhosttyTerminalSurface | null>(null);
   const fontRef = useRef({ family, size });
   const { theme, resolvedTheme } = useTheme();
+  const revealed = useRevealed(mountRef);
 
   useEffect(() => {
     const current = fontRef.current;
@@ -203,7 +232,7 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
 
   useEffect(() => {
     const mount = mountRef.current;
-    if (!mount) return;
+    if (!mount || !revealed) return;
     let cancelled = false;
     // Column of the caret on the current input line, so Backspace stops at
     // the prompt instead of eating it.
@@ -261,7 +290,7 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
       surfaceRef.current?.dispose();
       surfaceRef.current = null;
     };
-  }, []);
+  }, [revealed]);
 
   return (
     <div
