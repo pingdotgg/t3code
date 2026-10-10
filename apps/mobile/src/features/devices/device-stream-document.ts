@@ -15,6 +15,19 @@ export interface DeviceStreamConfiguration {
   };
 }
 
+export function deviceStreamBaseUrl(
+  viewerPlatform: string,
+  devicePlatform: DevicePlatform,
+  httpBase: string,
+) {
+  if (viewerPlatform !== "android") return "file:///";
+  // iOS targets use an MJPEG image. A synthetic HTTPS origin makes Android
+  // block HTTP image streams as mixed content, even with mixedContentMode="always".
+  if (devicePlatform === "ios") return `${new URL(httpBase).origin}/`;
+  // Android targets use WebCodecs, which requires a secure document.
+  return "https://localhost/";
+}
+
 export function deviceStreamDocument(configuration: string, script: string) {
   // Tickets and device names are data, including any HTML delimiter characters.
   const safeConfiguration = configuration.replace(/</g, "\\u003c");
