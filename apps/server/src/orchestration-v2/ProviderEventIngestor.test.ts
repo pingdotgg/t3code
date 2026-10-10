@@ -1799,6 +1799,109 @@ layer("ProviderEventIngestorV2", (it) => {
         },
       });
 
+      const parentItemId = TurnItemId.make("turn-item:old-native-parent");
+      yield* ingest({
+        type: "turn_item.updated",
+        driver: CODEX_DRIVER,
+        turnItem: {
+          id: parentItemId,
+          threadId: root.threadId!,
+          runId: null,
+          nodeId: task.id,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: { driver: CODEX_DRIVER, nativeId: "old-task", strength: "strong" },
+          parentItemId: null,
+          ordinal: 2,
+          status: "waiting",
+          title: "Review",
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          type: "subagent",
+          subagentId: task.id,
+          origin: "provider_native",
+          driver: CODEX_DRIVER,
+          providerInstanceId: modelSelection.instanceId,
+          childThreadId,
+          prompt: "Review",
+          result: null,
+        },
+      });
+      const otherChildRootId = NodeId.make("node:old-native-other-child-root");
+      yield* ingest({
+        type: "node.updated",
+        driver: CODEX_DRIVER,
+        node: {
+          id: otherChildRootId,
+          threadId: childThreadId,
+          runId: null,
+          parentNodeId: null,
+          rootNodeId: otherChildRootId,
+          kind: "root_turn",
+          status: "running",
+          countsForRun: false,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: {
+            driver: CODEX_DRIVER,
+            nativeId: "other-task",
+            strength: "strong",
+          },
+          runtimeRequestId: null,
+          checkpointScopeId: null,
+          startedAt: now,
+          completedAt: null,
+        },
+      });
+      const childItemId = TurnItemId.make("turn-item:old-native-child");
+      yield* ingest({
+        type: "turn_item.updated",
+        driver: CODEX_DRIVER,
+        turnItem: {
+          id: childItemId,
+          threadId: childThreadId,
+          runId: null,
+          nodeId: childRootId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: { driver: CODEX_DRIVER, nativeId: "child-reasoning", strength: "strong" },
+          parentItemId: null,
+          ordinal: 1,
+          status: "waiting",
+          title: "Thinking",
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          type: "reasoning",
+          text: "partial",
+          streaming: true,
+        },
+      });
+      const otherChildItemId = TurnItemId.make("turn-item:old-native-other-child");
+      yield* ingest({
+        type: "turn_item.updated",
+        driver: CODEX_DRIVER,
+        turnItem: {
+          id: otherChildItemId,
+          threadId: childThreadId,
+          runId: null,
+          nodeId: otherChildRootId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: { driver: CODEX_DRIVER, nativeId: "other-reasoning", strength: "strong" },
+          parentItemId: null,
+          ordinal: 1,
+          status: "running",
+          title: "Thinking",
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          type: "reasoning",
+          text: "partial",
+          streaming: true,
+        },
+      });
       yield* ingest({
         type: "subagent.updated",
         driver: CODEX_DRIVER,
@@ -1823,10 +1926,25 @@ layer("ProviderEventIngestorV2", (it) => {
       assert.equal(updated?.providerInstanceId, modelSelection.instanceId);
       assert.equal(updated?.result, "Previous session ended");
       assert.equal(
-        (yield* store.getThreadProjection(childThreadId)).nodes.find(
-          (node) => node.id === childRootId,
-        )?.status,
+        projection.turnItems.find((item) => item.id === parentItemId)?.status,
         "cancelled",
+      );
+
+      const childProjection = yield* store.getThreadProjection(childThreadId);
+      assert.equal(
+        childProjection.nodes.find((node) => node.id === childRootId)?.status,
+        "cancelled",
+      );
+      const settledChildItem = childProjection.turnItems.find((item) => item.id === childItemId);
+      assert.equal(settledChildItem?.status, "cancelled");
+      assert.isNotNull(settledChildItem?.completedAt);
+      if (settledChildItem?.type !== "reasoning") {
+        assert.fail("expected the reconciled child item to be reasoning");
+      }
+      assert.isFalse(settledChildItem.streaming);
+      assert.equal(
+        childProjection.turnItems.find((item) => item.id === otherChildItemId)?.status,
+        "running",
       );
 
       assert.equal(
