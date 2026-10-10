@@ -11,6 +11,7 @@ import {
   forkSession as forkClaudeSession,
   type ForkSessionOptions,
   type ForkSessionResult,
+  getSessionMessages,
   getSubagentMessages,
   query,
   type Options as ClaudeQueryOptions,
@@ -377,6 +378,10 @@ export interface ClaudeAgentSdkQueryRunnerShape {
   readonly subagentLaunchToolUseId: (
     input: ClaudeAgentSdkSubagentLookupInput,
   ) => Effect.Effect<string | null, ClaudeAgentSdkQueryRunnerError>;
+  /** Message ids a resume can reach: the chain after the newest compaction. */
+  readonly sessionMessageIds: (
+    input: ClaudeAgentSdkSessionLookupInput,
+  ) => Effect.Effect<ReadonlyArray<string>, ClaudeAgentSdkQueryRunnerError>;
   readonly assertComplete: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
 
@@ -390,6 +395,11 @@ export interface ClaudeAgentSdkSessionForkInput {
   readonly options: ForkSessionOptions;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
+}
+
+export interface ClaudeAgentSdkSessionLookupInput {
+  readonly sessionId: string;
+  readonly dir: string | null;
 }
 
 export interface ClaudeAgentSdkSubagentLookupInput {
@@ -828,6 +838,12 @@ export const layerQueryRunner: Layer.Layer<
           return toolUseId;
         },
       ),
+      sessionMessageIds: (input) =>
+        Effect.tryPromise({
+          try: () =>
+            getSessionMessages(input.sessionId, input.dir === null ? {} : { dir: input.dir }),
+          catch: (cause) => queryRunnerError(cause, "getSessionMessages"),
+        }).pipe(Effect.map((messages) => messages.map((message) => message.uuid))),
       assertComplete: Effect.void,
     });
   }),
@@ -8106,6 +8122,74 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               }
 
               const resumeSessionAt = yield* resolveClaudeRollbackResumeSessionAt(rollbackInput);
+              const dir = input.runtimePolicy.cwd;
+              // A compaction in a rolled-back turn hides every earlier message
+              // from resume, so resuming at the target would fail every send.
+              // Fork the session at the target instead; the fork ends there.
+              // If the lookup fails, keep the plain resume at the target.
+              const resumableIds =
+                resumeSessionAt === null
+                  ? null
+                  : yield* queryRunner.sessionMessageIds({ sessionId: nativeThreadId, dir }).pipe(
+                      Effect.catch((cause) =>
+                        Effect.logWarning("orchestration-v2.claude-rollback-lookup-failed", {
+                          providerThreadId: rollbackInput.providerThread.id,
+                          cause,
+                        }).pipe(Effect.as(null)),
+                      ),
+                    );
+              if (
+                resumeSessionAt !== null &&
+                resumableIds !== null &&
+                !resumableIds.includes(resumeSessionAt)
+              ) {
+                const forked = yield* queryRunner.forkSession({
+                  sessionId: nativeThreadId,
+                  options: {
+                    ...(dir === null ? {} : { dir }),
+                    upToMessageId: resumeSessionAt,
+                  },
+                  threadId: input.threadId,
+                  providerSessionId: input.providerSessionId,
+                });
+                const forkedHeadId = (yield* queryRunner.sessionMessageIds({
+                  sessionId: forked.sessionId,
+                  dir,
+                })).at(-1);
+                return {
+                  providerThread: {
+                    ...makeProviderThread({
+                      idAllocator,
+                      providerInstanceId: adapterOptions.instanceId,
+                      appThreadId: rollbackInput.providerThread.appThreadId,
+                      ...(rollbackInput.providerThread.ownerNodeId === null
+                        ? {}
+                        : { ownerNodeId: rollbackInput.providerThread.ownerNodeId }),
+                      providerSessionId: input.providerSessionId,
+                      nativeThreadId: forked.sessionId,
+                      ...(rollbackInput.providerThread.forkedFrom === null
+                        ? {}
+                        : { forkedFrom: rollbackInput.providerThread.forkedFrom }),
+                      now,
+                    }),
+                    // The fork has no provider turns, so a pinned head is what
+                    // makes the next open resume it instead of creating it.
+                    nativeConversationHeadRef:
+                      forkedHeadId === undefined
+                        ? null
+                        : {
+                            driver: CLAUDE_PROVIDER,
+                            nativeId: forkedHeadId,
+                            strength: "weak" as const,
+                          },
+                    lastRunOrdinal: rollbackInput.target.appRunOrdinal,
+                    handoffIds: rollbackInput.providerThread.handoffIds,
+                  },
+                  providerTurns: [],
+                  messages: [],
+                  runtimeRequests: [],
+                };
+              }
               return {
                 providerThread: {
                   ...rollbackInput.providerThread,

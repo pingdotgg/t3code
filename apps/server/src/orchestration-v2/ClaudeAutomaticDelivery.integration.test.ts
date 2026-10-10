@@ -163,6 +163,7 @@ it.effect.each(["child completion", "scheduled message", "user steering"] as con
               }),
             forkSession: () => Effect.die("unused"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            sessionMessageIds: () => Effect.die("unused"),
             assertComplete: Effect.void,
           },
         });
