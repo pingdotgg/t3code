@@ -27,7 +27,7 @@ export interface CreatedPullRequestKey {
  * null when the action did not leave one behind. Reading the host and
  * repository from the URL keeps the link host-level even when the checkout's
  * remote differs from where the PR was opened (a fork, say); the project is
- * only consulted when the URL is one this cannot read.
+ * only consulted for valid HTTP(S) URLs this cannot read.
  */
 export function createdPullRequestKey(
   result: Pick<GitRunStackedActionResult, "pr">,
@@ -39,6 +39,9 @@ export function createdPullRequestKey(
   }
   const parsed = parseChangeRequestUrl(url);
   if (parsed !== null) return { ...parsed, url };
+  if (!URL.canParse(url)) return null;
+  const { protocol } = new URL(url);
+  if (protocol !== "http:" && protocol !== "https:") return null;
   const identity = project?.repositoryIdentity;
   const kind = identity?.provider as SourceControlProviderKind | undefined;
   const repository = sourceControlRepositorySelector(identity);
