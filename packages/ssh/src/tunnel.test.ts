@@ -245,6 +245,9 @@ describe("ssh tunnel scripts", () => {
       '[ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null',
     );
     assert.notInclude(launch, "RUNNER_CHANGED");
+    assert.include(launch, 'STARTED_RUNNER_FILE="$STATE_DIR/run-t3-started.sh"');
+    assert.include(launch, 'if [ -f "$RUNNER_FILE" ] && [ ! -f "$STARTED_RUNNER_FILE" ]; then');
+    assert.include(launch, 'cp "$RUNNER_FILE" "$STARTED_RUNNER_FILE"');
     assert.include(launch, "ensure_remote_node_path()");
     assert.include(launch, "if ! ensure_remote_node_path; then");
     assert.include(devLaunch, `T3_NODE_ENGINE_RANGE='${TEST_NODE_ENGINE_RANGE}'`);
@@ -262,6 +265,14 @@ describe("ssh tunnel scripts", () => {
     assert.include(
       SshTunnel.buildRemotePairingScript(stateKey, ARCHIVE),
       '"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json',
+    );
+    assert.include(
+      SshTunnel.buildRemotePairingScript(stateKey, ARCHIVE),
+      '"$STARTED_RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json',
+    );
+    assert.include(
+      SshTunnel.buildRemotePairingScript(stateKey, ARCHIVE),
+      'kill -0 "$REMOTE_PID" 2>/dev/null; then',
     );
     assert.include(
       SshTunnel.buildRemotePairingScript(stateKey, ARCHIVE),
@@ -929,6 +940,82 @@ exec "$REAL_NODE" "$@"
       if (ready) assert.deepEqual(JSON.parse(stdout), { remotePort: 3773, serverKind: "managed" });
       else assert.include(stderr, "server was left running");
       assert.equal(yield* fs.readFileString(`${state}/pid`), String(server.pid));
+      // The pairing handshake needs the runtime that owns the live server.
+      assert.equal(yield* fs.readFileString(`${state}/run-t3-started.sh`), "old runner");
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("remote pairing script", () => {
+  it.effect.each([{ live: true }, { live: false }] as const)(
+    "uses the started runner while a managed server is live: %j",
+    ({ live }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-pairing-" });
+        const state = `${root}/.t3/ssh-launch/test`;
+        yield* fs.makeDirectory(state, { recursive: true });
+        const startedRunner = `${state}/run-t3-started.sh`;
+        yield* fs.writeFileString(
+          startedRunner,
+          `#!/bin/sh
+printf '{"credential":"started"}\\n'
+`,
+        );
+        yield* fs.chmod(startedRunner, 0o700);
+        const nodeScript = `${root}/runner.mjs`;
+        yield* fs.writeFileString(
+          nodeScript,
+          `console.log(JSON.stringify({ credential: "new" }));\n`,
+        );
+        if (live) {
+          const server = yield* spawner.spawn(ChildProcess.make("sleep", ["120"]));
+          yield* fs.writeFileString(`${state}/pid`, String(server.pid));
+          yield* fs.writeFileString(`${state}/managed`, "managed");
+        }
+        const script = `${root}/pair.sh`;
+        yield* fs.writeFileString(
+          script,
+          SshTunnel.buildRemotePairingScript("test", {
+            nodeScriptPath: nodeScript,
+            nodeEngineRange: ">=20",
+          }),
+        );
+        const child = yield* spawner.spawn(
+          ChildProcess.make("sh", [script], {
+            env: {
+              HOME: root,
+              PATH: `${process.execPath.slice(0, process.execPath.lastIndexOf("/"))}:${process.env.PATH ?? ""}`,
+            },
+            extendEnv: false,
+          }),
+        );
+        const [stdout, stderr, code] = yield* Effect.all(
+          [
+            child.stdout.pipe(
+              Stream.decodeText(),
+              Stream.runFold(
+                () => "",
+                (a, b) => a + b,
+              ),
+            ),
+            child.stderr.pipe(
+              Stream.decodeText(),
+              Stream.runFold(
+                () => "",
+                (a, b) => a + b,
+              ),
+            ),
+            child.exitCode,
+          ],
+          { concurrency: "unbounded" },
+        );
+        assert.equal(Number(code), 0, stderr);
+        // A live managed server must never run the newer runner: its
+        // migrations would run underneath the older running server.
+        assert.equal(stdout.trim(), live ? '{"credential":"started"}' : '{"credential":"new"}');
+        assert.equal(yield* fs.exists(`${state}/run-t3.sh`), !live);
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

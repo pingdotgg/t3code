@@ -550,6 +550,7 @@ PID_FILE="$STATE_DIR/pid"
 MANAGED_FILE="$STATE_DIR/managed"
 LOG_FILE="$STATE_DIR/server.log"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
+STARTED_RUNNER_FILE="$STATE_DIR/run-t3-started.sh"
 RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
 mkdir -p "$STATE_DIR"
 cleanup_runner_next() {
@@ -559,6 +560,13 @@ trap cleanup_runner_next EXIT
 cat >"$RUNNER_NEXT" <<'SH'
 @@T3_RUNNER_SCRIPT@@
 SH
+# The pairing handshake must run under the runtime that owns the live server's
+# database. Until this launch replaces the server, the previous runner is the
+# best record of that runtime, so keep it for the pairing script.
+if [ -f "$RUNNER_FILE" ] && [ ! -f "$STARTED_RUNNER_FILE" ]; then
+  cp "$RUNNER_FILE" "$STARTED_RUNNER_FILE"
+  chmod 700 "$STARTED_RUNNER_FILE"
+fi
 mv "$RUNNER_NEXT" "$RUNNER_FILE"
 chmod 700 "$RUNNER_FILE"
 T3_ARCHIVE_MODE=@@T3_ARCHIVE_MODE@@
@@ -675,6 +683,8 @@ if [ -z "$REMOTE_PORT" ]; then
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
   printf 'managed\\n' >"$MANAGED_FILE"
+  cp "$RUNNER_FILE" "$STARTED_RUNNER_FILE"
+  chmod 700 "$STARTED_RUNNER_FILE"
   if ! wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
     printf 'Remote T3 server did not become ready on 127.0.0.1:%s.\\n' "$REMOTE_PORT" >&2
     if [ -s "$LOG_FILE" ]; then
@@ -695,12 +705,24 @@ const REMOTE_PAIRING_SCRIPT = `set -eu
 STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
 DEFAULT_SERVER_HOME="$HOME/.t3"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
+STARTED_RUNNER_FILE="$STATE_DIR/run-t3-started.sh"
+PID_FILE="$STATE_DIR/pid"
+MANAGED_FILE="$STATE_DIR/managed"
 mkdir -p "$STATE_DIR"
+PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
+REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
+REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+# A live managed server keeps the runtime it was started with. Minting the
+# token with a newer runner would run that runner's database migrations
+# underneath the older running server.
+if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && [ -x "$STARTED_RUNNER_FILE" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+  "$STARTED_RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json
+  exit 0
+fi
 cat >"$RUNNER_FILE" <<'SH'
 @@T3_RUNNER_SCRIPT@@
 SH
 chmod 700 "$RUNNER_FILE"
-PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
 "$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json
 `;
 
