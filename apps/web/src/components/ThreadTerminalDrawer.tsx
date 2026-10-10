@@ -1460,6 +1460,11 @@ export default function ThreadTerminalDrawer({
       // A drag that ends where it started keeps the stored preference, which may
       // be taller than the window-capped height the drag started from.
       if (!didResizeDuringDragRef.current || drawerHeightRef.current === resizeState.startHeight) {
+        // React skips the write when the rendered height did not change, so put
+        // back the preference as the current window caps it.
+        const renderedHeight = clampDrawerHeight(preferredDrawerHeightRef.current);
+        drawerHeightRef.current = renderedHeight;
+        resizeState.drawer?.style.setProperty("height", `${renderedHeight}px`);
         return;
       }
       setDrawerHeight(drawerHeightRef.current);
