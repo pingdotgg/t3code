@@ -3,6 +3,9 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
   EnvironmentId,
+  GitManagerError,
+  IsoDateTime,
+  type Project,
   NodeId,
   type OrchestrationV2ThreadShell,
   type ScheduledTask,
@@ -94,6 +97,7 @@ describe("OrchestratorMcpService", () => {
       let hasNestedWork = true;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
+        Layer.mock(GitWorkflow.GitWorkflowService)({ isRepository: () => Effect.succeed(true) }),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: (threadId) =>
             Effect.succeed(
@@ -211,6 +215,7 @@ describe("OrchestratorMcpService", () => {
       } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
+        Layer.mock(GitWorkflow.GitWorkflowService)({ isRepository: () => Effect.succeed(true) }),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: (threadId) =>
             Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
@@ -294,6 +299,7 @@ describe("OrchestratorMcpService", () => {
       } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
+        Layer.mock(GitWorkflow.GitWorkflowService)({ isRepository: () => Effect.succeed(true) }),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: (threadId) =>
             Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
@@ -370,6 +376,7 @@ describe("OrchestratorMcpService", () => {
       } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
+        Layer.mock(GitWorkflow.GitWorkflowService)({ isRepository: () => Effect.succeed(true) }),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: (threadId) =>
             Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
@@ -449,6 +456,7 @@ describe("OrchestratorMcpService", () => {
       } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
+        Layer.mock(GitWorkflow.GitWorkflowService)({ isRepository: () => Effect.succeed(true) }),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: (threadId) =>
             Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
@@ -535,6 +543,7 @@ describe("OrchestratorMcpService", () => {
       } as unknown as OrchestrationV2ThreadProjection;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
+        Layer.mock(GitWorkflow.GitWorkflowService)({ isRepository: () => Effect.succeed(true) }),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: (threadId) =>
             Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
@@ -650,6 +659,7 @@ describe("OrchestratorMcpService", () => {
       ]) as unknown as ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection>;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
+        Layer.mock(GitWorkflow.GitWorkflowService)({ isRepository: () => Effect.succeed(true) }),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: (threadId) => Effect.succeed(projections.get(threadId)!),
           // The child still runs Supervised; its user has since raised the task under it
@@ -917,6 +927,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         ];
         const layerDependencies = Layer.mergeAll(
           NodeServices.layer,
+          Layer.mock(GitWorkflow.GitWorkflowService)({ isRepository: () => Effect.succeed(true) }),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             getThreadRecords: () => Effect.succeed(parentProjection([])),
           }),
@@ -1037,6 +1048,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
         const layerDependencies = Layer.mergeAll(
           NodeServices.layer,
+          Layer.mock(GitWorkflow.GitWorkflowService)({ isRepository: () => Effect.succeed(true) }),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             getThreadRecords: (threadId) =>
               Effect.succeed(
@@ -1134,6 +1146,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       let delegated = false;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
+        Layer.mock(GitWorkflow.GitWorkflowService)({ isRepository: () => Effect.succeed(true) }),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: (threadId) =>
             Effect.succeed(
@@ -1211,6 +1224,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       });
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
+        Layer.mock(GitWorkflow.GitWorkflowService)({ isRepository: () => Effect.succeed(true) }),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: () => Effect.succeed(parentProjection([])),
         }),
@@ -1303,6 +1317,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       const dispatched = yield* Ref.make(0);
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
+        Layer.mock(GitWorkflow.GitWorkflowService)({ isRepository: () => Effect.succeed(true) }),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: (threadId) =>
             Effect.succeed(
@@ -1447,6 +1462,9 @@ describe("OrchestratorMcpService provider resolution", () => {
           let delegated = false;
           const layerDependencies = Layer.mergeAll(
             NodeServices.layer,
+            Layer.mock(GitWorkflow.GitWorkflowService)({
+              isRepository: () => Effect.succeed(true),
+            }),
             Layer.mock(ThreadManagementService.ThreadManagementService)({
               getThreadRecords: (threadId) =>
                 Effect.succeed(
@@ -1613,24 +1631,25 @@ describe("OrchestratorMcpService provider resolution", () => {
       issuedAt: 1,
     };
 
-    const scheduleForProject = (isGitRepository: boolean) =>
+    const workspaceRoot = "/family-vault";
+    const project: Project = {
+      id: projectId,
+      title: "Family vault",
+      workspaceRoot,
+      repositoryIdentity: null,
+      defaultModelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+      defaultThreadEnvMode: null,
+      autoPull: false,
+      faviconPath: null,
+      projectIcon: null,
+      scripts: [],
+      createdAt: IsoDateTime.make("2026-10-05T00:00:00.000Z"),
+      updatedAt: IsoDateTime.make("2026-10-05T00:00:00.000Z"),
+      deletedAt: null,
+    };
+
+    const scheduleForProject = (isGitRepository: boolean | GitManagerError) =>
       Effect.gen(function* () {
-        const workspaceRoot = "/family-vault";
-        const project = {
-          id: projectId,
-          title: "Family vault",
-          workspaceRoot,
-          repositoryIdentity: null,
-          defaultModelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
-          defaultThreadEnvMode: null,
-          autoPull: false,
-          faviconPath: null,
-          projectIcon: null,
-          scripts: [],
-          createdAt: "2026-10-05T00:00:00.000Z",
-          updatedAt: "2026-10-05T00:00:00.000Z",
-          deletedAt: null,
-        } as never;
         const detectedRoots = yield* Ref.make<ReadonlyArray<string>>([]);
         const savedStrategy = yield* Ref.make<ScheduledTask["workspaceStrategy"] | null>(null);
         const dependencies = Layer.mergeAll(
@@ -1646,7 +1665,11 @@ describe("OrchestratorMcpService provider resolution", () => {
           Layer.mock(GitWorkflow.GitWorkflowService)({
             isRepository: (cwd) =>
               Ref.update(detectedRoots, (roots) => [...roots, cwd]).pipe(
-                Effect.as(isGitRepository),
+                Effect.andThen(
+                  typeof isGitRepository === "boolean"
+                    ? Effect.succeed(isGitRepository)
+                    : Effect.fail(isGitRepository),
+                ),
               ),
           }),
           Layer.mock(SecretRequests.SecretRequests)({}),
@@ -1667,15 +1690,21 @@ describe("OrchestratorMcpService provider resolution", () => {
           Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))),
         );
 
-        yield* service
-          .scheduleTask(supervisedClient, {
-            projectId,
-            prompt: "Run the daily check",
-            schedule: { type: "interval", everyMs: 60_000 },
-            bindToCurrentThread: false,
-          })
-          .pipe(Effect.provide(dependencies));
+        const scheduled = service.scheduleTask(supervisedClient, {
+          projectId,
+          prompt: "Run the daily check",
+          schedule: { type: "interval", everyMs: 60_000 },
+          bindToCurrentThread: false,
+        });
 
+        if (typeof isGitRepository !== "boolean") {
+          const error = yield* Effect.flip(scheduled);
+          assert.equal(error.code, "orchestration_error");
+          assert.equal(error.message, "Could not inspect project Git status.");
+          assert.equal(yield* Ref.get(savedStrategy), null);
+          return;
+        }
+        yield* scheduled;
         assert.deepEqual(yield* Ref.get(detectedRoots), [workspaceRoot]);
         assert.deepEqual(
           yield* Ref.get(savedStrategy),
@@ -1693,24 +1722,18 @@ describe("OrchestratorMcpService provider resolution", () => {
       scheduleForProject(true),
     );
 
+    it.effect("does not save a schedule when repository detection fails", () =>
+      scheduleForProject(
+        new GitManagerError({
+          operation: "GitWorkflowService.isRepository",
+          cwd: "/family-vault",
+          detail: "Repository detection failed.",
+        }),
+      ),
+    );
+
     it.effect("uses the project root when unbinding a schedule in a non-Git project", () =>
       Effect.gen(function* () {
-        const workspaceRoot = "/family-vault";
-        const project = {
-          id: projectId,
-          title: "Family vault",
-          workspaceRoot,
-          repositoryIdentity: null,
-          defaultModelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
-          defaultThreadEnvMode: null,
-          autoPull: false,
-          faviconPath: null,
-          projectIcon: null,
-          scripts: [],
-          createdAt: "2026-10-05T00:00:00.000Z",
-          updatedAt: "2026-10-05T00:00:00.000Z",
-          deletedAt: null,
-        } as never;
         const existing = task({ threadId: boundThreadId, workspaceStrategy: { type: "root" } });
         const detectedRoots = yield* Ref.make<ReadonlyArray<string>>([]);
         const savedStrategy = yield* Ref.make<ScheduledTask["workspaceStrategy"] | null>(null);
@@ -1749,12 +1772,10 @@ describe("OrchestratorMcpService provider resolution", () => {
           Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))),
         );
 
-        yield* service
-          .updateScheduledTask(supervisedClient, {
-            scheduledTaskId: existing.id,
-            bindToCurrentThread: false,
-          })
-          .pipe(Effect.provide(dependencies));
+        yield* service.updateScheduledTask(supervisedClient, {
+          scheduledTaskId: existing.id,
+          bindToCurrentThread: false,
+        });
 
         assert.deepEqual(yield* Ref.get(detectedRoots), [workspaceRoot]);
         assert.deepEqual(yield* Ref.get(savedStrategy), { type: "root" });
@@ -1770,6 +1791,9 @@ describe("OrchestratorMcpService provider resolution", () => {
         Layer.provide(
           Layer.mergeAll(
             NodeServices.layer,
+            Layer.mock(GitWorkflow.GitWorkflowService)({
+              isRepository: () => Effect.succeed(true),
+            }),
             Layer.mock(ThreadManagementService.ThreadManagementService)({
               getThreadShell: (threadId) =>
                 Effect.succeed(threadId === boundThreadId ? boundThread : null),
@@ -1837,6 +1861,9 @@ describe("OrchestratorMcpService provider resolution", () => {
               Layer.provide(
                 Layer.mergeAll(
                   NodeServices.layer,
+                  Layer.mock(GitWorkflow.GitWorkflowService)({
+                    isRepository: () => Effect.succeed(true),
+                  }),
                   Layer.mock(ThreadManagementService.ThreadManagementService)({
                     getThreadShell: () => Effect.succeed(null),
                     // Its turn ended: no run is active.
@@ -1919,6 +1946,9 @@ describe("OrchestratorMcpService provider resolution", () => {
               Layer.provide(
                 Layer.mergeAll(
                   NodeServices.layer,
+                  Layer.mock(GitWorkflow.GitWorkflowService)({
+                    isRepository: () => Effect.succeed(true),
+                  }),
                   Layer.mock(ThreadManagementService.ThreadManagementService)({
                     getThreadShell: (threadId) =>
                       Ref.getAndUpdate(lookups, (count) => count + 1).pipe(

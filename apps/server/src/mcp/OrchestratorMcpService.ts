@@ -222,45 +222,6 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * Bound runs post into the existing thread. Unbound runs use an isolated
- * worktree when the project is a Git repository, and its root otherwise.
- */
-function scheduledTaskWorkspaceStrategy(
-  boundToThread: boolean,
-  isGitRepository: boolean,
-): ScheduledTask["workspaceStrategy"] {
-  return boundToThread || !isGitRepository
-    ? { type: "root" }
-    : { type: "worktree", baseRef: "main", startFromOrigin: true };
-}
-
-function resolveScheduledTaskWorkspaceStrategy(
-  boundToThread: boolean,
-  workspaceRoot: string,
-): Effect.Effect<ScheduledTask["workspaceStrategy"], OrchestratorMcpFailure> {
-  return Effect.gen(function* () {
-    if (boundToThread) return { type: "root" };
-    const git = yield* Effect.serviceOption(GitWorkflow.GitWorkflowService);
-    if (Option.isNone(git)) {
-      return yield* Effect.fail(
-        failure(
-          "orchestration_error",
-          "Cannot choose a scheduled task workspace because Git detection is unavailable.",
-        ),
-      );
-    }
-    const isGitRepository = yield* git.value
-      .isRepository(workspaceRoot)
-      .pipe(
-        Effect.mapError((error) =>
-          failure("orchestration_error", `Could not inspect project Git status: ${error.message}`),
-        ),
-      );
-    return scheduledTaskWorkspaceStrategy(boundToThread, isGitRepository);
-  });
-}
-
-/**
  * A scheduled task as an agent sees it. `mayRun` says whether the caller may
  * run it: a webhook's URL carries the secret that starts the task's runs, so
  * only such a caller sees it.
@@ -862,6 +823,26 @@ const make = Effect.gen(function* () {
   const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
   const projects = yield* ProjectService.ProjectService;
+  const git = yield* GitWorkflow.GitWorkflowService;
+
+  const resolveScheduledTaskWorkspaceStrategy = Effect.fn(
+    "OrchestratorMcpService.resolveScheduledTaskWorkspaceStrategy",
+  )(function* (
+    boundToThread: boolean,
+    workspaceRoot: string,
+  ): Effect.fn.Return<ScheduledTask["workspaceStrategy"], OrchestratorMcpFailure> {
+    if (boundToThread) return { type: "root" };
+    const isGitRepository = yield* git
+      .isRepository(workspaceRoot)
+      .pipe(
+        Effect.mapError(() =>
+          failure("orchestration_error", "Could not inspect project Git status."),
+        ),
+      );
+    return isGitRepository
+      ? { type: "worktree", baseRef: "main", startFromOrigin: true }
+      : { type: "root" };
+  });
 
   /** A caller-named project, which must exist before anything is recorded against it. */
   const requireProject = (projectId: ProjectId) =>
@@ -1619,8 +1600,6 @@ const make = Effect.gen(function* () {
             : input.bindToCurrentThread && parent !== undefined
               ? parent.thread.id
               : null;
-        // Re-evaluate the workspace when binding changes so Git projects stay
-        // isolated and non-Git projects do not request worktrees.
         const workspaceStrategy =
           input.bindToCurrentThread === undefined
             ? existing.workspaceStrategy
@@ -2535,5 +2514,6 @@ export const layer: Layer.Layer<
   | ProviderAdapterRegistry.ProviderAdapterRegistryV2
   | ScheduledTaskService.ScheduledTaskService
   | ProjectService.ProjectService
+  | GitWorkflow.GitWorkflowService
   | SecretRequests.SecretRequests
 > = Layer.effect(OrchestratorMcpService, make);

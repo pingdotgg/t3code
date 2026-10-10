@@ -68,6 +68,7 @@ import {
   materializeReplayTranscriptWorkspace,
 } from "@t3tools/provider-testing/replayTranscript";
 import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
+import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
@@ -672,6 +673,8 @@ describe("orchestrator MCP toolkit", () => {
               triggerWebhook: () => Effect.die("unused in this test"),
             }),
           );
+          const gitProject = yield* Ref.make(false);
+          const gitInspections = yield* Ref.make(0);
           const layerTest = Layer.merge(
             McpHttpServer.layerOrchestratorToolkit,
             McpHttpServer.layerThreadToolkit,
@@ -681,13 +684,27 @@ describe("orchestrator MCP toolkit", () => {
             Layer.provide(layerRegistry),
             Layer.provide(layerProviderRegistry),
             Layer.provide(layerScheduledTaskStub),
+            Layer.provide(
+              Layer.mock(GitWorkflow.GitWorkflowService)({
+                isRepository: (root) => {
+                  expect(root).toBe(cwd);
+                  return Ref.update(gitInspections, (count) => count + 1).pipe(
+                    Effect.andThen(Ref.get(gitProject)),
+                  );
+                },
+              }),
+            ),
             Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
             Layer.provide(
               Layer.mock(ProjectService.ProjectService)({
                 getById: (id) =>
                   Effect.succeed(
                     id === projectId
-                      ? Option.some({ id, defaultModelSelection: null } as never)
+                      ? Option.some({
+                          id,
+                          workspaceRoot: cwd,
+                          defaultModelSelection: null,
+                        } as never)
                       : Option.none(),
                   ),
               }),
@@ -1540,6 +1557,45 @@ describe("orchestrator MCP toolkit", () => {
               scheduledTaskId,
               deleted: true,
             });
+            expect(yield* Ref.get(scheduledStore)).toHaveLength(0);
+
+            expect(yield* Ref.get(gitInspections)).toBe(0);
+            const unboundScheduleCall = yield* invoke("schedule_task", {
+              prompt: "check the workspace",
+              schedule: { type: "interval", everyMs: 3_600_000 },
+              bindToCurrentThread: false,
+              enabled: false,
+              clientRequestId: "schedule-non-git-workspace",
+            });
+            expect(unboundScheduleCall.isError).toBe(false);
+            const unboundScheduledTaskId = (
+              unboundScheduleCall.structuredContent as { scheduledTaskId: string }
+            ).scheduledTaskId;
+            expect(yield* Ref.get(scheduledStore)).toMatchObject([
+              { threadId: null, workspaceStrategy: { type: "root" } },
+            ]);
+            yield* Ref.set(gitProject, true);
+            const gitScheduleUpdate = yield* invoke("update_scheduled_task", {
+              scheduledTaskId: unboundScheduledTaskId,
+              bindToCurrentThread: false,
+            });
+            expect(gitScheduleUpdate.isError).toBe(false);
+            expect(yield* Ref.get(scheduledStore)).toMatchObject([
+              {
+                threadId: null,
+                workspaceStrategy: { type: "worktree", baseRef: "main", startFromOrigin: true },
+              },
+            ]);
+            const reboundScheduleUpdate = yield* invoke("update_scheduled_task", {
+              scheduledTaskId: unboundScheduledTaskId,
+              bindToCurrentThread: true,
+            });
+            expect(reboundScheduleUpdate.isError).toBe(false);
+            expect(yield* Ref.get(scheduledStore)).toMatchObject([
+              { threadId: parentThreadId, workspaceStrategy: { type: "root" } },
+            ]);
+            expect(yield* Ref.get(gitInspections)).toBe(2);
+            yield* invoke("delete_scheduled_task", { scheduledTaskId: unboundScheduledTaskId });
             expect(yield* Ref.get(scheduledStore)).toHaveLength(0);
 
             // OpenCode 1.15 has emitted this exact nested-object-as-JSON-string
@@ -3819,6 +3875,11 @@ describe("orchestrator MCP toolkit", () => {
           ),
           Layer.provide(layerProviderRegistry),
           Layer.provide(layerUnusedScheduledTaskStub),
+          Layer.provide(
+            Layer.mock(GitWorkflow.GitWorkflowService)({
+              isRepository: () => Effect.succeed(true),
+            }),
+          ),
           Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
           Layer.provideMerge(
             SecretRequests.layer.pipe(

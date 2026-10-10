@@ -18,6 +18,7 @@ import { expect, it } from "vite-plus/test";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
@@ -157,6 +158,7 @@ it("readThread prefers activity-run status over a newer cancelled queued run", a
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
+        Layer.mock(GitWorkflow.GitWorkflowService)({ isRepository: () => Effect.succeed(true) }),
         NodeCrypto.layer,
       ),
     ),
@@ -222,6 +224,7 @@ it("readThread prefers waiting activity status over a newer cancelled queued run
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
+        Layer.mock(GitWorkflow.GitWorkflowService)({ isRepository: () => Effect.succeed(true) }),
         NodeCrypto.layer,
       ),
     ),
@@ -335,6 +338,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
+        Layer.mock(GitWorkflow.GitWorkflowService)({ isRepository: () => Effect.succeed(true) }),
         NodeCrypto.layer,
       ),
     ),
@@ -468,6 +472,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
+        Layer.mock(GitWorkflow.GitWorkflowService)({ isRepository: () => Effect.succeed(true) }),
         NodeCrypto.layer,
       ),
     ),
