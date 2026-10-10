@@ -53,9 +53,13 @@ afterEach(async () => {
   state.projection = null;
 });
 
-it.each(["codex", "claudeAgent"])(
-  "stops only active app-owned %s subagents without opening their thread",
-  async (driver) => {
+it.each([
+  { driver: "codex", origin: "app_owned" },
+  { driver: "claudeAgent", origin: "app_owned" },
+  { driver: "claudeAgent", origin: "provider_native" },
+])(
+  "stops active $origin $driver subagents without opening their thread",
+  async ({ driver, origin }) => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const parent = {
       id: "parent",
@@ -70,7 +74,9 @@ it.each(["codex", "claudeAgent"])(
     const agent = {
       id: "agent",
       childThreadId: "child",
-      origin: "app_owned",
+      origin,
+      threadId: "parent",
+      nativeTaskRef: { driver, nativeId: "claude-task", strength: "strong" },
       driver,
       providerInstanceId: "codex",
       title: "Worker",
@@ -106,7 +112,10 @@ it.each(["codex", "claudeAgent"])(
     await act(async () => stopButton().props.onClick());
     expect(state.command).toHaveBeenCalledWith({
       environmentId: "test",
-      input: { threadId: "child" },
+      input:
+        origin === "provider_native"
+          ? { threadId: "parent", subagentId: "agent" }
+          : { threadId: "child" },
     });
     expect(state.navigate).not.toHaveBeenCalled();
 
@@ -132,6 +141,12 @@ it.each(["codex", "claudeAgent"])(
       );
       state.projection = { ...projection, subagents: [{ ...agent, status: "completed" }] };
       await act(async () => renderer.update(cloneElement(panel)));
+      if (origin === "provider_native") {
+        expect(renderer.root.findAllByProps({ "aria-label": "Stop subagent Worker" })).toHaveLength(
+          0,
+        );
+        continue;
+      }
       await act(async () => stopButton().props.onClick());
       expect(state.command).toHaveBeenCalledTimes(1);
       expect(state.command).toHaveBeenLastCalledWith({
@@ -152,7 +167,7 @@ it.each(["codex", "claudeAgent"])(
     expect(renderer.root.findAllByProps({ "aria-label": "Stop subagent Worker" })).toHaveLength(0);
     state.projection = {
       ...projection,
-      subagents: [{ ...agent, origin: "provider_native", driver: "claudeAgent" }],
+      subagents: [{ ...agent, origin: "provider_native", driver: "codex" }],
     };
     await act(async () => renderer.update(cloneElement(panel)));
     expect(renderer.root.findAllByProps({ "aria-label": "Stop subagent Worker" })).toHaveLength(0);

@@ -2130,6 +2130,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   const makeWakeHarnessWithOptions = (options?: {
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
     readonly interrupt?: Effect.Effect<void>;
+    readonly stopTask?: (taskId: string) => Effect.Effect<void>;
     readonly environment?: NodeJS.ProcessEnv;
     readonly settings?: ClaudeSettings;
     // A CLI process opened after the first streams from its own queue, so the
@@ -2155,6 +2156,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const permissionModeChanges: Array<string> = [];
       const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
         [];
+      const subagentReceipts =
+        yield* Queue.unbounded<
+          Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "subagent.updated" }>
+        >();
       const terminalReceipts =
         yield* Queue.unbounded<
           Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }>
@@ -2227,6 +2232,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   Effect.sync(() => {
                     permissionModeChanges.push(mode);
                   }),
+                ...(options?.stopTask === undefined ? {} : { stopTask: options.stopTask }),
                 interrupt: options?.interrupt ?? Effect.void,
                 close: options?.close?.(sdkMessages) ?? Effect.void,
               };
@@ -2253,6 +2259,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         Stream.runForEach((event) =>
           Effect.gen(function* () {
             events.push(event);
+            if (event.type === "subagent.updated") yield* Queue.offer(subagentReceipts, event);
             if (event.type === "turn.terminal") {
               yield* Queue.offer(terminalReceipts, event);
             }
@@ -2292,6 +2299,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         continuationRequests,
         events,
         terminalReceipts,
+        subagentReceipts,
         systemNoticeReceipts,
         getOpenedOptions: () => openedOptions,
         terminalEvents,
@@ -8074,6 +8082,107 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       ),
     ),
+  );
+
+  it.effect.each([false, true])(
+    "stops one native subagent while its sibling keeps running, owner settled %s",
+    (ownerSettled) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const stopped: string[] = [];
+          let closes = 0;
+          const harness = yield* makeWakeHarnessWithOptions({
+            stopTask: (taskId) =>
+              Effect.sync(() => {
+                stopped.push(taskId);
+              }),
+            interrupt: Effect.die("A child stop must not interrupt its owner"),
+            close: () =>
+              Effect.sync(() => {
+                closes++;
+              }),
+          });
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-native-child-stop"),
+              text: "Start two agents.",
+              attachments: [],
+            }),
+          );
+          for (const [taskId, toolUseId, uuid] of [
+            ["agent-stop", "toolu-stop", "00000000-0000-4000-8000-000000000801"],
+            ["agent-keep", "toolu-keep", "00000000-0000-4000-8000-000000000802"],
+          ]) {
+            yield* harness.offerAndWait(
+              makeSubagentTaskStartedFrame({ taskId: taskId!, toolUseId: toolUseId!, uuid: uuid! }),
+            );
+            yield* Queue.take(harness.subagentReceipts);
+          }
+          if (ownerSettled) {
+            yield* harness.offerAndWait(
+              makeResultFrame({
+                uuid: "00000000-0000-4000-8000-000000000803",
+                result: "Agents are working.",
+              }),
+            );
+            yield* Queue.take(harness.terminalReceipts);
+          }
+          const stop = harness.runtime.stopSubagent;
+          assert.isDefined(stop);
+          yield* stop!({ providerThread: harness.providerThread, nativeTaskId: "agent-stop" });
+          assert.deepEqual(stopped, ["agent-stop"]);
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              ...makeSubagentNotificationFrame({
+                taskId: "agent-stop",
+                toolUseId: "toolu-stop",
+                summary: "Stopped by user",
+                uuid: "00000000-0000-4000-8000-000000000804",
+              }),
+              status: "stopped",
+            }),
+          );
+          if (ownerSettled) {
+            yield* harness.runtime.startTurn(
+              makeClaudeTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: harness.providerThread,
+                now: yield* DateTime.now,
+                attemptId: RunAttemptId.make("attempt-native-child-stop-wake"),
+                text: "Background task stopped.",
+                attachments: [],
+                providerTurnOrdinal: 2,
+                messageCreatedBy: "agent",
+                messageCreationSource: "provider",
+              }),
+            );
+          }
+          const stoppedEvent = yield* Queue.take(harness.subagentReceipts);
+          assert.equal(stoppedEvent.subagent.status, "cancelled");
+          const tasks = harness.events.filter((event) => event.type === "subagent.updated");
+          assert.equal(
+            tasks.findLast((event) => event.subagent.nativeTaskRef?.nativeId === "agent-stop")
+              ?.subagent.status,
+            "cancelled",
+          );
+          assert.equal(
+            tasks.findLast((event) => event.subagent.nativeTaskRef?.nativeId === "agent-keep")
+              ?.subagent.status,
+            "running",
+          );
+          assert.lengthOf(harness.terminalEvents(), ownerSettled ? 1 : 0);
+          yield* stop!({ providerThread: harness.providerThread, nativeTaskId: "agent-stop" });
+          assert.deepEqual(stopped, ["agent-stop"]);
+          assert.equal(closes, 0);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
   );
 
   it.effect.each(["requested", "observed-before", "observed-after", "inherit", "unknown"] as const)(
