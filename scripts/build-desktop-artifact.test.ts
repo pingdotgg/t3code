@@ -401,7 +401,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
                       lockExists,
                       version: manifest.version,
                     });
-                  }),
+                  }).pipe(Effect.orDie),
               ),
             ),
           ),
