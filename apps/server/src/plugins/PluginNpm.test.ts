@@ -845,6 +845,30 @@ it.layer(NodeServices.layer)("PluginNpm", (it) => {
       ),
     );
 
+    it.effect("refuses an update to the files already installed", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const { catalog, npm, registry, plugin } = yield* setup();
+          registry.publish("same", "1.0.0", { tarball: plugin("same", "1.0.0") });
+          const added = yield* npm.add({ name: "same", version: "1.0.0" });
+          const installationId = added.installation.installationId;
+          const home = path.dirname(added.installation.directory);
+          const digest = added.installation.source!.digest;
+          yield* catalog.consent({ installationId, digest });
+          yield* catalog.enable({ installationId });
+
+          // A restart between its two moves could not tell such a swap from a finished one.
+          const { package: staged } = yield* npm.stageUpdate({ installationId, version: "1.0.0" });
+          expect(staged.stagedUpdate?.source.digest).toBe(digest);
+          const refused = yield* npm.applyUpdate({ installationId, digest }).pipe(Effect.flip);
+          expect(refused.reason).toBe("npm-no-update");
+          expect(yield* entries(home)).toEqual(["npm.json", "package"]);
+          expect((yield* callVersion(catalog, installationId)).version).toBe("1.0.0");
+        }),
+      ),
+    );
+
     it.effect("summarizes a downloaded update's declarations as the catalogue does", () =>
       withDatabase(
         Effect.gen(function* () {

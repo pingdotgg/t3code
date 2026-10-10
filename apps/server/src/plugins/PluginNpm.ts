@@ -838,6 +838,16 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
         installationId: input.installationId,
       });
     }
+    // Recovery reads consent to the new digest as a finished swap, which these files already have.
+    const row = yield* catalogRow(input.installationId);
+    if (row.source?.digest === input.digest || row.consent?.digest === input.digest) {
+      yield* discardStaged(entry);
+      return yield* new PluginCatalogError({
+        reason: "npm-no-update",
+        message: "The downloaded update has the files already installed, so it was discarded.",
+        installationId: input.installationId,
+      });
+    }
     const next: PluginNpmSource = {
       ...entry.source,
       version: staged.update.version,
