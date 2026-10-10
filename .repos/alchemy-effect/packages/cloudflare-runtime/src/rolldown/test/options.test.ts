@@ -120,10 +120,11 @@ describe("options plugin", () => {
     });
   });
 
-  it("does not stub process.env with nodejs_compat enabled", () => {
-    const plugin = optionsPlugin.rolldown({
-      compatibilityFlags: ["nodejs_compat"],
-    });
+  it.each([
+    { compatibilityFlags: ["nodejs_compat"] },
+    { compatibilityDate: "2026-08-31" },
+  ])("preserves runtime process.env with Node compatibility: %j", (options) => {
+    const plugin = optionsPlugin.rolldown(options);
     const input = {};
     assert(
       typeof plugin.options === "function",

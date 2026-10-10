@@ -7,7 +7,7 @@ import type { ServerConfig } from "@t3tools/contracts";
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Option from "effect/Option";
-import { Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { Atom, AtomRegistry } from "effect/reactivity";
 
 import { createRemoteEnvironmentProjectionAtoms } from "./remote-environment-projections";
 
@@ -29,7 +29,7 @@ function presentation(
   serverConfig: ServerConfig | null = null,
 ): EnvironmentPresentation {
   return {
-    entry: { target: target(environmentId, endpoint), profile: Option.none() },
+    entry: { target: target(environmentId, endpoint), profile: Option.none(), enabled: true },
     connection: { phase: "connected", error: null, traceId: null },
     serverConfig,
   };

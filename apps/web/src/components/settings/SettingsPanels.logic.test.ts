@@ -190,57 +190,27 @@ describe("formatDiagnosticsDescription", () => {
 });
 
 describe("buildProviderInstanceUpdatePatch", () => {
-  it("promotes an edited default provider into providerInstances and resets the legacy provider", () => {
+  it("replaces one instance and keeps the others", () => {
     const instanceId = ProviderInstanceId.make("codex");
+    const otherId = ProviderInstanceId.make("codex_personal");
+    const other = {
+      driver: ProviderDriverKind.make("codex"),
+      config: { homePath: "/Users/example/.codex-personal" },
+    } satisfies ProviderInstanceConfig;
     const nextInstance = {
       driver: ProviderDriverKind.make("codex"),
       enabled: true,
-      config: {
-        binaryPath: "/opt/t3/codex",
-      },
+      config: { binaryPath: "/opt/t3/codex" },
     } satisfies ProviderInstanceConfig;
 
     const patch = buildProviderInstanceUpdatePatch({
-      settings: {
-        ...DEFAULT_SERVER_SETTINGS,
-        providers: {
-          ...DEFAULT_SERVER_SETTINGS.providers,
-          codex: {
-            ...DEFAULT_SERVER_SETTINGS.providers.codex,
-            binaryPath: "/legacy/codex",
-          },
-        },
-      },
+      settings: { providerInstances: { [otherId]: other } },
       instanceId,
       instance: nextInstance,
-      driver: ProviderDriverKind.make("codex"),
-      isDefault: true,
     });
 
-    expect(patch.providerInstances?.[instanceId]).toEqual(nextInstance);
-    expect(patch.providers?.codex).toEqual(DEFAULT_SERVER_SETTINGS.providers.codex);
-  });
-
-  it("updates custom instances without touching legacy provider settings", () => {
-    const instanceId = ProviderInstanceId.make("codex_personal");
-    const nextInstance = {
-      driver: ProviderDriverKind.make("codex"),
-      enabled: true,
-      config: {
-        homePath: "/Users/example/.codex-personal",
-      },
-    } satisfies ProviderInstanceConfig;
-
-    const patch = buildProviderInstanceUpdatePatch({
-      settings: DEFAULT_SERVER_SETTINGS,
-      instanceId,
-      instance: nextInstance,
-      driver: ProviderDriverKind.make("codex"),
-      isDefault: false,
-    });
-
-    expect(patch.providerInstances?.[instanceId]).toEqual(nextInstance);
-    expect(patch.providers).toBeUndefined();
+    expect(patch.providerInstances).toEqual({ [otherId]: other, [instanceId]: nextInstance });
+    expect(patch).not.toHaveProperty("textGenerationModelSelection");
   });
 });
 
@@ -268,6 +238,8 @@ describe("getChangedBrowserSettingLabels", () => {
         browserDefaultZoomFactor: 1.5,
         browserDefaultAppearance: "dark",
         browserRecordingFrameRate: 60,
+        browserRecordingShowKeyPresses: true,
+        browserRecordingShowMousePresses: true,
         browserLinkTarget: "app",
         browserAutoShowFloatingPreview: !DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview,
       }),
@@ -276,6 +248,8 @@ describe("getChangedBrowserSettingLabels", () => {
       "Browser zoom",
       "Browser appearance",
       "Recording frame rate",
+      "Recording key presses",
+      "Recording mouse presses",
       "Open links in",
       "Floating preview",
     ]);

@@ -6,8 +6,10 @@ import * as Lambda from "@distilled.cloud/aws/lambda";
 import { expect } from "alchemy-test";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as Stream from "effect/Stream";
+import * as HttpClient from "effect/http/HttpClient";
 import { fileURLToPath } from "node:url";
 import { TestFunction, TestFunctionLive } from "./handler.ts";
 
@@ -33,9 +35,23 @@ test.provider(
     Effect.gen(function* () {
       yield* stack.destroy();
 
-      const { functionName, functionUrl, roleName } = yield* stack.deploy(
-        TestFunction.pipe(Effect.provide(TestFunctionLive)),
-      );
+      const deploy = (marker: string) =>
+        stack.deploy(
+          Effect.gen(function* () {
+            const fn = yield* TestFunction;
+            yield* fn.bind`ReadinessMarker`({
+              env: { READINESS_MARKER: marker },
+            });
+            return fn;
+          }).pipe(Effect.provide(TestFunctionLive)),
+        );
+
+      const { functionName, functionUrl, roleName } = yield* deploy("created");
+      yield* assertFunctionReady(functionName, "created");
+
+      const updated = yield* deploy("updated");
+      expect(updated.functionName).toBe(functionName);
+      yield* assertFunctionReady(updated.functionName, "updated");
 
       expect(functionUrl).toBeTruthy();
 
@@ -72,11 +88,20 @@ test.provider(
       yield* stack.destroy();
       yield* assertFunctionDeleted(functionName);
       yield* assertRoleDeleted(roleName);
+
+      const recreated = yield* deploy("recreated");
+      yield* assertFunctionReady(recreated.functionName, "recreated");
+      yield* stack.destroy();
+      yield* assertFunctionDeleted(recreated.functionName);
+      yield* assertRoleDeleted(recreated.roleName);
     }).pipe(
       Effect.tap(() => stack.destroy()),
       Effect.onError(() => stack.destroy().pipe(Effect.ignore)),
     ),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:aws", "provider:aws:iam", "provider:aws:lambda", "live"],
+    timeout: 180_000,
+  },
 );
 
 test.provider(
@@ -132,7 +157,7 @@ test.provider(
       Effect.tap(() => stack.destroy()),
       Effect.onError(() => stack.destroy().pipe(Effect.ignore)),
     ),
-  { timeout: 360_000 },
+  { tags: ["provider:aws", "provider:aws:lambda", "live"], timeout: 360_000 },
 );
 
 test.provider(
@@ -180,7 +205,7 @@ test.provider(
       Effect.tap(() => stack.destroy()),
       Effect.onError(() => stack.destroy().pipe(Effect.ignore)),
     ),
-  { timeout: 360_000 },
+  { tags: ["provider:aws", "provider:aws:lambda", "live"], timeout: 360_000 },
 );
 
 test.provider(
@@ -248,7 +273,7 @@ test.provider(
       Effect.tap(() => stack.destroy()),
       Effect.onError(() => stack.destroy().pipe(Effect.ignore)),
     ),
-  { timeout: 360_000 },
+  { tags: ["provider:aws", "provider:aws:lambda", "live"], timeout: 360_000 },
 );
 
 test.provider(
@@ -287,7 +312,7 @@ test.provider(
       Effect.tap(() => stack.destroy()),
       Effect.onError(() => stack.destroy().pipe(Effect.ignore)),
     ),
-  { timeout: 360_000 },
+  { tags: ["provider:aws", "provider:aws:lambda", "live"], timeout: 360_000 },
 );
 
 test.provider(
@@ -341,7 +366,7 @@ test.provider(
       Effect.tap(() => stack.destroy()),
       Effect.onError(() => stack.destroy().pipe(Effect.ignore)),
     ),
-  { timeout: 360_000 },
+  { tags: ["provider:aws", "provider:aws:lambda", "live"], timeout: 360_000 },
 );
 
 // Canonical `list()` test (AWS account/region-scoped collection): deploy a
@@ -376,7 +401,7 @@ test.provider(
       Effect.tap(() => stack.destroy()),
       Effect.onError(() => stack.destroy().pipe(Effect.ignore)),
     ),
-  { timeout: 180_000 },
+  { tags: ["provider:aws", "provider:aws:lambda", "live"], timeout: 180_000 },
 );
 
 test.provider(
@@ -472,8 +497,51 @@ test.provider(
       Effect.tap(() => stack.destroy()),
       Effect.onError(() => stack.destroy().pipe(Effect.ignore)),
     ),
-  { timeout: 360_000 },
+  { tags: ["provider:aws", "provider:aws:lambda", "live"], timeout: 360_000 },
 );
+
+const assertFunctionReady = Effect.fn(function* (
+  functionName: string,
+  marker: string,
+) {
+  // Deploy must finish configuration propagation; these checks never retry.
+  const { Configuration } = yield* Lambda.getFunction({
+    FunctionName: functionName,
+  });
+  expect(Configuration?.State).toBe("Active");
+  expect(Configuration?.LastUpdateStatus).toBe("Successful");
+  const observed = Configuration?.Environment?.Variables?.READINESS_MARKER;
+  expect(
+    Redacted.isRedacted(observed) ? Redacted.value(observed) : observed,
+  ).toBe(marker);
+
+  const response = yield* Lambda.invoke({
+    FunctionName: functionName,
+    Payload: JSON.stringify({
+      version: "2.0",
+      rawPath: "/readiness",
+      rawQueryString: "",
+      headers: { host: "localhost" },
+      requestContext: {
+        http: {
+          method: "GET",
+          path: "/readiness",
+          protocol: "HTTP/1.1",
+          sourceIp: "127.0.0.1",
+          userAgent: "alchemy-test",
+        },
+      },
+      isBase64Encoded: false,
+    }),
+  });
+  expect(response.FunctionError).toBeUndefined();
+  const payload = response.Payload
+    ? yield* response.Payload.pipe(Stream.decodeText(), Stream.mkString)
+    : "";
+  const body = yield* Effect.try(() => JSON.parse(payload));
+  expect(body.statusCode).toBe(200);
+  expect(body.body).toBe(marker);
+});
 
 // Out-of-band proof that the trailing destroy actually removed the function
 // from the cloud (bounded retry to ride out delete propagation).

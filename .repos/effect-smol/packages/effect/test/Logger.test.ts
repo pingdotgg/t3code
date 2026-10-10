@@ -115,6 +115,22 @@ describe("Logger", () => {
       assert.strictEqual(json[0].level, "INFO")
     }))
 
+  it.effect("formatJson includes the message of plain Errors", () =>
+    Effect.gen(function*() {
+      const json: Array<{ readonly message: unknown; readonly level: string }> = []
+      const logger = Logger.formatJson.pipe(Logger.map((output) => void json.push(JSON.parse(output))))
+
+      yield* Effect.fail(new Error("boom")).pipe(
+        Effect.tapError(Effect.logError),
+        Effect.ignore,
+        Effect.provide(Logger.layer([logger]))
+      )
+
+      assert.strictEqual(json.length, 1)
+      assert.deepStrictEqual(json[0].message, { name: "Error", message: "boom" })
+      assert.strictEqual(json[0].level, "ERROR")
+    }))
+
   it.effect("annotateLogsScoped applies annotations only while scoped", () =>
     Effect.gen(function*() {
       const annotations: Array<Record<string, unknown>> = []
@@ -161,6 +177,31 @@ describe("Logger", () => {
         [{ outer: "program" }, { outer: "program", inner: "scope" }, {}]
       )
     }))
+
+  for (const initial of [{}, { measurement: "previous" }]) {
+    it.effect(`annotateLogsScoped ${"measurement" in initial ? "restores" : "removes"} NaN annotations`, () =>
+      Effect.gen(function*() {
+        const annotations: Array<Record<string, unknown>> = []
+        const logger = Logger.make<unknown, void>(({ fiber }) => {
+          annotations.push({ ...fiber.getRef(References.CurrentLogAnnotations) })
+        })
+        const scope = yield* Scope.make()
+
+        yield* Effect.gen(function*() {
+          yield* Effect.annotateLogsScoped("measurement", NaN)
+          yield* Effect.log("inside")
+          yield* Scope.close(scope, Exit.void)
+          yield* Effect.log("after close")
+        }).pipe(
+          Scope.provide(scope),
+          Effect.annotateLogs(initial),
+          Effect.provide(Logger.layer([logger])),
+          Effect.ensuring(Scope.close(scope, Exit.void))
+        )
+
+        assert.deepStrictEqual(annotations, [{ measurement: NaN }, initial])
+      }))
+  }
 
   it.effect("default logger preserves message item order when logging a cause", () =>
     Effect.gen(function*() {

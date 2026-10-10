@@ -21,7 +21,7 @@ import type * as Scope from "./Scope.ts"
 import * as TxQueue from "./TxQueue.ts"
 import * as TxRef from "./TxRef.ts"
 
-const TypeId = "~effect/transactions/TxPubSub"
+const TypeId = "~effect/TxPubSub"
 
 /**
  * A TxPubSub represents a transactional publish/subscribe hub that broadcasts messages
@@ -322,6 +322,35 @@ export const size = <A>(self: TxPubSub<A>): Effect.Effect<number> =>
  * @since 2.0.0
  */
 export const isEmpty = <A>(self: TxPubSub<A>): Effect.Effect<boolean> => Effect.map(size(self), (s) => s === 0)
+
+/**
+ * Checks whether any subscriber queue has pending messages.
+ * A pub/sub with no subscribers is empty, even if values have been published.
+ *
+ * **Example** (Checking whether a pub/sub is non-empty)
+ *
+ * ```ts import.meta.vitest
+ * import { Effect, TxPubSub } from "effect"
+ *
+ * const program = Effect.gen(function*() {
+ *   const hub = yield* TxPubSub.unbounded<number>()
+ *   const empty = yield* TxPubSub.isNonEmpty(hub)
+ *
+ *   const nonEmpty = yield* Effect.scoped(Effect.gen(function*() {
+ *     yield* TxPubSub.subscribe(hub)
+ *     yield* TxPubSub.publish(hub, 1)
+ *     return yield* TxPubSub.isNonEmpty(hub)
+ *   }))
+ *   return [empty, nonEmpty] as const
+ * })
+ *
+ * await Effect.runPromise(program) // => [false, true]
+ * ```
+ *
+ * @category predicates
+ * @since 4.0.0
+ */
+export const isNonEmpty = <A>(self: TxPubSub<A>): Effect.Effect<boolean> => Effect.map(size(self), (s) => s > 0)
 
 /**
  * Checks whether any subscriber queue is at capacity.

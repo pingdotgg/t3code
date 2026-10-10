@@ -36,6 +36,7 @@ function environment(
           wsBaseUrl: "wss://environment.example.test",
         }),
       ),
+      enabled: true,
     },
     connection: {
       phase,
@@ -52,7 +53,6 @@ const EMPTY_SHELL_SUMMARY: EnvironmentShellSummary = {
   hasCachedShell: false,
   hasLiveShell: false,
   firstError: null,
-  latestSnapshotUpdatedAt: null,
 };
 
 const CACHED_SHELL_SUMMARY: EnvironmentShellSummary = {
@@ -60,19 +60,18 @@ const CACHED_SHELL_SUMMARY: EnvironmentShellSummary = {
   hasSnapshot: true,
   hasSynchronizingShell: true,
   hasCachedShell: true,
-  latestSnapshotUpdatedAt: "2026-06-07T00:00:00.000Z",
 };
 
 describe("mobile workspace projection", () => {
   it("preserves explicit offline state without presenting it as a connection error", () => {
-    const projected = projectWorkspaceEnvironment(environment("offline"));
+    const projected = projectWorkspaceEnvironment(ENVIRONMENT_ID, environment("offline"));
 
     expect(projected.connectionState).toBe("offline");
     expect(projected.connectionError).toBeNull();
   });
 
   it("reports offline before stale connected presentations", () => {
-    const environments = [projectWorkspaceEnvironment(environment("connected"))];
+    const environments = [projectWorkspaceEnvironment(ENVIRONMENT_ID, environment("connected"))];
     const state = projectWorkspaceState({
       isReady: true,
       networkStatus: "offline",
@@ -87,11 +86,8 @@ describe("mobile workspace projection", () => {
 
   it("projects reconnecting environments dynamically from active phases", () => {
     const environments = [
-      projectWorkspaceEnvironment(environment("reconnecting")),
-      projectWorkspaceEnvironment({
-        ...environment("connected"),
-        environmentId: EnvironmentId.make("environment-2"),
-      }),
+      projectWorkspaceEnvironment(ENVIRONMENT_ID, environment("reconnecting")),
+      projectWorkspaceEnvironment(EnvironmentId.make("environment-2"), environment("connected")),
     ];
     const state = projectWorkspaceState({
       isReady: true,
@@ -107,7 +103,7 @@ describe("mobile workspace projection", () => {
   });
 
   it("keeps retained snapshots visible while reconnecting without claiming readiness", () => {
-    const environments = [projectWorkspaceEnvironment(environment("reconnecting"))];
+    const environments = [projectWorkspaceEnvironment(ENVIRONMENT_ID, environment("reconnecting"))];
     const state = projectWorkspaceState({
       isReady: true,
       networkStatus: "online",

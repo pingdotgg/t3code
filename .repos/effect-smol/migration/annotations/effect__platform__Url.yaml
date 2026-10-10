@@ -1,3 +1,6 @@
+"@effect/platform/Url#fromString":
+  replacement: "Url.fromString"
+  note: "Retained; returns Result with IllegalArgumentError instead of Either with IllegalArgumentException."
 "@effect/platform/Url#setUrlParams":
   replacement: "Url.setUrlParams"
   note: "Retained and widened to accept UrlParams.Input."

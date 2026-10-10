@@ -7,8 +7,8 @@ import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import TransferTestFunctionLive, { TransferTestFunction } from "./handler";
 import TransferWorkflowTestFunctionLive, {
   TransferWorkflowTestFunction,
@@ -36,149 +36,165 @@ const probeReady = (readinessUrl: string) =>
 
 // Ungated typed-error probes: prove the distilled error unions carry the
 // tags the bindings and providers depend on, at near-zero cost.
-describe("typed-error probes", () => {
-  test.provider(
-    "startServer on a nonexistent server fails with ResourceNotFoundException",
-    () =>
-      Effect.gen(function* () {
-        const error = yield* Effect.flip(
-          transfer.startServer({ ServerId: "s-00000000000000000" }),
-        );
-        expect(error._tag).toBe("ResourceNotFoundException");
-      }),
-  );
+describe(
+  "typed-error probes",
+  { tags: ["provider:aws", "provider:aws:transfer", "live"] },
+  () => {
+    test.provider(
+      "startServer on a nonexistent server fails with ResourceNotFoundException",
+      () =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            transfer.startServer({ ServerId: "s-00000000000000000" }),
+          );
+          expect(error._tag).toBe("ResourceNotFoundException");
+        }),
+    );
 
-  test.provider(
-    "importSshPublicKey on a nonexistent server fails with ResourceNotFoundException",
-    () =>
-      Effect.gen(function* () {
-        const error = yield* Effect.flip(
-          transfer.importSshPublicKey({
-            ServerId: "s-00000000000000000",
-            UserName: "nobody",
-            SshPublicKeyBody: "ssh-ed25519 AAAA",
-          }),
-        );
-        expect(error._tag).toBe("ResourceNotFoundException");
-      }),
-  );
+    test.provider(
+      "importSshPublicKey on a nonexistent server fails with ResourceNotFoundException",
+      () =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            transfer.importSshPublicKey({
+              ServerId: "s-00000000000000000",
+              UserName: "nobody",
+              SshPublicKeyBody: "ssh-ed25519 AAAA",
+            }),
+          );
+          expect(error._tag).toBe("ResourceNotFoundException");
+        }),
+    );
 
-  test.provider(
-    "testIdentityProvider on a nonexistent server fails with ResourceNotFoundException",
-    () =>
-      Effect.gen(function* () {
-        const error = yield* Effect.flip(
-          transfer.testIdentityProvider({
-            ServerId: "s-00000000000000000",
-            UserName: "nobody",
-            UserPassword: Redacted.make("not-a-real-password"),
-          }),
-        );
-        expect(error._tag).toBe("ResourceNotFoundException");
-      }),
-  );
+    test.provider(
+      "testIdentityProvider on a nonexistent server fails with ResourceNotFoundException",
+      () =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            transfer.testIdentityProvider({
+              ServerId: "s-00000000000000000",
+              UserName: "nobody",
+              UserPassword: Redacted.make("not-a-real-password"),
+            }),
+          );
+          expect(error._tag).toBe("ResourceNotFoundException");
+        }),
+    );
 
-  test.provider(
-    "sendWorkflowStepState on a nonexistent workflow fails with a typed tag",
-    () =>
-      Effect.gen(function* () {
-        const error = yield* Effect.flip(
-          transfer.sendWorkflowStepState({
-            WorkflowId: "w-1234567890abcdef0",
-            ExecutionId: "00000000-0000-0000-0000-000000000000",
-            Token: "MA==",
-            Status: "SUCCESS",
-          }),
-        );
-        // Transfer rejects the nonexistent workflow with the typed
-        // ValidationException (from the shared CommonErrors union).
-        expect([
-          "ResourceNotFoundException",
-          "InvalidRequestException",
-          "ValidationException",
-        ]).toContain(error._tag);
-      }),
-  );
-});
+    test.provider(
+      "sendWorkflowStepState on a nonexistent workflow fails with a typed tag",
+      () =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            transfer.sendWorkflowStepState({
+              WorkflowId: "w-1234567890abcdef0",
+              ExecutionId: "00000000-0000-0000-0000-000000000000",
+              Token: "MA==",
+              Status: "SUCCESS",
+            }),
+          );
+          // Transfer rejects the nonexistent workflow with the typed
+          // ValidationException (from the shared CommonErrors union).
+          expect([
+            "ResourceNotFoundException",
+            "InvalidRequestException",
+            "ValidationException",
+          ]).toContain(error._tag);
+        }),
+    );
+  },
+);
 
 // Ungated Lambda fixture: exercises the account-level binding + the
 // EventBridge event source without provisioning a Transfer server.
-describe.sequential("Transfer workflow binding", () => {
-  const workflowStack = Core.scratchStack(
-    testOptions,
-    "TransferWorkflowBindings",
-  );
+describe.sequential(
+  "Transfer workflow binding",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:lambda",
+      "provider:aws:transfer",
+      "live",
+    ],
+  },
+  () => {
+    const workflowStack = Core.scratchStack(
+      testOptions,
+      "TransferWorkflowBindings",
+    );
 
-  let baseUrl: string;
-  let functionArn: string;
+    let baseUrl: string;
+    let functionArn: string;
 
-  beforeAll(
-    Effect.gen(function* () {
-      yield* workflowStack.destroy();
+    beforeAll(
+      Effect.gen(function* () {
+        yield* workflowStack.destroy();
 
-      const attrs = yield* workflowStack.deploy(
+        const attrs = yield* workflowStack.deploy(
+          Effect.gen(function* () {
+            return yield* TransferWorkflowTestFunction;
+          }).pipe(Effect.provide(TransferWorkflowTestFunctionLive)),
+        );
+
+        expect(attrs.functionUrl).toBeTruthy();
+        baseUrl = attrs.functionUrl!.replace(/\/+$/, "");
+        functionArn = attrs.functionArn;
+
+        yield* probeReady(`${baseUrl}/bindings`);
+      }),
+      { timeout: 300_000 },
+    );
+
+    afterAll(workflowStack.destroy(), { timeout: 180_000 });
+
+    test.provider("the capability initializes in the runtime", (_stack) =>
+      Effect.gen(function* () {
+        const response = yield* HttpClient.get(`${baseUrl}/bindings`).pipe(
+          Effect.flatMap((r) => r.json),
+        );
+        expect((response as { bound: string[] }).bound).toContain(
+          "sendWorkflowStepState",
+        );
+      }),
+    );
+
+    test.provider(
+      "SendWorkflowStepState round-trips and rejects with a typed tag",
+      (_stack) =>
         Effect.gen(function* () {
-          return yield* TransferWorkflowTestFunction;
-        }).pipe(Effect.provide(TransferWorkflowTestFunctionLive)),
-      );
+          const response = (yield* HttpClient.execute(
+            HttpClientRequest.post(`${baseUrl}/workflow-step`),
+          ).pipe(Effect.flatMap((r) => r.json))) as {
+            ok: boolean;
+            tag?: string;
+          };
+          // The workflow does not exist — the call must surface the typed
+          // rejection (not an untyped catch-all, not an IAM denial).
+          expect(response.ok).toBe(false);
+          expect([
+            "ResourceNotFoundException",
+            "InvalidRequestException",
+            "ValidationException",
+          ]).toContain(response.tag);
+        }),
+    );
 
-      expect(attrs.functionUrl).toBeTruthy();
-      baseUrl = attrs.functionUrl!.replace(/\/+$/, "");
-      functionArn = attrs.functionArn;
-
-      yield* probeReady(`${baseUrl}/bindings`);
-    }),
-    { timeout: 300_000 },
-  );
-
-  afterAll(workflowStack.destroy(), { timeout: 180_000 });
-
-  test.provider("the capability initializes in the runtime", (_stack) =>
-    Effect.gen(function* () {
-      const response = yield* HttpClient.get(`${baseUrl}/bindings`).pipe(
-        Effect.flatMap((r) => r.json),
-      );
-      expect((response as { bound: string[] }).bound).toContain(
-        "sendWorkflowStepState",
-      );
-    }),
-  );
-
-  test.provider(
-    "SendWorkflowStepState round-trips and rejects with a typed tag",
-    (_stack) =>
-      Effect.gen(function* () {
-        const response = (yield* HttpClient.execute(
-          HttpClientRequest.post(`${baseUrl}/workflow-step`),
-        ).pipe(Effect.flatMap((r) => r.json))) as {
-          ok: boolean;
-          tag?: string;
-        };
-        // The workflow does not exist — the call must surface the typed
-        // rejection (not an untyped catch-all, not an IAM denial).
-        expect(response.ok).toBe(false);
-        expect([
-          "ResourceNotFoundException",
-          "InvalidRequestException",
-          "ValidationException",
-        ]).toContain(response.tag);
-      }),
-  );
-
-  test.provider(
-    "consumeFileTransferEvents created an EventBridge rule targeting the function",
-    (_stack) =>
-      Effect.gen(function* () {
-        // Out-of-band via distilled: the fixture's consumeFileTransferEvents
-        // must have materialized as a rule on the default bus with the
-        // Lambda as target.
-        const { RuleNames } = yield* eventbridge.listRuleNamesByTarget({
-          TargetArn: functionArn,
-        });
-        expect((RuleNames ?? []).length).toBeGreaterThanOrEqual(1);
-      }),
-  );
-});
+    test.provider(
+      "consumeFileTransferEvents created an EventBridge rule targeting the function",
+      (_stack) =>
+        Effect.gen(function* () {
+          // Out-of-band via distilled: the fixture's consumeFileTransferEvents
+          // must have materialized as a rule on the default bus with the
+          // Lambda as target.
+          const { RuleNames } = yield* eventbridge.listRuleNamesByTarget({
+            TargetArn: functionArn,
+          });
+          expect((RuleNames ?? []).length).toBeGreaterThanOrEqual(1);
+        }),
+      { tags: ["provider:aws:eventbridge"] },
+    );
+  },
+);
 
 // A running Transfer server is billed hourly and takes minutes to reach
 // ONLINE, so the server/user-scoped binding lifecycle is gated behind
@@ -186,6 +202,15 @@ describe.sequential("Transfer workflow binding", () => {
 // created.
 describe.runIf(!!process.env.AWS_TEST_SLOW)(
   "Transfer server bindings (slow)",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:iam",
+      "provider:aws:lambda",
+      "provider:aws:transfer",
+      "live",
+    ],
+  },
   () => {
     const serverStack = Core.scratchStack(testOptions, "TransferBindings");
 

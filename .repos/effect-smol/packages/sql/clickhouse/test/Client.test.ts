@@ -1,20 +1,25 @@
 import { ClickhouseClient } from "@effect/sql-clickhouse"
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Fiber } from "effect"
+import * as Reactivity from "effect/reactivity/Reactivity"
+import * as Statement from "effect/sql/Statement"
 import { TestClock } from "effect/testing"
-import * as Reactivity from "effect/unstable/reactivity/Reactivity"
-import * as Statement from "effect/unstable/sql/Statement"
 import { vi } from "vitest"
 
 let closeCalls = 0
 let connectImmediately = false
 const commandCalls: Array<Record<string, unknown>> = []
+const insertCalls: Array<Record<string, unknown>> = []
+let insertImpl: ((options: Record<string, unknown>) => Promise<unknown>) | undefined
 
 vi.mock("@clickhouse/client", () => ({
   createClient: () => ({
-    exec: () => connectImmediately ? Promise.resolve({}) : new Promise(() => {}),
+    ping: () => connectImmediately ? Promise.resolve({ success: true }) : new Promise(() => {}),
     query: () => new Promise(() => {}),
-    insert: () => new Promise(() => {}),
+    insert: (options: Record<string, unknown>) => {
+      insertCalls.push(options)
+      return insertImpl ? insertImpl(options) : new Promise(() => {})
+    },
     command: (options: Record<string, unknown>) => {
       commandCalls.push(options)
       return Promise.resolve({})
@@ -26,12 +31,27 @@ vi.mock("@clickhouse/client", () => ({
   })
 }))
 
-describe("ClickhouseClient", () => {
+describe("ClickhouseClient", { concurrent: false }, () => {
   it("preserves fractional JavaScript numbers in inferred parameters", () => {
     const sql = Statement.make(Effect.void as any, ClickhouseClient.makeCompiler(), [], undefined)
     const [query] = sql`SELECT ${1.5}`.compile()
 
     assert.strictEqual(query, "SELECT {p1: Float64}")
+  })
+
+  it("uses the ClickHouse dialect for dialect-specific fragments", () => {
+    const sql = Statement.make(Effect.void as any, ClickhouseClient.makeCompiler(), [], undefined)
+
+    assert.strictEqual(
+      sql.onDialect({
+        sqlite: () => "sqlite",
+        pg: () => "pg",
+        mysql: () => "mysql",
+        mssql: () => "mssql",
+        clickhouse: () => "clickhouse"
+      }),
+      "clickhouse"
+    )
   })
 
   it.effect("closes the client when the connection check times out", () =>
@@ -91,4 +111,21 @@ describe("ClickhouseClient", () => {
       Effect.scoped,
       Effect.provide(Reactivity.layer)
     ))
+
+  it.effect("passes column selection to insertQuery", () =>
+    Effect.gen(function*() {
+      connectImmediately = true
+      insertCalls.length = 0
+      insertImpl = () => Promise.resolve({ executed: true, query_id: "" })
+      const client = yield* ClickhouseClient.make({ url: "http://localhost:8123" })
+
+      yield* client.insertQuery({ table: "people", values: [{ name: "Alice" }], columns: ["name"] })
+      yield* client.insertQuery({ table: "people", values: [{ name: "Bob" }], columns: { except: ["id"] } })
+
+      assert.strictEqual(insertCalls.length, 2)
+      assert.strictEqual(insertCalls[0].table, "people")
+      assert.strictEqual(insertCalls[0].format, "JSONEachRow")
+      assert.deepStrictEqual(insertCalls[0].columns, ["name"])
+      assert.deepStrictEqual(insertCalls[1].columns, { except: ["id"] })
+    }).pipe(Effect.provide(Reactivity.layer)))
 })

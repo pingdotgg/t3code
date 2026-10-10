@@ -1,9 +1,11 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { T3ProjectFile } from "./t3ProjectFile.ts";
+import { T3ProjectFile, type T3ProjectFile as T3ProjectFileType } from "./t3ProjectFile.ts";
 
-const decode = Schema.decodeUnknownSync(T3ProjectFile);
+const decode = Schema.decodeUnknownSync(T3ProjectFile as never) as (
+  input: unknown,
+) => T3ProjectFileType;
 
 describe("T3ProjectFile", () => {
   it("decodes a full project file", () => {
@@ -20,12 +22,14 @@ describe("T3ProjectFile", () => {
           autoOpenPreview: true,
         },
         { name: "Test", command: "pnpm test" },
+        { name: "Setup", command: "pnpm i", runOnWorktreeCreate: true, async: false },
       ],
     });
 
     expect(decoded.iconPath).toBe("assets/logo.svg");
-    expect(decoded.scripts).toHaveLength(2);
+    expect(decoded.scripts).toHaveLength(3);
     expect(decoded.scripts?.[1]).toEqual({ name: "Test", command: "pnpm test" });
+    expect(decoded.scripts?.[2]?.async).toBe(false);
   });
 
   it("decodes an empty object and ignores unknown fields", () => {
@@ -57,5 +61,11 @@ describe("T3ProjectFile", () => {
     expect(decode({ defaultThreadEnvMode: "worktree" }).defaultThreadEnvMode).toBe("worktree");
     expect(decode({ defaultThreadEnvMode: "local" }).defaultThreadEnvMode).toBe("local");
     expect(() => decode({ defaultThreadEnvMode: "remote" })).toThrow();
+  });
+
+  it("decodes worktreeSubmodules and rejects unknown modes", () => {
+    expect(decode({ worktreeSubmodules: "none" }).worktreeSubmodules).toBe("none");
+    expect(decode({ worktreeSubmodules: "top-level" }).worktreeSubmodules).toBe("top-level");
+    expect(() => decode({ worktreeSubmodules: "shallow" })).toThrow();
   });
 });

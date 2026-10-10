@@ -159,7 +159,7 @@ export interface Container extends Resource<
  * ### Secret Environment
  * **Example:** Redacted env var
  * ```typescript
- * const password = yield* Config.redacted("POSTGRES_PASSWORD");
+ * const password = yield* Config.Redacted("POSTGRES_PASSWORD");
  * const db = yield* Docker.Container("postgres", {
  *   image: "postgres:18-alpine",
  *   environment: {
@@ -265,6 +265,7 @@ export interface Container extends Resource<
  * ```
  *
  * @resource
+ * @product Container
  */
 export const Container = Resource<Container>("Docker.Container");
 

@@ -390,16 +390,13 @@ export { createContainerRuntimeContext } from "../../Server/Process.ts";
  * ```
  *
  * ### Bundling & Tree-shaking
- * `main` is bundled with rolldown at deploy time. Top-level calls in the
- * `effect`, `@effect/*`, `alchemy`, `@alchemy.run/*`, and
- * `@distilled.cloud/*` packages receive `#__PURE__` annotations by
- * default, so anything the task doesn't use from those packages is
- * tree-shaken out of the bundle. Any other package — including your own
- * app — is left untouched unless you list it explicitly.
+ * `main` is bundled with rolldown at deploy time. Unused code is
+ * tree-shaken. `effect`, alchemy, and `@distilled.cloud` are marked
+ * pure so unused parts prune more aggressively. Your app is not
+ * marked pure.
  *
- * **Example:** Treat additional packages as pure
- * Pass package names (or picomatch globs) via `build.pure.packages` to
- * annotate them in addition to the defaults.
+ * **Example:** Mark additional packages as pure
+ * Only list packages with no top-level side effects.
  * ```typescript
  * {
  *   main: import.meta.url,
@@ -409,18 +406,7 @@ export { createContainerRuntimeContext } from "../../Server/Process.ts";
  * }
  * ```
  *
- * Listing a package annotates calls whose result is bound (variable
- * initializers, exports) — safe anywhere. If a listed package also
- * declares `"sideEffects": false` (or `[]`) in its `package.json`, that
- * combination opts it into full annotation: top-level calls whose result
- * is discarded (e.g. `router.on("/path", handler)` registrations) are
- * also marked pure and deleted under minification when unused. Only list
- * a `sideEffects: false` package if its modules really are free of
- * meaningful top-level side effects. The `effect`, `alchemy`, and
- * `@distilled.cloud` defaults declare exactly that, on purpose — their
- * modules are designed to be fully tree-shakeable.
- *
- * **Example:** Disable pure annotations
+ * **Example:** Turn it off
  * ```typescript
  * {
  *   main: import.meta.url,
@@ -474,6 +460,18 @@ export const taskImagePlatform = (runtimePlatform?: ecs.RuntimePlatform) =>
   // start with `image Manifest does not contain descriptor matching
   // platform 'linux/amd64'`.
   runtimePlatform?.cpuArchitecture === "ARM64" ? "linux/arm64" : "linux/amd64";
+
+/** Keep image resolution, drift detection and dev watching on the same inputs. */
+export const taskImageInput = (props: TaskProps) => {
+  const source = props as ImageSourceLike;
+  return {
+    source,
+    platform: taskImagePlatform(props.runtimePlatform),
+    port: props.port,
+    isExternal: props.isExternal,
+    bootstrap: makeBunBootstrap(source.handler ?? "default"),
+  };
+};
 
 /**
  * Create the IAM role assumed by ECS tasks if it doesn't already exist.
@@ -1124,14 +1122,7 @@ export const TaskProvider = () =>
           // and surface drift as an update; without this a bootstrap or
           // code-only change would silently no-op until `--force`.
           if (output) {
-            const source = news as ImageSourceLike;
-            const hash = yield* imageSource.hash({
-              source,
-              platform: taskImagePlatform(news.runtimePlatform),
-              port: news.port,
-              isExternal: news.isExternal,
-              bootstrap: makeBunBootstrap(source.handler ?? "default"),
-            });
+            const hash = yield* imageSource.hash(taskImageInput(news));
             if (hash !== undefined && hash !== output.code.hash) {
               return { action: "update" } as const;
             }
@@ -1250,20 +1241,15 @@ export const TaskProvider = () =>
           // task definition revision. Task definitions are versioned in
           // AWS, so registering a new revision is the unit of "update" —
           // the superseded revision is reaped after registration below.
-          const source = news as ImageSourceLike;
           const resolved = yield* imageSource.resolve({
+            ...taskImageInput(news),
             id,
-            source,
             repositoryName,
             repositoryUri:
               output?.repositoryUri && output.repositoryName === repositoryName
                 ? output.repositoryUri
                 : undefined,
             tags,
-            platform: taskImagePlatform(news.runtimePlatform),
-            port: news.port,
-            isExternal: news.isExternal,
-            bootstrap: makeBunBootstrap(source.handler ?? "default"),
             session,
           });
 

@@ -18,6 +18,7 @@ import type {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import type { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 
 export class DeviceHostError extends Schema.TaggedError<DeviceHostError>()("DeviceHostError", {
   hostId: Schema.String,
@@ -79,6 +80,7 @@ export class DeviceHost extends Context.Service<
   {
     readonly id: DeviceHostId;
     readonly summary: Effect.Effect<DeviceHostSummary>;
+    readonly inspect?: Effect.Effect<DeviceHostSummary, DeviceHostError>;
     readonly platformAvailability: (
       platform: DevicePlatform,
     ) => Effect.Effect<DevicePlatformAvailability>;
@@ -87,12 +89,15 @@ export class DeviceHost extends Context.Service<
      * concurrent callers share one start, and a ready host returns immediately.
      */
     readonly ensureReady: (
-      onPhase: (phase: "installing" | "starting") => Effect.Effect<void>,
-    ) => Effect.Effect<DeviceHostReady, DeviceHostError>;
+      onPhase: (phase: "installing" | "starting", detail?: string) => Effect.Effect<void>,
+    ) => Effect.Effect<DeviceHostReady, DeviceHostError | NodeRuntimeUnavailableError>;
     /** Installs and starts agent-device after the user grants agent access. */
     readonly ensureAgentReady: (
-      onPhase: (phase: "installing" | "starting") => Effect.Effect<void>,
-    ) => Effect.Effect<DeviceHostAgentReady, DeviceHostError | DeviceHostTimeoutError>;
+      onPhase: (phase: "installing" | "starting", detail?: string) => Effect.Effect<void>,
+    ) => Effect.Effect<
+      DeviceHostAgentReady,
+      DeviceHostError | DeviceHostTimeoutError | NodeRuntimeUnavailableError
+    >;
     /** Current endpoints when already running, without starting anything. */
     readonly current: Effect.Effect<DeviceHostReady | null>;
     /** Stops only agent-device. Manual viewing through the hub stays available. */

@@ -51,9 +51,6 @@ export const resolveTitle = resolveAt<string>("title")
 export const resolveDescription = resolveAt<string>("description")
 
 /** @internal */
-export const resolveBrands = resolveAt<ReadonlyArray<string>>("brands")
-
-/** @internal */
 export const getExpected = memoize((ast: SchemaAST.AST): string => {
   const identifier = resolve(ast)?.identifier
   if (typeof identifier === "string") return identifier
@@ -61,24 +58,18 @@ export const getExpected = memoize((ast: SchemaAST.AST): string => {
 })
 
 /** @internal */
-export function collectBrands(annotations: Schema.Annotations.Annotations | undefined): ReadonlyArray<string> {
-  return annotations !== undefined && Array.isArray(annotations.brands) ? annotations.brands : []
-}
-
-/** @internal */
 export const annotationExcludedKeys = new Set([
   SENTINELS_ANNOTATION_KEY,
   STRUCTURAL_ANNOTATION_KEY,
   "representation",
-  "arbitrary",
-  "brands",
+  "arbitraryConstraint",
   "toJsonSchema",
   "toCode",
-  "toArbitrary",
   "toEquivalence",
   "toFormatter",
   "toCodec",
   "toCodecJson",
   "toCodecStringTree",
-  "toCodecIso"
+  "toCodecIso",
+  "toCodecArbitrary"
 ])

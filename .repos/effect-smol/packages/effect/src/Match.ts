@@ -20,6 +20,22 @@ import type { Unify } from "./Unify.ts"
 
 const TypeId = internal.TypeId
 
+// The conditional must stay deferred until P is inferred. Replacing it with an
+// intersection loses contextual typing for nested generic calls (microsoft/TypeScript#52864).
+type Contextual<P, Fallback> = [P] extends [never] ? Fallback : P
+
+type TagHandlers<D extends string, R, Ret> = {
+  readonly [Tag in Types.Tags<D, R> & string]: (_: Extract<R, Record<D, Tag>>) => Ret
+}
+
+type PartialTagHandlers<D extends string, R, Ret> = {
+  readonly [Tag in Types.Tags<D, R> & string]?: ((_: Extract<R, Record<D, Tag>>) => Ret) | undefined
+}
+
+type ValueTagHandlers<I> = {
+  readonly [Tag in Types.Tags<"_tag", I> & string]: (_: Extract<I, { readonly _tag: Tag }>) => any
+}
+
 /**
  * Marker used by `Matcher` to distinguish matchers created with `Match.value`.
  *
@@ -316,10 +332,13 @@ export const type: <I>() => Matcher<I, Types.Without<never>, I, never, never> = 
 /**
  * Creates a reusable matcher from a function that selects the value to match.
  *
+ * **Details**
+ *
  * The compiled matcher keeps the selector's original argument list. Case
  * handlers receive the narrowed selected value followed by those arguments.
  *
- * @example
+ * **Example** (Creating a reusable matcher)
+ *
  * ```ts import.meta.vitest
  * import { Match } from "effect"
  *
@@ -419,15 +438,20 @@ export const valueTags: {
   <
     const I,
     P extends
-      & { readonly [Tag in Types.Tags<"_tag", I> & string]: (_: Extract<I, { readonly _tag: Tag }>) => any }
+      & ValueTagHandlers<I>
       & { readonly [Tag in Exclude<keyof P, Types.Tags<"_tag", I>>]: never }
-  >(fields: P): (input: I) => Unify<ReturnType<P[keyof P]>>
+  >(
+    fields: Contextual<P, ValueTagHandlers<I>>
+  ): (input: I) => Unify<ReturnType<P[keyof P]>>
   <
     const I,
     P extends
-      & { readonly [Tag in Types.Tags<"_tag", I> & string]: (_: Extract<I, { readonly _tag: Tag }>) => any }
+      & ValueTagHandlers<I>
       & { readonly [Tag in Exclude<keyof P, Types.Tags<"_tag", I>>]: never }
-  >(input: I, fields: P): Unify<ReturnType<P[keyof P]>>
+  >(
+    input: I,
+    fields: Contextual<P, ValueTagHandlers<I>>
+  ): Unify<ReturnType<P[keyof P]>>
 } = internal.valueTags
 
 /**
@@ -880,10 +904,10 @@ export const discriminators: <D extends string>(
   R,
   Ret,
   P extends
-    & { readonly [Tag in Types.Tags<D, R> & string]?: ((_: Extract<R, Record<D, Tag>>) => Ret) | undefined }
+    & PartialTagHandlers<D, R, Ret>
     & { readonly [Tag in Exclude<keyof P, Types.Tags<D, R>>]: never }
 >(
-  fields: P
+  fields: Contextual<P, PartialTagHandlers<D, R, Ret>>
 ) => <I, F, A, Pr>(
   self: Matcher<I, F, R, A, Pr, Ret>
 ) => Matcher<
@@ -943,10 +967,10 @@ export const discriminatorsExhaustive: <D extends string>(
   R,
   Ret,
   P extends
-    & { readonly [Tag in Types.Tags<D, R> & string]: (_: Extract<R, Record<D, Tag>>) => Ret }
+    & TagHandlers<D, R, Ret>
     & { readonly [Tag in Exclude<keyof P, Types.Tags<D, R>>]: never }
 >(
-  fields: P
+  fields: Contextual<P, TagHandlers<D, R, Ret>>
 ) => <I, F, A, Pr>(
   self: Matcher<I, F, R, A, Pr, Ret>
 ) => [Pr] extends [never] ? (u: I) => Unify<A | ReturnType<P[keyof P]>> : Unify<A | ReturnType<P[keyof P]>> =
@@ -1103,10 +1127,10 @@ export const tags: <
   R,
   Ret,
   P extends
-    & { readonly [Tag in Types.Tags<"_tag", R> & string]?: ((_: Extract<R, Record<"_tag", Tag>>) => Ret) | undefined }
+    & PartialTagHandlers<"_tag", R, Ret>
     & { readonly [Tag in Exclude<keyof P, Types.Tags<"_tag", R>>]: never }
 >(
-  fields: P
+  fields: Contextual<P, PartialTagHandlers<"_tag", R, Ret>>
 ) => <I, F, A, Pr>(
   self: Matcher<I, F, R, A, Pr, Ret>
 ) => Matcher<
@@ -1158,10 +1182,10 @@ export const tagsExhaustive: <
   R,
   Ret,
   P extends
-    & { readonly [Tag in Types.Tags<"_tag", R> & string]: (_: Extract<R, Record<"_tag", Tag>>) => Ret }
+    & TagHandlers<"_tag", R, Ret>
     & { readonly [Tag in Exclude<keyof P, Types.Tags<"_tag", R>>]: never }
 >(
-  fields: P
+  fields: Contextual<P, TagHandlers<"_tag", R, Ret>>
 ) => <I, F, A, Pr>(
   self: Matcher<I, F, R, A, Pr, Ret>
 ) => [Pr] extends [never] ? (u: I) => Unify<A | ReturnType<P[keyof P]>> : Unify<A | ReturnType<P[keyof P]>> =
@@ -2051,7 +2075,7 @@ export const exhaustive: <I, F, A, Pr, Ret, Args extends Array<any>>(
 ) => [Pr] extends [never] ? [Args] extends [[]] ? (u: I) => Unify<A> : (...args: Args) => Unify<A> : Unify<A> =
   internal.exhaustive
 
-const SafeRefinementId = "~effect/match/Match/SafeRefinement"
+const SafeRefinementId = "~effect/Match/SafeRefinement"
 
 /**
  * A safe refinement that narrows types without runtime errors.

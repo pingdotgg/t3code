@@ -57,6 +57,67 @@ export const A = Schema.String.annotate({ "description": "desc", "examples": ["e
 `)
   })
 
+  const definitions = {
+    A: {
+      type: "object",
+      properties: { a: { type: "string" } },
+      required: ["a"]
+    },
+    B: {
+      type: "object",
+      properties: { b: { type: "string" } },
+      required: ["b"]
+    }
+  } as const
+
+  const openA =
+    `Schema.StructWithRest(Schema.Struct({ "a": Schema.String }), [Schema.Record(Schema.String, Schema.Json.annotate({ "expected": "JSON value" }))])`
+  const openB =
+    `Schema.StructWithRest(Schema.Struct({ "b": Schema.String }), [Schema.Record(Schema.String, Schema.Json.annotate({ "expected": "JSON value" }))])`
+
+  for (
+    const [keyword, expected] of [
+      ["oneOf", `export const Choice = Schema.Union([${openA}, ${openB}], { mode: "oneOf" })`],
+      ["anyOf", `export const Choice = Schema.Union([${openA}, ${openB}])`],
+      [
+        "allOf",
+        `export const Choice = Schema.StructWithRest(Schema.Struct({ "a": Schema.String, "b": Schema.String }), [Schema.Record(Schema.String, Schema.Json.annotate({ "expected": "JSON value" }))])`
+      ]
+    ] as const
+  ) {
+    it(`preserves omitted additionalProperties with ${keyword}`, () => {
+      const generator = JsonSchemaGenerator.make()
+      generator.addSchema("Choice", {
+        type: "object",
+        [keyword]: [
+          { $ref: "#/components/schemas/A" },
+          { $ref: "#/components/schemas/B" }
+        ]
+      })
+
+      const result = generator.generate("openapi-3.1", definitions, false)
+
+      expect(result).toContain(expected)
+    })
+  }
+
+  it("honors explicit additionalProperties false with oneOf", () => {
+    const generator = JsonSchemaGenerator.make()
+    generator.addSchema("Choice", {
+      type: "object",
+      additionalProperties: false,
+      oneOf: [
+        { $ref: "#/components/schemas/A" },
+        { $ref: "#/components/schemas/B" }
+      ]
+    })
+
+    const result = generator.generate("openapi-3.1", definitions, false)
+
+    // The closed outer object forbids the properties required by both branches.
+    expect(result).toContain("export const Choice = Schema.Never")
+  })
+
   it("generateHttpApi emits explicit type and const declarations", () => {
     const generator = JsonSchemaGenerator.make()
     generator.addSchema("A", { type: "string" })

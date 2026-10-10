@@ -1,4 +1,5 @@
 import * as NodeTerminal from "@effect/platform-node-shared/NodeTerminal"
+import { Prompt } from "effect/cli"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import * as FileSystem from "effect/FileSystem"
@@ -7,7 +8,6 @@ import * as Option from "effect/Option"
 import * as Path from "effect/Path"
 import * as Queue from "effect/Queue"
 import * as Terminal from "effect/Terminal"
-import { Prompt } from "effect/unstable/cli"
 
 const TerminalLayer = Layer.mergeAll(
   NodeTerminal.layer,
@@ -16,8 +16,8 @@ const TerminalLayer = Layer.mergeAll(
 )
 
 const prompts = Effect.gen(function*() {
-  const first = yield* Prompt.run(Prompt.confirm({ message: "First" }))
-  const second = yield* Prompt.run(Prompt.confirm({ message: "Second" })).pipe(Effect.flip)
+  const first = yield* Prompt.run(Prompt.Confirm({ message: "First" }))
+  const second = yield* Prompt.run(Prompt.Confirm({ message: "Second" })).pipe(Effect.flip)
   return { first, second: second._tag }
 })
 

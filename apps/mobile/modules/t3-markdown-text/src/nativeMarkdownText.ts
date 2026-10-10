@@ -1,4 +1,144 @@
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
+import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
+import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
+import { imageMimeType } from "@t3tools/shared/image";
+import { isWindowsAbsolutePath } from "@t3tools/shared/path";
+import { videoMimeType } from "@t3tools/shared/video";
+/**
+ * Every accent shares a lightness so no kind reads heavier than another; only hue carries
+ * identity. These are the sRGB form of the same OKLCH set web uses, so a chip looks the
+ * same on every surface. See `composerInlineChip.ts`.
+ */
+const CONTEXT_CHIP_PRESENTATIONS = {
+  image: { accent: "#d55665", symbol: "photo" },
+  video: { accent: "#d06217", symbol: "play.rectangle" },
+  file: { accent: "#0090cd", symbol: "doc" },
+  mention: { accent: "#0096af", symbol: "doc" },
+  terminal: { accent: "#009f6e", symbol: "terminal" },
+  element: { accent: "#b87501", symbol: "cursorarrow.click" },
+  "preview-annotation": { accent: "#b87501", symbol: "cursorarrow.click" },
+  "review-comment": { accent: "#8a70dd", symbol: "text.bubble" },
+  "pull-request": { accent: "#7079e4", symbol: "git-pull-request" },
+  skill: { accent: "#b261be", symbol: "cube" },
+  thread: { accent: "#009c96", symbol: "text.bubble" },
+} as const;
+
+/**
+ * The size an attachment chip reports beside its name, matching web. Rendered as its own
+ * smaller run, so it carries no separator. Only attachment-backed records have bytes.
+ */
+export function composerChipSizeSuffix(record?: {
+  readonly kind?: string;
+  readonly sizeBytes?: number;
+}): string {
+  if (record?.kind !== "file" && record?.kind !== "image") return "";
+  return typeof record.sizeBytes === "number" ? formatAttachmentSize(record.sizeBytes) : "";
+}
+
+/**
+ * A pull request chip is coloured by what the pull request *is*, the way web colours it and
+ * the way the forge itself does: green open, grey draft, purple merged, red closed. The glyph
+ * stays the same across all four, as it does on web — state is carried by colour alone.
+ */
+const PULL_REQUEST_CHIP_PRESENTATIONS = {
+  open: { accent: "#009f6e", symbol: "git-pull-request" },
+  draft: { accent: "#7f8793", symbol: "git-pull-request" },
+  merged: { accent: "#8a70dd", symbol: "git-pull-request" },
+  closed: { accent: "#d55665", symbol: "git-pull-request" },
+} as const;
+
+export function contextChipPresentation(
+  kind: string,
+  record?: {
+    readonly kind?: string;
+    readonly name?: string;
+    readonly mimeType?: string;
+    readonly sectionId?: string;
+    readonly pullRequest?: {
+      readonly state?: string;
+      readonly isDraft?: boolean;
+    };
+  },
+) {
+  const presentationKind =
+    kind === "file" &&
+    videoMimeType({
+      name: record?.name ?? "",
+      mimeType: record?.mimeType ?? "",
+    })
+      ? "video"
+      : // A picture chosen through the file picker is typed `file`, but it is still a
+        // picture: it reads as one to the user and should not wear the generic file chip.
+        kind === "file" &&
+          imageMimeType({ name: record?.name ?? "", mimeType: record?.mimeType ?? "" }) !== null
+        ? "image"
+        : kind === "review-comment" && record?.sectionId?.startsWith("pull-request:")
+          ? "pull-request"
+          : kind;
+  if (presentationKind === "pull-request") {
+    const pullRequest = record?.pullRequest;
+    const state =
+      pullRequest?.state === "open" && pullRequest.isDraft === true
+        ? "draft"
+        : (pullRequest?.state ?? "");
+    if (Object.hasOwn(PULL_REQUEST_CHIP_PRESENTATIONS, state)) {
+      return PULL_REQUEST_CHIP_PRESENTATIONS[state as keyof typeof PULL_REQUEST_CHIP_PRESENTATIONS];
+    }
+  }
+  return Object.hasOwn(CONTEXT_CHIP_PRESENTATIONS, presentationKind)
+    ? CONTEXT_CHIP_PRESENTATIONS[presentationKind as keyof typeof CONTEXT_CHIP_PRESENTATIONS]
+    : CONTEXT_CHIP_PRESENTATIONS.file;
+}
+import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
+import {
+  formatComposerContextReference,
+  parseComposerContextHref,
+} from "@t3tools/shared/composerContextReferences";
+
+/** Native selections count UTF-16 display units, including each inline image placeholder. */
+export function nativeMarkdownContextCopyRanges(
+  runs: ReadonlyArray<{
+    readonly run: {
+      readonly href?: string;
+      readonly text: string;
+      readonly skillName?: string;
+      readonly fileIcon?: string;
+      readonly sourceText?: string;
+    };
+    readonly text: string;
+    readonly inlineImageLength: number;
+  }>,
+) {
+  let offset = 0;
+  const ranges: Array<{ start: number; end: number; text: string }> = [];
+  for (const [index, { run, text, inlineImageLength }] of runs.entries()) {
+    const start = offset;
+    offset += text.length + inlineImageLength;
+    const reference = parseComposerContextHref(run.href ?? "");
+    const source = reference
+      ? formatComposerContextReference({ ...reference, label: run.text })
+      : run.skillName
+        ? `$${run.skillName}`
+        : run.sourceText !== undefined
+          ? run.sourceText
+          : run.fileIcon && run.href
+            ? `[${run.text}](<${run.href}>)`
+            : null;
+    if (source === null) continue;
+    const previous = ranges.at(-1);
+    if (
+      run.sourceText !== undefined &&
+      !runs[index - 1]?.run.fileIcon &&
+      previous?.end === start &&
+      previous.text === source
+    ) {
+      previous.end = offset;
+    } else {
+      ranges.push({ start, end: offset, text: source });
+    }
+  }
+  return ranges;
+}
 
 import type { SelectableMarkdownSkill } from "./SelectableMarkdownText.types";
 import {
@@ -18,6 +158,7 @@ export interface NativeMarkdownTextRun {
   readonly fileIcon?: MarkdownFileIcon;
   readonly skillName?: string;
   readonly skillLabel?: string;
+  readonly sourceText?: string;
   readonly role?:
     | "body"
     | "heading"
@@ -56,6 +197,7 @@ interface RunContext {
   readonly href?: string;
   readonly externalHost?: string;
   readonly fileIcon?: MarkdownFileIcon;
+  readonly sourceText?: string;
   readonly role?: NativeMarkdownTextRun["role"];
   readonly headingLevel?: number;
   readonly depth?: number;
@@ -143,6 +285,7 @@ function sameRunStyle(left: NativeMarkdownTextRun, right: NativeMarkdownTextRun)
     left.href === right.href &&
     left.externalHost === right.externalHost &&
     left.fileIcon === right.fileIcon &&
+    left.sourceText === right.sourceText &&
     left.skillName === right.skillName &&
     left.skillLabel === right.skillLabel &&
     left.role === right.role &&
@@ -173,6 +316,7 @@ function appendRun(
     ...(context.href ? { href: context.href } : {}),
     ...(context.externalHost ? { externalHost: context.externalHost } : {}),
     ...(context.fileIcon ? { fileIcon: context.fileIcon } : {}),
+    ...(context.sourceText !== undefined ? { sourceText: context.sourceText } : {}),
     ...(context.role ? { role: context.role } : {}),
     ...(context.headingLevel ? { headingLevel: context.headingLevel } : {}),
     ...(context.depth ? { depth: context.depth } : {}),
@@ -196,7 +340,7 @@ function appendRun(
 }
 
 const SKILL_TOKEN_REGEX =
-  /(^|\s)\$(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/g;
+  /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
 
 function formatSkillLabel(skill: SelectableMarkdownSkill): string {
   const displayName = skill.displayName?.trim();
@@ -236,7 +380,7 @@ function decorateSkillRuns(
         continue;
       }
       const start = (match.index ?? 0) + prefix.length;
-      const end = start + name.length + 1;
+      const end = (match.index ?? 0) + match[0].length;
       if (start > cursor) {
         decorated.push({ ...run, text: run.text.slice(cursor, start) });
       }
@@ -259,6 +403,36 @@ function decorateSkillRuns(
   return decorated;
 }
 
+function decorateMentionRuns(runs: ReadonlyArray<NativeMarkdownTextRun>) {
+  return runs.flatMap((run) => {
+    if (run.code || run.href || run.skillName || run.role === "code-block") return [run];
+    const decorated: NativeMarkdownTextRun[] = [];
+    let cursor = 0;
+    for (const token of collectComposerInlineTokens(`${run.text} `)) {
+      if (token.type !== "mention" || !token.source.startsWith("@")) continue;
+      // Sentence punctuation is not part of an unquoted file reference.
+      const path = token.source.startsWith('@"')
+        ? token.value
+        : token.value.replace(/[.,;!?]+$/, "");
+      const presentation = resolveMarkdownLinkPresentation(path);
+      if (presentation.kind !== "file") continue;
+      const end = token.end - (token.value.length - path.length);
+      if (token.start > cursor)
+        decorated.push({ ...run, text: run.text.slice(cursor, token.start) });
+      decorated.push({
+        ...run,
+        text: presentation.label,
+        href: presentation.href,
+        fileIcon: presentation.icon,
+        sourceText: run.text.slice(token.start, end),
+      });
+      cursor = end;
+    }
+    if (cursor < run.text.length) decorated.push({ ...run, text: run.text.slice(cursor) });
+    return decorated;
+  });
+}
+
 function appendChildren(
   runs: NativeMarkdownTextRun[],
   node: MarkdownNode,
@@ -275,6 +449,36 @@ function nodeTextContent(node: MarkdownNode): string {
     return node.content;
   }
   return (node.children ?? []).map(nodeTextContent).join("");
+}
+
+function fileLinkLabelMarkdown(node: MarkdownNode): string {
+  const children = (node.children ?? []).map(fileLinkLabelMarkdown).join("");
+  switch (node.type) {
+    case "bold":
+      return `**${children}**`;
+    case "italic":
+      return `*${children}*`;
+    case "strikethrough":
+      return `~~${children}~~`;
+    case "code_inline": {
+      const content = nodeTextContent(node);
+      const fence = "`".repeat(
+        Math.max(0, ...(content.match(/`+/g) ?? []).map((run) => run.length)) + 1,
+      );
+      const padding = /^`|`$|^ .* $/.test(content) && content.trim().length > 0 ? " " : "";
+      return `${fence}${padding}${content}${padding}${fence}`;
+    }
+    case "soft_break":
+      return "\n";
+    case "line_break":
+      return "  \n";
+    case "text":
+      return textNodeContent(nodeTextContent(node)).replace(/[\\[\]*_`~]/g, "\\$&");
+    case "image":
+      return `![${(node.alt ?? "").replace(/[\\[\]]/g, "\\$&")}](<${node.href ?? ""}>)`;
+    default:
+      return node.content ?? children;
+  }
 }
 
 function appendNode(
@@ -310,8 +514,40 @@ function appendNode(
     case "strikethrough":
       return appendChildren(runs, node, { ...context, strikethrough: true });
     case "link": {
+      const reference = parseComposerContextHref(node.href ?? "");
+      if (reference) {
+        // Build the link in isolation: adjacent links with the same href and
+        // style would otherwise merge into one run, collapsing two chips and
+        // their copy ranges into a single reference with a combined label.
+        const referenceRuns: NativeMarkdownTextRun[] = [];
+        appendChildren(referenceRuns, node, {
+          ...context,
+          href: node.href,
+          fileIcon:
+            reference.kind === "image" ? "image" : reference.kind === "terminal" ? "bash" : "text",
+        });
+        runs.push(...referenceRuns);
+        return runs;
+      }
       const presentation = resolveMarkdownLinkPresentation(node.href ?? "");
       if (presentation.kind === "file") {
+        const label = textNodeContent(nodeTextContent(node));
+        if (!isMarkdownFileLinkLabel(label, presentation.href)) {
+          const fileRuns: NativeMarkdownTextRun[] = [];
+          const fileContext = {
+            ...context,
+            href: presentation.href,
+            sourceText: `[${fileLinkLabelMarkdown(node)}](<${presentation.href}>)`,
+          };
+          appendChildren(fileRuns, node, fileContext);
+          appendRun(fileRuns, " ", fileContext);
+          appendRun(fileRuns, presentation.label, {
+            ...fileContext,
+            fileIcon: presentation.icon,
+          });
+          runs.push(...fileRuns);
+          return runs;
+        }
         return appendRun(runs, presentation.label, {
           ...context,
           href: presentation.href,
@@ -348,6 +584,35 @@ export function nativeMarkdownWithPreservedSoftBreaks(node: MarkdownNode): Markd
     ...(node.type === "soft_break" ? { type: "line_break" as const } : {}),
     ...(children ? { children } : {}),
   };
+}
+
+const WINDOWS_DESTINATION_PATTERN = /\](?:\(|:)\s*<?((?:[A-Za-z]:|\\\\)(?:\\.|[^\s()<>\\])*)/g;
+const MARKDOWN_ESCAPE_PATTERN = /\\([!-/:-@[-`{-~])/g;
+
+/**
+ * md4c reads the `\.` in `C:\me\.t3\shot.png` as an escape, even in a link destination.
+ * Every backslash in a Windows path is a separator, so link and image paths go back to
+ * the destination as written in `markdown`. A parsed path that more than one written
+ * destination could have produced stays as parsed.
+ */
+export function nativeMarkdownWithAuthoredWindowsPaths(
+  node: MarkdownNode,
+  markdown: string,
+): MarkdownNode {
+  const authoredByParsed = new Map<string, string | null>();
+  for (const [, authored = ""] of markdown.matchAll(WINDOWS_DESTINATION_PATTERN)) {
+    if (!isWindowsAbsolutePath(authored)) continue;
+    const parsed = authored.replace(MARKDOWN_ESCAPE_PATTERN, "$1");
+    const known = authoredByParsed.get(parsed);
+    authoredByParsed.set(parsed, known === undefined || known === authored ? authored : null);
+  }
+  if (authoredByParsed.size === 0) return node;
+  const restore = (current: MarkdownNode): MarkdownNode => {
+    const href = current.href && authoredByParsed.get(current.href);
+    const children = current.children?.map(restore);
+    return { ...current, ...(href ? { href } : {}), ...(children ? { children } : {}) };
+  };
+  return restore(node);
 }
 
 function appendBlockTerminator(
@@ -694,21 +959,31 @@ function containsRichBlock(node: MarkdownNode): boolean {
   return (node.children ?? []).some(containsRichBlock);
 }
 
+/**
+ * Sibling identity for React keys. A source offset survives appends while the
+ * document streams; the child index is the fallback for offset-free nodes. The
+ * two never share a namespace, so a positioned node cannot collide with an
+ * offset-free sibling whose index happens to equal its offset.
+ */
+export function nativeMarkdownNodePosition(node: MarkdownNode, index: number): string {
+  return node.beg === undefined ? `index:${index}` : `offset:${node.beg}`;
+}
+
 export function nativeMarkdownDocumentChunks(
   document: MarkdownNode,
 ): ReadonlyArray<NativeMarkdownDocumentChunk> {
   const chunks: NativeMarkdownDocumentChunk[] = [];
   let selectableNodes: MarkdownNode[] = [];
+  let selectableStart = 0;
 
   const flushSelectable = () => {
-    if (selectableNodes.length === 0) {
+    const first = selectableNodes[0];
+    if (!first) {
       return;
     }
-    const first = selectableNodes[0];
-    const last = selectableNodes.at(-1);
     chunks.push({
       kind: "selectable",
-      key: `selectable:${first?.beg ?? "start"}:${last?.end ?? "end"}`,
+      key: `selectable:${nativeMarkdownNodePosition(first, selectableStart)}`,
       node: {
         type: "document",
         children: selectableNodes,
@@ -719,6 +994,9 @@ export function nativeMarkdownDocumentChunks(
 
   for (const [index, child] of (document.children ?? []).entries()) {
     if (!containsRichBlock(child)) {
+      if (selectableNodes.length === 0) {
+        selectableStart = index;
+      }
       selectableNodes.push(child);
       continue;
     }
@@ -726,7 +1004,7 @@ export function nativeMarkdownDocumentChunks(
     flushSelectable();
     chunks.push({
       kind: "rich",
-      key: `rich:${child.type}:${child.beg ?? index}:${child.end ?? index}`,
+      key: `rich:${child.type}:${nativeMarkdownNodePosition(child, index)}`,
       node: child,
     });
   }
@@ -779,5 +1057,5 @@ export function nativeMarkdownDocumentRuns(
       runs[lastIndex] = { ...last, text };
     }
   }
-  return decorateSkillRuns(runs, skills);
+  return decorateMentionRuns(decorateSkillRuns(runs, skills));
 }

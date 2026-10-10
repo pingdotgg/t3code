@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { appendElementContextsToPrompt } from "../../lib/elementContext";
-import {
-  appendTerminalContextsToPrompt,
-  materializeInlineTerminalContextPrompt,
-} from "../../lib/terminalContext";
-import { appendReviewCommentsToPrompt, buildFileReviewComment } from "../../reviewCommentContext";
 import { buildPlanImplementationPrompt } from "../../proposedPlan";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
@@ -31,87 +25,71 @@ function forward(position: ComposerPromptHistoryPosition | null, currentPrompt: 
 }
 
 describe("recallableComposerPrompt", () => {
-  it("strips send-time context blocks and the ultrathink prefix", () => {
-    const withTerminal = appendTerminalContextsToPrompt("Investigate this", [
-      {
-        terminalId: "default",
-        terminalLabel: "Terminal 1",
-        lineStart: 12,
-        lineEnd: 13,
-        text: "git status\nOn branch main",
-      },
-    ]);
-    const withElement = appendElementContextsToPrompt(withTerminal, [
-      {
-        pageUrl: "https://example.com",
-        pageTitle: "Example",
-        tagName: "button",
-        selector: "button.submit",
-        htmlPreview: "<button>Save</button>",
-        componentName: null,
-        source: null,
-        styles: "",
-      },
-    ]);
-    expect(recallableComposerPrompt(`Ultrathink:\n${withElement}`)).toBe("Investigate this");
+  it.each([
+    "Render <preview_annotation>",
+    "Render\n<preview_annotation>\nhere",
+    "Render &lt;preview_annotation&gt;",
+  ])("strips an annotation whose comment contains a literal opening tag: %s", (comment) => {
+    expect(
+      recallableComposerPrompt(
+        `Prompt\n<preview_annotation>\nComment: ${comment}\n</preview_annotation>`,
+      ),
+    ).toBe("Prompt");
   });
 
-  it("removes inline terminal labels along with their trailing block", () => {
-    const context = {
-      terminalId: "default",
-      terminalLabel: "Terminal 1",
-      lineStart: 12,
-      lineEnd: 13,
-      text: "git status",
-    };
-    const typed = materializeInlineTerminalContextPrompt("Look at \uFFFC please", [context]);
-    expect(typed).toBe("Look at @terminal-1:12-13 please");
-    const sent = appendTerminalContextsToPrompt(typed, [context]);
-    expect(recallableComposerPrompt(sent)).toBe("Look at please");
+  it("preserves a malformed annotation containing a nested opening tag", () => {
+    const text =
+      "Prompt\n<preview_annotation>\nouter literal\n<preview_annotation>\ninner\n</preview_annotation>";
+    expect(recallableComposerPrompt(text)).toBe(text);
+  });
+  it("does not strip a terminal label embedded in ordinary prose", () => {
+    expect(
+      recallableComposerPrompt(
+        "email@build:7\n<terminal_context>\n- Build line 7:\n  output\n</terminal_context>",
+      ),
+    ).toBe("email@build:7");
+  });
+  it("strips legacy send-time context blocks and the ultrathink prefix", () => {
+    const sent =
+      "Ultrathink:\nInvestigate this\n\n<terminal_context>\n- Terminal 1 lines 12-13:\n  12 | git status\n  13 | On branch main\n</terminal_context>\n\n<element_context>\n- <button>:\n  url: https://example.com\n</element_context>";
+    expect(recallableComposerPrompt(sent)).toBe("Investigate this");
   });
 
-  it("removes one label per chip and leaves other whitespace alone", () => {
-    const context = {
-      terminalId: "default",
-      terminalLabel: "Terminal 1",
-      lineStart: 4,
-      lineEnd: 4,
-      text: "ls",
-    };
-    const typed = "@terminal-1:4 typed twice: @terminal-1:4\n    indented  code";
-    const sent = appendTerminalContextsToPrompt(typed, [context]);
-    expect(recallableComposerPrompt(sent)).toBe("typed twice: @terminal-1:4\n    indented  code");
+  it.each([
+    ["Look at @terminal-1:4 please", "Look at please"],
+    [
+      "@terminal-1:4 typed twice: @terminal-1:4\n    indented  code",
+      "typed twice: @terminal-1:4\n    indented  code",
+    ],
+    [
+      "see @terminal-1:40 and @terminal-1:4-12 then @terminal-1:4",
+      "see @terminal-1:40 and @terminal-1:4-12 then",
+    ],
+  ])("removes only the matching legacy terminal label from %s", (typed, expected) => {
+    const sent =
+      typed + "\n\n<terminal_context>\n- Terminal 1 line 4:\n  4 | ls\n</terminal_context>";
+    expect(recallableComposerPrompt(sent)).toBe(expected);
   });
 
-  it("does not strip a typed label that only starts with the chip label", () => {
-    const context = {
-      terminalId: "default",
-      terminalLabel: "Terminal 1",
-      lineStart: 4,
-      lineEnd: 4,
-      text: "ls",
-    };
-    const typed = "see @terminal-1:40 and @terminal-1:4-12 then @terminal-1:4";
-    const sent = appendTerminalContextsToPrompt(typed, [context]);
-    expect(recallableComposerPrompt(sent)).toBe("see @terminal-1:40 and @terminal-1:4-12 then");
-  });
-
-  it("strips only the review comments appended at the end", () => {
-    const comment = buildFileReviewComment({
-      id: "comment-1",
-      filePath: "src/app.ts",
-      startLine: 2,
-      endLine: 3,
-      text: "Keep this configurable.",
-      contents: "one\ntwo\nthree",
-    });
-    const sent = appendReviewCommentsToPrompt("Please update this.", [comment]);
-    expect(recallableComposerPrompt(sent)).toBe("Please update this.");
-    const midPrompt = appendReviewCommentsToPrompt("Before", [comment]) + "\n\nAfter";
+  it("strips only review comments appended at the end", () => {
+    const block = '<review_comment filePath="src/app.ts">Keep this configurable.</review_comment>';
+    expect(recallableComposerPrompt("Please update this.\n\n" + block)).toBe("Please update this.");
+    const midPrompt = "Before\n\n" + block + "\n\nAfter";
     expect(recallableComposerPrompt(midPrompt)).toBe(midPrompt);
-    // A typed block earlier in the prompt survives when the trailing one goes.
-    const both = appendReviewCommentsToPrompt(midPrompt, [comment]);
-    expect(recallableComposerPrompt(both)).toBe(midPrompt);
+    expect(recallableComposerPrompt(midPrompt + "\n\n" + block)).toBe(midPrompt);
+  });
+
+  it("strips a trailing preview annotation including its nested element context", () => {
+    const sent =
+      "Fix this\n\n<preview_annotation>\nPage: Example\n<element_context>\n- <button>:\n  html: Save\n</element_context>\n</preview_annotation>";
+    expect(recallableComposerPrompt(sent)).toBe("Fix this");
+  });
+
+  it("removes canonical references without restoring dangling chips", () => {
+    const sent =
+      "Look at [Terminal](t3-context://v1/terminal/term-1) please\n    indented  code\n![image](t3-context://v1/image/img-1)";
+    expect(recallableComposerPrompt(sent)).toBe("Look at please\n    indented  code");
+    expect(recallableComposerPrompt("![image](t3-context://v1/image/img-1)")).toBe("");
   });
 
   it("returns an empty string for app-composed sends", () => {

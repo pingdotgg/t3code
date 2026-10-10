@@ -131,14 +131,19 @@ function themePreviewEdgeShadow(mode: ThemeAppearance): string {
 export function ThemePreviewCircle({
   colors,
   mode,
+  className,
 }: {
   colors: ThemeCardPreviewColors;
   mode: ThemeAppearance;
+  className?: string;
 }) {
   return (
     <span
       aria-hidden
-      className="relative block size-14 shrink-0 overflow-hidden rounded-full border-2 border-background"
+      className={cn(
+        "relative block size-14 shrink-0 overflow-hidden rounded-full border-2 border-background",
+        className,
+      )}
       style={{ boxShadow: themePreviewEdgeShadow(mode) }}
     >
       <span
@@ -182,7 +187,7 @@ export function ThemePreviewCircles({
                   aria-label={`Use ${label} ${mode} mode`}
                   aria-pressed={isPicked}
                   className={cn(
-                    "relative flex size-[68px] shrink-0 transform-gpu cursor-pointer items-center justify-center rounded-full p-1 outline-none transition-transform hover:scale-105 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card",
+                    "relative flex size-[68px] shrink-0 transform-gpu cursor-pointer items-center justify-center rounded-full p-1 outline-none transition-transform hover:scale-105 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card",
                     isPicked && "hover:scale-100",
                   )}
                   onClick={(event) => {

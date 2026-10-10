@@ -60,6 +60,12 @@ export interface ServiceProps extends PlatformProps {
    */
   main?: string;
   /**
+   * Local Docker context uploaded with Railway `up`. Paths are relative to the
+   * initial working directory. Limited to a 32 MiB archive, 10,000 entries,
+   * ASCII paths, and no symlinks; Docker ignore files apply.
+   */
+  context?: string;
+  /**
    * Docker image Railway should run.
    *
    * When `main` is omitted this is `source.image` (e.g.
@@ -68,8 +74,11 @@ export interface ServiceProps extends PlatformProps {
    */
   image?: string;
   /**
-   * Region for the service instance (`us-west2`, `us-east4`, …). If
-   * omitted, Railway picks the default. Updates in place.
+   * Region the service runs in (`us-west2`, `europe-west4-drams3a`, …).
+   * Railway places replicas with `deploy.multiRegionConfig`. Omit this
+   * and the current placement is left alone (the workspace default on
+   * first create). Updating it moves the replicas in place and keeps
+   * the current replica count.
    */
   region?: string;
   /**
@@ -79,6 +88,12 @@ export interface ServiceProps extends PlatformProps {
    * `hashicorp/http-echo`.
    */
   port?: number;
+  /**
+   * Whether to create and manage a generated `*.up.railway.app` domain.
+   * Existing unowned generated or custom domains are not removed.
+   * @default true
+   */
+  publicDomain?: boolean;
   /**
    * Additional environment variables. Merged after binding-injected
    * `env`. Upserted as service-scoped Railway variables with
@@ -137,6 +152,21 @@ export interface ServiceProps extends PlatformProps {
    */
   buildCommand?: string;
   /**
+   * Pre-deploy step Railway runs after the image build and before
+   * start (migrations, seed). Omit to leave the current Railway setting
+   * unchanged. Pass `{ command: null }` to clear it.
+   *
+   * @see https://docs.railway.com/deployments/pre-deploy-command
+   */
+  preDeploy?: {
+    /**
+     * Shell command Railway executes in a separate container after
+     * build and before start. Must exit 0 or the deployment fails.
+     * Pass `null` to clear it.
+     */
+    command: string | null;
+  };
+  /**
    * Start command (`pnpm start`).
    */
   startCommand?: string;
@@ -186,7 +216,9 @@ export interface ServiceProps extends PlatformProps {
    */
   autoUpdates?: boolean;
   /**
-   * Dockerfile path relative to {@link rootDirectory}.
+   * Dockerfile path relative to {@link rootDirectory}, or to {@link context}
+   * for a local context.
+   * @default "Dockerfile"
    */
   dockerfilePath?: string;
   /**
@@ -232,7 +264,10 @@ export type Service = Resource<
     cronSchedule: string | undefined;
     /** Observed root directory. */
     rootDirectory: string | undefined;
-    /** Observed region, if Railway reported one. */
+    /**
+     * Region the service is placed in. Set when
+     * `deploy.multiRegionConfig` has replicas in exactly one region.
+     */
     region: string | undefined;
     /** Port published on the generated service domain. */
     port: number | undefined;
@@ -344,6 +379,19 @@ const createServiceRuntimeContext = (id: string): ServiceRuntimeContext => {
  * ) {}
  * ```
  *
+ * ### Local Docker context
+ * `context` is a directory Railway builds with `up`. Mutually exclusive
+ * with `image` (without `main`) and `repo`. Docker ignore files apply.
+ *
+ * **Example:** Upload a local Dockerfile
+ * ```typescript
+ * const api = yield* Railway.Service("Api", {
+ *   project: site,
+ *   context: "./api",
+ *   port: 80,
+ * });
+ * ```
+ *
  * ### The public URL
  * Yield the Service in the Stack. `api.url` is
  * `https://{name}.up.railway.app`.
@@ -360,8 +408,25 @@ const createServiceRuntimeContext = (id: string): ServiceRuntimeContext => {
  * );
  * ```
  *
+ * ### Private service
+ * `publicDomain: false` skips the generated `*.up.railway.app` hostname.
+ * `url` / `domain` stay unset. Reach it on the private mesh at
+ * `{name}.railway.internal`. Unowned generated or custom domains are
+ * left alone.
+ *
+ * **Example:** Private-only service
+ * ```typescript
+ * const worker = yield* Railway.Service("Worker", {
+ *   project: site,
+ *   image: "hashicorp/http-echo",
+ *   port: 5678,
+ *   publicDomain: false,
+ * });
+ * ```
+ *
  * ### Pin a region
- * Omit `region` to use Railway's default. Updating it is in place.
+ * Omit `region` to leave placement alone. On first create that is the
+ * workspace default. Updating `region` moves the replicas in place.
  *
  * **Example:** Region
  * ```typescript
@@ -406,6 +471,19 @@ const createServiceRuntimeContext = (id: string): ServiceRuntimeContext => {
  *   rootDirectory: "apps/api",
  *   buildCommand: "pnpm build",
  *   startCommand: "pnpm start",
+ * });
+ * ```
+ *
+ * ### Pre-deploy
+ * Railway runs `preDeploy.command` after the image build and before
+ * start — the same setting as the dashboard Pre-deploy Command.
+ *
+ * **Example:** Run migrations before traffic
+ * ```typescript
+ * const api = yield* Railway.Service("Api", {
+ *   project: site,
+ *   image: "hashicorp/http-echo",
+ *   preDeploy: { command: "bun --cwd apps/api migrate" },
  * });
  * ```
  *
@@ -488,6 +566,7 @@ const createServiceRuntimeContext = (id: string): ServiceRuntimeContext => {
  * ```
  *
  * @resource
+ * @product Service
  */
 export const Service: Platform<
   Service,

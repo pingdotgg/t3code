@@ -82,5 +82,5 @@ test.provider(
       const after = yield* getCatalog;
       expect(after).toBeUndefined();
     }),
-  { timeout: 180_000 },
+  { tags: ["provider:aws", "provider:aws:athena", "live"], timeout: 180_000 },
 );

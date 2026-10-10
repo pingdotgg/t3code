@@ -6,14 +6,14 @@ import tailwindColors from "tailwindcss/colors";
 import { BUILT_IN_THEME_IDS, type BuiltInThemeId } from "@t3tools/shared/themePalettes";
 
 import {
+  createMobileThemeVariables,
+  getMobileThemeColors,
   getMobileThemeVariables,
-  MOBILE_THEME_VARIABLE_NAMES,
+  DEFAULT_MOBILE_THEME_ID,
   type MobileThemeAppearance,
-  type MobileThemeVariables,
 } from "../src/lib/mobileTheme.ts";
 
 const APPEARANCES = ["light", "dark"] as const;
-const GLOBAL_CSS_PATH = NodePath.resolve(import.meta.dirname, "../global.css");
 const GENERATED_CSS_PATH = NodePath.resolve(import.meta.dirname, "../generated-uniwind-themes.css");
 const GENERATED_NAMES_PATH = NodePath.resolve(
   import.meta.dirname,
@@ -23,6 +23,7 @@ const GENERATED_DEFAULT_VARIABLES_PATH = NodePath.resolve(
   import.meta.dirname,
   "../generated-uniwind-default-theme-variables.json",
 );
+const GENERATED_CLERK_THEME_PATH = NodePath.resolve(import.meta.dirname, "../clerk-theme.json");
 
 type TailwindColorFamily = keyof typeof tailwindColors;
 type TailwindColorShade = 50 | 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900 | 950;
@@ -53,10 +54,12 @@ const color = (family: TailwindColorFamily, shade?: TailwindColorShade, opacity 
 // These replace the remaining dark:* utility pairs. A registered palette theme is
 // neither literally `light` nor `dark`, so appearance-sensitive values must also be
 // represented as semantic variables for custom themes.
-const ADAPTIVE_COLORS = {
+const ADAPTIVE_COLORS: Readonly<Record<string, readonly [light: string, dark: string]>> = {
   "--color-adaptive-amber-50-950-a40": [color("amber", 50), color("amber", 950, 0.4)],
   "--color-adaptive-amber-200-900-a60": [color("amber", 200), color("amber", 900, 0.6)],
   "--color-adaptive-amber-500-a12-a16": [color("amber", 500, 0.12), color("amber", 500, 0.16)],
+  "--color-adaptive-amber-500-a10-400-a10": [color("amber", 500, 0.1), color("amber", 400, 0.1)],
+  "--color-adaptive-amber-500-a25-400-a25": [color("amber", 500, 0.25), color("amber", 400, 0.25)],
   "--color-adaptive-amber-700-300": [color("amber", 700), color("amber", 300)],
   "--color-adaptive-amber-700-400": [color("amber", 700), color("amber", 400)],
   "--color-adaptive-amber-800-200": [color("amber", 800), color("amber", 200)],
@@ -72,6 +75,10 @@ const ADAPTIVE_COLORS = {
   "--color-adaptive-black-a15-a35": [
     color("black", undefined, 0.15),
     color("black", undefined, 0.35),
+  ],
+  "--color-adaptive-black-a2p5-white-a2p5": [
+    color("black", undefined, 0.025),
+    color("white", undefined, 0.025),
   ],
   "--color-adaptive-emerald-500-a12-a16": [
     color("emerald", 500, 0.12),
@@ -114,6 +121,14 @@ const ADAPTIVE_COLORS = {
   "--color-adaptive-neutral-600-300": [color("neutral", 600), color("neutral", 300)],
   "--color-adaptive-neutral-600-400": [color("neutral", 600), color("neutral", 400)],
   "--color-adaptive-neutral-950-50": [color("neutral", 950), color("neutral", 50)],
+  "--color-adaptive-neutral-950-a5-white-a5": [
+    color("neutral", 950, 0.05),
+    color("white", undefined, 0.05),
+  ],
+  "--color-adaptive-neutral-950-a10-white-a10": [
+    color("neutral", 950, 0.1),
+    color("white", undefined, 0.1),
+  ],
   "--color-adaptive-red-50-950-a80": [color("red", 50), color("red", 950, 0.8)],
   "--color-adaptive-red-200-800": [color("red", 200), color("red", 800)],
   "--color-adaptive-red-600-a80-400-a80": [color("red", 600, 0.8), color("red", 400, 0.8)],
@@ -126,6 +141,8 @@ const ADAPTIVE_COLORS = {
   "--color-adaptive-rose-600-400": [color("rose", 600), color("rose", 400)],
   "--color-adaptive-rose-700-300": [color("rose", 700), color("rose", 300)],
   "--color-adaptive-sky-500-a12-a16": [color("sky", 500, 0.12), color("sky", 500, 0.16)],
+  "--color-adaptive-sky-500-a10-400-a10": [color("sky", 500, 0.1), color("sky", 400, 0.1)],
+  "--color-adaptive-sky-500-a25-400-a25": [color("sky", 500, 0.25), color("sky", 400, 0.25)],
   "--color-adaptive-sky-600-400": [color("sky", 600), color("sky", 400)],
   "--color-adaptive-sky-700-300": [color("sky", 700), color("sky", 300)],
   "--color-adaptive-violet-500-a12-a16": [color("violet", 500, 0.12), color("violet", 500, 0.16)],
@@ -143,16 +160,55 @@ export const customThemeNames = BUILT_IN_THEME_IDS.flatMap((themeId) =>
 
 const adaptiveVariablesFor = (appearance: MobileThemeAppearance) =>
   Object.fromEntries(
-    Object.entries(ADAPTIVE_COLORS).map(([name, values]) => [
+    Object.entries(ADAPTIVE_COLORS).map(([name, [light, dark]]) => [
       name,
-      values[appearance === "light" ? 0 : 1],
+      appearance === "light" ? light : dark,
     ]),
   );
 
 const variablesFor = (themeId: BuiltInThemeId, appearance: MobileThemeAppearance) => ({
   ...getMobileThemeVariables(themeId, appearance),
   ...adaptiveVariablesFor(appearance),
+  ...clerkVariablesFor(appearance),
 });
+
+// Clerk's native screens use one build-time palette per appearance. Custom
+// profile pages must match it even when the rest of the app uses a named theme.
+const clerkColorsFor = (appearance: MobileThemeAppearance) => {
+  // Native authentication uses plain cards, rather than tonal settings groups.
+  const variables = createMobileThemeVariables(
+    getMobileThemeColors(DEFAULT_MOBILE_THEME_ID, appearance),
+    appearance,
+  );
+  return {
+    primary: variables["--color-primary"],
+    background: variables["--color-sheet-solid"],
+    input: variables["--color-input"],
+    danger: variables["--color-danger-foreground"],
+    success: appearance === "dark" ? "#34d399" : "#059669",
+    warning: variables["--color-warning-foreground"],
+    foreground: variables["--color-foreground"],
+    mutedForeground: variables["--color-foreground-muted"],
+    primaryForeground: variables["--color-primary-foreground"],
+    inputForeground: variables["--color-foreground"],
+    neutral: variables["--color-secondary"],
+    border: variables["--color-border"],
+    ring: variables["--color-focus"],
+    muted: variables["--color-subtle"],
+    shadow: variables["--color-primary-shadow"],
+  };
+};
+
+const clerkVariablesFor = (appearance: MobileThemeAppearance) => {
+  const colors = clerkColorsFor(appearance);
+  return {
+    "--color-clerk-page": colors.background.toLowerCase(),
+    "--color-clerk-foreground": colors.foreground.toLowerCase(),
+    "--color-clerk-foreground-muted": colors.mutedForeground.toLowerCase(),
+    "--color-clerk-border": colors.border,
+    "--color-clerk-danger": colors.danger.toLowerCase(),
+  };
+};
 
 const renderVariant = (name: string, variables: Readonly<Record<string, string>>) => {
   const declarations = Object.entries(variables)
@@ -163,8 +219,13 @@ const renderVariant = (name: string, variables: Readonly<Record<string, string>>
 
 export const renderUniwindThemesCSS = () => {
   const variants = [
-    renderVariant("light", adaptiveVariablesFor("light")),
-    renderVariant("dark", adaptiveVariablesFor("dark")),
+    ...APPEARANCES.map((appearance) =>
+      renderVariant(appearance, {
+        ...getMobileThemeVariables(DEFAULT_MOBILE_THEME_ID, appearance),
+        ...adaptiveVariablesFor(appearance),
+        ...clerkVariablesFor(appearance),
+      }),
+    ),
     ...BUILT_IN_THEME_IDS.flatMap((themeId) =>
       APPEARANCES.map((appearance) =>
         renderVariant(`${themeId}-${appearance}`, variablesFor(themeId, appearance)),
@@ -182,50 +243,27 @@ export const renderUniwindThemesCSS = () => {
   ].join("\n");
 };
 
-const readVariantBody = (css: string, appearance: MobileThemeAppearance): string => {
-  const marker = `@variant ${appearance} {`;
-  const markerIndex = css.indexOf(marker);
-  if (markerIndex === -1) throw new Error(`Could not find ${marker} in global.css.`);
-
-  const openingBraceIndex = css.indexOf("{", markerIndex);
-  let depth = 0;
-  for (let index = openingBraceIndex; index < css.length; index += 1) {
-    if (css[index] === "{") depth += 1;
-    if (css[index] !== "}") continue;
-    depth -= 1;
-    if (depth === 0) return css.slice(openingBraceIndex + 1, index);
-  }
-  throw new Error(`Could not find the end of ${marker} in global.css.`);
-};
-
-export const readDefaultThemeVariables = (css: string) =>
-  Object.fromEntries(
-    APPEARANCES.map((appearance) => {
-      const body = readVariantBody(css, appearance);
-      const variables = Object.fromEntries(
-        MOBILE_THEME_VARIABLE_NAMES.map((name) => {
-          const match = new RegExp(`^\\s*${name}:\\s*([^;]+);`, "mu").exec(body);
-          if (!match?.[1]) {
-            throw new Error(`Default ${appearance} theme is missing ${name}.`);
-          }
-          return [name, match[1].trim()];
-        }),
-      ) as MobileThemeVariables;
-      return [appearance, variables];
-    }),
-  ) as Readonly<Record<MobileThemeAppearance, MobileThemeVariables>>;
-
-export const renderDefaultThemeVariablesJSON = (css: string) =>
-  `${JSON.stringify(readDefaultThemeVariables(css), null, 2)}\n`;
+export const renderDefaultThemeVariablesJSON = () =>
+  `${JSON.stringify(
+    Object.fromEntries(
+      APPEARANCES.map((appearance) => [
+        appearance,
+        getMobileThemeVariables(DEFAULT_MOBILE_THEME_ID, appearance),
+      ]),
+    ),
+    null,
+    2,
+  )}\n`;
 
 export const getGeneratedUniwindThemeOutputs = (): ReadonlyArray<
   readonly [filename: string, contents: string]
 > => [
   [GENERATED_CSS_PATH, renderUniwindThemesCSS()],
   [GENERATED_NAMES_PATH, `${JSON.stringify(customThemeNames, null, 2)}\n`],
+  [GENERATED_DEFAULT_VARIABLES_PATH, renderDefaultThemeVariablesJSON()],
   [
-    GENERATED_DEFAULT_VARIABLES_PATH,
-    renderDefaultThemeVariablesJSON(NodeFS.readFileSync(GLOBAL_CSS_PATH, "utf8")),
+    GENERATED_CLERK_THEME_PATH,
+    `${JSON.stringify({ colors: clerkColorsFor("light"), darkColors: clerkColorsFor("dark"), design: { borderRadius: 18 } }, null, 2)}\n`,
   ],
 ];
 

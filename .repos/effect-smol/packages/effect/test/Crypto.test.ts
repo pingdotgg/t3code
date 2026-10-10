@@ -25,6 +25,13 @@ const makeCrypto = (value: bigint) =>
   })
 
 describe("Crypto", () => {
+  it("uses the module path for its type ID", () => {
+    assert.strictEqual(
+      (testCrypto as unknown as Record<string, unknown>)["~effect/Crypto"],
+      "~effect/Crypto"
+    )
+  })
+
   it("supports string literal digest algorithms", () => {
     const algorithm: Crypto.DigestAlgorithm = "SHA-256"
     assert.strictEqual(algorithm, "SHA-256")
@@ -56,6 +63,15 @@ describe("Crypto", () => {
       assert.strictEqual(randomIntBetween, 5)
       assert.deepStrictEqual(randomShuffle, [1, 2, 3])
     }).pipe(Effect.provideService(Crypto.Crypto, testCrypto)))
+
+  it.effect("randomBetween excludes the upper bound when the result rounds up", () =>
+    Effect.gen(function*() {
+      const value = yield* makeCrypto((1n << 53n) - 2n).randomBetween(10, 20)
+
+      assert.isAtLeast(value, 10)
+      assert.isBelow(value, 20)
+      assert.strictEqual(value, 20 - 2 ** -48)
+    }))
 
   it("maps adjacent random values to adjacent safe integers", () => {
     assert.strictEqual(makeCrypto(0n).nextIntUnsafe(), Number.MIN_SAFE_INTEGER)
@@ -90,6 +106,24 @@ describe("Crypto", () => {
       const crypto = yield* Crypto.Crypto
       const uuid = yield* crypto.randomUUIDv7
       assert.strictEqual(uuid, "01234567-89ab-7607-8809-0a0b0c0d0e0f")
+    }).pipe(Effect.provideService(Crypto.Crypto, testCrypto)))
+
+  it.effect("randomULID encodes the Clock timestamp and random bytes", () =>
+    Effect.gen(function*() {
+      yield* TestClock.setTime(0x0123456789ab)
+      const crypto = yield* Crypto.Crypto
+      const ulid = yield* crypto.randomULID
+
+      assert.strictEqual(ulid, "014D2PF2DB000G40R40M30E209")
+    }).pipe(Effect.provideService(Crypto.Crypto, testCrypto)))
+
+  it.effect("randomULID clamps an overflowing Clock timestamp", () =>
+    Effect.gen(function*() {
+      yield* TestClock.setTime(2 ** 48)
+      const crypto = yield* Crypto.Crypto
+      const ulid = yield* crypto.randomULID
+
+      assert.strictEqual(ulid, "7ZZZZZZZZZ000G40R40M30E209")
     }).pipe(Effect.provideService(Crypto.Crypto, testCrypto)))
 
   it.effect("digest delegates to the service", () =>

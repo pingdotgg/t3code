@@ -1,7 +1,8 @@
+import * as floatingIps from "@distilled.cloud/hetzner/floating_ips";
 import * as Hetzner from "@/Hetzner";
 import * as Provider from "@/Provider";
 import * as Test from "@/Test/Alchemy";
-import { Services } from "@distilled.cloud/hetzner";
+import * as servers from "@distilled.cloud/hetzner/servers";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
@@ -17,7 +18,7 @@ const logLevel = Effect.provideService(
 const hasHetznerCreds = !!process.env.HCLOUD_TOKEN;
 
 const waitUntilFloatingIpGone = (id: number) =>
-  Services.floatingIps.getFloatingIp({ id }).pipe(
+  floatingIps.getFloatingIp({ id }).pipe(
     Effect.as("found" as const),
     Effect.catchTag("NotFound", () => Effect.succeed("gone" as const)),
     Effect.repeat({
@@ -28,7 +29,7 @@ const waitUntilFloatingIpGone = (id: number) =>
   );
 
 const waitUntilServerGone = (id: number) =>
-  Services.servers.getServer({ id }).pipe(
+  servers.getServer({ id }).pipe(
     Effect.as("found" as const),
     Effect.catchTag("NotFound", () => Effect.succeed("gone" as const)),
     Effect.repeat({
@@ -66,7 +67,7 @@ test.provider.skipIf(!hasHetznerCreds)(
       expect(created.assignment.floatingIpId).toEqual(created.ip.id);
       expect(created.assignment.serverId).toEqual(created.server.serverId);
 
-      const fetched = yield* Services.floatingIps.getFloatingIp({
+      const fetched = yield* floatingIps.getFloatingIp({
         id: created.ip.id,
       });
       expect(fetched.floating_ip.server).toEqual(created.server.serverId);
@@ -103,7 +104,7 @@ test.provider.skipIf(!hasHetznerCreds)(
       expect(updated.server.id).toEqual(created.server.id);
       expect(updated.ip.id).toEqual(created.ip.id);
 
-      const stillAssigned = yield* Services.floatingIps.getFloatingIp({
+      const stillAssigned = yield* floatingIps.getFloatingIp({
         id: created.ip.id,
       });
       expect(stillAssigned.floating_ip.server).toEqual(created.server.serverId);
@@ -135,12 +136,12 @@ test.provider.skipIf(!hasHetznerCreds)(
       expect(replaced.assignment.serverId).toEqual(created.server.serverId);
       expect(replaced.nextIp.id).not.toEqual(created.ip.id);
 
-      const oldIp = yield* Services.floatingIps.getFloatingIp({
+      const oldIp = yield* floatingIps.getFloatingIp({
         id: created.ip.id,
       });
       expect(oldIp.floating_ip.server).toBeNull();
 
-      const newIp = yield* Services.floatingIps.getFloatingIp({
+      const newIp = yield* floatingIps.getFloatingIp({
         id: replaced.nextIp.id,
       });
       expect(newIp.floating_ip.server).toEqual(created.server.serverId);
@@ -154,5 +155,16 @@ test.provider.skipIf(!hasHetznerCreds)(
       const serverGone = yield* waitUntilServerGone(created.server.id);
       expect(serverGone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 180_000, exclusive: true },
+  {
+    tags: [
+      "provider:hetzner",
+      "provider:hetzner:floatingip",
+      "provider:hetzner:floatingipassignment",
+      "provider:hetzner:server",
+      "provider:hetzner:service",
+      "live",
+    ],
+    timeout: 180_000,
+    exclusive: true,
+  },
 );

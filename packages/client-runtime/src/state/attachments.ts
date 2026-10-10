@@ -6,7 +6,7 @@ import {
   type AttachmentDeleteInput,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import type { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import type { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {

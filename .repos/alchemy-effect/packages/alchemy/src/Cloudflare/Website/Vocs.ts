@@ -46,6 +46,13 @@ export interface VocsProps<
   assets?: AssetsConfig;
 }
 
+// These options are inspected while constructing the Worker. Resolve them in
+// the outer props Effect; pass-through properties can remain deferred Inputs.
+type VocsInput<Bindings extends WorkerBindingProps> = InputProps<
+  VocsProps<Bindings>,
+  "assets"
+>;
+
 /**
  * A Cloudflare Worker deployed from a [Vocs](https://vocs.dev) documentation project.
  *
@@ -58,7 +65,7 @@ export interface VocsProps<
  *
  * Input files are content-hashed (respecting `.gitignore` by default), so an
  * unchanged project skips its build and deployment. Vocs' server runtime uses
- * Node APIs, so `nodejs_compat` is included in the Worker's compatibility
+ * Node APIs, enabled by the Worker's compatibility date
  * flags automatically.
  *
  * ### Deploying a Vocs Site
@@ -137,8 +144,8 @@ export const Vocs: {
     <const Bindings extends WorkerBindingProps = {}, Req = never>(
       id: string,
       propsEff?:
-        | InputProps<VocsProps<Bindings>>
-        | Effect.Effect<InputProps<VocsProps<Bindings>>, never, Req>,
+        | VocsInput<Bindings>
+        | Effect.Effect<VocsInput<Bindings>, never, Req>,
     ): Effect.Effect<Self, never, Req | Providers> & {
       new (): Worker<{
         [
@@ -150,8 +157,8 @@ export const Vocs: {
   <const Bindings extends WorkerBindingProps = {}, Req = never>(
     id: string,
     propsEff?:
-      | InputProps<VocsProps<Bindings>>
-      | Effect.Effect<InputProps<VocsProps<Bindings>>, never, Req>,
+      | VocsInput<Bindings>
+      | Effect.Effect<VocsInput<Bindings>, never, Req>,
   ): Effect.Effect<
     Worker<{
       [
@@ -161,21 +168,27 @@ export const Vocs: {
     never,
     Req | Providers
   >;
-} = ((id?: any, propsEff?: any) =>
+} = (<const Bindings extends WorkerBindingProps = {}, Req = never>(
+  id?: string,
+  propsEff?:
+    | VocsInput<Bindings>
+    | Effect.Effect<VocsInput<Bindings>, never, Req>,
+) =>
   id === undefined
-    ? (id: string, propsEff: any) => effectClass(Vocs(id, propsEff))
+    ? <const Bindings extends WorkerBindingProps = {}, Req = never>(
+        id: string,
+        propsEff?:
+          | VocsInput<Bindings>
+          | Effect.Effect<VocsInput<Bindings>, never, Req>,
+      ) => effectClass(Vocs(id, propsEff))
     : Worker(
         id,
         Effect.map(
           Effect.isEffect(propsEff) ? propsEff : Effect.succeed(propsEff),
           (props) => ({
             ...props,
-            compatibility: {
-              ...props?.compatibility,
-              flags: props?.compatibility?.flags?.includes("nodejs_compat")
-                ? props.compatibility.flags
-                : [...(props?.compatibility?.flags ?? []), "nodejs_compat"],
-            },
+            // The Worker compatibility resolver enables Node.js APIs from
+            // the date (or adds the flag when a caller pins an older date).
             assets: {
               htmlHandling: "drop-trailing-slash" as const,
               ...props?.assets,

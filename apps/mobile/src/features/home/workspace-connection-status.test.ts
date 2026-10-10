@@ -15,7 +15,6 @@ function workspaceState(overrides: Partial<WorkspaceState> = {}): WorkspaceState
     connectionState: "connected",
     connectionError: null,
     shellSnapshotError: null,
-    latestCachedSnapshotReceivedAt: null,
     networkStatus: "online",
     ...overrides,
   };
@@ -45,6 +44,7 @@ describe("workspace connection status", () => {
           environmentLabel: "Julius’s Mac mini",
           displayUrl: "",
           isRelayManaged: false,
+          isEnabled: true,
           connectionState: "reconnecting",
           connectionError: null,
           connectionErrorTraceId: null,

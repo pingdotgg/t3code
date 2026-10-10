@@ -218,7 +218,7 @@ export type Project = Resource<
  * const project = yield* Cloudflare.Pages.Project("site", {
  *   deploymentConfigs: {
  *     production: {
- *       compatibilityDate: "2025-01-01",
+ *       compatibilityDate: "2026-08-31",
  *       envVars: {
  *         API_URL: { value: "https://api.example.com" },
  *         API_KEY: { type: "secret_text", value: apiKey },

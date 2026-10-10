@@ -11,10 +11,10 @@
  */
 import type * as Effect from "effect/Effect"
 import type { FileSystem } from "effect/FileSystem"
+import * as Multipart from "effect/http/Multipart"
 import type { Path } from "effect/Path"
 import type * as Scope from "effect/Scope"
 import * as Stream from "effect/Stream"
-import * as Multipart from "effect/unstable/http/Multipart"
 
 /**
  * Parses a web `Request` body as multipart data and returns a stream of multipart parts.

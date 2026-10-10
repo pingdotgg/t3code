@@ -10,6 +10,7 @@ import { readDefaultMobileThemeVariables } from "../../lib/mobileTheme.test-supp
 
 import {
   buildNativeReviewDiffData,
+  buildNativeReviewSnippetRows,
   createNativeReviewDiffTheme,
   getCachedNativeReviewDiffData,
   type BuildNativeReviewDiffDataInput,
@@ -29,6 +30,31 @@ const parsedDiff = buildReviewParsedDiff(
   ].join("\n"),
   "native-review-cache-test",
 );
+
+describe("buildNativeReviewSnippetRows", () => {
+  it("preserves selected code and change types without inventing line numbers", () => {
+    const rows = buildNativeReviewSnippetRows({
+      id: "selection",
+      diff: "  unchanged\r\n-  before\r\n+  after\r\n",
+    });
+    expect(
+      rows.map((row) => [row.content, row.change, row.oldLineNumber, row.newLineNumber]),
+    ).toEqual([
+      [" unchanged", "context", null, null],
+      ["  before", "delete", null, null],
+      ["  after", "add", null, null],
+    ]);
+  });
+
+  it("leaves full patches, unrecognized text, and non-diff code to their existing renderers", () => {
+    for (const diff of ["@@ -1 +1 @@\n-old\n+new", "--- a/file\n+++ b/file", "plain text", ""]) {
+      expect(buildNativeReviewSnippetRows({ id: "selection", diff })).toEqual([]);
+    }
+    expect(
+      buildNativeReviewSnippetRows({ id: "code", diff: "+value", fenceLanguage: "typescript" }),
+    ).toEqual([]);
+  });
+});
 
 function makeComment(text: string): ReviewInlineComment {
   return {
@@ -71,7 +97,43 @@ function appTheme(themeId: MobileThemeId, appearance: MobileThemeAppearance) {
     : getMobileThemeVariables(themeId, appearance);
 }
 
+function contrastRatio(first: string, second: string): number {
+  const luminance = (hex: string) => {
+    const [red, green, blue] = [1, 3, 5].map((offset) => {
+      const channel = Number.parseInt(hex.slice(offset, offset + 2), 16) / 255;
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * red! + 0.7152 * green! + 0.0722 * blue!;
+  };
+  const a = luminance(first);
+  const b = luminance(second);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
+
 describe("getCachedNativeReviewDiffData", () => {
+  it.each([true, false])(
+    "preserves available diff rows before a notice (has excerpt: %s)",
+    (hasExcerpt) => {
+      if (parsedDiff.kind !== "files") throw new Error("Expected a parsed file diff");
+      const notice = "This file preview was truncated.";
+      const result = buildNativeReviewDiffData({
+        parsedDiff: {
+          ...parsedDiff,
+          files: parsedDiff.files.map((file) => ({
+            ...file,
+            rows: hasExcerpt ? file.rows : [],
+            notice,
+          })),
+        },
+      });
+      const original = buildNativeReviewDiffData({ parsedDiff });
+      expect(result.rows.slice(0, -1)).toEqual(
+        hasExcerpt ? original.rows : original.rows.filter((row) => row.kind === "file"),
+      );
+      expect(result.rows.at(-1)).toMatchObject({ kind: "notice", text: notice });
+    },
+  );
+
   it("reuses the row model for equivalent empty comment arrays", () => {
     const first = getCachedNativeReviewDiffData(buildInput([]));
     const second = getCachedNativeReviewDiffData(buildInput([]));
@@ -202,9 +264,38 @@ describe("createNativeReviewDiffTheme", () => {
         for (const color of Object.values(theme)) {
           expect(color, `${themeId}/${appearance}`).toMatch(/^#[\da-f]{6}$/i);
         }
+        expect(
+          contrastRatio(theme.hunkText, theme.hunkBackground),
+          `${themeId}/${appearance} hunk text`,
+        ).toBeGreaterThanOrEqual(4.5);
       }
     }
   });
+
+  it.each(["light", "dark"] as const)(
+    "preserves Material You RGBA hex channels and composites alpha in %s",
+    (appearance) => {
+      const variables = {
+        ...appTheme("material-you", appearance),
+        "--color-screen": "#101214FF",
+        "--color-md-code-bg": "#20222480",
+        "--color-md-code-text": "#E3E2E6FF",
+        "--color-foreground-muted": "#C7C5D080",
+        "--color-border": "#44464F80",
+        "--color-primary": "#A8C7FAFF",
+      };
+      const theme = createNativeReviewDiffTheme(appearance, "material-you", variables);
+      expect(theme.background).toBe("#181a1c");
+      expect(theme.headerBackground).toBe(theme.background);
+      expect(theme.text).toBe("#e3e2e6");
+      expect(theme.mutedText).toBe("#707076");
+      expect(theme.border).toBe("#2e3036");
+      expect(contrastRatio(theme.hunkText, theme.hunkBackground)).toBeGreaterThanOrEqual(4.5);
+      for (const color of Object.values(theme)) {
+        expect(color).toMatch(/^#[\da-f]{6}$/i);
+      }
+    },
+  );
 
   it("uses the selected app palette for native code surfaces", () => {
     const standard = createNativeReviewDiffTheme("dark", "t3-code", appTheme("t3-code", "dark"));

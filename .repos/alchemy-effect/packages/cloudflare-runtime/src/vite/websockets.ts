@@ -2,7 +2,7 @@ import * as NodeHttp from "node:http";
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import type * as vite from "vite";
-import { resolveForwardedHost } from "./forwarded-host.ts";
+import { proxyRequestHeaders, resolveForwardedHost } from "./forwarded-host.ts";
 
 /**
  * Handles 'upgrade' requests on the Vite HTTP server and forwards the
@@ -13,6 +13,7 @@ import { resolveForwardedHost } from "./forwarded-host.ts";
 export function handleWebSocket(
   httpServer: vite.HttpServer,
   address: string | URL,
+  proxySharedSecret: string,
 ): () => void {
   const upstreamBase = typeof address === "string" ? new URL(address) : address;
 
@@ -60,7 +61,7 @@ export function handleWebSocket(
       method: request.method,
       // Forward the client-facing host so the worker sees the URL the client
       // requested rather than the local workerd address.
-      headers: { ...request.headers, host: url.host },
+      headers: proxyRequestHeaders(request, url, proxySharedSecret),
     });
 
     const cleanup = () => {

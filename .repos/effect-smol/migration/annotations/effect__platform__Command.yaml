@@ -1,6 +1,6 @@
 "@effect/platform/Command#Command":
   replacement: "ChildProcess.Command"
-  note: "Commands moved to effect/unstable/process/ChildProcess and are now directly Effectable to spawn a ChildProcessHandle."
+  note: "Commands moved to effect/process/ChildProcess and are now directly Effectable to spawn a ChildProcessHandle."
 "@effect/platform/Command#Command.Input":
   replacement: "ChildProcess.CommandInput"
   note: "The standard-input configuration type was flattened out of the Command namespace."

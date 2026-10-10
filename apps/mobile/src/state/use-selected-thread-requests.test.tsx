@@ -47,6 +47,7 @@ vi.mock("./entities", () => ({
       ],
     ]),
 }));
+vi.mock("./session", () => ({ readEnvironmentScope: () => true }));
 vi.mock("./threads", () => ({ threadEnvironment: {} }));
 vi.mock("./use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("./use-thread-selection", () => ({
@@ -55,22 +56,22 @@ vi.mock("./use-thread-selection", () => ({
   }),
 }));
 vi.mock("./use-thread-detail", () => ({
-  useSelectedThreadDetail: () => ({
-    activities: [
+  useSelectedThreadPendingRequests: () => ({
+    approvals: [],
+    userInputs: [
       {
-        id: "request-activity",
-        kind: "user-input.requested",
+        requestId: "request-1",
         createdAt: "2026-09-08T00:00:00Z",
-        payload: {
-          requestId: "request-1",
-          questions: ["first", "second"].map((id) => ({
-            id,
-            header: id,
-            question: `Attach ${id} file`,
-            options: [],
-            allowCustomAnswer: true,
-          })),
-        },
+        responseCapability: "live",
+        dismissible: false,
+        questions: ["first", "second"].map((id) => ({
+          id,
+          header: id,
+          question: `Attach ${id} file`,
+          options: [],
+          allowCustomAnswer: true,
+          multiSelect: false,
+        })),
       },
     ],
   }),

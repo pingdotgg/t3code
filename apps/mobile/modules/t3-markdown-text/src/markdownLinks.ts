@@ -1,10 +1,11 @@
+import { fileBasename } from "@t3tools/shared/path";
+import { formatFilePathPosition } from "@t3tools/shared/fileLinks";
 import {
-  fileBasename,
-  formatFilePathPosition,
   inlineCodeFilePathCandidate,
   normalizeMarkdownLinkDestination,
   parseMarkdownFileLink,
-} from "@t3tools/client-runtime/markdown-links";
+} from "@t3tools/shared/markdownLinks";
+import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { videoMimeType } from "@t3tools/shared/video";
 
 import type { MARKDOWN_FILE_ICON_SOURCES } from "./markdownFileIcons.generated";
@@ -116,7 +117,7 @@ const FILE_ICON_BY_NAME: Readonly<Record<string, MarkdownFileIcon>> = {
   "next.config.mjs": "nextjs",
   "next.config.mts": "nextjs",
   "next.config.ts": "nextjs",
-  "package.json": "package",
+  "package.json": "npm",
   "pnpm-lock.yaml": "pnpm",
   "pnpm-workspace.yaml": "pnpm",
   "postcss.config.js": "postcss",
@@ -127,7 +128,7 @@ const FILE_ICON_BY_NAME: Readonly<Record<string, MarkdownFileIcon>> = {
   "prettier.config.cjs": "prettier",
   "prettier.config.mjs": "prettier",
   rakefile: "ruby",
-  "readme.md": "readme",
+  "readme.md": "markdown",
   "stylelint.config.js": "stylelint",
   "stylelint.config.cjs": "stylelint",
   "stylelint.config.mjs": "stylelint",
@@ -139,7 +140,7 @@ const FILE_ICON_BY_NAME: Readonly<Record<string, MarkdownFileIcon>> = {
   "tailwind.config.cjs": "tailwind",
   "tailwind.config.mjs": "tailwind",
   "tailwind.config.ts": "tailwind",
-  "tsconfig.json": "tsconfig",
+  "tsconfig.json": "typescript",
   "vite.config.js": "vite",
   "vite.config.mjs": "vite",
   "vite.config.mts": "vite",
@@ -253,7 +254,7 @@ export function resolveMarkdownFileIcon(value: string): MarkdownFileIcon {
   const exactIcon = FILE_ICON_BY_NAME[basename];
   if (exactIcon) return exactIcon;
   if (basename.startsWith("tsconfig.") && basename.endsWith(".json")) {
-    return "tsconfig";
+    return "typescript";
   }
   const segments = basename.split(".");
   for (let index = 1; index < segments.length; index += 1) {
@@ -293,7 +294,11 @@ export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPrese
 
   return {
     kind: "link",
-    href: /^(?:mailto|tel):/i.test(normalized) ? normalized : null,
+    // A thread link keeps its href so a press reaches the feed, which opens the thread.
+    href:
+      /^(?:mailto|tel):/i.test(normalized) || parseThreadLinkHref(normalized) !== null
+        ? normalized
+        : null,
   };
 }
 

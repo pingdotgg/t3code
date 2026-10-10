@@ -1,21 +1,20 @@
 import { NodeHttpServer, NodeSocket, NodeSocketServer } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Ref, Schedule, Schema, Stream } from "effect"
-import { Entity, EntityProxy, EntityProxyServer, Sharding } from "effect/unstable/cluster"
-import { HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/unstable/http"
-import { Rpc, RpcClient, RpcGroup, RpcSerialization, RpcServer, RpcTest } from "effect/unstable/rpc"
-import { SocketServer } from "effect/unstable/socket"
+import { Entity, EntityProxy, EntityProxyServer, Sharding } from "effect/cluster"
+import { HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/http"
+import type * as NetAddress from "effect/net/NetAddress"
+import { Rpc, RpcClient, RpcGroup, RpcSerialization, RpcServer, RpcTest } from "effect/rpc"
+import { SocketServer } from "effect/socket"
 import { e2eSuite, UsersClient } from "./fixtures/rpc-e2e.ts"
 import { RpcLayer, User } from "./fixtures/rpc-schemas.ts"
 
 describe("RpcServer", () => {
   // http ndjson
-  const HttpProtocol = RpcServer.layerProtocolHttp({ path: "/rpc" }).pipe(
-    Layer.provide(HttpRouter.layer)
-  )
-  const HttpNdjsonServer = RpcLayer.pipe(
-    Layer.provideMerge(HttpProtocol),
-    Layer.provide(HttpRouter.serve(HttpProtocol, { disableListenLog: true, disableLogger: true }))
+  const HttpProtocol = RpcServer.layerProtocolHttp({ path: "/rpc" })
+  const HttpNdjsonServer = HttpRouter.serve(
+    RpcLayer.pipe(Layer.provideMerge(HttpProtocol)),
+    { disableListenLog: true, disableLogger: true }
   )
   const HttpNdjsonClient = UsersClient.layer.pipe(
     Layer.provide(
@@ -37,10 +36,10 @@ describe("RpcServer", () => {
     )
   )
   e2eSuite(
-    "e2e http msgpack",
+    "e2e http SchemaBinary",
     HttpNdjsonClient.pipe(
       Layer.provideMerge(HttpNdjsonServer),
-      Layer.provide([NodeHttpServer.layerTest, RpcSerialization.layerMsgPack])
+      Layer.provide([NodeHttpServer.layerTest, RpcSerialization.layerSchemaBinary()])
     )
   )
   e2eSuite(
@@ -52,19 +51,17 @@ describe("RpcServer", () => {
   )
 
   // websocket
-  const WsProtocol = RpcServer.layerProtocolWebsocket({ path: "/rpc" }).pipe(
-    Layer.provide(HttpRouter.layer)
-  )
-  const HttpWsServer = RpcLayer.pipe(
-    Layer.provideMerge(WsProtocol),
-    Layer.provide(HttpRouter.serve(WsProtocol, { disableListenLog: true, disableLogger: true }))
+  const WsProtocol = RpcServer.layerProtocolWebsocket({ path: "/rpc" })
+  const HttpWsServer = HttpRouter.serve(
+    RpcLayer.pipe(Layer.provideMerge(WsProtocol)),
+    { disableListenLog: true, disableLogger: true }
   )
   const HttpWsClient = UsersClient.layer.pipe(
     Layer.provide(RpcClient.layerProtocolSocket()),
     Layer.provide(
       Effect.gen(function*() {
         const server = yield* HttpServer.HttpServer
-        const address = server.address as HttpServer.TcpAddress
+        const address = server.address as NetAddress.InetAddress
         return NodeSocket.layerWebSocket(`http://127.0.0.1:${address.port}/rpc`)
       }).pipe(Layer.unwrap)
     )
@@ -84,10 +81,10 @@ describe("RpcServer", () => {
     )
   )
   e2eSuite(
-    "e2e ws msgpack",
+    "e2e ws SchemaBinary",
     HttpWsClient.pipe(
       Layer.provideMerge(HttpWsServer),
-      Layer.provide([NodeHttpServer.layerTest, RpcSerialization.layerMsgPack])
+      Layer.provide([NodeHttpServer.layerTest, RpcSerialization.layerSchemaBinary()])
     )
   )
   e2eSuite(
@@ -108,7 +105,7 @@ describe("RpcServer", () => {
     Layer.provide(
       Effect.gen(function*() {
         const server = yield* SocketServer.SocketServer
-        const address = server.address as SocketServer.TcpAddress
+        const address = server.address as NetAddress.InetAddress
         return NodeSocket.layerNet({ port: address.port })
       }).pipe(Layer.unwrap)
     )
@@ -121,10 +118,10 @@ describe("RpcServer", () => {
     )
   )
   e2eSuite(
-    "e2e tcp msgpack",
+    "e2e tcp SchemaBinary",
     TcpClient.pipe(
       Layer.provideMerge(TcpServer),
-      Layer.provide([NodeHttpServer.layerTest, RpcSerialization.layerMsgPack])
+      Layer.provide([NodeHttpServer.layerTest, RpcSerialization.layerSchemaBinary()])
     )
   )
   e2eSuite(
@@ -221,7 +218,7 @@ describe("RpcServer", () => {
     Layer.provide(
       Effect.gen(function*() {
         const server = yield* SocketServer.SocketServer
-        const address = server.address as SocketServer.TcpAddress
+        const address = server.address as NetAddress.InetAddress
         return NodeSocket.layerNet({ port: address.port })
       }).pipe(Layer.unwrap)
     ),
