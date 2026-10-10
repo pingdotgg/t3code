@@ -208,8 +208,18 @@ function scenarioCommands(scenario: OrchestratorV2Scenario): ReadonlyArray<Orche
   );
 }
 
+// A client answers the card it shows, so a request is answerable once its turn item is
+// projected too; the provider's request and its card can commit separately.
 const findPendingRuntimeRequest = (projection: OrchestrationV2ThreadProjection) =>
-  projection.runtimeRequests.find((request) => request.status === "pending");
+  projection.runtimeRequests.find(
+    (request) =>
+      request.status === "pending" &&
+      projection.turnItems.some(
+        (item) =>
+          (item.type === "approval_request" || item.type === "user_input_request") &&
+          item.requestId === request.id,
+      ),
+  );
 
 const hasActiveRun = (projection: OrchestrationV2ThreadProjection) =>
   projection.runs.some((run) =>
