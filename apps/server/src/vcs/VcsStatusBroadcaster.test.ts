@@ -451,6 +451,56 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
+  it.effect("an automatic pull cannot overwrite a newer local status with its own read", () => {
+    const releasePostPullRemote = Deferred.makeUnsafe<void>();
+    const defaultLocalStatus = { ...baseLocalStatus, isDefaultRef: true, refName: "main" };
+    const newerLocalStatus = { ...defaultLocalStatus, refName: "feature/newer" };
+    let currentLocalStatus = defaultLocalStatus;
+    let remoteStatus: VcsStatusRemoteResult = { ...baseRemoteStatus, behindCount: 2 };
+    const layer = VcsStatusBroadcaster.layer.pipe(
+      Layer.provide(FileSystem.layerNoop({ realPath: (path) => Effect.succeed(path) })),
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provide(makeBackgroundPolicyLayer(() => true)),
+      Layer.provide(
+        Layer.succeed(VcsStatusBroadcaster.VcsAutoPullPolicy, {
+          isEnabled: () => Effect.succeed(true),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
+          localStatus: () => Effect.sync(() => currentLocalStatus),
+          // Only the post-pull lookup (refreshUpstream: false) is held open.
+          remoteStatus: (_input, options) =>
+            options?.refreshUpstream === false
+              ? Deferred.await(releasePostPullRemote).pipe(Effect.map(() => remoteStatus))
+              : Effect.sync(() => remoteStatus),
+          invalidateLocalStatus: () => Effect.void,
+          invalidateStatus: () => Effect.void,
+          pullCurrentBranch: () =>
+            Effect.sync(() => {
+              remoteStatus = { ...remoteStatus, behindCount: 0 };
+              return { status: "pulled" as const, refName: "main", upstreamRef: "origin/main" };
+            }),
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const refresh = yield* broadcaster.refreshStatus("/repo").pipe(Effect.forkScoped);
+      // Run the pull up to its post-pull remote wait, then publish a newer local.
+      yield* TestClock.adjust(Duration.zero);
+      currentLocalStatus = newerLocalStatus;
+      yield* broadcaster.refreshLocalStatus("/repo");
+      yield* Deferred.succeed(releasePostPullRemote, undefined);
+
+      const result = yield* Fiber.join(refresh);
+      assert.equal(result.refName, "feature/newer");
+      assert.equal(result.behindCount, 0);
+      assert.equal((yield* broadcaster.getStatus({ cwd: "/repo" })).refName, "feature/newer");
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
   it.effect("publishes the refreshed local status before the remote fetch finishes", () => {
     const releaseRemote = Deferred.makeUnsafe<void>();
     const switchedLocalStatus = { ...baseLocalStatus, refName: "feature/switched" };
