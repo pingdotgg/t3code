@@ -16,6 +16,7 @@ import {
   isClaudeUltrathinkPrompt,
   normalizeModelSlug,
 } from "@t3tools/shared/model";
+import { REASONING_EFFORT_OPTION_IDS } from "@t3tools/client-runtime/state/thread-execution";
 import { memo, useCallback } from "react";
 import { BrainIcon } from "lucide-react";
 import {
@@ -542,7 +543,7 @@ export function buildTraitsTriggerDisplay(input: {
       if (
         reasoningLabelIndex === -1 &&
         descriptor.type === "select" &&
-        ["reasoningEffort", "reasoning", "effort", "variant", "thinking"].includes(descriptor.id)
+        (descriptor.id === "thinking" || REASONING_EFFORT_OPTION_IDS.includes(descriptor.id))
       ) {
         reasoningLabelIndex = labels.length;
       }

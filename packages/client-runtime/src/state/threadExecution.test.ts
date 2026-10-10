@@ -414,7 +414,7 @@ describe("formatModelSelectionEffort", () => {
     model: "claude-sonnet-5",
     ...(options === undefined ? {} : { options }),
   });
-  const catalog = (descriptor: { currentValue?: string }) => [
+  const catalog = (descriptor: { id?: string; currentValue?: string }) => [
     {
       slug: "claude-sonnet-5",
       name: "Claude Sonnet 5",
@@ -444,6 +444,15 @@ describe("formatModelSelectionEffort", () => {
   it("names a stored effort the way the catalog does", () => {
     expect(
       formatModelSelectionEffort(selection([{ id: "effort", value: "xhigh" }]), catalog({})),
+    ).toBe("Extra High");
+  });
+
+  it("names the effort Cursor reports under its native reasoning_effort id", () => {
+    expect(
+      formatModelSelectionEffort(
+        selection([{ id: "reasoning_effort", value: "xhigh" }]),
+        catalog({ id: "reasoning_effort" }),
+      ),
     ).toBe("Extra High");
   });
 

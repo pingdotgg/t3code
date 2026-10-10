@@ -461,6 +461,7 @@ it("shows readable models and only differing workspace details in agent tooltips
     [[{ id: "reasoning", value: "low" }], " · low"],
     [[{ id: "variant", value: "high" }], " · high"],
     [[{ id: "reasoningEffort", value: "none" }], " · none"],
+    [[{ id: "reasoning_effort", value: "xhigh" }], " · xhigh"],
     [[{ id: "reasoningEffort", value: true }], ""],
     [[{ id: "serviceTier", value: "fast" }], ""],
     [[], ""],

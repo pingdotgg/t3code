@@ -81,7 +81,7 @@ describe("buildTraitsTriggerDisplay", () => {
     });
   });
 
-  it.each(["reasoningEffort", "reasoning", "effort", "variant", "thinking"])(
+  it.each(["reasoningEffort", "reasoning", "effort", "variant", "reasoning_effort", "thinking"])(
     "pairs Fast with %s even when context is the primary select",
     (id) => {
       for (const speed of [fastModeDescriptor(true), serviceTierDescriptor("priority")]) {
