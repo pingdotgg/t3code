@@ -1917,6 +1917,16 @@ function parseClaudeBackgroundTaskEntry(
   });
 }
 
+// The subagent that started a background task. Undeclared in the SDK types,
+// but set on task_started frames and background_tasks_changed roster entries.
+function claudeParentTaskId(entry: unknown): string | undefined {
+  const parentTaskId =
+    entry !== null && typeof entry === "object" ? Reflect.get(entry, "parent_task_id") : undefined;
+  return typeof parentTaskId === "string" && parentTaskId.length > 0 ? parentTaskId : undefined;
+}
+
+const CLAUDE_SUBAGENT_AWAITING_BACKGROUND_WORK_PROGRESS = "Waiting for its background work";
+
 function fileNameFromClaudeTool(toolName: string, input: ClaudeNativeToolInput): string {
   return (
     firstStringInputField(input, ["file_path", "path", "filename", "fileName"]) ??
@@ -3300,6 +3310,96 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const nestedSubagentTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
         const isNestedSubagentTask = (taskId: string) =>
           Ref.get(nestedSubagentTaskIds).pipe(Effect.map((ids) => ids.has(taskId)));
+        // Live background work a subagent started, by native thread: task id
+        // to the owning subagent's task id. Claude reports a subagent
+        // `completed` when its own turn ends even while this work runs, and
+        // resumes it under the same task id once the work finishes.
+        const subagentBackgroundWorkByNativeThread = yield* Ref.make(
+          new Map<string, ReadonlyMap<string, string>>(),
+        );
+        // Background subagents whose `completed` arrived while their own
+        // background work ran. They stay running until their resume is
+        // handled, or until a turn starts after the work ended without a
+        // resume. `resumed` marks a resume held in the wake buffer.
+        const subagentsAwaitingOwnBackgroundWork = yield* Ref.make(
+          new Map<string, { readonly nativeThreadId: string; readonly resumed: boolean }>(),
+        );
+        const subagentOwnsBackgroundWork = (nativeThreadId: string, taskId: string) =>
+          Ref.get(subagentBackgroundWorkByNativeThread).pipe(
+            Effect.map((current) =>
+              [...(current.get(nativeThreadId)?.values() ?? [])].includes(taskId),
+            ),
+          );
+        // Runs whose turn ended without completing and that a running
+        // subagent is still attributed to. Their ingestion stopped, so that
+        // subagent cannot continue on them when it resumes.
+        const runsEndedWithoutCompleting = yield* Ref.make<ReadonlySet<string>>(new Set());
+        // Running only until the next turn settles it: its work ended and no
+        // resume came. It must not refuse that turn's model change.
+        const awaitsEndedOwnBackgroundWork = Effect.fnUntraced(function* (taskId: string) {
+          const awaiting = (yield* Ref.get(subagentsAwaitingOwnBackgroundWork)).get(taskId);
+          return (
+            awaiting !== undefined &&
+            !awaiting.resumed &&
+            !(yield* subagentOwnsBackgroundWork(awaiting.nativeThreadId, taskId))
+          );
+        });
+        const stopAwaitingOwnBackgroundWork = (taskId: string) =>
+          Ref.update(subagentsAwaitingOwnBackgroundWork, (current) => {
+            if (!current.has(taskId)) {
+              return current;
+            }
+            const updated = new Map(current);
+            updated.delete(taskId);
+            return updated;
+          });
+        // Follows the roster snapshot, and the task_started and
+        // task_notification edges between snapshots.
+        const trackSubagentBackgroundWork = (nativeThreadId: string, message: SDKMessage) =>
+          Ref.update(subagentBackgroundWorkByNativeThread, (current) => {
+            const owned = current.get(nativeThreadId) ?? new Map<string, string>();
+            let next: ReadonlyMap<string, string>;
+            if (isClaudeBackgroundTasksChangedMessage(message)) {
+              const roster = Reflect.get(message, "tasks");
+              if (!Array.isArray(roster)) {
+                return current;
+              }
+              next = new Map(
+                roster.flatMap((entry) => {
+                  const taskId =
+                    entry !== null && typeof entry === "object"
+                      ? Reflect.get(entry, "task_id")
+                      : undefined;
+                  const ownerTaskId = claudeParentTaskId(entry);
+                  return typeof taskId === "string" && ownerTaskId !== undefined
+                    ? [[taskId, ownerTaskId] as const]
+                    : [];
+                }),
+              );
+            } else if (message.type === "system" && message.subtype === "task_started") {
+              const ownerTaskId = claudeParentTaskId(message);
+              if (ownerTaskId === undefined || message.is_backgrounded !== true) {
+                return current;
+              }
+              next = new Map(owned).set(message.task_id, ownerTaskId);
+            } else if (message.type === "system" && message.subtype === "task_notification") {
+              if (!owned.has(message.task_id)) {
+                return current;
+              }
+              const remaining = new Map(owned);
+              remaining.delete(message.task_id);
+              next = remaining;
+            } else {
+              return current;
+            }
+            const updated = new Map(current);
+            if (next.size === 0) {
+              updated.delete(nativeThreadId);
+            } else {
+              updated.set(nativeThreadId, next);
+            }
+            return updated;
+          });
         const recordWakeReport = (
           nativeThreadId: string,
           taskId: string,
@@ -3788,6 +3888,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               updated.delete(nativeThreadId);
               return updated;
             });
+            // A subagent still awaiting this work settles at the next turn start.
+            yield* Ref.update(subagentBackgroundWorkByNativeThread, (current) => {
+              if (!current.has(nativeThreadId)) {
+                return current;
+              }
+              const updated = new Map(current);
+              updated.delete(nativeThreadId);
+              return updated;
+            });
             // The thread's process died or its turn failed; those monitors never notify.
             yield* endClaudeMonitorTasks((_taskId, task) => task.nativeThreadId === nativeThreadId);
           });
@@ -3811,6 +3920,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               }
               const updated = new Set(current);
               updated.delete(nativeThreadId);
+              return updated;
+            });
+            // A resume dropped with the buffer never reaches its subagent, so
+            // the next turn settles it like one that never resumed.
+            yield* Ref.update(subagentsAwaitingOwnBackgroundWork, (current) => {
+              const dropped = [...current].filter(
+                ([, awaiting]) => awaiting.nativeThreadId === nativeThreadId && awaiting.resumed,
+              );
+              if (dropped.length === 0) {
+                return current;
+              }
+              const updated = new Map(current);
+              for (const [taskId, awaiting] of dropped) {
+                updated.set(taskId, { ...awaiting, resumed: false });
+              }
               return updated;
             });
           });
@@ -4257,6 +4381,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             "running" | "completed" | "failed" | "cancelled"
           >;
           readonly reopen?: boolean;
+          // A resume of a subagent kept running through its own background
+          // work. It never settled, so the run tracking it keeps it.
+          readonly continuesRun?: boolean;
         }) {
           // The session registry lets a wake-replay turn (fresh context maps)
           // hydrate a subagent that was created by an earlier, settled turn.
@@ -4342,7 +4469,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const priorTask =
             existingSubagent === undefined
               ? undefined
-              : isReopen
+              : isReopen || input.continuesRun === true
                 ? (({ progress: _staleProgress, ...rest }) => ({ ...rest, result: null }))(
                     existingSubagent.task,
                   )
@@ -4386,6 +4513,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // in the resuming run's active-child tracking so its fiber
             // outlives settle until the resumed task completes.
             ...(input.reopen === true &&
+            input.continuesRun !== true &&
             input.status === "running" &&
             existingSubagent !== undefined
               ? { runId: input.context.input.runId }
@@ -5134,6 +5262,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly threadDisposition?: "reusable" | "broken";
           readonly result?: SDKResultMessage;
         }) {
+          const runningSubagentRunIds = new Set<string>(
+            [...(yield* Ref.get(sessionSubagentsByTaskId)).values()].flatMap((subagent) =>
+              subagent.task.status === "running" && subagent.task.runId !== null
+                ? [subagent.task.runId]
+                : [],
+            ),
+          );
+          yield* Ref.update(
+            runsEndedWithoutCompleting,
+            (current) =>
+              new Set(
+                [
+                  ...current,
+                  ...(input.status === "completed" ? [] : [input.context.input.runId]),
+                ].filter((runId) => runningSubagentRunIds.has(runId)),
+              ),
+          );
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
           // A subagent still running in the background keeps its open calls:
           // their results arrive after this turn. One left by an earlier CLI
@@ -5523,6 +5668,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             message.type === "system" &&
             message.subtype === "task_started"
           ) {
+            yield* Ref.update(subagentsAwaitingOwnBackgroundWork, (current) => {
+              const awaiting = current.get(message.task_id);
+              return awaiting === undefined
+                ? current
+                : new Map(current).set(message.task_id, { ...awaiting, resumed: true });
+            });
             const now = yield* DateTime.now;
             yield* Ref.update(sessionSubagentsByTaskId, (current) => {
               const registered = current.get(message.task_id);
@@ -5682,6 +5833,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         }) {
           const message = input.message;
           let rosterChanged = false;
+          yield* trackSubagentBackgroundWork(input.nativeThreadId, message);
 
           if (isClaudeBackgroundTasksChangedMessage(message)) {
             const roster = Reflect.get(message, "tasks");
@@ -6370,6 +6522,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   new Set(current).add(message.task_id),
                 );
               }
+              const awaitedRunId = (yield* Ref.get(subagentsAwaitingOwnBackgroundWork)).has(
+                message.task_id,
+              )
+                ? (yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id)?.task.runId
+                : undefined;
+              const continuesRun =
+                awaitedRunId !== undefined &&
+                awaitedRunId !== null &&
+                !(yield* Ref.get(runsEndedWithoutCompleting)).has(awaitedRunId);
+              yield* stopAwaitingOwnBackgroundWork(message.task_id);
               yield* recoverResumedClaudeSubagent({
                 context,
                 nativeThreadId: liveQuery.nativeThreadId,
@@ -6388,6 +6550,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 title: message.description,
                 status: "running",
                 reopen: true,
+                continuesRun,
               });
             }
           }
@@ -6444,6 +6607,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 });
               }
             }
+            const wasBackgroundedSubagent = (yield* Ref.get(backgroundedSubagentTaskIds)).has(
+              message.task_id,
+            );
             // A resume starts the subagent again and says again whether it is backgrounded.
             yield* Ref.update(backgroundedSubagentTaskIds, (current) => {
               if (!current.has(message.task_id)) return current;
@@ -6456,7 +6622,35 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               message,
               activeContext: context,
             });
-            if (!wasBackgroundTask && !context.ignoredTaskIds.has(message.task_id)) {
+            // Claude ends a background subagent's run with `completed` when
+            // its own turn ends, even while background work it started still
+            // runs, and resumes it under this task id once that work is done.
+            // Its result is interim, so it stays running until then.
+            const awaitsOwnBackgroundWork =
+              wasBackgroundedSubagent &&
+              !wasBackgroundTask &&
+              !context.ignoredTaskIds.has(message.task_id) &&
+              message.status === "completed" &&
+              (context.subagentsByTaskId.has(message.task_id) ||
+                (yield* Ref.get(sessionSubagentsByTaskId)).has(message.task_id)) &&
+              (yield* subagentOwnsBackgroundWork(liveQuery.nativeThreadId, message.task_id));
+            if (awaitsOwnBackgroundWork) {
+              yield* Ref.update(subagentsAwaitingOwnBackgroundWork, (current) =>
+                new Map(current).set(message.task_id, {
+                  nativeThreadId: liveQuery.nativeThreadId,
+                  resumed: false,
+                }),
+              );
+              yield* updateClaudeSubagentNode({
+                context,
+                taskId: message.task_id,
+                ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
+                progress: CLAUDE_SUBAGENT_AWAITING_BACKGROUND_WORK_PROGRESS,
+                result: message.summary,
+                status: "running",
+              });
+            } else if (!wasBackgroundTask && !context.ignoredTaskIds.has(message.task_id)) {
+              yield* stopAwaitingOwnBackgroundWork(message.task_id);
               yield* updateClaudeSubagentNode({
                 context,
                 taskId: message.task_id,
@@ -7385,6 +7579,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (
               subagent.task.status === "running" &&
               !live.subagentsFromEarlierProcesses.has(subagent) &&
+              !(yield* awaitsEndedOwnBackgroundWork(taskId)) &&
               !buffered.some(
                 (message) =>
                   message.type === "system" &&
@@ -7396,6 +7591,30 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
           }
           return false;
+        });
+
+        // A subagent kept running for its own background work that ended
+        // without resuming it: its interim result was its final one. Claude
+        // resumes a subagent as soon as that work ends, so a turn that starts
+        // in between can still settle it early; its resume then re-opens it.
+        const settleSubagentsWhoseBackgroundWorkEnded = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          nativeThreadId: string,
+        ) {
+          for (const [taskId, awaiting] of yield* Ref.get(subagentsAwaitingOwnBackgroundWork)) {
+            if (
+              awaiting.nativeThreadId !== nativeThreadId ||
+              awaiting.resumed ||
+              (yield* subagentOwnsBackgroundWork(nativeThreadId, taskId))
+            ) {
+              continue;
+            }
+            yield* stopAwaitingOwnBackgroundWork(taskId);
+            if ((yield* Ref.get(sessionSubagentsByTaskId)).get(taskId)?.task.status !== "running") {
+              continue;
+            }
+            yield* updateClaudeSubagentNode({ context, taskId, status: "completed" });
+          }
         });
 
         const openQuery = Effect.fnUntraced(function* (
@@ -7726,6 +7945,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 completedAt: null,
               }),
             });
+            yield* settleSubagentsWhoseBackgroundWorkEnded(context, nativeThreadId);
             if (userMessage !== null) {
               // A user turn that races a wake leaves the buffer alone: the
               // continuation run the worker queued behind this run drains it
