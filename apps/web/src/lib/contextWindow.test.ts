@@ -54,6 +54,16 @@ describe("V2 context window presentation", () => {
   it("formats compact token values", () => {
     expect(formatContextWindowTokens(1_500)).toBe("1.5k");
   });
+
+  it.each([
+    [999_499, "999k"],
+    [999_500, "1m"],
+    [999_999, "1m"],
+    [1_000_000, "1m"],
+    [1_100_000, "1.1m"],
+  ])("formats %d tokens as %s at the million boundary", (tokens, expected) => {
+    expect(formatContextWindowTokens(tokens)).toBe(expected);
+  });
 });
 
 describe("live provider-turn usage (#8144)", () => {
