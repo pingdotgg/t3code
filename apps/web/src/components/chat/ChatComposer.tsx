@@ -418,6 +418,13 @@ const EMPTY_PULL_REQUEST_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<Pull
 
 const COMPOSER_SCROLL_COLLAPSE_THRESHOLD_PX = 24;
 const COMPOSER_SCROLL_GESTURE_RESET_MS = 120;
+const POINTER_SCROLL_TAIL_MS = 250;
+const POINTER_SCROLL_RELEASE_EVENTS = [
+  "pointerup",
+  "pointercancel",
+  "touchend",
+  "touchcancel",
+] as const;
 const COMPOSER_RESTING_TRANSITION_CLEANUP_BUFFER_MS = 50;
 const COMPOSER_RESTING_TRANSITION_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
 const COMPOSER_RESTING_CONTROLS_ARRIVAL_DRIFT_PX = 4;
@@ -5382,7 +5389,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerScrollCollapseTimeoutRef.current = null;
       resetComposerScrollGesture(composerScrollGestureRef.current);
     };
+    const recordScrollGestureEvent = (
+      input: Omit<Parameters<typeof recordComposerScrollGestureEvent>[1], "collapseThresholdPx">,
+    ) => {
+      if (composerScrollCollapseTimeoutRef.current !== null) {
+        window.clearTimeout(composerScrollCollapseTimeoutRef.current);
+      }
+      composerScrollCollapseTimeoutRef.current = window.setTimeout(
+        finishScrollGesture,
+        COMPOSER_SCROLL_GESTURE_RESET_MS,
+      );
+      const shouldCollapse = recordComposerScrollGestureEvent(composerScrollGestureRef.current, {
+        ...input,
+        collapseThresholdPx: COMPOSER_SCROLL_COLLAPSE_THRESHOLD_PX,
+      });
+      if (shouldCollapse) {
+        setIsComposerScrollCollapsed(true);
+      }
+    };
     const handleTimelineWheel = (event: WheelEvent) => {
+      endMiddleClickAutoscroll();
       if (event.ctrlKey || !(event.target instanceof Element)) {
         return;
       }
@@ -5396,14 +5422,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       )
         return;
 
-      if (composerScrollCollapseTimeoutRef.current !== null) {
-        window.clearTimeout(composerScrollCollapseTimeoutRef.current);
-      }
-      composerScrollCollapseTimeoutRef.current = window.setTimeout(
-        finishScrollGesture,
-        COMPOSER_SCROLL_GESTURE_RESET_MS,
-      );
-
       const canScrollInGestureDirection =
         targetsTimeline &&
         (event.deltaY < 0
@@ -5416,24 +5434,120 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
             ? scrollNode.clientHeight
             : 1);
-      const shouldCollapse = recordComposerScrollGestureEvent(composerScrollGestureRef.current, {
+      recordScrollGestureEvent({
         now: window.performance.now(),
         deltaPx,
-        collapseThresholdPx: COMPOSER_SCROLL_COLLAPSE_THRESHOLD_PX,
         collapseEligible: targetsTimeline && composerScrollCollapseEligibleRef.current,
         canScrollInGestureDirection,
         scrollsTowardLogicalEnd: event.deltaY > 0 && isTimelineAtLogicalEnd(),
       });
-      if (!shouldCollapse) {
-        return;
-      }
+    };
 
-      setIsComposerScrollCollapsed(true);
+    // Scrollbar drags, middle-click autoscroll and touch send no wheel
+    // events, so their direction comes from scroll offsets. Only scrolls
+    // during the gesture or a short fixed tail after release count, so
+    // programmatic scrolls (live follow, turn anchoring) can't collapse the
+    // composer. Scrolls don't extend the tail: streaming follow scrolls would
+    // keep it open.
+    let pointerScrollUntil = 0;
+    let lastScrollTop = getTimelineScrollableNode()?.scrollTop ?? null;
+    // Middle-click autoscroll keeps going after the button is released, until
+    // the next click, key press, or wheel, so its hold ends on those instead.
+    let middleClickAutoscroll = false;
+    const holdPointerScroll = () => {
+      pointerScrollUntil = Number.POSITIVE_INFINITY;
+    };
+    const releasePointerScroll = (event: Event) => {
+      if (middleClickAutoscroll) {
+        if (event.type !== "blur") return;
+        middleClickAutoscroll = false;
+      }
+      if (pointerScrollUntil === Number.POSITIVE_INFINITY) {
+        pointerScrollUntil = window.performance.now() + POINTER_SCROLL_TAIL_MS;
+      }
+    };
+    const endMiddleClickAutoscroll = () => {
+      if (!middleClickAutoscroll) return false;
+      middleClickAutoscroll = false;
+      pointerScrollUntil = 0;
+      return true;
+    };
+    const handleTimelinePointerDown = (event: PointerEvent) => {
+      // The click that stops autoscroll doesn't start a new gesture.
+      if (endMiddleClickAutoscroll()) return;
+      const scrollNode = getTimelineScrollableNode();
+      if (!scrollNode || !(event.target instanceof Node)) return;
+      if (event.button === 1 && scrollNode.contains(event.target)) {
+        middleClickAutoscroll = true;
+        holdPointerScroll();
+      } else if (event.target === scrollNode) {
+        // Only scrollbar presses target the scroll node itself.
+        holdPointerScroll();
+      }
+    };
+    const handleTimelineTouchMove = (event: TouchEvent) => {
+      const scrollNode = getTimelineScrollableNode();
+      if (scrollNode && event.target instanceof Node && scrollNode.contains(event.target)) {
+        holdPointerScroll();
+      }
+    };
+    const handleTimelineScroll = (event: Event) => {
+      const scrollNode = getTimelineScrollableNode();
+      if (!scrollNode || event.target !== scrollNode) return;
+      const scrollTop = scrollNode.scrollTop;
+      const deltaY = lastScrollTop === null ? 0 : scrollTop - lastScrollTop;
+      lastScrollTop = scrollTop;
+      const now = window.performance.now();
+      if (deltaY === 0 || now >= pointerScrollUntil) return;
+
+      // This capture listener runs before the list records the new offset,
+      // so the list's end state can lag by one scroll step.
+      const atLogicalEnd =
+        deltaY > 0 &&
+        (scrollNode.scrollHeight - scrollTop - scrollNode.clientHeight <= 1 ||
+          isTimelineAtLogicalEnd());
+      if (atLogicalEnd) {
+        restoreAfterTimelineReachedEnd();
+      }
+      recordScrollGestureEvent({
+        now,
+        deltaPx: Math.abs(deltaY),
+        collapseEligible: composerScrollCollapseEligibleRef.current,
+        // The offset already moved, so the timeline could scroll this way.
+        canScrollInGestureDirection: true,
+        scrollsTowardLogicalEnd: atLogicalEnd,
+      });
     };
 
     document.addEventListener("wheel", handleTimelineWheel, { capture: true, passive: true });
+    // Scroll events don't bubble, so a capture listener is the only document-
+    // level way to hear the timeline's.
+    document.addEventListener("scroll", handleTimelineScroll, { capture: true, passive: true });
+    document.addEventListener("pointerdown", handleTimelinePointerDown, {
+      capture: true,
+      passive: true,
+    });
+    document.addEventListener("touchmove", handleTimelineTouchMove, {
+      capture: true,
+      passive: true,
+    });
+    document.addEventListener("keydown", endMiddleClickAutoscroll, { capture: true });
+    // Capture so a handler that stops propagation can't leave the hold stuck.
+    for (const type of POINTER_SCROLL_RELEASE_EVENTS) {
+      window.addEventListener(type, releasePointerScroll, { capture: true, passive: true });
+    }
+    // A drag interrupted by switching windows may never deliver its pointerup.
+    window.addEventListener("blur", releasePointerScroll);
     return () => {
       document.removeEventListener("wheel", handleTimelineWheel, true);
+      document.removeEventListener("scroll", handleTimelineScroll, true);
+      document.removeEventListener("pointerdown", handleTimelinePointerDown, true);
+      document.removeEventListener("touchmove", handleTimelineTouchMove, true);
+      document.removeEventListener("keydown", endMiddleClickAutoscroll, true);
+      for (const type of POINTER_SCROLL_RELEASE_EVENTS) {
+        window.removeEventListener(type, releasePointerScroll, true);
+      }
+      window.removeEventListener("blur", releasePointerScroll);
       finishScrollGesture();
     };
   }, [
@@ -5441,6 +5555,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     canTrackComposerScrollGesture,
     getTimelineScrollableNode,
     isTimelineAtLogicalEnd,
+    restoreAfterTimelineReachedEnd,
     setIsComposerScrollCollapsed,
   ]);
 
