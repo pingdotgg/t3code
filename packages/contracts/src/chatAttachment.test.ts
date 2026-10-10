@@ -9,9 +9,128 @@ import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   SnapShotAccessibility,
 } from "./chatAttachment.ts";
+import {
+  OrchestrationV2Command,
+  OrchestrationV2ConversationMessageJson,
+  OrchestrationV2ThreadLaunchInput,
+} from "./orchestrationV2.ts";
+import { ProviderRespondToUserInputInput, ProviderSendTurnInput } from "./provider.ts";
+import { UserInputAttachmentAnswerPayload } from "./providerPolicy.ts";
 
 const decodeAttachment = Schema.decodeUnknownEffect(ChatAttachment);
 const decodeSnapShotAccessibility = Schema.decodeUnknownEffect(SnapShotAccessibility);
+const decodeQuestionAnswer = Schema.decodeUnknownSync(UserInputAttachmentAnswerPayload);
+const decodeMessage = Schema.decodeUnknownSync(OrchestrationV2ConversationMessageJson);
+
+it.each([
+  ["provider turn", ProviderSendTurnInput, {}],
+  [
+    "provider question response",
+    ProviderRespondToUserInputInput,
+    { requestId: "request-1", answers: {} },
+  ],
+  [
+    "message dispatch",
+    OrchestrationV2Command,
+    {
+      type: "message.dispatch",
+      createdBy: "user",
+      creationSource: "web",
+      messageId: "message-1",
+      text: "hello",
+      dispatchMode: { type: "start_immediately" },
+    },
+  ],
+  [
+    "queued message edit",
+    OrchestrationV2Command,
+    { type: "queued-run.edit", runId: "run-1", text: "hello" },
+  ],
+  [
+    "runtime question response",
+    OrchestrationV2Command,
+    { type: "runtime-request.respond", requestId: "request-1", answers: {} },
+  ],
+  [
+    "thread launch",
+    OrchestrationV2ThreadLaunchInput,
+    {
+      projectId: "project-1",
+      title: "Thread",
+      modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      workspaceStrategy: { type: "root" },
+    },
+  ],
+] as const)("caps new file attachments in %s", (name, schema, fields) => {
+  const input = (sizeBytes: number) => {
+    const attachments = [
+      { type: "file", id: "file-1", name: "report.pdf", mimeType: "application/pdf", sizeBytes },
+    ];
+    return {
+      commandId: "command-1",
+      threadId: "thread-1",
+      ...fields,
+      ...(name === "thread launch"
+        ? { initialMessage: { text: "hello", attachments } }
+        : name.includes("question response")
+          ? { attachmentsByQuestionId: { question: attachments } }
+          : { attachments }),
+    };
+  };
+  assert.strictEqual(Schema.is(schema)(input(PROVIDER_SEND_TURN_MAX_FILE_BYTES)), true);
+  assert.strictEqual(Schema.is(schema)(input(PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1)), false);
+});
+
+it("reads historical question replies with files above the send limit", () => {
+  const payload = decodeQuestionAnswer({
+    requestId: "request-1",
+    answers: {},
+    attachmentsByQuestionId: {
+      question: [
+        {
+          type: "file",
+          id: "file-1",
+          name: "report.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1,
+        },
+      ],
+    },
+  });
+  assert.strictEqual(
+    payload.attachmentsByQuestionId.question?.[0]?.sizeBytes,
+    PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1,
+  );
+});
+
+it("reads complete historical messages with files above the send limit", () => {
+  const message = decodeMessage({
+    id: "message-1",
+    threadId: "thread-1",
+    runId: null,
+    nodeId: null,
+    createdBy: "user",
+    creationSource: "web",
+    role: "user",
+    text: "hello",
+    streaming: false,
+    createdAt: "2026-10-03T00:00:00.000Z",
+    updatedAt: "2026-10-03T00:00:00.000Z",
+    attachments: [
+      {
+        type: "file",
+        id: "file-1",
+        name: "report.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1,
+      },
+    ],
+  });
+  assert.strictEqual(message.attachments[0]?.sizeBytes, PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1);
+  assert.strictEqual(message.text, "hello");
+});
 
 // Attachments ride on persisted events and thread streams with no client
 // version negotiation. A type this build does not know must decode instead of
@@ -29,9 +148,6 @@ it.effect("tolerates attachment types from newer builds", () =>
   }),
 );
 
-// The tolerant member must not catch malformed known attachments: a file over
-// the size cap or an image with a bad mime has to fail its own schema, not
-// slide through the open one with those constraints unchecked.
 it.effect("rejects malformed known attachment types instead of tolerating them", () =>
   Effect.gen(function* () {
     const base = {
@@ -39,10 +155,13 @@ it.effect("rejects malformed known attachment types instead of tolerating them",
       name: "report.pdf",
       mimeType: "application/pdf",
     };
-    const oversizedFile = yield* Effect.exit(
-      decodeAttachment({ ...base, type: "file", sizeBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1 }),
-    );
-    assert.strictEqual(Exit.isFailure(oversizedFile), true);
+    // A newer build may raise the upload cap; this build must still read those files.
+    const aboveUploadCap = PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1;
+    const largeFile = yield* decodeAttachment({ ...base, type: "file", sizeBytes: aboveUploadCap });
+    assert.strictEqual(largeFile.sizeBytes, aboveUploadCap);
+
+    const emptyFile = yield* Effect.exit(decodeAttachment({ ...base, type: "file", sizeBytes: 0 }));
+    assert.strictEqual(Exit.isFailure(emptyFile), true);
     const badMimeImage = yield* Effect.exit(
       decodeAttachment({ ...base, type: "image", mimeType: "application/pdf", sizeBytes: 12 }),
     );

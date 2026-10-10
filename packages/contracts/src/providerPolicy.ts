@@ -1,6 +1,7 @@
 import {
   ChatImageAttachment,
   ChatFileAttachment,
+  ChatFileAttachmentInput,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
 } from "./chatAttachment.ts";
 import * as Schema from "effect/Schema";
@@ -74,6 +75,14 @@ export const UserInputAttachments = Schema.Record(
   ),
 );
 export type UserInputAttachments = typeof UserInputAttachments.Type;
+
+export const UserInputAttachmentsInput = Schema.Record(
+  Schema.String,
+  Schema.Array(Schema.Union([ChatImageAttachment, ChatFileAttachmentInput])).pipe(
+    Schema.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)),
+  ),
+);
+export type UserInputAttachmentsInput = typeof UserInputAttachmentsInput.Type;
 
 export const UserInputAttachmentAnswerPayload = Schema.Struct({
   requestId: TrimmedNonEmptyString,

@@ -11,7 +11,7 @@ import {
 import {
   getProviderAttachmentLimitError,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
-  ChatAttachment,
+  ChatAttachmentInput,
 } from "./chatAttachment.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
@@ -21,7 +21,7 @@ import {
   ProviderRequestKind,
   ProviderSandboxMode,
   ProviderUserInputAnswers,
-  UserInputAttachments,
+  UserInputAttachmentsInput,
   RuntimeMode,
 } from "./providerPolicy.ts";
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
@@ -77,7 +77,7 @@ export const ProviderSendTurnInput = Schema.Struct({
     TrimmedNonEmptyString.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
   ),
   attachments: Schema.optional(
-    Schema.Array(ChatAttachment).check(
+    Schema.Array(ChatAttachmentInput).check(
       Schema.makeFilter((attachments) => getProviderAttachmentLimitError(attachments) ?? true),
     ),
   ),
@@ -115,7 +115,7 @@ export const ProviderRespondToUserInputInput = Schema.Struct({
   threadId: ThreadId,
   requestId: ApprovalRequestId,
   answers: ProviderUserInputAnswers,
-  attachmentsByQuestionId: Schema.optional(UserInputAttachments),
+  attachmentsByQuestionId: Schema.optional(UserInputAttachmentsInput),
 });
 export type ProviderRespondToUserInputInput = typeof ProviderRespondToUserInputInput.Type;
 
