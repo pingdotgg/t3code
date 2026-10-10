@@ -2553,9 +2553,37 @@ function isClaudeTaskNotificationOriginResult(message: SDKMessage): message is S
 
 function providerFailureFromResult(
   message: SDKResultMessage,
+  completedAt: DateTime.Utc,
   failureHint?: string,
   usageLimited = false,
 ): OrchestrationV2ProviderFailure | null {
+  // shortcut: accept 9router's wrapped 429 cooldown; prefer native reset metadata when available.
+  const gatewayLimit =
+    failureHint === undefined &&
+    message.subtype === "success" &&
+    message.is_error &&
+    message.terminal_reason === "api_error" &&
+    message.api_error_status === 503
+      ? /^API Error: 503 \[[^\]\r\n]+\] \[429\]: \{"type":"error","error":\{"type":"rate_limit_error",[^\r\n]*\} \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/.exec(
+          message.result,
+        )
+      : null;
+  if (gatewayLimit) {
+    const seconds =
+      Number(gatewayLimit[1] ?? 0) * 3_600 +
+      Number(gatewayLimit[2] ?? 0) * 60 +
+      Number(gatewayLimit[3] ?? 0);
+    const resetMs = DateTime.toEpochMillis(completedAt) + seconds * 1_000;
+    if (seconds > 0 && resetMs < 8.64e15) {
+      return makeProviderFailure({
+        class: "usage_limit",
+        message: "Claude API rate limit reached. Try again later.",
+        code: "api_error_429",
+        retryable: true,
+        resetAt: DateTime.formatIso(DateTime.makeUnsafe(resetMs)),
+      });
+    }
+  }
   const failureClass =
     message.terminal_reason === "blocking_limit" ||
     (message.subtype === "success" && message.api_error_status === 429) ||
@@ -6707,10 +6735,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 : null;
             const resultFailure = interrupted
               ? null
-              : providerFailureFromResult(message, failureHint, usageLimited);
+              : providerFailureFromResult(message, completedAt, failureHint, usageLimited);
             const terminalFailure =
               resultFailure?.class === "usage_limit"
-                ? { ...resultFailure, resetAt }
+                ? { ...resultFailure, resetAt: resetAt ?? resultFailure.resetAt ?? null }
                 : resultFailure;
             yield* finalizeActiveTurn({
               context,

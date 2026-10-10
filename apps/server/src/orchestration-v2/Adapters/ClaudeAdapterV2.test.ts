@@ -3017,7 +3017,65 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect.each([429, 401, 529])(
+  it.effect.each([
+    { status: 503, cooldown: "4m 6s", seconds: 246 },
+    { status: 503, cooldown: "1h 2m 3s", seconds: 3723 },
+    { status: 503, cooldown: "7s", seconds: 7 },
+    { status: 503, cooldown: "0s", seconds: 0 },
+    { status: 503, cooldown: "unknown", seconds: 0 },
+    { status: 503, cooldown: "999999999999999999999999h", seconds: 0 },
+    { status: 503, cooldown: "4m 6s", seconds: 0, errorType: "overloaded_error" },
+    { status: 401, cooldown: "4m 6s", seconds: 0 },
+  ])("recovers wrapped gateway limits with status $status and cooldown $cooldown", (input) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-gateway-limit"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offerAll(harness.sdkMessages, [
+        makeAssistantErrorFrame({
+          uuid: "00000000-0000-4000-8000-000000000652",
+          error: "server_error",
+        }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000653",
+          result: `API Error: ${input.status} [claude/claude-opus-5-5] [429]: {"type":"error","error":{"type":"${input.errorType ?? "rate_limit_error"}","message":"Please try again later."}} (reset after ${input.cooldown}).`,
+          terminalReason: "api_error",
+          isError: true,
+          apiErrorStatus: input.status,
+        }),
+      ]);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.equal(terminal.failure.class, input.seconds > 0 ? "usage_limit" : "provider_error");
+      if (input.seconds > 0) {
+        assert.equal(terminal.failure.retryable, true);
+        assert.equal(
+          terminal.failure.resetAt,
+          DateTime.formatIso(
+            DateTime.makeUnsafe(DateTime.toEpochMillis(now) + input.seconds * 1_000),
+          ),
+        );
+      } else {
+        assert.isUndefined(terminal.failure.resetAt);
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect.each([429, 401, 503, 529])(
     "classifies the current Claude API status %s after rate-limit evidence",
     (apiErrorStatus) =>
       Effect.gen(function* () {
