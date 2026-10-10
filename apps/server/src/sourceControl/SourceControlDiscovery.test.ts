@@ -25,6 +25,7 @@ import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/Git
 import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
 import * as GitLabPullRequestCli from "@t3tools/source-control-gitlab/server/GitLabPullRequestCli";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
+import * as GitCafeApi from "@t3tools/source-control-gitcafe/server/GitCafeApi";
 import * as ForgejoSourceControlProvider from "@t3tools/source-control-forgejo/server/ForgejoSourceControlProvider";
 import * as ForgejoPullRequestProvider from "@t3tools/source-control-forgejo/server/ForgejoPullRequestProvider";
 import * as SourceControlDiscovery from "./SourceControlDiscovery.ts";
@@ -53,6 +54,7 @@ const layerSourceControlProviderRegistryTest = (input: {
         Layer.mock(GitLabCli.GitLabCli)({}),
         Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({}),
         Layer.mock(ForgejoCli.ForgejoCli)({ listLogins: () => Effect.succeed([]) }),
+        Layer.mock(GitCafeApi.GitCafeApi)({}),
         Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({}),
         Layer.mock(VcsProcess.VcsProcess)(input.process),
         ServerSourceControlHost.layer.pipe(
@@ -203,6 +205,12 @@ it.effect("reports implemented tools separately from locally available executabl
           auth: "unknown",
           account: Option.none(),
         },
+        {
+          kind: "gitcafe",
+          status: "missing",
+          auth: "unknown",
+          account: Option.none(),
+        },
       ],
     );
     const bitbucket = result.sourceControlProviders.find((item) => item.kind === "bitbucket");
@@ -265,6 +273,13 @@ Logged in to gitlab.com as gitlab-user
         input.args.join(" ") === "account show --query user.name -o tsv"
       ) {
         return Effect.succeed(processOutput("azure-user@example.com\n"));
+      }
+      if (input.command === "cafe" && input.args.slice(-3).join(" ") === "auth status --json") {
+        return Effect.succeed(
+          processOutput(
+            encodeJson({ schemaVersion: 1, data: { host: "git.cafe", username: "cafe-user" } }),
+          ),
+        );
       }
       return Effect.fail(
         new VcsProcessSpawnError({
@@ -339,6 +354,12 @@ Logged in to gitlab.com as gitlab-user
           kind: "forgejo",
           auth: "authenticated",
           account: Option.some("forgejo-user"),
+          detail: Option.none(),
+        },
+        {
+          kind: "gitcafe",
+          auth: "authenticated",
+          account: Option.some("cafe-user"),
           detail: Option.none(),
         },
       ],

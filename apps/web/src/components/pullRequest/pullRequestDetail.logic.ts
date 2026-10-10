@@ -128,6 +128,8 @@ export function pullRequestCheckoutCommand(
         : null;
     case "azure-devops":
       return `az repos pr checkout --id ${number}`;
+    case "gitcafe":
+      return `cafe pr checkout ${number}`;
     case "bitbucket": {
       if (
         !headRepositoryNameWithOwner ||

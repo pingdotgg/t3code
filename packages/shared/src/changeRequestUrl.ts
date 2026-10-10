@@ -48,6 +48,11 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
   const host = url.hostname.toLowerCase();
 
+  // GitCafe, only on its own two hosts: /{owner}/{repo}/pulls/{n}
+  if (host === "git.cafe" || host === "staging.git.cafe") {
+    const match = /^\/([^/]+\/[^/]+)\/pulls\/(\d+)(?:\/|$)/u.exec(url.pathname);
+    return claim(host, match);
+  }
   // GitHub, and any Enterprise install: /{owner}/{repo}/pull/{n}
   if (isHostOf(host, "github.com", "github")) {
     const match = /^\/([^/]+\/[^/]+)\/pull\/(\d+)(?:\/|$)/u.exec(url.pathname);
@@ -96,6 +101,8 @@ export function changeRequestUrlFor(
   switch (kind) {
     case "github":
       return `https://${host}/${repository}/pull/${number}`;
+    case "gitcafe":
+      return `https://${host}/${repository}/pulls/${number}`;
     case "forgejo": {
       try {
         const remote = new URL(remoteUrl ?? "");
