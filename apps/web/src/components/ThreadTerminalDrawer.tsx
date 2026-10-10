@@ -1212,6 +1212,7 @@ export default function ThreadTerminalDrawer({
     pointerId: number;
     startY: number;
     startHeight: number;
+    drawer: HTMLElement | null;
   } | null>(null);
   const didResizeDuringDragRef = useRef(false);
 
@@ -1418,26 +1419,26 @@ export default function ThreadTerminalDrawer({
       pointerId: event.pointerId,
       startY: event.clientY,
       startHeight: drawerHeightRef.current,
+      drawer: event.currentTarget.parentElement,
     };
   }, []);
 
-  const handleResizePointerMove = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      const resizeState = resizeStateRef.current;
-      if (!resizeState || resizeState.pointerId !== event.pointerId) return;
-      event.preventDefault();
-      const clampedHeight = clampDrawerHeight(
-        resizeState.startHeight + (resizeState.startY - event.clientY),
-      );
-      if (clampedHeight === drawerHeightRef.current) {
-        return;
-      }
-      didResizeDuringDragRef.current = true;
-      drawerHeightRef.current = clampedHeight;
-      setDrawerHeight(clampedHeight);
-    },
-    [setDrawerHeight],
-  );
+  // Writes the height straight to the drawer while dragging so the edge lands in
+  // the pointer's frame; React state commits once on release.
+  const handleResizePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const resizeState = resizeStateRef.current;
+    if (!resizeState || resizeState.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const clampedHeight = clampDrawerHeight(
+      resizeState.startHeight + (resizeState.startY - event.clientY),
+    );
+    if (clampedHeight === drawerHeightRef.current) {
+      return;
+    }
+    didResizeDuringDragRef.current = true;
+    drawerHeightRef.current = clampedHeight;
+    resizeState.drawer?.style.setProperty("height", `${clampedHeight}px`);
+  }, []);
 
   const handleResizePointerEnd = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1450,10 +1451,11 @@ export default function ThreadTerminalDrawer({
       if (!didResizeDuringDragRef.current) {
         return;
       }
+      setDrawerHeight(drawerHeightRef.current);
       syncHeight(drawerHeightRef.current);
       setResizeEpoch((value) => value + 1);
     },
-    [syncHeight],
+    [setDrawerHeight, syncHeight],
   );
 
   useEffect(() => {
@@ -1510,6 +1512,7 @@ export default function ThreadTerminalDrawer({
             onPointerMove={handleResizePointerMove}
             onPointerUp={handleResizePointerEnd}
             onPointerCancel={handleResizePointerEnd}
+            onLostPointerCapture={handleResizePointerEnd}
           />
         ) : null}
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-4 py-6 text-center text-sm text-muted-foreground">
@@ -1546,6 +1549,7 @@ export default function ThreadTerminalDrawer({
           onPointerMove={handleResizePointerMove}
           onPointerUp={handleResizePointerEnd}
           onPointerCancel={handleResizePointerEnd}
+          onLostPointerCapture={handleResizePointerEnd}
         />
       ) : null}
 
