@@ -1262,3 +1262,45 @@ export function settlePullRequestOverrides<Entry extends PullRequestListEntry>(
   }
   return kept.size === overrides.size ? overrides : kept;
 }
+
+/** The row actions speed mode offers, in the order they are drawn. */
+export type PullRequestQuickAction = "close" | "merge" | "ready" | "reopen";
+
+/**
+ * Which actions each host can take on a listed row, before any row's detail is read. Hosts are
+ * matched by the host summary; a server that does not report actions per host only ever offered
+ * these on GitHub, so that is what it keeps getting.
+ */
+export function pullRequestHostActions(
+  providers: ReadonlyArray<PullRequestListResult["providers"][number]>,
+): (
+  entry: Pick<EnvironmentPullRequestEntry, "host" | "provider">,
+) => ReadonlySet<PullRequestAction> {
+  const byHost = new Map(
+    providers.flatMap((provider) =>
+      provider.actions === undefined
+        ? []
+        : [[provider.host.toLowerCase(), new Set(provider.actions)] as const],
+    ),
+  );
+  const legacy = new Set<PullRequestAction>(["close", "merge", "ready", "reopen"]);
+  const none = new Set<PullRequestAction>();
+  return (entry) =>
+    byHost.get(entry.host.toLowerCase()) ?? (entry.provider === "github" ? legacy : none);
+}
+
+/** The quick actions a row offers: what its state allows, narrowed to what its host can do. */
+export function pullRequestQuickActions(
+  entry: Pick<EnvironmentPullRequestEntry, "state" | "isDraft">,
+  hostActions: ReadonlySet<PullRequestAction>,
+): ReadonlyArray<PullRequestQuickAction> {
+  const forState: ReadonlyArray<PullRequestQuickAction> =
+    entry.state === "merged"
+      ? []
+      : entry.state === "closed"
+        ? ["reopen"]
+        : entry.isDraft
+          ? ["close", "ready"]
+          : ["close", "merge"];
+  return forState.filter((action) => hostActions.has(action));
+}

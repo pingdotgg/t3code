@@ -12,13 +12,12 @@ import {
   type PullRequestProviderApi,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import type { BitbucketPullRequest } from "./bitbucketPullRequestJson.ts";
+import { definition } from "../client/definition.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
   comment: true,
-  // Bitbucket has no endpoint that reopens a declined pull request, and nothing documented that
-  // moves one in or out of draft, so neither is offered rather than failing when pressed.
-  actions: ["merge", "close"],
+  actions: [...definition.changeRequestActions],
   mergeMethods: ["merge", "squash", "rebase"],
   search: true,
   // Bitbucket Cloud's API exposes no reaction on a pull request or on a comment, so none is

@@ -18,11 +18,12 @@ import {
 import * as GitCafeApi from "./GitCafeApi.ts";
 import * as GitCafeHosts from "./gitCafeHosts.ts";
 import * as Json from "./gitCafePullRequestJson.ts";
+import { definition } from "../client/definition.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
   comment: true,
-  actions: ["ready", "draft", "close", "reopen", "merge", "update-branch"],
+  actions: [...definition.changeRequestActions],
   mergeMethods: ["merge", "squash", "rebase"],
   // Only through a stack: GitCafe's one branch update restacks every layer above it.
   updateMethods: ["rebase"],

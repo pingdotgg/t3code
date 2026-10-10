@@ -30,6 +30,16 @@ export const definition = defineSourceControlClient({
   defaultCloneTransport: "ssh",
   changeRequestUrl: ({ host, repository, number }) =>
     `https://${host}/${repository}/-/merge_requests/${number}`,
+  changeRequestActions: new Set([
+    "merge",
+    "ready",
+    "draft",
+    "close",
+    "reopen",
+    "update-branch",
+    "enable-auto-merge",
+    "disable-auto-merge",
+  ] as const),
   checkoutCommand: ({ number }) => `glab mr checkout ${number}`,
   authorProfileUrl: () => null,
   referenceAutolinkRepositoryUrl: () => null,

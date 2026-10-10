@@ -12,6 +12,7 @@
  * @module source-control-core/client/definition
  */
 import {
+  type PullRequestAction,
   pullRequestHostOf,
   type PullRequestReviewVerdict,
   type RepositoryIdentity,
@@ -77,6 +78,12 @@ export interface SourceControlClientDefinition {
   readonly defaultCloneTransport: "https" | "ssh";
   /** The web URL of a change request, or null when this client cannot build one for the host. */
   readonly changeRequestUrl: (input: ChangeRequestUrlInput) => string | null;
+  /**
+   * The actions this host can take on a change request, the same list its server provider
+   * declares in `capabilities.actions`. Surfaces with no server answer to hand, such as a thread's
+   * linked pull requests, offer actions from this.
+   */
+  readonly changeRequestActions: ReadonlySet<PullRequestAction>;
   /** A shell command that checks the change request out, or null when it cannot be built. */
   readonly checkoutCommand: (changeRequest: ChangeRequestCheckoutInput) => string | null;
   /** A comment author's profile page, or null where the host has none clients can link. */
@@ -219,6 +226,7 @@ export const UNKNOWN_SOURCE_CONTROL_CLIENT: SourceControlClientDefinition = {
   publishHost: (signedInHost) => signedInHost ?? "your server",
   defaultCloneTransport: "ssh",
   changeRequestUrl: () => null,
+  changeRequestActions: new Set(),
   checkoutCommand: () => null,
   authorProfileUrl: () => null,
   referenceAutolinkRepositoryUrl: () => null,

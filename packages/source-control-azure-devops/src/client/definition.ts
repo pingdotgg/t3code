@@ -40,6 +40,15 @@ export const definition = defineSourceControlClient({
   defaultCloneTransport: "ssh",
   changeRequestUrl: ({ host, repository, number }) =>
     `https://${canonicalRepositoryKey(`${host}/${repository}`.toLowerCase())}/pullrequest/${number}`,
+  changeRequestActions: new Set([
+    "merge",
+    "ready",
+    "draft",
+    "close",
+    "reopen",
+    "enable-auto-merge",
+    "disable-auto-merge",
+  ] as const),
   checkoutCommand: ({ number }) => `az repos pr checkout --id ${number}`,
   authorProfileUrl: () => null,
   referenceAutolinkRepositoryUrl: () => null,

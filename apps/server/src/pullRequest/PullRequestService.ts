@@ -1252,20 +1252,24 @@ export const make = Effect.gen(function* () {
       // One summary per host, which is what the viewer lookup already answers for: two GitHub
       // hosts sign in separately, so collapsing them by kind would report one as the other.
       const providers: ReadonlyArray<PullRequestProviderSummary> = [
-        ...viewerResults.map((result) => ({
-          host: result.host,
-          kind: result.kind,
-          searchesOnHost:
-            projects.find((project) => project.host === result.host)?.api.capabilities.search ??
-            false,
-          projectCount: projectCounts.get(result.host) ?? 1,
-          configured: result.viewer !== null,
-          detail: result.error === null ? null : providerDetail(result.error),
-        })),
+        ...viewerResults.map((result) => {
+          const capabilities = projects.find((project) => project.host === result.host)?.api
+            .capabilities;
+          return {
+            host: result.host,
+            kind: result.kind,
+            searchesOnHost: capabilities?.search ?? false,
+            actions: capabilities?.actions ?? [],
+            projectCount: projectCounts.get(result.host) ?? 1,
+            configured: result.viewer !== null,
+            detail: result.error === null ? null : providerDetail(result.error),
+          };
+        }),
         ...[...unimplemented].map(([host, { kind, projectCount }]) => ({
           host,
           kind,
           searchesOnHost: false,
+          actions: [],
           projectCount,
           configured: false,
           detail: "This host cannot be browsed here yet.",

@@ -14,20 +14,12 @@ import {
   type ProviderChangeRequestDetail,
   type PullRequestProviderApi,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
+import { definition } from "../client/definition.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
   comment: true,
-  actions: [
-    "merge",
-    "ready",
-    "draft",
-    "close",
-    "reopen",
-    "update-branch",
-    "enable-auto-merge",
-    "disable-auto-merge",
-  ],
+  actions: [...definition.changeRequestActions],
   // GitLab offers all three, though a project settles on one; `mergeCapabilities` narrows it.
   mergeMethods: ["merge", "squash", "rebase"],
   // Rebase alone: GitLab moves a stale branch onto its target by replaying it, and has nothing

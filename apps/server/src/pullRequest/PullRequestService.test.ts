@@ -572,6 +572,35 @@ it.effect("lists GitHub Enterprise PRs for a stored unknown repository after hos
   }),
 );
 
+it.effect("reports each host's actions with its summary, so rows can offer them unread", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/repo",
+          repository: "acme/web",
+          provider: SourceControlProviderKind.make("bitbucket"),
+          host: "bitbucket.org",
+        }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("bitbucket"), {
+          capabilities: {
+            ...fakeProvider(SourceControlProviderKind.make("bitbucket")).capabilities,
+            actions: ["merge", "close"],
+          },
+        }),
+      ],
+    });
+
+    const result = yield* service.list({ state: "open" });
+
+    assert.deepStrictEqual(result.providers[0]?.actions, ["merge", "close"]);
+  }),
+);
+
 it.effect("refines unknown self-hosted GitLab projects before listing merge requests", () =>
   Effect.gen(function* () {
     let refinementCalls = 0;

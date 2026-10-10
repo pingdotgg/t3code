@@ -30,6 +30,18 @@ export const definition = defineSourceControlClient({
   defaultCloneTransport: "https",
   changeRequestUrl: ({ host, repository, number }) =>
     `https://${host}/${repository}/pull/${number}`,
+  changeRequestActions: new Set([
+    "merge",
+    "ready",
+    "draft",
+    "close",
+    "reopen",
+    "update-branch",
+    "enable-auto-merge",
+    "disable-auto-merge",
+    "revert",
+    "approve-workflows",
+  ] as const),
   checkoutCommand: ({ number }) => `gh pr checkout ${number}`,
   authorProfileUrl: (login, repositoryUrl) =>
     login.endsWith("[bot]")
