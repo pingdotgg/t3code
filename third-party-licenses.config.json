@@ -200,6 +200,16 @@
       }
     },
     {
+      "license": "MIT",
+      "name": "rehype-katex",
+      "version": "7.0.1",
+      "sourceUrl": "https://github.com/remarkjs/remark-math/tree/main/packages/rehype-katex",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) Junyoung Choi <fluke8259@gmail.com>"]
+      }
+    },
+    {
       "name": "glob-to-regexp",
       "generatedNotice": {
         "licenseId": "BSD-2-Clause",

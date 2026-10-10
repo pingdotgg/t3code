@@ -22,6 +22,25 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("ClientSettings LaTeX rendering", () => {
+  it("renders math by default in new and existing settings", () => {
+    expect(decodeClientSettings({}).latexRenderingMode).toBe("on");
+    expect(decodeClientSettings({ chatWidth: "wide" }).latexRenderingMode).toBe("on");
+  });
+
+  it.each(["off", "readable", "on"])(
+    "preserves the %s mode when saving and loading preferences",
+    (mode) => {
+      const preference = { latexRenderingMode: mode };
+      expect(decodeClientSettingsPatch(preference)).toEqual(preference);
+      expect(encodeClientSettings(decodeClientSettings(preference))).toMatchObject(preference);
+    },
+  );
+  it("rejects unsupported rendering modes", () => {
+    expect(() => decodeClientSettingsPatch({ latexRenderingMode: "other" })).toThrow();
+  });
+});
+
 describe("ServerSettings response streaming", () => {
   it("defaults to paragraph buffering", () => {
     expect(decodeServerSettings({}).responseStreamingMode).toBe("paragraph");

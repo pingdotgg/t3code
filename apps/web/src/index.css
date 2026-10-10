@@ -1767,6 +1767,12 @@ code {
 
 /* Chat markdown rendering */
 
+.chat-markdown .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.15rem 0;
+}
+
 .chat-markdown > :first-child {
   margin-top: 0;
 }
@@ -2366,4 +2372,16 @@ code {
       );
     }
   }
+}
+
+.chat-markdown .math-readable-inline,
+.chat-markdown .math-readable-display {
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+}
+
+.chat-markdown .math-readable-display {
+  display: block;
+  margin-block: 1rem;
+  overflow-x: auto;
 }

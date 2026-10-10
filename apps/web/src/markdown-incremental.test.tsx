@@ -1,15 +1,15 @@
-import { CHAT_MARKDOWN_REHYPE_PLUGINS } from "@t3tools/shared/markdownPipeline";
+import {
+  CHAT_MARKDOWN_REHYPE_PLUGINS,
+  CHAT_MARKDOWN_REMARK_PLUGINS,
+} from "@t3tools/shared/markdownPipeline";
+import { remarkChatMath } from "@t3tools/shared/markdownMath";
 import type { Root } from "mdast";
 import { renderToStaticMarkup } from "react-dom/server";
 import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import type { Plugin } from "unified";
 import { describe, expect, it } from "vite-plus/test";
 
-import { remarkCodexDirectives } from "@t3tools/shared/codexMarkdownDirectives";
-import { remarkGithubAlerts } from "@t3tools/shared/markdownGithubAlerts";
 import { createIncrementalMarkdownPlugin } from "./markdown-incremental";
-import { remarkNormalizeListItemIndentation } from "@t3tools/shared/markdownListIndentation";
 
 function render(source: string, incremental?: Plugin<[], Root>, parsedSources?: string[]) {
   let tree: Root | undefined;
@@ -30,10 +30,8 @@ function render(source: string, incremental?: Plugin<[], Root>, parsedSources?: 
       remarkPlugins={[
         observeParsing,
         capture,
-        remarkGfm,
-        remarkGithubAlerts,
-        remarkNormalizeListItemIndentation,
-        remarkCodexDirectives,
+        ...CHAT_MARKDOWN_REMARK_PLUGINS,
+        remarkChatMath,
         ...(incremental ? [incremental] : []),
       ]}
       rehypePlugins={CHAT_MARKDOWN_REHYPE_PLUGINS}
@@ -73,6 +71,8 @@ describe("incremental Markdown parsing", () => {
     "\n\n\tcode\n\nmore",
     "text <https://example.com> *bold*",
     "> [!NOTE]\n> alert\n\n- [ ] task",
+    String.raw`Inline \(b_{12}\), then \[\begin{pmatrix}3&8\\-2&6\end{pmatrix}\]`,
+    "\\[\nB=\\begin{pmatrix}3&8\\\\-2&6\\end{pmatrix}\n\\]",
     "\uFEFFtext after a byte-order mark",
   ])("preserves the parse tree, positions, and HTML while streaming %j", (tail) => {
     const source = prefix + tail;

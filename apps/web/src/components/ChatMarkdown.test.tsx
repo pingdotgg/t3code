@@ -10,12 +10,14 @@ import { MarkdownFindContext } from "./chat/markdownFindContext";
 import { act, type ComponentProps, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { GitHubIcon } from "./Icons";
 import { Button } from "./ui/button";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
+import { serializeRenderedMarkdownFragment } from "../markdown-clipboard";
+import katex from "katex";
 
 vi.mock("../hooks/useFileMetadata", () => ({ useFileMetadata: () => null }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
@@ -24,13 +26,18 @@ vi.mock("./chat/MermaidDiagram", () => ({
   MermaidDiagram: () => <svg aria-label="Diagram" />,
 }));
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
+const mathPreference = vi.hoisted(() => ({
+  latexRenderingMode: "on" as "off" | "readable" | "on",
+}));
 vi.mock("../hooks/useSettings", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../hooks/useSettings")>();
   const settings = actual.getClientSettings();
   return {
     ...actual,
-    useClientSettings: (select?: (value: typeof settings) => unknown) =>
-      select ? select(settings) : settings,
+    useClientSettings: (select?: (value: typeof settings) => unknown) => {
+      const current = { ...settings, ...mathPreference };
+      return select ? select(current) : current;
+    },
   };
 });
 vi.mock("./ui/tooltip", async () => {
@@ -81,6 +88,7 @@ vi.mock("~/lib/openPullRequestLink", () => ({
   useOpenChangeRequestLink: () => vi.fn(),
 }));
 
+import { loadChatMathPlugins } from "./chat/useChatMath";
 import ChatMarkdown, {
   canUseMarkdownFileShellActions,
   hasMarkdownFilePrimaryAction,
@@ -94,6 +102,327 @@ function codeButton(renderer: ReactTestRenderer, label: string) {
   if (!button) throw new Error(`Missing code button: ${label}`);
   return button.props as ComponentProps<typeof Button>;
 }
+
+describe("ChatMarkdown math", () => {
+  beforeAll(() => Promise.all([loadChatMathPlugins(), loadChatMathPlugins("readable")]));
+  it.each([
+    { mode: "on", parseRawHtml: true },
+    { mode: "on", parseRawHtml: false },
+    { mode: "readable", parseRawHtml: true },
+    { mode: "readable", parseRawHtml: false },
+  ] as const)(
+    "keeps heading links and HTML handling with $mode math (parseRawHtml=$parseRawHtml)",
+    async ({ mode, parseRawHtml }) => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const container = document.createElement("div");
+      document.body.append(container);
+      const root = createRoot(container);
+      const authoredHtml = '<b onclick="alert(1)">Formatted</b><script>alert(1)</script>';
+      const text = `[Equation](#equation)\n\n## Equation\n\n\\(\\frac{17}{29}\\)\n\n${authoredHtml}`;
+      const url = window.location.href;
+      try {
+        mathPreference.latexRenderingMode = mode;
+        await act(async () =>
+          root.render(<ChatMarkdown cwd="/tmp/project" text={text} parseRawHtml={parseRawHtml} />),
+        );
+        if (mode === "on") {
+          expect(container.querySelector("mfrac")?.textContent).toBe("1729");
+        } else {
+          expect(container.querySelector(".math-readable-inline")?.textContent).toBe("17 / 29");
+        }
+        expect(container.querySelector("script, [onclick]")).toBeNull();
+        if (parseRawHtml) {
+          expect(container.querySelector("b")?.textContent).toBe("Formatted");
+        } else {
+          expect(container.querySelector("b")).toBeNull();
+          expect(container.textContent).toContain(authoredHtml);
+        }
+
+        const heading = container.querySelector("h2")!;
+        expect(heading.id).toBe("user-content-equation");
+        const scrollIntoView = vi.fn();
+        heading.scrollIntoView = scrollIntoView;
+        const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+        container.querySelector("a")!.dispatchEvent(click);
+        expect(click.defaultPrevented).toBe(true);
+        expect(scrollIntoView.mock.contexts).toEqual([heading]);
+        expect(window.location.href).toBe(url);
+      } finally {
+        mathPreference.latexRenderingMode = "on";
+        await act(async () => root.unmount());
+        container.remove();
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+  it.each(["on", "readable"] as const)(
+    "keeps math fences as code in %s mode when an unrelated equation is added",
+    async (mode) => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const container = document.createElement("div");
+      const root = createRoot(container);
+      const fence = "```math\nx^2\n```";
+      try {
+        mathPreference.latexRenderingMode = mode;
+        await act(async () => root.render(<ChatMarkdown cwd="/tmp/project" text={fence} />));
+        expect(container.querySelector("pre code")?.textContent).toContain("x^2");
+        await act(async () =>
+          root.render(<ChatMarkdown cwd="/tmp/project" text={`${fence}\n\n\\(y\\)`} />),
+        );
+        expect(container.querySelector("pre code")?.textContent).toContain("x^2");
+        const selector = mode === "on" ? ".katex" : ".math-readable-inline";
+        expect(container.querySelectorAll(selector)).toHaveLength(1);
+        expect(container.querySelector(".katex-display, .math-readable-display")).toBeNull();
+      } finally {
+        mathPreference.latexRenderingMode = "on";
+        await act(async () => root.unmount());
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+  it("skips visual HTML in readable mode without reusing it for typeset mode", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const renderMath = vi.spyOn(katex, "renderToString");
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const text = String.raw`\(\frac{139}{251}\)`;
+    try {
+      mathPreference.latexRenderingMode = "readable";
+      await act(async () => root.render(<ChatMarkdown cwd="/tmp/project" text={text} />));
+      expect(container.querySelector(".math-readable-inline")?.textContent).toBe("139 / 251");
+      expect(renderMath).toHaveBeenCalledTimes(1);
+      expect(renderMath.mock.calls[0]?.[1]).toMatchObject({ output: "mathml", trust: false });
+
+      mathPreference.latexRenderingMode = "on";
+      await act(async () =>
+        root.render(<ChatMarkdown cwd="/tmp/project" text={text} parseRawHtml={false} />),
+      );
+      expect(container.querySelector(".katex-html")).not.toBeNull();
+      expect(renderMath).toHaveBeenCalledTimes(2);
+      expect(renderMath.mock.calls[1]?.[1]).toMatchObject({
+        output: "htmlAndMathml",
+        trust: false,
+      });
+    } finally {
+      mathPreference.latexRenderingMode = "on";
+      renderMath.mockRestore();
+      await act(async () => root.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+  it.each([
+    [String.raw`\frac{1}{2}`, "1 / 2"],
+    [String.raw`x^2+b_{12}`, "x^2 + b[12]"],
+    [String.raw`x_a^b`, "x[a]^b"],
+    [String.raw`\int_0^\pi \sin x\,dx=2`, "integral[0 to π]"],
+    [String.raw`\sum_{n=1}^{\infty}\frac{1}{n^2}`, "sum[n = 1 to ∞]"],
+    [String.raw`\lim_{x\to0}\frac{\sin x}{x}=1`, "lim(x → 0)"],
+    [String.raw`x=\frac{-b\pm\sqrt{b^2-4ac}}{2a}`, "sqrt(b^2 − 4 a c)"],
+    [String.raw`\begin{pmatrix}3&8\\-2&6\end{pmatrix}`, "3"],
+    [String.raw`f(x)=\begin{cases}x^2&x\ge0\\-x&x<0\end{cases}`, "cases:\nx^2 if x ≥ 0"],
+  ])("shows readable text for %s and preserves its source when copying", async (tex, expected) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    try {
+      mathPreference.latexRenderingMode = "readable";
+      await act(async () => root.render(<ChatMarkdown cwd="/tmp/project" text={`\\[${tex}\\]`} />));
+      const readable = container.querySelector(".math-readable-display");
+      expect(readable?.textContent).toContain(expected);
+      expect(container.querySelector(".katex")).toBeNull();
+      expect(container.querySelector("math")).toBeNull();
+      expect(serializeRenderedMarkdownFragment(container)).toContain(tex);
+    } finally {
+      mathPreference.latexRenderingMode = "on";
+      await act(async () => root.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+  it("reuses an unchanged equation while surrounding text streams", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const renderMath = vi.spyOn(katex, "renderToString");
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const tex = String.raw`\frac{137}{241}`;
+    try {
+      for (let index = 0; index < 10; index++) {
+        await act(async () =>
+          root.render(
+            <ChatMarkdown cwd="/tmp/project" text={`\\(${tex}\\) next ${index}`} isStreaming />,
+          ),
+        );
+        expect(container.querySelector("mfrac")?.textContent).toBe("137241");
+        expect(container.textContent).toContain(`next ${index}`);
+      }
+      expect(renderMath).toHaveBeenCalledTimes(1);
+    } finally {
+      renderMath.mockRestore();
+      await act(async () => root.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+  it("shows source when disabled and restores equations when enabled", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const text = String.raw`Before \(x^2\) after.`;
+    try {
+      mathPreference.latexRenderingMode = "off";
+      await act(async () => root.render(<ChatMarkdown cwd="/tmp/project" text={text} />));
+      expect(container.querySelector(".katex")).toBeNull();
+      expect(container.textContent).toBe("Before (x^2) after.");
+      mathPreference.latexRenderingMode = "on";
+      await act(async () =>
+        root.render(<ChatMarkdown cwd="/tmp/project" text={text} parseRawHtml={false} />),
+      );
+      expect(container.querySelector("msup")?.textContent).toBe("x2");
+    } finally {
+      mathPreference.latexRenderingMode = "on";
+      await act(async () => root.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+  it.each([
+    {
+      name: "definite integrals",
+      tex: String.raw`\int_0^\pi \sin x\,dx=2`,
+      selector: "msubsup",
+      rendered: "∫0π",
+    },
+    {
+      name: "improper integrals with square roots",
+      tex: String.raw`\int_{-\infty}^{\infty}e^{-x^2}\,dx=\sqrt{\pi}`,
+      selector: "msqrt",
+      rendered: "π",
+    },
+    {
+      name: "double integrals",
+      tex: String.raw`\int_0^1\int_0^1(x+y)\,dx\,dy=1`,
+      selector: "msubsup",
+      rendered: "∫01",
+    },
+    {
+      name: "infinite series",
+      tex: String.raw`\sum_{n=1}^{\infty}\frac{1}{n^2}=\frac{\pi^2}{6}`,
+      selector: "munderover",
+      rendered: "∑n=1∞",
+    },
+    {
+      name: "limits with fractions",
+      tex: String.raw`\lim_{x\to0}\frac{\sin x}{x}=1`,
+      selector: "munder",
+      rendered: "lim\u2061x→0",
+    },
+    {
+      name: "the quadratic formula",
+      tex: String.raw`x=\frac{-b\pm\sqrt{b^2-4ac}}{2a}`,
+      selector: "msqrt",
+      rendered: "b2−4ac",
+    },
+    {
+      name: "aligned integration steps",
+      tex: String.raw`\begin{aligned}\int xe^x\,dx&=xe^x-\int e^x\,dx\\&=e^x(x-1)+C\end{aligned}`,
+      selector: "mtable mtr:last-child",
+      rendered: "=ex(x−1)+C",
+    },
+    {
+      name: "piecewise functions",
+      tex: String.raw`f(x)=\begin{cases}x^2&x\ge0\\-x&x<0\end{cases}`,
+      selector: "mtable mtr:last-child",
+      rendered: "−xx<0",
+    },
+  ])("typesets $name into readable MathML", async ({ tex, selector, rendered }) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => {
+        root.render(<ChatMarkdown cwd="/tmp/project" text={`\\[\n${tex}\n\\]`} />);
+      });
+      expect(container.querySelector(".katex-error")).toBeNull();
+      expect(container.querySelectorAll(".katex-display")).toHaveLength(1);
+      expect(container.querySelector("annotation")?.textContent?.trim()).toBe(tex);
+      expect(container.querySelector(selector)?.textContent).toBe(rendered);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each([true, false])(
+    "renders the diagnostic matrix with parseRawHtml=%s",
+    async (parseRawHtml) => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const container = document.createElement("div");
+      document.body.append(container);
+      const root = createRoot(container);
+      try {
+        await act(async () => {
+          root.render(
+            <ChatMarkdown
+              cwd="/tmp/project"
+              parseRawHtml={parseRawHtml}
+              text={String.raw`\[
+B=\begin{pmatrix}3&8&1\\-2&6&4\end{pmatrix}
+\]
+
+State the size of \(B\) and \(b_{12}\).`}
+            />,
+          );
+        });
+        expect(container.querySelectorAll(".katex-display")).toHaveLength(1);
+        expect(container.querySelectorAll(".katex")).toHaveLength(3);
+        const rows = container.querySelectorAll("mtable mtr");
+        expect(
+          [...rows].map((row) => [...row.querySelectorAll("mtd")].map((cell) => cell.textContent)),
+        ).toEqual([
+          ["3", "8", "1"],
+          ["−2", "6", "4"],
+        ]);
+        expect(container.querySelector("msub")?.textContent).toBe("b12");
+        expect(container.querySelectorAll("pre")).toHaveLength(0);
+        const copied = serializeRenderedMarkdownFragment(container);
+        expect(copied).toContain(String.raw`B=\begin{pmatrix}3&8&1\\-2&6&4\end{pmatrix}`);
+        expect(copied).toContain(String.raw`\(b_{12}\)`);
+      } finally {
+        await act(async () => root.unmount());
+        container.remove();
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
+  it("renders dollar math and keeps malformed LaTeX from breaking the message", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    try {
+      await act(async () => {
+        root.render(
+          <ChatMarkdown
+            cwd="/tmp/project"
+            text={String.raw`Inline \(x^2\).
+
+$$
+\frac{1}{2}
+$$
+
+Malformed \(\frac{\) and still readable.`}
+          />,
+        );
+      });
+      expect(container.querySelectorAll(".katex")).toHaveLength(2);
+      expect(container.querySelector("mfrac")?.textContent).toBe("12");
+      expect(container.querySelector(".katex-error")?.textContent).toBe("\\frac{");
+      expect(container.textContent).toContain("and still readable.");
+    } finally {
+      await act(async () => root.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+});
 
 describe("ChatMarkdown bare anchor placeholders", () => {
   it.each(["<A>", "<a>", "<a >", "<a/>", "<A/>", "<a />"])(

@@ -98,6 +98,7 @@ import type {
   Options as ReactMarkdownOptions,
 } from "react-markdown";
 import ReactMarkdown from "react-markdown";
+import { useChatMathPlugins } from "./chat/useChatMath";
 import { toHtml } from "hast-util-to-html";
 import { createIncrementalMarkdownPlugin } from "../markdown-incremental";
 import { defaultUrlTransform } from "react-markdown";
@@ -3404,6 +3405,8 @@ function ChatMarkdown({
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
   ...props
 }: ChatMarkdownProps) {
+  const mathMode = useClientSettings((settings) => settings.latexRenderingMode);
+  const mathPlugins = useChatMathPlugins(mathMode, text);
   const {
     componentState,
     handleCopy,
@@ -3419,11 +3422,20 @@ function ChatMarkdown({
   const remarkPlugins = useMemo(
     () => [
       ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
+      ...(mathPlugins?.remark ?? EMPTY_REMARK_PLUGINS),
       ...extraRemarkPlugins,
       ...(incrementalParsing ? [createIncrementalMarkdownPlugin()] : []),
     ],
-    [extraRemarkPlugins, incrementalParsing, lineBreaks],
+    [extraRemarkPlugins, incrementalParsing, lineBreaks, mathPlugins],
   );
+  const rehypePlugins = useMemo(() => {
+    if (!mathPlugins) {
+      return parseRawHtml
+        ? CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS
+        : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS;
+    }
+    return [...(parseRawHtml ? mathPlugins.rehype : mathPlugins.literalRehype), rehypeHeadingIds];
+  }, [mathPlugins, parseRawHtml]);
 
   // react-markdown converts unparsed HTML nodes to text when skipHtml is false.
   // Keep that behavior explicit because literal mode depends on escaping the
@@ -3442,11 +3454,7 @@ function ChatMarkdown({
       <ChatMarkdownRendererContext value={componentState}>
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
-          rehypePlugins={
-            parseRawHtml
-              ? CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS
-              : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS
-          }
+          rehypePlugins={rehypePlugins}
           skipHtml={false}
           components={CHAT_MARKDOWN_COMPONENTS}
           urlTransform={markdownUrlTransform}

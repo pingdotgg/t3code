@@ -275,6 +275,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["wide full width column layout messages composer monitor"],
   },
   {
+    id: "latex-rendering",
+    title: "LaTeX rendering",
+    to: "/settings/appearance",
+    searchTerms: ["math equations formulas matrices integrals TeX readable plain text"],
+  },
+  {
     id: "panel-animations",
     title: "Panel animations",
     to: "/settings/appearance",
