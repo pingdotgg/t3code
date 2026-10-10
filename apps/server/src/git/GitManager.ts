@@ -2730,14 +2730,6 @@ export const make = Effect.gen(function* () {
             detail: "Feature-branch checkout is only supported for commit actions.",
           });
         }
-        if (input.action === "create_pr" && initialStatus.hasWorkingTreeChanges) {
-          return yield* new GitManagerError({
-            operation: "runStackedAction",
-            cwd: input.cwd,
-            detail: "Commit local changes before creating a PR.",
-          });
-        }
-
         const phases: GitActionProgressPhase[] = [
           ...(input.featureBranch ? (["branch"] as const) : []),
           ...(wantsCommit ? (["commit"] as const) : []),
