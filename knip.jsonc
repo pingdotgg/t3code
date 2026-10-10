@@ -99,6 +99,11 @@
       // These workspace packages are private to this monorepo.
       "includeEntryExports": true,
     },
+    "packages/client": {
+      "includeEntryExports": true,
+      // Runnable consumer of the package, executed directly with node.
+      "entry": ["examples/*.ts"],
+    },
     "packages/effect-acp": {
       "includeEntryExports": true,
       "entry": ["test/fixtures/*.ts"],

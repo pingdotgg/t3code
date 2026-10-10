@@ -31,12 +31,30 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
+  type EnvironmentRpcTag,
+  type EnvironmentStreamRpcTag,
   EnvironmentRpcRequestObserver,
   request,
   runStream,
   subscribe,
   subscribeDynamicWithSession,
 } from "./client.ts";
+
+// Every streaming RPC must be classified, or `request` would accept it and
+// try to run its stream as an effect.
+type StreamingRpcTag = {
+  [TTag in EnvironmentRpcTag]: WsRpcProtocolClient[TTag] extends (
+    ...args: Array<never>
+  ) => Stream.Stream<unknown, unknown, unknown>
+    ? TTag
+    : never;
+}[EnvironmentRpcTag];
+const everyStreamClassified: [Exclude<StreamingRpcTag, EnvironmentStreamRpcTag>] extends [never]
+  ? [StreamingRpcTag] extends [never]
+    ? false
+    : true
+  : false = true;
+void everyStreamClassified;
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),

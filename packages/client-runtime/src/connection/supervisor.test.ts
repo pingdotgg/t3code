@@ -683,6 +683,30 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("acknowledges a control request with the state it replaces", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          attempt === 1 ? Effect.fail(blocked()) : Effect.succeed(PREPARED_CONNECTION),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+      const blockedState = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "blocked",
+      );
+
+      expect(yield* supervisor.control("retry")).toEqual(Option.some(blockedState));
+      const connected = yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      // A retry that only probes the live session leaves it current.
+      expect(yield* supervisor.control("retry")).toEqual(Option.none());
+      expect(yield* supervisor.control("disconnect")).toEqual(Option.some(connected));
+      yield* awaitState(supervisor.state, (state) => state.phase === "available");
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+    }),
+  );
+
   it.effect("resets retries when activation wakes a blocked connection", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
