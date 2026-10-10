@@ -7993,7 +7993,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect.each(["requested", "observed-before", "observed-after", "inherit", "unknown"] as const)(
+  it.effect.each([
+    "requested",
+    "observed-before",
+    "observed-after",
+    "synthetic-after",
+    "inherit",
+    "unknown",
+  ] as const)(
     "records the subagent model from %s without inheriting the parent override",
     (source) =>
       Effect.scoped(
@@ -8002,7 +8009,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const now = yield* DateTime.now;
           const toolUseId = "toolu-subagent-model";
           const parentModel = "claude-opus-4-6";
-          const observedModel = "claude-haiku-4-5-20251001";
+          // Claude stamps its own error frames, such as a usage-limit notice, as
+          // "<synthetic>"; that is not the model the subagent runs on.
+          const observedModel =
+            source === "synthetic-after" ? "<synthetic>" : "claude-haiku-4-5-20251001";
           yield* harness.runtime.startTurn(
             makeClaudeTestTurnInput({
               threadId: harness.threadId,
@@ -8071,7 +8081,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               session_id: WAKE_NATIVE_SESSION,
             }),
           );
-          if (source === "observed-after") yield* Queue.offer(harness.sdkMessages, observed);
+          if (source === "observed-after" || source === "synthetic-after") {
+            yield* Queue.offer(harness.sdkMessages, observed);
+          }
           yield* Queue.offer(
             harness.sdkMessages,
             makeResultFrame({
