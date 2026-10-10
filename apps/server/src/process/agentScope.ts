@@ -13,6 +13,7 @@ import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -91,7 +92,7 @@ const CLEAR_FAILED_INTERVAL = "1 second";
 const CLEAR_FAILED_ATTEMPTS = 120;
 const MAX_TRACKED_THREADS = 500;
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   if (platform !== "linux") return AgentScope.defaultValue();
 
@@ -225,18 +226,35 @@ const make = Effect.gen(function* () {
   const forget = (systemctl: string, unit: string) =>
     clearFailed(systemctl, unit).pipe(Effect.forkIn(layerScope), Effect.asVoid);
 
-  const track = (systemctl: string, threadId: string, unit: string) =>
+  // Drops the oldest thread's scope once it has ended. A scope that still
+  // runs moves to the back, so its thread keeps its OOM answer and cleanup.
+  const evictOldest = (systemctl: string) =>
+    Effect.gen(function* () {
+      const oldest = scopeByThread.entries().next();
+      if (oldest.done === true) return;
+      const [threadId, tracked] = oldest.value;
+      const state = yield* readScope(systemctl, tracked.unit);
+      // A newer launch replaced it while we read, and forgets it itself.
+      if (scopeByThread.get(threadId) !== tracked) return;
+      scopeByThread.delete(threadId);
+      const status = state === undefined ? "running" : classifyScope(state);
+      if (status === "running" || status === "stopping") {
+        scopeByThread.set(threadId, tracked);
+        return;
+      }
+      yield* forget(systemctl, tracked.unit);
+    });
+
+  // Records a thread's newest launch. `unit` is undefined for a launch without
+  // a scope, so the thread's older scope stops answering for it.
+  const track = (systemctl: string, threadId: string, unit: string | undefined) =>
     Effect.gen(function* () {
       const previous = scopeByThread.get(threadId);
       scopeByThread.delete(threadId);
-      scopeByThread.set(threadId, { unit, oomKilled: false });
       if (previous !== undefined) yield* forget(systemctl, previous.unit);
-      // Maps keep insertion order, so the first entry is the oldest thread.
-      for (const [oldThreadId, old] of scopeByThread) {
-        if (scopeByThread.size <= MAX_TRACKED_THREADS) break;
-        scopeByThread.delete(oldThreadId);
-        yield* forget(systemctl, old.unit);
-      }
+      if (unit === undefined) return;
+      scopeByThread.set(threadId, { unit, oomKilled: false });
+      if (scopeByThread.size > MAX_TRACKED_THREADS) yield* evictOldest(systemctl);
     });
 
   const oomKilled: AgentScopeShape["oomKilled"] = (threadId) =>
@@ -268,11 +286,23 @@ const make = Effect.gen(function* () {
     });
 
   return {
-    wrap: Effect.fn("AgentScope.wrap")(function* ({ command, args, name, threadId, env }) {
-      const resolved = yield* resolve(command, env ?? hostEnvironment);
-      // Leave unresolved commands alone so the spawn reports the missing binary.
-      if (resolved._tag === "None") return { command, args };
+    wrap: Effect.fn("AgentScope.wrap")(function* ({
+      command,
+      args,
+      name,
+      threadId,
+      env,
+      unscoped,
+    }) {
+      const resolved = unscoped ? Option.none() : yield* resolve(command, env ?? hostEnvironment);
       const scope = yield* systemd;
+      // Leave unresolved commands alone so the spawn reports the missing binary.
+      if (resolved._tag === "None") {
+        if (scope !== undefined && threadId !== undefined) {
+          yield* track(scope.systemctl, threadId, undefined);
+        }
+        return { command, args };
+      }
       if (scope === undefined) return agentScopeCommand({ command: resolved.value, args });
       const unit = `t3code-${name}-${NodeCrypto.randomUUID().slice(0, 8)}.scope`;
       if (threadId !== undefined) yield* track(scope.systemctl, threadId, unit);

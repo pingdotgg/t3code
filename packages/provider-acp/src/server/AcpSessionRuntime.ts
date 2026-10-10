@@ -1556,19 +1556,16 @@ export const make = (
           });
     // A cgroup lease is already its own leaf cgroup, so it only needs the
     // raised OOM score (in its wrapper). Other agents get their own scope.
-    const scopedSpawnCommand =
-      linuxCgroupLease !== undefined || spawnCommand.shell
-        ? spawnCommand
-        : {
-            ...(yield* (yield* AgentScope).wrap({
-              command: spawnCommand.command,
-              args: spawnCommand.args,
-              name: "acp",
-              threadId: yield* AgentScopeThreadId,
-              env: { ...process.env, ...options.spawn.env },
-            })),
-            shell: false,
-          };
+    const unscoped = linuxCgroupLease !== undefined || spawnCommand.shell;
+    const launch = yield* (yield* AgentScope).wrap({
+      command: spawnCommand.command,
+      args: spawnCommand.args,
+      name: "acp",
+      threadId: yield* AgentScopeThreadId,
+      env: { ...process.env, ...options.spawn.env },
+      unscoped,
+    });
+    const scopedSpawnCommand = unscoped ? spawnCommand : { ...launch, shell: false };
     const containedSpawnCommand =
       linuxCgroupLease === undefined
         ? scopedSpawnCommand

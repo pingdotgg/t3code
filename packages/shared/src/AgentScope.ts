@@ -18,6 +18,8 @@ export interface AgentScopeShape {
    * scope unit, for example "claude" or "terminal". `env` is the environment
    * the command will run with, used to resolve it on PATH. A command that does
    * not resolve stays unwrapped, so a missing binary still fails at spawn.
+   * Set `unscoped` for a launch that cannot be wrapped: the command comes back
+   * unchanged, and the thread's older scope no longer answers `oomKilled`.
    */
   readonly wrap: (input: {
     readonly command: string;
@@ -25,6 +27,7 @@ export interface AgentScopeShape {
     readonly name: string;
     readonly threadId?: string | undefined;
     readonly env?: NodeJS.ProcessEnv | undefined;
+    readonly unscoped?: boolean | undefined;
   }) => Effect.Effect<AgentScopeCommand>;
   /**
    * Whether the latest agent scope of this thread was killed because the
