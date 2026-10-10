@@ -10,11 +10,9 @@ import * as RequestResolver from "effect/RequestResolver";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import {
-  DEFAULT_SERVER_SETTINGS,
   SourceControlProviderError,
   TrimmedNonEmptyString,
   type ChangeRequest,
-  type GitHubSettings,
   type SourceControlProviderDiscoveryItem,
   type SourceControlRepositoryCloneUrls,
 } from "@t3tools/contracts";
@@ -55,6 +53,9 @@ import {
   type SourceControlManagedCliDiscoverySpec,
 } from "@t3tools/source-control-core/server/discovery";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import { readSourceControlHostSettings } from "@t3tools/source-control-core/client/definition";
+
+import * as GitHubClient from "../client/definition.ts";
 
 const decodeLinkSubject = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
@@ -85,7 +86,7 @@ function authAccounts(accounts: ReadonlyArray<GitHubAuthStatusAccount>) {
  */
 export function parseGitHubAuth(
   input: SourceControlAuthProbeInput,
-  settings: GitHubSettings = DEFAULT_SERVER_SETTINGS.github,
+  settings: GitHubClient.GitHubSettings = readSourceControlHostSettings(GitHubClient.settings, {}),
 ) {
   const output = combinedAuthOutput(input);
   const authStatus = parseGitHubAuthStatus(input.stdout);
@@ -202,9 +203,12 @@ export const makeDiscovery = Effect.gen(function* () {
     label: discovery.label,
     installHint: discovery.installHint,
     probe: Effect.fn("GitHubSourceControlProvider.discovery")(function* (cwd: string) {
-      const settings = yield* sourceControlHost.settings.get.pipe(
-        Effect.map((current) => current.github),
-        Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS.github),
+      const settings = readSourceControlHostSettings(
+        GitHubClient.settings,
+        yield* sourceControlHost.settings.get.pipe(
+          Effect.map((current) => current.sourceControlHosts[GitHubClient.definition.kind]),
+          Effect.orElseSucceed(() => undefined),
+        ),
       );
       const cli = yield* probeSourceControlProvider({
         cwd,

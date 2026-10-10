@@ -632,16 +632,22 @@ it.effect("prefers credentials saved in settings over the environment, without a
     assert.strictEqual(lastAuthorization(), basic("user@example.com", "token"));
 
     yield* settings.updateSettings({
-      bitbucket: { email: "saved@example.com", apiToken: "saved-api-token" },
+      sourceControlHosts: {
+        bitbucket: { email: "saved@example.com", apiToken: "saved-api-token" },
+      },
     });
     yield* bitbucket.probeAuth;
     assert.strictEqual(lastAuthorization(), basic("saved@example.com", "saved-api-token"));
 
-    yield* settings.updateSettings({ bitbucket: { accessToken: "saved-access-token" } });
+    yield* settings.updateSettings({
+      sourceControlHosts: { bitbucket: { accessToken: "saved-access-token" } },
+    });
     yield* bitbucket.probeAuth;
     assert.strictEqual(lastAuthorization(), "Bearer saved-access-token");
 
-    yield* settings.updateSettings({ bitbucket: { accessToken: "", apiToken: "" } });
+    yield* settings.updateSettings({
+      sourceControlHosts: { bitbucket: { accessToken: "", apiToken: "" } },
+    });
     yield* bitbucket.probeAuth;
     assert.strictEqual(lastAuthorization(), basic("user@example.com", "token"));
   }).pipe(Effect.provide(layer));
@@ -658,7 +664,9 @@ it.effect("never puts a saved token that is unsafe for an HTTP header on the wir
 
     // Fetch would reject this header with an error quoting the token, and that error reaches
     // clients. The unusable token is ignored, so the environment credential is used instead.
-    yield* settings.updateSettings({ bitbucket: { accessToken: "saved\ntoken" } });
+    yield* settings.updateSettings({
+      sourceControlHosts: { bitbucket: { accessToken: "saved\ntoken" } },
+    });
     yield* bitbucket.probeAuth;
     assert.strictEqual(
       execute.mock.calls.at(-1)?.[0].headers.authorization,
@@ -679,7 +687,9 @@ it.effect("reports saved credentials as configured when Bitbucket cannot confirm
 
     assert.strictEqual((yield* bitbucket.probeAuth).status, "unauthenticated");
 
-    yield* settings.updateSettings({ bitbucket: { accessToken: "saved-access-token" } });
+    yield* settings.updateSettings({
+      sourceControlHosts: { bitbucket: { accessToken: "saved-access-token" } },
+    });
     assert.deepStrictEqual(yield* bitbucket.probeAuth, {
       status: "unknown",
       account: Option.none(),

@@ -3,7 +3,13 @@
  *
  * @module source-control-gitcafe/client/definition
  */
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import {
+  makeProviderSettingsSchema,
+  SourceControlProviderKind,
+  TrimmedString,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import {
   defineSourceControlClient,
   isChangeRequestInProjectRepository,
@@ -15,6 +21,20 @@ import {
 const GITCAFE_HOSTS = new Set(["git.cafe", "staging.git.cafe"]);
 
 const KIND = SourceControlProviderKind.make("gitcafe");
+
+/** A git.cafe token, used before `CAFE_TOKEN` and the `cafe` login. */
+export const settings = makeProviderSettingsSchema({
+  token: TrimmedString.pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+    Schema.annotateKey({
+      title: "Token",
+      description:
+        "A git.cafe token, used before CAFE_TOKEN and the cafe login, so GitCafe works without the CLI signed in.",
+      providerSettingsForm: { control: "password", secret: true },
+    }),
+  ),
+});
+export type GitCafeSettings = typeof settings.Type;
 
 export const definition = defineSourceControlClient({
   kind: KIND,
@@ -64,4 +84,5 @@ export const definition = defineSourceControlClient({
       return false;
     }
   },
+  settings,
 });

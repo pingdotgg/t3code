@@ -42,16 +42,8 @@ const failure = (code: string, status: number | null) => ({
 });
 
 describe("GitCafeSourceControlProvider", () => {
-  it("probes the cafe CLI against production", () => {
-    const { discovery } = GitCafeSourceControlProvider;
-    assert.strictEqual(discovery.kind, "gitcafe");
-    assert.strictEqual(discovery.executable, "cafe");
-    assert.deepStrictEqual(discovery.authArgs.slice(0, 2), ["--host", "https://git.cafe/api"]);
-    assert.deepStrictEqual(discovery.authArgs.slice(-3), ["auth", "status", "--json"]);
-  });
-
   it("reads a signed-in account and keeps transient failures apart from sign-out", () => {
-    const { parseAuth } = GitCafeSourceControlProvider.discovery;
+    const { parseAuth } = GitCafeSourceControlProvider;
     const signedIn = parseAuth(
       authAnswer({ stdout: { schemaVersion: 1, data: { host: "git.cafe", username: "alice" } } }),
     );
@@ -115,7 +107,7 @@ describe("GitCafeSourceControlProvider", () => {
     }).pipe(
       Effect.provide(
         GitCafeApi.layer.pipe(
-          Layer.provide(GitCafeCredentials.layer),
+          Layer.provideMerge(GitCafeCredentials.layer),
           Layer.provideMerge(TestSourceControlHost.layer()),
           Layer.provide(
             Layer.succeed(HostProcess.Environment, { CAFE_TOKEN: "env-token", CAFE_HOST: host }),
@@ -162,7 +154,7 @@ describe("GitCafeSourceControlProvider", () => {
       }).pipe(
         Effect.provide(
           GitCafeApi.layer.pipe(
-            Layer.provide(GitCafeCredentials.layer),
+            Layer.provideMerge(GitCafeCredentials.layer),
             Layer.provideMerge(
               TestSourceControlHost.layer({
                 git: {
@@ -244,7 +236,7 @@ describe("GitCafeSourceControlProvider", () => {
     }).pipe(
       Effect.provide(
         GitCafeApi.layer.pipe(
-          Layer.provide(GitCafeCredentials.layer),
+          Layer.provideMerge(GitCafeCredentials.layer),
           Layer.provideMerge(
             TestSourceControlHost.layer({
               git: {
@@ -304,7 +296,7 @@ describe("GitCafeSourceControlProvider", () => {
     }).pipe(
       Effect.provide(
         GitCafeApi.layer.pipe(
-          Layer.provide(GitCafeCredentials.layer),
+          Layer.provideMerge(GitCafeCredentials.layer),
           Layer.provideMerge(
             TestSourceControlHost.layer({
               process: {

@@ -19,6 +19,7 @@ import {
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import type { ChangeRequestLink } from "@t3tools/shared/changeRequestUrl";
+import * as Schema from "effect/Schema";
 
 /** What a host calls a change request, e.g. `MR` and `merge request` on GitLab. */
 export interface ChangeRequestTerminology {
@@ -140,7 +141,19 @@ export interface SourceControlClientDefinition {
   readonly checkoutChangeRequestHost: (identity: ChangeRequestProjectIdentity) => string | null;
   /** Whether a change request URL has this host's path shape, e.g. GitLab's `/-/merge_requests/`. */
   readonly isChangeRequestUrl: (url: string) => boolean;
+  /**
+   * What the environment saves for this host under `settings.sourceControlHosts[kind]`, rendered
+   * as a form in Source Control settings and read by the host's server package. Fields carry
+   * `providerSettingsForm` annotations, as agent provider settings do; one marked `secret` is
+   * kept in the server's secret store. Omitted for a host with nothing to configure.
+   */
+  readonly settings?: SourceControlHostSettingsSchema;
 }
+
+/** A host's settings struct. Its fields are strings, or a secret string per server host. */
+export type SourceControlHostSettingsSchema = {
+  readonly fields: Readonly<Record<string, Schema.Top>>;
+} & Schema.Decoder<object>;
 
 /**
  * Whether a URL's path is a change request at `route`, such as `/pull/`, followed by its number.
@@ -292,4 +305,34 @@ export function makeSourceControlClientRegistry(
     hostLabelForChangeRequestUrl: (url) =>
       definitions.find((definition) => definition.isChangeRequestUrl(url))?.label ?? "the host",
   };
+}
+
+/**
+ * A host's saved settings decoded with its schema. A blob that no longer decodes, such as one a
+ * newer build wrote, reads as the schema's defaults rather than failing the host.
+ */
+export function readSourceControlHostSettings<S extends SourceControlHostSettingsSchema>(
+  schema: S,
+  saved: unknown,
+): S["Type"] {
+  const decode = Schema.decodeUnknownOption(schema as Schema.Decoder<S["Type"]>);
+  const decoded = decode(saved ?? {});
+  if (decoded._tag === "Some") return decoded.value;
+  const fallback = decode({});
+  if (fallback._tag === "Some") return fallback.value;
+  throw new Error("A source control host settings schema must decode an empty object.");
+}
+
+/**
+ * The settings fields a host keeps in the server's secret store: those annotated
+ * `providerSettingsForm.secret`. A secret field holds a string, or a string per server host.
+ */
+export function secretSourceControlHostSettingsFields(
+  schema: SourceControlHostSettingsSchema,
+): ReadonlyArray<string> {
+  return Object.entries(schema.fields).flatMap(([field, fieldSchema]) => {
+    const annotations =
+      Schema.resolveAnnotationsKey(fieldSchema) ?? Schema.resolveAnnotations(fieldSchema);
+    return annotations?.providerSettingsForm?.secret ? [field] : [];
+  });
 }

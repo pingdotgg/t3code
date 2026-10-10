@@ -1,4 +1,4 @@
-import type { GitHubSettings } from "@t3tools/contracts";
+import type { GitHubSettings } from "../client/definition.ts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
