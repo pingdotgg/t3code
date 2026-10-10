@@ -89,6 +89,7 @@ const STOPPING_POLL_ATTEMPTS = 20;
 // A stopping scope can wait out TimeoutStopSec (90 s by default) for a stuck process.
 const CLEAR_FAILED_INTERVAL = "1 second";
 const CLEAR_FAILED_ATTEMPTS = 120;
+const MAX_UNITS_PER_THREAD = 2;
 
 const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
@@ -154,8 +155,11 @@ const make = Effect.gen(function* () {
     }),
   );
 
-  // Scope units started for each thread, until we see them end.
+  // Recent scope units per thread. A thread runs one agent at a time, plus a
+  // replacement during a restart, so older units have ended.
   const unitsByThread = new Map<string, Set<string>>();
+  // Threads whose latest agent was OOM-killed, until they launch another.
+  const oomKilledThreads = new Set<string>();
 
   const readCgroupFile = (controlGroup: string, file: string) =>
     fileSystem
@@ -170,7 +174,9 @@ const make = Effect.gen(function* () {
         unit,
         "--property=LoadState,ActiveState,Result,ControlGroup",
       ]);
-      const values = parseKeyValues(shown._tag === "Some" ? shown.value.stdout : "");
+      // A failed query says nothing about the scope; the caller keeps the unit.
+      if (shown._tag === "None" || shown.value.code !== 0) return undefined;
+      const values = parseKeyValues(shown.value.stdout);
       const controlGroup = values.get("ControlGroup") ?? "";
       const memoryEvents = controlGroup ? yield* readCgroupFile(controlGroup, "memory.events") : "";
       const cgroupEvents = controlGroup ? yield* readCgroupFile(controlGroup, "cgroup.events") : "";
@@ -188,6 +194,7 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       for (let attempt = 0; attempt < CLEAR_FAILED_ATTEMPTS; attempt++) {
         const state = yield* readScope(systemctl, unit);
+        if (state === undefined) return;
         if (state.activeState === "failed") {
           yield* run(systemctl, ["--user", "reset-failed", unit]);
           return;
@@ -197,8 +204,9 @@ const make = Effect.gen(function* () {
       }
     });
 
-  const takeOomKill: AgentScopeShape["takeOomKill"] = (threadId) =>
+  const oomKilled: AgentScopeShape["oomKilled"] = (threadId) =>
     Effect.gen(function* () {
+      if (oomKilledThreads.has(threadId)) return true;
       const units = unitsByThread.get(threadId);
       if (units === undefined) return false;
       const scope = yield* systemd;
@@ -207,6 +215,7 @@ const make = Effect.gen(function* () {
         let stopping = false;
         for (const unit of units) {
           const state = yield* readScope(scope.systemctl, unit);
+          if (state === undefined) continue;
           const status = classifyScope(state);
           if (status === "running") continue;
           if (status === "stopping") {
@@ -221,6 +230,7 @@ const make = Effect.gen(function* () {
           }
           if (status === "oom-killed") {
             yield* Effect.logWarning("Agent scope was killed: out of memory", { threadId, unit });
+            oomKilledThreads.add(threadId);
             return true;
           }
         }
@@ -240,8 +250,14 @@ const make = Effect.gen(function* () {
       if (scope === undefined) return agentScopeCommand({ command: resolved.value, args });
       const unit = `t3code-${name}-${NodeCrypto.randomUUID().slice(0, 8)}.scope`;
       if (threadId !== undefined) {
+        oomKilledThreads.delete(threadId);
         const units = unitsByThread.get(threadId) ?? new Set<string>();
         units.add(unit);
+        // Sets keep insertion order, so the first unit is the oldest.
+        for (const old of units) {
+          if (units.size <= MAX_UNITS_PER_THREAD) break;
+          units.delete(old);
+        }
         unitsByThread.set(threadId, units);
       }
       const systemdScope: AgentSystemdScope = {
@@ -252,7 +268,7 @@ const make = Effect.gen(function* () {
       };
       return agentScopeCommand({ command: resolved.value, args, scope: systemdScope });
     }),
-    takeOomKill,
+    oomKilled,
   } satisfies AgentScopeShape;
 });
 

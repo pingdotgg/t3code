@@ -27,10 +27,11 @@ export interface AgentScopeShape {
     readonly env?: NodeJS.ProcessEnv | undefined;
   }) => Effect.Effect<AgentScopeCommand>;
   /**
-   * Whether an agent scope started for this thread was killed because the
-   * machine or the agents slice ran out of memory. Reports each kill once.
+   * Whether the latest agent scope of this thread was killed because the
+   * machine or the agents slice ran out of memory. The answer holds until the
+   * thread launches its next agent, so a retried failure reads the same.
    */
-  readonly takeOomKill: (threadId: string) => Effect.Effect<boolean>;
+  readonly oomKilled: (threadId: string) => Effect.Effect<boolean>;
 }
 
 export interface AgentScopeCommand {
@@ -41,7 +42,7 @@ export interface AgentScopeCommand {
 export const AgentScope = Context.Reference<AgentScopeShape>("@t3tools/shared/AgentScope", {
   defaultValue: () => ({
     wrap: ({ command, args }) => Effect.succeed({ command, args }),
-    takeOomKill: () => Effect.succeed(false),
+    oomKilled: () => Effect.succeed(false),
   }),
 });
 

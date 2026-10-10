@@ -656,7 +656,7 @@ export const layer: Layer.Layer<
             const occurredAt = yield* DateTime.now;
             // A turn that failed because systemd killed the agent's scope for
             // memory would otherwise read as a plain provider crash.
-            const failure = (yield* agentScope.takeOomKill(input.threadId))
+            const failure = (yield* agentScope.oomKilled(input.threadId))
               ? { ...input.event.failure, message: "Killed: out of memory.", code: "oom_kill" }
               : input.event.failure;
             return [
