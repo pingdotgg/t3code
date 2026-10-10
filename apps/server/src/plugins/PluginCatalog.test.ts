@@ -697,6 +697,44 @@ it.layer(NodeServices.layer)("PluginCatalog", (it) => {
         }),
       ),
     );
+
+    it.effect("keeps a remove made as the catalogue starts", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const { before, installationId } = yield* enabledInStub();
+          yield* Scope.close(before, Exit.void);
+
+          const stub = yield* makeStubSupervisor;
+          const after = yield* startStubCatalog(yield* Scope.Scope, stub.service);
+          yield* after.remove({ installationId });
+          // A call waits for startup to finish restoring.
+          yield* after.invoke(installationId, "ping", null).pipe(Effect.flip);
+
+          expect((yield* after.list).installations).toEqual([]);
+          expect(yield* storedRows).toEqual([]);
+          expect(stub.registrations.size).toBe(0);
+        }),
+      ),
+    );
+
+    it.effect("keeps an enable made as the catalogue starts", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const { before, installationId } = yield* enabledInStub();
+          yield* Scope.close(before, Exit.void);
+
+          const stub = yield* makeStubSupervisor;
+          const after = yield* startStubCatalog(yield* Scope.Scope, stub.service);
+          yield* after.enable({ installationId });
+          const [directory] = [...stub.registrations.values()].map((r) => r.directory);
+          expect(yield* after.invoke(installationId, "ping", null)).toBe(directory);
+
+          const [row] = (yield* after.list).installations;
+          expect(row).toMatchObject({ enabled: true, generation: 2 });
+          expect(stub.registrations.size).toBe(1);
+        }),
+      ),
+    );
   });
 
   describe("server restart", () => {

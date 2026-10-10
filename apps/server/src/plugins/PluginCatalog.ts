@@ -652,7 +652,8 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
   );
 
   // Re-register what was enabled, off the startup path. Changed bytes are disabled here;
-  // nothing starts a process until it is used.
+  // nothing starts a process until it is used. Starting at once takes the lock before this
+  // returns, so no management step can act on an installation still waiting to be restored.
   yield* managed(
     Effect.forEach(
       [...installations.values()].filter((installation) => installation.record.enabled),
@@ -672,7 +673,10 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
         ),
       { discard: true },
     ),
-  ).pipe(Effect.ensuring(Deferred.succeed(restored, undefined)), Effect.forkScoped);
+  ).pipe(
+    Effect.ensuring(Deferred.succeed(restored, undefined)),
+    Effect.forkIn(scope, { startImmediately: true }),
+  );
 
   return PluginCatalog.of({
     list,
