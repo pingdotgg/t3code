@@ -60,7 +60,7 @@ import {
   isSshRemoteUrl,
   type ChangeRequestTerminology,
 } from "@t3tools/shared/sourceControl";
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import { parseChangeRequestUrl, providerUrlHosts } from "@t3tools/shared/changeRequestUrl";
 import {
   normalizeThreadPullRequestKey,
   threadPullRequestKeyOf,
@@ -1171,7 +1171,7 @@ export const make = Effect.gen(function* () {
   const lookupStates = new Map<string, PullRequestInfo["state"]>();
   const noteLookupState = (pr: PullRequestInfo) =>
     Effect.suspend(() => {
-      const parsed = parseChangeRequestUrl(pr.url);
+      const parsed = parseChangeRequestUrl(pr.url, providerUrlHosts(pr.url));
       if (parsed === null || parsed.number !== pr.number) return Effect.void;
       const key = normalizeThreadPullRequestKey(parsed);
       const id = threadPullRequestKeyOf(key);

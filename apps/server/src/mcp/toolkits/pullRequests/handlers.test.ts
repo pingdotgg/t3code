@@ -158,6 +158,7 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
   const layerDependencies = Layer.mergeAll(
     Layer.mock(ProjectService.ProjectService)({
       getShell: () => Effect.succeed(Option.fromNullishOr(project)),
+      listShells: () => Effect.succeed(project ? [project] : []),
     }),
     Layer.mock(Orchestrator.OrchestratorV2)({
       getThreadShell: (id) =>

@@ -16,7 +16,10 @@ import {
   type SourceControlProviderDiscoveryItem,
   type SourceControlRepositoryCloneUrls,
 } from "@t3tools/contracts";
-import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
+import {
+  detectSourceControlProviderFromGitRemoteUrl,
+  normalizeGitRemoteUrl,
+} from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
@@ -474,6 +477,32 @@ export function pullRequestCheckoutBranchName(input: {
     ? `${input.headOwner}/${input.headRefName}`
     : input.headRefName;
 }
+
+/**
+ * A GitHub Enterprise host named nothing like GitHub reads as an unknown host from its remote
+ * URL alone. Discovery claims it by the credential GitHub holds for its web host, and marking
+ * the identity GitHub lets clients open its pull request links the way they open github.com's.
+ */
+const refineRepositoryIdentity: NonNullable<
+  SourceControlProvider.SourceControlProvider["Service"]["refineRepositoryIdentity"]
+> = Effect.fn("GitHubSourceControlProvider.refineRepositoryIdentity")(function* ({
+  identity,
+  resolveContext,
+}) {
+  if (!identity.rootPath || (identity.provider !== undefined && identity.provider !== "unknown"))
+    return identity;
+  const baseUrl = detectSourceControlProviderFromGitRemoteUrl(identity.locator.remoteUrl)?.baseUrl;
+  if (!baseUrl) return identity;
+  const context = yield* resolveContext({
+    cwd: identity.rootPath,
+    context: {
+      provider: { kind: SourceControlProviderKind.make("unknown"), name: "Unknown", baseUrl },
+      remoteName: identity.locator.remoteName,
+      remoteUrl: identity.locator.remoteUrl,
+    },
+  });
+  return context?.provider.kind === "github" ? { ...identity, provider: "github" } : identity;
+});
 
 /** The checkout's GitHub API host, from the remote the caller resolved the provider from. */
 const contextHost = (context: SourceControlProvider.SourceControlProviderContext | undefined) =>
@@ -945,6 +974,7 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("github"),
+    refineRepositoryIdentity,
     // `gh pr list --head` filters on the head ref name alone and accepts anything, so an
     // `owner:branch` or `remote:branch` selector silently lists zero pull requests while
     // spending a GraphQL call; the bare branch is always among the selectors. Without the owner,

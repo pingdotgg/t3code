@@ -8,6 +8,7 @@ import {
 import { Minus, Plus } from "lucide";
 import { useState, type ComponentProps, type MouseEvent as ReactMouseEvent } from "react";
 
+import { gitHubHostsOf } from "@t3tools/shared/changeRequestUrl";
 import { findProjectOnChangeRequestHost, parseChangeRequestUrl } from "~/lib/openPullRequestLink";
 
 import { useProjects } from "~/state/entities";
@@ -33,15 +34,10 @@ function ThreadDetailsPrLinkRow({
   onActed?: (() => void) | undefined;
   onStopWatching?: (() => void) | undefined;
 }) {
-  const projects = useProjects();
-  const parsed = parseChangeRequestUrl(link.url);
+  const projects = useProjects().filter((candidate) => candidate.environmentId === environmentId);
+  const parsed = parseChangeRequestUrl(link.url, gitHubHostsOf(projects));
   const project =
-    parsed === null
-      ? null
-      : (findProjectOnChangeRequestHost(
-          projects.filter((candidate) => candidate.environmentId === environmentId),
-          parsed,
-        ) ?? null);
+    parsed === null ? null : (findProjectOnChangeRequestHost(projects, parsed) ?? null);
   const linked = linkedPullRequestSnapshotStatus(link);
   const pr = linked?.pr ?? null;
   return (

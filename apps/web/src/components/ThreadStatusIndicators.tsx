@@ -30,6 +30,7 @@ import { useRender } from "@base-ui/react/use-render";
 import { type ReactNode, type AnimationEvent, type MouseEvent, type ReactElement } from "react";
 import { cn } from "../lib/utils";
 
+import { providerUrlHosts } from "@t3tools/shared/changeRequestUrl";
 import { parseChangeRequestUrl } from "../lib/openPullRequestLink";
 import { useEnvironmentQuery } from "../state/query";
 import { linkedPullRequestDetailAtom, useSharedPullRequestSummary } from "../state/pullRequests";
@@ -98,7 +99,7 @@ export function useLinkedThreadPullRequest(
   // touch the cache on every render.
   const reference = useMemo(() => {
     if (fallback == null) return null;
-    const host = parseChangeRequestUrl(fallback.url)?.host;
+    const host = parseChangeRequestUrl(fallback.url, providerUrlHosts(fallback.url))?.host;
     return { ...fallback, ...(host === undefined ? {} : { host }) };
   }, [fallback]);
   const queried = useEnvironmentQuery(

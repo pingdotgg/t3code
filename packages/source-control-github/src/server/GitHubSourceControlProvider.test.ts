@@ -1217,3 +1217,52 @@ it.effect.each([
     );
   },
 );
+
+describe("GitHubSourceControlProvider repository identity", () => {
+  const identity = (remoteUrl: string, provider?: "github" | "unknown" | "forgejo") => ({
+    canonicalKey: "git.corp.example/team/workspace",
+    locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl },
+    rootPath: "/repo",
+    ...(provider === undefined ? {} : { provider }),
+  });
+
+  it.effect("marks a GitHub Enterprise host that discovery claims as GitHub", () =>
+    Effect.gen(function* () {
+      const refine = (yield* makeProvider({})).refineRepositoryIdentity!;
+      const baseUrls: Array<string> = [];
+      const refined = yield* refine({
+        identity: identity("git@git.corp.example:team/workspace.git", "unknown"),
+        resolveContext: ({ context }) => {
+          baseUrls.push(context.provider.baseUrl);
+          return Effect.succeed({
+            ...context,
+            provider: {
+              ...context.provider,
+              kind: SourceControlProviderKind.make("github"),
+              name: "GitHub Self-Hosted",
+            },
+          });
+        },
+      });
+      // Discovery claims a custom host by its credential, so it is asked about the web host.
+      assert.deepStrictEqual(baseUrls, ["https://git.corp.example"]);
+      assert.strictEqual(refined.provider, "github");
+    }),
+  );
+
+  it.effect("leaves hosts GitHub does not claim, and other providers' identities, alone", () =>
+    Effect.gen(function* () {
+      const refine = (yield* makeProvider({})).refineRepositoryIdentity!;
+      const unclaimed = identity("git@git.corp.example:team/workspace.git", "unknown");
+      assert.strictEqual(
+        yield* refine({ identity: unclaimed, resolveContext: () => Effect.succeed(null) }),
+        unclaimed,
+      );
+      const forgejo = identity("git@git.corp.example:team/workspace.git", "forgejo");
+      assert.strictEqual(
+        yield* refine({ identity: forgejo, resolveContext: () => Effect.die("not asked") }),
+        forgejo,
+      );
+    }),
+  );
+});

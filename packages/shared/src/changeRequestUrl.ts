@@ -1,4 +1,9 @@
-import type { RepositoryIdentity, ThreadLinkedPullRequest } from "@t3tools/contracts";
+import {
+  pullRequestHostOf,
+  SourceControlProviderKind,
+  type RepositoryIdentity,
+  type ThreadLinkedPullRequest,
+} from "@t3tools/contracts";
 import { canonicalRepositoryKey } from "./sourceControl.ts";
 
 /**
@@ -36,8 +41,14 @@ function isHostOf(hostname: string, apex: string, label?: string): boolean {
  * Nothing here tries to tell a lookalike hostname from a real one — `github.com.evil.test` and
  * the rest are an open set, and blocking spellings of it costs real hosts (`gitlab.com.br` is a
  * registrable domain). What a claim is worth is decided where it is used.
+ *
+ * `gitHubHosts` names GitHub hosts known from checked-out projects (see `gitHubHostsOf`), so a
+ * GitHub Enterprise install named nothing like GitHub is still read as one.
  */
-export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | null {
+export function parseChangeRequestUrl(
+  targetUrl: string,
+  gitHubHosts: ReadonlyArray<string> = [],
+): ChangeRequestLink | null {
   let url: URL;
   try {
     url = new URL(targetUrl);
@@ -54,7 +65,7 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
     return claim(host, match);
   }
   // GitHub, and any Enterprise install: /{owner}/{repo}/pull/{n}
-  if (isHostOf(host, "github.com", "github")) {
+  if (isHostOf(host, "github.com", "github") || gitHubHosts.includes(host)) {
     const match = /^\/([^/]+\/[^/]+)\/pull\/(\d+)(?:\/|$)/u.exec(url.pathname);
     if (match) return claim(host, match);
   }
@@ -80,6 +91,35 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
     return claim(host, match);
   }
   return null;
+}
+
+/**
+ * The hosts these projects were checked out from that may be GitHub: GitHub's own, and those
+ * whose hostname named no provider, since a GitHub Enterprise install is often only known to
+ * be one once the server reads it. A link still has to match one of these projects to open.
+ */
+export function gitHubHostsOf(
+  projects: ReadonlyArray<{ readonly repositoryIdentity?: RepositoryIdentity | null | undefined }>,
+): string[] {
+  return projects.flatMap(({ repositoryIdentity }) =>
+    repositoryIdentity?.provider === "github" || repositoryIdentity?.provider === "unknown"
+      ? [
+          pullRequestHostOf(
+            repositoryIdentity,
+            SourceControlProviderKind.make(repositoryIdentity.provider),
+          ),
+        ]
+      : [],
+  );
+}
+
+/**
+ * The host of a change request URL a provider returned itself or a thread already accepted, as
+ * `parseChangeRequestUrl`'s `gitHubHosts`: reading such a URL back needs no lookalike guard.
+ */
+export function providerUrlHosts(url: string): string[] {
+  const host = URL.parse(url)?.hostname.toLowerCase();
+  return host ? [host] : [];
 }
 
 function claim(host: string, match: RegExpExecArray | null): ChangeRequestLink | null {
@@ -197,9 +237,13 @@ export function pullRequestCandidateUrlFromReferenceAutolink(targetUrl: string):
 export function matchesLinkedPullRequestUrl(
   linkedPullRequest: ThreadLinkedPullRequest,
   targetUrl: string,
+  gitHubHosts: ReadonlyArray<string> = [],
 ): boolean {
-  const linked = parseChangeRequestUrl(linkedPullRequest.url);
-  const target = parseChangeRequestUrl(targetUrl);
+  const linked = parseChangeRequestUrl(
+    linkedPullRequest.url,
+    providerUrlHosts(linkedPullRequest.url),
+  );
+  const target = parseChangeRequestUrl(targetUrl, gitHubHosts);
   return (
     linked !== null &&
     target !== null &&
@@ -211,8 +255,11 @@ export function matchesLinkedPullRequestUrl(
 }
 
 /** The repository root behind a recognised change-request URL, without PR-specific state. */
-export function changeRequestRepositoryUrl(targetUrl: string): string | null {
-  const changeRequest = parseChangeRequestUrl(targetUrl);
+export function changeRequestRepositoryUrl(
+  targetUrl: string,
+  gitHubHosts: ReadonlyArray<string> = [],
+): string | null {
+  const changeRequest = parseChangeRequestUrl(targetUrl, gitHubHosts);
   if (changeRequest === null) return null;
   const url = new URL(targetUrl);
   const repositoryPath =
@@ -227,8 +274,9 @@ export function changeRequestRepositoryUrl(targetUrl: string): string | null {
   return url.toString();
 }
 
+/** The URL of another change request in a linked one's repository; `url` is a stored link. */
 export function siblingPullRequestUrl(url: string, number: number): string | null {
-  const reference = parseChangeRequestUrl(url);
+  const reference = parseChangeRequestUrl(url, providerUrlHosts(url));
   if (reference === null || !Number.isSafeInteger(number) || number < 1) return null;
   const sibling = new URL(url);
   const route = /^\/(-\/merge_requests|pulls?|pull-requests|pullrequest)\/\d+(?:\/|$)/u.exec(
