@@ -128,6 +128,18 @@ export const SourceControlProviderAuth = Schema.Struct({
   account: Schema.Option(TrimmedNonEmptyString),
   host: Schema.Option(TrimmedNonEmptyString),
   detail: Schema.Option(TrimmedNonEmptyString),
+  /** Configured Forgejo / Gitea connections, including failed or unverified logins. */
+  instances: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        baseUrl: TrimmedNonEmptyString,
+        executable: Schema.Literals(["fj", "tea"]),
+        login: TrimmedNonEmptyString,
+        account: Schema.Option(TrimmedNonEmptyString),
+        status: SourceControlProviderAuthStatus,
+      }),
+    ),
+  ),
   /** Every login the provider CLI holds, across hosts. Only GitHub reports these today. */
   accounts: Schema.optionalKey(
     Schema.Array(

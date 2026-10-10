@@ -834,6 +834,16 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   ...SOURCE_CONTROL_HOST_SEARCH_ITEMS,
   {
+    id: "forgejo-instances",
+    title: "Forgejo and Gitea instances",
+    to: "/settings/source-control",
+    searchTerms: [
+      "forgejo gitea fj tea codeberg multiple servers instances connections accounts usernames login",
+    ],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
     id: "source-control-writing-style",
     title: "Source control writing style",
     to: "/settings/source-control",
