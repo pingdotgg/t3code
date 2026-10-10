@@ -91,8 +91,9 @@ import {
   groupByProvider,
   isModelSelectionUnavailable,
 } from "../../lib/modelOptions";
-import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
+import { useScaledTextRole, type ScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
+import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { ControlPillMenu } from "../../components/ControlPill";
 import type { ActiveTurnComposerAction } from "@t3tools/client-runtime/state/composer-dispatch";
@@ -133,6 +134,20 @@ import {
  * Exported so the parent can compute feed overlap / content insets.
  */
 export const COMPOSER_COLLAPSED_CHROME = 60;
+
+const COLLAPSED_EDITOR_DEFAULT_INSET = 6;
+// DM Sans descender (0.31em) plus half its x-height (0.504em). iOS puts a line's spare
+// height above the glyphs, so this is how far the lowercase midline sits above the line's bottom.
+const LOWERCASE_MIDLINE_EM = 0.562;
+
+function lowercaseMidline(text: ScaledTextRole): number {
+  return text.lineHeight - LOWERCASE_MIDLINE_EM * text.fontSize;
+}
+
+function collapsedEditorInset(text: ScaledTextRole): number {
+  const shift = lowercaseMidline(text) - lowercaseMidline(MOBILE_TYPOGRAPHY.body);
+  return Math.max(0, Math.round(COLLAPSED_EDITOR_DEFAULT_INSET - shift));
+}
 
 /**
  * Height of the expanded composer (card + toolbar + vertical padding, excluding safe-area inset).
@@ -1005,7 +1020,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 // Android: collapsed single line centers natively (gravity) in
                 // a pill-height box matching the send button; iOS keeps insets.
                 singleLineCentered={!isExpanded}
-                contentInsetVertical={isExpanded || Platform.OS === "android" ? 0 : 6}
+                contentInsetVertical={
+                  isExpanded || Platform.OS === "android" ? 0 : collapsedEditorInset(bodyText)
+                }
                 style={
                   isExpanded
                     ? {
