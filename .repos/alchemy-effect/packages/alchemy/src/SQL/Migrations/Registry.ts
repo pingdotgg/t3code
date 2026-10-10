@@ -4,14 +4,13 @@ import type * as Path from "effect/Path";
 import { hashMigrations } from "../SqlFile.ts";
 import { recordsEqual } from "../../Util/equal.ts";
 import { ALCHEMY_DEFAULT_TABLE, applyAlchemyFormat } from "./AlchemyFormat.ts";
-import { detectLayout } from "./Detect.ts";
 import {
   MigrationError,
   type DrizzleV0LayoutError,
   type MigrationHistoryConflictError,
   type SqlExecutor,
 } from "./Format.ts";
-import { readDrizzleDirRecords, readFlatRecords } from "./Records.ts";
+import { readMigrationRecords } from "./Records.ts";
 
 /**
  * The migrations input surface shared by every SQL database resource.
@@ -111,11 +110,7 @@ export const applyMigrations = (options: {
 > =>
   Effect.gen(function* () {
     const { resolved, executor } = options;
-    const layout = yield* detectLayout(resolved.dir);
-    const records =
-      layout === "flat"
-        ? yield* readFlatRecords(resolved.dir)
-        : yield* readDrizzleDirRecords(resolved.dir);
+    const records = yield* readMigrationRecords(resolved.dir);
     yield* applyAlchemyFormat({
       executor,
       table: resolved.table,

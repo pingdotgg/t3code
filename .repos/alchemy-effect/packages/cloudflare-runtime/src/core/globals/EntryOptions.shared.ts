@@ -13,3 +13,6 @@
  * worker (`workers-sdk/packages/miniflare/src/workers/assets/rpc-proxy.worker.ts`).
  */
 export const BINDING_USER_WORKER_DIRECT = "USER_WORKER_DIRECT";
+
+/** Internal module-runner connection; routed directly to the Worker in dev. */
+export const PATH_MODULE_RUNNER_INIT = "/cdn-cgi/alchemy/module-runner/init";

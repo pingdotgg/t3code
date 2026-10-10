@@ -50,6 +50,7 @@ test.provider(
         ),
       ).toBe(true);
     }),
+  { tags: ["provider:aws", "provider:aws:forecast", "live"] },
 );
 
 // Entitlement probe: Amazon Forecast is closed to new customers — accounts
@@ -84,6 +85,7 @@ test.provider(
           );
       }
     }),
+  { tags: ["provider:aws", "provider:aws:forecast", "live"] },
 );
 
 // Forecast datasets and dataset groups are cheap, fast metadata objects, but
@@ -190,5 +192,5 @@ test.provider.skipIf(!process.env.AWS_TEST_FORECAST)(
       );
       expect(datasetError._tag).toBe("ResourceNotFoundException");
     }),
-  { timeout: 300_000 },
+  { tags: ["provider:aws", "provider:aws:forecast", "live"], timeout: 300_000 },
 );

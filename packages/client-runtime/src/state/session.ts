@@ -1,26 +1,31 @@
 import type { AuthSessionState, EnvironmentId, ServerConfig } from "@t3tools/contracts";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import type { HttpClient } from "effect/unstable/http";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { HttpClient } from "effect/http";
+import { AsyncResult, Atom } from "effect/reactivity";
 
-import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
-import { EnvironmentRegistry } from "../connection/registry.ts";
+import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
+import * as EnvironmentRegistry from "../connection/registry.ts";
 import type { PreparedConnection } from "../connection/model.ts";
-import { EnvironmentSupervisor } from "../connection/supervisor.ts";
-import { environmentEndpointUrl } from "../environment/endpoint.ts";
-import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import * as ManagedRelay from "../relay/managedRelay.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
-import { followStreamInEnvironment } from "./runtime.ts";
+import { followStreamInEnvironment } from "./environmentStreams.ts";
+
+/** @public Required to name the error in consumers' inferred session results. */
+export class SessionHttpClientUnavailable extends Data.TaggedError(
+  "SessionHttpClientUnavailable",
+) {}
 
 function initialConfigOption<E>(
   initialConfig: Effect.Effect<ServerConfig, E>,
 ): Effect.Effect<Option.Option<ServerConfig>> {
   return initialConfig.pipe(
-    Effect.map(Option.some),
+    Effect.asSome,
     Effect.catch((error) =>
       Effect.logWarning("Could not load the initial environment configuration.").pipe(
         Effect.annotateLogs({ ...safeErrorLogAttributes(error) }),
@@ -30,8 +35,8 @@ function initialConfigOption<E>(
   );
 }
 
-// Bounded like the snapshot fetches: a wedged environment must not pin the
-// permissions check (and with it the settings UI) in a loading state for long.
+// Bounded so a wedged environment cannot pin the permissions check (and with it
+// the settings UI) in a loading state for long.
 const DEFAULT_SESSION_STATE_TIMEOUT_MS = 6_000;
 
 /**
@@ -43,15 +48,17 @@ export const fetchEnvironmentSessionState = Effect.fn(
   "clientRuntime.state.fetchEnvironmentSessionState",
 )(function* (input: {
   readonly prepared: PreparedConnection;
-  readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
-  readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
+  readonly signer: Option.Option<ManagedRelay.ManagedRelayDpopSigner["Service"]>;
+  readonly remoteAuthorization?: Option.Option<
+    RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]
+  >;
   readonly timeoutMs?: number;
 }) {
   return yield* executeAuthenticatedEnvironmentHttpRequest({
     ...input,
     group: "auth",
     method: "GET",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/auth/session"),
+    url: (urls) => urls.session(),
     timeoutMs: input.timeoutMs ?? DEFAULT_SESSION_STATE_TIMEOUT_MS,
     request: ({ client, headers }) => client.session({ headers }),
     // This endpoint returns 200 with authenticated:false for expired credentials.
@@ -59,15 +66,15 @@ export const fetchEnvironmentSessionState = Effect.fn(
   });
 });
 
-export function createEnvironmentSessionAtoms<R, E>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry | HttpClient.HttpClient | R, E>,
+function makeEnvironmentSessionAtoms<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, E>,
 ) {
   const initialConfigAtom = Atom.family((environmentId: EnvironmentId) =>
     runtime.atom(
       followStreamInEnvironment(
         environmentId,
         Stream.unwrap(
-          EnvironmentSupervisor.pipe(
+          EnvironmentSupervisor.EnvironmentSupervisor.pipe(
             Effect.map((supervisor) =>
               SubscriptionRef.changes(supervisor.session).pipe(
                 Stream.mapEffect(
@@ -103,7 +110,7 @@ export function createEnvironmentSessionAtoms<R, E>(
       followStreamInEnvironment(
         environmentId,
         Stream.unwrap(
-          EnvironmentSupervisor.pipe(
+          EnvironmentSupervisor.EnvironmentSupervisor.pipe(
             Effect.map((supervisor) => SubscriptionRef.changes(supervisor.prepared)),
           ),
         ),
@@ -131,9 +138,17 @@ export function createEnvironmentSessionAtoms<R, E>(
           return Effect.never;
         }
         return Effect.gen(function* () {
-          const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
-          const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
-          return yield* fetchEnvironmentSessionState({ prepared, signer, remoteAuthorization });
+          const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+          const remoteAuthorization = yield* Effect.serviceOption(
+            RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+          );
+          const client = yield* Effect.serviceOption(HttpClient.HttpClient);
+          if (Option.isNone(client)) return yield* new SessionHttpClientUnavailable();
+          return yield* fetchEnvironmentSessionState({
+            prepared,
+            signer,
+            remoteAuthorization,
+          }).pipe(Effect.provideService(HttpClient.HttpClient, client.value));
         });
       })
       .pipe(
@@ -158,4 +173,17 @@ export function createEnvironmentSessionAtoms<R, E>(
     sessionStateAtom,
     sessionStateValueAtom,
   };
+}
+
+const sessionAtomsByRuntime = new WeakMap<object, ReturnType<typeof makeEnvironmentSessionAtoms>>();
+
+/** Commands and UI share one session fetch and the same reconnect invalidation. */
+export function createEnvironmentSessionAtoms<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, E>,
+): ReturnType<typeof makeEnvironmentSessionAtoms<R, E>> {
+  const existing = sessionAtomsByRuntime.get(runtime);
+  if (existing) return existing as ReturnType<typeof makeEnvironmentSessionAtoms<R, E>>;
+  const atoms = makeEnvironmentSessionAtoms(runtime);
+  sessionAtomsByRuntime.set(runtime, atoms);
+  return atoms;
 }

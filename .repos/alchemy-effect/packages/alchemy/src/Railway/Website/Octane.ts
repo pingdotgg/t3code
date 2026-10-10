@@ -15,17 +15,10 @@ export interface OctaneProps extends FrameworkSiteProps {}
  * Deploy an [OctaneJS](https://octanejs.dev) application to Railway:
  * Octane's SSR server plus client assets on one `Railway.Service`.
  *
- * The project's `octane.config.ts` must select the Node marker adapter:
- *
- * ```ts
- * import { node } from "@alchemy.run/frontend-frameworks/octane/node-adapter";
- * import { defineConfig } from "@octanejs/vite-plugin";
- *
- * export default defineConfig({
- *   adapter: node(),
- *   // ...
- * });
- * ```
+ * `Railway.Website.Octane` selects hosting and automatically wraps Octane's
+ * default native Node output. Keep compiler and route settings in
+ * `octane.config.ts` without an adapter. The legacy Node marker adapter
+ * remains optional for existing projects.
  *
  * During `alchemy dev` the site is Octane/Vite's own dev server and no
  * cloud resources are created. `Alchemy.remote()` opts back into the live

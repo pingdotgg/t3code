@@ -14,7 +14,8 @@ export type HardwareKeyboardCommand =
   | "terminal"
   | "review"
   | "copyThreadReference"
-  | "toggleSidebar";
+  | "toggleSidebar"
+  | "cycleHost";
 
 type CommandHandler = (command: HardwareKeyboardCommand) => boolean | void;
 
@@ -67,8 +68,10 @@ export function subscribeToHardwareKeyboardCommandRegistrations(listener: () => 
 export function dispatchHardwareKeyboardCommand(command: HardwareKeyboardCommand): boolean {
   const commandHandlers = handlers.get(command);
   if (!commandHandlers) return false;
-  // `.reverse()` on a copy, not `.toReversed()`: Hermes has no ES2023 array methods.
-  for (const handler of [...commandHandlers].reverse()) {
+  const handlersInRegistrationOrder = Array.from(commandHandlers);
+  for (let index = handlersInRegistrationOrder.length - 1; index >= 0; index -= 1) {
+    const handler = handlersInRegistrationOrder[index];
+    if (!handler) continue;
     if (handler(command) !== false) return true;
   }
   return false;
@@ -88,4 +91,17 @@ export function parseActiveThreadPath(pathname: string): {
   } catch {
     return null;
   }
+}
+
+/**
+ * The machine after `currentId` in display order, wrapping around. Starts at
+ * the first machine when `currentId` is not listed.
+ */
+export function nextEnvironmentId<T extends { readonly environmentId: string }>(
+  environments: ReadonlyArray<T>,
+  currentId: string | null,
+): T["environmentId"] | null {
+  if (environments.length < 2) return null;
+  const index = environments.findIndex((environment) => environment.environmentId === currentId);
+  return environments[(index + 1) % environments.length]?.environmentId ?? null;
 }

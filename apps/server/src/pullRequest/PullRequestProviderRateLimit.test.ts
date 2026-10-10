@@ -1,21 +1,21 @@
 import { assert, it } from "@effect/vitest";
 
-import * as AzureDevOpsCli from "../sourceControl/AzureDevOpsCli.ts";
-import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
-import * as GitHubCli from "../sourceControl/GitHubCli.ts";
-import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
-import * as GitLabCli from "../sourceControl/GitLabCli.ts";
-import { azureDevOpsProviderFailure } from "./AzureDevOpsPullRequestProvider.ts";
-import { bitbucketProviderFailure } from "./BitbucketPullRequestProvider.ts";
-import { gitHubProviderFailure } from "./GitHubPullRequestProvider.ts";
-import { gitLabProviderFailure } from "./GitLabPullRequestProvider.ts";
+import * as AzureDevOpsCli from "@t3tools/source-control-azure-devops/server/AzureDevOpsCli";
+import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
+import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
+import { azureDevOpsProviderFailure } from "@t3tools/source-control-azure-devops/server/AzureDevOpsPullRequestProvider";
+import { bitbucketProviderFailure } from "@t3tools/source-control-bitbucket/server/BitbucketPullRequestProvider";
+import { gitHubProviderFailure } from "@t3tools/source-control-github/server/GitHubPullRequestProvider";
+import { gitLabProviderFailure } from "@t3tools/source-control-gitlab/server/GitLabPullRequestProvider";
 
 const cause = new Error("redacted provider failure");
 
 it("classifies rate limits from every pull-request provider", () => {
   assert.deepStrictEqual(
     gitHubProviderFailure(
-      new GitHubCli.GitHubCliRateLimitError({ command: "gh", cwd: "/repo", cause }),
+      new GitHubApi.GitHubApiRateLimitError({ host: "github.com", operation: "execute" }),
     ),
     { reason: "rate-limited" },
   );

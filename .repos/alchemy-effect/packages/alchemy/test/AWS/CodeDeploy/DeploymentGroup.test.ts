@@ -171,5 +171,13 @@ test.provider(
         );
       expect(afterConfig).toBeUndefined();
     }),
-  { timeout: 300_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:codedeploy",
+      "provider:aws:iam",
+      "live",
+    ],
+    timeout: 300_000,
+  },
 );

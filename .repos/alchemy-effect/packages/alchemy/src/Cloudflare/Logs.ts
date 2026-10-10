@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import * as Socket from "effect/unstable/socket/Socket";
+import * as Socket from "effect/socket/Socket";
 import type { LogLine, LogsInput } from "../Provider.ts";
 import { profileCommandHint } from "../Util/interactive.ts";
 

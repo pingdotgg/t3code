@@ -3,7 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { ConnectionCatalogDocument } from "@t3tools/client-runtime/platform";
 import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64 from "effect/encoding/Base64";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
@@ -28,7 +28,7 @@ const encodeLegacySavedEnvironments = Schema.encodeEffect(
     Schema.Struct({ version: Schema.Literal(1), records: Schema.Array(Schema.Unknown) }),
   ),
 );
-function makeSafeStorageLayer(available: boolean, failDecrypt: Ref.Ref<boolean> | null = null) {
+function layerSafeStorageFor(available: boolean, failDecrypt: Ref.Ref<boolean> | null = null) {
   return Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, {
     isEncryptionAvailable: Effect.succeed(available),
     encryptString: (value) => Effect.succeed(textEncoder.encode(`encrypted:${value}`)),
@@ -46,17 +46,17 @@ function makeSafeStorageLayer(available: boolean, failDecrypt: Ref.Ref<boolean> 
         return decoded.slice("encrypted:".length);
       });
     },
-    selectedStorageBackend: Effect.succeed(Option.none()),
+    selectedStorageBackend: Effect.succeedNone,
   } satisfies ElectronSafeStorage.ElectronSafeStorage["Service"]);
 }
 
-function makeLayer(
+function layerFor(
   baseDir: string,
   encryptionAvailable = true,
   failDecrypt: Ref.Ref<boolean> | null = null,
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem> = NodeServices.layer,
 ) {
-  const environmentLayer = DesktopEnvironment.layer({
+  const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     homeDirectory: baseDir,
     platform: "darwin",
@@ -71,20 +71,20 @@ function makeLayer(
       Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ T3CODE_HOME: baseDir })),
     ),
   );
-  const safeStorageLayer = makeSafeStorageLayer(encryptionAvailable, failDecrypt);
-  const dependencies = Layer.mergeAll(
-    environmentLayer,
-    safeStorageLayer,
+  const layerSafeStorage = layerSafeStorageFor(encryptionAvailable, failDecrypt);
+  const layerDependencies = Layer.mergeAll(
+    layerEnvironment,
+    layerSafeStorage,
     NodeServices.layer,
     fileSystemLayer,
   );
-  const savedEnvironmentsLayer = DesktopSavedEnvironments.layer.pipe(
-    Layer.provideMerge(dependencies),
+  const layerSavedEnvironments = DesktopSavedEnvironments.layer.pipe(
+    Layer.provideMerge(layerDependencies),
   );
 
   return DesktopConnectionCatalogStore.layer.pipe(
-    Layer.provideMerge(savedEnvironmentsLayer),
-    Layer.provideMerge(dependencies),
+    Layer.provideMerge(layerSavedEnvironments),
+    Layer.provideMerge(layerDependencies),
   );
 }
 
@@ -97,7 +97,7 @@ const withStore = <A, E, R>(
     const baseDir = yield* fileSystem.makeTempDirectoryScoped({
       prefix: "t3-desktop-connection-catalog-test-",
     });
-    return yield* effect.pipe(Effect.provide(makeLayer(baseDir, encryptionAvailable)));
+    return yield* effect.pipe(Effect.provide(layerFor(baseDir, encryptionAvailable)));
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopConnectionCatalogStore", () => {
@@ -175,7 +175,7 @@ describe("DesktopConnectionCatalogStore", () => {
               record.environmentId === "bearer-environment"
                 ? {
                     ...record,
-                    encryptedBearerToken: Encoding.encodeBase64(
+                    encryptedBearerToken: Base64.encode(
                       textEncoder.encode("encrypted:legacy-token"),
                     ),
                   }
@@ -280,14 +280,14 @@ describe("DesktopConnectionCatalogStore", () => {
         method: "readFileString",
         pathOrDescriptor: path.join(baseDir, "userdata", "connection-catalog.json"),
       });
-      const fileSystemLayer = Layer.succeed(
+      const layerFileSystem = Layer.succeed(
         FileSystem.FileSystem,
         FileSystem.makeNoop({
           readFileString: () => Effect.fail(permissionError),
         }),
       );
       const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
-        Effect.provide(makeLayer(baseDir, true, null, fileSystemLayer)),
+        Effect.provide(layerFor(baseDir, true, null, layerFileSystem)),
       );
 
       const error = yield* store.get.pipe(Effect.flip);
@@ -318,14 +318,14 @@ describe("DesktopConnectionCatalogStore", () => {
         method: "makeDirectory",
         pathOrDescriptor: path.join(baseDir, "userdata"),
       });
-      const fileSystemLayer = Layer.succeed(
+      const layerFileSystem = Layer.succeed(
         FileSystem.FileSystem,
         FileSystem.makeNoop({
           makeDirectory: () => Effect.fail(permissionError),
         }),
       );
       const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
-        Effect.provide(makeLayer(baseDir, true, null, fileSystemLayer)),
+        Effect.provide(layerFor(baseDir, true, null, layerFileSystem)),
       );
 
       const error = yield* store.set("{}").pipe(Effect.flip);
@@ -413,7 +413,7 @@ describe("DesktopConnectionCatalogStore", () => {
         prefix: "t3-desktop-connection-catalog-test-",
       });
       const failDecrypt = yield* Ref.make(false);
-      const layer = makeLayer(baseDir, true, failDecrypt);
+      const layer = layerFor(baseDir, true, failDecrypt);
       const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
         Effect.provide(layer),
       );

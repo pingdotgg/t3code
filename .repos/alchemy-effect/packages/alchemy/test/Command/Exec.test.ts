@@ -30,7 +30,7 @@ test.provider(
       const all = yield* provider.list();
       expect(all).toEqual([]);
     }),
-  { timeout: 30000 },
+  { tags: ["unit", "local"], timeout: 30000 },
 );
 
 test.provider(
@@ -113,5 +113,5 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { timeout: 60000 },
+  { tags: ["unit", "local"], timeout: 60000 },
 );

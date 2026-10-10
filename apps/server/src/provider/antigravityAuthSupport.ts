@@ -1,24 +1,23 @@
-import * as NodeCrypto from "node:crypto";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Effect's symlink has no type argument, and Windows needs a junction to link without elevation.
 import * as NodeFSP from "node:fs/promises";
-// @effect-diagnostics-next-line nodeBuiltinImport:off - resolveAntigravityProfileDirectory is a pure sync helper, so it cannot use the Path service.
-import * as NodePath from "node:path";
 
 import type { AntigravityAuthMethod, ProviderInstanceId } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as AcpErrors from "effect-acp/errors";
 
-import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
-import type { AcpSpawnInput } from "./acp/AcpSessionRuntime.ts";
+import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   antigravityUserSkillDirectories,
   resolveAntigravityUserHome,
@@ -185,19 +184,30 @@ export function isAntigravitySignInRequiredError(error: unknown): boolean {
   );
 }
 
-/** Keeps case-sensitive instance IDs separate on case-insensitive filesystems. */
-export function resolveAntigravityProfileDirectory(
-  stateDir: string,
-  instanceId: ProviderInstanceId,
-): string {
-  const directoryName = NodeCrypto.createHash("sha256").update(instanceId).digest("hex");
-  return NodePath.join(stateDir, "providers", "antigravity", directoryName);
+export interface AntigravityInstanceDirectories {
+  /** GEMINI_HOME for the agent. Holds the instance's Google sign-in. */
+  readonly profile: string;
+  /**
+   * Parent of the per-process directories the agent unpacks into. It sits
+   * beside the profile, not inside it: the agent unpacks members up to 120
+   * characters deep, and the profile's longer name would push them past
+   * Windows' 260-character path limit.
+   */
+  readonly runtimeTemp: string;
 }
 
-/** Parent of the per-process runtime temp directories inside a profile. */
-export function resolveAntigravityRuntimeTempDirectory(profileDirectory: string): string {
-  return NodePath.join(profileDirectory, "antigravity-acp", "tmp");
-}
+/** Hashes the instance ID so case-only differences stay separate on case-insensitive filesystems. */
+export const resolveAntigravityInstanceDirectories = Effect.fn(
+  "resolveAntigravityInstanceDirectories",
+)(function* (stateDir: string, instanceId: ProviderInstanceId) {
+  const crypto = yield* Crypto.Crypto;
+  const path = yield* Path.Path;
+  const key = Hex.encode(yield* crypto.digest("SHA-256", new TextEncoder().encode(instanceId)));
+  return {
+    profile: path.join(stateDir, "providers", "antigravity", key),
+    runtimeTemp: path.join(stateDir, "antigravity-tmp", key.slice(0, 12)),
+  } satisfies AntigravityInstanceDirectories;
+});
 
 function quoteBrowserArgument(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
@@ -265,9 +275,7 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
     yield* Effect.gen(function* () {
       const existing = yield* fs.readLink(link).pipe(
         Effect.map((value): string | undefined => path.resolve(path.dirname(link), value)),
-        Effect.catch((error) =>
-          error.reason._tag === "NotFound" ? Effect.succeed(undefined) : Effect.fail(error),
-        ),
+        Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
       );
       if (existing === target) return;
       if (existing !== undefined) {
@@ -300,14 +308,21 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   readonly auth?: AntigravityAuthConfig;
   /** Home the agent expands `~` against. Defaults to the launch environment's. */
   readonly userHome?: string;
+  /** Parent of per-process temp directories. Defaults to one inside the profile. */
+  readonly tempDirectory?: string;
 }) {
   const auth = input.auth ?? ANTIGRAVITY_PERSONAL_AUTH;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const platform = input.platform ?? (yield* HostProcessPlatform);
+  const platform = input.platform ?? (yield* HostProcess.Platform);
   const userHome =
-    input.userHome ?? resolveAntigravityUserHome(platform, input.baseEnv ?? process.env);
+    input.userHome ??
+    resolveAntigravityUserHome(
+      platform,
+      input.baseEnv ?? process.env,
+      yield* HostProcess.HomeDirectory,
+    );
   const runtimeExecutablePath =
     input.runtimeExecutablePath ??
     (yield* resolveNodeExecutable("Antigravity sign-in", input.baseEnv).pipe(
@@ -337,7 +352,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
 
   const geminiHome = path.resolve(input.profileDirectory);
   const acpDirectory = path.join(geminiHome, "antigravity-acp");
-  const tempDirectory = resolveAntigravityRuntimeTempDirectory(geminiHome);
+  const tempDirectory = input.tempDirectory ?? path.join(acpDirectory, "tmp");
   const profile: AntigravityProfile = {
     platform,
     geminiHome,
@@ -430,7 +445,7 @@ export function buildAntigravityAcpSpawnInput(input: {
   readonly auth?: AntigravityAuthConfig;
   /** Per-process temp directory. Defaults to the profile's shared temp directory. */
   readonly runtimeTempDirectory?: string;
-}): AcpSpawnInput {
+}): AcpSessionRuntime.AcpSpawnInput {
   return {
     command: input.installation.executablePath,
     args: input.profile.platform === "linux" ? ["--uid="] : [],

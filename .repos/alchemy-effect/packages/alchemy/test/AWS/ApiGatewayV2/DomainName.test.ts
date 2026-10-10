@@ -26,6 +26,7 @@ test.provider.skipIf(!!process.env.FAST)(
         expect(domain.tags).toBeDefined();
       }
     }),
+  { tags: ["provider:aws", "provider:aws:apigatewayv2", "live"] },
 );
 
 // Full lifecycle. SKIPPED by default: an API Gateway v2 custom domain
@@ -105,5 +106,8 @@ test.provider.skipIf(!!process.env.FAST || !domainName || !certificateArn)(
         );
       expect(gone).toBe("deleted");
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:apigatewayv2", "live"],
+    timeout: 240_000,
+  },
 );

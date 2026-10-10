@@ -114,7 +114,10 @@ test.provider(
       const gone = yield* waitUntilAppGone(created.applicationId);
       expect(gone).toBeUndefined();
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:appconfig", "live"],
+    timeout: 240_000,
+  },
 );
 
 // Extension + association lifecycle: an extension whose action emits
@@ -220,5 +223,8 @@ test.provider(
         );
       expect(goneAssociation).toBeUndefined();
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:appconfig", "live"],
+    timeout: 240_000,
+  },
 );

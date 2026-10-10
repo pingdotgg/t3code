@@ -1,3 +1,4 @@
+import { useAtomCommand } from "~/state/use-atom-command";
 import type {
   EnvironmentId,
   PullRequestActor,
@@ -18,7 +19,6 @@ import { useState, type ReactNode } from "react";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { pullRequestEnvironment } from "~/state/pullRequests";
-import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import { Button } from "../ui/button";
@@ -141,7 +141,7 @@ function ActorTimelineMarker({
       <PullRequestActorAvatar
         actor={actor}
         className={cn(
-          "size-7 bg-muted text-[9px] transition-opacity",
+          "size-7 bg-muted text-3xs transition-opacity",
           muted && "opacity-45 grayscale",
         )}
       />
@@ -156,9 +156,7 @@ function friendlyReviewState(value: string): string {
 
 function ReviewStateBadge({ state }: { state: string }) {
   return (
-    <span className="text-[10px] font-medium text-muted-foreground">
-      {friendlyReviewState(state)}
-    </span>
+    <span className="text-3xs font-medium text-muted-foreground">{friendlyReviewState(state)}</span>
   );
 }
 
@@ -166,8 +164,8 @@ function OpenOnHostButton({ url, onOpen }: { url: string | null; onOpen: (url: s
   return url === null ? null : (
     <Button
       size="icon-xs"
-      variant="ghost"
-      className="-mr-1 -mt-1 shrink-0 text-muted-foreground"
+      variant="ghost-muted"
+      className="-mr-1 -mt-1 shrink-0"
       aria-label="Open activity on host"
       onClick={() => onOpen(url)}
     >
@@ -224,7 +222,7 @@ function ConversationCard({
               <span className="text-muted-foreground">{event.title}</span>
               {event.reviewState ? <ReviewStateBadge state={event.reviewState} /> : null}
             </div>
-            <PullRequestMetaLine className="mt-1 flex-wrap text-[11px] text-muted-foreground">
+            <PullRequestMetaLine className="mt-1 flex-wrap text-2xs text-muted-foreground">
               <span>{formatRelativeTimeLabel(event.at)}</span>
               {event.path ? (
                 <span className="inline-flex min-w-0 items-center gap-1">
@@ -330,7 +328,7 @@ function ConversationGroup({
               <span className="block text-xs font-semibold">
                 {events.length.toLocaleString()} {events.length === 1 ? "comment" : "comments"}
               </span>
-              <span className="block truncate text-[10px] text-muted-foreground">
+              <span className="block truncate text-3xs text-muted-foreground">
                 {actors.length.toLocaleString()} {actors.length === 1 ? "author" : "authors"} ·{" "}
                 {formatRelativeTimeLabel(first.at)}
               </span>
@@ -378,7 +376,7 @@ function CommitEvent({
   return (
     <button
       type="button"
-      className="group relative mb-5 block w-full cursor-pointer rounded-sm pl-12 text-left outline-none [contain-intrinsic-block-size:48px] [content-visibility:auto] focus-visible:ring-2 focus-visible:ring-ring"
+      className="group relative mb-5 block w-full cursor-pointer rounded-sm pl-12 text-left outline-none [contain-intrinsic-block-size:48px] [content-visibility:auto] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       aria-label={`View commit ${event.id}`}
       onClick={() => onOpen(event.id)}
     >
@@ -391,7 +389,7 @@ function CommitEvent({
           <div className="truncate text-xs font-semibold text-foreground transition-colors group-hover:text-primary">
             {event.body ?? "Untitled commit"}
           </div>
-          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-3xs text-muted-foreground">
             <code className="font-mono">{event.id.slice(0, 7)}</code>
             <span>{formatRelativeTimeLabel(event.at)}</span>
           </div>
@@ -400,7 +398,7 @@ function CommitEvent({
           <PullRequestDiffStat
             additions={event.additions}
             deletions={event.deletions}
-            className="ml-auto shrink-0 font-mono text-[10px]"
+            className="ml-auto shrink-0 font-mono text-3xs"
           />
         ) : null}
       </div>
@@ -433,7 +431,7 @@ function LifecycleEvent({ event }: { event: PullRequestTimelineEvent }) {
           {event.actor ? <ActorName actor={event.actor} /> : null}
           <span className="font-semibold text-foreground">{presentation.label}</span>
         </div>
-        <div className="mt-0.5 text-[11px] text-muted-foreground">
+        <div className="mt-0.5 text-2xs text-muted-foreground">
           {formatRelativeTimeLabel(event.at)}
         </div>
       </div>
@@ -500,7 +498,7 @@ function ReviewVerdictEvent({
             </Tooltip>
           </div>
           <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <PullRequestMetaLine className="flex-wrap text-[11px] text-muted-foreground">
+            <PullRequestMetaLine className="flex-wrap text-2xs text-muted-foreground">
               <span>{formatRelativeTimeLabel(event.at)}</span>
               {event.path ? (
                 <span className="inline-flex min-w-0 items-center gap-1">
@@ -579,7 +577,7 @@ export function PullRequestTimelineTab({
   };
 
   return (
-    <div className="h-full overflow-y-auto px-4 py-5">
+    <div className="scrollbar-gutter-both h-full overflow-y-auto px-4 py-5">
       <div className="mx-auto max-w-3xl">
         <div className="relative">
           <span aria-hidden className="absolute bottom-5 left-[15px] top-1 w-px bg-border/45" />

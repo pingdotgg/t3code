@@ -8,7 +8,7 @@
  * @since 4.0.0
  */
 "use client"
-import * as Hydration from "effect/unstable/reactivity/Hydration"
+import * as Hydration from "effect/reactivity/Hydration"
 import * as React from "react"
 import { RegistryContext } from "./RegistryContext.ts"
 

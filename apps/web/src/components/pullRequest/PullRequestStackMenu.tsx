@@ -87,6 +87,11 @@ export function PullRequestStackMenu({
       layer.headSha ? [{ number: layer.number, headSha: layer.headSha }] : [],
     );
     setPending(true);
+    setConfirmation(null);
+    const toastId = toastManager.add({
+      type: "loading",
+      title: action === "merge" ? "Merging stack..." : "Rebasing stack...",
+    });
     const result = await runAction({
       environmentId,
       input: {
@@ -99,16 +104,15 @@ export function PullRequestStackMenu({
       },
     });
     setPending(false);
-    setConfirmation(null);
     onActed();
     if (result._tag === "Failure") {
-      toastManager.add({
+      toastManager.update(toastId, {
         type: "error",
-        title: "Stack operation did not complete",
+        title: action === "merge" ? "Could not merge the stack" : "Could not rebase the stack",
         description: String(squashAtomCommandFailure(result)),
       });
     } else {
-      toastManager.add({
+      toastManager.update(toastId, {
         type: "success",
         title: action === "merge" ? "Stack merge request completed" : "Stack rebased",
         description:
@@ -145,7 +149,7 @@ export function PullRequestStackMenu({
             {notice ? ` · ${notice}` : null}
           </TooltipPopup>
         </Tooltip>
-        <MenuPopup align="start" className="w-96 max-w-[calc(100vw-2rem)]">
+        <MenuPopup align="start">
           <MenuGroup>
             <PullRequestStackHeader number={stack.number} notice={notice} stale={!!onRetry} />
             {onRetry ? <MenuItem onClick={onRetry}>Retry stack refresh</MenuItem> : null}
@@ -216,10 +220,10 @@ export function PullRequestStackMenu({
       <Dialog
         open={confirmation !== null}
         onOpenChange={(value) => {
-          if (!value && !pending) setConfirmation(null);
+          if (!value) setConfirmation(null);
         }}
       >
-        <DialogPopup className="max-w-md" showCloseButton={!pending}>
+        <DialogPopup className="max-w-md">
           <DialogHeader>
             <DialogTitle>
               {confirmation === "merge"
@@ -245,11 +249,11 @@ export function PullRequestStackMenu({
             </ul>
           </DialogPanel>
           <DialogFooter>
-            <Button variant="outline" disabled={pending} onClick={() => setConfirmation(null)}>
+            <Button variant="outline" onClick={() => setConfirmation(null)}>
               Cancel
             </Button>
-            <Button disabled={pending} onClick={() => void run()}>
-              {pending ? "Working…" : confirmation === "merge" ? "Merge stack" : "Rebase stack"}
+            <Button onClick={() => void run()}>
+              {confirmation === "merge" ? "Merge stack" : "Rebase stack"}
             </Button>
           </DialogFooter>
         </DialogPopup>

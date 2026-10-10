@@ -1,7 +1,7 @@
 import type { ReadSecretClient } from "@/Cloudflare/SecretsStore/ReadSecret.ts";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * Shared route that drives every shape of the {@link ReadSecretClient} so both

@@ -23,6 +23,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:iotsitewise", "live"] },
 );
 
 // Bounded wait until a describe reports the resource gone.
@@ -157,7 +158,10 @@ test.provider(
           ),
       );
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:iotsitewise", "live"],
+    timeout: 240_000,
+  },
 );
 
 test.provider(
@@ -226,5 +230,8 @@ test.provider(
         ),
       );
     }),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:aws", "provider:aws:iotsitewise", "live"],
+    timeout: 180_000,
+  },
 );

@@ -1,4 +1,10 @@
-# Type Tests
+# Type tests
+
+Enter this branch when the acceptance criterion is compiler behavior: inference,
+assignability, rejection, overload selection, generic constraints, or a displayed
+public type. Use `pnpm check` for ordinary declaration edits whose compiler
+behavior is not independently under test. A runtime bug in generic code needs a
+runtime regression test, not a type test, when its type contract is unchanged.
 
 Inspect nearby `.tst.ts` files and use their imports and assertion style. Use
 ordinary Tstyche assertions such as `toBe` for structural equality and choose a

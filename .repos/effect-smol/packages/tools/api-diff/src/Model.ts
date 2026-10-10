@@ -17,7 +17,7 @@ export interface Documentation {
   readonly deprecated?: string | undefined
   readonly since?: string | undefined
   readonly category?: string | undefined
-  readonly stability?: "stable" | "unstable" | undefined
+  readonly stability?: "stable" | "unstable" | "experimental" | undefined
 }
 
 export interface TypeModel {

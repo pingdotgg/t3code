@@ -7,6 +7,7 @@ import { makeHttpStripeIdBinding } from "./StripeHttp.ts";
  * HTTP implementation of {@link RetrievePaymentMethodDomain}.
  *
  * @layer
+ * @product Payment Methods
  * @provides Stripe.RetrievePaymentMethodDomain
  */
 export const RetrievePaymentMethodDomainHttp = Layer.effect(

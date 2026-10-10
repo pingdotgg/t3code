@@ -3,7 +3,6 @@ import type {
   EnvironmentId,
   ProjectId,
   PullRequestInvolvement,
-  ProjectIconOverride,
   PullRequestListFilters,
   PullRequestListState,
   SourceControlProviderKind,
@@ -202,9 +201,7 @@ function PullRequestFilterRadioGroup<Value extends string>({
         return (
           <Tooltip key={option.value}>
             <TooltipTrigger render={item} />
-            <TooltipPopup side="top" className="max-w-80">
-              {option.unavailable}
-            </TooltipPopup>
+            <TooltipPopup side="top">{option.unavailable}</TooltipPopup>
           </Tooltip>
         );
       })}
@@ -234,7 +231,7 @@ function PullRequestFilterRadioSubmenu<Value extends string>({
           {current.label}
         </span>
       </MenuSubTrigger>
-      <MenuSubPopup className="min-w-56">
+      <MenuSubPopup>
         <PullRequestFilterRadioGroup
           label={label}
           value={value}
@@ -279,7 +276,7 @@ function PullRequestAuthorFilter({
           {value ?? "Anyone"}
         </span>
       </MenuSubTrigger>
-      <MenuSubPopup className="w-80">
+      <MenuSubPopup>
         <div className="p-1 pb-2">
           <InputGroup>
             <InputGroupAddon>
@@ -348,7 +345,7 @@ function PullRequestLabelFilter({
           {value.length === 0 ? "Any" : `${value.length} selected`}
         </span>
       </MenuSubTrigger>
-      <MenuSubPopup className="w-72">
+      <MenuSubPopup>
         {visible.length === 0 ? (
           <MenuItem disabled>No labels in this view</MenuItem>
         ) : (
@@ -359,7 +356,6 @@ function PullRequestLabelFilter({
             return (
               <MenuCheckboxItem
                 key={key}
-                className="grid-cols-[1rem_minmax(0,1fr)]"
                 checked={checked}
                 onCheckedChange={(next) =>
                   onChange(
@@ -503,14 +499,7 @@ export function PullRequestFiltersMenu({
   ];
   return (
     <Menu onOpenChange={onOpenChange}>
-      <MenuTrigger
-        render={
-          <Button
-            className={filterCount > 0 ? "[--control-icon-color:currentColor]" : undefined}
-            variant="outline"
-          />
-        }
-      >
+      <MenuTrigger render={<Button variant="outline" />}>
         <ListFilterIcon className="size-4" />
         <span>Filters</span>
         {filterCount > 0 ? (
@@ -519,7 +508,7 @@ export function PullRequestFiltersMenu({
           </span>
         ) : null}
       </MenuTrigger>
-      <MenuPopup align="end" side="bottom" className="w-56">
+      <MenuPopup align="end" side="bottom">
         <PullRequestFilterRadioSubmenu
           label="State"
           value={state}

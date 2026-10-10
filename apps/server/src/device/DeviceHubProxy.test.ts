@@ -8,16 +8,10 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpClient, HttpClientResponse, HttpRouter } from "effect/unstable/http";
-import {
-  EnvironmentAuth,
-  ServerAuthMissingCredentialError,
-  ServerAuthSessionCredentialValidationError,
-  type ServerAuthCredentialError,
-  type ServerAuthInternalError,
-} from "../auth/EnvironmentAuth.ts";
-import { DeviceService } from "./DeviceService.ts";
-import { deviceHubProxyRouteLayer } from "./DeviceHubProxy.ts";
+import { HttpClient, HttpClientResponse, HttpRouter } from "effect/http";
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as DeviceService from "./DeviceService.ts";
+import * as DeviceHubProxy from "./DeviceHubProxy.ts";
 
 const disposers: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -27,7 +21,7 @@ afterEach(async () => {
 const fixture = (
   scopes: ReadonlyArray<AuthEnvironmentScope>,
   fail = false,
-  authError?: ServerAuthCredentialError | ServerAuthInternalError,
+  authError?: EnvironmentAuth.ServerAuthCredentialError | EnvironmentAuth.ServerAuthInternalError,
 ) => {
   let finalized = 0;
   const requests: string[] = [];
@@ -42,9 +36,9 @@ const fixture = (
     }),
   );
   const { handler, dispose } = HttpRouter.toWebHandler(
-    deviceHubProxyRouteLayer.pipe(
+    DeviceHubProxy.layer.pipe(
       Layer.provideMerge(
-        Layer.succeed(EnvironmentAuth, {
+        Layer.succeed(EnvironmentAuth.EnvironmentAuth, {
           authenticateWebSocketUpgrade: () =>
             authError
               ? Effect.fail(authError)
@@ -54,13 +48,13 @@ const fixture = (
                   method: "bearer-access-token",
                   scopes,
                 }),
-        } as unknown as EnvironmentAuth["Service"]),
+        } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
       ),
       Layer.provideMerge(
-        Layer.succeed(DeviceService, {
+        Layer.succeed(DeviceService.DeviceService, {
           currentReadiness: () =>
             Effect.succeed({ hostId: LOCAL_DEVICE_HOST_ID, hub: { origin: "http://hub.test" } }),
-        } as DeviceService["Service"]),
+        } as DeviceService.DeviceService["Service"]),
       ),
       Layer.provideMerge(Layer.succeed(HttpClient.HttpClient, client)),
     ),
@@ -111,6 +105,32 @@ describe("device hub proxy", () => {
     await response.text();
   });
 
+  it("reads Android fold state but requires operate scope to change it", async () => {
+    const path = "http://t3.test/api/device-hub/vendor/serve-emu/api/fold?device=emulator-5554";
+    const reader = fixture([AuthOrchestrationReadScope]);
+    const read = await reader.handler(new Request(path));
+    expect(read.status).toBe(200);
+    await read.text();
+    expect(reader.requests).toEqual([
+      "http://hub.test/vendor/serve-emu/api/fold?device=emulator-5554",
+    ]);
+    const denied = await reader.handler(
+      new Request(path, { method: "POST", body: '{"posture":"closed"}' }),
+    );
+    expect(denied.status).toBe(403);
+    expect(reader.requests).toHaveLength(1);
+
+    const operator = fixture([AuthOrchestrationOperateScope]);
+    const changed = await operator.handler(
+      new Request(path, { method: "POST", body: '{"posture":"closed"}' }),
+    );
+    expect(changed.status).toBe(200);
+    await changed.text();
+    expect(operator.requests).toEqual([
+      "http://hub.test/vendor/serve-emu/api/fold?device=emulator-5554",
+    ]);
+  });
+
   it("never forwards the vendor shell endpoint", async () => {
     const { handler, requests } = fixture([AuthOrchestrationOperateScope]);
     expect(
@@ -125,9 +145,9 @@ describe("device hub proxy", () => {
 });
 
 it.each([
-  [new ServerAuthMissingCredentialError({}), 401],
+  [new EnvironmentAuth.ServerAuthMissingCredentialError({}), 401],
   [
-    new ServerAuthSessionCredentialValidationError({
+    new EnvironmentAuth.ServerAuthSessionCredentialValidationError({
       cause: new Error("private credential diagnostic"),
     }),
     500,
@@ -139,3 +159,29 @@ it.each([
   expect(await response.text()).not.toContain("private credential diagnostic");
   expect(requests).toEqual([]);
 });
+
+it.each([1, 3])(
+  "forwards fixed Duo display %s through the authenticated read proxy",
+  async (panel) => {
+    const { handler, requests } = fixture([AuthOrchestrationReadScope]);
+    const route = `/vendor/serve-sim/helper/duo/panel/${panel}/stream.avcc`;
+    const response = await handler(
+      new Request(`http://t3.test/api/device-hub${route}?wsTicket=secret`),
+    );
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(requests).toEqual([`http://hub.test${route}`]);
+  },
+);
+
+it.each(["/panel/2/stream.avcc", "/panel/1/webrtc/offer", "/panel/3/exec"])(
+  "rejects unsupported Duo route %s",
+  async (route) => {
+    const { handler, requests } = fixture([AuthOrchestrationReadScope]);
+    const response = await handler(
+      new Request(`http://t3.test/api/device-hub/vendor/serve-sim/helper/duo${route}`),
+    );
+    expect(response.status).toBe(404);
+    expect(requests).toEqual([]);
+  },
+);

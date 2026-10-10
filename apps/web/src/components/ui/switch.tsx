@@ -18,7 +18,7 @@ function Switch({
   return (
     <SwitchPrimitive.Root
       className={cn(
-        "inline-flex h-[calc(var(--thumb-size)+2px)] w-[calc(var(--thumb-size)*2-2px)] shrink-0 cursor-pointer items-center rounded-full p-[2px] outline-none transition-[background-color,box-shadow] duration-200 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background data-checked:bg-primary data-unchecked:bg-input data-disabled:cursor-not-allowed data-disabled:opacity-64 data-[mixed]:bg-input",
+        "inline-flex h-[calc(var(--thumb-size)+2px)] w-[calc(var(--thumb-size)*2-2px)] shrink-0 cursor-pointer items-center rounded-full p-[2px] outline-none transition-[background-color,box-shadow] duration-200 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background data-checked:bg-primary data-unchecked:bg-input data-disabled:cursor-not-allowed data-disabled:opacity-64 data-[mixed]:bg-input",
         size === "sm"
           ? "[--thumb-size:--spacing(4)] sm:[--thumb-size:--spacing(3.5)]"
           : "[--thumb-size:--spacing(5)] sm:[--thumb-size:--spacing(4)]",
@@ -27,7 +27,10 @@ function Switch({
       data-size={size}
       data-slot="switch"
       data-mixed={mixed ? "" : undefined}
-      aria-checked={mixed ? "mixed" : undefined}
+      // Base UI copies every key we pass, even `undefined`, over its own
+      // aria-checked. Only pass the attribute when mixed so the real state
+      // survives for screen readers.
+      {...(mixed ? { "aria-checked": "mixed" as const } : {})}
       {...props}
     >
       <SwitchPrimitive.Thumb
