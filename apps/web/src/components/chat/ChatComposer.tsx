@@ -261,6 +261,8 @@ import {
 import { useEnvironmentQuery } from "~/state/query";
 import { useDebouncedValue } from "~/state/queries";
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import { FallbackModelPicker } from "./FallbackModelPicker";
+import { type OrchestrationV2FallbackSelection } from "@t3tools/contracts";
 import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import {
   type ComposerCommandItem,
@@ -1561,6 +1563,9 @@ export interface ChatComposerProps {
   onToggleKeepFullHistory: () => void;
   /** Picking /usage-limits from the menu is the action itself; the draft keeps nothing of it. */
   onUsageLimitsCommand?: (() => void) | undefined;
+  onFallbackSelectionChange?:
+    | ((selection: OrchestrationV2FallbackSelection | null) => void)
+    | undefined;
   environmentUnavailable: {
     readonly label: string;
     readonly connection: EnvironmentConnectionPresentation;
@@ -2440,6 +2445,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
+  const [draftFallbackSelection, setDraftFallbackSelection] =
+    useState<OrchestrationV2FallbackSelection | null>(null);
   const isMobileViewport = useMediaQuery("max-sm");
   const {
     isComposerFocused,
@@ -5601,6 +5608,31 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           onProviderModelSelect(instanceId, model);
         }}
         onOpenProviderSetup={onOpenProviderSetup}
+      />
+
+      <FallbackModelPicker
+        fallbackSelection={activeThreadShell?.fallbackModelSelection ?? draftFallbackSelection}
+        activeInstanceId={
+          providerCatalogPending
+            ? (activeThreadModelSelection?.instanceId ?? selectedInstanceId)
+            : selectedInstanceId
+        }
+        activeModel={
+          providerCatalogPending
+            ? (activeThreadModelSelection?.model ?? selectedModelForPickerWithCustomFallback)
+            : selectedModelForPickerWithCustomFallback
+        }
+        instanceEntries={providerInstanceEntries}
+        modelOptionsByInstance={modelOptionsByInstance}
+        size={composerControlsCollapsed ? "xs" : "sm"}
+        disabled={providerCatalogPending || isSendBusy}
+        onFallbackSelect={(selection) => {
+          if (props.onFallbackSelectionChange) {
+            props.onFallbackSelectionChange(selection);
+          } else {
+            setDraftFallbackSelection(selection);
+          }
+        }}
       />
 
       <>

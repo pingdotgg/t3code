@@ -1,6 +1,7 @@
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
+import { resolveFallbackModelSelection } from "@t3tools/shared/model";
 import {
   resolveBackgroundDraftWorkspaceOptions,
   resolveDraftHeroState,
@@ -7808,6 +7809,32 @@ export default function ChatView(props: ChatViewProps) {
           stoppedAt: activeThreadShell.latestRun.completedAt ?? activeThreadShell.updatedAt,
           recovery: activeThreadShell.limitRecovery ?? null,
           snoozedUntil: activeThreadShell.snoozedUntil,
+          onFallbackNow: async () => {
+            const fallbackTarget = resolveFallbackModelSelection(
+              activeThreadShell.fallbackModelSelection ?? { mode: "auto" },
+              activeThreadShell.modelSelection,
+            );
+            if (fallbackTarget) {
+              onProviderModelSelect(fallbackTarget.instanceId, fallbackTarget.model, {
+                focusComposer: false,
+              });
+              await startThreadTurn({
+                environmentId,
+                input: {
+                  threadId: activeThreadShell.id,
+                  manualContinuationOfRunId: activeThreadShell.latestRun?.runId,
+                  message: {
+                    messageId: newMessageId(),
+                    role: "user",
+                    text: "Continue where you left off.",
+                    attachments: [],
+                  },
+                  runtimeMode,
+                  interactionMode,
+                },
+              });
+            }
+          },
           onChange: async (limitRecovery) => {
             const result = await updateThreadMetadata({
               environmentId,
@@ -11717,6 +11744,17 @@ export default function ChatView(props: ChatViewProps) {
                                   ? openUsageLimits
                                   : undefined
                               }
+                              onFallbackSelectionChange={async (fallbackSelection) => {
+                                if (activeThreadShell) {
+                                  await updateThreadMetadata({
+                                    environmentId,
+                                    input: {
+                                      threadId: activeThreadShell.id,
+                                      fallbackModelSelection,
+                                    },
+                                  });
+                                }
+                              }}
                               environmentUnavailable={activeEnvironmentUnavailableState}
                               activePendingApproval={activePendingApproval}
                               pendingApprovals={pendingApprovals}

@@ -1,5 +1,7 @@
 import {
   type CustomModelSetting,
+  type OrchestrationV2FallbackSelection,
+  DEFAULT_MODEL_BY_PROVIDER,
   MODEL_SLUG_ALIASES_BY_PROVIDER,
   ModelCapabilities,
   type ModelSelection,
@@ -526,4 +528,33 @@ export function applyClaudePromptEffortPrefix(
     return trimmed;
   }
   return `Ultrathink:\n${trimmed}`;
+}
+
+export function resolveFallbackModelSelection(
+  fallback: OrchestrationV2FallbackSelection | null | undefined,
+  current: ModelSelection,
+): ModelSelection | null {
+  if (!fallback) return null;
+  if (fallback.mode === "specific") return fallback.modelSelection;
+  if (fallback.mode === "auto") {
+    const candidates: Array<{ driver: string; model: string }> = [
+      {
+        driver: "claudeAgent",
+        model: DEFAULT_MODEL_BY_PROVIDER.claudeAgent ?? "claude-sonnet-5-5",
+      },
+      { driver: "codex", model: DEFAULT_MODEL_BY_PROVIDER.codex ?? "gpt-6.1-sol" },
+      {
+        driver: "antigravity",
+        model: DEFAULT_MODEL_BY_PROVIDER.antigravity ?? "gemini-3.8-flash-high",
+      },
+      { driver: "grok", model: DEFAULT_MODEL_BY_PROVIDER.grok ?? "grok-build" },
+    ];
+    const currentInstance = String(current.instanceId);
+    const chosen = candidates.find((c) => c.driver !== currentInstance) ?? candidates[0];
+    return {
+      instanceId: ProviderInstanceId.make(chosen.driver),
+      model: chosen.model,
+    };
+  }
+  return null;
 }

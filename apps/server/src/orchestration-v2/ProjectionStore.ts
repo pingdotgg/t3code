@@ -1531,6 +1531,7 @@ export function threadShellFromProjection(
     lastVisitedAt: projection.thread.lastVisitedAt,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
     limitRecovery: projection.thread.limitRecovery ?? null,
+    fallbackModelSelection: projection.thread.fallbackModelSelection ?? null,
     deletedAt: projection.thread.deletedAt,
   };
 }
@@ -1786,6 +1787,7 @@ function shellFromState(input: {
     lastVisitedAt: input.state.thread.lastVisitedAt,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
     limitRecovery: input.state.thread.limitRecovery ?? null,
+    fallbackModelSelection: input.state.thread.fallbackModelSelection ?? null,
     deletedAt: input.state.thread.deletedAt,
   };
 }

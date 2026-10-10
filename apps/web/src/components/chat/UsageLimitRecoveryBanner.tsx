@@ -14,6 +14,7 @@ type RecoveryProps = {
   stoppedAt: string;
   snoozedUntil: string | null;
   recovery: OrchestrationV2LimitRecovery | null;
+  onFallbackNow?: (() => Promise<void>) | undefined;
   onChange: (recovery: OrchestrationV2LimitRecoveryUpdate) => Promise<void>;
 };
 
@@ -33,7 +34,8 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
   };
 }
 
-function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: RecoveryProps) {
+function RecoveryActions(props: RecoveryProps) {
+  const { runId, resetAt, recovery, snoozedUntil, onChange, onFallbackNow } = props;
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -75,6 +77,27 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
   }
   return (
     <div className="flex flex-wrap items-center gap-2">
+      {onFallbackNow ? (
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={pending}
+          onClick={async () => {
+            setPending(true);
+            setError(null);
+            try {
+              await onFallbackNow();
+            } catch (cause) {
+              setError(
+                cause instanceof Error ? cause.message : "Failed to switch to fallback agent.",
+              );
+            }
+            setPending(false);
+          }}
+        >
+          Switch to Fallback Agent
+        </Button>
+      ) : null}
       <Button size="xs" variant="ghost" disabled={pending} onClick={() => void toggle("resume")}>
         {pending ? "Saving..." : scheduled ? "Cancel auto-resume" : "Resume at reset"}
       </Button>

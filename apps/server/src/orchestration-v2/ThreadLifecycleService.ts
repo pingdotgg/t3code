@@ -1,6 +1,7 @@
 import {
   CommandId,
   type ModelSelection,
+  type OrchestrationV2FallbackSelection,
   type OrchestrationV2ThreadProjection,
   type ProviderInteractionMode,
   type RuntimeMode,
@@ -53,6 +54,7 @@ export class ThreadLifecycleService extends Context.Service<
       readonly commandId: CommandId;
       readonly threadId: ThreadId;
       readonly title?: string;
+      readonly fallbackModelSelection?: OrchestrationV2FallbackSelection | null;
       readonly branch?: string | null;
       readonly worktreePath?: string | null;
     }) => Effect.Effect<Pick<OrchestrationV2ThreadProjection, "thread">, ThreadLifecycleError>;
@@ -112,6 +114,9 @@ const make = Effect.gen(function* () {
         commandId: input.commandId,
         threadId: input.threadId,
         ...(input.title === undefined ? {} : { title: input.title }),
+        ...(input.fallbackModelSelection === undefined
+          ? {}
+          : { fallbackModelSelection: input.fallbackModelSelection }),
         ...(input.branch === undefined ? {} : { branch: input.branch }),
         ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
       }),

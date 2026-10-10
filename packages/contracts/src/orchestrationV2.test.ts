@@ -25,6 +25,7 @@ import {
 import {
   latestProviderTurnForAttempt,
   OrchestrationV2Checkpoint,
+  OrchestrationV2FallbackSelection,
   OrchestrationV2CheckpointScope,
   OrchestrationV2Command,
   OrchestrationV2LimitRecoveryUpdate,
@@ -1502,5 +1503,24 @@ describe("latestProviderTurnForAttempt", () => {
     ];
     expect(latestProviderTurnForAttempt(turns, RunAttemptId.make("goal-attempt"))?.id).toBe("last");
     expect(latestProviderTurnForAttempt(turns, null)).toBeUndefined();
+  });
+});
+
+describe("OrchestrationV2FallbackSelection", () => {
+  const decode = Schema.decodeUnknownSync(OrchestrationV2FallbackSelection);
+
+  it("accepts auto fallback mode", () => {
+    expect(decode({ mode: "auto" })).toEqual({ mode: "auto" });
+  });
+
+  it("accepts specific fallback mode with model selection", () => {
+    const specific = {
+      mode: "specific" as const,
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet-5-5",
+      },
+    };
+    expect(decode(specific)).toEqual(specific);
   });
 });

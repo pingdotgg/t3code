@@ -2222,6 +2222,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       settledAt: null,
       snoozedUntil: null,
       snoozedAt: null,
+      fallbackModelSelection: command.fallbackModelSelection ?? null,
       lastVisitedAt: null,
       deletedAt: null,
     };
@@ -2923,6 +2924,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             ...(command.title === undefined ? {} : { title: command.title }),
+            ...(command.fallbackModelSelection === undefined
+              ? {}
+              : { fallbackModelSelection: command.fallbackModelSelection }),
             ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
             ...(command.limitRecovery !== undefined &&
             limitRecovery?.snooze === true &&
