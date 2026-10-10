@@ -85,7 +85,8 @@ type Selection =
   | { readonly kind: "none" }
   | { readonly kind: "node"; readonly key: string }
   | { readonly kind: "edge"; readonly dependency: string; readonly dependent: string }
-  | { readonly kind: "new" };
+  // `after` is the task that was selected when Add task was clicked; the new task branches off it.
+  | { readonly kind: "new"; readonly after: string | null };
 
 const NO_SELECTION: Selection = { kind: "none" };
 
@@ -181,7 +182,8 @@ export default function TaskGraphEditor(props: {
   const layout = graphLayout(graph.nodes);
   const selection = resolveSelection(selectionState, graph);
   const { nodes, edges } = taskGraphCanvasElements(graph.nodes, layout.positions, {
-    nodeKey: selection.kind === "node" ? selection.key : null,
+    nodeKey:
+      selection.kind === "node" ? selection.key : selection.kind === "new" ? selection.after : null,
     edgeId:
       selection.kind === "edge"
         ? taskGraphCanvasEdgeId(selection.dependency, selection.dependent)
@@ -221,7 +223,12 @@ export default function TaskGraphEditor(props: {
               size="sm"
               variant="outline"
               disabled={!canEdit}
-              onClick={() => setSelection({ kind: "new" })}
+              onClick={() =>
+                setSelection({
+                  kind: "new",
+                  after: selection.kind === "node" ? selection.key : null,
+                })
+              }
             >
               <PlusIcon />
               Add task
@@ -312,6 +319,11 @@ function resolveSelection(selection: Selection, graph: TaskGraph): Selection {
     const dependent = graph.nodes.find((node) => node.key === selection.dependent);
     return dependent?.dependsOn.includes(selection.dependency) ? selection : NO_SELECTION;
   }
+  if (selection.kind === "new" && selection.after !== null) {
+    return graph.nodes.some((node) => node.key === selection.after)
+      ? selection
+      : { kind: "new", after: null };
+  }
   return selection;
 }
 
@@ -327,10 +339,11 @@ function SelectionPanel(props: {
   const canEdit = commands.canEdit && !commands.busy;
 
   if (selection.kind === "new") {
+    const after = graph.nodes.find((node) => node.key === selection.after) ?? null;
     return (
       <TaskNodeForm
-        key="new"
-        heading="New task"
+        key={`new:${after?.key ?? ""}`}
+        heading={after === null ? "New task" : `New task after ${after.title}`}
         initial={{
           title: "",
           prompt: "",
@@ -340,7 +353,7 @@ function SelectionPanel(props: {
           workspace: "worktree",
           startAt: null,
         }}
-        placement={{ graph, labels: props.labels, dependency: null }}
+        placement={{ graph, labels: props.labels, dependency: after }}
         opensByDefault
         disabled={!canEdit}
         submitLabel="Add task"
@@ -363,7 +376,7 @@ function SelectionPanel(props: {
                 key,
                 title: values.title,
                 prompt: values.prompt,
-                dependsOn: [],
+                dependsOn: after === null ? [] : [after.key],
                 ...(values.pullRequest === null ? {} : { pullRequest: values.pullRequest }),
                 ...(values.modelSelection === null
                   ? {}
