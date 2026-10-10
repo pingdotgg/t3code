@@ -2,6 +2,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   EnvironmentId,
+  TextGenerationError,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -19,6 +20,10 @@ const state = vi.hoisted(() => ({
   metadataRequests: [] as { environmentId: string; branch: string }[],
   afterGitAction: undefined as (() => void) | undefined,
   run: null as ((input: { action: "commit"; featureBranch?: boolean }) => Promise<void>) | null,
+  failure: null as unknown,
+  toasts: [] as { actionProps?: { children: string; onClick: () => void } }[],
+  closedToasts: [] as string[],
+  navigations: [] as unknown[],
 }));
 
 vi.mock("react", async (importOriginal) => ({
@@ -40,6 +45,7 @@ vi.mock("~/state/entities", () => ({
   useThreadProjection: (ref: unknown) =>
     ref === null || state.detail === null ? null : { projection: { thread: state.detail } },
   useThreadShell: () => state.shell,
+  readProjects: () => [],
 }));
 vi.mock("~/state/session", () => ({
   useEnvironmentScope: (environmentId: unknown, scope: string) =>
@@ -108,6 +114,7 @@ vi.mock("~/lib/sourceControlActions", () => ({
   useSourceControlPublishRepositoryAction: () => ({}),
   useGitStackedAction: () => ({
     run: async ({ featureBranch }: { featureBranch?: boolean }) => {
+      if (state.failure !== null) return AsyncResult.failure(Cause.fail(state.failure));
       state.commits += 1;
       if (featureBranch) state.branch = "feature";
       state.afterGitAction?.();
@@ -126,10 +133,17 @@ vi.mock("~/lib/sourceControlActions", () => ({
 vi.mock("~/lib/utils", () => ({ cn: () => "", randomUUID: () => "action" }));
 vi.mock("~/editorPreferences", () => ({ useOpenInPreferredEditor: () => () => {} }));
 vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => () => {} }));
+vi.mock("@tanstack/react-router", () => ({
+  useNavigate: () => (input: unknown) => state.navigations.push(input),
+}));
 vi.mock("~/lib/openPullRequestLink", () => ({ useOpenPrLink: () => () => {} }));
 vi.mock("~/components/ui/toast", () => ({
   stackedThreadToast: (input: unknown) => input,
-  toastManager: { add: () => "toast", update: () => {}, close: () => {} },
+  toastManager: {
+    add: (toast: (typeof state.toasts)[number]) => state.toasts.push(toast) && "toast",
+    update: () => {},
+    close: (id: string) => state.closedToasts.push(id),
+  },
 }));
 vi.mock("~/components/ui/dialog", () => ({
   Dialog: "Dialog",
@@ -194,6 +208,10 @@ describe("Git actions while thread details load", () => {
     state.metadataRequests = [];
     state.afterGitAction = undefined;
     state.run = null;
+    state.failure = null;
+    state.toasts = [];
+    state.closedToasts = [];
+    state.navigations = [];
   });
 
   it("does not create a feature branch for a server thread without task permission", async () => {
@@ -291,5 +309,59 @@ describe("Git actions while thread details load", () => {
     expect(state.commits).toBe(1);
     expect(state.draft.branch).toBe("feature");
     expect(state.metadataRequests).toEqual([]);
+  });
+});
+
+describe("Settings action on a generation failure", () => {
+  beforeEach(() => {
+    state.scopes = new Set([AuthSourceControlWriteScope]);
+    state.primaryScopes = new Set();
+    state.shell = { branch: "main" };
+    state.detail = null;
+    state.draft = null;
+    state.run = null;
+    state.toasts = [];
+    state.closedToasts = [];
+    state.navigations = [];
+  });
+
+  it.each([
+    ["textGenerationModelSelection", "/settings/general", "text-generation-model"],
+    [
+      "sourceControlWriterModelSelection",
+      "/settings/source-control",
+      "source-control-writer-model",
+    ],
+  ] as const)("opens Settings at %s and closes the toast", async (modelSetting, to, hash) => {
+    state.failure = new TextGenerationError({
+      operation: "generateCommitMessage",
+      detail: "Model unavailable",
+      modelSetting,
+    });
+    await renderActions()({ action: "commit" });
+
+    const action = state.toasts.at(-1)?.actionProps;
+    expect(action?.children).toBe("Settings");
+    action?.onClick();
+
+    expect(state.closedToasts).toEqual(["toast"]);
+    expect(state.navigations).toEqual([
+      {
+        to,
+        hash,
+        search: { machine: "environment", project: undefined, checkout: "environment:/repo" },
+      },
+    ]);
+  });
+
+  it("offers no Settings action when the failure names no setting", async () => {
+    state.failure = new TextGenerationError({
+      operation: "generateCommitMessage",
+      detail: "Timed out",
+    });
+    await renderActions()({ action: "commit" });
+
+    expect(state.toasts).toHaveLength(1);
+    expect(state.toasts[0]?.actionProps).toBeUndefined();
   });
 });

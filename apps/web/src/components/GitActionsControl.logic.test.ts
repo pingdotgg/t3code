@@ -1,4 +1,4 @@
-import type { VcsStatusResult } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, type VcsStatusResult } from "@t3tools/contracts";
 import { assert, describe, it } from "vite-plus/test";
 import {
   buildGitActionProgressStages,
@@ -11,9 +11,82 @@ import {
   resolveGitActionResultToastTiming,
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
+  resolveGitActionSettingsScope,
   resolveThreadBranchUpdate,
   resolveThreadBranchMetadataPatch,
 } from "./GitActionsControl.logic";
+import { resolveSettingsScope } from "./settings/settingsScope";
+import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
+import type { Project } from "../types";
+import type { ProjectGroupingSettings } from "../logicalProject";
+
+describe("generation failure settings scope", () => {
+  const environmentId = EnvironmentId.make("acting-environment");
+  const project: Project = {
+    id: ProjectId.make("acting-project"),
+    environmentId,
+    title: "Test",
+    workspaceRoot: "/repo",
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+  const groupingSettings: ProjectGroupingSettings = {
+    sidebarProjectGroupingMode: "separate",
+    sidebarProjectGroupingOverrides: {},
+  };
+  const environments = [{ environmentId, label: "Acting environment" }];
+
+  /** Resolves the generated link through the same group and scope builders used by Settings. */
+  function resolveDestination(projects: Project[], projectId: ProjectId | undefined = project.id) {
+    const search = resolveGitActionSettingsScope({
+      environmentId,
+      projectId,
+      gitCwd: "/repo",
+      projects,
+      groupingSettings,
+    });
+    const groups = buildSidebarProjectSnapshots({
+      projects,
+      settings: groupingSettings,
+      primaryEnvironmentId: environmentId,
+      resolveEnvironmentLabel: () => "Acting environment",
+    });
+    return { search, scope: resolveSettingsScope(search, groups, environments) };
+  }
+
+  it("keeps the acting checkout for an existing project", () => {
+    assert.equal(resolveDestination([project]).scope.kind, "checkout");
+  });
+
+  it("rejects a removed project instead of falling back to environment defaults", () => {
+    const { search, scope } = resolveDestination([]);
+    assert.equal(search.checkout, "acting-environment:/repo");
+    assert.equal(search.machine, environmentId);
+    assert.equal(scope.kind, "unavailable");
+    assert.deepEqual(scope.environmentIds, []);
+  });
+
+  it("does not substitute a different project record at the same path", () => {
+    assert.equal(
+      resolveDestination([{ ...project, id: ProjectId.make("replacement") }]).scope.kind,
+      "unavailable",
+    );
+  });
+
+  it("does not substitute a project from another environment", () => {
+    assert.equal(
+      resolveDestination([{ ...project, environmentId: EnvironmentId.make("other") }]).scope.kind,
+      "unavailable",
+    );
+  });
+
+  it("keeps a previously resolved target unavailable if it disappears before Settings loads", () => {
+    const { search } = resolveDestination([project]);
+    assert.equal(resolveSettingsScope(search, [], environments).kind, "unavailable");
+  });
+});
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
   return {

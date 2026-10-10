@@ -8,7 +8,47 @@ import {
   GitRunStackedActionResult,
   GitRunStackedActionInput,
   GitResolvePullRequestResult,
+  TextGenerationError,
+  GitManagerServiceError,
 } from "./git.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
+
+const decodeTextGenerationError = Schema.decodeUnknownSync(TextGenerationError);
+const gitManagerErrorJson = Schema.fromJsonString(GitManagerServiceError);
+const encodeGitManagerError = Schema.encodeSync(gitManagerErrorJson);
+const decodeGitManagerError = Schema.decodeUnknownSync(gitManagerErrorJson);
+
+describe("TextGenerationError", () => {
+  it("preserves model context and diagnostic detail through the RPC error schema", () => {
+    const error = new TextGenerationError({
+      operation: "generateCommitMessage",
+      detail: "Model is not supported by this backend",
+      modelSelection: { instanceId: ProviderInstanceId.make("claude_work"), model: "custom-model" },
+      modelSetting: "sourceControlWriterModelSelection",
+    });
+    const decoded = decodeGitManagerError(encodeGitManagerError(error));
+    expect(decoded).toBeInstanceOf(TextGenerationError);
+    expect(decoded).toMatchObject({
+      modelSelection: error.modelSelection,
+      modelSetting: error.modelSetting,
+    });
+    expect(decoded.message).toBe(
+      "Text generation failed in generateCommitMessage using custom-model (claude_work): Model is not supported by this backend",
+    );
+  });
+
+  it("still decodes errors from servers without model context", () => {
+    const decoded = decodeTextGenerationError({
+      _tag: "TextGenerationError",
+      operation: "generatePrContent",
+      detail: "Provider unavailable",
+    });
+    expect(decoded.message).toBe(
+      "Text generation failed in generatePrContent: Provider unavailable",
+    );
+    expect(decoded.modelSelection).toBeUndefined();
+  });
+});
 
 const decodeCreateWorktreeInput = Schema.decodeUnknownSync(VcsCreateWorktreeInput);
 const decodePreparePullRequestThreadInput = Schema.decodeUnknownSync(
