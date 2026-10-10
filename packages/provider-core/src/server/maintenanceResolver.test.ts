@@ -443,21 +443,29 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
         );
 
+      // The shim npm writes into a global prefix runs the package's executable.
+      const npmShim =
+        '@ECHO off\r\n"%dp0%\\node_modules\\@example\\package-tool\\bin\\package-tool.exe"   %*\r\n';
       const prefix = yield* makeTempDir("t3-npm-windows-package-exe");
       const globalExe = writePackageExe(prefix);
-      NodeFS.writeFileSync(NodePath.join(prefix, "package-tool.cmd"), "@echo off\r\n");
+      NodeFS.writeFileSync(NodePath.join(prefix, "package-tool.cmd"), npmShim);
       expect((yield* resolve(globalExe)).update).toMatchObject({
         executable: "npm",
         args: ["install", "-g", "--prefix", prefix, expect.any(String), expect.any(String)],
       });
 
-      // A project dependency keeps its shim in `node_modules\.bin`, so it stays manual.
+      // A project dependency keeps npm's shim in `node_modules\.bin`, and a
+      // same-named script of the project's own is not npm's shim, so it stays manual.
       const project = yield* makeTempDir("t3-npm-windows-project-exe");
       const projectExe = writePackageExe(project);
       NodeFS.mkdirSync(NodePath.join(project, "node_modules", ".bin"), { recursive: true });
       NodeFS.writeFileSync(
         NodePath.join(project, "node_modules", ".bin", "package-tool.cmd"),
-        "@echo off\r\n",
+        npmShim,
+      );
+      NodeFS.writeFileSync(
+        NodePath.join(project, "package-tool.cmd"),
+        "@echo off\r\nnode build.js\r\n",
       );
       expect((yield* resolve(projectExe)).update).toBeNull();
     }),

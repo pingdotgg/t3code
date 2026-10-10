@@ -641,11 +641,14 @@ const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (
   if (!prefix) {
     return null;
   }
+  // npm's shim runs `"%dp0%\node_modules\<pkg>\…"`. Requiring that target, not
+  // just a same-named `.cmd`, keeps a project's own script from passing.
   const command = path.basename(context.realCommandPath, path.extname(context.realCommandPath));
-  const hasShim = yield* fileSystem
-    .exists(path.join(prefix, `${command}.cmd`))
-    .pipe(Effect.orElseSucceed(() => false));
-  return hasShim ? prefix : null;
+  const shim = yield* fileSystem
+    .readFileString(path.join(prefix, `${command}.cmd`))
+    .pipe(Effect.orElseSucceed(() => ""));
+  const shimTarget = `%dp0%\\node_modules\\${packageName.replaceAll("/", "\\")}\\`;
+  return shim.toLowerCase().includes(shimTarget.toLowerCase()) ? prefix : null;
 });
 
 export function makePackageManagedProviderMaintenanceResolver(
