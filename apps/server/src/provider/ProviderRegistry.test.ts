@@ -689,6 +689,61 @@ it.layer(
       assert.strictEqual(recovered.workspaceSnapshots?.[0]?.slashCommandsPending, undefined);
     });
 
+    it("replaces slash commands only for the cwd that has a workspace snapshot", () => {
+      const baseProvider = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        driver: ProviderDriverKind.make("claudeAgent"),
+        status: "ready",
+        enabled: true,
+        installed: true,
+        auth: { status: "authenticated" },
+        checkedAt: "2026-03-25T00:00:00.000Z",
+        version: "1.0.0",
+        models: [],
+        slashCommands: [{ name: "global" }],
+        skills: [],
+      } satisfies ServerProvider;
+      const scoped = (slashCommands: ProviderWorkspaceSnapshot["slashCommands"]) =>
+        ({
+          ...baseProvider,
+          checkedAt: "2026-03-25T00:01:00.000Z",
+          slashCommands,
+          skills: [{ name: "project", path: "/project/SKILL.md", enabled: true }],
+        }) satisfies ServerProvider;
+      const provider = ProviderRegistry.upsertProviderWorkspaceSnapshot(
+        ProviderRegistry.upsertProviderWorkspaceSnapshot(
+          baseProvider,
+          "/project",
+          scoped([{ name: "review", description: "Review changes" }]),
+        ),
+        "/other",
+        scoped([{ name: "other" }]),
+      );
+
+      const result = ProviderRegistry.replaceWorkspaceSlashCommands(provider, "/project", [
+        { name: "mod-command", description: "From a mod", input: { hint: "<arg>" } },
+      ]);
+
+      const snapshotOf = (candidate: ServerProvider, cwd: string) =>
+        candidate.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd);
+      assert.deepStrictEqual(snapshotOf(result, "/project")?.slashCommands, [
+        { name: "mod-command", description: "From a mod", input: { hint: "<arg>" } },
+      ]);
+      assert.strictEqual(snapshotOf(result, "/project")?.checkedAt, "2026-03-25T00:01:00.000Z");
+      assert.deepStrictEqual(snapshotOf(result, "/project")?.skills, [
+        { name: "project", path: "/project/SKILL.md", enabled: true },
+      ]);
+      assert.deepStrictEqual(snapshotOf(result, "/other"), snapshotOf(provider, "/other"));
+      assert.deepStrictEqual(result.slashCommands, provider.slashCommands);
+
+      const withoutSnapshot = ProviderRegistry.replaceWorkspaceSlashCommands(
+        provider,
+        "/unscanned",
+        [{ name: "mod-command" }],
+      );
+      assert.strictEqual(withoutSnapshot, provider);
+    });
+
     it("preserves previously discovered provider models when a refresh returns none", () => {
       const previousProvider = {
         instanceId: ProviderInstanceId.make("cursor"),

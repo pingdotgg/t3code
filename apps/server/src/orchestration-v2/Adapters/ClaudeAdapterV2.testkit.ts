@@ -825,6 +825,7 @@ function makeReplayQueryRunner(
               mode,
             });
           }),
+        supportedCommands: Effect.succeed([]),
         interrupt: replayEffect(() => {
           assertNextOutboundFrame({ type: "query.interrupt" });
         }),

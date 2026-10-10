@@ -33,6 +33,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
+  type ServerProviderSlashCommand,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -205,6 +206,24 @@ export function upsertProviderWorkspaceSnapshot(
       ...(provider.workspaceSnapshots ?? []).filter((snapshot) => snapshot.cwd !== cwd),
       workspaceSnapshot,
     ].slice(-MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER),
+  };
+}
+
+/**
+ * Replaces the slash commands of a cwd that already has a workspace snapshot.
+ * Without a snapshot the next scan of that cwd gets the commands from the driver.
+ */
+export function replaceWorkspaceSlashCommands(
+  provider: ServerProvider,
+  cwd: string,
+  slashCommands: ReadonlyArray<ServerProviderSlashCommand>,
+): ServerProvider {
+  if (!provider.workspaceSnapshots?.some((candidate) => candidate.cwd === cwd)) return provider;
+  return {
+    ...provider,
+    workspaceSnapshots: provider.workspaceSnapshots.map((candidate) =>
+      candidate.cwd === cwd ? { ...candidate, slashCommands } : candidate,
+    ),
   };
 }
 
@@ -536,6 +555,21 @@ export const layer = Layer.effect(
     const liveSubsRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, ProviderInstance>>(
       new Map(),
     );
+    const updateProviders = (
+      update: (providers: ReadonlyArray<ServerProvider>) => ReadonlyArray<ServerProvider>,
+    ) =>
+      Ref.modify(providersRef, (currentProviders) => {
+        const nextProviders = update(currentProviders);
+        return [[currentProviders, nextProviders] as const, nextProviders];
+      }).pipe(
+        Effect.tap(([previousProviders, nextProviders]) =>
+          haveProvidersChanged(previousProviders, nextProviders)
+            ? PubSub.publish(changesPubSub, nextProviders)
+            : Effect.void,
+        ),
+        Effect.map(([, nextProviders]) => nextProviders),
+      );
+
     // Serialize `syncLiveSources` so a rapid burst of reconciles doesn't
     // interleave two passes clobbering each other's fiber bookkeeping.
     const syncSemaphore = yield* Semaphore.make(1);
@@ -890,6 +924,17 @@ export const layer = Layer.effect(
           yield* Stream.runForEach(source.streamChanges, (provider) =>
             correlateSnapshotWithSource(source, provider).pipe(Effect.flatMap(syncProvider)),
           ).pipe(Effect.forkScoped);
+          if (instance.sessionSlashCommands !== undefined) {
+            yield* Stream.runForEach(instance.sessionSlashCommands, (update) =>
+              updateProviders((providers) =>
+                providers.map((candidate) =>
+                  candidate.instanceId === instance.instanceId
+                    ? replaceWorkspaceSlashCommands(candidate, update.cwd, update.slashCommands)
+                    : candidate,
+                ),
+              ),
+            ).pipe(Effect.forkScoped);
+          }
         }
         yield* Effect.yieldNow;
 
@@ -1021,21 +1066,6 @@ export const layer = Layer.effect(
       });
       return yield* Ref.get(providersRef);
     });
-
-    const updateProviders = (
-      update: (providers: ReadonlyArray<ServerProvider>) => ReadonlyArray<ServerProvider>,
-    ) =>
-      Ref.modify(providersRef, (currentProviders) => {
-        const nextProviders = update(currentProviders);
-        return [[currentProviders, nextProviders] as const, nextProviders];
-      }).pipe(
-        Effect.tap(([previousProviders, nextProviders]) =>
-          haveProvidersChanged(previousProviders, nextProviders)
-            ? PubSub.publish(changesPubSub, nextProviders)
-            : Effect.void,
-        ),
-        Effect.map(([, nextProviders]) => nextProviders),
-      );
 
     const refreshWorkspaceSnapshot = Effect.fn("refreshWorkspaceSnapshot")(function* (input: {
       readonly instanceId: ProviderInstanceId;

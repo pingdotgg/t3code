@@ -31,11 +31,13 @@ import type {
   ProviderInstanceEnvironment,
   ProviderInstanceId,
   ServerProvider,
+  ServerProviderSlashCommand,
   ServerProviderWorkspaceSnapshot,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
+import type * as Stream from "effect/Stream";
 
 import type * as ProviderAdapter from "./ProviderAdapter.ts";
 import type { ProviderAuthController } from "./auth.ts";
@@ -93,6 +95,14 @@ export interface ProviderInstance {
   readonly refreshModels?: () => Effect.Effect<void, ProviderDriverError>;
   /** Invalidate T3-owned discovery caches before an explicit provider refresh. */
   readonly invalidateCaches?: Effect.Effect<void>;
+  /**
+   * The complete slash command list for a cwd, pushed when a live session
+   * changes the commands beyond what `snapshotForCwd` probed.
+   */
+  readonly sessionSlashCommands?: Stream.Stream<{
+    readonly cwd: string;
+    readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  }>;
   /**
    * Redeem one banked rate-limit reset credit on the signed-in account, then
    * re-probe so the snapshot reflects the cleared windows. Account-level,

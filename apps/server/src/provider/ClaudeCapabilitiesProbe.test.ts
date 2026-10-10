@@ -12,7 +12,7 @@ import {
 } from "@t3tools/contracts";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -21,14 +21,87 @@ import * as Schema from "effect/Schema";
 import {
   buildClaudeCapabilitiesProbeQueryOptions,
   CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES,
+  parseClaudeInitializationCommands,
   probeClaudeCapabilities,
   probeClaudeWorkspaceSnapshot,
+  recordClaudeProbedSlashCommands,
+  recordClaudeSessionSlashCommands,
 } from "./ClaudeProvider.ts";
 import { COMPACT_SLASH_COMMAND } from "@t3tools/provider-core/server/snapshotProbe";
 
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
+
+describe("live-session slash commands", () => {
+  const probed = [{ name: "review", description: "Probed review" }];
+  const session = parseClaudeInitializationCommands([
+    { name: "review", description: "Session review", argumentHint: "<pr>" },
+    { name: "mod-command", description: "From a mod", argumentHint: "<arg>" },
+  ]);
+  const merged = [
+    { name: "review", description: "Probed review", input: { hint: "<pr>" } },
+    { name: "mod-command", description: "From a mod", input: { hint: "<arg>" } },
+  ];
+
+  it("waits for the first probe of a cwd, which then merges the session list", () => {
+    const [beforeProbe, afterSession] = recordClaudeSessionSlashCommands(
+      new Map(),
+      "/project",
+      session,
+    );
+    assert.strictEqual(beforeProbe, undefined);
+
+    const [afterProbe] = recordClaudeProbedSlashCommands(afterSession, "/project", probed);
+    assert.deepEqual(afterProbe, merged);
+  });
+
+  it("replaces the previous session list, so a removed command disappears", () => {
+    const [, probedState] = recordClaudeProbedSlashCommands(new Map(), "/project", probed);
+    const [withMod, withModState] = recordClaudeSessionSlashCommands(
+      probedState,
+      "/project",
+      session,
+    );
+    assert.deepEqual(withMod, merged);
+
+    const [withoutMod] = recordClaudeSessionSlashCommands(withModState, "/project", []);
+    assert.deepEqual(withoutMod, probed);
+  });
+
+  it("keeps the session list across a new probe and other cwds", () => {
+    const [, probedState] = recordClaudeProbedSlashCommands(new Map(), "/project", probed);
+    const [, sessionState] = recordClaudeSessionSlashCommands(probedState, "/project", session);
+
+    const [reprobed, reprobedState] = recordClaudeProbedSlashCommands(
+      sessionState,
+      "/project",
+      probed,
+    );
+    assert.deepEqual(reprobed, merged);
+    assert.deepEqual(recordClaudeProbedSlashCommands(reprobedState, "/other", probed)[0], probed);
+  });
+
+  it("keeps the last successful probe when a re-probe fails", () => {
+    const fallback = [COMPACT_SLASH_COMMAND];
+    const [, probedState] = recordClaudeProbedSlashCommands(new Map(), "/project", probed);
+    const [, failedState] = recordClaudeProbedSlashCommands(
+      probedState,
+      "/project",
+      fallback,
+      true,
+    );
+    assert.deepEqual(recordClaudeSessionSlashCommands(failedState, "/project", session)[0], merged);
+
+    const [, failedFirstState] = recordClaudeProbedSlashCommands(
+      new Map(),
+      "/other",
+      fallback,
+      true,
+    );
+    assert.deepEqual(recordClaudeSessionSlashCommands(failedFirstState, "/other", [])[0], fallback);
+  });
+});
 
 it("isolates Claude capability probes without dropping workspace setting sources", () => {
   const abortController = new AbortController();

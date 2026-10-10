@@ -286,7 +286,7 @@ type ClaudeCapabilitiesProbe = {
   readonly usage?: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
 };
 
-function parseClaudeInitializationCommands(
+export function parseClaudeInitializationCommands(
   commands: ReadonlyArray<ClaudeSlashCommand> | undefined,
 ): ReadonlyArray<ServerProviderSlashCommand> {
   return dedupeSlashCommands(
@@ -308,6 +308,53 @@ function parseClaudeInitializationCommands(
       ];
     }),
   );
+}
+
+/**
+ * The latest probed and live-session slash commands per cwd. Mod commands only
+ * exist in a live session, because the probe runs with hooks off.
+ */
+export type ClaudeSlashCommandsByCwd = ReadonlyMap<
+  string,
+  {
+    readonly probed: ReadonlyArray<ServerProviderSlashCommand> | undefined;
+    readonly session: ReadonlyArray<ServerProviderSlashCommand>;
+  }
+>;
+
+/**
+ * Stores a probe result and returns the cwd's complete list. A failed probe
+ * (`pending`) only has fallback commands, so it keeps the last successful list.
+ */
+export function recordClaudeProbedSlashCommands(
+  byCwd: ClaudeSlashCommandsByCwd,
+  cwd: string,
+  scanned: ReadonlyArray<ServerProviderSlashCommand>,
+  pending = false,
+): readonly [ReadonlyArray<ServerProviderSlashCommand>, ClaudeSlashCommandsByCwd] {
+  const current = byCwd.get(cwd);
+  const probed = (pending && current?.probed) || scanned;
+  const session = current?.session ?? [];
+  return [
+    dedupeSlashCommands([...probed, ...session]),
+    new Map(byCwd).set(cwd, { probed, session }),
+  ];
+}
+
+/**
+ * Replaces the cwd's session list and returns the cwd's complete list. Returns
+ * no list before the cwd's first probe; that probe merges the session list.
+ */
+export function recordClaudeSessionSlashCommands(
+  byCwd: ClaudeSlashCommandsByCwd,
+  cwd: string,
+  session: ReadonlyArray<ServerProviderSlashCommand>,
+): readonly [ReadonlyArray<ServerProviderSlashCommand> | undefined, ClaudeSlashCommandsByCwd] {
+  const probed = byCwd.get(cwd)?.probed;
+  return [
+    probed && dedupeSlashCommands([...probed, ...session]),
+    new Map(byCwd).set(cwd, { probed, session }),
+  ];
 }
 
 function dedupeSlashCommands(
