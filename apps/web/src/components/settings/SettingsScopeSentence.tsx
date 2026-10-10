@@ -152,7 +152,7 @@ function EnvironmentScopeMenu({
       >
         {!singleEnvironment ? (
           <>
-            <MenuRadioItem value={ALL_ENVIRONMENTS_VALUE}>
+            <MenuRadioItem value={ALL_ENVIRONMENTS_VALUE} closeOnClick>
               <span className="flex min-w-0 items-center gap-2">
                 <LayersIcon aria-hidden className="size-3.5" />
                 <span className="min-w-0 flex-1 truncate">All environments</span>
@@ -163,7 +163,11 @@ function EnvironmentScopeMenu({
           </>
         ) : null}
         {environments.map((environment) => (
-          <MenuRadioItem key={environment.environmentId} value={environment.environmentId}>
+          <MenuRadioItem
+            key={environment.environmentId}
+            value={environment.environmentId}
+            closeOnClick
+          >
             <span className="flex min-w-0 items-center gap-2">
               <EnvironmentMachineIcon
                 aria-hidden
@@ -199,7 +203,7 @@ function ProjectScopeMenu({ value, groups, onChange }: SettingsScopeMenuProps) {
           if (typeof next === "string") onChange(selectProjectAxis(value, next));
         }}
       >
-        <MenuRadioItem value={ALL_PROJECTS_VALUE}>
+        <MenuRadioItem value={ALL_PROJECTS_VALUE} closeOnClick>
           <span className="flex min-w-0 items-center gap-2">
             <span className="min-w-0 flex-1 truncate">All projects</span>
             <MenuRadioItemIndicator />
@@ -207,7 +211,7 @@ function ProjectScopeMenu({ value, groups, onChange }: SettingsScopeMenuProps) {
         </MenuRadioItem>
         <MenuSeparator />
         {groups.map((group) => (
-          <MenuRadioItem key={group.projectKey} value={group.projectKey}>
+          <MenuRadioItem key={group.projectKey} value={group.projectKey} closeOnClick>
             <span className="flex min-w-0 items-center gap-2">
               <ProjectFavicon project={group} className="size-3.5" />
               <span className="min-w-0 flex-1 truncate">{group.displayName}</span>
