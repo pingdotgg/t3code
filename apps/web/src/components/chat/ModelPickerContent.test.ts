@@ -299,24 +299,35 @@ describe("OpenCode upstream-provider sections", () => {
     ...(subProvider ? { subProvider } : {}),
   });
 
-  it("splits OpenCode Zen and OpenCode Go models into sections, keeping their order", () => {
+  it("gives each OpenCode provider its own section, ordered by name, keeping model order", () => {
     const models = [
-      model("opencode/deepseek-v4-flash", "OpenCode Zen"),
+      model("anthropic/claude-sonnet-5", "Anthropic"),
+      model("opencode/claude-sonnet-5", "OpenCode Zen"),
+      model("openrouter/claude-sonnet-5", "OpenRouter"),
       model("opencode-go/deepseek-v4-flash", "OpenCode Go"),
-      model("opencode/glm-5.2", "OpenCode Zen"),
+      model("opencode/deepseek-v4-flash", "OpenCode Zen"),
+      model("openai/gpt-5.5", "OpenAI"),
+      model("anthropic/claude-opus-5", "Anthropic"),
       model("opencode-go/kimi-k2.6", "OpenCode Go"),
     ];
     const grouped = groupOpenCodeModelsBySubProvider(models);
 
     expect(grouped.map((item) => item.slug)).toEqual([
+      "anthropic/claude-sonnet-5",
+      "anthropic/claude-opus-5",
+      "openai/gpt-5.5",
       "opencode-go/deepseek-v4-flash",
       "opencode-go/kimi-k2.6",
+      "opencode/claude-sonnet-5",
       "opencode/deepseek-v4-flash",
-      "opencode/glm-5.2",
+      "openrouter/claude-sonnet-5",
     ]);
     expect([...openCodeSectionHeadings(grouped)]).toEqual([
+      [modelPickerModelKey(instanceId, "anthropic/claude-sonnet-5"), "Anthropic"],
+      [modelPickerModelKey(instanceId, "openai/gpt-5.5"), "OpenAI"],
       [modelPickerModelKey(instanceId, "opencode-go/deepseek-v4-flash"), "OpenCode Go"],
-      [modelPickerModelKey(instanceId, "opencode/deepseek-v4-flash"), "OpenCode Zen"],
+      [modelPickerModelKey(instanceId, "opencode/claude-sonnet-5"), "OpenCode Zen"],
+      [modelPickerModelKey(instanceId, "openrouter/claude-sonnet-5"), "OpenRouter"],
     ]);
   });
 

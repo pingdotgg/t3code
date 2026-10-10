@@ -302,10 +302,11 @@ export type ModelSection = {
 };
 
 /**
- * OpenCode serves models from several OpenCode providers through one instance
- * (for example OpenCode Zen and an OpenCode Go subscription), often with the
- * same model names. Splits an OpenCode provider's models into one section per
- * OpenCode provider; order within a section is unchanged. Other drivers, and
+ * OpenCode serves models from every provider the user connected in OpenCode
+ * (Anthropic, OpenAI, OpenRouter, OpenCode Go, OpenCode Zen, ...) through one
+ * instance, often with the same model names. Splits an OpenCode provider's
+ * models into one section per OpenCode provider, ordered by name; order within
+ * a section is unchanged. Other drivers, and
  * catalogs with a single source, stay one unlabeled section.
  */
 export function openCodeModelSections(

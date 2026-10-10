@@ -146,10 +146,12 @@ export function adjacentModelPickerProvider(input: {
 }
 
 /**
- * OpenCode serves models from several upstream providers through one instance
- * (for example OpenCode Zen and an OpenCode Go subscription), often with the
- * same model names. Groups an OpenCode instance's list by that upstream provider
- * so each source gets its own section; order within a section is unchanged.
+ * OpenCode serves models from every provider the user connected in OpenCode
+ * (Anthropic, OpenAI, OpenRouter, OpenCode Go, OpenCode Zen, ...) through one
+ * instance, often with the same model names. Groups an OpenCode instance's list
+ * by that provider, named as OpenCode names it, so the user can see which
+ * account or subscription a model runs on. Sections are ordered by name and
+ * order within a section is unchanged.
  * Other drivers, and catalogs with a single source, are returned as-is.
  */
 export function groupOpenCodeModelsBySubProvider<

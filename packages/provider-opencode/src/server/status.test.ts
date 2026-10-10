@@ -609,6 +609,20 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
             variants: [],
             providerName: "OpenCode Go",
           },
+          {
+            providerID: "anthropic",
+            id: "claude-sonnet-5",
+            name: "Claude Sonnet 5",
+            variants: [],
+            providerName: "Anthropic",
+          },
+          {
+            providerID: "openai",
+            id: "gpt-5.5",
+            name: "GPT-5.5",
+            variants: [],
+            providerName: "OpenAI",
+          },
           { providerID: "local", id: "qwen", name: "Qwen", variants: [], providerName: " " },
         ]),
       );
@@ -616,6 +630,8 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
       NodeAssert.deepEqual(
         snapshot.models.map((model) => [model.slug, model.subProvider]),
         [
+          ["anthropic/claude-sonnet-5", "Anthropic"],
+          ["openai/gpt-5.5", "OpenAI"],
           ["opencode/kimi-k2.6", "OpenCode Zen"],
           ["opencode-go/kimi-k2.6", "OpenCode Go"],
           ["local/qwen", undefined],

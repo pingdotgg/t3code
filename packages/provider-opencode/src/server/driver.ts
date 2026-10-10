@@ -310,7 +310,7 @@ export const OpenCodeDriver: ProviderDriver<
             {
               models: connection.client.model.list({ location: { directory: host.paths.cwd } }),
               // Names tell same-named models from different OpenCode providers apart
-              // (OpenCode Zen and OpenCode Go); the catalog still loads without them.
+              // (Anthropic, OpenAI, OpenCode Go, ...); the catalog still loads without them.
               providers: connection.client.provider
                 .list({ location: { directory: host.paths.cwd } })
                 .pipe(

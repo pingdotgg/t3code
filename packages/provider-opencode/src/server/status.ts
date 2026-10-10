@@ -384,7 +384,7 @@ export interface OpenCode2Model {
   readonly id: string;
   readonly name: string;
   readonly variants: ReadonlyArray<{ readonly id: string }>;
-  /** Display name of the model's OpenCode provider, such as "OpenCode Go". */
+  /** Display name of the model's OpenCode provider, such as "Anthropic" or "OpenCode Go". */
   readonly providerName?: string | undefined;
 }
 

@@ -142,17 +142,33 @@ describe("mobile model options", () => {
     ]);
   });
 
-  it("splits an OpenCode catalog into one section per OpenCode provider", () => {
+  it("splits an OpenCode catalog into one section per connected OpenCode provider", () => {
     const option = (slug: string, subtitle: string, providerDriver = "opencode") =>
       ({ key: `p:${slug}`, label: slug, subtitle, providerDriver }) as unknown as ModelOption;
     const zenKimi = option("opencode/kimi-k2.6", "OpenCode Zen");
     const goKimi = option("opencode-go/kimi-k2.6", "OpenCode Go");
     const zenGlm = option("opencode/glm-5.2", "OpenCode Zen");
+    const anthropicSonnet = option("anthropic/claude-sonnet-5", "Anthropic");
+    const openAiGpt = option("openai/gpt-5.5", "OpenAI");
+    const openRouterSonnet = option("openrouter/claude-sonnet-5", "OpenRouter");
     const local = option("local/qwen", "");
 
-    expect(openCodeModelSections([zenKimi, goKimi, local, zenGlm])).toEqual([
+    expect(
+      openCodeModelSections([
+        openRouterSonnet,
+        zenKimi,
+        goKimi,
+        local,
+        anthropicSonnet,
+        zenGlm,
+        openAiGpt,
+      ]),
+    ).toEqual([
+      { label: "Anthropic", models: [anthropicSonnet] },
+      { label: "OpenAI", models: [openAiGpt] },
       { label: "OpenCode Go", models: [goKimi] },
       { label: "OpenCode Zen", models: [zenKimi, zenGlm] },
+      { label: "OpenRouter", models: [openRouterSonnet] },
       { label: "Other", models: [local] },
     ]);
     expect(openCodeModelSections([zenKimi, zenGlm])).toEqual([
