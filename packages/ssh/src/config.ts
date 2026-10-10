@@ -89,10 +89,55 @@ const expandGlob = Effect.fnUntraced(function* (pattern: string) {
   return matchedPaths.toSorted((left, right) => left.localeCompare(right));
 });
 
+interface SshHostNameRule {
+  readonly guards: ReadonlyArray<ReadonlyArray<string> | null>;
+  readonly patterns: ReadonlyArray<string> | null;
+  readonly hostname: string;
+}
+
+type SshHostNameRuleMatch = "match" | "no-match" | "unresolved";
+
+function expandConfiguredHostname(hostname: string, alias: string): string | null {
+  let supported = true;
+  const expanded = hostname.replace(/%(.?)/gsu, (_, token: string) => {
+    if (token === "h") return alias.toLowerCase();
+    if (token === "%") return "%";
+    supported = false;
+    return "";
+  });
+  return supported ? expanded : null;
+}
+
+function matchesHostPatterns(alias: string, patterns: ReadonlyArray<string>): boolean {
+  let matched = false;
+  for (const pattern of patterns) {
+    const negated = pattern.startsWith("!");
+    const candidate = negated ? pattern.slice(1) : pattern;
+    if (!new RegExp(globToRegExp(candidate).source, "iu").test(alias)) continue;
+    if (negated) return false;
+    matched = true;
+  }
+  return matched;
+}
+
+function matchSshHostNameRule(alias: string, rule: SshHostNameRule): SshHostNameRuleMatch {
+  const scopes = [...rule.guards, rule.patterns];
+  if (scopes.some((patterns) => patterns !== null && !matchesHostPatterns(alias, patterns))) {
+    return "no-match";
+  }
+  return scopes.some((patterns) => patterns === null) ? "unresolved" : "match";
+}
+
 const collectSshConfigAliasesFromFile = Effect.fnUntraced(function* (
   filePath: string,
   visited = new Set<string>(),
   homeDir: string,
+  context: {
+    patterns: ReadonlyArray<string> | null;
+    guards: ReadonlyArray<ReadonlyArray<string> | null>;
+  },
+  hostnameRules: Array<SshHostNameRule>,
+  traversal = { remaining: 256 },
 ): Effect.fn.Return<
   ReadonlyArray<string>,
   PlatformError.PlatformError,
@@ -101,9 +146,16 @@ const collectSshConfigAliasesFromFile = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const resolvedPath = path.resolve(filePath);
-  if (visited.has(resolvedPath) || !(yield* fs.exists(resolvedPath))) {
+  // Bound repeated conditional Includes as well as recursive nesting for discovery.
+  if (
+    visited.size >= 16 ||
+    traversal.remaining <= 0 ||
+    visited.has(resolvedPath) ||
+    !(yield* fs.exists(resolvedPath))
+  ) {
     return NO_HOSTS;
   }
+  traversal.remaining -= 1;
   visited.add(resolvedPath);
 
   const aliases = new Set<string>();
@@ -131,6 +183,12 @@ const collectSshConfigAliasesFromFile = Effect.fnUntraced(function* (
             includedPath,
             visited,
             homeDir,
+            {
+              patterns: context.patterns,
+              guards: [...context.guards, context.patterns],
+            },
+            hostnameRules,
+            traversal,
           );
           for (const alias of includedAliases) {
             aliases.add(alias);
@@ -141,17 +199,44 @@ const collectSshConfigAliasesFromFile = Effect.fnUntraced(function* (
     }
 
     if (normalizedDirective !== "host") {
+      if (normalizedDirective === "match") {
+        const condition = rawArgs[0]?.toLowerCase();
+        const originalHostPatterns = rawArgs[1]?.replace(/^(["'])(.*)\1$/u, "$2");
+        context.patterns =
+          condition === "all" && rawArgs.length === 1
+            ? ["*"]
+            : condition === "originalhost" &&
+                rawArgs.length === 2 &&
+                originalHostPatterns !== undefined &&
+                !/["']/u.test(originalHostPatterns)
+              ? originalHostPatterns.split(",")
+              : null;
+      }
+      if (normalizedDirective === "hostname") {
+        const hostname = rawArgs[0]?.replace(/^(["'])(.*)\1$/u, "$2");
+        if (hostname) {
+          hostnameRules.push({
+            guards: context.guards,
+            patterns: context.patterns,
+            hostname,
+          });
+        }
+      }
       continue;
     }
 
+    context.patterns = rawArgs.some((pattern) => /["']/u.test(pattern)) ? null : rawArgs;
     for (const alias of rawArgs) {
       if (alias.length === 0 || hasSshPattern(alias)) {
         continue;
       }
-      aliases.add(alias);
+      if (context.guards.every((guard) => guard === null || matchesHostPatterns(alias, guard))) {
+        aliases.add(alias);
+      }
     }
   }
 
+  visited.delete(resolvedPath);
   return [...aliases].toSorted((left, right) => left.localeCompare(right));
 });
 
@@ -224,18 +309,37 @@ export const discoverSshHosts = Effect.fnUntraced(
     }
 
     const sshDirectory = path.join(homeDir, ".ssh");
+    const hostnameRules: Array<SshHostNameRule> = [];
     const configAliases = yield* collectSshConfigAliasesFromFile(
       path.join(sshDirectory, "config"),
       new Set<string>(),
       homeDir,
+      { patterns: ["*"], guards: [] },
+      hostnameRules,
     );
     const knownHosts = yield* readKnownHostsHostnames(path.join(sshDirectory, "known_hosts"));
     const discovered = new Map<string, DesktopDiscoveredSshHost>();
+    const configuredTargets = new Set<string>();
 
     for (const alias of configAliases) {
+      let configuredHostname: string | undefined;
+      for (const rule of hostnameRules) {
+        const ruleMatch = matchSshHostNameRule(alias, rule);
+        if (ruleMatch === "no-match") {
+          continue;
+        }
+        if (ruleMatch === "match") {
+          configuredHostname = rule.hostname;
+        }
+        break;
+      }
+      const hostname = configuredHostname
+        ? (expandConfiguredHostname(configuredHostname, alias) ?? alias)
+        : alias;
+      configuredTargets.add(hostname.toLowerCase());
       discovered.set(alias, {
         alias,
-        hostname: alias,
+        hostname,
         username: null,
         port: null,
         source: "ssh-config",
@@ -243,7 +347,7 @@ export const discoverSshHosts = Effect.fnUntraced(
     }
 
     for (const hostname of knownHosts) {
-      if (discovered.has(hostname)) {
+      if (discovered.has(hostname) || configuredTargets.has(hostname.toLowerCase())) {
         continue;
       }
       discovered.set(hostname, {
