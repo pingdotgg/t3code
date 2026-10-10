@@ -15,6 +15,7 @@ import {
 import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -64,6 +65,24 @@ const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
 const refusedBeforePrompt = (error: unknown): boolean =>
   Predicate.isTagged(error, "ClaudeBackgroundWorkBlocksQueryReplacementError") ||
   (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
+
+/**
+ * How long a run waits for `providerSessions.open` before failing visibly.
+ *
+ * Open is a process spawn plus a short auth/version-check round trip
+ * (every adapter's `openSession` returns as soon as that handshake lands:
+ * AcpAdapterV2, ClaudeAdapterV2, CodexAdapterV2, CursorAdapterV2,
+ * OpenCodeAdapterV2, OpenCode2AdapterV2, PiAdapterV2). It does not wait on
+ * turn work, so it does not cover OpenCode's slow `/compact`, which runs
+ * later through `startTurn`/`compactThread`.
+ *
+ * Without a deadline, a provider that never answers leaves the run
+ * "starting" forever (reproduced on main: still starting after 7m46s, only
+ * clearing on Stop). Two minutes is generous headroom over a real open,
+ * which finishes in seconds, while still turning a hang into a visible
+ * failure instead of an indefinite spinner.
+ */
+const PROVIDER_SESSION_OPEN_TIMEOUT = Duration.minutes(2);
 
 export interface ProviderTurnStartServiceV2Shape {
   /**
@@ -525,24 +544,40 @@ export const layer: Layer.Layer<
         (candidate) => candidate.id === providerSessionId,
       );
       const sessionResult = yield* Effect.result(
-        providerSessions.open({
-          threadId: projection.thread.id,
-          providerSessionId,
-          modelSelection: run.modelSelection,
-          runtimePolicy: resolvedRuntimePolicy,
-          ...(existingSessionProjection === undefined
-            ? {}
-            : { resumeFromSession: existingSessionProjection }),
-          ...(providerThread.nativeThreadRef?.nativeId == null
-            ? {}
-            : { initialNativeThreadId: providerThread.nativeThreadRef.nativeId }),
-          ...(providerThread.nativeMetadata?.itemIdentityVersion === undefined
-            ? {}
-            : {
-                initialProviderItemIdentityVersion:
-                  providerThread.nativeMetadata.itemIdentityVersion,
-              }),
-        }),
+        providerSessions
+          .open({
+            threadId: projection.thread.id,
+            providerSessionId,
+            modelSelection: run.modelSelection,
+            runtimePolicy: resolvedRuntimePolicy,
+            ...(existingSessionProjection === undefined
+              ? {}
+              : { resumeFromSession: existingSessionProjection }),
+            ...(providerThread.nativeThreadRef?.nativeId == null
+              ? {}
+              : { initialNativeThreadId: providerThread.nativeThreadRef.nativeId }),
+            ...(providerThread.nativeMetadata?.itemIdentityVersion === undefined
+              ? {}
+              : {
+                  initialProviderItemIdentityVersion:
+                    providerThread.nativeMetadata.itemIdentityVersion,
+                }),
+          })
+          .pipe(
+            // A session open that never answers would otherwise leave the run
+            // "starting" forever (no other step here can time it out). The
+            // timeout interrupts the open on the way out; closing whatever
+            // scope it opened is ProviderSessionManager's job, not this one.
+            Effect.timeoutOrElse({
+              duration: PROVIDER_SESSION_OPEN_TIMEOUT,
+              orElse: () =>
+                new ProviderSessionManager.ProviderSessionOpenError({
+                  instanceId: run.modelSelection.instanceId,
+                  providerSessionId,
+                  cause: `The provider didn't finish starting within ${Duration.toMinutes(PROVIDER_SESSION_OPEN_TIMEOUT)} minutes.`,
+                }),
+            }),
+          ),
       );
       // The last start attempt fails the run with the provider's own reason
       // instead of leaving it `starting` after the effect gives up. A run that

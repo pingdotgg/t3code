@@ -18,11 +18,14 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -171,6 +174,10 @@ function makeLocalCommandHarness(input: {
   readonly writeFailure?: unknown;
   /** Loads the thread and starts the run, then fails every later state read. */
   readonly failReadsAfterRunning?: boolean;
+  /** Opens the session and never resolves, simulating a hung provider. */
+  readonly hungOpen?: boolean;
+  /** Delays the `failReadsAfterRunning` open's success by this long. */
+  readonly slowOpenDelay?: Duration.Input;
 }) {
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
   const threadId = ThreadId.make("thread-native-account-command");
@@ -396,42 +403,49 @@ function makeLocalCommandHarness(input: {
   const open = vi.fn(() =>
     input.interruptOpen === true
       ? Effect.interrupt
-      : "historyReadFailureAfterFallback" in input
-        ? Effect.succeed(resumeFallbackSession as never)
-        : "ensureThreadFailure" in input
-          ? Effect.succeed({ driver: providerThread.driver, ensureThread } as never)
-          : "openFailure" in input
-            ? Effect.sync(() => {
-                if (input.interruptRunBeforeOpenFailure === true) interruptRun();
-              }).pipe(
-                Effect.andThen(
-                  Effect.fail(
-                    new ProviderSessionManager.ProviderSessionOpenError({
-                      instanceId: newInstanceId,
-                      providerSessionId,
-                      cause: input.openFailure,
-                    }),
+      : input.hungOpen === true
+        ? Effect.never
+        : "historyReadFailureAfterFallback" in input
+          ? Effect.succeed(resumeFallbackSession as never)
+          : "ensureThreadFailure" in input
+            ? Effect.succeed({ driver: providerThread.driver, ensureThread } as never)
+            : "openFailure" in input
+              ? Effect.sync(() => {
+                  if (input.interruptRunBeforeOpenFailure === true) interruptRun();
+                }).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new ProviderSessionManager.ProviderSessionOpenError({
+                        instanceId: newInstanceId,
+                        providerSessionId,
+                        cause: input.openFailure,
+                      }),
+                    ),
                   ),
-                ),
-              )
-            : input.failReadsAfterRunning === true
-              ? Effect.succeed({
-                  driver: providerThread.driver,
-                  providerSession: {
-                    id: providerSessionId,
-                    driver: providerThread.driver,
-                    providerInstanceId: newInstanceId,
-                    status: "ready",
-                    cwd: "/tmp/native-account-command",
-                    model: null,
-                    capabilities: CodexProviderCapabilitiesV2,
-                    createdAt: now,
-                    updatedAt: now,
-                    lastError: null,
-                  },
-                  ensureThread: () => Effect.succeed(providerThread),
-                } as never)
-              : Effect.die("A local command must not open a native session."),
+                )
+              : input.failReadsAfterRunning === true
+                ? (input.slowOpenDelay === undefined
+                    ? Effect.void
+                    : Effect.sleep(input.slowOpenDelay)
+                  ).pipe(
+                    Effect.as({
+                      driver: providerThread.driver,
+                      providerSession: {
+                        id: providerSessionId,
+                        driver: providerThread.driver,
+                        providerInstanceId: newInstanceId,
+                        status: "ready",
+                        cwd: "/tmp/native-account-command",
+                        model: null,
+                        capabilities: CodexProviderCapabilitiesV2,
+                        createdAt: now,
+                        updatedAt: now,
+                        lastError: null,
+                      },
+                      ensureThread: () => Effect.succeed(providerThread),
+                    } as never),
+                  )
+                : Effect.die("A local command must not open a native session."),
   );
   const startRootRun = vi.fn<
     (input: RunExecutionService.RunExecutionServiceV2StartRootRunInput) => Effect.Effect<void>
@@ -656,6 +670,92 @@ effectIt.effect("does not overwrite a run interrupted while its provider session
     expect(projection.turnItems).toEqual([]);
     expect(harness.events).toEqual([]);
   }),
+);
+
+/** Waits until a forked harness has reached its `open` call, so a later
+ * `TestClock.adjust` or interrupt lands after the timeout race is armed
+ * instead of racing the fiber's own startup. */
+const awaitOpenCalled = Effect.fnUntraced(function* (open: { mock: { calls: Array<unknown> } }) {
+  while (open.mock.calls.length === 0) yield* Effect.yieldNow;
+});
+
+effectIt.effect(
+  "fails a starting run as a session-open failure when its provider never opens",
+  () =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({ text: "Continue", hungOpen: true });
+
+      const fiber = yield* harness.start.pipe(Effect.forkChild({ startImmediately: true }));
+      yield* awaitOpenCalled(harness.open);
+      yield* TestClock.adjust("2 minutes");
+      yield* Fiber.join(fiber);
+
+      expect(harness.startRootRun).not.toHaveBeenCalled();
+      const projection = harness.projection();
+      expect(projection.runs.at(-1)).toMatchObject({ status: "failed", startedAt: null });
+      expect(projection.attempts[0]).toMatchObject({ status: "failed", startedAt: null });
+      expect(projection.nodes[0]).toMatchObject({ status: "failed", startedAt: null });
+      expect(projection.turnItems).toMatchObject([
+        {
+          type: "error",
+          title: "Provider session failed to open",
+          failure: {
+            class: "provider_error",
+            message: "The provider didn't finish starting within 2 minutes.",
+          },
+        },
+      ]);
+    }).pipe(Effect.provide(TestClock.layer())),
+);
+
+effectIt.effect("leaves a hung session open starting when a timed-out open will be retried", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({ text: "Continue", hungOpen: true });
+
+    const fiber = yield* harness.startWithRetry.pipe(Effect.forkChild({ startImmediately: true }));
+    yield* awaitOpenCalled(harness.open);
+    yield* TestClock.adjust("2 minutes");
+    const error = yield* Fiber.join(fiber).pipe(Effect.flip);
+
+    expect(error._tag).toBe("ProviderTurnStartError");
+    expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
+    expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
+effectIt.effect("does not fail a run whose provider session opens just under the deadline", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      failReadsAfterRunning: true,
+      slowOpenDelay: "110 seconds",
+    });
+
+    const fiber = yield* harness.start.pipe(Effect.forkChild({ startImmediately: true }));
+    yield* awaitOpenCalled(harness.open);
+    yield* TestClock.adjust("110 seconds");
+    yield* Fiber.join(fiber);
+
+    expect(harness.open).toHaveBeenCalledOnce();
+    expect(harness.startRootRun).toHaveBeenCalledOnce();
+    expect(harness.projection().runs.at(-1)?.status).toBe("running");
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
+effectIt.effect("still interrupts a hung session open when Stop arrives before the deadline", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({ text: "Continue", hungOpen: true });
+
+    const fiber = yield* harness.start.pipe(Effect.forkChild({ startImmediately: true }));
+    yield* awaitOpenCalled(harness.open);
+    yield* TestClock.adjust("1 second");
+    yield* Fiber.interrupt(fiber);
+
+    expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+    expect(harness.events).toEqual([]);
+  }).pipe(Effect.provide(TestClock.layer())),
 );
 
 effectIt.effect("fails a starting run when its last start attempt cannot load the thread", () =>
