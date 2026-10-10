@@ -1,8 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   EnvironmentId,
+  PluginActionId,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ThreadId,
+  type PluginAction,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { act, createElement } from "react";
@@ -27,9 +31,15 @@ vi.mock("../../state/server", () => ({
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: () => refreshProviders,
 }));
+vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
+vi.mock("../../state/plugin-actions", () => ({
+  usePluginActions: () => [],
+  runPluginAction: vi.fn(),
+}));
 
 import {
   buildComposerSlashCommandItems,
+  buildPluginActionSlashItems,
   resolveComposerCommandSelection,
   useComposerCommandMenu,
 } from "./use-composer-command-menu";
@@ -145,6 +155,7 @@ describe("workspace command discovery retry", () => {
       draftMessage: "/project",
       ownerKey: null,
       environmentId,
+      projectId: null,
       projectCwd: cwd,
       selectedProviderStatus: status,
       hasThread: false,
@@ -320,5 +331,45 @@ describe("workspace command discovery retry", () => {
     await act(() => vi.advanceTimersByTimeAsync(20_000));
     expect(refreshProviders).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("mobile plugin action slash entries", () => {
+  const action = (name: string, title: string, target: PluginAction["target"]) =>
+    ({
+      id: PluginActionId.make(`installation-1:1:${name}`),
+      pluginId: "acme.deploy",
+      pluginName: "Deploy",
+      name,
+      title,
+      target,
+      placements: ["composer-slash"],
+    }) satisfies PluginAction;
+  const actions = [
+    action("deploy", "Deploy this branch", "thread"),
+    action("open-dashboard", "Open dashboard", "project"),
+  ];
+  const threadId = ThreadId.make("thread-1");
+  const projectId = ProjectId.make("project-1");
+
+  it("match by name or title and run on the thread they were picked on", () => {
+    expect(
+      buildPluginActionSlashItems(actions, "branch", { threadId, projectId }).map((item) =>
+        item.type === "plugin-action" ? [item.label, item.target] : null,
+      ),
+    ).toEqual([["/deploy", { _tag: "thread", threadId }]]);
+    expect(
+      buildPluginActionSlashItems(actions, "dash", { threadId, projectId }).map(
+        (item) => item.label,
+      ),
+    ).toEqual(["/open-dashboard"]);
+  });
+
+  it("leave out actions whose target the composer cannot supply", () => {
+    expect(
+      buildPluginActionSlashItems(actions, "", { threadId: null, projectId }).map(
+        (item) => item.label,
+      ),
+    ).toEqual(["/open-dashboard"]);
   });
 });

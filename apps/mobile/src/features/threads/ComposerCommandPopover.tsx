@@ -3,6 +3,8 @@ import {
   type ProviderSkillSourceKind,
 } from "@t3tools/client-runtime/providerSkills";
 import type {
+  PluginAction,
+  PluginActionTarget,
   PullRequestContextMetadata,
   ScopedThreadRef,
   ServerProviderSkill,
@@ -59,6 +61,14 @@ export type ComposerCommandItem =
       readonly skill: ServerProviderSkill;
       readonly label: string;
       readonly description: string;
+    }
+  | {
+      readonly id: string;
+      readonly type: "plugin-action";
+      readonly action: PluginAction;
+      readonly target: PluginActionTarget;
+      readonly label: string;
+      readonly description: string;
     };
 
 interface ComposerCommandPopoverProps {
@@ -109,6 +119,8 @@ function itemIcon(item: ComposerCommandItem): AppSymbolName | null {
       return null;
     case "thread":
       return "text.bubble";
+    case "plugin-action":
+      return "cube";
   }
 }
 
