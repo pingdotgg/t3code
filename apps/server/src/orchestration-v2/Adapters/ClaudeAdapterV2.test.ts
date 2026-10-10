@@ -405,6 +405,43 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     });
   });
 
+  // #4927 / #7246: a Claude settings cascade or managed policy can set
+  // `permissions.disableBypassPermissionsMode: "disable"`, which makes the
+  // CLI refuse to run in bypassPermissions. Full access must fall back to
+  // the strongest mode the policy still allows instead of requesting one
+  // we already know is forbidden.
+  it("downgrades full-access to Auto when Claude policy disables bypass", () => {
+    const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
+      ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: "/workspace",
+      }),
+      { bypassDisabled: true, autoDisabled: false },
+    );
+
+    assert.deepEqual(queryPolicy, {
+      permissionMode: "auto",
+      installPermissionCallback: true,
+    });
+  });
+
+  it("downgrades full-access to the default permission mode when both bypass and Auto are disabled", () => {
+    const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
+      ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: "/workspace",
+      }),
+      { bypassDisabled: true, autoDisabled: true },
+    );
+
+    assert.deepEqual(queryPolicy, {
+      permissionMode: "default",
+      installPermissionCallback: true,
+    });
+  });
+
   it("maps Auto runtime mode to Claude's AI-reviewed permission mode", () => {
     const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
       ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -1106,6 +1143,1077 @@ describe("ClaudeAdapterV2 approval cancellation", () => {
       assert.equal(removes, 1);
     }),
   );
+});
+
+// #4927 / #7246: Claude's own settings (here, a real project .claude/settings.json
+// resolved by the Agent SDK's resolveSettings, the same way the real CLI reads it)
+// can disable bypassPermissions. Full access must downgrade instead of requesting
+// a mode the CLI will refuse, and must ask for approval instead of silently
+// auto-allowing tools once downgraded.
+describe("ClaudeAdapterV2 Claude policy bypass downgrade", () => {
+  const minimalResultFrame = (input: { readonly uuid: string; readonly sessionId: string }) => {
+    const frame: unknown = {
+      type: "result",
+      subtype: "success",
+      duration_ms: 10,
+      duration_api_ms: 10,
+      is_error: false,
+      num_turns: 1,
+      result: "done",
+      stop_reason: "end_turn",
+      total_cost_usd: 0,
+      usage: {
+        input_tokens: 1,
+        output_tokens: 1,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
+      modelUsage: {},
+      permission_denials: [],
+      uuid: input.uuid,
+      session_id: input.sessionId,
+      terminal_reason: "completed",
+    };
+    return frame as SDKMessage;
+  };
+
+  const awaitUntil = (predicate: () => boolean, label: string): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      for (let attempt = 0; attempt < 5000; attempt++) {
+        if (predicate()) {
+          return;
+        }
+        yield* Effect.yieldNow;
+      }
+      return yield* Effect.die(`Timed out waiting for ${label}.`);
+    });
+
+  it.effect(
+    "asks for approval instead of allowing a tool call when Claude policy disables bypass",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-bypass-policy-",
+          });
+          const cwd = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-bypass-policy-cwd-",
+          });
+          yield* fileSystem.makeDirectory(path.join(cwd, ".claude"), { recursive: true });
+          yield* fileSystem.writeFileString(
+            path.join(cwd, ".claude", "settings.json"),
+            '{"permissions":{"disableBypassPermissionsMode":"disable"}}',
+          );
+
+          let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+          const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+            instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+            settings: DEFAULT_CLAUDE_SETTINGS,
+            environment: {},
+            attachmentsDir,
+            fileSystem,
+            path,
+            crypto: yield* Crypto.Crypto,
+            idAllocator,
+            queryRunner: {
+              allocateSessionId: Effect.succeed("native-thread-claude-bypass-policy"),
+              open: (input) =>
+                Effect.sync(() => {
+                  openedOptions = input.options;
+                  return {
+                    messages: Stream.never,
+                    offer: () => Effect.void,
+                    setModel: () => Effect.void,
+                    setPermissionMode: () => Effect.void,
+                    interrupt: Effect.void,
+                    close: Effect.void,
+                  };
+                }),
+              forkSession: () => Effect.die("unused"),
+              subagentLaunchToolUseId: () => Effect.succeed(null),
+              assertComplete: Effect.void,
+            },
+          });
+
+          const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd,
+          });
+          const threadId = ThreadId.make("thread-claude-bypass-policy");
+          const runtime = yield* adapter.openSession({
+            threadId,
+            providerSessionId: ProviderSessionId.make("provider-session-claude-bypass-policy"),
+            modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+            runtimePolicy,
+          });
+          const providerThread = yield* runtime.ensureThread({
+            threadId,
+            modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+            runtimePolicy,
+          });
+          const now = yield* DateTime.now;
+
+          const noticeEvent = yield* runtime.events.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
+            ),
+            Stream.runHead,
+            Effect.forkScoped,
+          );
+
+          yield* runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId,
+              providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-bypass-policy"),
+              text: "touch file.txt",
+              attachments: [],
+              runtimePolicy,
+            }),
+          );
+
+          // Auto, not bypassPermissions: this project's settings only disable
+          // bypass, not Auto.
+          assert.equal(openedOptions?.permissionMode, "auto");
+          assert.isUndefined(openedOptions?.allowDangerouslySkipPermissions);
+          const canUseTool = openedOptions?.canUseTool;
+          assert.isFunction(canUseTool);
+
+          const requestEvent = yield* runtime.events.pipe(
+            Stream.filter((event) => event.type === "runtime_request.updated"),
+            Stream.runHead,
+            Effect.forkScoped,
+          );
+          const decision = yield* Effect.promise(() =>
+            canUseTool!(
+              "Bash",
+              { command: "touch file.txt" },
+              {
+                signal: new AbortController().signal,
+                toolUseID: "tool-bash-bypass-policy",
+                requestId: "request-bash-bypass-policy",
+              },
+            ),
+          ).pipe(Effect.forkScoped);
+          // Without a callback that asks, the command is allowed before any
+          // request is raised. The downgrade must force that callback on.
+          const first = yield* Effect.raceFirst(
+            Fiber.join(requestEvent).pipe(
+              Effect.map((event) => ({ type: "request", event }) as const),
+            ),
+            Fiber.join(decision).pipe(
+              Effect.map((result) => ({ type: "decision", result }) as const),
+            ),
+          );
+          assert.equal(first.type, "request", "the command ran without asking for approval");
+
+          const notice = yield* Fiber.join(noticeEvent);
+          assert.isTrue(Option.isSome(notice), "expected a one-time system_notice turn item");
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      ),
+  );
+
+  it.effect("re-resolves Claude's policy when a later turn's cwd changes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-bypass-policy-cwd-change-",
+        });
+        const restrictedCwd = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-bypass-policy-restricted-",
+        });
+        yield* fileSystem.makeDirectory(path.join(restrictedCwd, ".claude"), { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(restrictedCwd, ".claude", "settings.json"),
+          '{"permissions":{"disableBypassPermissionsMode":"disable"}}',
+        );
+        const openCwd = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-bypass-policy-open-",
+        });
+
+        let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+        let currentQueue: Queue.Queue<SDKMessage> | undefined;
+        const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir,
+          fileSystem,
+          path,
+          crypto: yield* Crypto.Crypto,
+          idAllocator,
+          queryRunner: {
+            allocateSessionId: Effect.succeed("native-thread-claude-bypass-policy-cwd-change"),
+            open: (input) =>
+              Effect.gen(function* () {
+                openedOptions = input.options;
+                const queue = yield* Queue.unbounded<SDKMessage>();
+                currentQueue = queue;
+                return {
+                  messages: Stream.fromQueue(queue),
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Queue.shutdown(queue),
+                };
+              }),
+            forkSession: () => Effect.die("unused"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+
+        const threadId = ThreadId.make("thread-claude-bypass-policy-cwd-change");
+        const runtimePolicyRestricted = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: restrictedCwd,
+        });
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(
+            "provider-session-claude-bypass-policy-cwd-change",
+          ),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: runtimePolicyRestricted,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: runtimePolicyRestricted,
+        });
+        const now = yield* DateTime.now;
+
+        const firstTerminal = yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-bypass-policy-cwd-change-a"),
+            text: "touch file.txt",
+            attachments: [],
+            runtimePolicy: runtimePolicyRestricted,
+          }),
+        );
+        // The restricted cwd's project settings disable bypass: downgraded.
+        assert.equal(openedOptions?.permissionMode, "auto");
+
+        const nativeSessionId = openedOptions?.sessionId ?? openedOptions?.resume;
+        assert.isString(nativeSessionId);
+        yield* Queue.offer(
+          currentQueue!,
+          minimalResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000f01",
+            sessionId: nativeSessionId as string,
+          }),
+        );
+        yield* Fiber.join(firstTerminal);
+
+        const runtimePolicyOpen = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: openCwd,
+        });
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread: { ...providerThread, status: "active" },
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-bypass-policy-cwd-change-b"),
+            text: "touch file.txt",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            runtimePolicy: runtimePolicyOpen,
+          }),
+        );
+        // The new cwd has no restricting policy: the cache must not keep the
+        // first cwd's downgrade.
+        assert.equal(openedOptions?.permissionMode, "bypassPermissions");
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  // The cached availability is keyed on cwd, not on what a given turn
+  // actually requests. A full-access turn that gets downgraded must not make
+  // a *later* approval-required (or Auto) turn in the same cwd look
+  // downgraded too: that turn never asked for bypass, so there is nothing to
+  // announce. The second turn also must not reuse the first turn's
+  // downgraded-mode live query.
+  it.effect(
+    "announces the downgrade only once, and never for a later approval-required turn in the same cwd",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-bypass-policy-notice-once-",
+          });
+          const cwd = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-bypass-policy-notice-once-cwd-",
+          });
+          yield* fileSystem.makeDirectory(path.join(cwd, ".claude"), { recursive: true });
+          yield* fileSystem.writeFileString(
+            path.join(cwd, ".claude", "settings.json"),
+            '{"permissions":{"disableBypassPermissionsMode":"disable"}}',
+          );
+
+          let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+          let currentQueue: Queue.Queue<SDKMessage> | undefined;
+          const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+            instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+            settings: DEFAULT_CLAUDE_SETTINGS,
+            environment: {},
+            attachmentsDir,
+            fileSystem,
+            path,
+            crypto: yield* Crypto.Crypto,
+            idAllocator,
+            queryRunner: {
+              allocateSessionId: Effect.succeed("native-thread-claude-bypass-policy-notice-once"),
+              open: (input) =>
+                Effect.gen(function* () {
+                  openedOptions = input.options;
+                  const queue = yield* Queue.unbounded<SDKMessage>();
+                  currentQueue = queue;
+                  return {
+                    messages: Stream.fromQueue(queue),
+                    offer: () => Effect.void,
+                    setModel: () => Effect.void,
+                    setPermissionMode: () => Effect.void,
+                    interrupt: Effect.void,
+                    close: Queue.shutdown(queue),
+                  };
+                }),
+              forkSession: () => Effect.die("unused"),
+              subagentLaunchToolUseId: () => Effect.succeed(null),
+              assertComplete: Effect.void,
+            },
+          });
+
+          const threadId = ThreadId.make("thread-claude-bypass-policy-notice-once");
+          const runtimePolicyFullAccess = ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd,
+          });
+          const runtime = yield* adapter.openSession({
+            threadId,
+            providerSessionId: ProviderSessionId.make(
+              "provider-session-claude-bypass-policy-notice-once",
+            ),
+            modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+            runtimePolicy: runtimePolicyFullAccess,
+          });
+          const providerThread = yield* runtime.ensureThread({
+            threadId,
+            modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+            runtimePolicy: runtimePolicyFullAccess,
+          });
+          const now = yield* DateTime.now;
+
+          // One persistent collector for the whole test, polled afterward,
+          // rather than several concurrent one-shot listeners on the same
+          // events stream racing each other for the same items.
+          const events: Array<ProviderAdapterV2Event> = [];
+          yield* runtime.events.pipe(
+            Stream.runForEach((event) => Effect.sync(() => events.push(event))),
+            Effect.forkScoped,
+          );
+          const noticeCount = () =>
+            events.filter(
+              (event) =>
+                event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
+            ).length;
+          const terminalCount = () =>
+            events.filter((event) => event.type === "turn.terminal").length;
+
+          yield* runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId,
+              providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-bypass-policy-notice-once-a"),
+              text: "touch file.txt",
+              attachments: [],
+              runtimePolicy: runtimePolicyFullAccess,
+            }),
+          );
+          // Downgraded: the restricted cwd disables bypass.
+          assert.equal(openedOptions?.permissionMode, "auto");
+
+          const nativeSessionId = openedOptions?.sessionId ?? openedOptions?.resume;
+          assert.isString(nativeSessionId);
+          yield* Queue.offer(
+            currentQueue!,
+            minimalResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000f02",
+              sessionId: nativeSessionId as string,
+            }),
+          );
+          yield* awaitUntil(() => terminalCount() === 1, "first turn terminal");
+          assert.equal(noticeCount(), 1, "expected exactly one notice after the full-access turn");
+
+          const runtimePolicyApprovalRequired = ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            cwd,
+          });
+          yield* runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId,
+              providerThread: { ...providerThread, status: "active" },
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-bypass-policy-notice-once-b"),
+              text: "touch file.txt",
+              attachments: [],
+              providerTurnOrdinal: 2,
+              runtimePolicy: runtimePolicyApprovalRequired,
+            }),
+          );
+          // A fresh query in the plain approval-required mode, not a reuse
+          // of the first turn's downgraded-to-Auto live query.
+          assert.equal(openedOptions?.permissionMode, "default");
+
+          const canUseTool = openedOptions?.canUseTool;
+          assert.isFunction(canUseTool);
+          yield* Effect.promise(() =>
+            canUseTool!(
+              "Bash",
+              { command: "touch file.txt" },
+              {
+                signal: new AbortController().signal,
+                toolUseID: "tool-bash-notice-once",
+                requestId: "request-bash-notice-once",
+              },
+            ),
+          ).pipe(Effect.forkScoped);
+          // An auto-allowed call (a leftover downgraded-mode query) never
+          // raises a runtime_request.updated event at all, so this would
+          // time out instead of silently passing if the second turn reused
+          // the first turn's query.
+          yield* awaitUntil(
+            () => events.some((event) => event.type === "runtime_request.updated"),
+            "approval request for the second turn's tool call (must ask, not auto-allow)",
+          );
+          assert.equal(
+            noticeCount(),
+            1,
+            "the approval-required turn must not announce a downgrade of its own",
+          );
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      ),
+  );
+
+  // A Claude provider session can serve more than one app thread over its
+  // life (Claude sessions serve one app thread at a time, but can switch).
+  // The #4927 downgrade notice is tracked per thread, but the resolved
+  // availability cache is per session+cwd: a second thread sharing the same
+  // session and restricted cwd, but never itself requesting bypass, must not
+  // be announced as downgraded just because a sibling thread was.
+  it.effect("never announces the downgrade for a sibling thread that never requested bypass", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-bypass-policy-sibling-thread-",
+        });
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-bypass-policy-sibling-thread-cwd-",
+        });
+        yield* fileSystem.makeDirectory(path.join(cwd, ".claude"), { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(cwd, ".claude", "settings.json"),
+          '{"permissions":{"disableBypassPermissionsMode":"disable"}}',
+        );
+
+        let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+        let currentQueue: Queue.Queue<SDKMessage> | undefined;
+        let nextNativeThreadId = 0;
+        const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir,
+          fileSystem,
+          path,
+          crypto: yield* Crypto.Crypto,
+          idAllocator,
+          queryRunner: {
+            // A fresh native id per call: two sibling app threads sharing
+            // this session must not collapse into the same native thread.
+            allocateSessionId: Effect.sync(
+              () => `native-thread-claude-bypass-policy-sibling-${nextNativeThreadId++}`,
+            ),
+            open: (input) =>
+              Effect.gen(function* () {
+                openedOptions = input.options;
+                const queue = yield* Queue.unbounded<SDKMessage>();
+                currentQueue = queue;
+                return {
+                  messages: Stream.fromQueue(queue),
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Queue.shutdown(queue),
+                };
+              }),
+            forkSession: () => Effect.die("unused"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+
+        const threadA = ThreadId.make("thread-claude-bypass-policy-sibling-a");
+        const threadB = ThreadId.make("thread-claude-bypass-policy-sibling-b");
+        const runtimePolicyFullAccess = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd,
+        });
+        const runtimePolicyApprovalRequired = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          cwd,
+        });
+        const runtime = yield* adapter.openSession({
+          threadId: threadA,
+          providerSessionId: ProviderSessionId.make(
+            "provider-session-claude-bypass-policy-sibling",
+          ),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: runtimePolicyFullAccess,
+        });
+        const providerThreadA = yield* runtime.ensureThread({
+          threadId: threadA,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: runtimePolicyFullAccess,
+        });
+        const providerThreadB = yield* runtime.ensureThread({
+          threadId: threadB,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: runtimePolicyApprovalRequired,
+        });
+        const now = yield* DateTime.now;
+
+        const events: Array<ProviderAdapterV2Event> = [];
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) => Effect.sync(() => events.push(event))),
+          Effect.forkScoped,
+        );
+        const noticeCount = () =>
+          events.filter(
+            (event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
+          ).length;
+        const terminalCountForA = () =>
+          events.filter(
+            (event) =>
+              event.type === "turn.terminal" && event.providerThreadId === providerThreadA.id,
+          ).length;
+
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: threadA,
+            providerThread: providerThreadA,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-bypass-policy-sibling-a"),
+            text: "touch file.txt",
+            attachments: [],
+            runtimePolicy: runtimePolicyFullAccess,
+          }),
+        );
+        assert.equal(openedOptions?.permissionMode, "auto");
+
+        const nativeSessionIdA = openedOptions?.sessionId ?? openedOptions?.resume;
+        assert.isString(nativeSessionIdA);
+        yield* Queue.offer(
+          currentQueue!,
+          minimalResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000f03",
+            sessionId: nativeSessionIdA as string,
+          }),
+        );
+        yield* awaitUntil(() => terminalCountForA() === 1, "thread A's turn terminal");
+        assert.equal(
+          noticeCount(),
+          1,
+          "expected exactly one notice after thread A's full-access turn",
+        );
+
+        // Thread B shares this session and the same restricted cwd, but
+        // never itself asked for bypass.
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: threadB,
+            providerThread: { ...providerThreadB, status: "active" },
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-bypass-policy-sibling-b"),
+            text: "touch file.txt",
+            attachments: [],
+            runtimePolicy: runtimePolicyApprovalRequired,
+          }),
+        );
+        assert.equal(openedOptions?.permissionMode, "default");
+        // Give the background event collector a chance to drain thread B's
+        // own turn-start event before inspecting the full event list.
+        yield* awaitUntil(
+          () =>
+            events.some(
+              (event) =>
+                event.type === "provider_turn.updated" &&
+                event.providerTurn.providerThreadId === providerThreadB.id,
+            ),
+          "thread B's turn to start",
+        );
+        assert.equal(
+          noticeCount(),
+          1,
+          "thread B's approval-required turn must not announce a downgrade for itself",
+        );
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  // The skip must be keyed on this instance's own configured Claude home
+  // (settings.homePath), not on whether the resolved environment happens to
+  // carry an inherited CLAUDE_CONFIG_DIR: an ambient value the server process
+  // itself inherited is exactly what resolveSettings reads anyway, so it must
+  // not disable the policy check for the common default-instance case.
+  it.effect(
+    "does not skip the policy check for an inherited CLAUDE_CONFIG_DIR with no configured instance home",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-bypass-policy-inherited-env-",
+          });
+          const cwd = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-bypass-policy-inherited-env-cwd-",
+          });
+          yield* fileSystem.makeDirectory(path.join(cwd, ".claude"), { recursive: true });
+          yield* fileSystem.writeFileString(
+            path.join(cwd, ".claude", "settings.json"),
+            '{"permissions":{"disableBypassPermissionsMode":"disable"}}',
+          );
+
+          let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+          const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+            instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+            // No configured homePath: this is the default instance, even
+            // though the environment below carries an inherited
+            // CLAUDE_CONFIG_DIR the server process itself picked up.
+            settings: DEFAULT_CLAUDE_SETTINGS,
+            environment: { CLAUDE_CONFIG_DIR: "/some/inherited/claude/config/dir" },
+            attachmentsDir,
+            fileSystem,
+            path,
+            crypto: yield* Crypto.Crypto,
+            idAllocator,
+            queryRunner: {
+              allocateSessionId: Effect.succeed("native-thread-claude-bypass-inherited-env"),
+              open: (input) =>
+                Effect.sync(() => {
+                  openedOptions = input.options;
+                  return {
+                    messages: Stream.never,
+                    offer: () => Effect.void,
+                    setModel: () => Effect.void,
+                    setPermissionMode: () => Effect.void,
+                    interrupt: Effect.void,
+                    close: Effect.void,
+                  };
+                }),
+              forkSession: () => Effect.die("unused"),
+              subagentLaunchToolUseId: () => Effect.succeed(null),
+              assertComplete: Effect.void,
+            },
+          });
+
+          const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd,
+          });
+          const threadId = ThreadId.make("thread-claude-bypass-policy-inherited-env");
+          const runtime = yield* adapter.openSession({
+            threadId,
+            providerSessionId: ProviderSessionId.make(
+              "provider-session-claude-bypass-policy-inherited-env",
+            ),
+            modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+            runtimePolicy,
+          });
+          const providerThread = yield* runtime.ensureThread({
+            threadId,
+            modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+            runtimePolicy,
+          });
+          const now = yield* DateTime.now;
+
+          yield* runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId,
+              providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-bypass-policy-inherited-env"),
+              text: "touch file.txt",
+              attachments: [],
+              runtimePolicy,
+            }),
+          );
+
+          assert.equal(openedOptions?.permissionMode, "auto");
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      ),
+  );
+
+  // A configured Claude home (settings.homePath) cannot be resolved through
+  // resolveSettings's "user" source, which always reads the ambient
+  // CLAUDE_CONFIG_DIR. The adapter must still honor that home's own
+  // settings.json instead of unconditionally assuming bypass is available
+  // for every instance with a configured home.
+  it.effect(
+    "honors a configured Claude home's own settings.json instead of skipping the check",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-bypass-policy-custom-home-",
+          });
+          const customHome = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-bypass-policy-custom-home-dir-",
+          });
+          yield* fileSystem.writeFileString(
+            path.join(customHome, "settings.json"),
+            '{"permissions":{"disableBypassPermissionsMode":"disable"}}',
+          );
+          // No restriction at the cwd itself: only the custom home's own
+          // settings.json should be responsible for the downgrade below.
+          const cwd = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-bypass-policy-custom-home-cwd-",
+          });
+
+          let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+          const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+            instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+            settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: customHome },
+            environment: {},
+            attachmentsDir,
+            fileSystem,
+            path,
+            crypto: yield* Crypto.Crypto,
+            idAllocator,
+            queryRunner: {
+              allocateSessionId: Effect.succeed("native-thread-claude-bypass-custom-home"),
+              open: (input) =>
+                Effect.sync(() => {
+                  openedOptions = input.options;
+                  return {
+                    messages: Stream.never,
+                    offer: () => Effect.void,
+                    setModel: () => Effect.void,
+                    setPermissionMode: () => Effect.void,
+                    interrupt: Effect.void,
+                    close: Effect.void,
+                  };
+                }),
+              forkSession: () => Effect.die("unused"),
+              subagentLaunchToolUseId: () => Effect.succeed(null),
+              assertComplete: Effect.void,
+            },
+          });
+
+          const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd,
+          });
+          const threadId = ThreadId.make("thread-claude-bypass-policy-custom-home");
+          const runtime = yield* adapter.openSession({
+            threadId,
+            providerSessionId: ProviderSessionId.make(
+              "provider-session-claude-bypass-policy-custom-home",
+            ),
+            modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+            runtimePolicy,
+          });
+          const providerThread = yield* runtime.ensureThread({
+            threadId,
+            modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+            runtimePolicy,
+          });
+          const now = yield* DateTime.now;
+
+          yield* runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId,
+              providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-bypass-policy-custom-home"),
+              text: "touch file.txt",
+              attachments: [],
+              runtimePolicy,
+            }),
+          );
+
+          assert.equal(openedOptions?.permissionMode, "auto");
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      ),
+  );
+
+  it.effect(
+    "fails closed when a configured Claude home's settings.json exists but can't be read",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-bypass-policy-custom-home-unreadable-",
+          });
+          const customHome = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-bypass-policy-custom-home-unreadable-dir-",
+          });
+          // A directory where the file should be: present, but reading it fails
+          // with something other than NotFound.
+          yield* fileSystem.makeDirectory(path.join(customHome, "settings.json"));
+          const cwd = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-bypass-policy-custom-home-unreadable-cwd-",
+          });
+
+          let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+          const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+            instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+            settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: customHome },
+            environment: {},
+            attachmentsDir,
+            fileSystem,
+            path,
+            crypto: yield* Crypto.Crypto,
+            idAllocator,
+            queryRunner: {
+              allocateSessionId: Effect.succeed(
+                "native-thread-claude-bypass-custom-home-unreadable",
+              ),
+              open: (input) =>
+                Effect.sync(() => {
+                  openedOptions = input.options;
+                  return {
+                    messages: Stream.never,
+                    offer: () => Effect.void,
+                    setModel: () => Effect.void,
+                    setPermissionMode: () => Effect.void,
+                    interrupt: Effect.void,
+                    close: Effect.void,
+                  };
+                }),
+              forkSession: () => Effect.die("unused"),
+              subagentLaunchToolUseId: () => Effect.succeed(null),
+              assertComplete: Effect.void,
+            },
+          });
+
+          const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd,
+          });
+          const threadId = ThreadId.make("thread-claude-bypass-policy-custom-home-unreadable");
+          const runtime = yield* adapter.openSession({
+            threadId,
+            providerSessionId: ProviderSessionId.make(
+              "provider-session-claude-bypass-policy-custom-home-unreadable",
+            ),
+            modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+            runtimePolicy,
+          });
+          const providerThread = yield* runtime.ensureThread({
+            threadId,
+            modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+            runtimePolicy,
+          });
+          const now = yield* DateTime.now;
+
+          yield* runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId,
+              providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-bypass-policy-custom-home-unreadable"),
+              text: "touch file.txt",
+              attachments: [],
+              runtimePolicy,
+            }),
+          );
+
+          assert.equal(openedOptions?.permissionMode, "auto");
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      ),
+  );
+
+  it.effect(
+    "keeps bypassPermissions for a configured Claude home with no restricting settings.json",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-bypass-policy-custom-home-open-",
+          });
+          // No settings.json written here at all.
+          const customHome = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-bypass-policy-custom-home-open-dir-",
+          });
+          const cwd = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-bypass-policy-custom-home-open-cwd-",
+          });
+
+          let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+          const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+            instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+            settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: customHome },
+            environment: {},
+            attachmentsDir,
+            fileSystem,
+            path,
+            crypto: yield* Crypto.Crypto,
+            idAllocator,
+            queryRunner: {
+              allocateSessionId: Effect.succeed("native-thread-claude-bypass-custom-home-open"),
+              open: (input) =>
+                Effect.sync(() => {
+                  openedOptions = input.options;
+                  return {
+                    messages: Stream.never,
+                    offer: () => Effect.void,
+                    setModel: () => Effect.void,
+                    setPermissionMode: () => Effect.void,
+                    interrupt: Effect.void,
+                    close: Effect.void,
+                  };
+                }),
+              forkSession: () => Effect.die("unused"),
+              subagentLaunchToolUseId: () => Effect.succeed(null),
+              assertComplete: Effect.void,
+            },
+          });
+
+          const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd,
+          });
+          const threadId = ThreadId.make("thread-claude-bypass-policy-custom-home-open");
+          const runtime = yield* adapter.openSession({
+            threadId,
+            providerSessionId: ProviderSessionId.make(
+              "provider-session-claude-bypass-policy-custom-home-open",
+            ),
+            modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+            runtimePolicy,
+          });
+          const providerThread = yield* runtime.ensureThread({
+            threadId,
+            modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+            runtimePolicy,
+          });
+          const now = yield* DateTime.now;
+
+          yield* runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId,
+              providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-bypass-policy-custom-home-open"),
+              text: "touch file.txt",
+              attachments: [],
+              runtimePolicy,
+            }),
+          );
+
+          assert.equal(openedOptions?.permissionMode, "bypassPermissions");
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      ),
+  );
+});
+
+// The #4927 downgrade notice is tracked per thread on the adapter instance
+// with no lifecycle hook to clear an entry when a thread is deleted, so it
+// must be bounded some other way instead of growing forever.
+describe("ClaudeAdapterV2 bounded recent set", () => {
+  it("evicts the least-recently-marked entry once capacity is exceeded", () => {
+    const set = ClaudeAdapterV2.makeBoundedRecentSet<string>(3);
+    set.mark("a");
+    set.mark("b");
+    set.mark("c");
+    assert.isTrue(set.has("a"));
+
+    set.mark("d");
+
+    assert.isFalse(set.has("a"), "the oldest entry should have been evicted");
+    assert.isTrue(set.has("b"));
+    assert.isTrue(set.has("c"));
+    assert.isTrue(set.has("d"));
+  });
+
+  it("never grows past capacity across many distinct keys", () => {
+    const set = ClaudeAdapterV2.makeBoundedRecentSet<number>(10);
+    for (let i = 0; i < 10000; i++) {
+      set.mark(i);
+    }
+    let size = 0;
+    for (let i = 0; i < 10000; i++) {
+      if (set.has(i)) {
+        size++;
+      }
+    }
+    assert.isAtMost(size, 10);
+    // The most recently marked keys are the ones still present.
+    assert.isTrue(set.has(9999));
+    assert.isFalse(set.has(0));
+  });
+
+  it("treats re-marking an existing entry as a refresh, not a duplicate that skips eviction order", () => {
+    const set = ClaudeAdapterV2.makeBoundedRecentSet<string>(2);
+    set.mark("a");
+    set.mark("b");
+    set.mark("a"); // "a" is now most-recent; "b" is least-recent.
+    set.mark("c"); // Must evict "b", not "a".
+
+    assert.isTrue(set.has("a"));
+    assert.isFalse(set.has("b"));
+    assert.isTrue(set.has("c"));
+  });
 });
 
 // Opens a session with the given configured binary path, runs one turn, and
