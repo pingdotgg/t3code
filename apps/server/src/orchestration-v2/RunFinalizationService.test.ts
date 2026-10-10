@@ -1,8 +1,10 @@
 import { assert, it, vi } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  ProviderInstanceId,
   RunId,
   ThreadId,
+  type OrchestrationV2Run,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -12,15 +14,18 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
+import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as RunFinalization from "./RunFinalizationService.ts";
 
-it.effect("refreshes workspace after checkpoint capture without reading history", () => {
+it.effect("refreshes workspace after checkpoint capture, then records finalization", () => {
   const threadId = ThreadId.make("thread_finalize");
   const runId = RunId.make("run_finalize");
   const scopeId = CheckpointScopeId.make("scope_finalize");
-  const capture = vi.fn(() => Effect.void);
-  const refresh = vi.fn(() => Effect.void);
+  const steps: Array<string> = [];
+  const capture = vi.fn(() => Effect.sync(() => steps.push("capture")));
+  const refresh = vi.fn(() => Effect.sync(() => steps.push("refresh")));
+  const write = vi.fn(() => Effect.sync(() => (steps.push("record"), [])));
   const checkpointContext = {
     runs: [],
     checkpointScopes: [{ id: scopeId, runId, kind: "root_run" as const, cwd: "/repo" }],
@@ -34,6 +39,25 @@ it.effect("refreshes workspace after checkpoint capture without reading history"
           getThreadProjection: () =>
             Effect.die("workspace refresh must not load transcript history"),
           getCheckpointContext: () => Effect.succeed(checkpointContext),
+          getCheckpointCaptureContext: () =>
+            Effect.succeed({
+              run: {
+                id: runId,
+                threadId,
+                rootNodeId: null,
+                providerInstanceId: ProviderInstanceId.make("codex"),
+                status: "completed",
+                checkpointId: null,
+              } as OrchestrationV2Run,
+              rootNode: undefined,
+              scope: undefined,
+              providerThread: undefined,
+              readyCheckpointOrdinals: [],
+            }),
+        }),
+        Layer.mock(EventSink.EventSinkV2)({
+          write,
+          hasRunFinalization: () => Effect.succeed(false),
         }),
         Layer.succeed(RunFinalization.RunFinalizationObserver, {
           refresh,
@@ -47,6 +71,7 @@ it.effect("refreshes workspace after checkpoint capture without reading history"
     yield* service.finalize({ threadId, runId, scopeId });
     assert.equal(capture.mock.calls.length, 1);
     assert.deepEqual(refresh.mock.calls[0], [{ cwd: "/repo", threadId, runId }]);
+    assert.deepEqual(steps, ["capture", "refresh", "record"]);
   }).pipe(Effect.provide(layer));
 });
 

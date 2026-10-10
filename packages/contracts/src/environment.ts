@@ -213,6 +213,12 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       "server"`) and streams them over `/api/preview-stream`. Clients
       without a local browser runtime open server tabs here. */
   serverBrowser: Schema.optionalKey(Schema.Boolean),
+  /** Server serves subscribeContributionStatus. Absent on older servers, which
+      lack the method, so clients must not subscribe and show no statuses. */
+  contributionStatus: Schema.optionalKey(Schema.Boolean),
+  /** Server exposes the trusted local plugin catalogue (`plugins.*`). Absent on
+      older servers, so clients must not call or subscribe to those methods. */
+  plugins: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 
