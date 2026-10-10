@@ -3095,9 +3095,7 @@ it.layer(
             assert.deepStrictEqual(providers.map((provider) => provider.instanceId).toSorted(), [
               "antigravity",
               "claudeAgent",
-              "claudeCloud",
               "codex",
-              "codexCloud",
               "cursor",
               "grok",
               "muse",
@@ -3110,10 +3108,6 @@ it.layer(
             const museProvider = providers.find((provider) => provider.driver === "muse");
             assert.strictEqual(museProvider?.enabled, false);
             assert.strictEqual(museProvider?.status, "disabled");
-            for (const driver of ["codexCloud", "claudeCloud"]) {
-              const cloudProvider = providers.find((provider) => provider.driver === driver);
-              assert.strictEqual(cloudProvider?.status, "disabled");
-            }
             assert.strictEqual(cursorSpawned, false);
           }).pipe(Effect.provide(runtimeServices));
         }),

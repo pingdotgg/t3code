@@ -377,9 +377,6 @@ importers:
       '@t3tools/provider-acp-registry':
         specifier: workspace:*
         version: link:../../packages/provider-acp-registry
-      '@t3tools/provider-cloud':
-        specifier: workspace:*
-        version: link:../../packages/provider-cloud
       '@t3tools/provider-core':
         specifier: workspace:*
         version: link:../../packages/provider-core
@@ -802,9 +799,6 @@ importers:
       '@t3tools/provider-acp-registry':
         specifier: workspace:*
         version: link:../../packages/provider-acp-registry
-      '@t3tools/provider-cloud':
-        specifier: workspace:*
-        version: link:../../packages/provider-cloud
       '@t3tools/provider-core':
         specifier: workspace:*
         version: link:../../packages/provider-core

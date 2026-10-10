@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-10T15:40:00Z",
+  "updatedAt": "2026-10-09T23:31:10Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -94,24 +94,6 @@
       "ranges": [
         { "range": ">=1.4.2", "status": "supported" },
         { "range": "<1.4.2", "status": "unknown" }
-      ]
-    },
-    {
-      "driver": "codexCloud",
-      "t3CodeRange": ">=0.0.46",
-      "recommendedRange": ">=0.162.0",
-      "ranges": [
-        { "range": ">=0.162.0", "status": "supported" },
-        { "range": "<0.162.0", "status": "unknown" }
-      ]
-    },
-    {
-      "driver": "claudeCloud",
-      "t3CodeRange": ">=0.0.46",
-      "recommendedRange": ">=2.1.296",
-      "ranges": [
-        { "range": ">=2.1.296", "status": "supported" },
-        { "range": "<2.1.296", "status": "unknown" }
       ]
     }
   ],

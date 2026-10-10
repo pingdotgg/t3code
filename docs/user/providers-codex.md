@@ -64,6 +64,11 @@ Use a completely separate **CODEX_HOME path**, with no shadow home, when you wan
 separate Codex sessions and configuration. That instance cannot continue threads
 from the other home.
 
+## Run in Codex Cloud
+
+Set **Cloud environment** in Codex's provider settings to run threads in Codex
+Cloud from **Run on**. See [Run in the cloud](./cloud-runs.md).
+
 ## Switch accounts in an existing thread
 
 Choose the other account from the thread's model picker. T3 Code offers compatible

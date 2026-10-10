@@ -1,3 +1,4 @@
+import { CLOUD_RUN_OPTION_ID, keepCloudRun, selectsCloudRun } from "@t3tools/contracts";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { environmentSession } from "../../state/session";
@@ -122,6 +123,17 @@ import {
 import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 
+// Sticky picks seed new tasks; where one runs is picked per task, never carried over.
+function withoutCloudRun(selection: ModelSelection): ModelSelection {
+  if (!selectsCloudRun(selection.options)) return selection;
+  const options = selection.options?.filter((option) => option.id !== CLOUD_RUN_OPTION_ID);
+  return {
+    instanceId: selection.instanceId,
+    model: selection.model,
+    ...(options && options.length > 0 ? { options } : {}),
+  };
+}
+
 type WorkspaceMode = "local" | "worktree";
 
 const BRANCH_SEARCH_DEBOUNCE_MS = 150;
@@ -218,6 +230,11 @@ type NewTaskFlowContextValue = {
   readonly switchEnvironment: (environmentId: EnvironmentId) => Promise<boolean>;
   /** The machine a switch in progress is heading to. */
   readonly switchingToEnvironmentId: EnvironmentId | null;
+  /** The selected provider's cloud, offered beside the machines; null when it has none. */
+  readonly cloudRunLabel: string | null;
+  readonly cloudRunSelected: boolean;
+  /** Runs the task in the provider's cloud, or back on the selected machine. */
+  readonly setCloudRun: (cloud: boolean) => void;
   readonly setSelectedModelKey: (
     key: string | null,
     options?: ReadonlyArray<ProviderOptionSelection>,
@@ -634,8 +651,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       if (!option) {
         return;
       }
-      const selection = withRememberedModelOptions(
-        options ? { ...option.selection, options } : option.selection,
+      const selection = keepCloudRun(
+        withRememberedModelOptions(options ? { ...option.selection, options } : option.selection),
+        selectedModel,
       );
       const provider = selectedEnvironmentServerConfig?.providers.find(
         (candidate) => candidate.instanceId === selection.instanceId,
@@ -646,9 +664,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           ? { interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE }
           : {}),
       });
-      setStickyComposerModelSelection(selection);
+      setStickyComposerModelSelection(withoutCloudRun(selection));
     },
-    [modelOptions, selectedEnvironmentServerConfig, selectedProjectDraftKey],
+    [modelOptions, selectedEnvironmentServerConfig, selectedModel, selectedProjectDraftKey],
   );
   const setSelectedModelOptions = useCallback(
     (options: ReadonlyArray<ProviderOptionSelection> | undefined) => {
@@ -656,16 +674,37 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         return;
       }
       rememberModelOptions(selectedModel.instanceId, selectedModel.model, options ?? []);
-      const nextSelection: ModelSelection = options
-        ? { ...selectedModel, options }
-        : {
-            instanceId: selectedModel.instanceId,
-            model: selectedModel.model,
-          };
+      const nextSelection: ModelSelection = keepCloudRun(
+        options
+          ? { ...selectedModel, options }
+          : { instanceId: selectedModel.instanceId, model: selectedModel.model },
+        selectedModel,
+      );
       updateComposerDraftSettings(selectedProjectDraftKey, {
         modelSelection: nextSelection,
       });
-      setStickyComposerModelSelection(nextSelection);
+      setStickyComposerModelSelection(withoutCloudRun(nextSelection));
+    },
+    [selectedModel, selectedProjectDraftKey],
+  );
+
+  const cloudRunLabel = selectedProviderStatus?.cloudRun?.label ?? null;
+  const cloudRunSelected = cloudRunLabel !== null && selectsCloudRun(selectedModel?.options);
+  // Not remembered as a model option or made sticky: each task picks where it runs.
+  const setCloudRun = useCallback(
+    (cloud: boolean) => {
+      if (!selectedModel || !selectedProjectDraftKey) return;
+      const options = [
+        ...(selectedModel.options ?? []).filter((option) => option.id !== CLOUD_RUN_OPTION_ID),
+        ...(cloud ? [{ id: CLOUD_RUN_OPTION_ID, value: true }] : []),
+      ];
+      updateComposerDraftSettings(selectedProjectDraftKey, {
+        modelSelection: {
+          instanceId: selectedModel.instanceId,
+          model: selectedModel.model,
+          ...(options.length > 0 ? { options } : {}),
+        },
+      });
     },
     [selectedModel, selectedProjectDraftKey],
   );
@@ -1330,6 +1369,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectEnvironment,
       switchEnvironment,
       switchingToEnvironmentId,
+      cloudRunLabel,
+      cloudRunSelected,
+      setCloudRun,
       setSelectedModelKey,
       setWorkspaceMode,
       selectBranch,
@@ -1398,6 +1440,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectEnvironment,
       switchEnvironment,
       switchingToEnvironmentId,
+      cloudRunLabel,
+      cloudRunSelected,
+      setCloudRun,
       setInteractionMode,
       setPrompt,
       setRuntimeMode,

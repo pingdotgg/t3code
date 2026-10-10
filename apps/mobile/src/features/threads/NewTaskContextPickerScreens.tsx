@@ -245,18 +245,45 @@ export function NewTaskEnvironmentPickerRouteScreen() {
                     tintColorClassName="accent-icon-muted"
                   />
                 }
-                isLast={index === flow.environments.length - 1}
+                isLast={index === flow.environments.length - 1 && flow.cloudRunLabel === null}
                 disabled={flow.switchingToEnvironmentId !== null}
                 onPress={() => {
                   void Haptics.selectionAsync();
+                  if (flow.cloudRunSelected) flow.setCloudRun(false);
+                  if (flow.selectedEnvironmentId === environment.environmentId) {
+                    navigation.goBack();
+                    return;
+                  }
                   void flow.switchEnvironment(environment.environmentId).then((switched) => {
                     if (switched) navigation.goBack();
                   });
                 }}
-                selected={flow.selectedEnvironmentId === environment.environmentId}
+                selected={
+                  !flow.cloudRunSelected && flow.selectedEnvironmentId === environment.environmentId
+                }
                 title={environment.environmentLabel}
               />
             ))}
+            {flow.cloudRunLabel !== null ? (
+              <SelectionRow
+                icon={
+                  <EnvironmentMachineSymbol
+                    kind="cloud"
+                    size={Platform.OS === "android" ? 24 : 17}
+                    tintColorClassName="accent-icon-muted"
+                  />
+                }
+                isLast
+                disabled={flow.switchingToEnvironmentId !== null}
+                onPress={() => {
+                  void Haptics.selectionAsync();
+                  flow.setCloudRun(true);
+                  navigation.goBack();
+                }}
+                selected={flow.cloudRunSelected}
+                title={flow.cloudRunLabel}
+              />
+            ) : null}
           </PickerSurface>
         </ScrollView>
       </MaterialScreenContent>

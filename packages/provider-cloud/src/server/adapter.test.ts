@@ -32,8 +32,8 @@ const testLayer = Layer.mergeAll(
   IdAllocator.layer,
   TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
 );
-const DRIVER = ProviderDriverKind.make("claudeCloud");
-const INSTANCE_ID = ProviderInstanceId.make("claudeCloud");
+const DRIVER = ProviderDriverKind.make("claudeAgent");
+const INSTANCE_ID = ProviderInstanceId.make("claudeAgent");
 const THREAD_ID = ThreadId.make("thread-cloud-test");
 const TASK = { id: "session_01abc", url: "https://claude.ai/code/session_01abc" };
 const modelSelection = { instanceId: INSTANCE_ID, model: "cloud" };

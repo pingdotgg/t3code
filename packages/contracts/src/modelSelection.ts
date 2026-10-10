@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { ProviderOptionSelections } from "./model.ts";
+import { CLOUD_RUN_OPTION_ID, ProviderOptionSelections, selectsCloudRun } from "./model.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 /**
@@ -61,3 +61,22 @@ export const ModelSelection = ModelSelectionSource.pipe(
   ),
 );
 export type ModelSelection = typeof ModelSelection.Type;
+
+/**
+ * Carries a thread's cloud choice into a new model or option selection. Where
+ * a thread runs is fixed once it starts, so editors that rebuild options from
+ * model traits must not drop it.
+ */
+export function keepCloudRun(
+  next: ModelSelection,
+  current: ModelSelection | null | undefined,
+): ModelSelection {
+  if (!selectsCloudRun(current?.options) || selectsCloudRun(next.options)) return next;
+  return {
+    ...next,
+    options: [
+      ...(next.options ?? []).filter((option) => option.id !== CLOUD_RUN_OPTION_ID),
+      { id: CLOUD_RUN_OPTION_ID, value: true },
+    ],
+  };
+}

@@ -70,7 +70,6 @@
     "@t3tools/mobile-review-diff-native": "file:./modules/t3-review-diff",
     "@t3tools/mobile-terminal-native": "file:./modules/t3-terminal",
     "@t3tools/provider-acp-registry": "workspace:*",
-    "@t3tools/provider-cloud": "workspace:*",
     "@t3tools/provider-core": "workspace:*",
     "@t3tools/provider-cursor": "workspace:*",
     "@t3tools/provider-grok": "workspace:*",

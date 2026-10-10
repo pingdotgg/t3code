@@ -3,14 +3,6 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./client": {
-      "types": "./src/client.ts",
-      "import": "./src/client.ts"
-    },
-    "./settings": {
-      "types": "./src/settings.ts",
-      "import": "./src/settings.ts"
-    },
     "./server": {
       "types": "./src/server.ts",
       "import": "./src/server.ts"

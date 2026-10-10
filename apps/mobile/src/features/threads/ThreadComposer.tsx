@@ -15,6 +15,7 @@ import {
   type RuntimeMode,
   type ServerConfig as T3ServerConfig,
   type UsageLimitsReport,
+  keepCloudRun,
 } from "@t3tools/contracts";
 import {
   collectProviderUsageLimits,
@@ -679,7 +680,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       selectedModel: currentModelSelection,
       reportedModelSelection: props.reportedModelSelection,
       onSelectModel: (option) =>
-        props.onUpdateModelSelection(withRememberedModelOptions(option.selection)),
+        props.onUpdateModelSelection(
+          keepCloudRun(withRememberedModelOptions(option.selection), currentModelSelection),
+        ),
       optionDescriptors: providerOptionDescriptors,
       onUpdateOptionSelections: (options) => {
         rememberModelOptions(
@@ -687,7 +690,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           currentModelSelection.model,
           options ?? [],
         );
-        props.onUpdateModelSelection({ ...currentModelSelection, options });
+        props.onUpdateModelSelection(
+          keepCloudRun({ ...currentModelSelection, options }, currentModelSelection),
+        );
       },
       runtimeMode: currentRuntimeMode,
       onUpdateRuntimeMode: props.onUpdateRuntimeMode,

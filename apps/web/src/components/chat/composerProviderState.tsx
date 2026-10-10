@@ -6,6 +6,8 @@ import {
   type ProviderOptionSelection,
   type ScopedThreadRef,
   type ServerProviderModel,
+  CLOUD_RUN_OPTION_ID,
+  selectsCloudRun,
 } from "@t3tools/contracts";
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
@@ -143,13 +145,19 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
     (primarySelectDescriptor?.promptInjectedValues?.length ?? 0) > 0 &&
     promptInjectionState === "ultrathink";
 
+  const declaredOptions = buildExplicitProviderOptionSelectionsFromDescriptors(
+    descriptors,
+    selections,
+  );
+  // The cloud choice is a Run on location, not a model trait, so no descriptor carries it.
+  const modelOptionsForDispatch = selectsCloudRun(modelOptions)
+    ? [...(declaredOptions ?? []), { id: CLOUD_RUN_OPTION_ID, value: true }]
+    : declaredOptions;
+
   return {
     provider,
     promptEffort,
-    modelOptionsForDispatch: buildExplicitProviderOptionSelectionsFromDescriptors(
-      descriptors,
-      selections,
-    ),
+    modelOptionsForDispatch,
     ...(ultrathinkActive
       ? {
           composerFrameClassName: "ultrathink-frame",

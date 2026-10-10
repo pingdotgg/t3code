@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { ModelSelection } from "./modelSelection.ts";
+import { keepCloudRun, ModelSelection } from "./modelSelection.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 // ── ModelSelection: instance-keyed wire shape + legacy decoder ────────
@@ -122,3 +122,21 @@ it.effect(
       assert.deepStrictEqual(encoded.options, decoded.options);
     }),
 );
+
+it("keeps a thread's cloud choice when its model or traits change", () => {
+  const instanceId = ProviderInstanceId.make("codex");
+  const cloud = { id: "cloud", value: true } as const;
+  const current = { instanceId, model: "gpt-a", options: [cloud] };
+
+  assert.deepStrictEqual(
+    keepCloudRun(
+      { instanceId, model: "gpt-b", options: [{ id: "effort", value: "high" }] },
+      current,
+    ).options,
+    [{ id: "effort", value: "high" }, cloud],
+  );
+  assert.deepStrictEqual(keepCloudRun({ instanceId, model: "gpt-b" }, current).options, [cloud]);
+  // A thread on a machine stays there.
+  const local = { instanceId, model: "gpt-b" };
+  assert.strictEqual(keepCloudRun(local, { instanceId, model: "gpt-a" }), local);
+});

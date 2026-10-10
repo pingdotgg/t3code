@@ -862,9 +862,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const providerSessionIdFor = (input: {
     readonly adapter: ProviderAdapter.ProviderAdapterV2["Service"];
     readonly providerInstanceId: ProviderInstanceId;
+    readonly modelSelection: ModelSelection;
     readonly threadId: ThreadId;
   }) =>
-    input.adapter.getCapabilities().pipe(
+    (input.adapter.capabilitiesFor?.(input.modelSelection) ?? input.adapter.getCapabilities()).pipe(
       Effect.flatMap((capabilities) =>
         capabilities.sessions.supportsMultipleProviderThreadsPerSession
           ? Effect.succeed(
@@ -1583,6 +1584,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             providerSessionIdFor({
               adapter,
               providerInstanceId: queuedRun.providerInstanceId,
+              modelSelection: queuedRun.modelSelection,
               threadId,
             }),
           ),
@@ -4147,6 +4149,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             providerSessionIdFor({
               adapter: targetAdapter,
               providerInstanceId: input.modelSelection.instanceId,
+              modelSelection: input.modelSelection,
               threadId: input.command.threadId,
             }),
           ));
@@ -4913,7 +4916,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               );
         const queuedCapabilities =
           selectedProviderSession?.capabilities ??
-          (yield* queuedAdapter.getCapabilities().pipe(mapDispatchError(command)));
+          (yield* (
+            queuedAdapter.capabilitiesFor?.(modelSelection) ?? queuedAdapter.getCapabilities()
+          ).pipe(mapDispatchError(command)));
         yield* enforceCommandPolicy(command)(
           commandPolicy.ensureQueuedMessages({
             commandId: command.commandId,
@@ -5241,6 +5246,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             providerSessionIdFor({
               adapter,
               providerInstanceId: modelSelection.instanceId,
+              modelSelection,
               threadId: command.threadId,
             }),
           ));
@@ -5629,6 +5635,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           providerSessionIdFor({
             adapter,
             providerInstanceId: modelSelection.instanceId,
+            modelSelection,
             threadId: command.threadId,
           }),
         ));
@@ -5648,7 +5655,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ),
         );
 
-      const capabilities = yield* adapter.getCapabilities().pipe(
+      const capabilities = yield* (
+        adapter.capabilitiesFor?.(modelSelection) ?? adapter.getCapabilities()
+      ).pipe(
         Effect.mapError(
           (cause) =>
             new OrchestratorProviderAdapterError({

@@ -265,6 +265,9 @@ export const ServerProvider = Schema.Struct({
   requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
   supportsConversationRollback: Schema.optional(Schema.Boolean),
   supportsTextGeneration: Schema.optional(Schema.Boolean),
+  // Present when this provider can run threads in its own cloud, such as
+  // Codex Cloud. Clients offer it as Cloud under Run on; `label` names it.
+  cloudRun: Schema.optional(Schema.Struct({ label: TrimmedNonEmptyString })),
   setup: Schema.optional(
     Schema.Struct({
       canAuthenticate: Schema.Boolean,

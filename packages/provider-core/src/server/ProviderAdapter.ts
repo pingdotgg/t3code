@@ -643,6 +643,14 @@ export class ProviderAdapterV2 extends Context.Service<
       OrchestrationV2ProviderCapabilities,
       ProviderAdapterV2Error
     >;
+    /**
+     * Capabilities of the sessions a selection opens, for adapters whose
+     * selections open different kinds of session (a cloud run beside native
+     * ones). Absent means `getCapabilities` describes every selection.
+     */
+    readonly capabilitiesFor?: (
+      modelSelection: ModelSelection,
+    ) => Effect.Effect<OrchestrationV2ProviderCapabilities, ProviderAdapterV2Error>;
     readonly planSelectionTransition: (
       input: ProviderSelectionTransitionInput,
     ) => Effect.Effect<ProviderSelectionTransitionPlan, ProviderAdapterV2Error>;

@@ -53,6 +53,20 @@ export const ProviderOptionSelection = Schema.Struct({
 export type ProviderOptionSelection = typeof ProviderOptionSelection.Type;
 
 /**
+ * Boolean model option that runs a thread's turns in the provider's cloud
+ * instead of on its environment. Clients set it from the Cloud entry under
+ * Run on, offered when the provider snapshot has `cloudRun`; it is never a
+ * model trait, so option editors that rebuild a selection must carry it over.
+ */
+export const CLOUD_RUN_OPTION_ID = "cloud";
+
+/** Whether a selection's options ask for the provider's cloud. */
+export const selectsCloudRun = (
+  options: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): boolean =>
+  options?.some((option) => option.id === CLOUD_RUN_OPTION_ID && option.value === true) ?? false;
+
+/**
  * Legacy on-disk shape for provider option selections, kept readable by the
  * decoder so we can tolerate stored data written before the v3 array shape.
  *
@@ -184,9 +198,6 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [PI_DRIVER_KIND]: "default",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
   [ProviderDriverKind.make("antigravity")]: ANTIGRAVITY_DEFAULT_MODEL,
-  // Cloud runtimes pick their own model; this slug only names that choice.
-  [ProviderDriverKind.make("codexCloud")]: "cloud",
-  [ProviderDriverKind.make("claudeCloud")]: "cloud",
 };
 
 /** Per-provider text generation model defaults. */

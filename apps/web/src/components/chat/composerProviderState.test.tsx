@@ -101,6 +101,29 @@ describe("getComposerProviderState", () => {
     });
   });
 
+  it("dispatches the Run on cloud choice, which no descriptor declares", () => {
+    const state = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([
+        selectDescriptor("effort", [
+          { id: "low", label: "Low" },
+          { id: "high", label: "High", isDefault: true },
+        ]),
+      ]),
+      modelOptions: [
+        { id: "effort", value: "low" },
+        { id: "cloud", value: true },
+      ],
+      planModeEnabled: true,
+    });
+
+    expect(state.modelOptionsForDispatch).toEqual([
+      { id: "effort", value: "low" },
+      { id: "cloud", value: true },
+    ]);
+  });
+
   it("lets selections override defaults and propagates them through dispatch", () => {
     const state = getComposerProviderState({
       provider: PROVIDER,

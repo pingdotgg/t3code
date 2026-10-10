@@ -24,6 +24,7 @@ import {
   type ScopedThreadRef,
   ThreadId,
   SnapShotSource,
+  keepCloudRun,
 } from "@t3tools/contracts";
 import {
   parseScopedProjectKey,
@@ -3162,8 +3163,11 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               if (normalized.options !== undefined || opts?.replaceOptions) {
                 // Explicit options provided (or the caller passed a complete
                 // snapshot whose absent options mean "no options") → use the
-                // selection as-is.
-                nextMap[normalized.instanceId] = normalized as ModelSelection;
+                // selection as-is, keeping a Run on cloud choice.
+                nextMap[normalized.instanceId] = keepCloudRun(
+                  normalized as ModelSelection,
+                  current,
+                );
               } else {
                 // No options in selection → preserve existing options, update provider+model
                 nextMap[normalized.instanceId] = createModelSelection(

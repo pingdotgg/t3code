@@ -41,6 +41,11 @@ Claude Code's verbose mode can stay enabled when you use Claude for text generat
 thread titles, branch names, commit messages, and pull request descriptions. On a remote connection,
 T3 Code uses the Claude configuration on the connected server.
 
+## Run in the cloud
+
+With a claude.ai subscription, **Run on** offers **Claude Code cloud** for new
+threads. See [Run in the cloud](./cloud-runs.md).
+
 ## Compact long conversations
 
 Set **Auto-compact after** in the Claude provider settings to an integer between

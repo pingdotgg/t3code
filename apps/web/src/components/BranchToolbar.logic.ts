@@ -23,6 +23,39 @@ export interface EnvironmentOption {
   machine: EnvironmentMachineKind;
 }
 
+/**
+ * The provider's cloud as a Run on choice beside the machines. `onChange` is
+ * absent once the thread's run location is fixed.
+ */
+export interface CloudRunOption {
+  label: string;
+  selected: boolean;
+  onChange?: (cloud: boolean) => void;
+}
+
+export const CLOUD_RUN_VALUE = "cloud";
+
+/**
+ * Applies a Run on pick: the cloud entry turns the cloud on, and any machine
+ * (or auto balance) turns it off before switching environments as usual.
+ */
+export function applyRunOnSelection(input: {
+  value: string;
+  environmentId: EnvironmentId;
+  cloudRun: CloudRunOption | undefined;
+  onAutoEnvironment: (() => void) | undefined;
+  onEnvironmentChange: ((environmentId: EnvironmentId) => void) | undefined;
+}): void {
+  const { value, cloudRun } = input;
+  if (value === CLOUD_RUN_VALUE) {
+    cloudRun?.onChange?.(true);
+    return;
+  }
+  if (cloudRun?.selected) cloudRun.onChange?.(false);
+  if (value === "auto") input.onAutoEnvironment?.();
+  else if (value !== input.environmentId) input.onEnvironmentChange?.(value as EnvironmentId);
+}
+
 export const EnvMode = Schema.Literals(["local", "worktree"]);
 export type EnvMode = typeof EnvMode.Type;
 

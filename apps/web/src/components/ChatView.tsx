@@ -84,6 +84,8 @@ import {
   RuntimeMode,
   TerminalOpenInput,
   type WorktreeSetupSnapshot,
+  CLOUD_RUN_OPTION_ID,
+  selectsCloudRun,
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
@@ -376,6 +378,7 @@ import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
   useComposerDraftStore,
+  useEffectiveComposerModelState,
   DraftId,
 } from "../composerDraftStore";
 import {
@@ -3274,6 +3277,56 @@ export default function ChatView(props: ChatViewProps) {
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
   const activeProviderInstanceId = selectedProviderEntry?.instanceId ?? null;
   const activeProviderStatus = selectedProviderEntry?.snapshot ?? null;
+  const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
+  const { modelOptions: composerModelOptionsByInstance, selectedModel: composerSelectedModel } =
+    useEffectiveComposerModelState({
+      threadRef: composerDraftTarget,
+      providers: providerStatuses,
+      selectedProvider,
+      selectedInstanceId: activeProviderInstanceId,
+      threadModelSelection: activeThread?.modelSelection,
+      projectModelSelection: activeProjectDefaultModelSelection,
+      settings,
+    });
+  const cloudRunLabel = activeProviderStatus?.cloudRun?.label;
+  const activeModelOptions = activeProviderInstanceId
+    ? composerModelOptionsByInstance?.[activeProviderInstanceId]
+    : undefined;
+  const cloudRunSelected = selectsCloudRun(activeModelOptions);
+  // The cloud is chosen like a machine: before the thread starts, then fixed.
+  const onCloudRunChange = useCallback(
+    (cloud: boolean) => {
+      if (!activeProviderInstanceId) return;
+      setProviderModelOptions(
+        composerDraftTarget,
+        selectedProvider,
+        [
+          ...(activeModelOptions ?? []).filter((option) => option.id !== CLOUD_RUN_OPTION_ID),
+          ...(cloud ? [{ id: CLOUD_RUN_OPTION_ID, value: true }] : []),
+        ],
+        { instanceId: activeProviderInstanceId, model: composerSelectedModel },
+      );
+    },
+    [
+      activeModelOptions,
+      activeProviderInstanceId,
+      composerDraftTarget,
+      composerSelectedModel,
+      selectedProvider,
+      setProviderModelOptions,
+    ],
+  );
+  const cloudRun = useMemo(
+    () =>
+      cloudRunLabel
+        ? {
+            label: cloudRunLabel,
+            selected: cloudRunSelected,
+            ...(envLocked ? {} : { onChange: onCloudRunChange }),
+          }
+        : undefined,
+    [cloudRunLabel, cloudRunSelected, envLocked, onCloudRunChange],
+  );
   const { enabled: interactionModeEnabled, interactionMode } = resolveComposerInteractionMode({
     planModeEnabled: settings.planModeEnabled,
     provider: activeProviderStatus,
@@ -11180,6 +11233,7 @@ export default function ChatView(props: ChatViewProps) {
     isGitRepo,
     envLocked,
     availableEnvironments: logicalProjectEnvironments,
+    cloudRun,
     autoEnvironmentLabel,
     onAutoEnvironment:
       draftId &&
@@ -11862,6 +11916,7 @@ export default function ChatView(props: ChatViewProps) {
                                     : undefined
                                 }
                                 availableEnvironments={logicalProjectEnvironments}
+                                cloudRun={cloudRun}
                                 composerControlsHostRef={setRestingComposerControlsHost}
                                 contextStripVisible={showComposerContextStrip}
                               />

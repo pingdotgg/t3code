@@ -78,6 +78,13 @@ import * as CodexInstallation from "../CodexInstallation.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import {
+  makeCloudAdapterV2,
+  makeCloudCli,
+  makeCodexCloudBackend,
+  withCloudRun,
+  withCloudRunOption,
+} from "@t3tools/provider-cloud/server";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
@@ -158,13 +165,17 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv, Path.Pat
       const processEnv = yield* mergeProviderInstanceEnvironment(environment);
       const homeLayout = yield* resolveCodexHomeLayout(config);
       const continuationIdentity = codexContinuationIdentity(homeLayout);
-      const stampIdentity = withInstanceIdentity({
+      const stampInstance = withInstanceIdentity({
         instanceId,
         driverKind: DRIVER_KIND,
         displayName,
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
       });
+      // Threads can run in Codex Cloud once the instance names a cloud environment.
+      const stampIdentity: typeof stampInstance = config.cloudEnvironment
+        ? (draft) => withCloudRunOption(stampInstance(draft), "Codex Cloud")
+        : stampInstance;
       yield* materializeCodexShadowHome(homeLayout).pipe(
         Effect.mapError(
           (cause) =>
@@ -196,7 +207,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv, Path.Pat
         ),
       );
 
-      const orchestrationAdapter = yield* createCodexAdapterV2(
+      const nativeAdapter = yield* createCodexAdapterV2(
         {
           instanceId,
           displayName,
@@ -216,6 +227,21 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv, Path.Pat
               cause,
             }),
         ),
+      );
+      const cloudCli = yield* makeCloudCli(effectiveConfig.binaryPath, {
+        ...processEnv,
+        ...(effectiveConfig.homePath ? { CODEX_HOME: effectiveConfig.homePath } : {}),
+      });
+      const orchestrationAdapter = withCloudRun(
+        nativeAdapter,
+        yield* makeCloudAdapterV2({
+          instanceId,
+          driver: DRIVER_KIND,
+          backend: makeCodexCloudBackend({
+            cli: cloudCli,
+            environment: effectiveConfig.cloudEnvironment,
+          }),
+        }),
       );
 
       // Build a managed snapshot whose settings never change — mutations come
