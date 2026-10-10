@@ -1,15 +1,21 @@
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, PullRequestRef, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
-import { CheckIcon, MessageSquareIcon } from "lucide-react";
+import { CheckIcon, EyeIcon, EyeOffIcon, MessageSquareIcon } from "lucide-react";
 import { useState } from "react";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 
 import { parseChangeRequestUrl } from "~/lib/openPullRequestLink";
-import { normalizeThreadPullRequestKey } from "@t3tools/shared/threadPullRequests";
+import {
+  normalizeThreadPullRequestKey,
+  threadPullRequestKeysEqual,
+  visibleThreadPullRequests,
+} from "@t3tools/shared/threadPullRequests";
 import { useProjects, useServerConfigs, useThreadShell, useThreadShells } from "~/state/entities";
 import { pullRequestEnvironment } from "~/state/pullRequests";
+import { threadEnvironment } from "~/state/threads";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { useEnvironmentQuery } from "~/state/query";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { openCommandPalette } from "~/commandPaletteBus";
@@ -54,6 +60,18 @@ function EnabledPullRequestThreadLinks({
   const currentThreadRef = thread === null ? null : threadRef;
   const linking = usePullRequestLinking(environmentId);
   const linkedHere = linking.isLinked(thread, url);
+  const configs = useServerConfigs();
+  const supportsWatch =
+    configs.get(environmentId)?.environment.capabilities.threadPullRequestWatch === true;
+  const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: true });
+  const watchableLink =
+    supportsWatch && parsed !== null
+      ? visibleThreadPullRequests(thread?.pullRequests ?? []).find(
+          (link) =>
+            threadPullRequestKeysEqual(link, parsed) &&
+            (link.snapshot === null || link.snapshot.state === "open"),
+        )
+      : undefined;
   const relations = useEnvironmentQuery(
     linking.mode === "multiple" && display !== "menu-item"
       ? pullRequestEnvironment.linkedThreads({
@@ -154,6 +172,29 @@ function EnabledPullRequestThreadLinks({
             : currentThreadRef
               ? "Link to this thread"
               : "Link to thread"}
+        </MenuItem>
+      ) : null}
+      {display === "menu-item" && currentThreadRef !== null && watchableLink !== undefined ? (
+        <MenuItem
+          onClick={() =>
+            void watch({
+              environmentId,
+              input: {
+                threadId: currentThreadRef.threadId,
+                host: watchableLink.host,
+                repository: watchableLink.repository,
+                number: watchableLink.number,
+                watching: watchableLink.watch === undefined,
+              },
+            })
+          }
+        >
+          {watchableLink.watch !== undefined ? (
+            <EyeOffIcon className="size-3.5" />
+          ) : (
+            <EyeIcon className="size-3.5" />
+          )}
+          {watchableLink.watch !== undefined ? "Stop watching" : "Watch for changes"}
         </MenuItem>
       ) : null}
       {display === "picker" ? (
