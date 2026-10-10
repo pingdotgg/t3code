@@ -5622,6 +5622,9 @@ describe("AcpAdapterV2", () => {
               capabilities: AcpProviderCapabilitiesV2,
               deferFinalizeForBackgroundWork: true,
               enablePostSettleContinuation: true,
+              // A running monitor holds the settled root; a subagent alone no longer does.
+              extractBackgroundTaskId: (toolCall) =>
+                toolCall.toolCallId === "tool-call-monitor-hold" ? "task-monitor-hold" : undefined,
               extractSubagentUpdate: (toolCall) => {
                 if (toolCall.toolCallId === "tool-call-generic-1") {
                   return {
@@ -5652,7 +5655,10 @@ describe("AcpAdapterV2", () => {
               makeRuntime: makeMockRuntime({
                 childProcessSpawner,
                 mockAgentPath,
-                environment: { T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1" },
+                environment: {
+                  T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1",
+                  T3_ACP_EMIT_RUNNING_MONITOR_WITH_GENERIC: "1",
+                },
                 wrapRuntime: (runtime) => ({
                   ...runtime,
                   handleSessionUpdate: (handler) =>
@@ -5714,6 +5720,15 @@ describe("AcpAdapterV2", () => {
               kind: "other",
               status: "completed",
               rawOutput: { content: "FIRST_DONE" },
+            },
+          }).pipe(Effect.provideService(Clock.Clock, blockingClock));
+          // The monitor ends too, leaving only subagents: finalize arms.
+          yield* sessionUpdateHandler!({
+            sessionId: "mock-session-1",
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "tool-call-monitor-hold",
+              status: "completed",
             },
           }).pipe(Effect.provideService(Clock.Clock, blockingClock));
           for (let attempt = 0; attempt < 10; attempt += 1) {
@@ -6708,8 +6723,13 @@ describe("AcpAdapterV2", () => {
             capabilities: AcpProviderCapabilitiesV2,
             deferFinalizeForBackgroundWork: true,
             enablePostSettleContinuation: true,
+            // A running monitor holds the settled root; a subagent alone no longer does.
             extractBackgroundTaskId: (toolCall) =>
-              toolCall.toolCallId === "tool-call-generic-1" ? "task-generic-1" : undefined,
+              toolCall.toolCallId === "tool-call-generic-1"
+                ? "task-generic-1"
+                : toolCall.toolCallId === "tool-call-monitor-hold"
+                  ? "task-monitor-hold"
+                  : undefined,
             extractSubagentUpdate: (toolCall) =>
               toolCall.toolCallId !== "tool-call-generic-1"
                 ? undefined
@@ -6735,7 +6755,10 @@ describe("AcpAdapterV2", () => {
             makeRuntime: makeMockRuntime({
               childProcessSpawner,
               mockAgentPath,
-              environment: { T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1" },
+              environment: {
+                T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1",
+                T3_ACP_EMIT_RUNNING_MONITOR_WITH_GENERIC: "1",
+              },
               wrapRuntime: (runtime) => ({
                 ...runtime,
                 handleSessionUpdate: (handler) =>
