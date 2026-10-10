@@ -47,6 +47,20 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
       } ?: ""
       onCapture(mapOf("text" to text))
     }
+  private var snapshotPending = false
+  private var snapshotScheduled = false
+  private val snapshotFrame = Runnable {
+    snapshotScheduled = false
+    if (isCleanedUp || !isAttachedToWindow) return@Runnable
+    if (!isShown || windowVisibility != VISIBLE) return@Runnable
+    if (!snapshotPending) return@Runnable
+    snapshotPending = false
+    if (terminalHandle != 0L) {
+      TerminalFrame.decode(
+        GhosttyBridge.nativeSnapshot(terminalHandle)
+      )?.let(terminalCanvas::setFrame)
+    }
+  }
   private var terminalHandle = 0L
   private var fedBuffer = ""
   private var cols = 0
@@ -147,7 +161,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     terminalCanvas.onScrollRows = { delta ->
       if (terminalHandle != 0L) {
         GhosttyBridge.nativeScroll(terminalHandle, delta)
-        renderSnapshot()
+        renderImmediateSnapshot()
       }
     }
     terminalCanvas.onCellMetricsChanged = { emitResize() }
@@ -155,27 +169,27 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
       override fun selectWordAt(col: Int, row: Int): Boolean {
         if (terminalHandle == 0L) return false
         val selected = GhosttyBridge.nativeSelectWordAt(terminalHandle, col, row)
-        if (selected) renderSnapshot()
+        if (selected) renderImmediateSnapshot()
         return selected
       }
 
       override fun extendSelection(anchorCol: Int, anchorRow: Int, col: Int, row: Int) {
         if (terminalHandle == 0L) return
         GhosttyBridge.nativeExtendSelection(terminalHandle, anchorCol, anchorRow, col, row)
-        renderSnapshot()
+        renderImmediateSnapshot()
       }
 
       override fun selectAll(): Boolean {
         if (terminalHandle == 0L) return false
         val selected = GhosttyBridge.nativeSelectAll(terminalHandle)
-        if (selected) renderSnapshot()
+        if (selected) renderImmediateSnapshot()
         return selected
       }
 
       override fun clearSelection() {
         if (terminalHandle == 0L) return
         GhosttyBridge.nativeClearSelection(terminalHandle)
-        renderSnapshot()
+        renderImmediateSnapshot()
       }
 
       override fun selectionText(): String? =
@@ -222,6 +236,9 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   fun cleanup() {
     if (isCleanedUp) return
     isCleanedUp = true
+    removeCallbacks(snapshotFrame)
+    snapshotScheduled = false
+    snapshotPending = false
     inputView.setOnEditorActionListener(null)
     terminalCanvas.onScrollRows = null
     terminalCanvas.onRequestKeyboard = null
@@ -339,7 +356,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     emitResponse(response)
     onResize(mapOf("cols" to cols, "rows" to rows))
     feedPendingBuffer()
-    renderSnapshot()
+    renderImmediateSnapshot()
   }
 
   @Suppress("ComplexCondition")
@@ -394,11 +411,50 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     renderSnapshot()
   }
 
-  private fun renderSnapshot() {
-    if (terminalHandle == 0L) return
+  // Selection gestures derive their word anchors from the new frame before returning.
+  private fun renderImmediateSnapshot() {
+    removeCallbacks(snapshotFrame)
+    snapshotScheduled = false
+    snapshotPending = false
+    if (terminalHandle == 0L || isCleanedUp) return
     TerminalFrame.decode(
       GhosttyBridge.nativeSnapshot(terminalHandle)
     )?.let(terminalCanvas::setFrame)
+  }
+
+  // Parse output and deliver PTY replies immediately; only materialize output once per visible frame.
+  private fun renderSnapshot() {
+    if (terminalHandle == 0L || isCleanedUp) return
+    snapshotPending = true
+    scheduleSnapshot()
+  }
+
+  private fun scheduleSnapshot() {
+    if (!snapshotPending || snapshotScheduled || isCleanedUp) return
+    if (!isAttachedToWindow || !isShown || windowVisibility != VISIBLE) return
+    snapshotScheduled = true
+    postOnAnimation(snapshotFrame)
+  }
+
+  override fun onAttachedToWindow() {
+    super.onAttachedToWindow()
+    scheduleSnapshot()
+  }
+
+  override fun onDetachedFromWindow() {
+    removeCallbacks(snapshotFrame)
+    snapshotScheduled = false
+    super.onDetachedFromWindow()
+  }
+
+  override fun onVisibilityChanged(changedView: android.view.View, visibility: Int) {
+    super.onVisibilityChanged(changedView, visibility)
+    if (visibility == VISIBLE) scheduleSnapshot()
+  }
+
+  override fun onWindowVisibilityChanged(visibility: Int) {
+    super.onWindowVisibilityChanged(visibility)
+    if (visibility == VISIBLE) scheduleSnapshot()
   }
 
   private fun emitResponse(response: ByteArray) {
@@ -435,7 +491,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
         cursorColorValue,
         paletteColors,
       )
-      renderSnapshot()
+      renderImmediateSnapshot()
     }
   }
 

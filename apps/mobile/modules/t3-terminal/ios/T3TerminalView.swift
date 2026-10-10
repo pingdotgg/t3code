@@ -193,6 +193,14 @@ private extension UIColor {
   }
 }
 
+private final class TerminalDisplayLinkTarget {
+  weak var view: T3TerminalView?
+
+  init(view: T3TerminalView) { self.view = view }
+
+  @objc func displayFrame() { view?.displayPendingFrame() }
+}
+
 public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   private static let minimumVerticalScrollStepPoints: CGFloat = 18
   private static let verticalScrollStepMultiplier: CGFloat = 1.15
@@ -204,6 +212,8 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   private var lastViewportSize: CGSize = .zero
   private var lastContentScale: CGFloat = 0
   private var lastReportedGrid: (cols: Int, rows: Int)?
+  private var displayLink: CADisplayLink?
+  private var redrawPending = false
   private var lastAppliedBuffer = ""
   private var pendingVerticalScrollPoints: CGFloat = 0
   private var app: ghostty_app_t?
@@ -405,6 +415,12 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   public override func didMoveToWindow() {
     super.didMoveToWindow()
 
+    if window == nil {
+      displayLink?.invalidate()
+      displayLink = nil
+    } else if redrawPending {
+      scheduleDisplayFrame()
+    }
     guard window != nil, autoFocus else { return }
     DispatchQueue.main.async { [weak self] in
       self?.requestKeyboardFocus()
@@ -536,6 +552,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     setupWriteCallback()
     resizeSurface()
     feedBuffer(initialBuffer)
+    redrawSurface()
   }
 
   private func resetSurface() {
@@ -554,6 +571,9 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   }
 
   private func destroySurface() {
+    displayLink?.invalidate()
+    displayLink = nil
+    redrawPending = false
     if let surface {
       ghostty_surface_set_write_callback(surface, nil, nil)
       ghostty_surface_free(surface)
@@ -604,7 +624,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
       ghostty_surface_feed_data(surface, pointer, buffer.count)
     }
 
-    redrawSurface()
+    requestSurfaceRedraw()
   }
 
   private func setupWriteCallback() {
@@ -642,12 +662,38 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     emitGhosttyResize()
   }
 
+  private func requestSurfaceRedraw() {
+    guard surface != nil else { return }
+    redrawPending = true
+    scheduleDisplayFrame()
+    emitGhosttyResize()
+  }
+
+  private func scheduleDisplayFrame() {
+    guard displayLink == nil, window != nil else { return }
+    let target = TerminalDisplayLinkTarget(view: self)
+    let link = CADisplayLink(target: target, selector: #selector(TerminalDisplayLinkTarget.displayFrame))
+    displayLink = link
+    link.add(to: .main, forMode: .common)
+  }
+
   private func redrawSurface() {
+    displayLink?.invalidate()
+    displayLink = nil
+    redrawPending = false
     guard let surface else { return }
     ghostty_surface_refresh(surface)
     ghostty_surface_draw(surface)
     markIOSurfaceLayersForDisplay()
     emitGhosttyResize()
+  }
+
+  fileprivate func displayPendingFrame() {
+    displayLink?.invalidate()
+    displayLink = nil
+    guard redrawPending, window != nil else { return }
+    // Ghostty's draw forces renderer.drawFrame(true). Keep output at the display cadence.
+    redrawSurface()
   }
 
   private func emitGhosttyResize() {
