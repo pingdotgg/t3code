@@ -16,7 +16,8 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as SshAuth from "./auth.ts";
-import { SshCommandError } from "./errors.ts";
+import { remoteStateKey } from "./command.ts";
+import { SshCommandError, SshPairingError } from "./errors.ts";
 import * as SshTunnel from "./tunnel.ts";
 
 const TEST_NODE_ENGINE_RANGE = "^22.16 || ^23.11 || >=24.10";
@@ -482,6 +483,181 @@ describe("ssh tunnel scripts", () => {
       const result = yield* SshTunnel.issueRemotePairingToken(target, undefined, ARCHIVE);
       assert.equal(result.credential, "LCL4R2TPHDKQ");
     }).pipe(Effect.provide(layerProcess));
+  });
+
+  describe.skipIf(HostProcessPlatform.defaultValue() === "win32")("SSH release pairing", () => {
+    it.effect.each(["0.0.46-nightly.20261004.2652", ARCHIVE.archiveVersion, "1.2.4", "0.0.0-dev"])(
+      "mints pairing tokens with the running server's CLI version %s",
+      (serverVersion) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const localSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-pairing-" });
+          for (const version of new Set([serverVersion, ARCHIVE.archiveVersion])) {
+            const runtime = `${home}/.t3/runtime/versions/${version}`;
+            yield* fs.makeDirectory(runtime, { recursive: true });
+            yield* fs.writeFileString(`${runtime}/.install-complete`, version);
+            yield* fs.writeFileString(
+              `${runtime}/t3`,
+              `#!/bin/sh\nprintf '%s\\n' '{"credential":"paired-${version}"}'\n`,
+            );
+            yield* fs.chmod(`${runtime}/t3`, 0o700);
+          }
+          const runner =
+            serverVersion === "0.0.0-dev" ? { nodeScriptPath: `${home}/dev.mjs` } : ARCHIVE;
+          if ("nodeScriptPath" in runner) {
+            yield* fs.writeFileString(
+              runner.nodeScriptPath,
+              `process.stdout.write(JSON.stringify({ credential: "paired-${serverVersion}" }));`,
+            );
+          }
+          const target = { alias: "devbox", hostname: "devbox", username: null, port: null };
+          const stateKey = yield* remoteStateKey(target);
+          const launchRunner = `${home}/.t3/ssh-launch/${stateKey}/run-t3.sh`;
+          const launchScript = SshTunnel.buildRemoteT3RunnerScript(runner);
+          yield* fs.makeDirectory(`${home}/.t3/ssh-launch/${stateKey}`, { recursive: true });
+          yield* fs.writeFileString(launchRunner, launchScript);
+          let launches = 0;
+          let descriptorRequests = 0;
+          const spawner = ChildProcessSpawner.make((command) =>
+            Effect.gen(function* () {
+              const args = commandArgs(command);
+              if (args.includes("-N")) return makeRunningProcess(() => undefined);
+              if (args.includes("--")) {
+                launches += 1;
+                return makeSuccessfulProcess('{"remotePort":3773,"serverKind":"external"}\n');
+              }
+              if (command._tag === "StandardCommand" && args.includes("sh")) {
+                const stdin = command.options.stdin;
+                if (
+                  typeof stdin === "object" &&
+                  "stream" in stdin &&
+                  Stream.isStream(stdin.stream)
+                ) {
+                  const script = yield* stdin.stream.pipe(
+                    Stream.decodeText(),
+                    Stream.runFold(
+                      () => "",
+                      (text, chunk) => text + chunk,
+                    ),
+                  );
+                  if (script.includes("PAIRING_BASE_DIR=")) {
+                    return yield* localSpawner.spawn(
+                      ChildProcess.make("sh", ["-s"], {
+                        env: { HOME: home, PATH: process.env.PATH ?? "" },
+                        stdin: {
+                          stream: Stream.make(new TextEncoder().encode(script)),
+                          endOnDone: true,
+                        },
+                      }),
+                    );
+                  }
+                }
+              }
+              return makeSuccessfulProcess("");
+            }),
+          );
+          const client = HttpClient.make((request) => {
+            if (request.url.endsWith("/.well-known/t3/environment")) {
+              descriptorRequests += 1;
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(request, Response.json({ serverVersion })),
+              );
+            }
+            return Effect.succeed(HttpClientResponse.fromWeb(request, new Response("")));
+          });
+          yield* Effect.gen(function* () {
+            const manager = yield* SshTunnel.SshEnvironmentManager;
+            yield* manager.ensureEnvironment(target);
+            assert.equal(descriptorRequests, 0);
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+              const paired = yield* manager.ensureEnvironment(target, { issuePairingToken: true });
+              assert.equal(paired.pairingToken, `paired-${serverVersion}`);
+              assert.equal(paired.remoteServerKind, "external");
+            }
+            assert.equal(descriptorRequests, "nodeScriptPath" in runner ? 0 : 2);
+            assert.equal(launches, 1);
+            assert.equal(yield* fs.readFileString(launchRunner), launchScript);
+          }).pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                Layer.succeed(HttpClient.HttpClient, client),
+                Layer.succeed(NetService.NetService, testNetService),
+                SshAuth.SshPasswordPrompt.disabledLayer,
+                SshTunnel.SshEnvironmentManager.layer({
+                  resolveCliRunner: Effect.succeed(runner),
+                }),
+              ),
+            ),
+            Effect.scoped,
+          );
+        }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    );
+  });
+
+  it.effect.each([
+    { status: 500, body: "{}" },
+    { status: 200, body: "not JSON" },
+    { status: 200, body: "{}" },
+    { status: 200, body: '{"serverVersion":"../invalid"}' },
+    { status: 200, body: null },
+  ])("does not mint a grant when server version discovery fails: %j", ({ status, body }) => {
+    let pairingCommands = 0;
+    const spawner = ChildProcessSpawner.make((command) => {
+      const args = commandArgs(command);
+      if (args.includes("-N")) return Effect.succeed(makeRunningProcess(() => undefined));
+      if (args.includes("--")) return Effect.succeed(makeSuccessfulProcess('{"remotePort":3773}'));
+      if (args.includes("sh")) pairingCommands += 1;
+      return Effect.succeed(makeSuccessfulProcess(""));
+    });
+    return Effect.gen(function* () {
+      const discoveryStarted = yield* Deferred.make<void>();
+      const client = HttpClient.make((request) => {
+        if (request.url.endsWith("/.well-known/t3/environment") && body === null) {
+          return Deferred.succeed(discoveryStarted, undefined).pipe(Effect.andThen(Effect.never));
+        }
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            request.url.endsWith("/.well-known/t3/environment")
+              ? new Response(body, { status })
+              : new Response(""),
+          ),
+        );
+      });
+      const manager = yield* SshTunnel.SshEnvironmentManager;
+      const pairing = yield* Effect.forkChild(
+        Effect.result(
+          manager
+            .ensureEnvironment(
+              { alias: "devbox", hostname: "devbox", username: null, port: null },
+              { issuePairingToken: true },
+            )
+            .pipe(Effect.provideService(HttpClient.HttpClient, client)),
+        ),
+      );
+      if (body === null) {
+        yield* Deferred.await(discoveryStarted);
+        yield* TestClock.adjust(Duration.seconds(20));
+      }
+      const result = yield* Fiber.join(pairing);
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) assert.instanceOf(result.failure, SshPairingError);
+      assert.equal(pairingCommands, 0);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Layer.succeed(HttpClient.HttpClient, testHttpClient),
+          Layer.succeed(NetService.NetService, testNetService),
+          SshAuth.SshPasswordPrompt.disabledLayer,
+          SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+        ),
+      ),
+      Effect.scoped,
+    );
   });
 
   it.effect.each(["successful stop", "failed stop"] as const)(

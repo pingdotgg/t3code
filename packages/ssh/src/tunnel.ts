@@ -21,7 +21,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as SshAuth from "./auth.ts";
@@ -723,7 +723,7 @@ printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGE
 const REMOTE_PAIRING_SCRIPT = `set -eu
 STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
 DEFAULT_SERVER_HOME="$HOME/.t3"
-RUNNER_FILE="$STATE_DIR/run-t3.sh"
+RUNNER_FILE="$STATE_DIR/pair-t3.sh"
 mkdir -p "$STATE_DIR"
 cat >"$RUNNER_FILE" <<'SH'
 @@T3_RUNNER_SCRIPT@@
@@ -845,6 +845,41 @@ export function buildRemotePairingScript(stateKey: string, input?: RemoteT3Runne
     T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
   });
 }
+
+const resolveRemotePairingRunner = Effect.fn("ssh/tunnel.resolveRemotePairingRunner")(function* (
+  httpBaseUrl: string,
+  runner: RemoteT3RunnerOptions | undefined,
+) {
+  if (isNodeScriptRunner(runner)) {
+    return runner;
+  }
+  const descriptor = yield* HttpClient.get(
+    new URL("/.well-known/t3/environment", httpBaseUrl).toString(),
+  ).pipe(
+    Effect.flatMap(HttpClientResponse.filterStatusOk),
+    Effect.flatMap(
+      HttpClientResponse.schemaBodyJson(Schema.Struct({ serverVersion: Schema.String })),
+    ),
+    Effect.timeout(SSH_READY_TIMEOUT_MS),
+    Effect.mapError(
+      (cause) =>
+        new SshPairingError({
+          message: "Failed to discover the running SSH server version for pairing.",
+          stdout: "",
+          cause,
+        }),
+    ),
+  );
+  if (!EXACT_ARCHIVE_VERSION.test(descriptor.serverVersion)) {
+    return yield* new SshPairingError({
+      message: "The running SSH server did not report a valid release version for pairing.",
+      stdout: "",
+    });
+  }
+  // A reused server can predate the desktop's runner. Its own CLI must mint
+  // the grant so scopes and persistence formats agree with the consumer.
+  return { ...runner, archiveVersion: descriptor.serverVersion };
+});
 
 export function buildRemoteStopScript(stateKey: string): string {
   return applyScriptPlaceholders(REMOTE_STOP_SCRIPT, {
@@ -1687,13 +1722,15 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       key,
       Effect.gen(function* () {
         const entry = yield* ensureTunnelEntry(key, resolvedTarget, runner);
-
+        const pairingRunner = requestOptions?.issuePairingToken
+          ? yield* resolveRemotePairingRunner(entry.httpBaseUrl, runner)
+          : runner;
         const pairingResult = requestOptions?.issuePairingToken
           ? yield* runWithSshAuth({
               key,
               target: entry.target,
               operation: (authOptions) =>
-                issueRemotePairingToken(entry.target, authOptions, runner),
+                issueRemotePairingToken(entry.target, authOptions, pairingRunner),
             })
           : null;
         const pairingToken = pairingResult?.credential ?? null;
