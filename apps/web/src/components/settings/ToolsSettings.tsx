@@ -292,16 +292,20 @@ function SkillsPanel() {
   ) => {
     if (environmentId === null) return;
     setSkillActionError(null);
-    const result =
-      action === "update"
-        ? await updateSkill({ environmentId, input })
-        : await removeSkill({ environmentId, input });
+    const failure = async () => {
+      if (action === "remove") {
+        const result = await removeSkill({ environmentId, input });
+        return result._tag === "Failure" ? formatEnvironmentQueryError(result.cause) : null;
+      }
+      const result = await updateSkill({ environmentId, input });
+      if (result._tag === "Failure") return formatEnvironmentQueryError(result.cause);
+      // The CLI reports a skill it couldn't reinstall as a result, not an error.
+      const failed = result.value.outcomes.find((outcome) => outcome.status !== "installed");
+      return failed === undefined ? null : (failed.error ?? failed.status);
+    };
+    const message = await failure();
     afterSkillChange();
-    if (result._tag === "Failure") {
-      setSkillActionError(
-        `Couldn't ${action} ${input.name}: ${formatEnvironmentQueryError(result.cause)}`,
-      );
-    }
+    if (message !== null) setSkillActionError(`Couldn't ${action} ${input.name}: ${message}`);
   };
 
   // A project's skills live in its checkout, which each provider only scans

@@ -129,6 +129,8 @@ export function AddSkillsDialog({
               <div className="flex gap-2">
                 <Input
                   id={`${id}-source`}
+                  // The preview answers for the source it was asked about.
+                  disabled={busy !== null}
                   className="min-w-0 flex-1"
                   font="mono"
                   placeholder="owner/repo"

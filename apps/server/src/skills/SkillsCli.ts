@@ -46,6 +46,8 @@ export interface SkillsCliAddInput {
   readonly agents: ReadonlyArray<string>;
   /** Install into the home folders instead of `cwd`. */
   readonly global: boolean;
+  /** Look through the whole repository, not just its root skill. */
+  readonly fullDepth?: boolean;
   /** The project root, or the temp folder a preview unpacks into. */
   readonly cwd: string;
 }
@@ -108,6 +110,7 @@ const make = Effect.gen(function* () {
         "--agent",
         ...input.agents,
         ...(input.global ? ["--global"] : []),
+        ...(input.fullDepth === true ? ["--full-depth"] : []),
         "--yes",
         "--json",
       ],

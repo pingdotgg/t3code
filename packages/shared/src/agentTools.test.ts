@@ -10,6 +10,7 @@ import {
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
+import { skillsDisabledPatch } from "./agentTools.ts";
 import { resolveProjectSettings } from "./projectSettings.ts";
 import { applyServerSettingsPatch } from "./serverSettings.ts";
 
@@ -89,6 +90,23 @@ describe("project tools overrides", () => {
       "grill-me",
       "prepare-pr",
     ]);
+  });
+});
+
+describe("skill switches", () => {
+  it("turns an inherited skill back on for a project whatever its case", () => {
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      disabledSkills: ["Grill-Me"],
+      projectSettingsOverrides: { [projectId]: { disabledSkills: { "GRILL-ME": true } } },
+    } satisfies ServerSettings;
+    const next = applyServerSettingsPatch(
+      settings,
+      skillsDisabledPatch(settings, projectId, ["grill-me"], false),
+    );
+    // One switch replaces the differently cased one, and it wins over the environment's spelling.
+    expect(next.projectSettingsOverrides[projectId]?.disabledSkills).toEqual({ "grill-me": false });
+    expect(resolveProjectSettings(next, projectId).settings.disabledSkills).toEqual([]);
   });
 });
 
