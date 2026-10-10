@@ -1531,7 +1531,11 @@ function renderFeedEntry(
     readonly onCopyWorkRow: (rowId: string, value: string) => void;
     readonly onToggleWorkGroup: (groupId: string, anchorKey?: string) => void;
     readonly onToggleWorkRow: (rowId: string, anchorKey?: string) => void;
-    readonly onToggleTurnFold: (runId: RunId) => void;
+    readonly onToggleTurnFold: (fold: {
+      readonly runId: RunId;
+      readonly expandKey: string;
+      readonly expanded: boolean;
+    }) => void;
     readonly onPressPreview: (source: FilePreviewSource) => void;
     readonly onPressVideo: (attachment: ChatFileAttachment, sourceIdentifier: string) => void;
     readonly markdownLinkHandlers: MarkdownLinkHandlers;
@@ -1562,7 +1566,7 @@ function renderFeedEntry(
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ expanded: entry.expanded }}
-        onPress={() => props.onToggleTurnFold(entry.runId)}
+        onPress={() => props.onToggleTurnFold(entry)}
         hitSlop={4}
         className="mb-1 min-h-11 flex-row items-center gap-2 border-b border-border-subtle px-2"
         style={{
@@ -2252,7 +2256,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     readonly copiedRowId: string | null;
     readonly expandedWorkGroups: Record<string, boolean>;
     readonly expandedWorkRows: Record<string, boolean>;
-    readonly expandedTurnIds: ReadonlySet<RunId>;
+    readonly expandedTurnIds: ReadonlySet<string>;
   }>({
     copiedRowId: null,
     expandedWorkGroups: {},
@@ -2787,11 +2791,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       return;
     }
     setInteractionState((current) => {
-      if (!current.expandedTurnIds.has(previous.runId)) {
+      const previousKeys = [...current.expandedTurnIds].filter(
+        (key) => key === previous.runId || key.startsWith(`${previous.runId}:`),
+      );
+      if (previousKeys.length === 0) {
         return current;
       }
       const next = new Set(current.expandedTurnIds);
-      next.delete(previous.runId);
+      for (const key of previousKeys) next.delete(key);
       return { ...current, expandedTurnIds: next };
     });
   }, [props.latestRun]);
@@ -2917,14 +2924,24 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   );
 
   const onToggleTurnFold = useCallback(
-    (runId: RunId) => {
-      suspendEndScrollMaintenanceForDisclosure(`run-fold:${runId}`);
+    ({
+      runId,
+      expandKey,
+      expanded,
+    }: {
+      readonly runId: RunId;
+      readonly expandKey: string;
+      readonly expanded: boolean;
+    }) => {
+      suspendEndScrollMaintenanceForDisclosure(`run-fold:${expandKey}`);
       setInteractionState((current) => {
         const next = new Set(current.expandedTurnIds);
-        if (next.has(runId)) {
+        // An interrupt expands the whole run by its id.
+        if (expanded) {
+          next.delete(expandKey);
           next.delete(runId);
         } else {
-          next.add(runId);
+          next.add(expandKey);
         }
         return { ...current, expandedTurnIds: next };
       });
