@@ -270,6 +270,39 @@ export function npmGlobalPrefixFromCommandPath(
   return packageIndex === 0 ? "/" : slashPath.slice(0, packageIndex);
 }
 
+/**
+ * The Windows npm prefix a binary path inside a global package belongs to:
+ * `<prefix>\node_modules\<pkg>\…`. The layout alone is not proof, because a
+ * project checkout has the same shape. `resolveNpmGlobalPrefix` also requires
+ * the `<cmd>.cmd` shim npm writes into the prefix; a project keeps its shims
+ * in `node_modules\.bin`.
+ */
+export function windowsNpmPrefixFromPackagePath(
+  commandPath: string,
+  packageName: string,
+): string | null {
+  // Only ASCII is lowercased: `İ` lowercases to two code units, which would shift
+  // indexes into `commandPath`. The segment and npm package names are ASCII.
+  const normalized = commandPath
+    .replaceAll("\\", "/")
+    .replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+  const packageIndex = normalized.lastIndexOf(`/node_modules/${packageName.toLowerCase()}/`);
+  if (packageIndex <= 0 || normalized.slice(0, packageIndex).includes("/node_modules/")) {
+    return null;
+  }
+  const head = normalized.slice(0, packageIndex);
+  // As in `npmGlobalPrefixFromCommandPath`, a mise tool version is not npm's.
+  const miseTool = /\/mise\/installs\/([^/]+)\/[^/]+$/.exec(head)?.[1];
+  if (miseTool && miseTool !== "node") {
+    return null;
+  }
+  // Roots keep their separator, as `path.dirname` of a shim there does, so both
+  // proofs give the same lock key. npm also reads a bare `C:` as the drive's
+  // current directory rather than its root.
+  const isRoot = /^[a-z]:$/.test(head) || /^\/\/[^/]+\/[^/]+$/.test(head);
+  return commandPath.slice(0, isRoot ? packageIndex + 1 : packageIndex);
+}
+
 // `<prefix>/Cellar/<name>/<version>/…` or `<prefix>/Caskroom/<name>/<version>/…`.
 // Homebrew always nests a version directory under the keg.
 const HOMEBREW_KEG_PATTERN = /^(.*)\/(cellar|caskroom)\/([^/]+)\/[^/]+\//i;
@@ -577,7 +610,8 @@ const isVoltaPackageInstall = Effect.fn("isVoltaPackageInstall")(function* (
 /**
  * POSIX npm links `<prefix>/bin/<cmd>` into the package, so the real path is
  * proof. Windows npm writes `.cmd` shims beside `node_modules`, so the proof
- * is the package manifest next to the shim.
+ * is the package manifest next to the shim, or, for a binary path inside the
+ * package, the `<cmd>.cmd` shim next to `node_modules`.
  */
 const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (
   context: ProviderMaintenanceResolutionContext,
@@ -605,7 +639,31 @@ const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (
   const hasManifest = yield* fileSystem
     .exists(manifestPath)
     .pipe(Effect.orElseSucceed(() => false));
-  return hasManifest ? shimDir : null;
+  if (hasManifest) {
+    return shimDir;
+  }
+  // The path as configured goes first, like the shim proof above, so a prefix
+  // behind a junction (nvm-windows' `C:\nvm4w\nodejs`) gets one lock key either
+  // way. The real path covers a configured link into the package.
+  const target = `\\node_modules\\${packageName.toLowerCase().replaceAll("/", "\\")}\\`;
+  for (const commandPath of [context.resolvedCommandPath, context.realCommandPath]) {
+    const prefix = windowsNpmPrefixFromPackagePath(commandPath, packageName);
+    if (!prefix) {
+      continue;
+    }
+    // npm's shim runs `"%dp0%\node_modules\<pkg>\…"` (`%~dp0\…` in older npm).
+    // Requiring that target, not just a same-named `.cmd`, keeps a project's own
+    // script from passing.
+    const command = path.basename(commandPath, path.extname(commandPath));
+    const shim = yield* fileSystem
+      .readFileString(path.join(prefix, `${command}.cmd`))
+      .pipe(Effect.orElseSucceed(() => ""));
+    const shimText = shim.toLowerCase();
+    if (shimText.includes(`%dp0%${target}`) || shimText.includes(`%~dp0${target}`)) {
+      return prefix;
+    }
+  }
+  return null;
 });
 
 export function makePackageManagedProviderMaintenanceResolver(

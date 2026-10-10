@@ -30,6 +30,7 @@ import {
   resolveLatestProviderVersion,
   resolvePackageManagedProviderMaintenance,
   resolveProviderMaintenanceCapabilitiesEffect,
+  windowsNpmPrefixFromPackagePath,
   type ProviderMaintenanceCapabilities,
 } from "./maintenanceResolver.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -306,6 +307,55 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     ).toBeNull();
   });
 
+  it("derives the Windows npm prefix from a binary path inside the package", () => {
+    // The shim proof uses the shim's directory as the prefix; both must agree so
+    // updates share one lock key. At a root that keeps the separator, and npm
+    // would read a bare `C:` as the drive's current directory. `İ` grows when
+    // lowercased, so it would shift a prefix sliced by a lowercased index.
+    for (const prefix of [
+      "C:\\Users\\Theo\\AppData\\Roaming\\npm",
+      "C:\\Users\\İbrahimİ\\AppData\\Roaming\\npm",
+      "C:\\",
+      "\\\\server\\share\\",
+    ]) {
+      const shimDir = NodePath.win32.dirname(NodePath.win32.join(prefix, "claude.cmd"));
+      expect(shimDir).toBe(prefix);
+      expect(
+        windowsNpmPrefixFromPackagePath(
+          NodePath.win32.join(
+            prefix,
+            "node_modules",
+            "@anthropic-ai",
+            "claude-code",
+            "bin",
+            "claude.exe",
+          ),
+          "@anthropic-ai/claude-code",
+        ),
+      ).toBe(shimDir);
+    }
+    expect(
+      windowsNpmPrefixFromPackagePath(
+        "C:\\npm\\node_modules\\other\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe",
+        "@anthropic-ai/claude-code",
+      ),
+    ).toBeNull();
+    // Mise's npm backend lays a tool version out like a prefix; Node's own globals stay npm's.
+    const miseInstalls = "C:\\Users\\Theo\\AppData\\Local\\mise\\installs";
+    expect(
+      windowsNpmPrefixFromPackagePath(
+        `${miseInstalls}\\npm-anthropic-ai-claude-code\\2.1.0\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe`,
+        "@anthropic-ai/claude-code",
+      ),
+    ).toBeNull();
+    expect(
+      windowsNpmPrefixFromPackagePath(
+        `${miseInstalls}\\node\\22.0.0\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe`,
+        "@anthropic-ai/claude-code",
+      ),
+    ).toBe(`${miseInstalls}\\node\\22.0.0`);
+  });
+
   // The Codex Windows installer exposes `%LOCALAPPDATA%\\Programs\\OpenAI\\Codex\\bin`
   // as a junction into `%CODEX_HOME%\\packages\\standalone\\current\\bin`. Node's
   // realpath follows junctions, so the real path carries the standalone marker
@@ -380,6 +430,106 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
       );
       expect(posix.update).toBeNull();
+    }),
+  );
+
+  it.effect("proves Windows npm ownership of a binary path inside the global package", () =>
+    Effect.gen(function* () {
+      const writePackageExe = (root: string) => {
+        const exe = NodePath.join(
+          root,
+          "node_modules",
+          "@example",
+          "package-tool",
+          "bin",
+          "package-tool.exe",
+        );
+        NodeFS.mkdirSync(NodePath.dirname(exe), { recursive: true });
+        NodeFS.writeFileSync(exe, "");
+        return exe;
+      };
+      const resolve = (binaryPath: string) =>
+        resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+          binaryPath,
+          env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+        );
+
+      // The shim npm writes into a global prefix runs the package's executable.
+      const npmShim =
+        '@ECHO off\r\n"%dp0%\\node_modules\\@example\\package-tool\\bin\\package-tool.exe"   %*\r\n';
+      const prefix = yield* makeTempDir("t3-npm-windows-package-exe");
+      const globalExe = writePackageExe(prefix);
+      NodeFS.writeFileSync(NodePath.join(prefix, "package-tool.cmd"), npmShim);
+      expect((yield* resolve(globalExe)).update).toMatchObject({
+        executable: "npm",
+        args: ["install", "-g", "--prefix", prefix, expect.any(String), expect.any(String)],
+      });
+
+      // Older npm writes `%~dp0\…` instead of `%dp0%\…`.
+      const olderPrefix = yield* makeTempDir("t3-npm-windows-older-shim");
+      const olderExe = writePackageExe(olderPrefix);
+      NodeFS.writeFileSync(
+        NodePath.join(olderPrefix, "package-tool.cmd"),
+        npmShim.replace("%dp0%", "%~dp0"),
+      );
+      expect((yield* resolve(olderExe)).update).toMatchObject({
+        args: ["install", "-g", "--prefix", olderPrefix, expect.any(String), expect.any(String)],
+      });
+
+      const resolveLinked = (resolvedCommandPath: string, realCommandPath: string) =>
+        resolvePackageManagedProviderMaintenance(
+          {
+            provider: driver("packageTool"),
+            npmPackageName: "@example/package-tool",
+            nativeUpdate: null,
+          },
+          {
+            binaryPath: resolvedCommandPath,
+            resolvedCommandPath,
+            realCommandPath,
+            env: {},
+            platform: "win32",
+          },
+        ).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+        );
+
+      // Behind a junction (nvm-windows' `C:\nvm4w\nodejs`) the configured path
+      // names the prefix, as it does for a shim, so both share one lock key.
+      const visiblePrefix = yield* makeTempDir("t3-npm-windows-junction");
+      const visibleExe = writePackageExe(visiblePrefix);
+      NodeFS.writeFileSync(NodePath.join(visiblePrefix, "package-tool.cmd"), npmShim);
+      expect((yield* resolveLinked(visibleExe, globalExe)).update).toMatchObject({
+        args: ["install", "-g", "--prefix", visiblePrefix, expect.any(String), expect.any(String)],
+        lockKey: `npm-global:${normalizeCommandPath(visiblePrefix)}`,
+      });
+
+      // When the configured path only links into the global package (a project's
+      // `npm link`), the real path still proves the prefix.
+      const linkingProject = yield* makeTempDir("t3-npm-windows-linked");
+      const linkedExe = writePackageExe(linkingProject);
+      expect((yield* resolveLinked(linkedExe, globalExe)).update).toMatchObject({
+        args: ["install", "-g", "--prefix", prefix, expect.any(String), expect.any(String)],
+      });
+
+      // A project dependency keeps npm's shim in `node_modules\.bin`, and a
+      // same-named script of the project's own is not npm's shim, so it stays manual.
+      const project = yield* makeTempDir("t3-npm-windows-project-exe");
+      const projectExe = writePackageExe(project);
+      NodeFS.mkdirSync(NodePath.join(project, "node_modules", ".bin"), { recursive: true });
+      NodeFS.writeFileSync(
+        NodePath.join(project, "node_modules", ".bin", "package-tool.cmd"),
+        npmShim,
+      );
+      NodeFS.writeFileSync(
+        NodePath.join(project, "package-tool.cmd"),
+        "@echo off\r\nnode build.js\r\n",
+      );
+      expect((yield* resolve(projectExe)).update).toBeNull();
     }),
   );
 
