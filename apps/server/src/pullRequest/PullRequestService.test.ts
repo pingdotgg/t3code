@@ -1,4 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeV8 from "node:v8";
+import * as NodeVM from "node:vm";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import { assert, it } from "@effect/vitest";
@@ -5968,6 +5970,41 @@ it.effect("caches a small replacement after releasing a large diff", () =>
     assert.strictEqual((yield* service.diff(reference)).patch, "@@ small replacement");
     assert.strictEqual((yield* service.diff(reference)).patch, "@@ small replacement");
     assert.strictEqual(reads, 2);
+  }),
+);
+
+it.effect("releases an expired diff nobody reads again", () =>
+  Effect.gen(function* () {
+    NodeV8.setFlagsFromString("--expose-gc");
+    const collect = NodeVM.runInNewContext("gc") as () => void;
+    const settle = Effect.promise(async () => {
+      // A weak reference keeps its target for the rest of the job that created it.
+      await new Promise((resolve) => setImmediate(resolve));
+      collect();
+    });
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getDiff: () => Effect.sync(() => ({ patch: "@@", truncated: false, nextCursor: null })),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const read = (input: Parameters<typeof service.diff>[0]) =>
+      Effect.map(service.diff(input), (result) => new WeakRef(result));
+    const page = yield* read(reference);
+    const commit = yield* read({ ...reference, commit: "a".repeat(40) });
+
+    yield* TestClock.adjust("9 minutes");
+    yield* settle;
+    assert.isDefined(page.deref());
+    assert.isDefined(commit.deref());
+
+    yield* TestClock.adjust("2 minutes");
+    yield* settle;
+    assert.isUndefined(page.deref());
+    assert.isUndefined(commit.deref());
   }),
 );
 

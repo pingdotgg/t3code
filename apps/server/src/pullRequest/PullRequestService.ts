@@ -176,6 +176,8 @@ const LIST_STATS_CACHE_TTL = Duration.seconds(60);
 const FILES_VIEWED_CACHE_TTL = Duration.seconds(15);
 /** A diff can stay interactive while its next cached value is fetched off the critical path. */
 const DIFF_STALE_WINDOW = Duration.minutes(10);
+/** How long an expired diff may stay held before it is dropped unread. */
+const DIFF_SWEEP_INTERVAL = Duration.minutes(1);
 /** How long one host's signed-in login is believed without asking its CLI again. */
 const VIEWER_CACHE_TTL = Duration.minutes(10);
 const SEARCH_VISIBILITY_TTL = Duration.minutes(10);
@@ -1939,6 +1941,7 @@ export const make = Effect.gen(function* () {
     );
 
   const context = yield* Effect.context<never>();
+  const scope = yield* Effect.scope;
   /** Runs a refresh as its own fiber, for the reads that answer from a held value first. */
   const runFork = Effect.runForkWith(context);
 
@@ -2659,8 +2662,9 @@ export const make = Effect.gen(function* () {
           if (oldest !== undefined) held.delete(oldest);
         }
         held.set(key, { at, value });
+        armDiffSweep();
       });
-    return <E>(key: string, read: Effect.Effect<PullRequestDiffResult, E>) => {
+    const serve = <E>(key: string, read: Effect.Effect<PullRequestDiffResult, E>) => {
       const recorded = read.pipe(Effect.tap((value) => record(key, value)));
       return Effect.flatMap(Clock.currentTimeMillis, (now) => {
         const snapshot = held.get(key);
@@ -2671,6 +2675,14 @@ export const make = Effect.gen(function* () {
         return revalidate(recorded).pipe(Effect.as(snapshot.value));
       });
     };
+    /** Drops what `serve` would already refuse, and says how many values are still held. */
+    const dropExpired = Effect.map(Clock.currentTimeMillis, (now) => {
+      for (const [key, snapshot] of held) {
+        if (now - snapshot.at > staleMs) held.delete(key);
+      }
+      return held.size;
+    });
+    return { serve, dropExpired };
   })();
 
   const makeLastGoodRead = <A>(capacity: number) => {
@@ -3234,6 +3246,36 @@ export const make = Effect.gen(function* () {
       },
     },
   );
+  /**
+   * Both diff holders drop an expired value only when its own key is read again, and a diff's key
+   * moves with every push, so a closed page's patches would stay held until the server restarted.
+   * One pending sweep at a time, armed in the same step that leaves a value held and re-armed
+   * while anything still is, so an idle server keeps no timer.
+   */
+  let diffSweepPending = false;
+  // Forked from the service's own context, in one step with the flag: a caller's interruption
+  // cannot strand the flag, and its request is not kept alive by the wait.
+  const armDiffSweep = () => {
+    if (diffSweepPending) return;
+    diffSweepPending = true;
+    runFork(Effect.forkIn(sweepDiffs, scope));
+  };
+  const sweepDiffs: Effect.Effect<void> = Effect.sleep(DIFF_SWEEP_INTERVAL).pipe(
+    Effect.andThen(
+      Effect.suspend(() => {
+        // Cleared before the sweep, so a read that settles during it arms the next one itself.
+        diffSweepPending = false;
+        return staleDiff.dropExpired;
+      }),
+    ),
+    // The cache drops its expired entries as its keys are walked.
+    Effect.flatMap((stale) =>
+      Effect.map(Cache.keys(diffCache), (keys) => stale + Array.from(keys).length),
+    ),
+    Effect.map((held) => {
+      if (held > 0) armDiffSweep();
+    }),
+  );
   const diff: PullRequestService["Service"]["diff"] = (input) => {
     const key = JSON.stringify([
       refCacheKey(input),
@@ -3256,8 +3298,10 @@ export const make = Effect.gen(function* () {
               Effect.uninterruptible,
             ),
       ),
+      // However the read ends, it may have left a value behind in the cache.
+      Effect.ensuring(Effect.sync(armDiffSweep)),
     );
-    return staleDiff(key, read);
+    return staleDiff.serve(key, read);
   };
 
   const filesViewedCache = yield* Cache.makeWith(
