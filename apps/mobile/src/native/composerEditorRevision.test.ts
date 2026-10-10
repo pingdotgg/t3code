@@ -214,3 +214,23 @@ describe("typing immediately before an intercepted paste", () => {
     expect(acknowledgeComposerNativeEvent(2, 1)).toBeNull();
   });
 });
+
+describe("committed submission snapshot", () => {
+  it("allows clearing the corrected draft while rejecting delayed pre-submit events", () => {
+    const correction = { eventCount: 8, value: "The", selection: { start: 3, end: 3 } };
+    // Native advances once more after resignFirstResponder commits the correction.
+    const submitted = { ...correction, eventCount: 9 };
+    const eventCount = acknowledgeComposerNativeEvent(7, submitted.eventCount)!;
+    const snapshots = [
+      { eventCount: 7, value: "Teh", selection: { start: 3, end: 3 } },
+      correction,
+      submitted,
+    ];
+
+    expect(resolveComposerControlledEventCount("", null, eventCount, snapshots)).toBe(9);
+    expect(isComposerNativeEcho("", null, eventCount, snapshots)).toBe(false);
+    expect(acknowledgeComposerNativeEvent(eventCount, correction.eventCount)).toBeNull();
+    expect(acknowledgeComposerNativeEvent(eventCount, 7)).toBeNull();
+    expect(acknowledgeComposerNativeEvent(eventCount, 10)).toBe(10);
+  });
+});
