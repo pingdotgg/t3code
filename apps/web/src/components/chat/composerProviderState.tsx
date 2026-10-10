@@ -4,7 +4,6 @@ import {
   type ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderOptionSelection,
-  type ScopedThreadRef,
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import {
@@ -44,7 +43,8 @@ export type ComposerProviderState = {
 type TraitsRenderInput = {
   provider: ProviderDriverKind;
   instanceId?: ProviderInstanceId;
-  threadRef?: ScopedThreadRef;
+  onModelOptionsChange?: (options: ReadonlyArray<ProviderOptionSelection> | undefined) => void;
+  readOnly?: boolean;
   draftId?: DraftId;
   model: string;
   models: ReadonlyArray<ServerProviderModel>;
@@ -167,7 +167,8 @@ function renderTraitsControl(
   const {
     provider,
     instanceId,
-    threadRef,
+    onModelOptionsChange,
+    readOnly,
     draftId,
     model,
     models,
@@ -181,7 +182,7 @@ function renderTraitsControl(
     triggerClassName,
     isComposerOwned,
   } = input;
-  const hasTarget = threadRef !== undefined || draftId !== undefined;
+  const hasTarget = onModelOptionsChange !== undefined || draftId !== undefined;
   const { selections: resolvedModelOptions } = resolveComposerOptionSelections(
     models,
     model,
@@ -207,8 +208,8 @@ function renderTraitsControl(
       provider={provider}
       {...(instanceId ? { instanceId } : {})}
       models={models}
-      {...(threadRef ? { threadRef } : {})}
-      {...(draftId ? { draftId } : {})}
+      {...(onModelOptionsChange ? { onModelOptionsChange } : draftId ? { draftId } : {})}
+      {...(readOnly === undefined ? {} : { readOnly })}
       model={model}
       modelOptions={resolvedModelOptions}
       reportedModelSelection={reportedModelSelection}

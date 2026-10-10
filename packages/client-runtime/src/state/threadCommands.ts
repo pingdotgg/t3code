@@ -142,9 +142,9 @@ export type {
   WatchThreadPullRequestInput,
 } from "../operations/commands.ts";
 
-export class ThreadModelSelectionSaveError extends Data.TaggedError(
-  "ThreadModelSelectionSaveError",
-) {
+export type { ThreadModelSelectionSaveError };
+
+class ThreadModelSelectionSaveError extends Data.TaggedError("ThreadModelSelectionSaveError") {
   override readonly message =
     "The model selection could not be saved. Select a model again before sending.";
 }

@@ -10754,7 +10754,11 @@ export default function ChatView(props: ChatViewProps) {
   );
 
   const onProviderModelSelect = useCallback(
-    (instanceId: ProviderInstanceId, model: string, options?: { focusComposer?: boolean }) => {
+    (
+      instanceId: ProviderInstanceId,
+      model: string,
+      options?: { focusComposer?: boolean; modelOptions?: ModelSelection["options"] },
+    ) => {
       if (!activeThread) return;
       // Look up the configured instance so model normalization and custom
       // model lookup stay scoped to that exact instance. Unknown instance ids
@@ -10803,10 +10807,12 @@ export default function ChatView(props: ChatViewProps) {
         useComposerDraftStore.getState().stickyOptionsByModelByProvider[instanceId]?.[
           resolvedModel
         ];
-      const nextModelSelection: ModelSelection =
-        rememberedOptions !== undefined && rememberedOptions.length > 0
-          ? { instanceId, model: resolvedModel, options: [...rememberedOptions] }
-          : { instanceId, model: resolvedModel };
+      const modelOptions = options?.modelOptions ?? rememberedOptions;
+      const nextModelSelection: ModelSelection = {
+        instanceId,
+        model: resolvedModel,
+        ...(modelOptions === undefined ? {} : { options: modelOptions }),
+      };
       const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
         providers: providerStatuses,
         hasStartedSession: activeRuntime !== null,

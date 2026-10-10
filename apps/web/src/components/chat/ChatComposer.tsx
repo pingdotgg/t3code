@@ -1686,7 +1686,7 @@ export interface ChatComposerProps {
   onProviderModelSelect: (
     instanceId: ProviderInstanceId,
     model: string,
-    options?: { focusComposer?: boolean },
+    options?: { focusComposer?: boolean; modelOptions?: ModelSelection["options"] },
   ) => void;
   onOpenProviderSetup: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason: (instanceId: ProviderInstanceId, model: string) => string | null;
@@ -2980,11 +2980,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ],
   );
 
+  const onModelOptionsChange = useCallback(
+    (modelOptions: ModelSelection["options"]) => {
+      onProviderModelSelect(selectedInstanceId, selectedModel, {
+        focusComposer: false,
+        modelOptions: modelOptions ?? [],
+      });
+    },
+    [onProviderModelSelect, selectedInstanceId, selectedModel],
+  );
+  const traitsPersistence =
+    routeKind === "server"
+      ? {
+          onModelOptionsChange,
+          readOnly: getModelDisabledReason(selectedInstanceId, selectedModel) !== null,
+        }
+      : draftId
+        ? { draftId }
+        : {};
+
   const providerTraitsMenuContent = renderProviderTraitsMenuContent({
     provider: selectedProvider,
     instanceId: selectedInstanceId,
-    ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
-    ...(routeKind === "draft" && draftId ? { draftId } : {}),
+    ...traitsPersistence,
     model: selectedModel,
     models: selectedProviderModels,
     modelOptions: composerModelOptions?.[selectedInstanceId],
@@ -2996,8 +3014,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const providerTraitsPickerInput = {
     provider: selectedProvider,
     instanceId: selectedInstanceId,
-    ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
-    ...(routeKind === "draft" && draftId ? { draftId } : {}),
+    ...traitsPersistence,
     model: selectedModel,
     models: selectedProviderModels,
     modelOptions: composerModelOptions?.[selectedInstanceId],

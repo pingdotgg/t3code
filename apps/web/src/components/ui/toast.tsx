@@ -3,7 +3,6 @@
 import { Spinner } from "~/components/ui/spinner";
 
 import { Toast } from "@base-ui/react/toast";
-import { toastManager, anchoredToastManager } from "./toast-manager";
 import {
   useEffect,
   useMemo,
@@ -69,6 +68,8 @@ export type ThreadToastData = {
     | "secondary";
 };
 
+const toastManager = Toast.createToastManager<ThreadToastData>();
+const anchoredToastManager = Toast.createToastManager<ThreadToastData>();
 type ToastId = ReturnType<typeof toastManager.add>;
 const threadToastVisibleTimeoutRemainingMs = new Map<ToastId, number>();
 

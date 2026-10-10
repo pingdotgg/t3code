@@ -1,7 +1,7 @@
 import type { ModelSelection, ScopedThreadRef } from "@t3tools/contracts";
 import { useCallback } from "react";
 
-import { toastManager } from "../components/ui/toast-manager";
+import { toastManager } from "../components/ui/toast";
 import { threadEnvironment } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
 

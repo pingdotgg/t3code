@@ -4,7 +4,6 @@ import {
   type ProviderInstanceId,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
-  type ScopedThreadRef,
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import {
@@ -16,9 +15,6 @@ import {
   isClaudeUltrathinkPrompt,
   normalizeModelSlug,
 } from "@t3tools/shared/model";
-import { useAtomValue } from "@effect/atom-react";
-import { threadEnvironment } from "../../state/threads";
-import { useThreadModelSelection } from "../../state/use-thread-model-selection";
 import { memo, useCallback } from "react";
 import { BrainIcon } from "lucide-react";
 import {
@@ -84,12 +80,11 @@ export function buildUnavailableModelOptionDescriptors(
 
 type TraitsPersistence =
   | {
-      threadRef?: ScopedThreadRef;
       draftId?: DraftId;
       onModelOptionsChange?: never;
     }
   | {
-      threadRef?: undefined;
+      draftId?: undefined;
       onModelOptionsChange: (nextOptions: ProviderOptions | undefined) => void;
     };
 
@@ -284,6 +279,7 @@ export interface TraitsMenuContentProps {
   planModeEnabled: boolean;
   triggerClassName?: string;
   isComposerOwned?: boolean;
+  readOnly?: boolean;
 }
 
 export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
@@ -297,29 +293,16 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   reportedModelSelection,
   allowPromptInjectedEffort = true,
   planModeEnabled,
+  readOnly = false,
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
-  const canSelectThreadModel = useAtomValue(
-    threadEnvironment.setModelSelection.permissionAtom(
-      persistence.threadRef?.environmentId ?? null,
-    ),
-  );
-  const readOnly = persistence.threadRef !== undefined && !canSelectThreadModel;
-  const saveThreadModelSelection = useThreadModelSelection();
   const modelSelection =
     instanceId && model ? { instanceId, model, options: modelOptions ?? [] } : null;
   const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
-  const setStickyModelSelection = useComposerDraftStore((store) => store.setStickyModelSelection);
   const updateModelOptions = useCallback(
     (nextOptions: ProviderOptions | undefined) => {
       if ("onModelOptionsChange" in persistence) {
         persistence.onModelOptionsChange(nextOptions);
-        return;
-      }
-      if (persistence.threadRef && instanceId && model) {
-        const selection = { instanceId, model, options: nextOptions ?? [] };
-        setStickyModelSelection(selection);
-        void saveThreadModelSelection(persistence.threadRef, selection);
         return;
       }
       const threadTarget = persistence.draftId;
@@ -332,15 +315,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
         persistSticky: true,
       });
     },
-    [
-      instanceId,
-      model,
-      persistence,
-      provider,
-      setProviderModelOptions,
-      setStickyModelSelection,
-      saveThreadModelSelection,
-    ],
+    [instanceId, model, persistence, provider, setProviderModelOptions],
   );
   const {
     descriptors,
