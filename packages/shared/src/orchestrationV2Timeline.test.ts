@@ -1,9 +1,10 @@
-import { NodeId, RunId } from "@t3tools/contracts";
+import { NodeId, RunId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   createOrchestrationV2TurnItemVisibility,
   isOrchestrationV2TurnItemVisible,
+  runInterruptSenderThreadId,
 } from "./orchestrationV2Timeline.ts";
 
 const runId = RunId.make("run:timeline-visibility");
@@ -116,5 +117,31 @@ describe.each([
         items: [{ type: "run_interrupt_result", runId, nodeId }],
       }),
     ).toBe(true);
+  });
+});
+
+describe("runInterruptSenderThreadId", () => {
+  const threadId = ThreadId.make("thread:timeline-interrupted");
+  const senderThreadId = ThreadId.make("thread:timeline-interrupting");
+
+  it.each([
+    {
+      name: "an agent in another thread",
+      createdBy: "agent",
+      sender: senderThreadId,
+      opens: senderThreadId,
+    },
+    { name: "an agent in the same thread", createdBy: "agent", sender: threadId, opens: undefined },
+    { name: "the user's Stop", createdBy: "user", sender: undefined, opens: undefined },
+    { name: "no request", createdBy: undefined, sender: undefined, opens: undefined },
+  ] as const)("opens the sender only for $name", ({ createdBy, sender, opens }) => {
+    expect(
+      runInterruptSenderThreadId({
+        type: "run_interrupt_result",
+        threadId,
+        ...(createdBy === undefined ? {} : { createdBy }),
+        ...(sender === undefined ? {} : { senderThreadId: sender }),
+      }),
+    ).toBe(opens);
   });
 });

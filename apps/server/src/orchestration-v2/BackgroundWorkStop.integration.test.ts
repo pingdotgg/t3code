@@ -351,6 +351,7 @@ const stopEarlierBackgroundWork = ({
                   type: "thread.stop",
                   commandId: CommandId.make("stop-stalled-run"),
                   threadId,
+                  createdBy: "agent",
                 },
           );
           yield* worker.drain();
@@ -381,10 +382,16 @@ const stopEarlierBackgroundWork = ({
             after.turnItems.find((candidate) => candidate.type === "assistant_message")?.status,
             interrupted ? "interrupted" : "running",
           );
-          assert.equal(
-            after.turnItems.filter((candidate) => candidate.type === "run_interrupt_result").length,
-            interrupted ? 1 : 0,
+          const results = after.turnItems.filter(
+            (candidate) => candidate.type === "run_interrupt_result",
           );
+          assert.equal(results.length, interrupted ? 1 : 0);
+          if (interrupted) {
+            assert.deepInclude(results[0], {
+              createdBy: "agent",
+              message: "Run interrupted by an agent",
+            });
+          }
           assert.isEmpty(after.runs.filter((candidate) => candidate.status === "waiting"));
           return;
         }

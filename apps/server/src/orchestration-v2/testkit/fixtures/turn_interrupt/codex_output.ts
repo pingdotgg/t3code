@@ -36,6 +36,10 @@ export function assertTurnInterruptOutput(
   assert.equal(interruptRequest.status, "completed");
   assert.equal(interruptResult.status, "interrupted");
   assert.equal(interruptResult.parentItemId, interruptRequest.id);
+  assert.equal(
+    interruptResult.type === "run_interrupt_result" ? interruptResult.message : undefined,
+    "Run interrupted by user",
+  );
   assert.deepEqual(
     projection.attempts.map((attempt) => attempt.status),
     ["interrupted"],

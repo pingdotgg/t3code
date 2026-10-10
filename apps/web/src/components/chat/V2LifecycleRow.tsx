@@ -26,6 +26,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
+import { runInterruptSenderThreadId } from "@t3tools/shared/orchestrationV2Timeline";
 import {
   BotIcon,
   ChevronRightIcon,
@@ -94,12 +95,19 @@ export function V2LifecycleRow(props: {
     );
   }
   if (item.type === "run_interrupt_result") {
+    const senderThreadId = runInterruptSenderThreadId(item);
     return (
       <TimelineSystemDivider
         label="Run interrupted"
         detail={item.message}
         tone="danger"
         icon={XIcon}
+        {...(senderThreadId === undefined
+          ? {}
+          : {
+              actionLabel: "Open interrupting thread",
+              onAction: () => props.onOpenThread(senderThreadId),
+            })}
       />
     );
   }

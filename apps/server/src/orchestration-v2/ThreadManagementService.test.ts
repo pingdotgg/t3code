@@ -25,7 +25,7 @@ import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
-it("stamps authoritative provenance on commands that create threads or messages", () => {
+it("stamps authoritative provenance on commands that record who authored them", () => {
   const command: OrchestrationV2Command = {
     type: "thread.create",
     createdBy: "agent",
@@ -53,14 +53,30 @@ it("stamps authoritative provenance on commands that create threads or messages"
     createdBy: "user",
     creationSource: "web",
   });
-});
-
-it("leaves commands that do not create durable authored content unchanged", () => {
-  const command: OrchestrationV2Command = {
+  const interrupt: OrchestrationV2Command = {
     type: "run.interrupt",
     commandId: CommandId.make("command:thread-management:interrupt"),
     threadId: ThreadId.make("thread:thread-management:interrupt"),
     runId: RunId.make("run:thread-management:interrupt"),
+  };
+  expect(
+    ThreadManagementService.withCreationProvenance(
+      {
+        ...interrupt,
+        createdBy: "agent",
+        senderThreadId: ThreadId.make("thread:thread-management:spoofed-sender"),
+      },
+      { createdBy: "user", creationSource: "web" },
+    ),
+  ).toEqual({ ...interrupt, createdBy: "user" });
+});
+
+it("leaves commands that do not create durable authored content unchanged", () => {
+  const command: OrchestrationV2Command = {
+    type: "prepared-run.retry",
+    commandId: CommandId.make("command:thread-management:retry"),
+    threadId: ThreadId.make("thread:thread-management:retry"),
+    runId: RunId.make("run:thread-management:retry"),
   };
 
   expect(

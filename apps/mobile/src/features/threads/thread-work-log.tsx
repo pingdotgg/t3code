@@ -53,6 +53,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
+import { runInterruptSenderThreadId } from "@t3tools/shared/orchestrationV2Timeline";
 
 import { AppText as Text } from "../../components/AppText";
 import { T3Wordmark } from "../../components/T3Wordmark";
@@ -933,7 +934,9 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
     row.projectedItem.item.type === "notification"
       ? notificationChildThreadId(row.projectedItem.item.source)
       : undefined;
-  const canExpand = row.canExpand && notifiedSubagentThreadId === undefined;
+  const interruptSenderThreadId = runInterruptSenderThreadId(row.projectedItem.item);
+  const linkedThreadId = notifiedSubagentThreadId ?? interruptSenderThreadId;
+  const canExpand = row.canExpand && linkedThreadId === undefined;
   const reasoning = row.projectedItem.item.type === "reasoning" ? row.projectedItem.item : null;
   const fetchedItem = fetchedDetail.data?.item ?? null;
   // Reads keep their path list; the fetched file contents show as output.
@@ -1000,26 +1003,26 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
       {...(isFreshRow(row.createdAt) ? { entering: FadeIn.duration(200) } : {})}
     >
       <WorkLogPressable
-        accessibilityRole={
-          notifiedSubagentThreadId !== undefined ? "link" : canExpand ? "button" : undefined
-        }
+        accessibilityRole={linkedThreadId !== undefined ? "link" : canExpand ? "button" : undefined}
         accessibilityLabel={failed ? `${accessiblePreview}, tool call failed` : accessiblePreview}
         accessibilityHint={
           notifiedSubagentThreadId !== undefined
             ? "Opens this agent's thread. Long press to copy."
-            : canExpand
-              ? `Double tap to ${expanded ? "hide" : "show"} full details. Long press to copy.`
-              : "Long press to copy."
+            : interruptSenderThreadId !== undefined
+              ? "Opens the thread that stopped this run. Long press to copy."
+              : canExpand
+                ? `Double tap to ${expanded ? "hide" : "show"} full details. Long press to copy.`
+                : "Long press to copy."
         }
         accessibilityState={canExpand ? { expanded } : undefined}
         onPress={() => {
-          if (notifiedSubagentThreadId !== undefined) {
+          if (linkedThreadId !== undefined) {
             // Push, not navigate: navigate reuses this Thread route, so back
             // would skip the parent thread and land on Home (matches #15068).
             navigation.dispatch(
               StackActions.push("Thread", {
                 environmentId: String(props.environmentId),
-                threadId: String(notifiedSubagentThreadId),
+                threadId: String(linkedThreadId),
               }),
             );
             return;

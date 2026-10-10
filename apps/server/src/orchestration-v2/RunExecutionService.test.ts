@@ -3483,22 +3483,51 @@ it.effect("does not overwrite Stop when ownership changes after the finalization
   }),
 );
 
-it.effect("emits run_interrupt_result when hard-stop finalizes the active attempt", () =>
-  Effect.gen(function* () {
-    const { written, observed, committedEffects } = yield* captureRootRunTermination({
-      key: "hard-stop",
-      shouldFinalizeRun: () => Effect.succeed(true),
-    });
-    assert.deepEqual(
-      written.map((item) => item.type),
-      ["run_interrupt_result"],
-    );
-    assert.deepEqual(observed, ["run:interrupted", "pull-requests-refreshed"]);
-    assert.deepEqual(
-      committedEffects.map((effect) => effect.request.type),
-      ["checkpoint.capture"],
-    );
-  }),
+const interruptingThreadId = ThreadId.make("thread:hard-stop:interrupting");
+
+it.effect.each([
+  {
+    name: "an agent's request",
+    request: { createdBy: "agent", senderThreadId: interruptingThreadId },
+    message: "Run interrupted by an agent",
+  },
+  { name: "the user's Stop", request: { createdBy: "user" }, message: "Run interrupted by user" },
+  { name: "no request", request: null, message: "" },
+] as const)(
+  "emits run_interrupt_result attributed to $name when hard-stop finalizes the active attempt",
+  ({ name, request, message }) =>
+    Effect.gen(function* () {
+      const { written, observed, committedEffects } = yield* captureRootRunTermination({
+        key: `hard-stop:${name}`,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        interruptRequest:
+          request === null
+            ? null
+            : ({
+                type: "run_interrupt_request",
+                ...request,
+              } as RunExecutionService.RunInterruptRequestTurnItem),
+      });
+      assert.deepEqual(
+        written.map((item) => item.type),
+        ["run_interrupt_result"],
+      );
+      const result = written[0];
+      if (result?.type !== "run_interrupt_result") {
+        return assert.fail("expected run_interrupt_result");
+      }
+      assert.equal(result.message, message);
+      assert.equal(result.createdBy, request?.createdBy);
+      assert.equal(
+        result.senderThreadId,
+        request !== null && "senderThreadId" in request ? request.senderThreadId : undefined,
+      );
+      assert.deepEqual(observed, ["run:interrupted", "pull-requests-refreshed"]);
+      assert.deepEqual(
+        committedEffects.map((effect) => effect.request.type),
+        ["checkpoint.capture"],
+      );
+    }),
 );
 
 it.effect.each(["completed", "interrupted", "cancelled", "failed"] as const)(
@@ -3628,6 +3657,7 @@ function captureRootRunTermination(input: {
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;
   readonly rejectTerminalWrite?: boolean;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
+  readonly interruptRequest?: RunExecutionService.RunInterruptRequestTurnItem | null;
   readonly seedOpenSubagent?: boolean;
   readonly events?: (
     ids: BackgroundScenarioIds,
@@ -3784,6 +3814,9 @@ function captureRootRunTermination(input: {
           : {
               hasUnpairedRunInterruptRequest: input.hasUnpairedRunInterruptRequest,
             }),
+        ...(input.interruptRequest === undefined
+          ? {}
+          : { loadRunInterruptRequest: () => Effect.succeed(input.interruptRequest ?? null) }),
         message: {
           messageId: MessageId.make(`message:${input.key}`),
           text: "interrupt projection",

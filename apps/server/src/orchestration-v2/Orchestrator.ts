@@ -539,6 +539,19 @@ function hasLiveRun(projection: Pick<OrchestrationV2ThreadProjection, "runs">): 
   );
 }
 
+/** A stop with no `createdBy` came from a client's Stop, so the user. */
+function runInterruptAttribution(
+  command: Extract<
+    OrchestrationV2ServerCommand,
+    { readonly type: "run.interrupt" | "thread.stop" }
+  >,
+) {
+  return {
+    createdBy: command.createdBy ?? "user",
+    ...(command.senderThreadId === undefined ? {} : { senderThreadId: command.senderThreadId }),
+  } as const;
+}
+
 /** The link with its watch replaced, or removed when `watch` is undefined. */
 function withPullRequestWatch(
   link: ThreadPullRequestLink,
@@ -8604,6 +8617,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       if (providerThread !== undefined) {
+        const requestId = idAllocator.derive.runSignalTurnItem({
+          runId: run.id,
+          signal: "interrupt-request",
+        });
+        // A dead session's Stop writes its request in this same command, before the store has it.
+        const pendingRequest = (yield* Ref.get(input.events)).findLast(
+          (event) => event.type === "turn-item.updated" && event.payload.id === requestId,
+        );
+        const request =
+          pendingRequest?.type === "turn-item.updated"
+            ? pendingRequest.payload
+            : yield* projectionStore
+                .getTurnItem({ threadId: run.threadId, itemId: requestId })
+                .pipe(Effect.catchCause(() => Effect.succeed(null)));
         yield* emitEvent({
           ...base,
           type: "turn-item.updated",
@@ -8612,6 +8639,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             run,
             rootNode,
             providerThread,
+            request: request?.type === "run_interrupt_request" ? request : null,
             completedAt: input.now,
           }),
         });
@@ -8712,6 +8740,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         completedAt: now,
         updatedAt: now,
         type: "run_interrupt_request",
+        ...runInterruptAttribution(command),
         message: command.reason ?? "Interrupt requested",
       },
     });
@@ -9066,6 +9095,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             });
 
       const emitEvent = emit(events, command);
+      const interruptAttribution = runInterruptAttribution(command);
       const interruptRequestItem: OrchestrationV2TurnItem = {
         id: idAllocator.derive.runSignalTurnItem({
           runId: run.id,
@@ -9085,6 +9115,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         completedAt: now,
         updatedAt: now,
         type: "run_interrupt_request",
+        ...interruptAttribution,
         message: command.reason ?? "Interrupt requested",
       };
 
@@ -9179,7 +9210,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           completedAt: now,
           updatedAt: now,
           type: "run_interrupt_result",
-          message: "Run interrupted before provider start",
+          ...interruptAttribution,
+          message:
+            interruptAttribution.createdBy === "agent"
+              ? "Run interrupted by an agent before provider start"
+              : interruptAttribution.createdBy === "user"
+                ? "Run interrupted by user before provider start"
+                : "Run interrupted before provider start",
         };
         yield* emitEvent({
           type: "turn-item.updated",
@@ -9409,6 +9446,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               runId: target.id,
               holdQueue: true,
               ...(command.reason === undefined ? {} : { reason: command.reason }),
+              ...runInterruptAttribution(command),
             },
             interruptEvents,
             interruptEffects,

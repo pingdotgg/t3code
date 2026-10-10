@@ -2054,12 +2054,17 @@ const make = Effect.gen(function* () {
         const stopChild = Effect.gen(function* () {
           const commandId = stableCommandId({ scope, requestKey: key, operation: "cancel-task" });
           const reason = input.reason;
+          const attribution = {
+            createdBy: "agent",
+            senderThreadId: scope.thread.threadId,
+          } as const;
           yield* threadManagement
             .dispatch({
               type: "thread.stop",
               commandId,
               threadId: current.childThreadId,
               ...(reason === undefined ? {} : { reason }),
+              ...attribution,
             })
             .pipe(
               Effect.mapError((error) =>
@@ -2071,7 +2076,12 @@ const make = Effect.gen(function* () {
             );
           // A retry with the same clientRequestId repeats only the stops that failed.
           yield* threadManagement
-            .stopDelegatedTasks({ threadId: current.childThreadId, commandId, reason })
+            .stopDelegatedTasks({
+              threadId: current.childThreadId,
+              commandId,
+              reason,
+              ...attribution,
+            })
             .pipe(
               Effect.mapError((error) =>
                 failure(
@@ -2518,6 +2528,8 @@ const make = Effect.gen(function* () {
             threadId: input.threadId,
             ...(input.runId === undefined ? {} : { runId: input.runId }),
             ...(input.reason === undefined ? {} : { reason: input.reason }),
+            createdBy: "agent",
+            ...(parent === undefined ? {} : { senderThreadId: parent.thread.id }),
           })
           .pipe(
             Effect.mapError((error) =>

@@ -575,13 +575,22 @@ it.effect("thread.stop marks a turn it cannot interrupt so a late agent watch is
       },
     });
 
+    const senderThreadId = ThreadId.make("thread:stop-lost-session-sender");
     yield* orchestrator.dispatch({
       type: "thread.stop",
       commandId: CommandId.make("stop-lost-session"),
       threadId,
+      createdBy: "agent",
+      senderThreadId,
     });
     assert.isTrue(Exit.isFailure(yield* Effect.exit(watch(threadId, 12))));
     assert.deepEqual(yield* threadState(threadId), { runs: ["running"], watched: [] });
+    assert.deepInclude(
+      (yield* orchestrator.getThreadProjection(threadId)).turnItems.find(
+        (item) => item.type === "run_interrupt_request",
+      ),
+      { createdBy: "agent", senderThreadId },
+    );
   }).pipe(Effect.provide(layerTest)),
 );
 

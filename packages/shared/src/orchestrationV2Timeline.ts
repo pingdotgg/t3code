@@ -1,8 +1,10 @@
 import type {
+  OrchestrationV2Actor,
   OrchestrationV2Run,
   OrchestrationV2RunAttempt,
   OrchestrationV2TurnItem,
   OrchestrationV2UserMessageInputIntent,
+  ThreadId,
 } from "@t3tools/contracts";
 
 type TimelineRun = Pick<OrchestrationV2Run, "id" | "status">;
@@ -10,6 +12,19 @@ type TimelineRunAttempt = Pick<OrchestrationV2RunAttempt, "runId" | "rootNodeId"
 type TimelineTurnItem = Pick<OrchestrationV2TurnItem, "type" | "runId" | "nodeId"> & {
   readonly inputIntent?: OrchestrationV2UserMessageInputIntent;
 };
+
+export function runInterruptSenderThreadId(
+  item: Pick<OrchestrationV2TurnItem, "type" | "threadId"> & {
+    readonly createdBy?: OrchestrationV2Actor | undefined;
+    readonly senderThreadId?: ThreadId | undefined;
+  },
+): ThreadId | undefined {
+  return item.type === "run_interrupt_result" &&
+    item.createdBy === "agent" &&
+    item.senderThreadId !== item.threadId
+    ? item.senderThreadId
+    : undefined;
+}
 
 export function isOrchestrationV2SupersededInterrupt(input: {
   readonly item: TimelineTurnItem;
