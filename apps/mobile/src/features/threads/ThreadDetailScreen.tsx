@@ -59,6 +59,7 @@ import {
   useState,
 } from "react";
 import {
+  AccessibilityInfo,
   Alert,
   AppState,
   Keyboard,
@@ -745,6 +746,24 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     [userInputCoverageApplies],
   );
   const { freeze, scrollMessageToEnd } = useKeyboardScrollToEnd({ listRef });
+  // Read when a scroll starts; the listener keeps it current if the user
+  // changes Reduce Motion while the thread is open.
+  const reduceMotionRef = useRef(true);
+  useEffect(() => {
+    // A change event or cleanup makes a still-pending initial query stale.
+    let superseded = false;
+    void AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
+      if (!superseded) reduceMotionRef.current = enabled;
+    });
+    const subscription = AccessibilityInfo.addEventListener("reduceMotionChanged", (enabled) => {
+      superseded = true;
+      reduceMotionRef.current = enabled;
+    });
+    return () => {
+      superseded = true;
+      subscription.remove();
+    };
+  }, []);
   const endFollowEnabledRef = useRef(true);
   endFollowEnabledRef.current = endFollowEnabled;
   const overlayRepinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -978,7 +997,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           ) {
             return;
           }
-          return scrollMessageToEnd({ animated: true, closeKeyboard: false });
+          return scrollMessageToEnd({
+            animated: !reduceMotionRef.current,
+            closeKeyboard: false,
+          });
         })
         .catch(() => {
           if (
@@ -1079,9 +1101,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
 
   const handleScrollToEnd = useCallback(() => {
     void Haptics.selectionAsync();
-    void scrollMessageToEnd({ animated: true, closeKeyboard: false }).catch(() => {
-      freeze.set(false);
-    });
+    void scrollMessageToEnd({ animated: !reduceMotionRef.current, closeKeyboard: false }).catch(
+      () => {
+        freeze.set(false);
+      },
+    );
   }, [freeze, scrollMessageToEnd]);
 
   const showScrollToEndButton = contentPresentationKind === "ready" && !endFollowEnabled;
