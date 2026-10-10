@@ -349,9 +349,10 @@ export function DraftHeroHeadline({
                     machineByEnvironmentId={environmentMachineById}
                   />
                 ) : null}
-                {entry ? (
-                  // Stopping the click keeps the row from also selecting the
-                  // project, as in the sidebar's project picker.
+                {entry && item.value === activeProjectKey ? (
+                  // Only the selected project's row gets settings. Stopping the
+                  // click keeps the row from also selecting it, as in the
+                  // sidebar's project picker.
                   <Button
                     size="icon-xs"
                     variant="ghost-muted"
