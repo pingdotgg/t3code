@@ -18,7 +18,6 @@ export const en = {
   "wizard.continue": "Continue",
   "wizard.retry": "Retry",
   "wizard.close": "Close",
-  "wizard.run": "Run",
   "wizard.install": "Install",
   "wizard.signIn": "Sign in",
   "wizard.ready": "Ready",
@@ -125,6 +124,12 @@ export const en = {
   "settings.language.title": "Language",
   "settings.language.description": "System default follows your browser or OS language.",
   "settings.language.system": "System default",
+  "settings.language.deviceDescription": "Follow the device language.",
+  "settings.language.reset": "Reset language to default",
+  "settings.language.resetTooltip": "Reset to default",
+  "wizard.progress.label": "Setup progress",
+  "wizard.progress.summary": ", {{summary}}",
+  "wizard.progress.step": "{{name}}, step {{number}}{{summary}}",
 } as const;
 
 export type MessageKey = keyof typeof en;

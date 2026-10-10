@@ -74,8 +74,12 @@ export function WizardSteps({
   showSummaries = false,
   onStepChange,
   isStepDisabled,
+  accessibleLabel = "Setup progress",
+  getStepAccessibleLabel,
 }: {
   readonly steps: readonly string[];
+  readonly accessibleLabel?: string;
+  readonly getStepAccessibleLabel?: (step: string, index: number, summary: string | null) => string;
   readonly currentStep: number;
   readonly summaries?: readonly (string | null)[];
   readonly showSummaries?: boolean;
@@ -87,10 +91,11 @@ export function WizardSteps({
     <ol
       className="grid auto-cols-fr grid-flow-col gap-1 rounded-xl bg-zinc-25 p-1 ring-1 ring-black/5 dark:bg-white/4 dark:ring-white/5"
       role="list"
-      aria-label="Setup progress"
+      aria-label={accessibleLabel}
     >
       {steps.map((step, index) => (
-        <li key={step} className="min-w-0">
+        // oxlint-disable-next-line react/no-array-index-key -- Step positions are stable; translated names may change or collide.
+        <li key={index} className="min-w-0">
           <Step
             {...(onStepChange
               ? { type: "button" as const, disabled: isStepDisabled?.(index) }
@@ -103,7 +108,14 @@ export function WizardSteps({
                 "bg-card text-foreground shadow-xs ring-1 ring-black/5 hover:bg-card dark:shadow-none dark:ring-white/5",
             )}
             aria-current={index === currentStep ? "step" : undefined}
-            aria-label={`${step}, step ${index + 1}${index < currentStep && summaries?.[index] ? `, ${summaries?.[index]}` : ""}`}
+            aria-label={
+              getStepAccessibleLabel?.(
+                step,
+                index,
+                index < currentStep ? (summaries?.[index] ?? null) : null,
+              ) ??
+              `${step}, step ${index + 1}${index < currentStep && summaries?.[index] ? `, ${summaries?.[index]}` : ""}`
+            }
             onClick={onStepChange ? () => onStepChange(index) : undefined}
           >
             <span

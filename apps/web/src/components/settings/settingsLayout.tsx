@@ -508,11 +508,13 @@ export function SettingsRow({
 export function SettingResetButton({
   label,
   tooltip = "Reset to default",
+  accessibleName,
   disabled = false,
   onClick,
 }: {
   label: string;
   tooltip?: string;
+  accessibleName?: string;
   disabled?: boolean;
   onClick: () => void;
 }) {
@@ -523,7 +525,7 @@ export function SettingResetButton({
           <Button
             size="icon-micro"
             variant="ghost-muted"
-            aria-label={`Reset ${label} to default`}
+            aria-label={accessibleName ?? `Reset ${label} to default`}
             disabled={disabled}
             onClick={(event) => {
               event.stopPropagation();

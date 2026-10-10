@@ -245,6 +245,14 @@ export function WelcomeWizard({
           <WizardSteps
             steps={[t("wizard.step.connect"), t("wizard.step.agents"), t("wizard.step.projects")]}
             currentStep={stageIndex}
+            accessibleLabel={t("wizard.progress.label")}
+            getStepAccessibleLabel={(name, index, summary) =>
+              t("wizard.progress.step", {
+                name,
+                number: index + 1,
+                summary: summary ? t("wizard.progress.summary", { summary }) : "",
+              })
+            }
             isStepDisabled={(index) => isImporting || index >= stageIndex}
             onStepChange={(index) => {
               if (isImporting || index > stageIndex) return;
@@ -502,7 +510,7 @@ function ConnectAccountOption({
             {!isLoaded
               ? t("wizard.connection.loadingSignIn")
               : !isSignedIn
-                ? t("wizard.connection.signIn")
+                ? t("wizard.signIn")
                 : !discoveryReady
                   ? t("wizard.connection.loadingComputers")
                   : null}

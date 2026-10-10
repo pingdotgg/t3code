@@ -26,10 +26,10 @@ describe("preference and catalog agreement", () => {
   });
 
   it("offers every shipped language in the picker", () => {
-    for (const language of SUPPORTED_LANGUAGES) {
+    for (const language of Object.keys(resources)) {
       // A catalog nobody can select is dead weight, and usually a sign that the
       // schema update was forgotten.
-      expect(LanguagePreference.literals).toContain(language);
+      expect(SUPPORTED_LANGUAGES).toContain(language);
     }
   });
 });
@@ -109,12 +109,13 @@ describe("createI18n", () => {
 
   it("falls back to English for keys the Chinese catalog omits", () => {
     const i18n = createI18n({ lng: "zh" });
-    // Deliberately absent from `zh`: a partial catalog must never surface keys.
-    expect(i18n.t("wizard.agents.connectTitle")).not.toBe("wizard.agents.connectTitle");
+    expect(Object.hasOwn(resources.zh.translation, "wizard.connection.t3Connect")).toBe(false);
+    expect(i18n.t("wizard.connection.t3Connect")).toBe("T3 Connect");
   });
 
   it("falls back to the key itself for a message no catalog has", () => {
     const i18n = createI18n();
+    // @ts-expect-error Deliberately bypass key checking to test the runtime last resort.
     expect(i18n.t("wizard.not.a.real.key")).toBe("wizard.not.a.real.key");
   });
 

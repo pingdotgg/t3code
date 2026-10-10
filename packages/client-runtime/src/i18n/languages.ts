@@ -2,12 +2,18 @@
  * Languages a client can display.
  *
  * `en` is the source language: every message is written there first, and other
- * catalogs fall back to it. Adding a language means adding it here, adding the
- * matching value to `LanguagePreference` in `@t3tools/contracts`, and adding a
- * catalog to `resources.ts`.
+ * catalogs fall back to it. Selectable languages come from the contracts;
+ * adding one also requires its native label here and a catalog in `resources.ts`.
  */
-export const SUPPORTED_LANGUAGES = ["en", "zh"] as const;
-export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
+import * as Schema from "effect/Schema";
+import { LanguagePreference as LanguagePreferenceSchema } from "@t3tools/contracts/settings";
+
+export type LanguagePreference = typeof LanguagePreferenceSchema.Type;
+export type SupportedLanguage = Exclude<LanguagePreference, "system">;
+const isValidLanguagePreference = Schema.is(LanguagePreferenceSchema);
+export const SUPPORTED_LANGUAGES = LanguagePreferenceSchema.literals.filter(
+  (language): language is SupportedLanguage => language !== "system",
+);
 
 /** The source language, and what anything unrecognised resolves to. */
 export const DEFAULT_LANGUAGE: SupportedLanguage = "en";
@@ -18,13 +24,6 @@ export const LANGUAGE_LABELS: Record<SupportedLanguage, string> = {
   zh: "中文",
 };
 
-/**
- * What the user chose. `system` follows the host, which is what a first-run
- * client wants: an untranslated locale still resolves through
- * {@link resolveLanguage} rather than showing a picker nobody asked for.
- */
-export type LanguagePreference = "system" | SupportedLanguage;
-
 /** Internal: raw values narrow through {@link isLanguagePreference}. */
 function isSupportedLanguage(value: string): value is SupportedLanguage {
   return (SUPPORTED_LANGUAGES as readonly string[]).includes(value);
@@ -34,9 +33,7 @@ function isSupportedLanguage(value: string): value is SupportedLanguage {
 export function isLanguagePreference(
   value: string | null | undefined,
 ): value is LanguagePreference {
-  return (
-    value === "system" || (value !== null && value !== undefined && isSupportedLanguage(value))
-  );
+  return isValidLanguagePreference(value);
 }
 
 /** The primary subtag of a BCP-47 tag, lowercased: `zh-Hans-CN` -> `zh`. */

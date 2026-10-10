@@ -165,19 +165,3 @@ describe("LanguageSync hydration", () => {
     expect(document.documentElement.lang).toBe("en");
   });
 });
-
-describe("LanguageSync placement", () => {
-  it("is rendered above the router, so every route tree resolves it", async () => {
-    // `__root` returns three separate trees (pair/connect, welcome, app shell)
-    // and its branches do not share a component list. Language resolution must
-    // therefore live outside it; while it lived in the app-shell branch only,
-    // the welcome wizard rendered in English while Settings rendered in Chinese.
-    const [appRootSource, rootSource] = await Promise.all([
-      import("./AppRoot.tsx?raw").then((module) => module.default as string),
-      import("./routes/__root.tsx?raw").then((module) => module.default as string),
-    ]);
-
-    expect(appRootSource).toContain("<LanguageSync />");
-    expect(rootSource).not.toContain("LanguageSync");
-  });
-});

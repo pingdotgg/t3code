@@ -11,6 +11,15 @@ import { createInstance, type i18n as I18nInstance, type Module } from "i18next"
 import { DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, type SupportedLanguage } from "./languages.ts";
 import { resources } from "./resources.ts";
 
+declare module "i18next" {
+  interface CustomTypeOptions {
+    resources: (typeof resources)["en"];
+    keySeparator: false;
+    returnNull: false;
+    strictKeyChecks: true;
+  }
+}
+
 /**
  * Creates an instance with the catalogs already bundled.
  *
@@ -38,6 +47,7 @@ export function createI18n(options?: {
     fallbackLng: DEFAULT_LANGUAGE,
     supportedLngs: [...SUPPORTED_LANGUAGES],
     resources,
+    keySeparator: false,
     // Resources are already in memory, so nothing needs a backend or detector.
     initAsync: false,
     // Only match the primary subtag: `zh-Hans` and `zh-TW` both pick `zh`.

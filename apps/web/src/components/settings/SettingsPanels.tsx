@@ -2553,6 +2553,8 @@ export function GeneralSettingsPanel() {
             settings.languagePreference !== DEFAULT_UNIFIED_SETTINGS.languagePreference ? (
               <SettingResetButton
                 label="language"
+                accessibleName={t("settings.language.reset")}
+                tooltip={t("settings.language.resetTooltip")}
                 onClick={() =>
                   updateSettings({
                     languagePreference: DEFAULT_UNIFIED_SETTINGS.languagePreference,

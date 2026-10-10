@@ -1,5 +1,16 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, type ReactNode } from "react";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  Outlet,
+} from "@tanstack/react-router";
+import type { AppRouter } from "../../router";
+import type { LanguagePreference } from "@t3tools/client-runtime/i18n";
+import { AppRoot } from "../../AppRoot";
+import { changeLanguage } from "../../i18n";
 import { createRoot, type Root } from "react-dom/client";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
@@ -12,8 +23,21 @@ const mocks = vi.hoisted(() => ({
   refresh: vi.fn(),
   toast: vi.fn(),
   connectionPhase: "connected" as EnvironmentConnectionPresentation["phase"],
+  languagePreference: "en" as LanguagePreference,
   projects: [] as Array<{ id: string; environmentId: string; workspaceRoot: string }>,
 }));
+vi.mock("../../hooks/useSettings", () => ({
+  useClientSettings: (
+    selector: (settings: { languagePreference: LanguagePreference }) => unknown,
+  ) => selector(mocks),
+  useClientSettingsHydrated: () => true,
+}));
+vi.mock("../../rpc/atomRegistry", () => ({
+  AppAtomRegistryProvider: ({ children }: { children: ReactNode }) => children,
+}));
+vi.mock("../../browser/ElectronBrowserHost", () => ({ ElectronBrowserHost: () => null }));
+vi.mock("../../browser/BrowserProfileReporter", () => ({ BrowserProfileReporter: () => null }));
+vi.mock("../QuitHoldOverlay", () => ({ QuitHoldOverlay: () => null }));
 vi.mock("../../state/session", () => ({
   useEnvironmentScope: () => true,
   useEnvironmentsWithScope: (environments: Array<{ environmentId: string }>) =>
@@ -104,8 +128,10 @@ import { WelcomeWizard } from "./WelcomeWizard";
 let root: Root;
 let container: HTMLDivElement;
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
+  mocks.languagePreference = "en";
+  await changeLanguage("en");
   mocks.connectionPhase = "connected";
   vi.stubGlobal(
     "ResizeObserver",
@@ -134,6 +160,58 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+  await changeLanguage("en");
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+it("keeps the real welcome wizard translated across route and preference changes", async () => {
+  const rootRoute = createRootRoute({ component: Outlet });
+  const welcomeRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/welcome",
+    component: () => <WelcomeWizard localAvailable onDone={vi.fn()} />,
+  });
+  const shellRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/",
+    component: () => <main>Workspace</main>,
+  });
+  const router = createRouter({
+    routeTree: rootRoute.addChildren([welcomeRoute, shellRoute]),
+    history: createMemoryHistory({ initialEntries: ["/welcome"] }),
+  });
+  await router.load();
+  // The test route tree deliberately omits unrelated app routes and their I/O.
+  const appRouter = router as unknown as AppRouter;
+  const renderApp = () => act(async () => root.render(<AppRoot router={appRouter} />));
+  await renderApp();
+  expect(document.body.textContent).toContain("Connect your computers");
+  await act(async () => {
+    await router.navigate({ to: "/" });
+  });
+  expect(container.textContent).toContain("Workspace");
+  mocks.languagePreference = "zh";
+  await renderApp();
+  expect(document.documentElement.lang).toBe("zh");
+  await act(async () => {
+    await router.navigate({ to: "/welcome" });
+  });
+  expect(document.body.textContent).toContain("连接你的电脑");
+  expect(document.body.textContent).toContain("继续");
+  expect(document.querySelector('ol[aria-label="设置进度"]')).not.toBeNull();
+  expect(document.querySelector('button[aria-label="连接，第 1 步"]')).not.toBeNull();
+  await act(async () => {
+    await router.navigate({ to: "/" });
+  });
+  mocks.languagePreference = "en";
+  await renderApp();
+  await act(async () => {
+    await router.navigate({ to: "/welcome" });
+  });
+  expect(document.body.textContent).toContain("Connect your computers");
+  expect(document.body.textContent).not.toContain("连接你的电脑");
+  expect(document.documentElement.lang).toBe("en");
 });
 
 async function click(label: string) {

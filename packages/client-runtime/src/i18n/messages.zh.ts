@@ -19,7 +19,6 @@ export const zh: Partial<Messages> = {
   "wizard.continue": "继续",
   "wizard.retry": "重试",
   "wizard.close": "关闭",
-  "wizard.run": "运行",
   "wizard.install": "安装",
   "wizard.signIn": "登录",
   "wizard.ready": "就绪",
@@ -105,4 +104,10 @@ export const zh: Partial<Messages> = {
   "settings.language.title": "语言",
   "settings.language.description": "“跟随系统”会使用浏览器或操作系统的语言设置。",
   "settings.language.system": "跟随系统",
+  "settings.language.deviceDescription": "跟随设备语言。",
+  "settings.language.reset": "将语言重置为默认值",
+  "settings.language.resetTooltip": "重置为默认值",
+  "wizard.progress.label": "设置进度",
+  "wizard.progress.summary": "，{{summary}}",
+  "wizard.progress.step": "{{name}}，第 {{number}} 步{{summary}}",
 };
