@@ -10,6 +10,7 @@ import {
 import {
   AlertDialog,
   AlertDialogClose,
+  AlertDialogAction,
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
@@ -86,9 +87,9 @@ export function ConfirmDialogHost() {
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-          <Button variant={confirmVariant} onClick={onConfirm}>
+          <AlertDialogAction variant={confirmVariant} onClick={onConfirm}>
             Confirm
-          </Button>
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogPopup>
     </AlertDialog>

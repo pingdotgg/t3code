@@ -118,6 +118,7 @@ import { ScrollArea } from "../ui/scroll-area";
 import {
   AlertDialog,
   AlertDialogClose,
+  AlertDialogAction,
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
@@ -3805,7 +3806,7 @@ export function ConnectionsSettings() {
                 >
                   <span className="[text-box:trim-both_cap_alphabetic]">Cancel</span>
                 </AlertDialogClose>
-                <Button
+                <AlertDialogAction
                   variant="default"
                   onClick={handleConfirmDesktopServerExposureChange}
                   disabled={
@@ -3822,7 +3823,7 @@ export function ConnectionsSettings() {
                         ? "Restart and enable"
                         : "Restart and disable"}
                   </span>
-                </Button>
+                </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogPopup>
           </AlertDialog>
@@ -3885,7 +3886,7 @@ export function ConnectionsSettings() {
                         "Use only WSL"
                       )}
                     </Button>
-                    <Button
+                    <AlertDialogAction
                       variant="default"
                       onClick={() => handleConfirmEnableWsl("both")}
                       disabled={isUpdatingWslBackend || !canManageLocalBackend}
@@ -3898,10 +3899,10 @@ export function ConnectionsSettings() {
                       ) : (
                         "Run both backends"
                       )}
-                    </Button>
+                    </AlertDialogAction>
                   </>
                 ) : (
-                  <Button
+                  <AlertDialogAction
                     variant={
                       pendingWslChange?.kind === "disable" ||
                       (pendingWslChange?.kind === "wsl-only" && pendingWslChange.nextValue)
@@ -3929,7 +3930,7 @@ export function ConnectionsSettings() {
                     ) : (
                       "Restart and disable"
                     )}
-                  </Button>
+                  </AlertDialogAction>
                 )}
               </AlertDialogFooter>
             </AlertDialogPopup>
@@ -3955,7 +3956,7 @@ export function ConnectionsSettings() {
                 >
                   Cancel
                 </AlertDialogClose>
-                <Button
+                <AlertDialogAction
                   variant="destructive"
                   onClick={() => void handleConfirmTailscaleServeDisable()}
                   disabled={isUpdatingTailscaleServe || !canManageLocalBackend}
@@ -3968,7 +3969,7 @@ export function ConnectionsSettings() {
                   ) : (
                     "Restart and disable"
                   )}
-                </Button>
+                </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogPopup>
           </AlertDialog>

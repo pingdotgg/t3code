@@ -133,6 +133,7 @@ vi.mock("~/components/ui/toast", () => ({
 }));
 vi.mock("~/components/ui/dialog", () => ({
   Dialog: "Dialog",
+  DialogAction: "Button",
   DialogDescription: "DialogDescription",
   DialogFooter: "DialogFooter",
   DialogHeader: "DialogHeader",

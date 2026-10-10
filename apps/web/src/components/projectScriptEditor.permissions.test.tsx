@@ -32,6 +32,7 @@ vi.mock("./ui/dialog", () => ({
 }));
 vi.mock("./ui/alert-dialog", () => ({
   AlertDialog: "div",
+  AlertDialogAction: "button",
   AlertDialogClose: "button",
   AlertDialogDescription: "div",
   AlertDialogFooter: "div",

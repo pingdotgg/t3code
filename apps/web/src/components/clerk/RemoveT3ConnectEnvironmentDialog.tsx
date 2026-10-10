@@ -3,6 +3,7 @@ import { useState } from "react";
 import {
   AlertDialog,
   AlertDialogClose,
+  AlertDialogAction,
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
@@ -66,9 +67,9 @@ export function RemoveT3ConnectEnvironmentDialog({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-            <Button variant="destructive" onClick={onConfirm}>
+            <AlertDialogAction variant="destructive" onClick={onConfirm}>
               Remove from this device
-            </Button>
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogPopup>
       </AlertDialog>

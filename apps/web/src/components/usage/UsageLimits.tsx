@@ -29,6 +29,7 @@ import { formatUpcomingTimestamp } from "../../timestampFormat";
 import {
   AlertDialog,
   AlertDialogClose,
+  AlertDialogAction,
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
@@ -264,9 +265,9 @@ export function ResetCreditDialog({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-          <Button disabled={disabled} onClick={onConfirm}>
+          <AlertDialogAction disabled={disabled} onClick={onConfirm}>
             Use credit
-          </Button>
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogPopup>
     </AlertDialog>

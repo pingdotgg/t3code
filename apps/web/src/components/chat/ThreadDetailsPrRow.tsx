@@ -65,6 +65,7 @@ import {
 import {
   AlertDialog,
   AlertDialogClose,
+  AlertDialogAction,
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
@@ -474,7 +475,7 @@ export function ThreadDetailsPrRow({
               <AlertDialogClose render={<Button variant="outline" size="sm" />}>
                 Cancel
               </AlertDialogClose>
-              <Button
+              <AlertDialogAction
                 size="sm"
                 disabled={actionPending}
                 onClick={() => {
@@ -483,7 +484,7 @@ export function ThreadDetailsPrRow({
                 }}
               >
                 Merge
-              </Button>
+              </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogPopup>
         </AlertDialog>

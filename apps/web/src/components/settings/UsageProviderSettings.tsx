@@ -9,6 +9,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import {
   AlertDialog,
   AlertDialogClose,
+  AlertDialogAction,
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
@@ -157,7 +158,7 @@ function RemoveUsageProviderButton({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-            <Button
+            <AlertDialogAction
               variant="destructive"
               onClick={() => {
                 setOpen(false);
@@ -165,7 +166,7 @@ function RemoveUsageProviderButton({
               }}
             >
               Remove hub
-            </Button>
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogPopup>
       </AlertDialog>

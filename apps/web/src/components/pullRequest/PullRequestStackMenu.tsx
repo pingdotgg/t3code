@@ -19,6 +19,7 @@ import {
   DialogDescription,
   DialogHeader,
   DialogPanel,
+  DialogAction,
   DialogFooter,
 } from "../ui/dialog";
 import { toastManager } from "../ui/toast";
@@ -252,9 +253,9 @@ export function PullRequestStackMenu({
             <Button variant="outline" onClick={() => setConfirmation(null)}>
               Cancel
             </Button>
-            <Button onClick={() => void run()}>
+            <DialogAction onClick={() => void run()}>
               {confirmation === "merge" ? "Merge stack" : "Rebase stack"}
-            </Button>
+            </DialogAction>
           </DialogFooter>
         </DialogPopup>
       </Dialog>

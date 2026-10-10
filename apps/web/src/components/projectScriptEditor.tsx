@@ -39,6 +39,7 @@ import { useComposerMenuState } from "./chat/useComposerMenuState";
 import {
   AlertDialog,
   AlertDialogClose,
+  AlertDialogAction,
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
@@ -502,7 +503,7 @@ export function ProjectScriptEditorDialog({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-            <Button
+            <AlertDialogAction
               variant="destructive"
               disabled={isSaving || !canEditActions}
               onClick={() => {
@@ -517,7 +518,7 @@ export function ProjectScriptEditorDialog({
               }}
             >
               Delete action
-            </Button>
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogPopup>
       </AlertDialog>

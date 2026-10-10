@@ -4,6 +4,7 @@ import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { XIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
+import { runDialogActionOnEnter } from "~/components/ui/dialog-keyboard";
 import {
   DIALOG_BACKDROP_CLASS,
   DIALOG_MEDIA_BACKDROP_CLASS,
@@ -62,6 +63,7 @@ function DialogPopup({
   showCloseButton = true,
   bottomStickOnMobile = true,
   variant = "default",
+  onKeyDown,
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean;
@@ -88,6 +90,10 @@ function DialogPopup({
             className,
           )}
           data-slot="dialog-popup"
+          onKeyDown={(event) => {
+            onKeyDown?.(event);
+            runDialogActionOnEnter(event, "dialog-action");
+          }}
           {...props}
         >
           {children}
@@ -104,6 +110,15 @@ function DialogPopup({
       </DialogViewport>
     </DialogPortal>
   );
+}
+
+/**
+ * The dialog's primary, highlighted button. Enter activates it from anywhere in the
+ * popup, except for destructive actions, which take a deliberate Tab and Space.
+ */
+function DialogAction(props: React.ComponentProps<typeof Button>) {
+  const slot = props.variant?.startsWith("destructive") ? {} : { "data-slot": "dialog-action" };
+  return <Button {...slot} {...props} />;
 }
 
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
@@ -184,6 +199,7 @@ export {
   DialogTrigger,
   DialogPortal,
   DialogClose,
+  DialogAction,
   DialogBackdrop,
   DialogBackdrop as DialogOverlay,
   DialogPopup,

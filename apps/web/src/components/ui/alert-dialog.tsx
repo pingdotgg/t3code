@@ -3,6 +3,8 @@
 import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog";
 
 import { cn } from "~/lib/utils";
+import { Button } from "~/components/ui/button";
+import { runDialogActionOnEnter } from "~/components/ui/dialog-keyboard";
 import {
   DIALOG_BACKDROP_CLASS,
   DIALOG_MOBILE_SHEET_CLASS,
@@ -41,6 +43,7 @@ function AlertDialogPopup({
   className,
   bottomStickOnMobile = true,
   portalContainer,
+  onKeyDown,
   ...props
 }: AlertDialogPrimitive.Popup.Props & {
   bottomStickOnMobile?: boolean;
@@ -60,6 +63,10 @@ function AlertDialogPopup({
             className,
           )}
           data-slot="alert-dialog-popup"
+          onKeyDown={(event) => {
+            onKeyDown?.(event);
+            runDialogActionOnEnter(event, "alert-dialog-action");
+          }}
           {...props}
         />
       </AlertDialogViewport>
@@ -122,6 +129,18 @@ function AlertDialogClose(props: AlertDialogPrimitive.Close.Props) {
   return <AlertDialogPrimitive.Close data-slot="alert-dialog-close" {...props} />;
 }
 
+/**
+ * The dialog's primary, highlighted button. Enter activates it, except for
+ * destructive actions: those leave Enter on the focused Cancel, so running one
+ * from the keyboard takes a deliberate Tab and Space.
+ */
+function AlertDialogAction(props: React.ComponentProps<typeof Button>) {
+  const slot = props.variant?.startsWith("destructive")
+    ? {}
+    : { "data-slot": "alert-dialog-action" };
+  return <Button {...slot} {...props} />;
+}
+
 export {
   AlertDialog,
   AlertDialogPortal,
@@ -134,5 +153,6 @@ export {
   AlertDialogTitle,
   AlertDialogDescription,
   AlertDialogClose,
+  AlertDialogAction,
   AlertDialogViewport,
 };

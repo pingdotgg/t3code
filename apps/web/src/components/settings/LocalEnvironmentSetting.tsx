@@ -4,6 +4,7 @@ import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import {
   AlertDialog,
   AlertDialogClose,
+  AlertDialogAction,
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
@@ -79,7 +80,7 @@ export function LocalEnvironmentSetting() {
             <AlertDialogClose disabled={isUpdating} render={<Button variant="outline" />}>
               Cancel
             </AlertDialogClose>
-            <Button
+            <AlertDialogAction
               variant={enabled ? "destructive" : "default"}
               disabled={isUpdating}
               onClick={() => void applyChange()}
@@ -94,7 +95,7 @@ export function LocalEnvironmentSetting() {
               ) : (
                 "Restart and turn on"
               )}
-            </Button>
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogPopup>
       </AlertDialog>

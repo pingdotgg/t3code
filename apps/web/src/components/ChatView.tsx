@@ -577,6 +577,7 @@ import { Button, InlineButton } from "./ui/button";
 import {
   AlertDialog,
   AlertDialogClose,
+  AlertDialogAction,
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
@@ -11910,7 +11911,7 @@ export default function ChatView(props: ChatViewProps) {
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-                  <Button
+                  <AlertDialogAction
                     variant="default"
                     disabled={!canWriteSourceControl}
                     onClick={() => {
@@ -11919,7 +11920,7 @@ export default function ChatView(props: ChatViewProps) {
                     }}
                   >
                     Switch branch
-                  </Button>
+                  </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogPopup>
             </AlertDialog>
@@ -12100,7 +12101,7 @@ export default function ChatView(props: ChatViewProps) {
             >
               Revert files too
             </Button>
-            <Button
+            <AlertDialogAction
               onClick={() => {
                 if (!pendingRevert || pendingRevert.routeThreadKey !== routeThreadKey) return;
                 setPendingRevert(null);
@@ -12108,7 +12109,7 @@ export default function ChatView(props: ChatViewProps) {
               }}
             >
               Revert and keep changes
-            </Button>
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogPopup>
       </AlertDialog>

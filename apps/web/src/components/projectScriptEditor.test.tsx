@@ -21,6 +21,7 @@ vi.mock("./ui/dialog", () => ({
 vi.mock("./ui/alert-dialog", () => ({
   AlertDialog: ({ open, children }: { open: boolean; children: ReactNode }) =>
     open ? children : null,
+  AlertDialogAction: "button",
   AlertDialogClose: "button",
   AlertDialogDescription: "p",
   AlertDialogFooter: "footer",

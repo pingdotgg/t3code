@@ -81,6 +81,7 @@ import { toastManager } from "../ui/toast";
 import {
   AlertDialog,
   AlertDialogClose,
+  AlertDialogAction,
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
@@ -1437,7 +1438,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             >
               Cancel
             </AlertDialogClose>
-            <Button
+            <AlertDialogAction
               variant="destructive"
               disabled={profileRemovalInFlight || !settingsHydrated || !removalAvailable}
               onClick={() => {
@@ -1447,7 +1448,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
               }}
             >
               {profileRemovalInFlight ? "Removing…" : "Remove profile"}
-            </Button>
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogPopup>
       </AlertDialog>
@@ -1468,7 +1469,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-            <Button
+            <AlertDialogAction
               variant="destructive"
               onClick={() => {
                 if (profilePendingClear)
@@ -1477,7 +1478,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
               }}
             >
               Clear data
-            </Button>
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogPopup>
       </AlertDialog>

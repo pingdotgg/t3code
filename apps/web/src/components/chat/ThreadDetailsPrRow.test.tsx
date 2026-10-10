@@ -65,6 +65,7 @@ vi.mock("../ui/alert-dialog", () => ({
   AlertDialogDescription: ({ children }: { children: ReactNode }) => children,
   AlertDialogFooter: ({ children }: { children: ReactNode }) => children,
   AlertDialogClose: () => null,
+  AlertDialogAction: "button",
 }));
 
 import { ThreadDetailsPrRow } from "./ThreadDetailsPrRow";

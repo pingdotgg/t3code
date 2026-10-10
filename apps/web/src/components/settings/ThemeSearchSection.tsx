@@ -18,6 +18,7 @@ import { GitHubIcon, GitLabIcon } from "../Icons";
 import {
   AlertDialog,
   AlertDialogClose,
+  AlertDialogAction,
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
@@ -440,7 +441,7 @@ export function ThemeSearchSection({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-            <Button
+            <AlertDialogAction
               onClick={() => {
                 const extension = pendingUpdate;
                 setPendingUpdate(null);
@@ -448,7 +449,7 @@ export function ThemeSearchSection({
               }}
             >
               Update theme
-            </Button>
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogPopup>
       </AlertDialog>

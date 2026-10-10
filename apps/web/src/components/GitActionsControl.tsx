@@ -82,6 +82,7 @@ import { Checkbox } from "~/components/ui/checkbox";
 import {
   Dialog,
   DialogDescription,
+  DialogAction,
   DialogFooter,
   DialogHeader,
   DialogPanel,
@@ -2209,14 +2210,14 @@ export default function GitActionsControl({
             >
               {pendingDefaultBranchActionCopy?.continueLabel ?? "Continue"}
             </Button>
-            <Button
+            <DialogAction
               className="w-full max-w-full sm:w-auto"
               size="sm-multiline"
               onClick={checkoutFeatureBranchAndContinuePendingAction}
               disabled={!canChangeThreadBranch}
             >
               Check out feature branch & continue
-            </Button>
+            </DialogAction>
           </DialogFooter>
         </DialogPopup>
       </Dialog>
