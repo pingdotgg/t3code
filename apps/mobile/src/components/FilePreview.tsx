@@ -78,7 +78,7 @@ export function FilePreview(props: {
       imageIndex={0}
       visible
       onRequestClose={props.onRequestClose}
-      swipeToCloseEnabled
+      swipeToCloseEnabled={false}
       doubleTapToZoomEnabled
     />
   );
