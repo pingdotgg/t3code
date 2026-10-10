@@ -306,46 +306,62 @@ describe("authenticated environment HTTP requests", () => {
   );
 
   // MCP-created thread ids contain ":", which the request path percent-encodes.
-  // The DPoP proof must sign the URL that is actually sent, or the environment
-  // rejects it as a URL mismatch.
-  const MCP_THREAD_ID = ThreadId.make("mcp:3534bc83-1c17-4a1e-9118-601c2766d355");
+  // Threads delegated by OAuth MCP clients also embed an encoded `client:` namespace,
+  // whose "%" must be encoded again. The DPoP proof must sign the URL that is
+  // actually sent, or the environment rejects it as a URL mismatch.
+  const MCP_THREAD_IDS = [
+    {
+      threadId: ThreadId.make("mcp:3534bc83-1c17-4a1e-9118-601c2766d355"),
+      segment: "mcp%3A3534bc83-1c17-4a1e-9118-601c2766d355",
+    },
+    {
+      threadId: ThreadId.make("thread:mcp:client%3Asession-1:request-1:0"),
+      segment: "thread%3Amcp%3Aclient%253Asession-1%3Arequest-1%3A0",
+    },
+  ];
   const MCP_THREAD_LOADERS: ReadonlyArray<
-    Pick<(typeof LOADERS)[number], "name" | "response" | "load">
+    Pick<(typeof LOADERS)[number], "name" | "response"> & {
+      readonly suffix: string;
+      readonly load: (
+        input: HttpInput,
+        threadId: ThreadId,
+      ) => ReturnType<(typeof LOADERS)[number]["load"]>;
+    }
   > = [
     {
       name: "thread snapshot",
+      suffix: "",
       response: encodeThreadSnapshot(THREAD),
-      load: (input: HttpInput) =>
-        ThreadSnapshotLoader.fetchEnvironmentThreadSnapshot({ ...input, threadId: MCP_THREAD_ID }),
+      load: (input, threadId) =>
+        ThreadSnapshotLoader.fetchEnvironmentThreadSnapshot({ ...input, threadId }),
     },
     {
       name: "bounded thread snapshot",
+      suffix: "/bounded",
       response: encodeBoundedSnapshot(BOUNDED_THREAD),
-      load: (input: HttpInput) =>
-        fetchEnvironmentBoundedThreadSnapshot({ ...input, threadId: MCP_THREAD_ID }),
+      load: (input, threadId) => fetchEnvironmentBoundedThreadSnapshot({ ...input, threadId }),
     },
     {
       name: "older thread history",
+      suffix: "/history",
       response: THREAD_HISTORY,
-      load: (input: HttpInput) =>
-        fetchEnvironmentThreadHistoryPage({
-          ...input,
-          threadId: MCP_THREAD_ID,
-          cursor: "older-page",
-        }),
+      load: (input, threadId) =>
+        fetchEnvironmentThreadHistoryPage({ ...input, threadId, cursor: "older-page" }),
     },
   ];
-  it.effect.each(MCP_THREAD_LOADERS)(
-    "signs the sent URL for a $name of a thread id that needs encoding",
-    (loader) =>
-      Effect.gen(function* () {
-        const harness = makeHarness(() => Response.json(loader.response));
-        yield* loader.load(harness.input).pipe(Effect.provide(harness.httpLayer));
+  it.effect.each(
+    MCP_THREAD_LOADERS.flatMap((loader) => MCP_THREAD_IDS.map((id) => ({ ...loader, ...id }))),
+  )("signs the sent URL for a $name of thread $threadId", (loader) =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() => Response.json(loader.response));
+      yield* loader.load(harness.input, loader.threadId).pipe(Effect.provide(harness.httpLayer));
 
-        const sent = harness.calls[0]!.url;
-        expect(new URL(sent).pathname).toContain("/mcp%3A3534bc83-");
-        expect(harness.proofs.map((proof) => proof.url)).toEqual([sent]);
-      }),
+      const sent = harness.calls[0]!.url;
+      expect(new URL(sent).pathname).toBe(
+        `/api/orchestration/threads/${loader.segment}${loader.suffix}`,
+      );
+      expect(harness.proofs.map((proof) => proof.url)).toEqual([sent]);
+    }),
   );
 
   it.effect("retries a rejected diff once with a new token, endpoint, and proof", () =>
