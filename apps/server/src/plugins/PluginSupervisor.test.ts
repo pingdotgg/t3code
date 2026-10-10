@@ -421,6 +421,35 @@ it.layer(NodeServices.layer)("PluginSupervisor", (it) => {
         });
       }),
     );
+
+    it.effect(
+      "gives calls waiting on a start its outcome after the starting call is interrupted",
+      () =>
+        Effect.gen(function* () {
+          const supervisor = yield* makeSupervisor();
+          const subscription = yield* supervisor.subscribe;
+          const { registration } = yield* preparePlugin("test.abandoned", {
+            entry: "deferredActivate.mjs",
+          });
+          const pluginId = registration.manifest.id;
+          yield* supervisor.enable(registration);
+
+          const starting = yield* supervisor
+            .invoke(pluginId, "ping", null)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          const waiting = yield* supervisor
+            .invoke(pluginId, "ping", null)
+            .pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
+          yield* awaitLog(subscription, pluginId, "activating");
+          // The start outlives its caller, and the waiting call hears how it ended.
+          const interrupting = yield* Fiber.interrupt(starting).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* TestClock.adjust("5 seconds");
+          yield* Fiber.join(interrupting);
+          expect((yield* Fiber.join(waiting)).message).toContain("did not activate within 5000ms");
+        }),
+    );
   });
 
   describe("faults", () => {

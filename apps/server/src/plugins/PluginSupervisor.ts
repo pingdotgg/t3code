@@ -607,7 +607,11 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
     child.pending.clear();
   };
 
-  /** Starts the plugin's process if needed and waits until it has activated. */
+  /**
+   * Starts the plugin's process if needed and waits until it has activated.
+   * Claiming a start through publishing its outcome is uninterruptible, so an
+   * interrupted starter never strands the calls waiting on its start.
+   */
   const ensureChild = Effect.fnUntraced(function* (entry: Entry) {
     const claim = yield* Effect.sync(() => {
       if (entry.child && !entry.starting) return { _tag: "running" as const, child: entry.child };
@@ -623,7 +627,7 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
       return { _tag: "start" as const, deferred };
     });
     if (claim._tag === "running") return claim.child;
-    if (claim._tag === "wait") return yield* Deferred.await(claim.deferred);
+    if (claim._tag === "wait") return yield* Effect.interruptible(Deferred.await(claim.deferred));
     if (claim._tag === "limit")
       return yield* new PluginUnavailableError({
         pluginId: entry.pluginId,
@@ -663,14 +667,11 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
       if (child.stopping) return yield* new PluginStoppedError({ pluginId: entry.pluginId });
       yield* setState(entry, { _tag: "running" });
       return child;
-    }).pipe(
-      Effect.uninterruptible,
-      Effect.exit,
-      Effect.ensuring(Effect.sync(() => (entry.starting = undefined))),
-    );
+    }).pipe(Effect.exit);
+    entry.starting = undefined;
     yield* Deferred.done(claim.deferred, started);
     return yield* started;
-  });
+  }, Effect.uninterruptible);
 
   const cancel = (entry: Entry, child: Child, requestId: number, handler: string) =>
     Effect.suspend(() => {
