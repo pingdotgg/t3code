@@ -1416,6 +1416,12 @@ describe("orchestrator MCP toolkit", () => {
             expect(threadListTool?.tool.annotations?.idempotentHint).toBe(true);
             const threadReadTool = server.tools.find(({ tool }) => tool.name === "t3_thread_read");
             expect(threadReadTool?.tool.annotations?.readOnlyHint).toBe(false);
+            expect(threadReadTool?.tool.inputSchema).toMatchObject({ additionalProperties: false });
+            const unknownPagingParamError = yield* invoke("t3_thread_read", {
+              threadId: parentThreadId,
+              cursor: 90,
+            }).pipe(Effect.flip);
+            expect(unknownPagingParamError.message).toContain("Expected no excess property");
             const threadUpdateTool = server.tools.find(
               ({ tool }) => tool.name === "t3_thread_update",
             );
