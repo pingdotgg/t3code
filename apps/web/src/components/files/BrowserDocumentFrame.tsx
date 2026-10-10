@@ -32,6 +32,8 @@ export function BrowserDocumentFrame(props: {
   readonly title: string;
   readonly pdf: boolean;
   readonly htmlRender?: boolean;
+  /** Stable file identity plus content revision, independent of signed URL renewals. */
+  readonly documentKey?: string;
 }) {
   const className = "min-h-0 flex-1 border-0 bg-white";
   return props.pdf ? (
@@ -50,11 +52,28 @@ export function BrowserDocumentFrame(props: {
       className="min-h-0 flex-1"
     />
   ) : (
-    <iframe
-      key={props.src}
+    <HtmlFileDocument
+      key={props.documentKey ?? props.src}
       src={props.src}
       title={props.title}
       className={className}
+    />
+  );
+}
+
+function HtmlFileDocument(props: {
+  readonly src: string;
+  readonly title: string;
+  readonly className: string;
+}) {
+  // A renewed signature authorizes future loads; it must not discard the page
+  // the person is using. A different documentKey mounts a fresh document.
+  const [src] = useState(props.src);
+  return (
+    <iframe
+      src={src}
+      title={props.title}
+      className={props.className}
       sandbox="allow-scripts allow-forms allow-popups allow-downloads"
     />
   );

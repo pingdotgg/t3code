@@ -304,6 +304,8 @@ On web and desktop, HTML and PDF files open as rendered pages. Switch an HTML
 file to source view to read its markup; a link to a specific line opens source
 automatically. HTML previews cannot access your T3 Code session.
 
+An open HTML workspace preview keeps its form input when its file access link renews. Reloading the file, switching to source, or closing the preview can still clear input that the page has not saved or exported.
+
 The file viewer recognizes images, HTML, and PDF files by their filename extension,
 including filenames or folders containing `#` or `?`.
 
