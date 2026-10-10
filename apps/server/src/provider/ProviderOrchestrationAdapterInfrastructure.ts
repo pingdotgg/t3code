@@ -8,6 +8,8 @@ import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain"
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 
+import * as PromptSuggestions from "./PromptSuggestions.ts";
+
 export type ProviderOrchestrationAdapterInfrastructure =
   | ClaudeAdapterV2.ClaudeAgentSdkQueryRunner
   | CodexAdapterV2.CodexAppServerClientFactory
@@ -20,7 +22,8 @@ export type ProviderOrchestrationAdapterInfrastructure =
  * Infrastructure shared by the V2 adapters materialized inside provider
  * instances. `providerContinuationRequestsLayer` must be the same layer
  * reference the orchestration runtime provides to its continuation worker so
- * Effect layer memoization yields one shared queue.
+ * Effect layer memoization yields one shared queue. `PromptSuggestions.layer`
+ * likewise matches the server's WebSocket routes.
  */
 export const layer = Layer.mergeAll(
   ClaudeAdapterV2.layerQueryRunner,
@@ -29,4 +32,5 @@ export const layer = Layer.mergeAll(
   CursorKeychain.layer,
   IdAllocator.layer,
   ProviderContinuationRequests.layer,
+  PromptSuggestions.layer,
 );

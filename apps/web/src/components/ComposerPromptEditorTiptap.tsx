@@ -37,6 +37,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
 } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 
@@ -157,6 +158,8 @@ export interface ComposerPromptEditorProps {
   skills: ReadonlyArray<ServerProviderSkill>;
   disabled: boolean;
   placeholder: string;
+  /** Shown after the placeholder text, such as the key that uses a suggestion. */
+  placeholderHint?: ReactNode | undefined;
   ariaLabel?: string | undefined;
   /** Identifies an editor with suggestions, even while its list is closed. */
   suggestionListId?: string | undefined;
@@ -829,6 +832,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     skills,
     disabled,
     placeholder,
+    placeholderHint,
     ariaLabel,
     suggestionListId,
     activeSuggestionId,
@@ -1818,6 +1822,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
                 )}
               >
                 {placeholder}
+                {placeholderHint ? (
+                  <span className="ms-2 inline-flex align-middle">{placeholderHint}</span>
+                ) : null}
               </div>
             ) : null}
           </div>

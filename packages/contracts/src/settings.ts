@@ -707,9 +707,18 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    promptSuggestions: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({
+        title: "Prompt suggestions",
+        description:
+          "Suggest a next prompt in the empty composer after each turn. Press Right Arrow or Tab to use it.",
+        providerSettingsForm: { control: "switch" },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath", "autoCompactWindow", "launchArgs"],
+    order: ["binaryPath", "homePath", "autoCompactWindow", "promptSuggestions", "launchArgs"],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;

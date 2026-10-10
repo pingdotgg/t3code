@@ -248,7 +248,11 @@ import { THREAD_CONTEXT_DROP_EVENT, threadContextDropTargetProps } from "./threa
 import { readThreadShell, useThreadShells } from "~/state/entities";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
-import type { ComposerContextClipboardFragment, ComposerContextRecord } from "@t3tools/contracts";
+import type {
+  ComposerContextClipboardFragment,
+  ComposerContextRecord,
+  PromptSuggestion,
+} from "@t3tools/contracts";
 import { resolveAssetUrl } from "~/assets/assetUrls";
 import { assetEnvironment } from "~/state/assets";
 import { readPreparedConnection } from "~/state/session";
@@ -323,6 +327,7 @@ import {
 import { resizeSnapShotSource } from "../../lib/snapShotSource";
 import { basenameOfPath } from "../../pierre-icons";
 import { cn, isMacPlatform, randomUUID } from "~/lib/utils";
+import { Kbd } from "../ui/kbd";
 import {
   getComposerPromptLengthValidationMessage,
   getComposerSubmissionValidationMessage,
@@ -1553,6 +1558,9 @@ export interface ChatComposerProps {
   sendDisabledReason: string | null;
   isPreparingWorktree: boolean;
   bannerItems: readonly ComposerBannerStackItem[];
+  /** Claude's suggested next prompt for this thread, or null. */
+  promptSuggestion: PromptSuggestion | null;
+  onDismissPromptSuggestion: (id: string) => void;
   /** Tokens a stale session would re-read; null when the thread is not offered compaction. */
   resumeCompactionTokens: number | null;
   /** The Compact chip is off, so the next send keeps full history. */
@@ -2885,6 +2893,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isComposerApprovalState ||
     pendingUserInputs.length > 0 ||
     (!isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan !== null);
+  // Ghost text for an idle, empty composer that nothing else is asking for.
+  const promptSuggestion =
+    props.promptSuggestion !== null &&
+    phase === "ready" &&
+    canOperateThread &&
+    !isSendBusy &&
+    !showComposerTopDrawer &&
+    !isComposerCollapsedMobile &&
+    !isTasksDrawerOpen &&
+    prompt.length === 0 &&
+    !composerSendState.hasSendableContent
+      ? props.promptSuggestion
+      : null;
   const showCollapsedMobilePromptRow =
     isComposerCollapsedMobile && !isComposerApprovalState && pendingUserInputs.length === 0;
   const showComposerAttachAction =
@@ -4493,6 +4514,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const { trigger } = resolveActiveComposerTrigger();
     const menuIsActive =
       !isLiteralPendingAnswer && (composerMenuOpenRef.current || trigger !== null);
+    // Right Arrow or Tab fills the draft with the suggestion and never sends;
+    // Esc hides it.
+    if (
+      promptSuggestion !== null &&
+      promptRef.current.length === 0 &&
+      !menuIsActive &&
+      submissionIntent === null &&
+      !event.isComposing &&
+      event.keyCode !== 229 &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !event.metaKey &&
+      !event.ctrlKey
+    ) {
+      if (key === "ArrowRight" || key === "Tab") {
+        replacePromptFromHistory(promptSuggestion.text);
+        return true;
+      }
+      if (key === "Escape") {
+        props.onDismissPromptSuggestion(promptSuggestion.id);
+        return true;
+      }
+    }
     if (key === "Escape") {
       if (!menuIsActive || event.isComposing || event.keyCode === 229) return false;
       dismissComposerTrigger(trigger);
@@ -7537,8 +7581,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                 ? "Enable a provider in Settings to send a message"
                                 : phase === "disconnected"
                                   ? DISCONNECTED_COMPOSER_PLACEHOLDER
-                                  : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                                  : (promptSuggestion?.text ??
+                                    "Ask anything, @tag files/folders, $use skills, or / for commands")
                     }
+                    placeholderHint={promptSuggestion !== null ? <Kbd>→</Kbd> : undefined}
                     disabled={
                       isConnecting ||
                       isComposerApprovalState ||
