@@ -106,8 +106,8 @@ access. Source Control contains automatic pull, the default pull request merge m
 generation. The same rows edit environment defaults or project overrides depending on the
 project crumb.
 
-The Project category, shown while a project is selected, holds the project's name, icon, actions,
-checkouts and removal. Actions belong to a project: editing them creates the project's own list
+The Project category, shown while a project is selected, holds the project's name, icon, folder,
+actions, checkouts and removal. Actions belong to a project: editing them creates the project's own list
 on each selected environment, and reset returns to the environment's shared list. A project's
 `t3.json` actions can be imported there.
 
@@ -162,6 +162,14 @@ worktrees were removed or kept and why, plus any failures.
 
 Browser captures and rotated logs have separate retention periods. Expired capture links stop
 working. Current logs, message attachments, and browser profiles are kept.
+
+## Moved project folders
+
+If you move or rename a project's folder on disk, select the project, open Project, and enter the
+new path under **Folder**, or choose **Browse** on desktop. When a thread fails because its project
+folder is gone, **Open project settings** on the error takes you there. A project with several checkouts has a
+folder field per checkout. Threads that don't use a worktree run in the new folder from their next
+turn. Worktrees stay where they are.
 
 ## Project icons
 

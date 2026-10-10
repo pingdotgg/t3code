@@ -398,6 +398,10 @@ export class GitVcsDriver extends Context.Service<
     readonly pruneWorktrees: (input: {
       readonly cwd: string;
     }) => Effect.Effect<void, GitCommandError>;
+    /** Relinks linked worktrees to a moved main checkout at `cwd` (`git worktree repair`). */
+    readonly repairWorktrees: (input: {
+      readonly cwd: string;
+    }) => Effect.Effect<void, GitCommandError>;
     /**
      * Absolute paths of every live worktree of the repository at `cwd`, the
      * main checkout included. Worktrees whose directory is gone are left out.

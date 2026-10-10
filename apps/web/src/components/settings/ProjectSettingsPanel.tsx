@@ -10,6 +10,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { resolveProjectPathForDispatch } from "@t3tools/client-runtime/state/projects";
 import { AsyncResult } from "effect/reactivity";
 import { type EnvironmentId, type ProjectIconOverride } from "@t3tools/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -18,6 +19,7 @@ import { InfoIcon, Trash2Icon } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
+import { persistClientSettingsUpdate } from "../../hooks/useSettings";
 import { releaseProjectDraftUploads } from "../../lib/composerDraftUploads";
 import { readLocalApi } from "../../localApi";
 import {
@@ -27,6 +29,7 @@ import {
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useThreadShells } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
+import { renamePreferenceRecord, useUiStateStore } from "../../uiStateStore";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
@@ -44,7 +47,10 @@ import {
 } from "./ProjectFaviconPickerDialog";
 import { ProjectActionsSettings } from "./ProjectActionsSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
-import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
+import {
+  projectFolderKeyRenames,
+  projectGroupTitleNeedsUpdate,
+} from "./ProjectSettingsPanel.logic";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 
 const ProjectIconPickerDialog = lazy(() =>
@@ -85,7 +91,7 @@ export function ProjectSettingsPanel({
   );
 
   // Remember the members of the last rendered group so a grouping-rule change
-  // (which changes the group key) can follow the project to its new group.
+  // or a moved folder (both change path-derived keys) can follow the project.
   const lastSelectionRef = useRef<{
     key: string;
     environmentId: EnvironmentId | null;
@@ -98,12 +104,12 @@ export function ProjectSettingsPanel({
       key: selected.projectKey,
       environmentId,
       checkoutKey,
-      memberKeys: members.map((member) => member.physicalProjectKey),
+      memberKeys: members.map(memberKey),
     };
   }, [selected, members, environmentId, checkoutKey]);
 
-  // A grouping-rule change replaces the group key mid-visit; follow the
-  // project to its new key instead of parking on the not-found state.
+  // A grouping-rule change or a moved folder replaces the keys mid-visit;
+  // follow the project to its new keys instead of parking on the not-found state.
   useEffect(() => {
     if (members.length > 0) return;
     const last = lastSelectionRef.current;
@@ -113,16 +119,16 @@ export function ProjectSettingsPanel({
       last.checkoutKey !== checkoutKey
     )
       return;
-    const successor = groups.find((group) =>
-      group.memberProjects.some((member) => last.memberKeys.includes(member.physicalProjectKey)),
-    );
+    const successor = groups
+      .flatMap((group) => group.memberProjects.map((member) => ({ group, member })))
+      .find(({ member }) => last.memberKeys.includes(memberKey(member)));
     if (successor) {
       void navigate({
         to: pathname,
         search: () => ({
-          project: successor.projectKey,
+          project: successor.group.projectKey,
           machine: environmentId ?? undefined,
-          checkout: checkoutKey ?? undefined,
+          checkout: checkoutKey === null ? undefined : successor.member.physicalProjectKey,
         }),
         replace: true,
         hashScrollIntoView: false,
@@ -329,6 +335,62 @@ function ProjectDetail({
 
   const hasMultipleCheckouts = group.memberProjects.length > 1;
 
+  // Points one checkout at its folder after it moved on disk. Threads without a
+  // worktree run in the project folder, so they follow on their next turn.
+  // Resolves to whether the checkout now uses the requested folder.
+  const moveMember = useCallback(
+    async (member: SidebarProjectGroupMember, nextRoot: string): Promise<boolean> => {
+      // `../renamed` means next to the old folder, as when adding a project.
+      const workspaceRoot = resolveProjectPathForDispatch(nextRoot, member.workspaceRoot);
+      if (!workspaceRoot) return false;
+      if (checkProjectAccess([member], "Failed to change project folder")) return false;
+      if (workspaceRoot === member.workspaceRoot) return true;
+      const result = await updateProject({
+        environmentId: member.environmentId,
+        input: { projectId: member.id, workspaceRoot },
+      });
+      if (result._tag === "Success") {
+        // Sidebar order, expansion, scope and grouping are keyed by the folder.
+        const renames = projectFolderKeyRenames(
+          member.environmentId,
+          member.workspaceRoot,
+          result.value.workspaceRoot,
+        );
+        useUiStateStore.getState().renameProjectPreferenceKeys(renames);
+        void persistClientSettingsUpdate((current) =>
+          current.sidebarProjectGroupingOverrides === undefined
+            ? current
+            : {
+                ...current,
+                sidebarProjectGroupingOverrides: renamePreferenceRecord(
+                  current.sidebarProjectGroupingOverrides,
+                  renames,
+                ),
+              },
+        );
+      }
+      reportFailure(
+        "Failed to change project folder",
+        mapAtomCommandResult(result, () => undefined),
+      );
+      return result._tag === "Success";
+    },
+    [checkProjectAccess, reportFailure, updateProject],
+  );
+  const folderControl = (member: SidebarProjectGroupMember) => (
+    <ProjectFolderControl
+      member={member}
+      disabled={!editableIds.has(member.environmentId)}
+      canBrowse={
+        member.environmentId === primaryEnvironmentId &&
+        typeof window !== "undefined" &&
+        window.desktopBridge !== undefined &&
+        canPickExternalProjectFavicon(member.workspaceRoot, navigator.platform)
+      }
+      onMove={(nextRoot) => moveMember(member, nextRoot)}
+    />
+  );
+
   const removeMembers = useCallback(
     async (members: ReadonlyArray<SidebarProjectGroupMember>) => {
       if (checkProjectAccess(members, "Failed to remove project")) return;
@@ -428,17 +490,20 @@ function ProjectDetail({
         <SettingsRow
           key={member.physicalProjectKey}
           title={member.environmentLabel ?? "Environment"}
-          description={member.workspaceRoot}
+          description="Change the folder if this checkout moved on disk."
           control={
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!editableIds.has(member.environmentId)}
-              onClick={() => void removeMembers([member])}
-              aria-label={`Remove checkout ${member.workspaceRoot}`}
-            >
-              Remove
-            </Button>
+            <div className="flex items-center gap-2">
+              {folderControl(member)}
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!editableIds.has(member.environmentId)}
+                onClick={() => void removeMembers([member])}
+                aria-label={`Remove checkout ${member.workspaceRoot}`}
+              >
+                Remove
+              </Button>
+            </div>
           }
         />
       ))}
@@ -535,6 +600,13 @@ function ProjectDetail({
               </div>
             }
           />
+          {hasMultipleCheckouts ? null : (
+            <SettingsRow
+              title="Folder"
+              description="Where this project lives on disk. Change it after moving the folder."
+              control={folderControl(representative)}
+            />
+          )}
         </SettingsSection>
         <ProjectDefaultsSettings category="project" />
         <ProjectActionsSettings />
@@ -598,5 +670,66 @@ function ProjectDetail({
         </Suspense>
       ) : null}
     </>
+  );
+}
+
+/** Edits a checkout's folder: type a path, or Browse when the native picker reaches its machine. */
+function ProjectFolderControl({
+  member,
+  disabled,
+  canBrowse,
+  onMove,
+}: {
+  member: SidebarProjectGroupMember;
+  disabled: boolean;
+  canBrowse: boolean;
+  onMove: (nextRoot: string) => Promise<boolean>;
+}) {
+  const browse = async () => {
+    const picked = await settlePromise(
+      async () => (await readLocalApi()?.dialogs.pickFolder()) ?? null,
+    );
+    if (picked._tag === "Success" && picked.value) await onMove(picked.value);
+  };
+  return (
+    <div className="flex items-center gap-2">
+      <Input
+        key={member.workspaceRoot}
+        size="sm"
+        className="w-full sm:w-72"
+        aria-label={`Folder for ${member.environmentLabel ?? member.title}`}
+        defaultValue={member.workspaceRoot}
+        disabled={disabled}
+        spellCheck={false}
+        onBlur={(event) => {
+          // The field shows the folder the checkout uses: an emptied field or a
+          // rejected path (the toast names it) puts the current folder back.
+          const input = event.currentTarget;
+          if (!input.value.trim()) {
+            input.value = member.workspaceRoot;
+            return;
+          }
+          void onMove(input.value).then((moved) => {
+            if (!moved) input.value = member.workspaceRoot;
+          });
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+        }}
+      />
+      {canBrowse ? (
+        <Button
+          size="sm"
+          variant="outline"
+          type="button"
+          // Keep focus in the field so a half-typed path is not saved on blur.
+          disabled={disabled}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => void browse()}
+        >
+          Browse
+        </Button>
+      ) : null}
+    </div>
   );
 }

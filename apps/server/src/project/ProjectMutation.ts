@@ -1,7 +1,13 @@
 import { type ProjectMutation } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
-import { type ProjectService } from "./ProjectService.ts";
+import {
+  ProjectConflictError,
+  ProjectNotEmptyError,
+  ProjectOperationError,
+  type ProjectService,
+} from "./ProjectService.ts";
 
 type ProjectMutations = Pick<ProjectService["Service"], "create" | "delete" | "update">;
 
@@ -51,3 +57,23 @@ export const projectMutationOperation = Effect.fn("projectMutationOperation")(fu
       });
   }
 });
+
+const isProjectNotEmptyError = Schema.is(ProjectNotEmptyError);
+const isProjectConflictError = Schema.is(ProjectConflictError);
+const isProjectOperationError = Schema.is(ProjectOperationError);
+
+/** The client-facing message for a failed mutation: specific when the user can act on it. */
+export function projectMutationFailureMessage(cause: unknown): string {
+  if (isProjectNotEmptyError(cause) || isProjectConflictError(cause)) {
+    return cause.message;
+  }
+  // A missing or non-directory path, e.g. a mistyped folder when moving a project.
+  if (
+    isProjectOperationError(cause) &&
+    cause.operation === "normalize-workspace" &&
+    cause.cause instanceof Error
+  ) {
+    return cause.cause.message;
+  }
+  return "Failed to mutate project.";
+}

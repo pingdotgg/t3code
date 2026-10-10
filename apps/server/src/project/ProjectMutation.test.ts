@@ -3,8 +3,9 @@ import { CommandId, ProjectId, type Project } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 
-import { projectMutationOperation } from "./ProjectMutation.ts";
-import { type ProjectService } from "./ProjectService.ts";
+import { WorkspaceRootNotExistsError } from "../workspace/WorkspacePaths.ts";
+import { projectMutationFailureMessage, projectMutationOperation } from "./ProjectMutation.ts";
+import { ProjectOperationError, type ProjectService } from "./ProjectService.ts";
 
 const projectId = ProjectId.make("project:mutation-mapping");
 const project = {
@@ -91,3 +92,26 @@ it.effect("preserves every project mutation field", () =>
     ]);
   }),
 );
+
+it("explains a missing folder and hides other failures", () => {
+  const missing = new ProjectOperationError({
+    operation: "normalize-workspace",
+    projectId,
+    workspaceRoot: "/work/moved",
+    cause: new WorkspaceRootNotExistsError({
+      workspaceRoot: "/work/moved",
+      normalizedWorkspaceRoot: "/work/moved",
+    }),
+  });
+  const dispatch = new ProjectOperationError({
+    operation: "dispatch-project-command",
+    projectId,
+    cause: new Error("database is locked"),
+  });
+
+  assert.equal(
+    projectMutationFailureMessage(missing),
+    "Workspace root does not exist: /work/moved",
+  );
+  assert.equal(projectMutationFailureMessage(dispatch), "Failed to mutate project.");
+});

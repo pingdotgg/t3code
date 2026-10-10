@@ -15,6 +15,7 @@ import {
   ProjectId,
   type OrchestrationV2ThreadProjection,
   OrchestrationV2DomainEvent,
+  ORCHESTRATION_V2_PROJECT_FOLDER_MISSING_FAILURE_CODE,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -22,11 +23,13 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
+import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -96,6 +99,7 @@ it("does not commit running state when inherited background routing cannot be re
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
         Layer.succeed(FileSystem.FileSystem, { exists: () => Effect.succeed(false) } as never),
+        Path.layer,
         Layer.mock(GitWorkflow.GitWorkflowService)({ pruneWorktrees, createWorktree }),
         Layer.mock(ProjectService.ProjectService)({
           getById: () =>
@@ -159,6 +163,10 @@ function makeLocalCommandHarness(input: {
   readonly previousMessages?: ReadonlyArray<string>;
   readonly logoutFailure?: string;
   readonly openFailure?: unknown;
+  /** Fails the session open with this error as-is, unwrapped. */
+  readonly openError?: unknown;
+  /** Runs in a worktree whose `.git` file still names the project's old folder. */
+  readonly strandedWorktree?: boolean;
   /** Opens the session, then fails loading its provider thread. */
   readonly ensureThreadFailure?: unknown;
   /**
@@ -236,8 +244,8 @@ function makeLocalCommandHarness(input: {
     thread: {
       id: threadId,
       activeProviderThreadId: providerThreadId,
-      branch: null,
-      worktreePath: null,
+      branch: input.strandedWorktree ? "feature/moved" : null,
+      worktreePath: input.strandedWorktree ? "/work/worktrees/moved" : null,
     } as OrchestrationV2ThreadProjection["thread"],
     runs: [
       ...(input.previousNativeSession
@@ -393,6 +401,7 @@ function makeLocalCommandHarness(input: {
       ),
     ensureThread: () => Effect.succeed(providerThread),
   };
+  const repairWorktrees = vi.fn(() => Effect.void);
   const open = vi.fn(() =>
     input.interruptOpen === true
       ? Effect.interrupt
@@ -431,7 +440,9 @@ function makeLocalCommandHarness(input: {
                   },
                   ensureThread: () => Effect.succeed(providerThread),
                 } as never)
-              : Effect.die("A local command must not open a native session."),
+              : "openError" in input
+                ? Effect.fail(input.openError as never)
+                : Effect.die("A local command must not open a native session."),
   );
   const startRootRun = vi.fn<
     (input: RunExecutionService.RunExecutionServiceV2StartRootRunInput) => Effect.Effect<void>
@@ -491,9 +502,15 @@ function makeLocalCommandHarness(input: {
         }),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
-        FileSystem.layerNoop({}),
-        Layer.mock(GitWorkflow.GitWorkflowService)({}),
-        Layer.mock(ProjectService.ProjectService)({}),
+        FileSystem.layerNoop({
+          exists: (path) => Effect.succeed(path === "/work/worktrees/moved"),
+          readFileString: () => Effect.succeed("gitdir: /work/old/.git/worktrees/moved\n"),
+        }),
+        Path.layer,
+        Layer.mock(GitWorkflow.GitWorkflowService)({ repairWorktrees }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () => Effect.succeed(Option.some({ workspaceRoot: "/work/new" } as never)),
+        }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getTurnStartContext: () =>
             Effect.succeed({
@@ -532,6 +549,7 @@ function makeLocalCommandHarness(input: {
   );
   return {
     open,
+    repairWorktrees,
     writeIfRunCurrent,
     startRootRun,
     tryHandlePromptCommand,
@@ -584,6 +602,39 @@ effectIt.effect("terminalizes a starting run when its provider session cannot op
         },
       },
     ]);
+  }),
+);
+
+effectIt.effect("marks a missing project folder so clients can link to project settings", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      openError: new ProviderWorkspaceMissingError({ threadId: "thread", cwd: "/work/old" }),
+    });
+
+    yield* harness.start;
+
+    expect(harness.projection().turnItems).toMatchObject([
+      {
+        type: "error",
+        status: "failed",
+        failure: { code: ORCHESTRATION_V2_PROJECT_FOLDER_MISSING_FAILURE_CODE },
+      },
+    ]);
+  }),
+);
+
+effectIt.effect("relinks a worktree left pointing at a moved project folder", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      strandedWorktree: true,
+      openFailure: new Error("stop after workspace checks"),
+    });
+
+    yield* harness.start;
+
+    expect(harness.repairWorktrees).toHaveBeenCalledWith({ cwd: "/work/new" });
   }),
 );
 

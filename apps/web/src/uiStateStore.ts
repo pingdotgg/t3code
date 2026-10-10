@@ -329,6 +329,47 @@ export function setDefaultAdvertisedEndpointKey(state: UiState, key: string | nu
   };
 }
 
+/**
+ * Carries path-keyed sidebar preferences (order, expansion, scope) to their new
+ * keys after a project's folder moves. A project without a repository groups by
+ * its path, so its scope key is renamed too.
+ */
+export function renameProjectPreferenceKeys(
+  state: UiState,
+  renames: ReadonlyMap<string, string>,
+): UiState {
+  return {
+    ...state,
+    projectOrder: renameEntries(
+      state.projectOrder.map((key) => [key, key] as const),
+      renames,
+    ).map(([key]) => key),
+    projectExpandedById: renamePreferenceRecord(state.projectExpandedById, renames),
+    sidebarProjectScopeKey:
+      state.sidebarProjectScopeKey === null
+        ? null
+        : (renames.get(state.sidebarProjectScopeKey) ?? state.sidebarProjectScopeKey),
+  };
+}
+
+/** Renames keys; a renamed key replaces whatever its new key already held. */
+function renameEntries<V>(
+  entries: ReadonlyArray<readonly [string, V]>,
+  renames: ReadonlyMap<string, string>,
+): Array<[string, V]> {
+  const replaced = new Set(entries.flatMap(([key]) => renames.get(key) ?? []));
+  return entries
+    .filter(([key]) => renames.has(key) || !replaced.has(key))
+    .map(([key, value]) => [renames.get(key) ?? key, value]);
+}
+
+export function renamePreferenceRecord<V>(
+  record: Readonly<Record<string, V>>,
+  renames: ReadonlyMap<string, string>,
+): Record<string, V> {
+  return Object.fromEntries(renameEntries(Object.entries(record), renames));
+}
+
 export function setSidebarProjectScopeKey(state: UiState, projectKey: string | null): UiState {
   const nextKey = sanitizeOptionalKey(projectKey);
   if (state.sidebarProjectScopeKey === nextKey) {
@@ -431,6 +472,7 @@ interface UiStateStore extends UiState {
   setSidebarProjectScopeKey: (projectKey: string | null) => void;
   setPullRequestMergeMethod: (method: PullRequestMergeMethod) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
+  renameProjectPreferenceKeys: (renames: ReadonlyMap<string, string>) => void;
   reorderProjects: (
     currentProjectOrder: readonly string[],
     draggedProjectIds: readonly string[],
@@ -453,6 +495,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setPullRequestMergeMethod: (method) => set((state) => setPullRequestMergeMethod(state, method)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
+  renameProjectPreferenceKeys: (renames) =>
+    set((state) => renameProjectPreferenceKeys(state, renames)),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>
     set((state) =>
       reorderProjects(state, currentProjectOrder, draggedProjectIds, targetProjectIds),

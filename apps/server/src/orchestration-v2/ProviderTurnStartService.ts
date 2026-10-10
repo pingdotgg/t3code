@@ -11,6 +11,7 @@ import {
   type OrchestrationV2TurnItem,
   RunId,
   ThreadId,
+  ORCHESTRATION_V2_PROJECT_FOLDER_MISSING_FAILURE_CODE,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
@@ -19,12 +20,14 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
+import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import {
@@ -83,6 +86,8 @@ export class ProviderTurnStartServiceV2 extends Context.Service<
   ProviderTurnStartServiceV2Shape
 >()("t3/orchestration-v2/ProviderTurnStartService/ProviderTurnStartServiceV2") {}
 
+const isProviderWorkspaceMissingError = Schema.is(ProviderWorkspaceMissingError);
+
 export const layer: Layer.Layer<
   ProviderTurnStartServiceV2,
   never,
@@ -90,6 +95,7 @@ export const layer: Layer.Layer<
   | ContextHandoffService.ContextHandoffServiceV2
   | IdAllocator.IdAllocatorV2
   | FileSystem.FileSystem
+  | Path.Path
   | GitWorkflowService.GitWorkflowService
   | ProjectService.ProjectService
   | ProviderAuthService.ProviderAuthService
@@ -104,6 +110,7 @@ export const layer: Layer.Layer<
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
     const projects = yield* ProjectService.ProjectService;
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
@@ -111,6 +118,21 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
+
+    // A linked worktree's `.git` file points at its admin folder inside the
+    // project's repository. Moving the project folder leaves that pointer dangling.
+    const isWorktreeStranded = (worktreePath: string) =>
+      fileSystem.readFileString(path.join(worktreePath, ".git")).pipe(
+        Effect.flatMap((content) => {
+          const gitDir = /^gitdir:\s*(.+?)\s*$/m.exec(content)?.[1];
+          return gitDir === undefined
+            ? Effect.succeed(false)
+            : fileSystem
+                .exists(path.resolve(worktreePath, gitDir))
+                .pipe(Effect.map((found) => !found));
+        }),
+        Effect.orElseSucceed(() => false),
+      );
 
     // These callbacks outlive startup while a run drains background work. Build
     // them outside start's scope so they cannot retain its full thread history.
@@ -461,12 +483,30 @@ export const layer: Layer.Layer<
         const exists = yield* fileSystem
           .exists(worktreePath)
           .pipe(Effect.orElseSucceed(() => true));
-        if (!exists) {
+        const stranded = exists && (yield* isWorktreeStranded(worktreePath));
+        if (!exists || stranded) {
           const project = yield* projects.getById(projection.thread.projectId).pipe(
             Effect.map(Option.getOrUndefined),
             Effect.orElseSucceed(() => undefined),
           );
-          if (project !== undefined) {
+          if (project !== undefined && stranded) {
+            yield* Effect.logWarning("provider turn start relinking worktree to moved project", {
+              threadId: projection.thread.id,
+              worktreePath,
+              workspaceRoot: project.workspaceRoot,
+            });
+            yield* gitWorkflow.repairWorktrees({ cwd: project.workspaceRoot }).pipe(
+              Effect.catchCause((cause) =>
+                Cause.hasInterruptsOnly(cause)
+                  ? Effect.failCause(cause)
+                  : Effect.logWarning("provider turn start failed to relink worktree", {
+                      threadId: projection.thread.id,
+                      worktreePath,
+                      cause: Cause.pretty(cause),
+                    }),
+              ),
+            );
+          } else if (project !== undefined) {
             yield* Effect.logWarning("provider turn start recreating missing worktree", {
               threadId: projection.thread.id,
               worktreePath,
@@ -552,6 +592,7 @@ export const layer: Layer.Layer<
         readonly signal: string;
         readonly title: string;
         readonly error: Error;
+        readonly code?: string;
       }) =>
         Effect.gen(function* () {
           const nestedCause = "cause" in failed.error ? failed.error.cause : undefined;
@@ -573,6 +614,7 @@ export const layer: Layer.Layer<
                       ? nestedCause
                       : failed.error.message,
                 class: "provider_error",
+                ...(failed.code === undefined ? {} : { code: failed.code }),
               }),
             },
           });
@@ -583,6 +625,12 @@ export const layer: Layer.Layer<
           signal: "provider-session-open-failure",
           title: "Provider session failed to open",
           error: sessionResult.failure,
+          // Without a worktree the thread runs in the project folder, which the
+          // user can repoint from project settings.
+          ...(isProviderWorkspaceMissingError(sessionResult.failure) &&
+          projection.thread.worktreePath === null
+            ? { code: ORCHESTRATION_V2_PROJECT_FOLDER_MISSING_FAILURE_CODE }
+            : {}),
         });
         return;
       }

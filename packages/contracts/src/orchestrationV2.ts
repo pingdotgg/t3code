@@ -540,6 +540,9 @@ export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
 /** Failure code on the error item a failed workspace preparation leaves. */
 export const ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE = "workspace_preparation_failed";
 
+/** Failure code when a thread's project folder is gone, e.g. after the project moved. */
+export const ORCHESTRATION_V2_PROJECT_FOLDER_MISSING_FAILURE_CODE = "project_folder_missing";
+
 export const OrchestrationV2Run = Schema.Struct({
   id: RunId,
   threadId: ThreadId,

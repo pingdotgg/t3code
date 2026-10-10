@@ -1639,6 +1639,59 @@ it.effect("ProviderSessionManagerV2 stops a session still opening when its layer
   }),
 );
 
+it.effect.each([
+  { backgroundWork: "none", probe: Effect.succeed(false), opens: 2 },
+  { backgroundWork: "pending", probe: Effect.succeed(true), opens: 1 },
+  { backgroundWork: "unknown", probe: Effect.die("probe failed"), opens: 1 },
+])(
+  "ProviderSessionManagerV2 reopens an idle session after its folder moves (background work: $backgroundWork)",
+  ({ probe, opens }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const movedTo = yield* fileSystem.makeTempDirectoryScoped();
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const threadId = ThreadId.make("thread-provider-session-manager-moved-folder");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now: yield* DateTime.now }),
+          ],
+        });
+        const open = (cwd: string) =>
+          manager.open({
+            threadId,
+            providerSessionId,
+            modelSelection,
+            runtimePolicy: { ...runtimePolicy, cwd },
+          });
+
+        const first = yield* open(runtimePolicy.cwd);
+        assert.strictEqual(yield* open(runtimePolicy.cwd), first);
+        yield* open(movedTo);
+
+        // Background work from the last turn, or a probe that cannot tell, keeps the old session.
+        assert.equal((yield* Ref.get(state)).openCount, opens);
+        assert.equal((yield* Ref.get(state)).closeCount, opens - 1);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            capabilities: ExclusiveCapabilities,
+            hasPendingBackgroundWork: probe,
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("ProviderSessionManagerV2 releases live sessions when its layer shuts down", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
