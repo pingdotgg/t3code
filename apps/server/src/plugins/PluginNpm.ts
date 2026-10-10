@@ -47,8 +47,6 @@ import {
   PluginSourceDigest,
   type PluginInstallationId,
   type PluginInstallationInput,
-  type PluginInstallationManifest,
-  type PluginManifest,
   type PluginNpmAddInput,
   type PluginNpmApplyUpdateInput,
   type PluginNpmInstallationResult,
@@ -73,7 +71,7 @@ import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import { ServerConfig } from "../config.ts";
-import { PluginCatalog } from "./PluginCatalog.ts";
+import { PluginCatalog, summarizePluginManifest } from "./PluginCatalog.ts";
 import { loadPluginDirectory } from "./PluginManifestLoader.ts";
 import { digestPluginSource } from "./pluginSource.ts";
 import {
@@ -185,15 +183,6 @@ interface Installed {
       }
     | undefined;
 }
-
-const summarize = (manifest: PluginManifest): PluginInstallationManifest => ({
-  id: manifest.id,
-  name: manifest.name,
-  version: manifest.version,
-  ...(manifest.description === undefined ? {} : { description: manifest.description }),
-  capabilities: manifest.capabilities,
-  proposedApi: manifest.proposedApi,
-});
 
 const toPackage = (entry: Installed): PluginNpmPackage => ({
   installationId: entry.installationId,
@@ -785,7 +774,7 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
       return {
         version: resolved.version,
         integrity: resolved.integrity,
-        manifest: summarize(registration.manifest),
+        manifest: summarizePluginManifest(registration.manifest),
         source,
         stagedAt: yield* now,
       } satisfies PluginNpmStagedUpdate;

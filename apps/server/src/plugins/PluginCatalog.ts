@@ -101,7 +101,8 @@ type Admission =
   /** A fresh process would start: the bytes must be checked against `consented` first. */
   | { readonly _tag: "check"; readonly consented: string };
 
-const summarize = (manifest: PluginManifest): PluginInstallationManifest => ({
+/** What clients see of a manifest; also the summary of a downloaded npm update under review. */
+export const summarizePluginManifest = (manifest: PluginManifest): PluginInstallationManifest => ({
   id: manifest.id,
   name: manifest.name,
   version: manifest.version,
@@ -357,7 +358,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     const found =
       inspection._tag === "ok"
         ? {
-            manifest: summarize(inspection.registration.manifest),
+            manifest: summarizePluginManifest(inspection.registration.manifest),
             source: inspection.source,
             problem: null,
           }
@@ -506,7 +507,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
       installationId,
       generation: 0,
       directory,
-      manifest: summarize(inspection.registration.manifest),
+      manifest: summarizePluginManifest(inspection.registration.manifest),
       source: inspection.source,
       problem: null,
       inspectedAt: at,

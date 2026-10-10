@@ -3,7 +3,11 @@ import * as NodeNet from "node:net";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { pluginInstallationStatus, type PluginInstallationId } from "@t3tools/contracts";
+import {
+  pluginInstallationStatus,
+  type PluginInstallationId,
+  PluginNpmPackageResult,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -34,6 +38,8 @@ const BIN_PATH = `${import.meta.dirname}/../bin.ts`;
 
 const toJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const fromJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const encodeReply = Schema.encodeSync(Schema.fromJsonString(PluginNpmPackageResult));
+const decodeReply = Schema.decodeUnknownSync(Schema.fromJsonString(PluginNpmPackageResult));
 
 type Catalog = PluginCatalog.PluginCatalog["Service"];
 type Npm = PluginNpm.PluginNpm["Service"];
@@ -112,6 +118,8 @@ interface Fixture {
       readonly packageJson?: Record<string, unknown>;
       readonly extra?: ReadonlyArray<TarEntry>;
       readonly manifest?: boolean;
+      /** Merged into `t3-plugin.json`. */
+      readonly declares?: Record<string, unknown>;
     },
   ) => Uint8Array;
 }
@@ -156,6 +164,7 @@ const setup = Effect.fn("setup")(function* (
                 apiVersion: 1,
                 entry: "dist/main.mjs",
                 proposedApi: true,
+                ...options.declares,
               }),
             },
           ]),
@@ -831,6 +840,55 @@ it.layer(NodeServices.layer)("PluginNpm", (it) => {
             .pipe(Effect.flip);
           expect(unpublished.reason).toBe("npm-not-found");
           expect(yield* entries(home)).toEqual(["npm.json", "package"]);
+        }),
+      ),
+    );
+
+    it.effect("summarizes a downloaded update's declarations as the catalogue does", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const { catalog, npm, registry, plugin } = yield* setup();
+          const declares = {
+            capabilities: ["tools", "settings", "actions"],
+            tools: [
+              {
+                name: "word_count",
+                description: "Count the words in a text.",
+                inputSchema: { type: "object" },
+                sideEffect: "read",
+              },
+            ],
+            settings: [{ type: "boolean", key: "verbose", label: "Verbose logging" }],
+            actions: [
+              {
+                name: "say-hello",
+                title: "Say hello",
+                target: "environment",
+                placements: ["command-palette"],
+              },
+            ],
+          };
+          registry.publish("declares", "1.0.0", { tarball: plugin("declares", "1.0.0") });
+          registry.publish("declares", "1.1.0", {
+            tarball: plugin("declares", "1.1.0", { declares }),
+          });
+          const added = yield* npm.add({ name: "declares", version: "1.0.0" });
+          const installationId = added.installation.installationId;
+
+          const reply = yield* npm.stageUpdate({ installationId, version: "1.1.0" });
+          // What a client decodes from the reply it reviews.
+          const staged = decodeReply(encodeReply(reply)).package;
+          const reviewed = staged.stagedUpdate!.manifest;
+          expect(reviewed).toMatchObject({
+            tools: [{ name: "word_count" }],
+            settings: [{ key: "verbose" }],
+            actions: [{ name: "say-hello" }],
+          });
+
+          // Once applied, the catalogue lists exactly what was reviewed.
+          yield* npm.applyUpdate({ installationId, digest: staged.stagedUpdate!.source.digest });
+          const row = (yield* catalog.list).installations[0]!;
+          expect(row.manifest).toEqual(reviewed);
         }),
       ),
     );
