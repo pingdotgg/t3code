@@ -2881,6 +2881,18 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("names the missing ref behind a failed switch", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const error = yield* driver.switchRef({ cwd, refName: "deleted-branch" }).pipe(Effect.flip);
+
+        assert.deepInclude(error, { detail: "git checkout failed", reason: "ref_not_found" });
+      }),
+    );
+
     it.effect("still creates and reuses remote tracking branches and allows detached refs", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
