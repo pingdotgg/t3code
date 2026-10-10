@@ -3581,6 +3581,61 @@ it.effect("refreshes pull requests after a provider stream exits with an error",
   }),
 );
 
+it.effect("closes the run's open tool calls when its provider stream is lost", () =>
+  Effect.gen(function* () {
+    const key = "lost-stream-open-tools";
+    const toolItemId = TurnItemId.make(`turn-item:${key}`);
+    const finishedItemId = TurnItemId.make(`turn-item:${key}:finished`);
+    const commandItemId = TurnItemId.make(`turn-item:${key}:command`);
+    const imageData = "iVBORw0KGgo".repeat(16);
+    const unpairedNodeId = NodeId.make(`node:${key}:unpaired`);
+    const { written, observed } = yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.concat(
+          Stream.fromIterable([
+            backgroundTurnItemEvent(ids, "dynamic_tool", "running", 1, finishedItemId),
+            backgroundTurnItemEvent(ids, "dynamic_tool", "completed", 2, finishedItemId),
+            toolCallNodeEvent(ids, "running"),
+            withToolOutput(
+              withToolCallNode(ids, backgroundTurnItemEvent(ids, "dynamic_tool", "running", 3)),
+              { source: { type: "base64", media_type: "image/png", data: imageData } },
+            ),
+            backgroundTurnItemEvent(ids, "command_execution", "running", 4, commandItemId),
+            // The stream ends before this node's item arrives.
+            toolCallNodeEvent(ids, "running", unpairedNodeId),
+          ]),
+          // A provider switch releases the session, which fails its event stream.
+          Stream.fail(
+            new ProviderAdapter.ProviderAdapterEventStreamError({
+              driver,
+              providerSessionId: ProviderSessionId.make(`session:${key}`),
+              cause: "Provider session released: provider_switch.",
+            }),
+          ),
+        ),
+    });
+    assert.deepEqual(observed, [
+      `node:${toolItemId}:node:interrupted`,
+      `node:${unpairedNodeId}:interrupted`,
+      "run:failed",
+      "pull-requests-refreshed",
+    ]);
+    assert.deepEqual(
+      written.map((item) => [item.type, item.type === "error" ? null : item.id, item.status]),
+      [
+        ["dynamic_tool", toolItemId, "interrupted"],
+        ["command_execution", commandItemId, "interrupted"],
+        ["error", null, "failed"],
+      ],
+    );
+    // Closed as the ingestor stored it: without the unserved image bytes.
+    const closedTool = written.find((item) => item.id === toolItemId);
+    assert.isFalse(JSON.stringify(closedTool).includes(imageData));
+  }),
+);
+
 it.effect("refreshes pull requests only once when startup failure closes its event stream", () =>
   Effect.gen(function* () {
     const ingestionStarted = yield* Deferred.make<void>();
@@ -3608,6 +3663,43 @@ it.effect("refreshes pull requests only once when startup failure closes its eve
     assert.equal(observed[0], "run:failed");
     const error = written.find((item) => item.type === "error");
     assert.include(error?.failure.message ?? "", "provider could not start this turn");
+  }),
+);
+
+it.effect("interrupts a tool call reported before the turn fails to start", () =>
+  Effect.gen(function* () {
+    const key = "start-failure-open-tool";
+    const toolReported = yield* Deferred.make<void>();
+    const { written } = yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.concat(
+          Stream.fromIterable([backgroundTurnItemEvent(ids, "dynamic_tool", "running", 1)]),
+          Stream.unwrap(Deferred.succeed(toolReported, undefined).pipe(Effect.as(Stream.never))),
+        ),
+      startTurn: (input) =>
+        Deferred.await(toolReported).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new ProviderAdapter.ProviderAdapterTurnStartError({
+                driver,
+                threadId: input.threadId,
+                providerThreadId: input.providerThread.id,
+                runId: input.runId,
+                cause: "provider failed after reporting a tool call",
+              }),
+            ),
+          ),
+        ),
+    });
+    assert.deepEqual(
+      written.map((item) => [item.type, item.status]),
+      [
+        ["dynamic_tool", "interrupted"],
+        ["error", "failed"],
+      ],
+    );
   }),
 );
 
@@ -3660,6 +3752,12 @@ function captureRootRunTermination(input: {
         for (const event of events) {
           if (event.type === "turn-item.updated") {
             yield* captureTurnItem(event.payload);
+          }
+          if (event.type === "node.updated" && event.payload.kind === "tool_call") {
+            yield* Ref.update(observed, (current) => [
+              ...current,
+              `node:${event.payload.id}:${event.payload.status}`,
+            ]);
           }
           if (event.type === "run.updated") {
             yield* Ref.update(observed, (current) => [...current, `run:${event.payload.status}`]);
@@ -3900,6 +3998,47 @@ function backgroundTurnItemEvent(
       type,
       status,
     },
+  } as ProviderAdapter.ProviderAdapterV2Event;
+}
+
+function toolCallNodeEvent(
+  ids: BackgroundScenarioIds,
+  status: "running" | "completed",
+  nodeId: NodeId = NodeId.make(`${ids.itemId}:node`),
+): ProviderAdapter.ProviderAdapterV2Event {
+  return {
+    type: "node.updated",
+    driver,
+    node: {
+      id: nodeId,
+      threadId: ids.threadId,
+      runId: ids.runId,
+      kind: "tool_call",
+      status,
+    },
+  } as ProviderAdapter.ProviderAdapterV2Event;
+}
+
+function withToolCallNode(
+  ids: BackgroundScenarioIds,
+  event: ProviderAdapter.ProviderAdapterV2Event,
+): ProviderAdapter.ProviderAdapterV2Event {
+  if (event.type !== "turn_item.updated") {
+    return event;
+  }
+  return { ...event, turnItem: { ...event.turnItem, nodeId: NodeId.make(`${ids.itemId}:node`) } };
+}
+
+function withToolOutput(
+  event: ProviderAdapter.ProviderAdapterV2Event,
+  output: unknown,
+): ProviderAdapter.ProviderAdapterV2Event {
+  if (event.type !== "turn_item.updated") {
+    return event;
+  }
+  return {
+    ...event,
+    turnItem: { ...event.turnItem, output },
   } as ProviderAdapter.ProviderAdapterV2Event;
 }
 

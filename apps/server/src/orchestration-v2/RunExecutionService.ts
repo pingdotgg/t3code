@@ -49,6 +49,7 @@ import {
   makeProviderFailureTurnItem,
 } from "@t3tools/provider-core/server/failure";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
+import { stripUnservedToolOutputImageBytes } from "./toolOutputImageBytes.ts";
 
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
@@ -318,6 +319,72 @@ export function cascadeTerminalizeRunOwnedSubagents(input: {
   });
 }
 
+/**
+ * A root run's tool calls and their nodes that have not ended yet. Items are
+ * kept as the ingestor persists them, without unserved image bytes.
+ */
+type OpenRunToolCalls = {
+  readonly turnItems: ReadonlyMap<TurnItemId, OrchestrationV2TurnItem>;
+  readonly nodes: ReadonlyMap<NodeId, OrchestrationV2ExecutionNode>;
+};
+
+function emptyOpenRunToolCalls(): OpenRunToolCalls {
+  return { turnItems: new Map(), nodes: new Map() };
+}
+
+/**
+ * Ends the tool calls a run left open when the run fails without its provider
+ * ending the turn: the event stream was lost, such as when a provider switch
+ * released the session mid-turn, or the turn failed to start. No process is
+ * left to report how they ended, so they would otherwise stay running. They
+ * were cut short, not failed: a call such as t3_thread_configure may have done
+ * its work before the session went away.
+ */
+function interruptOpenRunToolCalls(input: {
+  readonly run: OrchestrationV2Run;
+  readonly open: OpenRunToolCalls;
+  readonly completedAt: DateTime.Utc;
+  readonly allocateEventId: () => Effect.Effect<EventId, IdAllocator.IdAllocatorV2AllocationError>;
+}): Effect.Effect<
+  ReadonlyArray<OrchestrationV2DomainEvent>,
+  IdAllocator.IdAllocatorV2AllocationError
+> {
+  return Effect.gen(function* () {
+    const events: Array<OrchestrationV2DomainEvent> = [];
+    // A node can arrive without its item when the stream ends between the two.
+    for (const node of input.open.nodes.values()) {
+      events.push({
+        id: yield* input.allocateEventId(),
+        type: "node.updated",
+        threadId: node.threadId,
+        runId: input.run.id,
+        nodeId: node.id,
+        providerInstanceId: input.run.providerInstanceId,
+        occurredAt: input.completedAt,
+        payload: { ...node, status: "interrupted", completedAt: input.completedAt },
+      });
+    }
+    for (const turnItem of input.open.turnItems.values()) {
+      events.push({
+        id: yield* input.allocateEventId(),
+        type: "turn-item.updated",
+        threadId: turnItem.threadId,
+        runId: input.run.id,
+        ...(turnItem.nodeId === null ? {} : { nodeId: turnItem.nodeId }),
+        providerInstanceId: input.run.providerInstanceId,
+        occurredAt: input.completedAt,
+        payload: {
+          ...turnItem,
+          status: "interrupted",
+          completedAt: input.completedAt,
+          updatedAt: input.completedAt,
+        },
+      });
+    }
+    return events;
+  });
+}
+
 export function finalProviderThreadStatus(
   disposition: ProviderTerminalEvent["threadDisposition"],
 ): OrchestrationV2ProviderThread["status"] {
@@ -566,6 +633,8 @@ export const layer: Layer.Layer<
       readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
       readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
       readonly openRunOwnedSubagents?: OpenRunOwnedSubagentProjection;
+      /** Set only when the run fails without its provider ending the turn. */
+      readonly abandonedToolCalls?: OpenRunToolCalls;
       readonly terminal: ProviderTerminalEvent;
       readonly failureItemPersisted: boolean;
       readonly refreshAfterTurn: Effect.Effect<void>;
@@ -636,6 +705,15 @@ export const layer: Layer.Layer<
                 allocateEventId,
               })
             : [];
+        const abandonedToolCallEvents =
+          input.abandonedToolCalls === undefined
+            ? []
+            : yield* interruptOpenRunToolCalls({
+                run: input.run,
+                open: input.abandonedToolCalls,
+                completedAt,
+                allocateEventId,
+              });
         const persistedStatus =
           input.terminal.status === "completed" ? "waiting" : input.terminal.status;
         // Completion cohorts are advanced by Orchestrator while a provider
@@ -690,6 +768,7 @@ export const layer: Layer.Layer<
             // Terminalize open run-owned subagent rows before the root run
             // settles so projections never keep a forever-running subagent card.
             ...cascadedSubagentEvents,
+            ...abandonedToolCallEvents,
             ...(finalizedAttempt === null
               ? []
               : [
@@ -959,6 +1038,7 @@ export const layer: Layer.Layer<
             ReadonlySet<OrchestrationV2TurnItem["id"]>
           >(new Set(inheritedBackgroundTurnItemsById.keys()));
           const openRunOwnedSubagents = yield* Ref.make(emptyOpenRunOwnedSubagentProjection());
+          const openToolCalls = yield* Ref.make(emptyOpenRunToolCalls());
           const finalizeRootRun = (terminal: ProviderTerminalEvent) =>
             Effect.gen(function* () {
               if (yield* Ref.get(rootRunFinalized)) {
@@ -1064,6 +1144,23 @@ export const layer: Layer.Layer<
                   });
                 }
               }
+              if (
+                event.type === "node.updated" &&
+                event.node.kind === "tool_call" &&
+                event.node.threadId === input.run.threadId &&
+                event.node.runId === input.run.id
+              ) {
+                const node = event.node;
+                yield* Ref.update(openToolCalls, (current) => {
+                  const nodes = new Map(current.nodes);
+                  if (isOpenExecutionNodeStatus(node.status)) {
+                    nodes.set(node.id, node);
+                  } else {
+                    nodes.delete(node.id);
+                  }
+                  return { ...current, nodes };
+                });
+              }
               if (event.type === "node.updated") {
                 const belongsToRootSubagent =
                   event.node.kind === "subagent" && event.node.runId === input.run.id;
@@ -1117,6 +1214,23 @@ export const layer: Layer.Layer<
                       childTurnItems.set(event.turnItem.id, event.turnItem);
                     }
                     return { ...current, childTurnItems };
+                  });
+                }
+                if (
+                  belongsToRootRun &&
+                  event.turnItem.threadId === input.run.threadId &&
+                  (event.turnItem.type === "command_execution" ||
+                    event.turnItem.type === "dynamic_tool")
+                ) {
+                  const toolItem = event.turnItem;
+                  yield* Ref.update(openToolCalls, (current) => {
+                    const turnItems = new Map(current.turnItems);
+                    if (isSettledTurnItemStatus(toolItem.status)) {
+                      turnItems.delete(toolItem.id);
+                    } else {
+                      turnItems.set(toolItem.id, stripUnservedToolOutputImageBytes(toolItem));
+                    }
+                    return { ...current, turnItems };
                   });
                 }
                 if (belongsToRootRun && event.turnItem.type === "subagent") {
@@ -1302,8 +1416,11 @@ export const layer: Layer.Layer<
                             Effect.flatMap((providerThread) =>
                               Ref.get(latestTurnItemOrdinal).pipe(
                                 Effect.flatMap((latestItemOrdinal) =>
-                                  Ref.get(openRunOwnedSubagents).pipe(
-                                    Effect.flatMap((openSubagents) =>
+                                  Effect.all([
+                                    Ref.get(openRunOwnedSubagents),
+                                    Ref.get(openToolCalls),
+                                  ]).pipe(
+                                    Effect.flatMap(([openSubagents, abandonedToolCalls]) =>
                                       writeFinalRunEvents({
                                         run: input.run,
                                         rootNode: input.rootNode,
@@ -1317,6 +1434,7 @@ export const layer: Layer.Layer<
                                           expectedStatus: "running",
                                         },
                                         openRunOwnedSubagents: openSubagents,
+                                        abandonedToolCalls,
                                         terminal: makeFailedTerminalEvent(
                                           makeProviderFailure({
                                             cause: Cause.squash(cause),
@@ -1429,8 +1547,8 @@ export const layer: Layer.Layer<
                 Effect.flatMap((providerThread) =>
                   Ref.get(latestTurnItemOrdinal).pipe(
                     Effect.flatMap((latestItemOrdinal) =>
-                      Ref.get(openRunOwnedSubagents).pipe(
-                        Effect.flatMap((openSubagents) =>
+                      Effect.all([Ref.get(openRunOwnedSubagents), Ref.get(openToolCalls)]).pipe(
+                        Effect.flatMap(([openSubagents, abandonedToolCalls]) =>
                           writeFinalRunEvents({
                             run: input.run,
                             rootNode: input.rootNode,
@@ -1444,6 +1562,7 @@ export const layer: Layer.Layer<
                               expectedStatus: "running",
                             },
                             openRunOwnedSubagents: openSubagents,
+                            abandonedToolCalls,
                             terminal: makeFailedTerminalEvent(
                               makeProviderFailure({
                                 cause: Cause.squash(cause),
