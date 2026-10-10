@@ -60,6 +60,7 @@
     "jose": "catalog:",
     "jsonc-parser": "3.3.1",
     "jszip": "3.10.1",
+    "katex": "^0.16.47",
     "lucide": "^0.564.0",
     "lucide-react": "^0.564.0",
     "mermaid": "^11.17.2",

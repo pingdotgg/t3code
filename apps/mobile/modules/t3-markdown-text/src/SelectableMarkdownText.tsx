@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { View } from "react-native";
 import { parseMarkdownWithOptions } from "react-native-nitro-markdown/headless";
 
+import { parseNativeMarkdownMath } from "./nativeMarkdownMath";
 import {
   nativeMarkdownChunkSpacing,
   nativeMarkdownDocumentChunks,
@@ -52,9 +53,11 @@ export function SelectableMarkdownText({
   marginBottom = 0,
 }: SelectableMarkdownTextProps) {
   const chunks = useMemo(() => {
-    const parsedDocument = nativeMarkdownWithAuthoredWindowsPaths(
-      parseMarkdownWithOptions(markdown, { gfm: true, html: true, math: false }),
-      markdown,
+    const parsedDocument = parseNativeMarkdownMath(markdown, (source) =>
+      nativeMarkdownWithAuthoredWindowsPaths(
+        parseMarkdownWithOptions(source, { gfm: true, html: true, math: false }),
+        source,
+      ),
     );
     const document = preserveSoftBreaks
       ? nativeMarkdownWithPreservedSoftBreaks(parsedDocument)

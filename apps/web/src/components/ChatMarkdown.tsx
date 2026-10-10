@@ -404,6 +404,25 @@ function orderedListGutterStyle(
   return { "--list-gutter": `${markerWidth + 2}ch` };
 }
 
+const LazyMarkdownMath = React.lazy(() => import("./MarkdownMath"));
+
+function MarkdownFormula({ code, displayMode = false }: { code: string; displayMode?: boolean }) {
+  const fallback = <code>{code}</code>;
+  return (
+    <span
+      className="chat-markdown-math"
+      data-display={displayMode ? "block" : "inline"}
+      data-markdown-copy={displayMode ? `$$\n${code}\n$$\n\n` : `\\(${code}\\)`}
+    >
+      <RenderErrorBoundary fallback={fallback} resetKeys={[code, displayMode]}>
+        <Suspense fallback={fallback}>
+          <LazyMarkdownMath code={code} displayMode={displayMode} />
+        </Suspense>
+      </RenderErrorBoundary>
+    </span>
+  );
+}
+
 const GITHUB_ALERT_PRESENTATIONS: Record<
   string,
   { label: string; Icon: typeof InfoIcon; borderClassName: string; titleClassName: string }
@@ -3176,6 +3195,14 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const { cwd, imageBaseDir, inlineCodeFileLinkMetaByText, fileLinkChip } = use(
       ChatMarkdownRendererContext,
     );
+    if (extractFenceLanguage(className) === "math") {
+      return (
+        <MarkdownFormula
+          code={nodeToPlainText(children)}
+          displayMode={node?.properties?.dataMathDisplay === "block"}
+        />
+      );
+    }
     if (node?.properties?.dataInlineCode != null) {
       const codeText = nodeToPlainText(children);
       const fileLinkMeta =
@@ -3340,6 +3367,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
     }
 
     const language = extractFenceLanguage(codeBlock.className);
+    if (language === "math") {
+      return <MarkdownFormula code={codeBlock.code.trim()} displayMode />;
+    }
     const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
     const highlightedCode = (
       <RenderErrorBoundary

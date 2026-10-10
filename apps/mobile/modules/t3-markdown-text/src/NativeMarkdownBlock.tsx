@@ -1,7 +1,8 @@
-import { createContext, memo, useContext, useMemo } from "react";
+import { createContext, lazy, memo, Suspense, useContext, useMemo } from "react";
 import { Image, Platform, ScrollView, Text, useColorScheme, View } from "react-native";
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 
+import { containsNativeMath } from "./nativeMarkdownMath";
 import { CopyTextButton } from "./CopyTextButton";
 import { MarkdownTextPrimitive } from "./MarkdownTextPrimitive";
 import {
@@ -18,6 +19,8 @@ import type {
   SelectableMarkdownSkill,
 } from "./SelectableMarkdownText.types";
 import { useHighlightedCode, type HighlightedCode } from "./useHighlightedCode";
+
+const NativeMathFormula = lazy(() => import("./NativeMathFormula"));
 
 /** Set by SelectableMarkdownText so images anywhere in the block tree can use it. */
 export const MarkdownImageRendererContext = createContext<MarkdownImageRenderer | null>(null);
@@ -58,6 +61,24 @@ function SelectableNode(props: {
   readonly textStyle: NativeMarkdownTextStyle;
   readonly onLinkPress?: (href: string) => void;
 }) {
+  if (props.node.type === "math_inline" || props.node.type === "math_block") {
+    return (
+      <Suspense
+        fallback={
+          <MarkdownTextPrimitive style={{ color: props.textStyle.color }}>
+            {nodeText(props.node)}
+          </MarkdownTextPrimitive>
+        }
+      >
+        <NativeMathFormula
+          source={nodeText(props.node)}
+          display={props.node.type === "math_block"}
+          textStyle={props.textStyle}
+        />
+      </Suspense>
+    );
+  }
+  if (containsNativeMath(props.node)) return <NativeMixedParagraph {...props} />;
   return (
     <NativeMarkdownSelectableText
       runs={nativeMarkdownDocumentRuns(documentFor(props.node), props.skills)}
@@ -358,21 +379,34 @@ function NativeMarkdownImage(props: {
   );
 }
 
-function inlineGroups(nodes: ReadonlyArray<MarkdownNode>): MarkdownNode[] {
+function inlineGroups(parent: MarkdownNode): MarkdownNode[] {
+  const nodes = parent.children ?? [];
+  // Split fragments must not reuse their parent's source offset as a React key.
+  const { beg: _beg, end: _end, ...container } = parent;
   const groups: MarkdownNode[] = [];
   let inline: MarkdownNode[] = [];
   const flush = () => {
     if (inline.length === 0) {
       return;
     }
-    groups.push({ type: "paragraph", children: inline });
+    groups.push({ ...container, children: inline });
     inline = [];
   };
 
+  // Equations, like images, get their own row to preserve native text selection.
   for (const node of nodes) {
-    if (node.type === "image") {
+    if (node.type === "image" || node.type === "math_inline" || node.type === "math_block") {
       flush();
       groups.push(node);
+    } else if (containsNativeMath(node)) {
+      flush();
+      groups.push(
+        ...inlineGroups(node).map((child) =>
+          child.type === "math_inline" || child.type === "math_block"
+            ? child
+            : { ...container, children: [child] },
+        ),
+      );
     } else {
       inline.push(node);
     }
@@ -389,7 +423,7 @@ function NativeMixedParagraph(props: {
 }) {
   return (
     <View style={{ gap: 8 }}>
-      {inlineGroups(props.node.children ?? []).map((child, index) =>
+      {inlineGroups(props.node).map((child, index) =>
         child.type === "image" ? (
           <NativeMarkdownImage
             key={nodeKey(child, index)}

@@ -386,8 +386,18 @@ export function chatMarkdownClipboardPayload(
   const texts: string[] = [];
   const htmls: string[] = [];
   for (let index = 0; index < selection.rangeCount; index += 1) {
-    const range = selection.getRangeAt(index);
+    const range = selection.getRangeAt(index).cloneRange();
     if (range.collapsed) continue;
+    // A formula's visual glyphs are not a useful serialization. Include its
+    // source wrapper even when a drag starts or ends inside the typeset span.
+    const formulaAt = (node: Node) =>
+      (node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement)?.closest(
+        ".chat-markdown-math",
+      );
+    const startFormula = formulaAt(range.startContainer);
+    const endFormula = formulaAt(range.endContainer);
+    if (startFormula) range.setStartBefore(startFormula);
+    if (endFormula) range.setEndAfter(endFormula);
     const container = document.createElement("div");
     container.appendChild(range.cloneContents());
     const ancestor = range.commonAncestorContainer;

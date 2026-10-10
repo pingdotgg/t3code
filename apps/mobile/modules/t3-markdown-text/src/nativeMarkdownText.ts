@@ -952,7 +952,8 @@ function containsRichBlock(node: MarkdownNode): boolean {
     node.type === "image" ||
     node.type === "horizontal_rule" ||
     node.type === "html_block" ||
-    node.type === "math_block"
+    node.type === "math_block" ||
+    node.type === "math_inline"
   ) {
     return true;
   }

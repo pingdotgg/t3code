@@ -36,9 +36,11 @@
     "expo-clipboard": "*",
     "expo-haptics": "*",
     "expo-symbols": "*",
+    "mathjax-full": "*",
     "react": "*",
     "react-native": "*",
-    "react-native-nitro-markdown": "*"
+    "react-native-nitro-markdown": "*",
+    "react-native-svg": "*"
   },
   "codegenConfig": {
     "name": "T3MarkdownTextSpec",

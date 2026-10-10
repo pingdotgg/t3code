@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
 import { EnvironmentId, type AuthEnvironmentScope } from "@t3tools/contracts";
-import { createRoot } from "react-dom/client";
 import { useThreadFindHighlights } from "./chat/threadFindHighlights";
 import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
 import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
@@ -9,8 +8,9 @@ import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import { MarkdownFindContext } from "./chat/markdownFindContext";
 import { act, type ComponentProps, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { createRoot, type Root } from "react-dom/client";
 import { create, type ReactTestRenderer } from "react-test-renderer";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { GitHubIcon } from "./Icons";
@@ -86,6 +86,96 @@ import ChatMarkdown, {
   hasMarkdownFilePrimaryAction,
   shouldUseMarkdownFileBrowserPrimaryAction,
 } from "./ChatMarkdown";
+import { chatMarkdownClipboardPayload } from "../markdown-clipboard";
+
+describe("ChatMarkdown formulas", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    window.getSelection()?.removeAllRanges();
+    await act(() => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
+  });
+
+  async function renderMarkdown(text: string, parseRawHtml = true) {
+    await act(async () => {
+      root.render(<ChatMarkdown cwd="/tmp/project" text={text} parseRawHtml={parseRawHtml} />);
+      await import("./MarkdownMath");
+    });
+  }
+
+  it.each([
+    String.raw`\[\sqrt{x_1\times x_2}-1\]`,
+    "$$\n\\sqrt{x_1\\times x_2}-1\n$$",
+    "```math\n\\sqrt{x_1\\times x_2}-1\n```",
+    String.raw`Inline \(\sqrt{x_1\times x_2}-1\).`,
+    String.raw`Inline $$\sqrt{x_1\times x_2}-1$$.`,
+    "\\[\n\\sqrt{x_1\\times x_2}-1\n\\]",
+    "> \\[\n> \\sqrt{x_1\\times x_2}-1\n> \\]",
+    "- \\[\n  \\sqrt{x_1\\times x_2}-1\n  \\]",
+  ])("typesets %s into accessible math", async (text) => {
+    await renderMarkdown(text);
+    expect(container.querySelector("math msqrt")).not.toBeNull();
+    expect(container.querySelector("math")?.getAttribute("display")).toBe(
+      text.startsWith("Inline") ? null : "block",
+    );
+    expect(container.querySelector("annotation")?.textContent).toBe(
+      String.raw`\sqrt{x_1\times x_2}-1`,
+    );
+  });
+
+  it("renders formulas when raw HTML is disabled", async () => {
+    await renderMarkdown(String.raw`\(x^2\)`, false);
+    expect(container.querySelector("math msup")).not.toBeNull();
+  });
+
+  it("preserves prices, code, bare brackets, and incomplete delimiters", async () => {
+    await renderMarkdown(
+      String.raw`Prices $20 and $30. [x_1] and \(unfinished` +
+        "\n\n`\\(x^2\\)`\n\n```text\n$$x^2$$\n\\[x^2\\]\n```",
+    );
+    expect(container.querySelector("math")).toBeNull();
+    expect(container.textContent).toContain("Prices $20 and $30.");
+    expect(container.textContent).toContain(String.raw`\(x^2\)`);
+    expect(container.textContent).toContain(String.raw`\[x^2\]`);
+  });
+
+  it("keeps invalid TeX readable and does not execute trusted commands", async () => {
+    await renderMarkdown(String.raw`\(\notACommand{x}\) and \(\href{javascript:alert(1)}{click}\)`);
+    expect(container.textContent).toContain(String.raw`\notACommand{x}`);
+    expect(container.querySelector("a")).toBeNull();
+    expect(container.querySelector("script")).toBeNull();
+  });
+
+  it("copies formulas as TeX without duplicate visual and accessible text", async () => {
+    await renderMarkdown("Growth:\n\n$$\n\\sqrt{x}-1\n$$\n\nInline \\(x^2\\).");
+    const range = document.createRange();
+    range.selectNodeContents(container);
+    const selection = window.getSelection()!;
+    selection.addRange(range);
+    expect(chatMarkdownClipboardPayload(selection)?.text).toBe(
+      "Growth:\n\n$$\n\\sqrt{x}-1\n$$\n\nInline \\(x^2\\).",
+    );
+  });
+
+  it("copies the source when the selection is inside the visible formula", async () => {
+    await renderMarkdown(String.raw`\(x^2\)`);
+    const range = document.createRange();
+    range.selectNodeContents(container.querySelector(".katex-html")!);
+    const selection = window.getSelection()!;
+    selection.addRange(range);
+    expect(chatMarkdownClipboardPayload(selection)?.text).toBe(String.raw`\(x^2\)`);
+  });
+});
 
 function codeButton(renderer: ReactTestRenderer, label: string) {
   const button = renderer.root

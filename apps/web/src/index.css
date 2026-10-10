@@ -1767,6 +1767,24 @@ code {
 
 /* Chat markdown rendering */
 
+.chat-markdown-math {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.chat-markdown-math[data-display="block"] {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin: 0.65rem 0;
+  padding: 0.25rem 0;
+}
+
+.chat-markdown-math .katex-display {
+  margin: 0;
+}
+
 .chat-markdown > :first-child {
   margin-top: 0;
 }
