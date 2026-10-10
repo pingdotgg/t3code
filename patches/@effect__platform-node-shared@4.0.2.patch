@@ -1,0 +1,58 @@
+diff --git a/dist/NodeChildProcessSpawner.js b/dist/NodeChildProcessSpawner.js
+--- a/dist/NodeChildProcessSpawner.js
++++ b/dist/NodeChildProcessSpawner.js
+@@ -44,9 +44,16 @@
+     return false;
+   }
+ };
+-const taskkill = (childProcess, onExit = () => {}) => NodeChildProcess.execFile("taskkill", ["/pid", String(childProcess.pid), "/T", "/F"], {
+-  windowsHide: true
+-}, onExit);
++const taskkill = (childProcess, onExit = () => {}) => {
++  // An exited leader's PID cannot safely identify its former Windows tree.
++  if (childProcess.exitCode !== null || childProcess.signalCode !== null) {
++    onExit(null);
++    return;
++  }
++  NodeChildProcess.execFile("taskkill", ["/pid", String(childProcess.pid), "/T", "/F"], {
++    windowsHide: true
++  }, onExit);
++};
+ const make = /*#__PURE__*/Effect.gen(function* () {
+   const fs = yield* FileSystem.FileSystem;
+   const path = yield* Path.Path;
+diff --git a/src/NodeChildProcessSpawner.ts b/src/NodeChildProcessSpawner.ts
+--- a/src/NodeChildProcessSpawner.ts
++++ b/src/NodeChildProcessSpawner.ts
+@@ -19,7 +19,9 @@
+  * `forceKillAfter`, the wait is limited to one second and never escalates.
+  * With it, cleanup may take the configured duration plus a final one-second
+  * wait after `SIGKILL`. Zombie descendants can consume either full bound. On
+- * Windows, `taskkill` terminates the tree and only the leader's exit is awaited.
++ * Windows, `taskkill` terminates the tree while the leader is running and only
++ * the leader's exit is awaited. Descendants that outlive the leader are not
++ * reclaimed by PID-based cleanup.
+  *
+  * POSIX cleanup targets a numeric process-group ID. If the group disappears
+  * and its ID is reused before cleanup, an unrelated group may be signalled.
+@@ -98,13 +100,19 @@
+ const taskkill = (
+   childProcess: NodeChildProcess.ChildProcess,
+   onExit: (error: NodeChildProcess.ExecException | null) => void = () => {}
+-) =>
++) => {
++  // An exited leader's PID cannot safely identify its former Windows tree.
++  if (childProcess.exitCode !== null || childProcess.signalCode !== null) {
++    onExit(null)
++    return
++  }
+   NodeChildProcess.execFile(
+     "taskkill",
+     ["/pid", String(childProcess.pid!), "/T", "/F"],
+     { windowsHide: true },
+     onExit
+   )
++}
+ 
+ const make = Effect.gen(function*() {
+   const fs = yield* FileSystem.FileSystem
