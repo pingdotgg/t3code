@@ -2,7 +2,7 @@ import {
   classifyMarkdownImageSource,
   markdownImageSourceFragment,
 } from "@t3tools/client-runtime/markdown-images";
-import { splitFilePathPosition } from "@t3tools/client-runtime/markdown-links";
+import { splitFilePathPosition } from "@t3tools/shared/fileLinks";
 import {
   mediaFileReference,
   mediaUrlReference,
