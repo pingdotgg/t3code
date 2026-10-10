@@ -779,7 +779,11 @@ export function BranchToolbarBranchSelector({
               )}
             />
             <ComposerContextLabel displayMode={displayMode}>
-              <MiddleTruncate value={triggerLabel} className="w-full" />
+              <MiddleTruncate
+                value={triggerLabel}
+                variant={displayMode === "panel" ? "cap-aligned" : "default"}
+                className="w-full"
+              />
             </ComposerContextLabel>
             {displayMode !== "panel" ? (
               <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
