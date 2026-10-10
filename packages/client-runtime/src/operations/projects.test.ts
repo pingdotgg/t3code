@@ -18,6 +18,8 @@ import {
   getCloneDestinationPath,
   getCloneDirectoryName,
   getDefaultCloneUrl,
+  getNewProjectPublishTarget,
+  getNewProjectPublishTargets,
   normalizePastedCloneUrl,
   resolveAddProjectPath,
   sortAddProjectProviderSources,
@@ -277,5 +279,38 @@ describe("add project shared logic", () => {
       createWorkspaceRootIfMissing: true,
       defaultModelSelection: null,
     });
+  });
+});
+
+describe("new project publish targets", () => {
+  const readyHost = (kind: string, account: string | null) => ({
+    kind: SourceControlProviderKind.make(kind),
+    label: kind,
+    status: "available" as const,
+    installHint: "",
+    version: Option.none(),
+    detail: Option.none(),
+    auth: {
+      status: "authenticated" as const,
+      account: Option.fromNullOr(account),
+      host: Option.none(),
+      detail: Option.none(),
+    },
+  });
+
+  it("offers ready hosts that can place the repository, GitHub first, and keeps the pick", () => {
+    const targets = getNewProjectPublishTargets({
+      versionControlSystems: [],
+      sourceControlProviders: [
+        readyHost("gitlab", "group"),
+        readyHost("github", null),
+        readyHost("azure-devops", "me"),
+      ],
+    });
+    expect(targets.map((target) => target.definition.kind)).toEqual(["github", "gitlab"]);
+    expect(getNewProjectPublishTarget(targets, null)?.definition.kind).toBe("github");
+    expect(
+      getNewProjectPublishTarget(targets, SourceControlProviderKind.make("gitlab"))?.owner,
+    ).toBe("group");
   });
 });

@@ -15,9 +15,10 @@ import {
   getCloneDestinationPath,
   getCloneDirectoryName,
   getDefaultCloneUrl,
-  getNewProjectGitHubRepository,
-  getNewProjectGitHubTarget,
   getNewProjectPathPreview,
+  getNewProjectPublishTarget,
+  getNewProjectPublishTargets,
+  getNewProjectRepository,
   normalizePastedCloneUrl,
   parseAddProjectRemoteSource,
   resolveAddProjectPath,
@@ -995,9 +996,12 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
           input: {},
         }),
   );
-  const githubTarget = getNewProjectGitHubTarget(discoveryState.data);
+  const publishTargets = getNewProjectPublishTargets(discoveryState.data);
   const [name, setName] = useState("");
-  const [publishesToGitHub, setPublishesToGitHub] = useState(false);
+  const [publishes, setPublishes] = useState(false);
+  // Null takes the first ready host, GitHub when it is ready.
+  const [publishKind, setPublishKind] = useState<SourceControlProviderKind | null>(null);
+  const publishTarget = getNewProjectPublishTarget(publishTargets, publishKind);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const trimmedName = name.trim();
@@ -1066,19 +1070,19 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
       if (commitError !== undefined) {
         Alert.alert("Created without a first commit", commitError);
       }
-      if (publishesToGitHub && githubTarget !== null) {
+      if (publishes && publishTarget !== null) {
         void publishRepository({
           environmentId: environment.environmentId,
           input: {
             cwd: workspaceRoot,
-            provider: SourceControlProviderKind.make("github"),
-            repository: getNewProjectGitHubRepository(githubTarget, workspaceRoot),
+            provider: publishTarget.definition.kind,
+            repository: getNewProjectRepository(publishTarget, workspaceRoot),
             visibility: "private",
           },
         }).then((publishResult) => {
           if (AsyncResult.isFailure(publishResult)) {
             Alert.alert(
-              "Could not create the GitHub repository",
+              `Could not create the ${publishTarget.definition.label} repository`,
               errorMessage(Cause.squash(publishResult.cause)),
             );
           }
@@ -1133,18 +1137,18 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
             </Text>
           ) : null}
           {machineRows}
-          {githubTarget !== null ? (
+          {publishTarget !== null ? (
             <ListSection>
               <ListRow
-                title="Create private repository on GitHub"
+                title={`Create private repository on ${publishTarget.definition.label}`}
                 subtitle={
                   trimmedName.length > 0 && pathPreview !== null
-                    ? getNewProjectGitHubRepository(githubTarget, pathPreview)
-                    : githubTarget.account
+                    ? getNewProjectRepository(publishTarget, pathPreview)
+                    : publishTarget.owner
                 }
                 icon={
                   <SourceControlIcon
-                    kind={sourceControlClients.get("github").icon}
+                    kind={publishTarget.definition.icon}
                     size={Platform.OS === "android" ? 24 : 18}
                     colorClassName="accent-icon"
                   />
@@ -1152,13 +1156,44 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
                 isFirst
                 right={
                   <ThemedSwitch
-                    accessibilityLabel="Create private repository on GitHub"
-                    value={publishesToGitHub}
-                    onValueChange={setPublishesToGitHub}
+                    accessibilityLabel={`Create private repository on ${publishTarget.definition.label}`}
+                    value={publishes}
+                    onValueChange={setPublishes}
                   />
                 }
-                onPress={() => setPublishesToGitHub((publishes) => !publishes)}
+                onPress={() => setPublishes((current) => !current)}
               />
+              {publishes && publishTargets.length > 1
+                ? publishTargets.map((target) => {
+                    const selected = target.definition.kind === publishTarget.definition.kind;
+                    return (
+                      <ListRow
+                        key={target.definition.kind}
+                        title={target.definition.label}
+                        icon={
+                          <SourceControlIcon
+                            kind={target.definition.icon}
+                            size={Platform.OS === "android" ? 24 : 17}
+                            colorClassName="accent-icon"
+                          />
+                        }
+                        selected={selected}
+                        disabled={isSubmitting}
+                        right={
+                          selected ? (
+                            <SymbolView
+                              name="checkmark"
+                              size={Platform.OS === "android" ? 20 : 14}
+                              tintColorClassName="accent-icon"
+                              type="monochrome"
+                            />
+                          ) : null
+                        }
+                        onPress={() => setPublishKind(target.definition.kind)}
+                      />
+                    );
+                  })
+                : null}
             </ListSection>
           ) : null}
           <PrimaryActionButton

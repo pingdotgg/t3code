@@ -37,6 +37,8 @@ export const definition = defineSourceControlClient({
   publicHost: null,
   publishDescription: "dev.azure.com",
   publishHost: () => "dev.azure.com",
+  // A new repository belongs to a project, which the account does not name.
+  newRepositoryOwner: () => null,
   defaultCloneTransport: "ssh",
   changeRequestUrl: ({ host, repository, number }) =>
     `https://${canonicalRepositoryKey(`${host}/${repository}`.toLowerCase())}/pullrequest/${number}`,
