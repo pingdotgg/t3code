@@ -30,6 +30,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { TitleSlotRoll } from "../TitleSlotRoll";
 import {
   WorkspaceBreadcrumb,
   WorkspaceBreadcrumbItem,
@@ -46,6 +47,7 @@ interface ChatHeaderProps {
   activeThreadTitle: string;
   /** Drafts have no server thread yet, so the title carries no action menu. */
   isServerThread: boolean;
+  isRegeneratingTitle: boolean;
   activeProject: EnvironmentProject | null;
   parentThreadLink: { threadId: ThreadId; title: string } | null;
   onOpenThread: (threadId: ThreadId) => void;
@@ -80,6 +82,7 @@ export const ChatHeader = memo(function ChatHeader({
   activeThreadId,
   activeThreadTitle,
   isServerThread,
+  isRegeneratingTitle,
   activeProject,
   parentThreadLink,
   onOpenThread,
@@ -87,6 +90,16 @@ export const ChatHeader = memo(function ChatHeader({
   onNewThreadInProject,
   onOpenProjectSettings,
 }: ChatHeaderProps) {
+  const [draftTitle, setDraftTitle] = useState(
+    isServerThread ? undefined : { threadId: activeThreadId, title: activeThreadTitle },
+  );
+  if (
+    !isServerThread &&
+    (draftTitle?.threadId !== activeThreadId || draftTitle.title !== activeThreadTitle)
+  ) {
+    setDraftTitle({ threadId: activeThreadId, title: activeThreadTitle });
+  }
+  const rollFromTitle = draftTitle?.threadId === activeThreadId ? draftTitle.title : undefined;
   const activeProjectName = activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const interfaceFont = useClientSettings((settings) => settings.fontFamilySans);
@@ -170,6 +183,7 @@ export const ChatHeader = memo(function ChatHeader({
     )
       return;
     renameCommittedRef.current = false;
+    setDraftTitle(undefined);
     setRenaming({
       environmentId: activeThreadEnvironmentId,
       threadId: activeThreadId,
@@ -414,7 +428,16 @@ export const ChatHeader = memo(function ChatHeader({
                 }
               >
                 <h2 className="min-w-0">
-                  <WorkspaceBreadcrumbText>{activeThreadTitle}</WorkspaceBreadcrumbText>
+                  <TitleSlotRoll
+                    regenerating={isRegeneratingTitle}
+                    from={
+                      rollFromTitle === undefined ? undefined : (
+                        <WorkspaceBreadcrumbText>{rollFromTitle}</WorkspaceBreadcrumbText>
+                      )
+                    }
+                  >
+                    <WorkspaceBreadcrumbText>{activeThreadTitle}</WorkspaceBreadcrumbText>
+                  </TitleSlotRoll>
                 </h2>
                 <ChevronDownIcon
                   aria-hidden

@@ -175,6 +175,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
+import { TitleSlotRoll } from "./TitleSlotRoll";
 import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
@@ -1689,10 +1690,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       ? "text-muted-foreground"
                       : "text-secondary-label/70",
               ),
-          isRegeneratingTitle && "opacity-55",
         )}
       >
-        {thread.title}
+        <TitleSlotRoll regenerating={isRegeneratingTitle}>{thread.title}</TitleSlotRoll>
       </span>
     );
   const accessibleTitle = isRenaming ? null : <span className="sr-only">{thread.title}</span>;
