@@ -4674,11 +4674,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           dispatchMode = { type: "start_immediately" };
         }
       }
+      // A restart continuation resumes the interrupted turn, so it starts
+      // immediately rather than queueing like other wakes.
       if (
         command.notification !== undefined &&
         (command.createdBy !== "agent" ||
           (command.creationSource !== "server" && command.creationSource !== "provider") ||
-          dispatchMode.type !== "queue_after_active")
+          (dispatchMode.type !== "queue_after_active" &&
+            !(
+              command.restartContinuationOfRunId !== undefined &&
+              dispatchMode.type === "start_immediately"
+            )))
       ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,

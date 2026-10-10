@@ -153,17 +153,27 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     );
     const noteText =
       note.work.length === 0 ? undefined : restartCancelledBackgroundWorkNote(note.work);
+    const text =
+      noteText === undefined
+        ? CONTINUE_PROMPT
+        : note.settled
+          ? noteText
+          : `${noteText}\n\n${CONTINUE_PROMPT}`;
     yield* threads.dispatch({
       type: "message.dispatch",
       commandId: CommandId.make(`command:restart-continuation:${input.sourceRunId}`),
       threadId: input.threadId,
       messageId,
-      text:
-        noteText === undefined
-          ? CONTINUE_PROMPT
-          : note.settled
-            ? noteText
-            : `${noteText}\n\n${CONTINUE_PROMPT}`,
+      text,
+      // Shown as a work log row; the prompt the agent got is its detail.
+      notification: {
+        source: { kind: "system" },
+        outcome: "updated",
+        summary: note.settled
+          ? "T3 Code restarted and stopped background work"
+          : "T3 Code restarted and resumed this turn",
+        detail: text,
+      },
       attachments: [],
       modelSelection: source.modelSelection,
       dispatchMode: { type: "start_immediately" },

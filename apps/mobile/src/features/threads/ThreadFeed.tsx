@@ -1719,11 +1719,15 @@ function renderFeedEntry(
           className="mb-5 items-end"
           {...(enterAnimated ? { entering: FadeInUp.duration(220) } : {})}
         >
-          {presentation.isAutomation ? (
+          {presentation.attribution === "automation" ? (
             <Text className="mb-1 pr-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
               Sent by automation
             </Text>
-          ) : message.createdBy === "agent" ? (
+          ) : presentation.attribution === "t3code" ? (
+            <Text className="mb-1 pr-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
+              Sent by T3 Code
+            </Text>
+          ) : presentation.attribution === "agent" ? (
             <AgentMessageAttribution
               environmentId={props.environmentId}
               senderThreadId={message.senderThreadId}
