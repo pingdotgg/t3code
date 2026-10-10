@@ -127,6 +127,28 @@ describe("rightPanelStore", () => {
     expect(useClosedViewStore.getState().entries).toHaveLength(1);
   });
 
+  it("keeps one plugin view tab per installation and view, across generations", () => {
+    const store = useRightPanelStore.getState();
+    const board = { installationId: "installation-1", viewId: "board", title: "Board" };
+    store.openPluginView(refA, board);
+    store.open(refA, "diff");
+    // A re-enabled plugin offers the same view under a new generation and maybe a new title.
+    store.openPluginView(refA, { ...board, title: "Kanban" });
+    store.openPluginView(refA, { ...board, viewId: "list", title: "List" });
+    store.openPluginView(refB, board);
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual([
+      "plugin-view:installation-1:board",
+      "diff",
+      "plugin-view:installation-1:list",
+    ]);
+    expect(state.surfaces[0]).toMatchObject({ kind: "plugin-view", title: "Kanban" });
+    expect(state.activeSurfaceId).toBe("plugin-view:installation-1:list");
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB).surfaces,
+    ).toHaveLength(1);
+  });
+
   it("gives each host/device its own tab and preserves renamed tabs", () => {
     const store = useRightPanelStore.getState();
     const android = {

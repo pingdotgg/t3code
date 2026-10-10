@@ -89,7 +89,7 @@ import {
   ChatAttachmentId,
   PersistChatAttachmentsError,
   RpcClientId,
-  EnvironmentAuthorizationError,
+  type EnvironmentAuthorizationError,
   type ProjectId,
   type ProviderDriverKind,
   type ProviderInstanceId,
@@ -124,6 +124,10 @@ import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts"
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
+import * as PluginCatalog from "./plugins/PluginCatalog.ts";
+import * as PluginSettings from "./plugins/PluginSettings.ts";
+import * as PluginActions from "./plugins/PluginActions.ts";
+import * as PluginViews from "./plugins/PluginViews.ts";
 import {
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
@@ -212,6 +216,7 @@ import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as DefectReporter from "./observability/DefectReporter.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
+import * as ContributionStatusStore from "@t3tools/provider-core/server/ContributionStatusStore";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { requiredScopeForDeviceList, rpcAuthorizationError } from "./auth/RpcAuthorization.ts";
 import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
@@ -1187,7 +1192,10 @@ const layerWsRpc = (
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
 ) =>
-  ServerWsRpcGroup.toLayer(
+  // Handlers are typed against the group without instrumentation. RpcServer finds a
+  // handler by its tag alone, and typing every handler against the instrumented group
+  // exceeds the type checker's instantiation limit.
+  WsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const sql = yield* SqlClient.SqlClient;
@@ -1223,6 +1231,10 @@ const layerWsRpc = (
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const secretRequests = yield* SecretRequests.SecretRequests;
+      const pluginCatalog = yield* PluginCatalog.PluginCatalog;
+      const pluginSettings = yield* PluginSettings.PluginSettings;
+      const pluginActions = yield* PluginActions.PluginActions;
+      const pluginViews = yield* PluginViews.PluginViews;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
@@ -1322,6 +1334,7 @@ const layerWsRpc = (
       const hostResources = yield* HostResources.HostResources;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
+      const contributionStatus = yield* ContributionStatusStore.ContributionStatusStore;
       const relayClient = yield* RelayClient.RelayClient;
       // A webhook URL starts agent runs, so only sessions that may operate
       // see it; read-only sessions still see the task itself.
@@ -1812,7 +1825,7 @@ const layerWsRpc = (
         return result;
       });
 
-      const handlers = ServerWsRpcGroup.of({
+      const handlers = WsRpcGroup.of({
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -2051,6 +2064,23 @@ const layerWsRpc = (
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.delete(input)),
           ),
+        [WS_METHODS.pluginsList]: (_input) => pluginCatalog.list,
+        [WS_METHODS.pluginsSubscribe]: (_input) => pluginCatalog.subscribe,
+        [WS_METHODS.pluginsAdd]: (input) => pluginCatalog.add(input),
+        [WS_METHODS.pluginsRefresh]: (input) => pluginCatalog.refresh(input),
+        [WS_METHODS.pluginsConsent]: (input) => pluginCatalog.consent(input),
+        [WS_METHODS.pluginsEnable]: (input) => pluginCatalog.enable(input),
+        [WS_METHODS.pluginsDisable]: (input) => pluginCatalog.disable(input),
+        [WS_METHODS.pluginsRemove]: (input) => pluginCatalog.remove(input),
+        [WS_METHODS.pluginsResume]: (input) => pluginCatalog.resume(input),
+        [WS_METHODS.pluginsSettingsSubscribe]: (input) =>
+          pluginSettings.subscribe(input.installationId),
+        [WS_METHODS.pluginsSettingsUpdate]: (input) => pluginSettings.update(input),
+        [WS_METHODS.pluginActionsSubscribe]: (_input) => pluginActions.subscribe,
+        [WS_METHODS.pluginActionsInvoke]: (input) => pluginActions.invoke(input),
+        [WS_METHODS.pluginViewsSubscribe]: (_input) => pluginViews.subscribe,
+        [WS_METHODS.pluginViewsReadBundle]: (input) => pluginViews.readBundle(input),
+        [WS_METHODS.pluginViewsCall]: (input) => pluginViews.call(input),
         [WS_METHODS.scheduledTasksRunNow]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.runNow(input)),
@@ -3114,6 +3144,8 @@ const layerWsRpc = (
               Stream.concat(Stream.make(latest), changes),
             ),
           ),
+        [WS_METHODS.subscribeContributionStatus]: (_input) =>
+          ContributionStatusStore.subscriptionStream(contributionStatus),
       });
       return handlers;
     }),

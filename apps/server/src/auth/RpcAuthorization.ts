@@ -5,6 +5,7 @@ import {
   authScopeRequiredResponse,
   AssetCreateUrlInput,
   AuthAccessReadScope,
+  AuthAccessWriteScope,
   ServerSettingsPatch,
   ProviderInstanceMutation,
   requiredScopesForServerSettingsPatch,
@@ -116,6 +117,29 @@ export const RPC_REQUIRED_SCOPES = {
   // Delivery logs hold request bodies, so they need the same scope as the URL.
   [WS_METHODS.scheduledTasksListWebhookDeliveries]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksGetWebhookDelivery]: AuthOrchestrationOperateScope,
+  // Plugins run as the server's OS user, so changing what runs takes the administrative scope
+  // that also manages pairing and sessions; standard pairing never grants it.
+  [WS_METHODS.pluginsList]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginsSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginsAdd]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsRefresh]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsConsent]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsEnable]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsDisable]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsRemove]: AuthAccessWriteScope,
+  [WS_METHODS.pluginsResume]: AuthAccessWriteScope,
+  // Saved setting values are readable like the catalogue; secrets are never sent. Saving one
+  // configures code that runs as the server's OS user, so it takes the administrative scope.
+  [WS_METHODS.pluginsSettingsSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginsSettingsUpdate]: AuthAccessWriteScope,
+  // Running an action the administrator already enabled is ordinary operation, like starting a
+  // turn; it cannot change what code runs.
+  [WS_METHODS.pluginActionsSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginActionsInvoke]: AuthOrchestrationOperateScope,
+  // A view call runs the plugin's own `view:` handlers, like an action a client takes.
+  [WS_METHODS.pluginViewsSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginViewsReadBundle]: AuthOrchestrationReadScope,
+  [WS_METHODS.pluginViewsCall]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayReadScope,
   [WS_METHODS.cloudInstallRelayClient]: AuthRelayWriteScope,
   [WS_METHODS.pullRequestsList]: AuthOrchestrationReadScope,
@@ -168,6 +192,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeWorktreeSetup]: AuthOrchestrationReadScope,
   [WS_METHODS.worktreeSetupCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribeResourceTelemetry]: AuthDiagnosticsReadScope,
+  [WS_METHODS.subscribeContributionStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsRefreshStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.gitResolvePullRequest]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsListRefs]: AuthOrchestrationReadScope,
