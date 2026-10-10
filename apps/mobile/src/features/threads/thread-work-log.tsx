@@ -60,12 +60,12 @@ import { cn } from "../../lib/cn";
 import { THREAD_WORK_ROW_MIN_HEIGHT, type deriveThreadWorkLogSizing } from "../../lib/layout";
 import {
   type AgentSpawnSummary,
+  expandedWorkRowCall,
   formatItemFullDetail,
   type ThreadFeedActivity,
   workEntryRowLabel,
 } from "../../lib/threadActivity";
 import {
-  toolCallLines,
   turnItemOutputImages,
   turnItemOutputText,
 } from "@t3tools/client-runtime/work-log/item-detail";
@@ -940,16 +940,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
   const isRead = toolGroupAction(row.workEntry) === "read";
   // Tool calls show the call in the foreground and the result muted below it.
   const shownItem = fetchedItem ?? row.projectedItem.item;
-  const call =
-    expanded && !isRead && shownItem.type === "command_execution"
-      ? toolCallLines({ command: shownItem.input })
-      : expanded && !isRead && shownItem.type === "dynamic_tool"
-        ? toolCallLines({ args: shownItem.input })
-        : expanded && shownItem.type === "file_search"
-          ? toolCallLines({ args: { pattern: shownItem.pattern } })
-          : expanded && shownItem.type === "web_search"
-            ? toolCallLines({ args: { query: shownItem.patterns?.join(", ") } })
-            : null;
+  const call = expanded ? expandedWorkRowCall(shownItem, isRead) : null;
   const failedExitCode =
     call && shownItem.type === "command_execution" && shownItem.exitCode
       ? shownItem.exitCode

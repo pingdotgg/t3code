@@ -7,7 +7,10 @@ import {
   MessageId,
   ProjectId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
+  TurnItemId,
+  type OrchestrationV2ProjectedTurnItem,
 } from "@t3tools/contracts";
 import {
   act,
@@ -20,6 +23,8 @@ import {
 import { renderToStaticMarkup } from "react-dom/server";
 import { createRoot } from "react-dom/client";
 import { create, type ReactTestRenderer } from "react-test-renderer";
+import { deriveTimelineEntriesFromVisibleTurnItems } from "../../session-logic";
+import { makeStreamingTimelineFixture } from "../../test-fixtures";
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
 import { useComposerFocusState } from "./useComposerFocusState";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -527,6 +532,202 @@ describe("MessagesTimeline", () => {
     } finally {
       await act(() => renderer?.unmount());
     }
+  });
+
+  it("shows a plugin's context, or why it was not added, when its row is expanded", async () => {
+    activityTestState.expanded = true;
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const source = makeStreamingTimelineFixture().visibleTurnItems[0]!;
+    const record = (
+      id: string,
+      status: "completed" | "failed",
+      title: string,
+      output: unknown,
+    ): OrchestrationV2ProjectedTurnItem => ({
+      ...source,
+      sourceItemId: TurnItemId.make(id),
+      item: {
+        id: TurnItemId.make(id),
+        threadId: source.item.threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: source.item.ordinal,
+        status,
+        title,
+        startedAt: source.item.startedAt,
+        completedAt: source.item.completedAt,
+        updatedAt: source.item.updatedAt,
+        type: "dynamic_tool",
+        toolName: "plugin_context",
+        toolSource: { key: "plugin:test.context", name: "Context fixture", kind: "integration" },
+        input: {
+          plugin: {
+            id: "test.context",
+            name: "Context fixture",
+            installationId: "INSTALLATION_INPUT",
+            generation: 3,
+          },
+        },
+        output,
+      },
+    });
+    const inspect = async (item: OrchestrationV2ProjectedTurnItem) => {
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(() => {
+          renderer = create(
+            <MessagesTimeline
+              {...buildProps()}
+              timelineEntries={deriveTimelineEntriesFromVisibleTurnItems({
+                visibleTurnItems: [item],
+                optimisticMessages: [],
+              })}
+            />,
+          );
+        });
+        const collapsed = JSON.stringify(renderer!.toJSON());
+        const row = renderer!.root.find(
+          (node) => typeof node.props.onClick === "function" && "aria-expanded" in node.props,
+        );
+        await act(() => row.props.onClick());
+        const inspector = renderer!.root.find(
+          (node) => node.props["data-v2-item-inspector"] === "dynamic_tool",
+        );
+        return {
+          collapsed,
+          inspector: inspector
+            .findAll((node) => typeof node.type === "string")
+            .flatMap((node) => node.children.filter((child) => typeof child === "string"))
+            .join(""),
+        };
+      } finally {
+        await act(() => renderer?.unmount());
+      }
+    };
+
+    const added = await inspect(
+      record("added", "completed", "Added context from Context fixture", {
+        context: [{ title: "Project codename", text: "The project codename is PERIWINKLE-42." }],
+      }),
+    );
+    expect(added.collapsed).not.toContain("PERIWINKLE-42");
+    expect(added.inspector).toContain("From Context fixture (test.context)");
+    expect(added.inspector).toContain("Project codename");
+    expect(added.inspector).toContain("The project codename is PERIWINKLE-42.");
+    // The context replaces the record's input, which only names the installation.
+    expect(added.inspector).not.toContain("INSTALLATION_INPUT");
+
+    const failed = await inspect(
+      record("failed", "failed", "Context from Context fixture not added", {
+        reason: "the notes index is offline",
+      }),
+    );
+    expect(failed.inspector).toContain("Not added");
+    expect(failed.inspector).toContain("the notes index is offline");
+  });
+
+  it("shows which plugin answered an approval, and why, when the row is expanded", async () => {
+    activityTestState.expanded = true;
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const fixture = makeStreamingTimelineFixture();
+    const source = fixture.visibleTurnItems[0]!;
+    const approval = (
+      id: string,
+      resolvedBy?: { readonly decision: "accept" | "decline"; readonly reason: string },
+    ): OrchestrationV2ProjectedTurnItem => ({
+      ...source,
+      sourceItemId: TurnItemId.make(id),
+      item: {
+        id: TurnItemId.make(id),
+        threadId: source.item.threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: source.item.ordinal,
+        status: "completed",
+        title: null,
+        startedAt: source.item.startedAt,
+        completedAt: source.item.completedAt,
+        updatedAt: source.item.updatedAt,
+        type: "approval_request",
+        requestId: RuntimeRequestId.make(`request-${id}`),
+        requestKind: "command",
+        prompt: `Create ${id}.txt file`,
+        ...(resolvedBy
+          ? {
+              resolvedBy: {
+                _tag: "plugin" as const,
+                pluginId: "proof.policy",
+                pluginName: "Proof policy",
+                ...resolvedBy,
+              },
+            }
+          : {}),
+      },
+    });
+    const inspect = async (item: OrchestrationV2ProjectedTurnItem) => {
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(() => {
+          renderer = create(
+            <MessagesTimeline
+              {...buildProps()}
+              timelineEntries={deriveTimelineEntriesFromVisibleTurnItems({
+                visibleTurnItems: [item],
+                optimisticMessages: [],
+              })}
+            />,
+          );
+        });
+        const collapsed = JSON.stringify(renderer!.toJSON());
+        const row = renderer!.root.find(
+          (node) => typeof node.props.onClick === "function" && "aria-expanded" in node.props,
+        );
+        await act(() => row.props.onClick());
+        const inspector = renderer!.root.find(
+          (node) => node.props["data-v2-item-inspector"] === "approval_request",
+        );
+        const inspectorText = inspector
+          .findAll((node) => typeof node.type === "string")
+          .flatMap((node) => node.children.filter((child) => typeof child === "string"))
+          .join("\n");
+        return { collapsed, inspector: inspectorText };
+      } finally {
+        await act(() => renderer?.unmount());
+      }
+    };
+
+    const approved = await inspect(
+      approval("approved", { decision: "accept", reason: "The proof allows this exact command." }),
+    );
+    expect(approved.collapsed).not.toContain("The proof allows this exact command.");
+    expect(approved.inspector).toContain("Create approved.txt file");
+    expect(approved.inspector).toContain("Approved by plugin Proof policy");
+    expect(approved.inspector).toContain("The proof allows this exact command.");
+
+    const declined = await inspect(
+      approval("declined", {
+        decision: "decline",
+        reason: "The proof forbids this exact command.",
+      }),
+    );
+    expect(declined.inspector).toContain("Declined by plugin Proof policy");
+    expect(declined.inspector).toContain("The proof forbids this exact command.");
+
+    const answered = await inspect(approval("answered"));
+    expect(answered.inspector).toContain("Create answered.txt file");
+    expect(answered.inspector).not.toContain("by plugin");
   });
 
   it("leads an unanswered question row with the question text", async () => {

@@ -33,6 +33,7 @@ import {
   type RenderFailureProps,
 } from "./components/RenderErrorBoundary";
 import { ArchivedThreadsRouteScreen } from "./features/archive/ArchivedThreadsRouteScreen";
+import { PluginNotificationBannerHost } from "./features/plugins/PluginNotificationBannerHost";
 import { useAgentNotificationNavigation } from "./features/agent-awareness/notificationNavigation";
 import { ConnectOnboardingRouteScreen } from "./features/cloud/ConnectOnboardingRouteScreen";
 import { useConnectOnboardingNavigation } from "./features/cloud/connectOnboardingNavigation";
@@ -95,6 +96,10 @@ import {
   SettingsScheduledTaskNewRouteScreen,
   SettingsScheduledTaskEditRouteScreen,
 } from "./features/settings/SettingsScheduledTasksRouteScreen";
+import {
+  SettingsPluginRouteScreen,
+  SettingsPluginsRouteScreen,
+} from "./features/settings/SettingsPluginsRouteScreen";
 import {
   ScheduledTaskModelPickerRouteScreen,
   ScheduledTaskBranchPickerRouteScreen,
@@ -325,6 +330,15 @@ const SettingsContentStack = createV5SheetStackNavigator({
         // Leave room to center UIKit's title beside the two trailing actions.
         headerTitleStyle: { fontSize: 16, fontWeight: "800" },
       },
+    }),
+    SettingsPlugins: createNativeStackScreen({
+      screen: SettingsPluginsRouteScreen,
+      linking: "plugins",
+      options: { title: "Plugins" },
+    }),
+    SettingsPlugin: createNativeStackScreen({
+      screen: SettingsPluginRouteScreen,
+      options: { title: "Plugin" },
     }),
     SettingsScheduledTaskNew: createNativeStackScreen({
       screen: SettingsScheduledTaskNewRouteScreen,
@@ -634,6 +648,7 @@ function RootStackLayout(props: {
           {props.children}
           <HardwareKeyboardCommandOverlay />
         </AdaptiveWorkspaceLayout>
+        <PluginNotificationBannerHost />
       </ExistingThreadSettingsRouteProvider>
     </HardwareKeyboardCommandProvider>
   );

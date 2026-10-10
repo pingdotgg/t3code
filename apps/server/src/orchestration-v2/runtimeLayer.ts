@@ -163,6 +163,8 @@ const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pip
       layerProviderAuthServiceProvided,
       layerRunExecutionServiceProvided,
       layerRuntimePolicyProvided,
+      // The orchestrator's layer reference, so both share one thread lock.
+      ThreadCommandExecutor.layer,
     ),
   ),
 );
@@ -198,7 +200,13 @@ const layerCheckpointCaptureServiceProvided = CheckpointCaptureService.layer.pip
   ),
 );
 const layerRunFinalizationServiceProvided = RunFinalizationService.layer.pipe(
-  Layer.provide(Layer.merge(layerCheckpointCaptureServiceProvided, ProjectionStore.layer)),
+  Layer.provide(
+    Layer.mergeAll(
+      layerCheckpointCaptureServiceProvided,
+      layerEventSinkProvided,
+      ProjectionStore.layer,
+    ),
+  ),
 );
 
 const layerOrchestratorProvided = Orchestrator.layer.pipe(

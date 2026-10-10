@@ -1,4 +1,5 @@
 import type {
+  OrchestrationV2ApprovalResolvedBy,
   OrchestrationV2Command,
   OrchestrationV2DomainEvent,
   OrchestrationV2RuntimeRequest,
@@ -100,6 +101,8 @@ export type OrchestratorV2ScenarioStep =
       readonly commandId: CommandId;
       readonly decision?: ProviderApprovalDecision;
       readonly answers?: ProviderUserInputAnswers;
+      /** Answers as this plugin instead of the user; its decision replaces `decision`. */
+      readonly resolvedBy?: OrchestrationV2ApprovalResolvedBy;
       /** Captures the shell snapshot under this key while the request is pending. */
       readonly shellSnapshotKeyWhilePending?: string;
     };
@@ -208,8 +211,18 @@ function scenarioCommands(scenario: OrchestratorV2Scenario): ReadonlyArray<Orche
   );
 }
 
+// A client answers the card it shows, so a request is answerable once its turn item is
+// projected too; the provider's request and its card can commit separately.
 const findPendingRuntimeRequest = (projection: OrchestrationV2ThreadProjection) =>
-  projection.runtimeRequests.find((request) => request.status === "pending");
+  projection.runtimeRequests.find(
+    (request) =>
+      request.status === "pending" &&
+      projection.turnItems.some(
+        (item) =>
+          (item.type === "approval_request" || item.type === "user_input_request") &&
+          item.requestId === request.id,
+      ),
+  );
 
 const hasActiveRun = (projection: OrchestrationV2ThreadProjection) =>
   projection.runs.some((run) =>
@@ -686,14 +699,24 @@ export function runOrchestratorV2Scenario(
                 yield* orchestrator.getShellSnapshot(),
               );
             }
-            const result = yield* orchestrator.dispatch({
-              type: "runtime-request.respond",
-              commandId: step.commandId,
-              threadId: step.threadId,
-              requestId: request.id,
-              ...(step.decision === undefined ? {} : { decision: step.decision }),
-              ...(step.answers === undefined ? {} : { answers: step.answers }),
-            });
+            const result = yield* orchestrator.dispatch(
+              step.resolvedBy === undefined
+                ? {
+                    type: "runtime-request.respond",
+                    commandId: step.commandId,
+                    threadId: step.threadId,
+                    requestId: request.id,
+                    ...(step.decision === undefined ? {} : { decision: step.decision }),
+                    ...(step.answers === undefined ? {} : { answers: step.answers }),
+                  }
+                : {
+                    type: "runtime-request.plugin-respond",
+                    commandId: step.commandId,
+                    threadId: step.threadId,
+                    requestId: request.id,
+                    resolvedBy: step.resolvedBy,
+                  },
+            );
             storedEventGroups.push(result.storedEvents);
             break;
           }

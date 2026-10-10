@@ -12,6 +12,7 @@ import {
   RunId,
   ThreadId,
   type ChatAttachment,
+  type ContributionStatusSnapshot,
   type ModelSelection,
   type OrchestrationV2AppThread,
   type OrchestrationV2ProviderThread,
@@ -19,13 +20,17 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -39,6 +44,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as ContributionStatusStore from "@t3tools/provider-core/server/ContributionStatusStore";
 import {
   makePiAdapterV2,
   PiAdapterV2Driver,
@@ -96,8 +102,14 @@ interface FakePi {
   readonly deferNextLifecycle: (type: "switch_session" | "new_session" | "fork") => void;
   /** Hold a model-select extension hook until its UI request is answered. */
   readonly deferNextModelSelection: () => void;
+  /** Send the held lifecycle request's normal response. */
+  readonly resolveDeferredLifecycle: Effect.Effect<void>;
   readonly queueModels: (models: ReadonlyArray<unknown>) => void;
   readonly vetoNextNewSession: () => void;
+  /** Make the next `fork` ack report an extension veto. */
+  readonly vetoNextFork: () => void;
+  /** Make the next `fork` fail with `success: false`, leaving Pi on its session. */
+  readonly rejectNextFork: () => void;
   /** Every request received by the fake process. */
   readonly allRequests: () => ReadonlyArray<PiRpcRecord>;
   /** Data returned by the next `get_session_stats` acks, consumed in order. */
@@ -147,7 +159,10 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   let failState = false;
   let vetoSwitch = false;
   let vetoNewSession = false;
+  let vetoFork = false;
+  let rejectFork = false;
   let deferredLifecycle: string | undefined;
+  let deferredLifecycleRequest: PiRpcRecord | undefined;
   let sessionFile = FAKE_SESSION_FILE;
   let sessionGeneration = 0;
   let models: ReadonlyArray<unknown> = [];
@@ -194,8 +209,15 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
         return { ...base, data: messagesQueue.shift() ?? { messages: [] } };
       case "get_session_stats":
         return { ...base, data: statsQueue.shift() ?? {} };
-      case "fork":
-        return { ...base, data: { text: "Hello pi", cancelled: false } };
+      case "fork": {
+        if (rejectFork) {
+          rejectFork = false;
+          return { ...base, success: false, error: "fork refused" };
+        }
+        const cancelled = vetoFork;
+        vetoFork = false;
+        return { ...base, data: { text: "Hello pi", cancelled } };
+      }
       default:
         return base;
     }
@@ -220,6 +242,7 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
         }
         if (record["type"] === deferredLifecycle) {
           deferredLifecycle = undefined;
+          deferredLifecycleRequest = record;
           continue;
         }
         const response = respondTo(record);
@@ -294,11 +317,24 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     deferNextModelSelection: () => {
       deferredLifecycle = "set_model";
     },
+    resolveDeferredLifecycle: Effect.suspend(() => {
+      const record = deferredLifecycleRequest;
+      assert.isDefined(record);
+      deferredLifecycleRequest = undefined;
+      const response = respondTo(record!);
+      return response === null ? Effect.void : emit(response);
+    }),
     queueModels: (value) => {
       models = value;
     },
     vetoNextNewSession: () => {
       vetoNewSession = true;
+    },
+    rejectNextFork: () => {
+      rejectFork = true;
+    },
+    vetoNextFork: () => {
+      vetoFork = true;
     },
     allRequests: () => allRequests,
     vetoNextSwitch: () => {
@@ -379,6 +415,95 @@ const openRuntime = Effect.fnUntraced(function* (
     });
   return { runtime, takeEvent };
 });
+
+const statusMap = (snapshot: ContributionStatusSnapshot) =>
+  Object.fromEntries(
+    snapshot.entries.map((entry) => [
+      entry.threadId,
+      entry.items.map((item) => `${item.key}=${item.text}`),
+    ]),
+  );
+
+/** Pi's fire-and-forget `ctx.ui.setStatus`; a missing text clears the key. */
+const emitStatus = (fake: FakePi, statusKey: string, statusText?: string) =>
+  fake.emit({
+    type: "extension_ui_request",
+    id: `status-${statusKey}-${statusText ?? "clear"}`,
+    method: "setStatus",
+    statusKey,
+    ...(statusText === undefined ? {} : { statusText }),
+  });
+
+/** Waits for the store to publish a snapshot matching `predicate`, the receipt for status events. */
+const waitForStatuses = (
+  subscription: { readonly changes: Stream.Stream<ContributionStatusSnapshot> },
+  predicate: (statuses: Record<string, ReadonlyArray<string>>) => boolean,
+) =>
+  subscription.changes.pipe(
+    Stream.map(statusMap),
+    Stream.filter(predicate),
+    Stream.runHead,
+    Effect.map(Option.getOrThrow),
+  );
+
+/**
+ * A status store whose "gate" status holds the session event pump until
+ * released. The pump handles records in order, so `pumpHeld` is also the
+ * receipt that every earlier record has been handled.
+ */
+const makeGatedStatusStore = Effect.fnUntraced(function* () {
+  const store = yield* ContributionStatusStore.make();
+  const pumpHeld = yield* Deferred.make<void>();
+  const releasePump = yield* Deferred.make<void>();
+  const gated: ContributionStatusStore.ContributionStatusStoreShape = {
+    ...store,
+    openSource: (source) =>
+      Effect.map(store.openSource(source), (handle) => ({
+        ...handle,
+        set: (input) =>
+          input.key === "gate"
+            ? Deferred.succeed(pumpHeld, undefined).pipe(
+                Effect.andThen(Deferred.await(releasePump)),
+                Effect.andThen(handle.set(input)),
+              )
+            : handle.set(input),
+      })),
+  };
+  return {
+    store,
+    provide: Effect.provideService(ContributionStatusStore.ContributionStatusStore, gated),
+    holdPump: (fake: FakePi) =>
+      emitStatus(fake, "gate", "held").pipe(Effect.andThen(Deferred.await(pumpHeld))),
+    releasePump: Deferred.succeed(releasePump, undefined),
+  };
+});
+
+/** Rolls `providerThread` back to its start, which forks Pi's session before the first turn. */
+const rollbackToThreadStart = (
+  runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
+  providerThread: OrchestrationV2ProviderThread,
+) =>
+  runtime.rollbackThread({
+    providerThread,
+    providerThreadTurns: [
+      {
+        id: ProviderTurnId.make("turn-1"),
+        providerThreadId: providerThread.id,
+        nodeId: NodeId.make("node-1"),
+        runAttemptId: null,
+        nativeTurnRef: { driver: PI_PROVIDER, nativeId: "u1", strength: "strong" },
+        ordinal: 1,
+        status: "completed",
+        startedAt: null,
+        completedAt: null,
+      },
+    ],
+    target: {
+      type: "thread_start",
+      checkpointId: CheckpointId.make("checkpoint-pi-rollback"),
+      appRunOrdinal: 0,
+    },
+  });
 
 const makeAppThread = Effect.fnUntraced(function* (model: string, threadId = THREAD_ID) {
   const now = yield* DateTime.now;
@@ -859,14 +984,8 @@ describe("PiAdapterV2", () => {
       const prompt = yield* fake.takeRequest("prompt");
       assert.equal(prompt["message"], "Continue the review");
       assert.equal(prompt["streamingBehavior"], "steer");
-      const resolved = yield* takeEvent(
-        (event) =>
-          event.type === "runtime_request.updated" && event.runtimeRequest.id === dialog!.id,
-      );
-      assert.isTrue(
-        resolved.type === "runtime_request.updated" &&
-          resolved.runtimeRequest.status === "resolved",
-      );
+      // The orchestrator records the answer before asking for this response, so the
+      // adapter does not report the dialog resolved again.
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
@@ -1309,6 +1428,447 @@ describe("PiAdapterV2", () => {
       assert.equal(spawn.env.T3_MCP_BEARER_TOKEN, "secret-pi-token");
       assert.equal(spawn.env.T3_PI_RUNTIME_MODE, "full-access");
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect(
+    "shows extension statuses on the session's thread until Pi rebinds or the session ends",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const store = yield* ContributionStatusStore.ContributionStatusStore;
+        const subscription = yield* store.subscribe;
+        // Each status change publishes one snapshot; waiting on it is the receipt.
+        const nextStatuses = Stream.runHead(subscription.changes).pipe(
+          Effect.map((snapshot) =>
+            Option.match(snapshot, {
+              onNone: () => ({}),
+              onSome: (value) =>
+                Object.fromEntries(
+                  value.entries.map((entry) => [
+                    entry.threadId,
+                    entry.items.map((item) => `${item.key}=${item.text}`),
+                  ]),
+                ),
+            }),
+          ),
+        );
+        const setStatus = (statusKey: string, statusText?: string) =>
+          fake.emit({
+            type: "extension_ui_request",
+            id: `status-${statusKey}-${statusText ?? "clear"}`,
+            method: "setStatus",
+            statusKey,
+            ...(statusText === undefined ? {} : { statusText }),
+          });
+
+        const sessionScope = yield* Scope.make();
+        const { runtime } = yield* openRuntime(fake).pipe(Scope.provide(sessionScope));
+
+        // Extensions set statuses from session_start, before T3 registers a thread.
+        yield* setStatus("plan", "\u001b[33m⏸ plan\u001b[39m");
+        assert.deepStrictEqual(yield* nextStatuses, { [THREAD_ID]: ["plan=⏸ plan"] });
+
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* setStatus("mode", "build");
+        assert.deepStrictEqual(yield* nextStatuses, { [THREAD_ID]: ["mode=build", "plan=⏸ plan"] });
+        yield* setStatus("plan");
+        assert.deepStrictEqual(yield* nextStatuses, { [THREAD_ID]: ["mode=build"] });
+
+        yield* runtime.resumeThread({ providerThread });
+        assert.deepStrictEqual(yield* nextStatuses, {});
+        yield* setStatus("mode", "resumed");
+        assert.deepStrictEqual(yield* nextStatuses, { [THREAD_ID]: ["mode=resumed"] });
+
+        yield* Scope.close(sessionScope, Exit.void);
+        assert.deepStrictEqual(yield* nextStatuses, {});
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerTest, ContributionStatusStore.layer))),
+  );
+
+  it.effect("lands a fork's startup statuses on the target thread before Pi answers", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const forkFake = yield* makeFakePi;
+      const store = yield* ContributionStatusStore.ContributionStatusStore;
+      const statuses = yield* store.subscribe;
+      const { runtime } = yield* openRuntime(fake, "default", THREAD_ID, SESSION_ID, forkFake);
+      const source = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* emitStatus(fake, "legacy", "old");
+      yield* waitForStatuses(statuses, (current) => current[THREAD_ID]?.[0] === "legacy=old");
+
+      const forkFile = "/fake/forked.jsonl";
+      forkFake.queueState({ sessionFile: forkFile });
+      fake.queueState({ sessionFile: forkFile });
+      fake.deferNextLifecycle("switch_session");
+      const target = ThreadId.make("fork-target");
+      const forked = yield* runtime
+        .forkThread({ sourceProviderThread: source, targetThreadId: target })
+        .pipe(Effect.forkChild);
+      yield* fake.takeRequest("switch_session");
+      // Pi rebinds the extensions, which set their statuses before the switch response.
+      yield* emitStatus(fake, "mode", "forked");
+      yield* waitForStatuses(statuses, (current) => current[target]?.[0] === "mode=forked");
+      yield* fake.resolveDeferredLifecycle;
+      yield* Fiber.join(forked);
+
+      assert.deepStrictEqual(statusMap(yield* store.snapshot), { [target]: ["mode=forked"] });
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerTest, ContributionStatusStore.layer))),
+  );
+
+  it.effect("drops statuses the old session queued before a switch the new one never resets", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const gate = yield* makeGatedStatusStore();
+      const statuses = yield* gate.store.subscribe;
+      const { runtime } = yield* openRuntime(fake).pipe(gate.provide);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* emitStatus(fake, "legacy", "old");
+      yield* waitForStatuses(statuses, (current) => current[THREAD_ID]?.[0] === "legacy=old");
+
+      // Hold the event pump so the stale update below queues behind it.
+      yield* gate.holdPump(fake);
+      yield* emitStatus(fake, "legacy", "stale");
+      // Responses resolve in stdout order, so once this answer arrives the stale update is queued.
+      yield* runtime.readThreadSnapshot({ providerThread });
+
+      fake.deferNextLifecycle("switch_session");
+      const resumed = yield* runtime.resumeThread({ providerThread }).pipe(Effect.forkChild);
+      yield* fake.takeRequest("switch_session");
+      yield* emitStatus(fake, "mode", "new");
+      yield* fake.resolveDeferredLifecycle;
+      yield* Fiber.join(resumed);
+      yield* gate.releasePump;
+
+      // "mode=new" is the last status event, so the first snapshot showing it is final.
+      const settled = yield* waitForStatuses(statuses, (current) =>
+        (current[THREAD_ID] ?? []).includes("mode=new"),
+      );
+      assert.deepStrictEqual(settled, { [THREAD_ID]: ["mode=new"] });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps a vetoed switch's later statuses off every thread until one registers", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const gate = yield* makeGatedStatusStore();
+      const statuses = yield* gate.store.subscribe;
+      const { runtime } = yield* openRuntime(fake).pipe(gate.provide);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* emitStatus(fake, "legacy", "old");
+      yield* waitForStatuses(statuses, (current) => current[THREAD_ID]?.[0] === "legacy=old");
+
+      fake.vetoNextSwitch();
+      yield* runtime.resumeThread({ providerThread }).pipe(Effect.flip);
+      // Pi stays on a session no thread is bound to; its updates go nowhere.
+      yield* emitStatus(fake, "orphan", "dropped");
+      yield* gate.holdPump(fake);
+      yield* gate.releasePump;
+
+      yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* emitStatus(fake, "mode", "fresh");
+      const settled = yield* waitForStatuses(statuses, (current) =>
+        (current[THREAD_ID] ?? []).includes("mode=fresh"),
+      );
+      assert.deepStrictEqual(settled, { [THREAD_ID]: ["mode=fresh"] });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    { failure: "a rejected get_state", sessionFile: true },
+    { failure: "a missing sessionFile", sessionFile: false },
+  ])("keeps statuses off the thread after a rollback fork with $failure", ({ sessionFile }) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const gate = yield* makeGatedStatusStore();
+      const statuses = yield* gate.store.subscribe;
+      const { runtime } = yield* openRuntime(fake).pipe(gate.provide);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* emitStatus(fake, "legacy", "old");
+      yield* waitForStatuses(statuses, (current) => current[THREAD_ID]?.[0] === "legacy=old");
+
+      if (sessionFile) fake.failNextState();
+      else fake.queueState({ sessionFile: undefined });
+      const turn: OrchestrationV2ProviderTurn = {
+        id: ProviderTurnId.make("turn-1"),
+        providerThreadId: providerThread.id,
+        nodeId: NodeId.make("node-1"),
+        runAttemptId: null,
+        nativeTurnRef: { driver: PI_PROVIDER, nativeId: "u1", strength: "strong" },
+        ordinal: 1,
+        status: "completed",
+        startedAt: null,
+        completedAt: null,
+      };
+      const error = yield* runtime
+        .rollbackThread({
+          providerThread,
+          providerThreadTurns: [turn],
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("checkpoint-pi-rollback"),
+            appRunOrdinal: 0,
+          },
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(error._tag, "ProviderAdapterRollbackThreadError");
+      // The forked session's updates go nowhere until a thread registers.
+      yield* emitStatus(fake, "orphan", "after-failed-rollback");
+      yield* gate.holdPump(fake);
+      yield* gate.releasePump;
+      assert.deepStrictEqual(statusMap(yield* gate.store.snapshot), {});
+
+      yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* emitStatus(fake, "mode", "fresh");
+      const settled = yield* waitForStatuses(statuses, (current) =>
+        (current[THREAD_ID] ?? []).includes("mode=fresh"),
+      );
+      assert.deepStrictEqual(settled, { [THREAD_ID]: ["mode=fresh"] });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("puts back the session's statuses when an extension cancels a rollback", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const store = yield* ContributionStatusStore.ContributionStatusStore;
+      const statuses = yield* store.subscribe;
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* emitStatus(fake, "mode", "build");
+      yield* emitStatus(fake, "plan", "on");
+      yield* waitForStatuses(statuses, (current) => current[THREAD_ID]?.length === 2);
+
+      fake.vetoNextFork();
+      fake.deferNextLifecycle("fork");
+      const turn: OrchestrationV2ProviderTurn = {
+        id: ProviderTurnId.make("turn-1"),
+        providerThreadId: providerThread.id,
+        nodeId: NodeId.make("node-1"),
+        runAttemptId: null,
+        nativeTurnRef: { driver: PI_PROVIDER, nativeId: "u1", strength: "strong" },
+        ordinal: 1,
+        status: "completed",
+        startedAt: null,
+        completedAt: null,
+      };
+      const rollback = yield* runtime
+        .rollbackThread({
+          providerThread,
+          providerThreadTurns: [turn],
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("checkpoint-pi-rollback"),
+            appRunOrdinal: 0,
+          },
+        })
+        .pipe(Effect.flip, Effect.forkChild);
+      yield* fake.takeRequest("fork");
+      // The session Pi stays on keeps writing while its hook decides.
+      yield* emitStatus(fake, "plan", "off");
+      yield* fake.resolveDeferredLifecycle;
+      const error = yield* Fiber.join(rollback);
+      assert.strictEqual(error._tag, "ProviderAdapterRollbackThreadError");
+      yield* emitStatus(fake, "zz", "receipt");
+
+      // "zz" is the last status event, so the first snapshot showing it is final.
+      const settled = yield* waitForStatuses(statuses, (current) =>
+        (current[THREAD_ID] ?? []).includes("zz=receipt"),
+      );
+      assert.deepStrictEqual(settled, { [THREAD_ID]: ["mode=build", "plan=off", "zz=receipt"] });
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerTest, ContributionStatusStore.layer))),
+  );
+
+  it.effect("puts back the session's statuses when Pi refuses a rollback fork", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const store = yield* ContributionStatusStore.ContributionStatusStore;
+      const statuses = yield* store.subscribe;
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* emitStatus(fake, "mode", "build");
+      yield* emitStatus(fake, "plan", "on");
+      yield* waitForStatuses(statuses, (current) => current[THREAD_ID]?.length === 2);
+
+      fake.rejectNextFork();
+      fake.deferNextLifecycle("fork");
+      const turn: OrchestrationV2ProviderTurn = {
+        id: ProviderTurnId.make("turn-1"),
+        providerThreadId: providerThread.id,
+        nodeId: NodeId.make("node-1"),
+        runAttemptId: null,
+        nativeTurnRef: { driver: PI_PROVIDER, nativeId: "u1", strength: "strong" },
+        ordinal: 1,
+        status: "completed",
+        startedAt: null,
+        completedAt: null,
+      };
+      const rollback = yield* runtime
+        .rollbackThread({
+          providerThread,
+          providerThreadTurns: [turn],
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("checkpoint-pi-rollback"),
+            appRunOrdinal: 0,
+          },
+        })
+        .pipe(Effect.flip, Effect.forkChild);
+      yield* fake.takeRequest("fork");
+      // The session Pi stays on keeps writing while its hook decides.
+      yield* emitStatus(fake, "plan", "off");
+      yield* fake.resolveDeferredLifecycle;
+      const error = yield* Fiber.join(rollback);
+      assert.strictEqual(error._tag, "ProviderAdapterRollbackThreadError");
+      yield* emitStatus(fake, "zz", "receipt");
+
+      // "zz" is the last status event, so the first snapshot showing it is final.
+      const settled = yield* waitForStatuses(statuses, (current) =>
+        (current[THREAD_ID] ?? []).includes("zz=receipt"),
+      );
+      assert.deepStrictEqual(settled, { [THREAD_ID]: ["mode=build", "plan=off", "zz=receipt"] });
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerTest, ContributionStatusStore.layer))),
+  );
+
+  it.effect("restores only the statuses the store held when an extension cancels a rollback", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const store = yield* ContributionStatusStore.ContributionStatusStore;
+      const statuses = yield* store.subscribe;
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      // The source holds at most eight items, so k9 is rejected; clearing k1 frees a slot.
+      for (let index = 1; index <= 9; index++) yield* emitStatus(fake, `k${index}`, `v${index}`);
+      yield* emitStatus(fake, "k1");
+      const before = yield* waitForStatuses(
+        statuses,
+        (current) => current[THREAD_ID]?.length === 7 && !current[THREAD_ID].includes("k1=v1"),
+      );
+
+      assert.deepStrictEqual(before, {
+        [THREAD_ID]: ["k2=v2", "k3=v3", "k4=v4", "k5=v5", "k6=v6", "k7=v7", "k8=v8"],
+      });
+
+      fake.vetoNextFork();
+      const error = yield* rollbackToThreadStart(runtime, providerThread).pipe(Effect.flip);
+      assert.strictEqual(error._tag, "ProviderAdapterRollbackThreadError");
+      yield* emitStatus(fake, "k8", "receipt");
+
+      // "k8=receipt" is the last status event, so the first snapshot showing it is final.
+      const settled = yield* waitForStatuses(statuses, (current) =>
+        (current[THREAD_ID] ?? []).includes("k8=receipt"),
+      );
+      assert.deepStrictEqual(settled, {
+        [THREAD_ID]: ["k2=v2", "k3=v3", "k4=v4", "k5=v5", "k6=v6", "k7=v7", "k8=receipt"],
+      });
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerTest, ContributionStatusStore.layer))),
+  );
+
+  it.effect("drops a successful rollback's kept statuses and restores stored text", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const store = yield* ContributionStatusStore.ContributionStatusStore;
+      const statuses = yield* store.subscribe;
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* emitStatus(fake, "mode", "before");
+      yield* waitForStatuses(statuses, (current) => current[THREAD_ID]?.[0] === "mode=before");
+
+      // A successful fork clears the session's statuses and keeps nothing for later.
+      yield* rollbackToThreadStart(runtime, providerThread);
+      for (let index = 0; index < 50; index++) {
+        yield* emitStatus(fake, `churn${index}`, "on");
+        yield* emitStatus(fake, `churn${index}`);
+      }
+      const longText = `a\nb ${"x".repeat(200)}`;
+      yield* emitStatus(fake, "mode", longText);
+      const stored = `a b ${"x".repeat(75)}…`;
+      yield* waitForStatuses(statuses, (current) => current[THREAD_ID]?.[0] === `mode=${stored}`);
+
+      fake.vetoNextFork();
+      yield* rollbackToThreadStart(runtime, providerThread).pipe(Effect.flip);
+      yield* emitStatus(fake, "zz", "receipt");
+
+      // "zz" is the last status event, so the first snapshot showing it is final.
+      const settled = yield* waitForStatuses(statuses, (current) =>
+        (current[THREAD_ID] ?? []).includes("zz=receipt"),
+      );
+      assert.deepStrictEqual(settled, { [THREAD_ID]: [`mode=${stored}`, "zz=receipt"] });
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerTest, ContributionStatusStore.layer))),
+  );
+
+  // Known residual, not a fix: Pi runs the old session's session_shutdown
+  // handlers after it reads switch_session and reports no rebind on stdout, so
+  // those writes are indistinguishable from the new session's and persist.
+  // Flip this test if Pi ever marks the native-session boundary.
+  it.effect("keeps an old session's shutdown status written after the switch marker", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const store = yield* ContributionStatusStore.ContributionStatusStore;
+      const statuses = yield* store.subscribe;
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+
+      fake.deferNextLifecycle("switch_session");
+      const resumed = yield* runtime.resumeThread({ providerThread }).pipe(Effect.forkChild);
+      yield* fake.takeRequest("switch_session");
+      yield* emitStatus(fake, "legacy", "old-shutdown-write");
+      yield* emitStatus(fake, "mode", "new-startup");
+      yield* fake.resolveDeferredLifecycle;
+      yield* Fiber.join(resumed);
+
+      const settled = yield* waitForStatuses(statuses, (current) =>
+        (current[THREAD_ID] ?? []).includes("mode=new-startup"),
+      );
+      assert.deepStrictEqual(settled, {
+        [THREAD_ID]: ["legacy=old-shutdown-write", "mode=new-startup"],
+      });
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerTest, ContributionStatusStore.layer))),
   );
 
   it.effect("rejects a resume while a turn is active", () =>

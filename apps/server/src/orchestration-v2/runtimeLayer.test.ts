@@ -4515,6 +4515,109 @@ it.layer(layerSharedApplicationDataPlaneTest)("pending provider interruption", (
   );
 });
 
+it.layer(layerSharedApplicationDataPlaneTest)("plugin context interruption", (it) => {
+  it.effect("closes context a plugin is still adding when the run is interrupted", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectId = ProjectId.make("runtime-layer-plugin-context-project");
+      const threadId = ThreadId.make("runtime-layer-plugin-context-thread");
+
+      yield* projects.create({
+        commandId: CommandId.make("runtime-layer-plugin-context-project-create"),
+        projectId,
+        title: "Plugin context project",
+        workspaceRoot: "/tmp/runtime-layer-plugin-context-project",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-plugin-context-create"),
+        threadId,
+        projectId,
+        title: "Plugin context",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-plugin-context-message"),
+        threadId,
+        messageId: MessageId.make("runtime-layer-plugin-context-message"),
+        text: "Add context first.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const starting = yield* orchestrator.getThreadProjection(threadId);
+      const run = starting.runs[0];
+      assert.isDefined(run);
+      // What the provider-turn start effect commits before it calls the plugin.
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("runtime-layer-plugin-context-started"),
+            type: "turn-item.updated",
+            threadId,
+            runId: run.id,
+            ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make("runtime-layer-plugin-context-item"),
+              type: "dynamic_tool",
+              threadId,
+              runId: run.id,
+              nodeId: run.rootNodeId,
+              providerThreadId: run.providerThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 2,
+              status: "running",
+              title: "Adding context from Notes",
+              toolName: "plugin_context",
+              toolSource: { key: "plugin:test.notes", name: "Notes", kind: "integration" },
+              input: { plugin: { id: "test.notes" } },
+              startedAt: now,
+              completedAt: null,
+              updatedAt: now,
+            },
+          },
+        ],
+      });
+
+      yield* threadManagement.interruptThread({
+        projectId,
+        commandId: CommandId.make("runtime-layer-plugin-context-interrupt"),
+        threadId,
+        runId: run.id,
+        reason: "Stop",
+      });
+
+      const interrupted = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(interrupted.runs[0]?.status, "interrupted");
+      const item = interrupted.turnItems.find(
+        (candidate) => candidate.id === "runtime-layer-plugin-context-item",
+      );
+      assert.equal(item?.status, "interrupted");
+      assert.equal(item?.title, "Context from Notes not added");
+      assert.deepEqual(item?.type === "dynamic_tool" ? item.output : undefined, {
+        reason: "The run was interrupted before the plugin answered.",
+      });
+    }),
+  );
+});
+
 it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
   it.effect("carries snooze state through the V2 shell projection", () =>
     Effect.gen(function* () {
