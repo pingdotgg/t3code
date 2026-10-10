@@ -3557,6 +3557,62 @@ it.effect("does not refresh pull requests for auxiliary or stale provider termin
   }),
 );
 
+it.effect("finalizes a planned workspace detach before the provider announces its first turn", () =>
+  Effect.gen(function* () {
+    const key = "workspace-detach-before-turn";
+    const { written, observed } = yield* captureRootRunTermination({
+      key,
+      knownProviderTurn: false,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.fail(
+          new ProviderAdapter.ProviderAdapterSessionDetached({
+            driver,
+            providerSessionId: ProviderSessionId.make(`session:${key}`),
+            threadId: ids.threadId,
+            reason: "workspace_changed",
+          }),
+        ),
+    });
+    assert.deepEqual(observed, ["run:interrupted", "pull-requests-refreshed"]);
+    assert.deepEqual(
+      written.map((item) => item.type),
+      ["run_interrupt_result"],
+    );
+    const interruption = written.find((item) => item.type === "run_interrupt_result");
+    assert.equal(interruption?.message, "Run interrupted because the workspace changed");
+  }),
+);
+
+it.effect.each(["thread", "session"] as const)(
+  "fails rather than treating another %s's planned detach as this run's interruption",
+  (mismatch) =>
+    Effect.gen(function* () {
+      const key = `workspace-detach-mismatched-${mismatch}`;
+      const { written, observed } = yield* captureRootRunTermination({
+        key,
+        knownProviderTurn: false,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: (ids) =>
+          Stream.fail(
+            new ProviderAdapter.ProviderAdapterSessionDetached({
+              driver,
+              providerSessionId: ProviderSessionId.make(
+                mismatch === "session" ? "session:other" : `session:${key}`,
+              ),
+              threadId: mismatch === "thread" ? ThreadId.make("thread:other") : ids.threadId,
+              reason: "workspace_changed",
+            }),
+          ),
+      });
+      assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+      assert.deepEqual(
+        written.map((item) => item.type),
+        ["error"],
+      );
+    }),
+);
+
 it.effect("refreshes pull requests after a provider stream exits with an error", () =>
   Effect.gen(function* () {
     const { written, observed } = yield* captureRootRunTermination({
@@ -3629,6 +3685,7 @@ function captureRootRunTermination(input: {
   readonly rejectTerminalWrite?: boolean;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly seedOpenSubagent?: boolean;
+  readonly knownProviderTurn?: boolean;
   readonly events?: (
     ids: BackgroundScenarioIds,
   ) => Stream.Stream<
@@ -3763,7 +3820,7 @@ function captureRootRunTermination(input: {
         } as OrchestrationV2Run,
         rootNode: {
           id: ids.rootNodeId,
-          providerTurnId: ids.rootProviderTurnId,
+          providerTurnId: input.knownProviderTurn === false ? null : ids.rootProviderTurnId,
         } as OrchestrationV2ExecutionNode,
         checkpointScope: {
           id: CheckpointScopeId.make(`checkpoint-scope:${input.key}`),
@@ -3774,7 +3831,7 @@ function captureRootRunTermination(input: {
         } as OrchestrationV2ProviderThread,
         attempt: {
           id: ids.attemptId,
-          providerTurnId: ids.rootProviderTurnId,
+          providerTurnId: input.knownProviderTurn === false ? null : ids.rootProviderTurnId,
         } as OrchestrationV2RunAttempt,
         attemptId: ids.attemptId,
         providerTurnOrdinal: 1,
