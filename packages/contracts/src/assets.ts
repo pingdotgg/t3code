@@ -17,8 +17,9 @@ export const AssetResource = Schema.Union([
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
   }),
   // One file served in place from anywhere the environment host can read:
-  // images, videos, HTML, and PDF. An absolute path may lie outside the
+  // images, videos, audio, HTML, PDF, and 3D models. An absolute path may lie outside the
   // workspace; a relative one resolves against the thread's workspace.
+  // Models can also load companion files below their directory.
   Schema.TaggedStruct("media-file", {
     threadId: ThreadId,
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
@@ -197,8 +198,8 @@ export class AssetPreviewTypeValidationError extends Schema.TaggedError<AssetPre
     // Draft resources serve absolute paths through the same host-media
     // validation as media files, so they share its message.
     return this.resource._tag === "media-file" || this.resource._tag === "draft-workspace-file"
-      ? "Only images, videos, audio, HTML, and PDF files can be previewed."
-      : "Only browser documents and images can be previewed.";
+      ? "Only images, videos, audio, HTML, PDF, and supported 3D models can be previewed."
+      : "Only browser documents, images, and supported 3D models can be previewed.";
   }
 }
 

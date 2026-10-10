@@ -5,15 +5,50 @@ import {
   decodeFilePreviewText,
   FILE_TEXT_PREVIEW_MAX_BYTES,
   hostPreviewMimeTypeFromExtension,
+  isWorkspace3DPreviewPath,
   isWorkspaceAudioPreviewPath,
   isWorkspaceBrowserPreviewPath,
   isWorkspaceImagePreviewPath,
   isWorkspacePreviewEntryPath,
   isWorkspaceVideoPreviewPath,
   mediaKindFromPath,
+  modelPreviewFormat,
 } from "./filePreview.ts";
 
 describe("workspace file previews", () => {
+  it.each([
+    [".FBX", "fbx", "application/octet-stream"],
+    [".GLB", "gltf", "model/gltf-binary"],
+    [".gltf", "gltf", "model/gltf+json"],
+    [".OBJ", "obj", "model/obj"],
+    [".stl", "stl", "model/stl"],
+    [".ply", "ply", "application/octet-stream"],
+  ])("recognizes models with extension %s", (extension, format, mime) => {
+    const path = `Models/car${extension}`;
+    expect(isWorkspace3DPreviewPath(path)).toBe(true);
+    expect(isWorkspacePreviewEntryPath(path)).toBe(true);
+    expect(modelPreviewFormat(path)).toBe(format);
+    expect(hostPreviewMimeTypeFromExtension(extension)).toBe(mime);
+    expect(modelPreviewFormat(`${path}.meta`)).toBeNull();
+  });
+
+  it.each(["material.mtl", "buffer.bin", "model.blend", "model.obj?download=1"])(
+    "keeps companion files and unsupported models out of the viewer: %s",
+    (path) => {
+      expect(modelPreviewFormat(path)).toBeNull();
+      expect(isWorkspacePreviewEntryPath(path)).toBe(false);
+      expect(hostPreviewMimeTypeFromExtension(path.slice(path.lastIndexOf(".")))).toBeNull();
+    },
+  );
+  it("serves FBX models without changing audio or document classification", () => {
+    expect(isWorkspace3DPreviewPath("Models/car.FBX")).toBe(true);
+    expect(isWorkspacePreviewEntryPath("Models/car.FBX")).toBe(true);
+    expect(isWorkspace3DPreviewPath("car.fbx.meta")).toBe(false);
+    expect(hostPreviewMimeTypeFromExtension(".FBX")).toBe("application/octet-stream");
+    expect(hostPreviewMimeTypeFromExtension(".html")).toBe("text/html");
+    expect(hostPreviewMimeTypeFromExtension(".wav")).toBe("audio/wav");
+  });
+
   it.each(["report.html", "report.HTM", "document#draft.pdf", "reports?old/document.pdf"])(
     "recognizes browser preview path %s",
     (path) => {

@@ -9,6 +9,7 @@ import {
 import { filePreviewDelimiter } from "@t3tools/shared/delimitedPreview";
 import { AuthFilesystemWriteScope } from "@t3tools/contracts";
 import {
+  isWorkspace3DPreviewPath,
   isWorkspaceAudioPreviewPath,
   isWorkspaceImagePreviewPath,
   isWorkspaceVideoPreviewPath,
@@ -40,7 +41,7 @@ import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { FolderTree, Globe2, WrapTextIcon } from "lucide-react";
 import { Code2, Eye, Table2 } from "lucide";
 import * as Schema from "effect/Schema";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
@@ -115,6 +116,10 @@ import {
   setProjectFileQueryData,
   useProjectFileQuery,
 } from "./projectFilesQueryState";
+
+const ModelPreview = lazy(() =>
+  import("./ModelPreview").then((module) => ({ default: module.ModelPreview })),
+);
 
 interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
@@ -376,6 +381,92 @@ function WorkspaceAudioPreview(props: {
   }
   if (url === null) return <FileSurfaceLoading />;
   return <AudioPreview src={url} name={props.name} onError={() => setFailedUrl(url)} />;
+}
+
+function WorkspaceModelPreview(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadRef: ScopedThreadRef;
+  readonly absolutePath: string;
+  readonly workspaceRoot: string;
+  readonly name: string;
+  readonly workspaceMutationId: string | null;
+}) {
+  const relativePath = mediaFileReference(props.absolutePath, props.workspaceRoot).relativePath;
+  const resource = useMemo(
+    () =>
+      relativePath !== undefined
+        ? { _tag: "draft-workspace-file" as const, cwd: props.workspaceRoot, path: relativePath }
+        : {
+            _tag: "media-file" as const,
+            threadId: props.threadRef.threadId,
+            path: props.absolutePath,
+          },
+    [relativePath, props.threadRef.threadId, props.absolutePath, props.workspaceRoot],
+  );
+  const assetUrl = useAssetUrlState(props.environmentId, resource);
+  const assetError = assetUrl._tag === "Failure" ? assetUrl.error : null;
+  useEffect(() => {
+    if (assetError !== null) console.error("Model preview asset request failed", assetError);
+  }, [assetError]);
+  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
+  useWorkspaceMutationRefresh({
+    mutationId: props.workspaceMutationId,
+    resourceKey: JSON.stringify([props.environmentId, resource]),
+    refresh: () => {
+      void refreshAssetUrl().catch(() => undefined);
+    },
+  });
+  const revisionSuffix =
+    props.workspaceMutationId === null
+      ? ""
+      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${encodeURIComponent(props.workspaceMutationId)}`;
+
+  if (assetUrl._tag === "Failure") {
+    return (
+      <div
+        role="alert"
+        className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-sm text-destructive"
+      >
+        <p>
+          Unable to load this model:{" "}
+          {assetUrl.error instanceof Error ? assetUrl.error.message : String(assetUrl.error)}
+        </p>
+        <button
+          type="button"
+          className="rounded-md border px-3 py-1.5 text-foreground hover:bg-muted"
+          onClick={() => {
+            void refreshAssetUrl().catch(() => undefined);
+          }}
+        >
+          Retry model preview
+        </button>
+      </div>
+    );
+  }
+  if (assetUrl._tag !== "Success") {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
+        <Spinner size="lg" />
+      </div>
+    );
+  }
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
+          <Spinner size="lg" />
+        </div>
+      }
+    >
+      <ModelPreview
+        src={`${assetUrl.url}${revisionSuffix}`}
+        name={props.name}
+        refresh={async () => {
+          await refreshAssetUrl();
+        }}
+      />
+    </Suspense>
+  );
 }
 
 function clampFileLine(contents: string, requestedLine: number): number {
@@ -1063,6 +1154,7 @@ export default function FilePreviewPanel({
   const isAudio = relativePath !== null && !isVideo && isWorkspaceAudioPreviewPath(relativePath);
   const isImage = relativePath !== null && !isVideo && isWorkspaceImagePreviewPath(relativePath);
   const isMedia = isImage || isVideo || isAudio;
+  const isModel = relativePath !== null && isWorkspace3DPreviewPath(relativePath);
   // PDFs have no text to show; HTML has, and can toggle between page and source.
   const isPdf = relativePath !== null && isPdfPreviewFile(relativePath);
   const isHtml = relativePath !== null && !isPdf && isBrowserPreviewFile(relativePath);
@@ -1172,7 +1264,7 @@ export default function FilePreviewPanel({
       // Media and PDFs never show their contents, so re-reading them on every
       // workspace mutation is waste. A folder named like one still re-reads, so
       // it notices when the path becomes a file.
-      (isDirectory || (!isMedia && !isPdf)) &&
+      (isDirectory || (!isMedia && !isModel && !isPdf)) &&
       !selectedFilePending,
     mutationId: workspaceMutationId,
     refresh: file.refresh,
@@ -1334,6 +1426,7 @@ export default function FilePreviewPanel({
       {previewPath &&
       attachment === undefined &&
       !isMedia &&
+      !isModel &&
       !renderBrowserFile &&
       file.data?.truncated ? (
         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-2xs text-warning-foreground">
@@ -1384,6 +1477,16 @@ export default function FilePreviewPanel({
               absolutePath={absolutePath}
               workspaceRoot={cwd}
               alt={relativePath}
+              workspaceMutationId={workspaceMutationId}
+            />
+          ) : relativePath && isModel && absolutePath ? (
+            <WorkspaceModelPreview
+              key={`${environmentId}:${threadRef.threadId}:${absolutePath}`}
+              environmentId={environmentId}
+              threadRef={threadRef}
+              absolutePath={absolutePath}
+              workspaceRoot={cwd}
+              name={relativePath}
               workspaceMutationId={workspaceMutationId}
             />
           ) : relativePath && renderBrowserFile && absolutePath ? (
@@ -1495,7 +1598,7 @@ export default function FilePreviewPanel({
               selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
               workspaceMutationId={workspaceMutationId}
-              {...(previewPath && !isMedia && !isPdf
+              {...(previewPath && !isMedia && !isModel && !isPdf
                 ? { onRefreshSelectedFile: file.refresh }
                 : {})}
             />

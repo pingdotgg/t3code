@@ -23,7 +23,7 @@ import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { request } from "../rpc/client.ts";
 import type { ProjectFaviconCache, ProjectFaviconTarget } from "../projectFaviconCache.ts";
-import { createEnvironmentQueryAtomFamily } from "./runtime.ts";
+import { createEnvironmentQueryAtomFamily, squashAtomCommandFailure } from "./runtime.ts";
 
 const ASSET_URL_REFRESH_INTERVAL_MS = 30 * 60_000;
 const ASSET_URL_STALE_TIME_MS = 5 * 60_000;
@@ -69,7 +69,7 @@ export const EMPTY_ASSET_URL_ATOM = Atom.make(AsyncResult.initial<never, never>(
 
 export type AssetUrlState =
   | { readonly _tag: "Loading" }
-  | { readonly _tag: "Failure" }
+  | { readonly _tag: "Failure"; readonly error: unknown }
   | {
       readonly _tag: "Success";
       readonly url: string;
@@ -85,10 +85,11 @@ export function assetUrlStateFromResult(
   result: AsyncResult.AsyncResult<AssetCreateUrlResult, unknown>,
   httpBaseUrl: string | null,
 ): AssetUrlState {
-  if (result._tag === "Failure") return { _tag: "Failure" };
+  if (result._tag === "Failure")
+    return { _tag: "Failure", error: squashAtomCommandFailure(result) };
   if (httpBaseUrl === null || result._tag !== "Success") return { _tag: "Loading" };
   const url = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
-  if (url === null) return { _tag: "Failure" };
+  if (url === null) return { _tag: "Failure", error: new Error("The asset URL is invalid.") };
   return {
     _tag: "Success",
     url,

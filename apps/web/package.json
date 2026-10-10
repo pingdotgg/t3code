@@ -69,6 +69,7 @@
     "react-markdown": "^10.1.0",
     "remark-gfm": "catalog:",
     "tailwind-merge": "^3.4.0",
+    "three": "^0.186.1",
     "unbash": "^5.0.0",
     "zustand": "^5.0.11"
   },
@@ -85,6 +86,7 @@
     "@types/react": "~19.3.0",
     "@types/react-dom": "~19.2.3",
     "@types/react-test-renderer": "19.1.0",
+    "@types/three": "^0.186.0",
     "@vercel/config": "^0.3.0",
     "@vitejs/plugin-react": "^6.0.0",
     "babel-plugin-react-compiler": "1.0.0",

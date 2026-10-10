@@ -94,6 +94,36 @@ export function decodeFilePreviewText(bytes: Uint8Array, truncated = false) {
 
 export const WORKSPACE_BROWSER_PREVIEW_EXTENSIONS = [".htm", ".html", ".pdf"] as const;
 
+export const WORKSPACE_3D_PREVIEW_EXTENSIONS = [
+  ".fbx",
+  ".glb",
+  ".gltf",
+  ".obj",
+  ".stl",
+  ".ply",
+] as const;
+
+export type ModelPreviewFormat = "fbx" | "gltf" | "obj" | "stl" | "ply";
+
+export function modelPreviewFormat(path: string): ModelPreviewFormat | null {
+  const extension = path.slice(path.lastIndexOf(".")).toLowerCase();
+  switch (extension) {
+    case ".fbx":
+      return "fbx";
+    case ".glb":
+    case ".gltf":
+      return "gltf";
+    case ".obj":
+      return "obj";
+    case ".stl":
+      return "stl";
+    case ".ply":
+      return "ply";
+    default:
+      return null;
+  }
+}
+
 export const WORKSPACE_IMAGE_PREVIEW_EXTENSIONS = [
   ".avif",
   ".gif",
@@ -116,10 +146,16 @@ const IMAGE_MIME_TYPE_BY_EXTENSION = new Map([
   [".webp", "image/webp"],
 ]);
 
-const BROWSER_MIME_TYPE_BY_EXTENSION = new Map([
+const HOST_PREVIEW_MIME_TYPE_BY_EXTENSION = new Map([
   [".htm", "text/html"],
   [".html", "text/html"],
   [".pdf", "application/pdf"],
+  [".fbx", "application/octet-stream"],
+  [".glb", "model/gltf-binary"],
+  [".gltf", "model/gltf+json"],
+  [".obj", "model/obj"],
+  [".stl", "model/stl"],
+  [".ply", "application/octet-stream"],
 ]);
 
 const AUDIO_MIME_TYPE_BY_EXTENSION = new Map([
@@ -149,13 +185,13 @@ export function mediaMimeTypeFromExtension(extension: string): string | null {
   );
 }
 
-/** Files the server serves in place from anywhere on its host: media, audio and browser documents. */
+/** Files served from anywhere on the host: media, audio, documents, and 3D models. */
 export function hostPreviewMimeTypeFromExtension(extension: string): string | null {
   if (!/^\.[a-z0-9]+$/i.test(extension)) return null;
   return (
     mediaMimeTypeFromExtension(extension) ??
     audioMimeTypeFromExtension(extension) ??
-    BROWSER_MIME_TYPE_BY_EXTENSION.get(extension.toLowerCase()) ??
+    HOST_PREVIEW_MIME_TYPE_BY_EXTENSION.get(extension.toLowerCase()) ??
     null
   );
 }
@@ -209,11 +245,19 @@ export function isWorkspaceVideoPreviewPath(path: string): boolean {
   return videoMimeType({ name: path, mimeType: "" }) !== null;
 }
 
-export function isWorkspaceAudioPreviewPath(path: string): boolean {
-  const extensionIndex = path.lastIndexOf(".");
-  return extensionIndex >= 0 && audioMimeTypeFromExtension(path.slice(extensionIndex)) !== null;
+export function isWorkspace3DPreviewPath(path: string): boolean {
+  return modelPreviewFormat(path) !== null;
 }
 
 export function isWorkspacePreviewEntryPath(path: string): boolean {
-  return isWorkspaceBrowserPreviewPath(path) || isWorkspaceImagePreviewPath(path);
+  return (
+    isWorkspaceBrowserPreviewPath(path) ||
+    isWorkspaceImagePreviewPath(path) ||
+    isWorkspace3DPreviewPath(path)
+  );
+}
+
+export function isWorkspaceAudioPreviewPath(path: string): boolean {
+  const extensionIndex = path.lastIndexOf(".");
+  return extensionIndex >= 0 && audioMimeTypeFromExtension(path.slice(extensionIndex)) !== null;
 }

@@ -20,8 +20,10 @@ import {
 import {
   audioMimeTypeFromExtension,
   hostPreviewMimeTypeFromExtension,
+  isWorkspace3DPreviewPath,
   isWorkspaceImagePreviewPath,
   isWorkspacePreviewEntryPath,
+  WORKSPACE_3D_PREVIEW_EXTENSIONS,
   WORKSPACE_BROWSER_PREVIEW_EXTENSIONS,
   WORKSPACE_IMAGE_PREVIEW_EXTENSIONS,
 } from "@t3tools/shared/filePreview";
@@ -83,6 +85,7 @@ const INLINE_PREVIEW_MIME_TYPES: Record<string, string> = {
 const inlinePreviewMimeTypeForExtension = (extension: string) =>
   INLINE_PREVIEW_MIME_TYPES[extension] ?? audioMimeTypeFromExtension(`.${extension}`) ?? undefined;
 const PREVIEW_ASSET_EXTENSIONS = new Set([
+  ...WORKSPACE_3D_PREVIEW_EXTENSIONS,
   ...WORKSPACE_BROWSER_PREVIEW_EXTENSIONS,
   ...WORKSPACE_IMAGE_PREVIEW_EXTENSIONS,
   ".css",
@@ -100,6 +103,7 @@ const AssetClaimsSchema = Schema.Union([
     kind: Schema.Literal("workspace-file"),
     workspaceRoot: Schema.String,
     baseRelativePath: Schema.String,
+    model: Schema.optionalKey(Schema.Boolean),
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -359,6 +363,14 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
     if (hostPreviewMimeTypeFromExtension(path.extname(canonicalFile)) === null) {
       return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
     }
+    if (isWorkspace3DPreviewPath(canonicalFile)) {
+      return yield* finalizeWorkspaceFileAsset({
+        workspaceRoot: path.dirname(canonicalFile),
+        requestedPath: path.basename(canonicalFile),
+        resource: input.resource,
+        expiresAt: input.expiresAt,
+      });
+    }
     const wantsDimensions = HEADER_IMAGE_EXTENSIONS.has(path.extname(canonicalFile).toLowerCase());
     const opened = yield* openMediaFile(canonicalFile).pipe(
       Effect.flatMap((file) =>
@@ -470,6 +482,7 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
             kind: "workspace-file" as const,
             workspaceRoot: canonicalWorkspaceRoot,
             baseRelativePath: path.dirname(resolved.relativePath),
+            ...(isWorkspace3DPreviewPath(resolved.relativePath) ? { model: true } : {}),
             expiresAt: input.expiresAt,
           },
       fileName: path.basename(resolved.relativePath),
@@ -950,15 +963,21 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     decodedPath.length === 0 ||
     decodedPath.includes("\0") ||
     segments.some((segment) => segment === "." || segment === ".." || segment.startsWith(".")) ||
-    !PREVIEW_ASSET_EXTENSIONS.has(path.extname(decodedPath).toLowerCase())
+    !(
+      PREVIEW_ASSET_EXTENSIONS.has(path.extname(decodedPath).toLowerCase()) ||
+      (claims.model === true && [".bin", ".mtl"].includes(path.extname(decodedPath).toLowerCase()))
+    )
   ) {
     return null;
   }
   const joinedRelativePath =
     claims.baseRelativePath === "." ? decodedPath : path.join(claims.baseRelativePath, decodedPath);
   const workspaceFile = yield* resolveCanonicalWorkspaceFileForRequest({
-    workspaceRoot: claims.workspaceRoot,
-    relativePath: joinedRelativePath,
+    workspaceRoot:
+      claims.model === true
+        ? path.resolve(claims.workspaceRoot, claims.baseRelativePath)
+        : claims.workspaceRoot,
+    relativePath: claims.model === true ? decodedPath : joinedRelativePath,
   });
   return workspaceFile ? ({ kind: "file", path: workspaceFile } satisfies ResolvedAsset) : null;
 });

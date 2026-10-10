@@ -159,6 +159,8 @@ const allowedHosts = [".ts.net", ...configuredAllowedHosts];
 export default defineConfig(() => {
   return {
     assetsInclude: ["**/*.wasm"],
+    // Model workers import only the loader needed for the selected format.
+    worker: { format: "es" },
     plugins: [
       devCompressionPlugin(),
       thirdPartyLicensesPlugin({

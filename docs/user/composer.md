@@ -316,3 +316,14 @@ including filenames or folders containing `#` or `?`.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens a compatible installed file viewer.
+
+## 3D model files
+
+On web and desktop, open an FBX, GLB, glTF, OBJ, STL, or PLY file from the workspace
+or an agent's file link to preview it in 3D. Previews show a static model; PLY files
+without faces show as point clouds. 3D previews are not available on mobile.
+
+Keep companion buffers, material libraries, and textures in the model's directory
+or its subfolders, using relative paths. Missing textures or OBJ material libraries
+leave the model visible with the available materials. glTF models using Draco,
+Meshopt, or KTX2 compression are not supported yet.

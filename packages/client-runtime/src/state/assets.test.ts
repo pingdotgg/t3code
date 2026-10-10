@@ -33,9 +33,21 @@ import { createProjectFaviconCache } from "../projectFaviconCache.ts";
 import {
   createAssetEnvironmentAtoms,
   createProjectFaviconUrlAtomFamily,
+  assetUrlStateFromResult,
   InvalidAssetCollectionKeyError,
   parseAssetCollectionKey,
 } from "./assets.ts";
+
+describe("asset URL errors", () => {
+  it("preserves the server failure for preview diagnostics", () => {
+    const error = new AssetWorkspaceContextNotFoundError({
+      resource: { _tag: "workspace-file", threadId: ThreadId.make("draft"), path: "model.fbx" },
+    });
+    expect(
+      assetUrlStateFromResult(AsyncResult.failure(Cause.fail(error)), "https://host.test"),
+    ).toEqual({ _tag: "Failure", error });
+  });
+});
 
 describe("asset collection keys", () => {
   it("preserves malformed JSON and its native cause", () => {
