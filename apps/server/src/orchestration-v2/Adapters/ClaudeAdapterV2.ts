@@ -2772,7 +2772,7 @@ function describeClaudeUsageLimit(
       : undefined;
   const reset = `${label ? `${label} ` : ""}limit resets${wait ? ` in ${wait}` : ""}`;
   return stopped
-    ? `Claude usage limit reached. Extra usage is off, so this turn stopped. The ${reset}.`
+    ? `Claude usage limit reached. Extra usage is off, so this turn is stopping. The ${reset}.`
     : `Claude usage limit reached. This turn is paused until the ${reset}.`;
 }
 
