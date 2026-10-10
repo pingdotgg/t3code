@@ -269,6 +269,7 @@ import { closePreviewSession } from "./preview/closePreviewSession";
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { usePreviewSession } from "./preview/usePreviewSession";
 import { subscribePreviewAction } from "./preview/previewActionBus";
+import { onToggleRightPanelMaximized } from "../rightPanelActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 
 import {
@@ -6069,6 +6070,10 @@ export default function ChatView(props: ChatViewProps) {
       threadKey === routeThreadKey ? null : routeThreadKey,
     );
   }, [canMaximizeRightPanel, routeThreadKey]);
+  useEffect(
+    () => onToggleRightPanelMaximized(toggleRightPanelMaximized),
+    [toggleRightPanelMaximized],
+  );
   const cleanupRightPanelSurfaces = useCallback(
     (surfaces: readonly RightPanelSurface[]) => {
       if (!activeThreadRef) return;
@@ -8128,6 +8133,13 @@ export default function ChatView(props: ChatViewProps) {
         event.preventDefault();
         event.stopPropagation();
         toggleThreadPanel();
+        return;
+      }
+
+      if (command === "rightPanel.toggleMaximized") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) toggleRightPanelMaximized();
         return;
       }
 
@@ -11268,6 +11280,7 @@ export default function ChatView(props: ChatViewProps) {
         >
           <RightPanelMaximizeControl
             maximized={rightPanelMaximized}
+            shortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggleMaximized")}
             onToggle={toggleRightPanelMaximized}
           />
         </span>

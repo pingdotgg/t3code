@@ -133,9 +133,11 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
 
 export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl({
   maximized,
+  shortcutLabel,
   onToggle,
 }: {
   maximized: boolean;
+  shortcutLabel: string | null;
   onToggle: () => void;
 }) {
   const label = maximized ? "Restore panel size" : "Maximize panel";
@@ -155,7 +157,10 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
           </Toggle>
         }
       />
-      <TooltipPopup side="bottom">{label}</TooltipPopup>
+      <TooltipPopup side="bottom">
+        {label}
+        {shortcutLabel ? ` (${shortcutLabel})` : ""}
+      </TooltipPopup>
     </Tooltip>
   );
 });
