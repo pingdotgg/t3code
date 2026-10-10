@@ -175,10 +175,9 @@ const make = Effect.gen(function* () {
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );
-    if (result.cacheChanged) {
-      cacheDirty = true;
-      yield* schedulePersist;
-    }
+    // Also after an unchanged scan, so a failed write is retried.
+    if (result.cacheChanged) cacheDirty = true;
+    if (cacheDirty) yield* schedulePersist;
     const scanned: ProviderUsageScan[] = [];
     for (const dir of conversationDirs) {
       const exists = yield* fileSystem

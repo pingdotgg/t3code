@@ -622,6 +622,44 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("retries a failed Antigravity cache write on the next scan", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const conversations = NodePath.join(home, "antigravity", "conversations");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(conversations, { recursive: true });
+        const db = new NodeSqlite.DatabaseSync(NodePath.join(conversations, "session-1.db"));
+        db.exec("CREATE TABLE gen_metadata (idx INTEGER, data BLOB)");
+        db.prepare("INSERT INTO gen_metadata VALUES (?, ?)").run(
+          0,
+          antigravityGeneration("r-1", 40),
+        );
+        db.close();
+      });
+      yield* Effect.gen(function* () {
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const cachePath = NodePath.join(stateDir, "usage-antigravity-cache-v1.json");
+        // A directory where the cache file goes makes the first write fail.
+        yield* Effect.promise(() => NodeFSP.mkdir(cachePath, { recursive: true }));
+        const service = yield* makeWithAntigravity;
+        yield* service.readSummary(WINDOW);
+        yield* service.awaitPersisted;
+        assert.isTrue((yield* Effect.promise(() => NodeFSP.stat(cachePath))).isDirectory());
+
+        // The history is unchanged, but the failed write is still owed.
+        yield* Effect.promise(() => NodeFSP.rm(cachePath, { recursive: true }));
+        yield* service.readSummary(WINDOW);
+        yield* service.awaitPersisted;
+        const saved = JSON.parse(
+          yield* Effect.promise(() => NodeFSP.readFile(cachePath, "utf8")),
+        ) as { files: Record<string, unknown> };
+        assert.strictEqual(Object.keys(saved.files).length, 1);
+      }).pipe(
+        Effect.provide(layerService({ prefix: "usage-service-antigravity-retry", home, settings })),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live("restores the Cursor account cache after a restart", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
