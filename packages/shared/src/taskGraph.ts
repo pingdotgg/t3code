@@ -352,7 +352,8 @@ export function readyTaskGraphNodes(nodes: Nodes, now: string): ReadonlyArray<Ta
 
 /** The graph status its nodes imply. A draft stays a draft until it is run. */
 export function deriveTaskGraphStatus(current: TaskGraphStatus, nodes: Nodes): TaskGraphStatus {
-  if (current === "draft") return "draft";
+  // Cancelling is final, even with failed nodes, so nothing continued later reopens the graph.
+  if (current === "draft" || current === "cancelled") return current;
   if (nodes.some((node) => !isTerminalTaskGraphNodeStatus(node.status))) return "running";
   if (nodes.some((node) => node.status === "failed")) return "failed";
   if (nodes.every((node) => node.status === "succeeded")) return "succeeded";
@@ -409,7 +410,8 @@ export function buildTaskGraphNodePrompt(
     `You are running node '${node.key}' of the task graph "${graph.title}". Other agents run the other nodes in their own worktrees.`,
   ];
   const [, ...toMerge] = dependencies;
-  if (toMerge.length > 0) {
+  // A project-folder node is read-only, so it never merges branches into the shared checkout.
+  if (toMerge.length > 0 && node.workspace !== "root") {
     const branches = toMerge.flatMap((dependency) =>
       dependency.branch === null ? [] : [`- ${dependency.branch} (from '${dependency.key}')`],
     );

@@ -46,10 +46,11 @@ export function useTaskGraphCommands(environmentId: EnvironmentId, graph: TaskGr
     if (busy || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
     setBusy(true);
     setError(null);
-    const message = failureMessage(await send());
+    const result = await send();
     setBusy(false);
-    setError(message);
-    return message === null;
+    // An interrupted command shows no message but still did not happen.
+    setError(failureMessage(result));
+    return result._tag === "Success";
   };
 
   /** Resolves true once the server accepted the edits. */
@@ -114,7 +115,7 @@ export function useNewTaskGraph(environmentId: EnvironmentId) {
     threadId: ThreadId,
     nodes: ReadonlyArray<TaskGraphNodeInput>,
     run: boolean,
-  ): Promise<{ readonly graphId: string } | { readonly error: string | null }> => {
+  ): Promise<{ readonly graphId: string } | { readonly error: string }> => {
     if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
       return { error: "You don't have permission to start task graphs here." };
     }
@@ -124,7 +125,7 @@ export function useNewTaskGraph(environmentId: EnvironmentId) {
     });
     return result._tag === "Success"
       ? { graphId: result.value.graph.id }
-      : { error: failureMessage(result) };
+      : { error: failureMessage(result) ?? "The request was interrupted. Try again." };
   };
   const start = async (threadId: ThreadId): Promise<string | null> => {
     const result = await send(threadId, [FIRST_TASK], false);

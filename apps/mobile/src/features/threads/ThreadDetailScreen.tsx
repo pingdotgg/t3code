@@ -567,6 +567,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     showWorkingControl ||
     queuedCount > 0 ||
     agentsSegment !== null ||
+    taskGraphSegment !== null ||
     devicePreviews.length > 0 ||
     browserTabs.tabs.length > 0 ||
     props.connectionStateLabel !== "connected" ||

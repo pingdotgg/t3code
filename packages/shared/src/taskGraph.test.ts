@@ -72,6 +72,17 @@ describe("scheduling", () => {
     expect(deriveTaskGraphStatus("running", done)).toBe("succeeded");
   });
 
+  it("keeps a cancelled graph cancelled even when a node failed", () => {
+    const ended = withStatus(diamond(), {
+      a: "succeeded",
+      b: "failed",
+      c: "cancelled",
+      d: "cancelled",
+    });
+    expect(deriveTaskGraphStatus("running", ended)).toBe("failed");
+    expect(deriveTaskGraphStatus("cancelled", ended)).toBe("cancelled");
+  });
+
   it("opens pull requests from the ends of the tree by default", () => {
     const nodes = diamond();
     expect(nodes.map((node) => taskGraphNodeOpensPullRequest(nodes, node))).toEqual([
@@ -154,6 +165,19 @@ describe("buildTaskGraphNodePrompt", () => {
     expect(prompt).not.toContain("- t3/b");
     expect(prompt).toContain("b done");
     expect(prompt).toContain("do d");
+  });
+
+  it("never asks a project-folder node to merge branches", () => {
+    const nodes = diamond().map((node) =>
+      node.key === "b" || node.key === "c"
+        ? { ...node, status: "succeeded" as const, branch: `t3/${node.key}` }
+        : node.key === "d"
+          ? { ...node, workspace: "root" as const }
+          : node,
+    );
+    const prompt = buildTaskGraphNodePrompt({ title: "Audit", nodes }, nodes[3]!);
+    expect(prompt).not.toContain("git merge");
+    expect(prompt).toContain("read-only");
   });
 });
 

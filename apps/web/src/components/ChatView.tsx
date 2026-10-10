@@ -10770,15 +10770,14 @@ export default function ChatView(props: ChatViewProps) {
         const failure = squashAtomCommandFailure(createResult);
         return failure instanceof Error ? failure.message : "Could not create the thread.";
       }
-      const error =
-        (await newTaskGraph.createAndRun(nextThreadId, nodes)) ??
-        ((await waitForServerThreadShell(scopeThreadRef(environmentId, nextThreadId)))
-          ? null
-          : "The new thread did not load.");
+      const error = await newTaskGraph.createAndRun(nextThreadId, nodes);
       if (error !== null) {
         await deleteThread({ environmentId, input: { threadId: nextThreadId } });
         return error;
       }
+      // The graph is running now, so its thread stays even if the shell is slow to arrive;
+      // waiting only keeps the route from opening before the thread is known.
+      await waitForServerThreadShell(scopeThreadRef(environmentId, nextThreadId));
       setDraftTaskGraphOpen(false);
       await navigate({
         to: "/$environmentId/$threadId",

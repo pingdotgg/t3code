@@ -8,7 +8,9 @@ import {
 import { type FormEvent, useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
-import { readPreparedConnection } from "~/state/session";
+import { isLoopbackHost } from "@t3tools/shared/preview";
+import * as Option from "effect/Option";
+import { environmentSession, readPreparedConnection } from "~/state/session";
 import type { EnvironmentPresentation } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
@@ -241,6 +243,19 @@ function ConnectedMachineRow({
     reportFailure: false,
   });
   const add = useAtomCommand(serverEnvironment.addTaskGraphPeer, { reportFailure: false });
+  const candidateUrl = Option.getOrNull(
+    useAtomValue(environmentSession.preparedConnectionValueAtom(candidate.environmentId)),
+  )?.httpBaseUrl;
+  const targetUrl = Option.getOrNull(
+    useAtomValue(environmentSession.preparedConnectionValueAtom(environmentId)),
+  )?.httpBaseUrl;
+  // The environment redeems the pairing at the address this app uses. A loopback address only
+  // works when this app also reaches the environment on loopback, so both run on this computer.
+  const unreachable =
+    candidateUrl !== undefined &&
+    targetUrl !== undefined &&
+    isLoopbackHost(new URL(candidateUrl).hostname) &&
+    !isLoopbackHost(new URL(targetUrl).hostname);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -251,7 +266,7 @@ function ConnectedMachineRow({
 
   const addMachine = async () => {
     const connection = readPreparedConnection(candidate.environmentId);
-    if (adding || connection === null) return;
+    if (adding || connection === null || unreachable) return;
     setAdding(true);
     setError(null);
     const grant = await issueGrant({
@@ -280,7 +295,7 @@ function ConnectedMachineRow({
         <Button
           size="sm"
           variant="outline"
-          disabled={adding || !canGrant}
+          disabled={adding || !canGrant || unreachable}
           onClick={() => void addMachine()}
         >
           {adding ? <Spinner size="sm" /> : null}
@@ -290,6 +305,11 @@ function ConnectedMachineRow({
       {!canGrant ? (
         <p className="text-xs text-muted-foreground">
           Your session on {candidate.label} cannot pair other machines.
+        </p>
+      ) : unreachable ? (
+        <p className="text-xs text-muted-foreground">
+          This app reaches {candidate.label} at a local address that {environmentLabel} cannot use.
+          Paste a pairing link from {candidate.label} with an address it can reach.
         </p>
       ) : null}
       {error ? <p className="text-xs text-destructive">{error}</p> : null}

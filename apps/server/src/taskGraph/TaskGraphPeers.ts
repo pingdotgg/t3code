@@ -95,6 +95,8 @@ export class TaskGraphPeers extends Context.Service<
     readonly candidates: (input: {
       readonly projectId: ProjectId;
       readonly maxNodesPerPeer: number;
+      /** Nodes already placed on each peer in this pass but not started there yet. */
+      readonly pending?: ReadonlyMap<string, number>;
     }) => Effect.Effect<ReadonlyArray<PeerCandidate>>;
     readonly startNode: (input: PeerNodeStart) => Effect.Effect<void, TaskGraphError>;
     /** Watches a node started before a restart. */
@@ -230,6 +232,8 @@ interface Tracked {
   readonly environmentId: EnvironmentId;
   readonly delivery: PeerDelivery;
   delivering: boolean;
+  /** True until the peer accepts the launch; until then a snapshot may not list the thread yet. */
+  launching: boolean;
 }
 
 const make = Effect.gen(function* () {
@@ -391,15 +395,45 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const changed: OrchestrationV2ThreadShell[] = [];
       switch (item.kind) {
-        case "snapshot":
+        case "snapshot": {
+          // An enrichment refresh only patches repository identity; it never replaces state.
+          if (item.resolvedRepositoryIdentityRoots !== undefined) {
+            for (const project of item.snapshot.projects) {
+              const known = state.projects.get(project.id);
+              if (known !== undefined && known.workspaceRoot === project.workspaceRoot) {
+                state.projects.set(project.id, {
+                  ...known,
+                  repositoryIdentity: project.repositoryIdentity,
+                });
+              }
+            }
+            break;
+          }
           state.projects.clear();
           state.threads.clear();
           for (const project of item.snapshot.projects) state.projects.set(project.id, project);
-          for (const thread of item.snapshot.threads) {
+          for (const thread of [...item.snapshot.threads, ...item.snapshot.archivedThreads]) {
             state.threads.set(thread.id, thread);
             changed.push(thread);
           }
+          // A tracked thread the full snapshot lacks was deleted, or never created before a
+          // restart; no removal event will come, so fail its node rather than wait forever.
+          for (const [threadId, entry] of tracked) {
+            if (
+              entry.environmentId !== environmentId ||
+              entry.launching ||
+              state.threads.has(threadId)
+            ) {
+              continue;
+            }
+            tracked.delete(threadId);
+            yield* Queue.offer(completions, {
+              threadId,
+              outcome: { type: "failed", error: "The node's thread is missing on the peer." },
+            });
+          }
           break;
+        }
         case "project.updated":
           state.projects.set(item.project.id, item.project);
           break;
@@ -521,16 +555,20 @@ const make = Effect.gen(function* () {
         repositoryGroupingKeyOf(project.repositoryIdentity) === key,
     );
 
-  const candidates: TaskGraphPeers["Service"]["candidates"] = ({ projectId, maxNodesPerPeer }) =>
+  const candidates: TaskGraphPeers["Service"]["candidates"] = ({
+    projectId,
+    maxNodesPerPeer,
+    pending,
+  }) =>
     Effect.gen(function* () {
       const key = yield* repositoryKeyOf(projectId);
       if (Option.isNone(key)) return [];
       const rows = yield* readRows.pipe(Effect.orElseSucceed(() => []));
       const usable = rows.flatMap((row) => {
         const state = live.get(row.environment_id);
-        const running = [...tracked.values()].filter(
-          (entry) => entry.environmentId === row.environment_id,
-        ).length;
+        const running =
+          [...tracked.values()].filter((entry) => entry.environmentId === row.environment_id)
+            .length + (pending?.get(row.environment_id) ?? 0);
         return state?.client != null &&
           row.weight > 0 &&
           running < maxNodesPerPeer &&
@@ -571,11 +609,13 @@ const make = Effect.gen(function* () {
       if (project === undefined) {
         return yield* peerError("The peer has no project for this repository.");
       }
-      tracked.set(input.threadId, {
+      const entry: Tracked = {
         environmentId: input.environmentId,
         delivery: input.delivery,
         delivering: false,
-      });
+        launching: true,
+      };
+      tracked.set(input.threadId, entry);
       yield* client[ORCHESTRATION_V2_WS_METHODS.launchThread]({
         commandId: CommandId.make(`task-graph-launch:${input.threadId}`),
         creationSource: "server",
@@ -591,11 +631,12 @@ const make = Effect.gen(function* () {
         Effect.tapError(() => Effect.sync(() => tracked.delete(input.threadId))),
         Effect.mapError((cause) => peerError("The peer could not start the node.", cause)),
       );
+      entry.launching = false;
     });
 
   const track: TaskGraphPeers["Service"]["track"] = ({ environmentId, threadId, delivery }) =>
     Effect.gen(function* () {
-      tracked.set(threadId, { environmentId, delivery, delivering: false });
+      tracked.set(threadId, { environmentId, delivery, delivering: false, launching: false });
       const thread = live.get(environmentId)?.threads.get(threadId);
       if (thread !== undefined) yield* finishTracked(environmentId, thread).pipe(Effect.forkDetach);
     });

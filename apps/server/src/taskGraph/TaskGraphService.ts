@@ -419,14 +419,40 @@ const make = Effect.gen(function* () {
       const opensPullRequest = taskGraphNodeOpensPullRequest(graph.nodes, node);
       // With peers paired, a dependent may run elsewhere and needs the branch on origin.
       const push = yield* peers.hasPeers;
-      const result = yield* git.runStackedAction({
-        actionId: `task-graph:${graph.id}:${node.key}:${node.threadId}`,
-        cwd: worktreePath,
-        action: opensPullRequest ? "commit_push_pr" : push ? "commit_push" : "commit",
-        ...(opensPullRequest ? { baseBranch: taskGraphPullRequestBase(graph, node) } : {}),
-        ...(node.threadId === null ? {} : { threadId: node.threadId }),
-        projectId: graph.projectId,
-      });
+      let failedPhase: string | null = null;
+      const delivered = yield* git
+        .runStackedAction(
+          {
+            actionId: `task-graph:${graph.id}:${node.key}:${node.threadId}`,
+            cwd: worktreePath,
+            action: opensPullRequest ? "commit_push_pr" : push ? "commit_push" : "commit",
+            ...(opensPullRequest ? { baseBranch: taskGraphPullRequestBase(graph, node) } : {}),
+            ...(node.threadId === null ? {} : { threadId: node.threadId }),
+            projectId: graph.projectId,
+          },
+          {
+            progressReporter: {
+              publish: (event) =>
+                Effect.sync(() => {
+                  if (event.kind === "action_failed") failedPhase = event.phase;
+                }),
+            },
+          },
+        )
+        .pipe(
+          // Only a failed PR step leaves the work committed and pushed for dependents;
+          // a commit or push failure fails the node.
+          Effect.map((result) => ({ result, prError: null })),
+          Effect.catch((error) =>
+            opensPullRequest && failedPhase === "pr"
+              ? Effect.succeed({ result: null, prError: error.message })
+              : Effect.fail(error),
+          ),
+        );
+      if (delivered.result === null) {
+        return { status: "failed", url: null, error: delivered.prError } as const;
+      }
+      const result = delivered.result;
       if (opensPullRequest && node.threadId !== null) {
         yield* linkCreatedPullRequest({
           threadId: node.threadId,
@@ -497,6 +523,7 @@ const make = Effect.gen(function* () {
         return;
       }
       if (run === undefined || run.status !== "completed") {
+        const completedAt = yield* nowIso;
         const status =
           run?.status === "cancelled" || run?.status === "interrupted" ? "cancelled" : "failed";
         yield* updateNode(graphId, key, (node, _graph) =>
@@ -508,6 +535,7 @@ const make = Effect.gen(function* () {
                   run === undefined
                     ? "The node's thread has no run."
                     : `The node's run ${run.status}.`,
+                completedAt,
               }
             : node,
         ).pipe(Effect.tap(() => advance));
@@ -540,25 +568,14 @@ const make = Effect.gen(function* () {
         current.status !== "delivering"
           ? current
           : Exit.isSuccess(delivered)
-            ? { ...current, status: "succeeded", pullRequestResult: delivered.value, completedAt }
-            : taskGraphNodeOpensPullRequest(stored.nodes, current)
-              ? {
-                  // The work itself is done; only the PR failed, so dependents still run.
-                  ...current,
-                  status: "succeeded",
-                  pullRequestResult: {
-                    status: "failed",
-                    url: null,
-                    error: errorMessage(delivered.cause),
-                  },
-                  completedAt,
-                }
-              : {
-                  ...current,
-                  status: "failed",
-                  error: `Could not commit the node's work: ${errorMessage(delivered.cause)}`,
-                  completedAt,
-                },
+            ? // A failed PR alone still succeeds: the work is committed and pushed for dependents.
+              { ...current, status: "succeeded", pullRequestResult: delivered.value, completedAt }
+            : {
+                ...current,
+                status: "failed",
+                error: `Could not commit the node's work: ${errorMessage(delivered.cause)}`,
+                completedAt,
+              },
       );
       if (
         finished.stored.nodes.find((candidate) => candidate.key === key)?.status === "succeeded"
@@ -625,6 +642,7 @@ const make = Effect.gen(function* () {
     node: TaskGraphNode,
     local: { readonly resources: HostResourcesSnapshot; readonly hasRoom: boolean },
     maxNodes: number,
+    pending: ReadonlyMap<string, number>,
   ): Effect.Effect<EnvironmentId | null> =>
     Effect.gen(function* () {
       // Continuing a worktree means running on the machine that has it.
@@ -640,6 +658,7 @@ const make = Effect.gen(function* () {
       const remote = yield* peers.candidates({
         projectId: graph.projectId,
         maxNodesPerPeer: maxNodes,
+        pending,
       });
       if (pinned !== null) {
         return remote.some((candidate) => candidate.environmentId === pinned) ? pinned : null;
@@ -763,6 +782,8 @@ const make = Effect.gen(function* () {
         const now = yield* nowIso;
         const nowMs = Date.parse(now);
         const localProviders = yield* providers.getProviders;
+        // Peers only count a node once it starts there, after this pass; count this pass's too.
+        const placedOnPeers = new Map<string, number>();
         for (const graph of graphs) {
           const settled = skipUnreachableTaskGraphNodes(graph.nodes, now);
           const ready = readyTaskGraphNodes(settled, now);
@@ -784,8 +805,12 @@ const make = Effect.gen(function* () {
               node,
               { resources: host, hasRoom: hostFree && active < taskGraphMaxConcurrentNodes },
               taskGraphMaxConcurrentNodes,
+              placedOnPeers,
             );
             if (environmentId === null) continue;
+            if (environmentId !== localEnvironmentId) {
+              placedOnPeers.set(environmentId, (placedOnPeers.get(environmentId) ?? 0) + 1);
+            }
             if (environmentId === localEnvironmentId) {
               // Starting into a used-up limit would only fail; wait for the reset instead.
               const instanceId = (node.modelSelection ?? graph.modelSelection)?.instanceId;
@@ -822,7 +847,10 @@ const make = Effect.gen(function* () {
           if (nodes.every((node, index) => node === graph.nodes[index])) continue;
           const stored = yield* writeGraph({ ...graph, nodes });
           if (stored.status !== "running") yield* reportFinished(stored).pipe(Effect.forkDetach);
-          for (const node of assigned.values()) started.push({ graph: stored, node });
+          // Nodes set waiting above have no thread yet; they launch on a later pass.
+          for (const node of assigned.values()) {
+            if (node.status === "running") started.push({ graph: stored, node });
+          }
         }
         return started;
       }),

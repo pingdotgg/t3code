@@ -433,7 +433,9 @@ function SelectionPanel(props: {
   );
 }
 
-const JOIN_AUTO = "auto";
+// Dependency choices carry a prefix, so no task key (keys are slugs) can equal the "any machine" value.
+const JOIN_AUTO = "any";
+const joinValue = (dependencyKey: string) => `dependency:${dependencyKey}`;
 
 /**
  * Where a task that merges branches from several machines brings them
@@ -449,11 +451,12 @@ function TaskJoinMachineField(props: {
   readonly onChoose: (dependencyKey: string | null) => void;
 }) {
   const id = useId();
-  const current =
-    props.node.workspace === "dependency" ? (props.node.dependsOn[0] ?? JOIN_AUTO) : JOIN_AUTO;
+  const continued =
+    props.node.workspace === "dependency" ? (props.node.dependsOn[0] ?? null) : null;
+  const current = continued === null ? JOIN_AUTO : joinValue(continued);
   const optionLabel = (option: TaskGraphJoinMachine) =>
     `${props.labels.machineLabel(option.machine)}, continuing ${option.dependency.title}`;
-  const chosen = props.options.find((option) => option.dependency.key === current);
+  const chosen = props.options.find((option) => option.dependency.key === continued);
   return (
     <div className="space-y-1.5">
       <Label htmlFor={`${id}-join`}>Bring branches together on</Label>
@@ -462,7 +465,9 @@ function TaskJoinMachineField(props: {
         disabled={props.disabled}
         onValueChange={(value) => {
           if (value === current) return;
-          props.onChoose(value === JOIN_AUTO ? null : value);
+          if (value === JOIN_AUTO) props.onChoose(null);
+          const option = props.options.find((entry) => joinValue(entry.dependency.key) === value);
+          if (option !== undefined) props.onChoose(option.dependency.key);
         }}
       >
         <SelectTrigger id={`${id}-join`} size="sm">
@@ -475,7 +480,7 @@ function TaskJoinMachineField(props: {
           {props.options.map((option) => (
             <SelectItem
               key={option.dependency.key}
-              value={option.dependency.key}
+              value={joinValue(option.dependency.key)}
               disabled={!option.available}
             >
               {optionLabel(option)}

@@ -55,6 +55,8 @@ interface Harness {
     launch: ThreadLaunch.ThreadLaunchInput,
     result: { readonly reply: string; readonly branch: string; readonly status?: string },
   ) => Effect.Effect<void>;
+  /** Makes the next git deliveries fail in `phase`, or succeed again with null. */
+  readonly failGitIn: (phase: "commit" | "push" | "pr" | null) => void;
 }
 
 const projection = (input: {
@@ -97,8 +99,12 @@ const withService = <A, E>(
     const interrupted: Array<ThreadId> = [];
     const settled = yield* Queue.unbounded<ThreadId>();
     const dispatched: Array<OrchestrationV2ServerCommand> = [];
+    let gitFailurePhase: "commit" | "push" | "pr" | null = null;
 
     const harness: Harness = {
+      failGitIn: (phase) => {
+        gitFailurePhase = phase;
+      },
       launches,
       gitActions,
       interrupted,
@@ -173,15 +179,28 @@ const withService = <A, E>(
               }),
           }),
           Layer.mock(GitWorkflow.GitWorkflowService)({
-            runStackedAction: (input) =>
-              Effect.sync(() => {
+            runStackedAction: (input, options) =>
+              Effect.suspend(() => {
                 gitActions.push(input);
-                return {
+                const phase = gitFailurePhase;
+                if (phase !== null) {
+                  return (
+                    options?.progressReporter?.publish({
+                      kind: "action_failed",
+                      actionId: input.actionId,
+                      cwd: input.cwd,
+                      action: input.action,
+                      phase,
+                      message: `${phase} failed`,
+                    } as never) ?? Effect.void
+                  ).pipe(Effect.andThen(Effect.fail(new Error(`${phase} failed`) as never)));
+                }
+                return Effect.succeed({
                   pr:
                     input.action === "commit_push_pr"
                       ? { status: "created", url: `https://pr/${input.cwd}` }
                       : {},
-                } as never;
+                } as never);
               }),
           }),
           Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
@@ -560,6 +579,41 @@ it.effect("waits for a node's start time", () =>
       yield* TestClock.adjust("2 minutes");
       const a = yield* Queue.take(harness.launches);
       assert.equal(a.title, "a");
+    }),
+  ),
+);
+
+it.effect("only a failed PR step leaves a node succeeded; a failed commit fails it", () =>
+  withService((service, harness) =>
+    Effect.gen(function* () {
+      const graph = yield* service.create({
+        threadId: PARENT,
+        title: "Delivery",
+        nodes: [node("a"), node("b")],
+        run: true,
+      });
+      const first = yield* Queue.take(harness.launches);
+      const second = yield* Queue.take(harness.launches);
+      const [a, b] = first.title === "a" ? [first, second] : [second, first];
+
+      harness.failGitIn("pr");
+      yield* harness.finish(a, { reply: "a done", branch: "t3/a" });
+      yield* Queue.take(harness.settled);
+      harness.failGitIn("commit");
+      yield* harness.finish(b, { reply: "b done", branch: "t3/b" });
+      assert.include(yield* Deferred.await(harness.report), "finished: failed");
+
+      const ended = yield* service.get(graph.id);
+      const byKey = new Map(ended.nodes.map((entry) => [entry.key, entry]));
+      assert.equal(byKey.get("a")?.status, "succeeded");
+      assert.deepEqual(byKey.get("a")?.pullRequestResult, {
+        status: "failed",
+        url: null,
+        error: "pr failed",
+      });
+      assert.equal(byKey.get("b")?.status, "failed");
+      assert.include(byKey.get("b")?.error ?? "", "commit failed");
+      assert.isNotNull(byKey.get("b")?.completedAt);
     }),
   ),
 );
