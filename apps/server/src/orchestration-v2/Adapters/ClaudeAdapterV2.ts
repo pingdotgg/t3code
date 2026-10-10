@@ -1869,6 +1869,17 @@ function isClaudeNonSubagentTask(message: SDKMessage): boolean {
   return isClaudeOpaqueBackgroundTaskType(claudeTaskTypeFromSdkMessage(message));
 }
 
+// SDK `ambient: true` marks tasks that are not activity (skip_transcript
+// housekeeping and live-update watchers, such as the watch Claude arms when it
+// publishes an artifact) and asks hosts to keep them out of activity
+// indicators. They never end on their own, so they join neither the subagent
+// lifecycle nor the Waiting roster.
+function isClaudeAmbientTask(message: SDKMessage): boolean {
+  return (
+    message.type === "system" && message.subtype === "task_started" && message.ambient === true
+  );
+}
+
 function isClaudeBackgroundTasksChangedMessage(message: SDKMessage): boolean {
   return (
     message.type === "system" &&
@@ -1899,6 +1910,10 @@ function parseClaudeBackgroundTaskEntry(
   }
   const taskId = Reflect.get(entry, "task_id");
   if (typeof taskId !== "string" || taskId.length === 0) {
+    return null;
+  }
+  // Ambient entries (live-update watchers, housekeeping) are not activity.
+  if (Reflect.get(entry, "ambient") === true) {
     return null;
   }
   const rawTaskType = Reflect.get(entry, "task_type");
@@ -5506,7 +5521,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const isNewSubagentTaskStarted =
             message.type === "system" &&
             message.subtype === "task_started" &&
-            !isClaudeNonSubagentTask(message);
+            !isClaudeNonSubagentTask(message) &&
+            !isClaudeAmbientTask(message);
           // A task_started for a session-registered subagent that races past
           // settle is a resume (SendMessage to a completed subagent re-emits
           // task_started with the same task id). Re-open the registry entry
@@ -6339,7 +6355,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           if (message.type === "system" && message.subtype === "task_started") {
-            if (isClaudeNonSubagentTask(message)) {
+            if (isClaudeAmbientTask(message)) {
+              // Later frames for this task (progress, notification) must not
+              // create a subagent either.
+              context.ignoredTaskIds.add(message.task_id);
+            } else if (isClaudeNonSubagentTask(message)) {
               context.ignoredTaskIds.add(message.task_id);
               yield* applyBackgroundTaskRosterMessage({
                 nativeThreadId: liveQuery.nativeThreadId,

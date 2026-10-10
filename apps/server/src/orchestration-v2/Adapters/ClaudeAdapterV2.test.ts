@@ -3885,6 +3885,75 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  // Publishing a Claude artifact arms a live-update watcher for it. The SDK
+  // reports it as a task_started/background_tasks_changed entry with
+  // `ambient: true` and asks hosts to keep such tasks out of activity
+  // indicators. It never ends on its own, so projecting it as a subagent or
+  // onto the Waiting roster leaves the thread "Running" indefinitely.
+  it.effect("ignores ambient tasks such as an artifact live watch", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const AMBIENT_TASK_ID = "s6315tsbk";
+        const ambientTaskStarted = claudeSdkFrame({
+          type: "system",
+          subtype: "task_started",
+          task_id: AMBIENT_TASK_ID,
+          tool_use_id: "toolu_018yCZvaj3NNS4PdmFayZHTC",
+          description:
+            "live updates for artifact https://claude.ai/artifact/Aku2Q1sSEztJpUFuzdEzgt (auto-armed on publish)",
+          task_type: "monitor_ws",
+          ambient: true,
+          uuid: "00000000-0000-4000-8000-000000000301",
+          session_id: WAKE_NATIVE_SESSION,
+        });
+        const ambientRoster = claudeSdkFrame({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [
+            {
+              task_id: AMBIENT_TASK_ID,
+              task_type: "monitor_ws",
+              description:
+                "live updates for artifact https://claude.ai/artifact/Aku2Q1sSEztJpUFuzdEzgt (auto-armed on publish)",
+              ambient: true,
+            },
+          ],
+          uuid: "00000000-0000-4000-8000-000000000302",
+          session_id: WAKE_NATIVE_SESSION,
+        });
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-ambient-task"),
+            text: "Publish this page as an artifact.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, ambientRoster);
+        yield* Queue.offer(harness.sdkMessages, ambientTaskStarted);
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "turn terminal");
+
+        assert.isFalse(
+          harness.events.some((event) => event.type === "subagent.updated"),
+          "an ambient task must not project as a subagent",
+        );
+        assert.isFalse(
+          providerThreadRosterEvents(harness.events).some(
+            (event) => (event.providerThread.pendingBackgroundTasks?.length ?? 0) > 0,
+          ),
+          "an ambient task must not enter the Waiting roster",
+        );
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
   // Frame shapes follow the claude_background_monitor_wake recording: Claude
   // runs a Monitor as a local_bash task, linked to its call by tool_use_id.
   it.effect("keeps a running Claude monitor typed after many newer monitors end", () =>
