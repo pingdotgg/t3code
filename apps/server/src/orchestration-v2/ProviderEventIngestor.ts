@@ -606,6 +606,90 @@ export const layer: Layer.Layer<
                 nodeId: input.event.subagent.id,
               }),
             ];
+          case "subagent.native-task-ended": {
+            const ended = input.event;
+            const projection = yield* projections.getThreadRecords(ended.threadId, [
+              "subagents",
+              "nodes",
+              "turnItems",
+            ]);
+            const task = projection.subagents.find(
+              (task) =>
+                task.origin === "provider_native" &&
+                task.driver === ended.driver &&
+                task.nativeTaskRef?.nativeId === ended.nativeTaskId &&
+                task.status === "running",
+            );
+            if (task === undefined) return [];
+            const now = yield* DateTime.now;
+            const owner = { ...input, providerInstanceId: task.providerInstanceId };
+            const events = [
+              yield* makeDomainEvent(owner, {
+                type: "subagent.updated",
+                threadId: task.threadId,
+                runId: task.runId,
+                nodeId: task.id,
+                payload: {
+                  ...task,
+                  status: ended.status,
+                  result: ended.result,
+                  completedAt: now,
+                  updatedAt: now,
+                },
+              }),
+            ];
+            const node = projection.nodes.find((node) => node.id === task.id);
+            if (node !== undefined)
+              events.push(
+                yield* makeDomainEvent(owner, {
+                  type: "node.updated",
+                  threadId: node.threadId,
+                  runId: node.runId,
+                  nodeId: node.id,
+                  payload: { ...node, status: ended.status, completedAt: now },
+                }),
+              );
+            for (const item of projection.turnItems) {
+              if (item.nodeId !== task.id || item.status !== "running") continue;
+              events.push(
+                yield* makeDomainEvent(owner, {
+                  type: "turn-item.updated",
+                  threadId: item.threadId,
+                  runId: item.runId,
+                  nodeId: item.nodeId,
+                  payload: {
+                    ...item,
+                    ...(item.type === "subagent" ? { result: ended.result } : {}),
+                    status: ended.status,
+                    completedAt: now,
+                    updatedAt: now,
+                  },
+                }),
+              );
+            }
+            if (task.childThreadId !== null) {
+              const child = yield* projections.getThreadRecords(task.childThreadId, ["nodes"]);
+              for (const node of child.nodes) {
+                if (
+                  node.kind !== "root_turn" ||
+                  node.status !== "running" ||
+                  node.nativeItemRef?.driver !== ended.driver ||
+                  node.nativeItemRef.nativeId !== ended.nativeTaskId
+                )
+                  continue;
+                events.push(
+                  yield* makeDomainEvent(owner, {
+                    type: "node.updated",
+                    threadId: node.threadId,
+                    runId: node.runId,
+                    nodeId: node.id,
+                    payload: { ...node, status: ended.status, completedAt: now },
+                  }),
+                );
+              }
+            }
+            return events;
+          }
           case "message.updated":
             return [
               yield* makeDomainEvent(input, {

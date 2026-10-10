@@ -115,6 +115,14 @@ export const ProviderAdapterV2Event = Schema.Union([
     subagent: OrchestrationV2Subagent,
   }),
   Schema.Struct({
+    type: Schema.Literal("subagent.native-task-ended"),
+    driver: ProviderDriverKind,
+    threadId: ThreadId,
+    nativeTaskId: Schema.String,
+    status: Schema.Literals(["completed", "failed", "cancelled"]),
+    result: Schema.String,
+  }),
+  Schema.Struct({
     type: Schema.Literal("message.updated"),
     driver: ProviderDriverKind,
     message: OrchestrationV2ConversationMessage,

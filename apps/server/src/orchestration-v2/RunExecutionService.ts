@@ -370,6 +370,9 @@ export function routeProviderEvent(
   });
 
   switch (event.type) {
+    case "subagent.native-task-ended":
+      // The session pump reconciles durable tasks even between runs.
+      return [false, state];
     case "provider_session.updated":
       // The session manager persists process-wide status once for every
       // attached app thread before broadcasting the adapter event.

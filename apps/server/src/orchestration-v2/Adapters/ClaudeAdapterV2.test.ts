@@ -2264,6 +2264,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const permissionModeChanges: Array<string> = [];
       const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
         [];
+      const nativeTaskEndReceipts =
+        yield* Queue.unbounded<
+          Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "subagent.native-task-ended" }>
+        >();
       const subagentReceipts =
         yield* Queue.unbounded<
           Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "subagent.updated" }>
@@ -2367,6 +2371,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         Stream.runForEach((event) =>
           Effect.gen(function* () {
             events.push(event);
+            if (event.type === "subagent.native-task-ended")
+              yield* Queue.offer(nativeTaskEndReceipts, event);
             if (event.type === "subagent.updated") yield* Queue.offer(subagentReceipts, event);
             if (event.type === "turn.terminal") {
               yield* Queue.offer(terminalReceipts, event);
@@ -2408,6 +2414,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         events,
         terminalReceipts,
         subagentReceipts,
+        nativeTaskEndReceipts,
         systemNoticeReceipts,
         getOpenedOptions: () => openedOptions,
         terminalEvents,
@@ -8736,6 +8743,103 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             : [],
         );
         assert.deepEqual(childEfforts, ["low", "low", "max"]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect(
+    "routes a stopped task missing from the process registry to durable reconciliation",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-orphan-stopped"),
+              text: "Continue",
+              attachments: [],
+            }),
+          );
+          yield* harness.offerAndWait(wakeTurnInit);
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "user",
+              isSynthetic: true,
+              parent_tool_use_id: null,
+              session_id: WAKE_NATIVE_SESSION,
+              uuid: "00000000-0000-4000-8000-000000000990",
+              message: {
+                role: "user",
+                content:
+                  "<task-notification><task-id>old-task</task-id><status>stopped</status><summary>Previous session ended</summary></task-notification>",
+              },
+            }),
+          );
+          const ended = yield* Queue.take(harness.nativeTaskEndReceipts);
+          assert.equal(ended.nativeTaskId, "old-task");
+          assert.equal(ended.threadId, harness.threadId);
+          assert.equal(ended.status, "cancelled");
+          assert.equal(ended.result, "Previous session ended");
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
+  it.effect("settles synthetic stopped transcript notifications", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-transcript-stopped"),
+            text: "Delegate",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          makeSubagentTaskStartedFrame({
+            taskId: "old-task",
+            toolUseId: "old-tool",
+            uuid: "00000000-0000-4000-8000-000000000991",
+          }),
+        );
+        yield* Queue.take(harness.subagentReceipts);
+        const frame = claudeSdkFrame({
+          type: "user",
+          isSynthetic: true,
+          parent_tool_use_id: null,
+          session_id: WAKE_NATIVE_SESSION,
+          uuid: "00000000-0000-4000-8000-000000000992",
+          message: {
+            role: "user",
+            content:
+              "<task-notification><task-id>old-task</task-id><status>stopped</status><summary>Previous session ended</summary></task-notification>",
+          },
+        });
+        assert.lengthOf(
+          ClaudeAdapterV2.claudeTranscriptTaskNotifications({
+            ...frame,
+            isSynthetic: false,
+          } as SDKMessage),
+          0,
+        );
+        yield* harness.offerAndWait(frame);
+        const ended = yield* Queue.take(harness.subagentReceipts);
+        assert.equal(ended.subagent.status, "cancelled");
+        assert.equal(ended.subagent.result, "Previous session ended");
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
