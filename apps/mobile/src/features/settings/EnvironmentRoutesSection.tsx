@@ -13,9 +13,8 @@ import { type EnvironmentId, sessionGrantsScope } from "@t3tools/contracts";
 import { AUTH_SCOPE_OPTIONS } from "@t3tools/shared/authScopeOptions";
 import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useState } from "react";
 import { Alert, Platform, Pressable, View } from "react-native";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Reanimated, { ReduceMotion, useAnimatedStyle, withTiming } from "react-native-reanimated";
 
 import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
@@ -27,6 +26,7 @@ import { environmentSession } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { connectionTone } from "../connection/connectionTone";
 import { SettingsActionRow } from "./components/SettingsActionRow";
+import { SettingsDragHandle } from "./components/SettingsDragHandle";
 import { SettingsSection } from "./components/SettingsSection";
 
 const ICON_SIZE = Platform.OS === "android" ? 24 : 22;
@@ -37,6 +37,7 @@ const ROUTE_ICONS: Record<ConnectionRouteKind, AppSymbolName> = {
   loopback: "desktopcomputer",
   lan: "wifi",
   tailnet: "point.3.connected.trianglepath.dotted",
+  vpn: { ios: "lock.shield", android: "lock" },
   public: "globe",
   ssh: "terminal",
 };
@@ -323,7 +324,7 @@ function RouteRow(props: {
         </View>
       </View>
       {props.editing ? (
-        <DragHandle
+        <SettingsDragHandle
           title={label}
           canMoveUp={props.position > 1}
           canMoveDown={props.position < props.count}
@@ -334,64 +335,5 @@ function RouteRow(props: {
         />
       ) : null}
     </Reanimated.View>
-  );
-}
-
-/** Pan recognition wins over the settings scroll view only inside the handle. */
-function DragHandle(props: {
-  readonly title: string;
-  readonly canMoveUp: boolean;
-  readonly canMoveDown: boolean;
-  readonly onStart: () => void;
-  readonly onMove: (translation: number) => void;
-  readonly onEnd: (translation: number, cancelled: boolean) => void;
-  readonly onStep: (direction: "up" | "down") => void;
-}) {
-  const latest = useRef(props);
-  useEffect(() => {
-    latest.current = props;
-  });
-  const translation = useRef(0);
-  const gesture = useMemo(
-    () =>
-      Gesture.Pan()
-        .minDistance(0)
-        .shouldCancelWhenOutside(false)
-        .runOnJS(true)
-        .onStart(() => {
-          translation.current = 0;
-          latest.current.onStart();
-        })
-        .onUpdate((event) => {
-          translation.current = event.translationY;
-          latest.current.onMove(event.translationY);
-        })
-        .onFinalize((_, success) => latest.current.onEnd(translation.current, !success)),
-    [],
-  );
-  return (
-    <GestureDetector gesture={gesture}>
-      <View
-        collapsable={false}
-        accessible
-        accessibilityRole="adjustable"
-        accessibilityLabel={`Reorder ${props.title}`}
-        accessibilityActions={[
-          ...(props.canMoveUp ? [{ name: "decrement", label: "Move up" }] : []),
-          ...(props.canMoveDown ? [{ name: "increment", label: "Move down" }] : []),
-        ]}
-        onAccessibilityAction={({ nativeEvent }) => {
-          if (nativeEvent.actionName === "decrement" && props.canMoveUp) props.onStep("up");
-          if (nativeEvent.actionName === "increment" && props.canMoveDown) props.onStep("down");
-        }}
-        style={{ width: 48, alignSelf: "stretch", alignItems: "center", justifyContent: "center" }}
-      >
-        <SymbolView
-          name="line.3.horizontal"
-          size={20}
-          tintColorClassName="accent-foreground-muted"
-        />
-      </View>
-    </GestureDetector>
   );
 }

@@ -1,18 +1,15 @@
 import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
-import {
-  HostProcessEnvironment,
-  HostProcessExecutablePath,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
-import { FetchHttpClient, HttpClient } from "effect/http";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
@@ -167,9 +164,9 @@ describe("OpenCode server output", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const environment = yield* HostProcessEnvironment;
-        const executablePath = yield* HostProcessExecutablePath;
-        const platform = yield* HostProcessPlatform;
+        const environment = yield* HostProcess.Environment;
+        const executablePath = yield* HostProcess.ExecutablePath;
+        const platform = yield* HostProcess.Platform;
         const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-output-" });
         const isWindows = platform === "win32";
         const binaryPath = path.join(tempDir, isWindows ? "opencode.cmd" : "opencode");

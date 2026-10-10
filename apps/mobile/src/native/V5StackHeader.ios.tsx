@@ -6,6 +6,7 @@ import type {
 import { isValidElement, useRef } from "react";
 import { Platform, StyleSheet } from "react-native";
 import { useMobileNavigationTheme } from "../lib/useMobileNavigationTheme";
+import { useNativeLayoutMetrics } from "../native/native-layout-metrics";
 import {
   SearchBar,
   Stack,
@@ -110,6 +111,7 @@ function convertItems(items: NativeStackHeaderItem[], prefix: string): HeaderIte
           id,
           identifier: item.identifier,
           title: item.label || item.accessibilityLabel || undefined,
+          axisBehavior: item.axisBehavior,
           icon: convertIcon(item.icon),
           menu: item.disabled ? undefined : convertMenu(item.menu, `${id}:menu`),
           hidesSharedBackground: item.hidesSharedBackground,
@@ -120,6 +122,7 @@ function convertItems(items: NativeStackHeaderItem[], prefix: string): HeaderIte
           id,
           identifier: item.identifier,
           title: item.label || item.accessibilityLabel || undefined,
+          axisBehavior: item.axisBehavior,
           icon: convertIcon(item.icon),
           onPress: item.disabled ? undefined : item.onPress,
           hidesSharedBackground: item.hidesSharedBackground,
@@ -136,6 +139,7 @@ export function V5StackHeader(props: {
 }) {
   const { options } = props;
   const theme = useMobileNavigationTheme();
+  const nativeMetrics = useNativeLayoutMetrics();
   const searchRef = useRef<SearchBarCommands>(null);
   const itemProps = { tintColor: options.headerTintColor, canGoBack: props.canGoBack };
   const leading = convertItems(options.unstable_headerLeftItems?.(itemProps) ?? [], "leading");
@@ -162,6 +166,7 @@ export function V5StackHeader(props: {
       bottom.push({
         type: "item",
         id: mailSearch.filterButtonId ?? "filter",
+        axisBehavior: bottomSearch ? "horizontalOnly" : undefined,
         icon: {
           type: "sfSymbol",
           name: mailSearch.filterSystemImageName ?? "line.3.horizontal.decrease",
@@ -171,7 +176,12 @@ export function V5StackHeader(props: {
     if (bottomSearch) {
       if (bottom.length)
         bottom.push({ type: "spacer", id: "before-search", sizing: "fixed", width: 8 });
-      bottom.push({ type: "item", id: "home-search", searchBarPlacement: true });
+      bottom.push({
+        type: "item",
+        id: "home-search",
+        axisBehavior: "horizontalOnly",
+        searchBarPlacement: true,
+      });
       if (mailSearch.onComposePress)
         bottom.push({ type: "spacer", id: "after-search", sizing: "fixed", width: 8 });
     }
@@ -179,9 +189,21 @@ export function V5StackHeader(props: {
       bottom.push({
         type: "item",
         id: mailSearch.composeButtonId ?? "compose",
+        axisBehavior: bottomSearch ? "horizontalOnly" : undefined,
         icon: { type: "sfSymbol", name: mailSearch.composeSystemImageName ?? "square.and.pencil" },
         onPress: mailSearch.onComposePress,
       });
+  }
+  // Expanded Duo panes put toolbar actions in the side bar. Folded phones
+  // keep their bottom search toolbar. UIKit keeps the
+  // primary column's navigation items beside its title and the detail's in
+  // the rail; a conventional UIToolbar can otherwise leave them inaccessible.
+  if (
+    nativeMetrics?.horizontalSizeClass === "regular" &&
+    nativeMetrics.verticalBarEdge !== "none"
+  ) {
+    trailing.push(...bottom);
+    bottom.length = 0;
   }
   const left = options.headerLeft?.(itemProps);
   const right = options.headerRight?.(itemProps);

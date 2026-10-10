@@ -26,12 +26,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { AgentScope } from "@t3tools/shared/AgentScope";
+import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeProviderFailureTurnItem } from "@t3tools/provider-core/server/failure";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { stripUnservedToolOutputImageBytes } from "./toolOutputImageBytes.ts";
@@ -41,7 +42,7 @@ export class ProviderEventNormalizeError extends Schema.TaggedError<ProviderEven
   {
     providerSessionId: ProviderSessionId,
     threadId: ThreadId,
-    providerEvent: ProviderAdapterV2Event,
+    providerEvent: ProviderAdapter.ProviderAdapterV2Event,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -93,7 +94,7 @@ export const layerAnalytics = Layer.effect(
 );
 
 function providerTurnAnalyticsProperties(input: {
-  readonly driver: ProviderAdapterV2Event["driver"];
+  readonly driver: ProviderAdapter.ProviderAdapterV2Event["driver"];
   readonly providerTurn: OrchestrationV2ProviderTurn;
   readonly context?: ProviderTurnAnalyticsContext;
 }): Readonly<Record<string, unknown>> {
@@ -257,7 +258,7 @@ export interface ProviderEventIngestInput {
   readonly runId?: RunId;
   readonly nodeId?: NodeId;
   readonly rawEventId?: RawEventId;
-  readonly event: ProviderAdapterV2Event;
+  readonly event: ProviderAdapter.ProviderAdapterV2Event;
   readonly analyticsContext?: ProviderTurnAnalyticsContext;
 }
 
@@ -316,6 +317,7 @@ export const layer: Layer.Layer<
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const analytics = yield* ProviderTurnAnalytics;
+    const agentScope = yield* AgentScope;
     const completedTurnAnalytics = new Set<string>();
 
     const makeDomainEvent = (
@@ -400,18 +402,32 @@ export const layer: Layer.Layer<
     /**
      * A native subagent's thread starts on the parent's model when the
      * provider names the real one later (a Claude agent file's model arrives
-     * with the subagent's first reply). Clients read the thread's model, so
-     * move the thread to the reported one. Thread commands rewrite the whole
-     * thread row under the thread's lock, so this read and write take it too.
+     * with the subagent's first reply). Clients read the thread's model and
+     * effort, so move the thread to the reported selection, or to the reported
+     * model alone when the provider reports no selection. Thread commands
+     * rewrite the whole thread row under the thread's lock, so this read and
+     * write take it too.
      */
     const syncSubagentThreadModel = Effect.fn("ProviderEventIngestor.syncSubagentThreadModel")(
       function* (input: ProviderEventIngestInput, subagent: OrchestrationV2Subagent) {
         const { childThreadId, model } = subagent;
-        if (subagent.origin !== "provider_native" || childThreadId === null || model === null) {
+        if (
+          subagent.origin !== "provider_native" ||
+          childThreadId === null ||
+          (model === null && subagent.modelSelection === undefined)
+        ) {
           return [];
         }
+        const reportedSelection = ({ modelSelection }: { modelSelection: ModelSelection }) =>
+          subagent.modelSelection ??
+          (model === null || model === modelSelection.model
+            ? modelSelection
+            : // The parent's options belong to the parent's model.
+              { instanceId: modelSelection.instanceId, model });
         const staleThread = projections.getThread(childThreadId).pipe(
-          Effect.map((thread) => (thread.modelSelection.model === model ? null : thread)),
+          Effect.map((thread) =>
+            modelSelectionsEqual(thread.modelSelection, reportedSelection(thread)) ? null : thread,
+          ),
           Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
         );
         // Nearly every update already matches; only a mismatch takes the lock.
@@ -425,10 +441,9 @@ export const layer: Layer.Layer<
             const event = yield* makeDomainEvent(input, {
               type: "thread.model-selection-updated",
               threadId: thread.id,
-              // The parent's options belong to the parent's model.
               payload: {
                 ...thread,
-                modelSelection: { instanceId: thread.modelSelection.instanceId, model },
+                modelSelection: reportedSelection(thread),
                 updatedAt: now,
               },
               occurredAt: now,
@@ -652,12 +667,16 @@ export const layer: Layer.Layer<
               return dismissed;
             }
             const occurredAt = yield* DateTime.now;
+            // A turn that failed because systemd killed the agent's scope for
+            // memory would otherwise read as a plain provider crash.
+            const failure = (yield* agentScope.oomKilled(input.threadId))
+              ? { ...input.event.failure, message: "Killed: out of memory.", code: "oom_kill" }
+              : input.event.failure;
             return [
               ...dismissed,
               yield* makeDomainEvent(input, {
                 type: "turn-item.updated",
                 payload: makeProviderFailureTurnItem({
-                  idAllocator,
                   driver: input.event.driver,
                   threadId: input.threadId,
                   runId: input.runId ?? null,
@@ -665,7 +684,7 @@ export const layer: Layer.Layer<
                   providerThreadId: input.event.providerThreadId,
                   providerTurnId: input.event.providerTurnId,
                   itemOrdinal: input.event.failureItemOrdinal,
-                  failure: input.event.failure,
+                  failure,
                   ...(input.event.retry === undefined ? {} : { retry: input.event.retry }),
                   ...(input.event.retryStartedAt === undefined
                     ? {}
