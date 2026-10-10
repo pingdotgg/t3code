@@ -4,6 +4,7 @@ import { Combobox as ComboboxPrimitive } from "@base-ui/react/combobox";
 import { ChevronsUpDownIcon, SearchIcon, XIcon } from "lucide-react";
 import * as React from "react";
 
+import { redirectListNavigationKey } from "~/keybindings";
 import { cn } from "~/lib/utils";
 import { Input } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -35,6 +36,7 @@ function ComboboxInput({
   startAddon,
   size,
   unstyled = false,
+  onKeyDown,
   ...props
 }: Omit<ComboboxPrimitive.Input.Props, "size"> & {
   showTrigger?: boolean;
@@ -79,6 +81,10 @@ function ComboboxInput({
           />
         }
         {...props}
+        onKeyDown={(event) => {
+          if (redirectListNavigationKey(event)) return;
+          onKeyDown?.(event);
+        }}
       />
       {showTrigger && (
         <ComboboxTrigger
