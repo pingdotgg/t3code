@@ -117,6 +117,12 @@ function UsageLimitsBannerBody({
               ) : null}
               {resetCreditInput && account.limits.resetCredits ? (
                 <ResetCredits
+                  identity={JSON.stringify([
+                    environmentId,
+                    account.id,
+                    account.email?.trim().toLowerCase(),
+                    account.limits.credentialFingerprint,
+                  ])}
                   environmentId={environmentId}
                   input={resetCreditInput}
                   credits={account.limits.resetCredits}

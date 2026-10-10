@@ -210,7 +210,7 @@ function SegmentPopover({
               className="ms-auto"
               onClick={onRedeem}
             >
-              {redeem.busy ? "Using…" : "Use reset"}
+              {redeem.using ? "Using…" : "Use reset"}
             </Button>
           </span>
         </div>
@@ -310,27 +310,13 @@ function PoolSegment({
         </div>
       </PopoverTrigger>
       <LegendRow account={account} window={window} color={color} now={now} index={index} />
-      {account.redeem ? (
-        <RedeemableSegmentPopup
-          account={account}
-          window={window}
-          reset={reset}
-          now={now}
-          redeemAt={account.redeem}
-          closePopover={() => setOpen(false)}
-        />
-      ) : (
-        <PopoverPopup side="top" sideOffset={6}>
-          <SegmentPopover
-            account={account}
-            window={window}
-            reset={reset}
-            now={now}
-            redeem={null}
-            onRedeem={() => {}}
-          />
-        </PopoverPopup>
-      )}
+      <RedeemableSegmentPopup
+        account={account}
+        window={window}
+        reset={reset}
+        now={now}
+        closePopover={() => setOpen(false)}
+      />
     </Popover>
   );
 }
@@ -395,23 +381,20 @@ function LegendRow({
   );
 }
 
-/** Split out so the redeem hook only runs for accounts that can redeem. */
 function RedeemableSegmentPopup({
   account,
   window,
   reset,
   now,
-  redeemAt,
   closePopover,
 }: {
   readonly account: LimitAccount;
   readonly window: LimitPoolMember["window"];
   readonly reset: LimitPoolWindow["resets"][number] | undefined;
   readonly now: number;
-  readonly redeemAt: NonNullable<LimitAccount["redeem"]>;
   readonly closePopover: () => void;
 }) {
-  const redeem = useResetCredit(redeemAt.environmentId, redeemAt.input);
+  const redeem = useResetCredit(account.identity, account.redeem);
   return (
     <>
       <PopoverPopup side="top" sideOffset={6}>
@@ -420,7 +403,7 @@ function RedeemableSegmentPopup({
           window={window}
           reset={reset}
           now={now}
-          redeem={redeem}
+          redeem={account.redeem ? redeem : null}
           onRedeem={() => {
             closePopover();
             redeem.setConfirming(true);
@@ -431,7 +414,7 @@ function RedeemableSegmentPopup({
         open={redeem.confirming}
         onOpenChange={redeem.setConfirming}
         onConfirm={() => void redeem.redeem()}
-        disabled={!redeem.canManageProviders}
+        disabled={redeem.busy || !redeem.canManageProviders}
       />
       {/* The popover closed before the confirm, so the outcome needs a home outside it. */}
       {redeem.status ? (

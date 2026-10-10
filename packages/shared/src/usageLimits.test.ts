@@ -792,6 +792,7 @@ describe("pools", () => {
         ...collectLimitAccounts(input),
         {
           key: "go",
+          identity: "go",
           driver: claude,
           displayName: "Go",
           email: undefined,
@@ -838,6 +839,7 @@ describe("pooled account columns", () => {
   } as const;
   const account = (key: string, windows: LimitAccount["limits"]["windows"]): LimitAccount => ({
     key,
+    identity: key,
     driver: ProviderDriverKind.make("claudeAgent"),
     displayName: key,
     email: undefined,
@@ -922,6 +924,7 @@ describe("pooled account columns", () => {
 describe("Cursor limit presentation", () => {
   const cursorAccount: LimitAccount = {
     key: "cursor",
+    identity: "cursor",
     driver: ProviderDriverKind.make("cursor"),
     displayName: "Cursor",
     email: undefined,
