@@ -206,10 +206,28 @@ describe("file metadata", () => {
         { concurrency: "unbounded" },
       );
       expect(h.batches.flat()).toHaveLength(130);
+      expect(h.batches.map((batch) => batch.length)).toEqual([64, 64, 2]);
       expect(h.batches.every((batch) => batch.length <= 64)).toBe(true);
       const count = h.batches.length;
       yield* h.read("/workspace/0");
       expect(h.batches).toHaveLength(count);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("batches synchronous mounts after the runtime is warm", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.read("/workspace/warmup");
+      h.batches.length = 0;
+      const paths = Array.from({ length: 130 }, (_, i) => `/workspace/mounted-${i}`);
+      yield* Effect.sync(() => {
+        for (const path of paths) h.registry.get(h.atom(path));
+      });
+      yield* Effect.all(
+        paths.map((path) => h.read(path)),
+        { concurrency: "unbounded" },
+      );
+      expect(h.batches.map((batch) => batch.length)).toEqual([64, 64, 2]);
     }).pipe(Effect.scoped),
   );
 
