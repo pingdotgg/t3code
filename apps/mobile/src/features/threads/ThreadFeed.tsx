@@ -1538,6 +1538,7 @@ function renderFeedEntry(
     readonly renderMarkdownImage: MarkdownImageRenderer;
     readonly renderViewedImage: MarkdownImageRenderer;
     readonly renderReasoning: (text: string) => ReactNode;
+    readonly renderSentMessage: (text: string) => ReactNode;
     readonly iconSubtleColor: string | import("react-native").ColorValue;
     readonly screenColor: string;
     readonly userBubbleColor: string | import("react-native").ColorValue;
@@ -1999,6 +2000,7 @@ function renderFeedEntry(
       renderImage={props.renderViewedImage}
       renderReasoning={props.renderReasoning}
       onPressPreview={props.onPressPreview}
+      renderSentMessage={props.renderSentMessage}
     />
   );
 }
@@ -2541,6 +2543,26 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       props.environmentId,
     ],
   );
+  // A message one agent sent another, drawn on the user bubble with its colors.
+  const renderSentMessage = useCallback(
+    (text: string) => (
+      <AssistantMarkdownContent
+        markdown={text}
+        environmentId={props.environmentId}
+        markdownStyles={markdownStyles.user}
+        linkHandlers={markdownLinkHandlers}
+        renderImage={renderMarkdownImage}
+        skills={props.skills}
+      />
+    ),
+    [
+      markdownStyles.user,
+      markdownLinkHandlers,
+      renderMarkdownImage,
+      props.skills,
+      props.environmentId,
+    ],
+  );
   const reviewCommentColors = useReviewCommentColors();
   const unsettledTurnId = threadFeedRunIsUnsettled(props.latestRun) ? props.latestRun.runId : null;
   // LegendList does not invalidate visible rows when only the renderItem closure changes.
@@ -3042,6 +3064,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             renderMarkdownImage,
             renderViewedImage,
             renderReasoning,
+            renderSentMessage,
             iconSubtleColor,
             screenColor,
             userBubbleColor,
@@ -3107,6 +3130,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       renderMarkdownImage,
       renderViewedImage,
       renderReasoning,
+      renderSentMessage,
     ],
   );
 

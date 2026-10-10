@@ -1,5 +1,7 @@
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import {
+  claudeAgentMessage,
+  claudeAgentMessageTitle,
   dynamicToolTitle,
   formatReadToolLabel,
   formatSearchToolLabel,
@@ -1995,6 +1997,27 @@ function claudeCommandOutputText(output: ClaudeNativeToolOutput): string {
     }
   }
   return claudeNativeToolOutputText(output);
+}
+
+// SendMessage reports a refused delivery (an unknown or stopped recipient)
+// as `success: false` in an ordinary, non-error tool result.
+function isClaudeAgentMessageRefused(toolName: string, output: ClaudeNativeToolOutput): boolean {
+  if (toolName !== "SendMessage") return false;
+  const value = claudeNativeToolOutputValue(output);
+  const [block] = Array.isArray(value) ? value : [];
+  let result: unknown = value;
+  if (
+    typeof block === "object" &&
+    block !== null &&
+    typeof Reflect.get(block, "text") === "string"
+  ) {
+    try {
+      result = JSON.parse(Reflect.get(block, "text"));
+    } catch {
+      return false;
+    }
+  }
+  return typeof result === "object" && result !== null && Reflect.get(result, "success") === false;
 }
 
 function claudeSubagentResultText(output: ClaudeNativeToolOutput): string {
@@ -4033,7 +4056,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 : (searchTitle ??
                   dynamicToolTitle(input.toolName, nativeToolInput) ??
                   input.presentation?.title ??
-                  null),
+                  claudeAgentMessageTitle(input.toolName, nativeToolInput) ??
+                  (input.toolName === "ListAgents" ? "Listed agents" : null)),
             startedAt: input.startedAt,
             completedAt,
             updatedAt: input.updatedAt,
@@ -4828,6 +4852,40 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const toolCallsFor = (context: ActiveClaudeTurnContext, toolCall: ActiveClaudeToolCall) =>
           toolCall.runId === null ? subagentToolCalls : context.toolCalls;
 
+        // A SendMessage addressed to a subagent this session launched is
+        // titled with that subagent's name. Clients only see the raw id.
+        const agentMessagePresentation = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          toolName: string,
+          toolInput: ClaudeNativeToolInput,
+        ) {
+          const to = claudeAgentMessage(toolName, claudeNativeToolInputValue(toolInput))?.to;
+          if (to === undefined) return undefined;
+          const recipient =
+            context.subagentsByTaskId.get(to) ?? (yield* Ref.get(sessionSubagentsByTaskId)).get(to);
+          const name = recipient?.task.title?.trim();
+          if (!name) return undefined;
+          const title = claudeAgentMessageTitle(
+            toolName,
+            claudeNativeToolInputValue(toolInput),
+            name,
+          );
+          return title === undefined ? undefined : { title };
+        });
+
+        // Claude Code's tool_use_meta gives built-in tools an untitled
+        // presentation, so a resolved recipient name fills in the title.
+        const withAgentMessageTitle = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          toolName: string,
+          toolInput: ClaudeNativeToolInput,
+          presentation: ClaudeToolPresentation | undefined,
+        ) {
+          if (presentation?.title !== undefined) return presentation;
+          const message = yield* agentMessagePresentation(context, toolName, toolInput);
+          return message === undefined ? presentation : { ...presentation, ...message };
+        });
+
         const ensureToolCallStarted = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly nativeItemId: string;
@@ -4836,14 +4894,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly parentToolUseId: string | null;
           readonly presentation?: ClaudeToolPresentation | undefined;
         }) {
+          const presentation = yield* withAgentMessageTitle(
+            input.context,
+            input.toolName,
+            input.toolInput,
+            input.presentation,
+          );
           const existing = findToolCall(input.context, input.nativeItemId);
           if (existing !== undefined) {
             // The permission callback can start a call before its assistant
             // frame arrives with the tool's display name and icon.
-            if (input.presentation === undefined || existing.presentation !== undefined) {
+            if (presentation === undefined || existing.presentation !== undefined) {
               return existing;
             }
-            const presented = { ...existing, presentation: input.presentation };
+            const presented = { ...existing, presentation };
             toolCallsFor(input.context, presented).set(input.nativeItemId, presented);
             const updatedAt = yield* DateTime.now;
             yield* emitToolCallArtifacts(
@@ -4862,7 +4926,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 status: "running",
                 startedAt: presented.startedAt,
                 updatedAt,
-                presentation: input.presentation,
+                presentation,
               }),
             );
             return presented;
@@ -4892,7 +4956,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             parentNodeId,
             ordinal,
             startedAt,
-            ...(input.presentation === undefined ? {} : { presentation: input.presentation }),
+            ...(presentation === undefined ? {} : { presentation }),
           };
           toolCallsFor(input.context, toolCall).set(input.nativeItemId, toolCall);
           yield* emitToolCallArtifacts(
@@ -4911,7 +4975,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               status: "running",
               startedAt,
               updatedAt: startedAt,
-              presentation: input.presentation,
+              presentation,
             }),
           );
           return toolCall;
@@ -6586,13 +6650,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               status:
                 toolNonExecutionKind === "cancelled"
                   ? "cancelled"
-                  : isClaudeToolResultError(toolResult)
+                  : isClaudeToolResultError(toolResult) ||
+                      isClaudeAgentMessageRefused(toolCall.toolName, output)
                     ? "failed"
                     : "completed",
               ...(toolNonExecutionKind === undefined ? {} : { toolNonExecutionKind }),
               startedAt: toolCall.startedAt,
               updatedAt: completedAt,
-              presentation: toolCall.presentation,
+              // A message sent right after a background launch can start before
+              // that subagent is registered; by its result the name resolves.
+              presentation: yield* withAgentMessageTitle(
+                context,
+                toolCall.toolName,
+                toolCall.input,
+                toolCall.presentation,
+              ),
             });
             yield* emitToolCallArtifacts(artifacts);
             toolCallsFor(context, toolCall).delete(toolCall.nativeItemId);

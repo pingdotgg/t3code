@@ -54,11 +54,14 @@ import type {
 } from "@t3tools/contracts";
 import { RunId, ThreadId } from "@t3tools/contracts";
 import {
+  claudeAgentMessage,
+  claudeAgentMessageTitle,
   classifyToolActivity,
   collectToolFilePaths,
   dynamicToolTitle,
   formatReadToolLabel,
   formatSearchToolLabel,
+  isClaudeAgentMessageItem,
 } from "@t3tools/shared/toolActivity";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
@@ -529,6 +532,7 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
     }
   }
   if (item.type === "dynamic_tool") {
+    if (isClaudeAgentMessageItem(item.toolName, item.input)) return "message";
     const classified = classifyToolActivity({
       itemType: "dynamic_tool_call",
       data: { toolName: item.toolName ?? undefined, input: item.input },
@@ -599,7 +603,11 @@ function itemSummary(
   if (item.type === "compaction") return contextCompactionLabel(item);
   const title =
     (item.type === "dynamic_tool" ? dynamicToolTitle(item.toolName, item.input) : undefined) ??
-    item.title?.trim();
+    (item.title?.trim() ||
+      // Items from before the adapter titled agent messages still get a heading.
+      (item.type === "dynamic_tool"
+        ? claudeAgentMessageTitle(item.toolName, item.input)
+        : undefined));
   if (item.type === "subagent") return formatSubagentDisplayTitle(title || "Subagent");
   if (title) return toolPresentation?.displayName ?? capitalizePhrase(title);
   switch (item.type) {
@@ -814,12 +822,26 @@ function toFeedActivity(
     item.type === "dynamic_tool" && toolGroupAction(workEntry) === "read"
       ? collectToolFilePaths(item)
       : null;
+  const agentMessage =
+    item.type === "dynamic_tool" ? claudeAgentMessage(item.toolName, item.input) : undefined;
+  // A long message arrives summarized; its body comes with the fetched item.
+  const summarizedAgentMessage =
+    agentMessage === undefined &&
+    item.type === "dynamic_tool" &&
+    isClaudeAgentMessageItem(item.toolName, item.input);
+  // A refused message also shows its delivery error.
+  const agentMessageFailed =
+    (agentMessage !== undefined || summarizedAgentMessage) &&
+    workEntryDisplayIndicatesToolFailure(workEntry);
+  // An agent message expands to its body.
   const getFullDetail = memoizeValue(() =>
     readPaths
       ? readPaths.join("\n") || null
       : item.type === "notification"
         ? item.detail?.trim() || null
-        : formatItemFullDetail(row, item),
+        : agentMessage
+          ? (agentMessage.message ?? null)
+          : formatItemFullDetail(row, item),
   );
   const getCopyText = memoizeValue(() =>
     [summary, detail, getFullDetail()]
@@ -840,9 +862,15 @@ function toFeedActivity(
       !(item.type === "error" && item.status === "failed") &&
       (readPaths
         ? readPaths.length > 0 || turnItemNeedsDetailFetch(item)
-        : turnItemHasDetail(item) || workEntry.questionAnswer !== undefined),
-    // Read rows show their paths, then the fetched file contents.
-    fetchesDetail: turnItemNeedsDetailFetch(item),
+        : agentMessage
+          ? agentMessage.message !== undefined || agentMessageFailed
+          : summarizedAgentMessage ||
+            turnItemHasDetail(item) ||
+            workEntry.questionAnswer !== undefined),
+    // Read rows show their paths, then the fetched file contents. A message
+    // already carries its body unless it was summarized for transport, but a
+    // refused one may still need its omitted delivery error.
+    fetchesDetail: agentMessage && !agentMessageFailed ? false : turnItemNeedsDetailFetch(item),
     getFullDetail,
     getCopyText,
     icon: workEntry.toolSurface ?? itemIcon(item),

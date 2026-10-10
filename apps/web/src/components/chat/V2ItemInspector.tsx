@@ -100,7 +100,7 @@ function StructuredValue({
  * The item behind a projected row, with the output the timeline withheld
  * fetched while the row is open.
  */
-function useFetchedTurnItem(
+export function useFetchedTurnItem(
   projectedItem: OrchestrationV2ProjectedTurnItem,
   environmentId: EnvironmentId,
 ) {
