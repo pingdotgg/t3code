@@ -4,6 +4,7 @@
  *
  * @module source-control-gitcafe/server/gitCafePullRequestJson
  */
+import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import {
@@ -261,6 +262,17 @@ function toActor(actor: Actor, host: string): PullRequestActor | null {
   };
 }
 
+/** The reviewers GitCafe has asked, as the detail's reviewer list shows them. */
+export function toReviewers(
+  pull: Pick<GitCafePull, "reviewers">,
+  host: string,
+): ReadonlyArray<PullRequestActor> {
+  return (pull.reviewers ?? []).flatMap(({ actor }) => {
+    const reviewer = toActor(actor, host);
+    return reviewer === null ? [] : [reviewer];
+  });
+}
+
 /** A linked GitHub reviewer answers to both logins, so either one finds the review request. */
 function reviewerLogins(actor: Actor, host: string): ReadonlyArray<string> {
   const reviewer = toActor(actor, host);
@@ -480,19 +492,14 @@ export function toStack(stack: GitCafeStack, target: RepositoryOnHost): Provider
   };
 }
 
-/** Git's own quoting for a path a patch header would otherwise split. */
-function quotePath(path: string): string {
-  return /[\s"\\]/u.test(path) ? `"${path.replace(/["\\]/gu, "\\$&")}"` : path;
-}
-
 /** Converts GitCafe's structured hunks into a unified patch, keeping omitted files' counts. */
 export function toDiff(diff: typeof GitCafeDiff.Type): ProviderDiffSlice {
   const chunks: Array<string> = [];
   const omittedFileStats: Array<{ path: string; additions: number; deletions: number }> = [];
   for (const file of diff.items) {
     const oldPath = file.oldPath ?? file.path;
-    const a = quotePath(`a/${oldPath}`);
-    const b = quotePath(`b/${file.path}`);
+    const a = quoteGitPatchPath(`a/${oldPath}`);
+    const b = quoteGitPatchPath(`b/${file.path}`);
     const before = file.status === "added" ? "/dev/null" : a;
     const after = file.status === "deleted" ? "/dev/null" : b;
     const mode = file.isSubmodule ? "160000" : "100644";
@@ -501,7 +508,10 @@ export function toDiff(diff: typeof GitCafeDiff.Type): ProviderDiffSlice {
     if (file.status === "deleted") lines.push(`deleted file mode ${mode}`);
     if (file.status === "renamed" || file.status === "copied") {
       const action = file.status === "renamed" ? "rename" : "copy";
-      lines.push(`${action} from ${quotePath(oldPath)}`, `${action} to ${quotePath(file.path)}`);
+      lines.push(
+        `${action} from ${quoteGitPatchPath(oldPath)}`,
+        `${action} to ${quoteGitPatchPath(file.path)}`,
+      );
     }
     if (file.binary) {
       lines.push(`Binary files ${before} and ${after} differ`);

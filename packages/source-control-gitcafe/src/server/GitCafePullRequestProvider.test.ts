@@ -589,13 +589,13 @@ describe("GitCafePullRequestProvider", () => {
     },
   );
 
-  it.effect("counts lines from hunk reads and offers only strategies no blocker names", () => {
+  it.effect("reads line counts, open merge strategies and requested reviewers", () => {
     const snapshot = { version: 4, headOid, comparisonBaseOid: baseOid };
     const files = (from: number, count: number) =>
       Array.from({ length: count }, (_, index) => ({ path: `f${from + index}.ts` }));
     let changePage = 0;
     const server = fakeGitCafe({
-      "GET /repos/owner/repo/pulls/7": pull,
+      "GET /repos/owner/repo/pulls/7": { ...pull, reviewers: [{ actor }] },
       "GET /repos/owner/repo/pulls/7/status": {
         merge: {
           conflicts: "unknown",
@@ -633,6 +633,11 @@ describe("GitCafePullRequestProvider", () => {
         squash: false,
         rebase: true,
       });
+      // A requested reviewer shows before they have reviewed.
+      assert.deepStrictEqual(
+        detail.reviewers.map((reviewer) => reviewer.login),
+        ["alice"],
+      );
     }).pipe(Effect.provide(server.layer));
   });
 

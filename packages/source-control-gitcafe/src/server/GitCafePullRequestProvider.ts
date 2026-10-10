@@ -573,7 +573,7 @@ export const make = Effect.gen(function* () {
         changedFiles: changes?.changedFiles ?? 0,
         closedAt: pull.closedAt,
         mergedAt: pull.mergedAt,
-        reviewers: [],
+        reviewers: Json.toReviewers(pull, input.host),
         checks: checks === null ? [] : Json.toChecks(checks),
         ...(status.checks.total === 0
           ? {}

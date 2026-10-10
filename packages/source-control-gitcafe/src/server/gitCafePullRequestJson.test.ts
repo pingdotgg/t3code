@@ -501,8 +501,20 @@ describe("toDiff", () => {
         truncated: false,
       }),
     );
-    assert.include(patch, 'rename from "old image.png"');
-    assert.include(patch, 'Binary files "a/old image.png" and "b/new image.png" differ');
+    // Git quotes a name for the bytes a header can't carry, not for a space.
+    assert.include(patch, "rename from old image.png");
+    assert.include(patch, "Binary files a/old image.png and b/new image.png differ");
+  });
+
+  it("C-escapes a name whose newline or tab would break the patch headers", () => {
+    const { patch } = GitCafePullRequestJson.toDiff(
+      decodeDiff({
+        items: [{ path: "two\nlines\tname.ts", status: "added", hunks: [] }],
+        truncated: false,
+      }),
+    );
+    assert.include(patch, 'diff --git "a/two\\nlines\\tname.ts" "b/two\\nlines\\tname.ts"');
+    assert.notInclude(patch, "two\nlines");
   });
 });
 
