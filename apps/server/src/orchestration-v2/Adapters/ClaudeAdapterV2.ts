@@ -7802,8 +7802,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             // Replay any result message last: a result finalizes the turn, and
             // replaying it before the rest would drop them back into the wake
-            // buffer and request another continuation.
-            const resultMessages = drained.filter((entry) => entry.type === "result");
+            // buffer and request another continuation. When Claude dequeues
+            // several notifications at once it can end an empty turn and open
+            // the next within a millisecond; that next turn is still running
+            // and owns this run, so the empty turn's result must not settle it.
+            const lastResultIndex = drained.findLastIndex((entry) => entry.type === "result");
+            const lastResult = drained[lastResultIndex];
+            const emptyTurnBeforeNextTurn =
+              lastResult?.type === "result" &&
+              lastResult.num_turns === 0 &&
+              !lastResult.is_error &&
+              terminalStatusFromResult(lastResult) === "completed" &&
+              drained.slice(lastResultIndex + 1).some((entry) => isClaudeTurnStartMessage(entry));
             const opaqueReplayTombstones = taskIdSetForNativeThread(
               yield* Ref.get(opaqueBackgroundTaskReplayTombstonesByNativeThread),
               nativeThreadId,
@@ -7819,8 +7829,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 yield* handleSdkMessage({ query: querySession.query, message: entry });
               }
             }
-            const lastResult = resultMessages.at(-1);
-            if (lastResult !== undefined) {
+            if (lastResult !== undefined && !emptyTurnBeforeNextTurn) {
               yield* handleSdkMessage({ query: querySession.query, message: lastResult });
               return;
             }
