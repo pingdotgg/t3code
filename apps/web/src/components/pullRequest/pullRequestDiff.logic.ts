@@ -1,5 +1,5 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
-import type { PullRequestDiffSide } from "@t3tools/contracts";
+import type { PullRequestDiffSide, PullRequestOmittedFileStat } from "@t3tools/contracts";
 
 /**
  * Whether a conversation's line is really in this file's hunks.
@@ -61,4 +61,50 @@ export function toggleFileDiffFoldForViewed(
   if (next.has(fileKey)) next.delete(fileKey);
   else next.add(fileKey);
   return next;
+}
+
+/** One answer from the host: a whole number of files, and where the next one carries on. */
+export interface DiffSlice {
+  /** What was asked for, null being the first slice. Identifies the slice among the loaded ones. */
+  readonly cursor: string | null;
+  readonly patch: string;
+  readonly truncated: boolean;
+  readonly nextCursor: string | null;
+  readonly omittedFileStats: ReadonlyArray<PullRequestOmittedFileStat>;
+}
+
+/**
+ * Folds one answer into the loaded slices. A new cursor appends. An unchanged answer keeps every
+ * slice and moves the cursor to the next loaded one, so a background refresh re-reads them in
+ * turn. A changed answer replaces its slice and drops the ones after it.
+ */
+export function reconcileDiffSlices(
+  slices: ReadonlyArray<DiffSlice>,
+  answer: DiffSlice,
+): { readonly cursor: string | null; readonly slices: ReadonlyArray<DiffSlice> } {
+  const index = slices.findIndex((slice) => slice.cursor === answer.cursor);
+  if (index === -1) return { cursor: answer.cursor, slices: [...slices, answer] };
+  const existing = slices[index];
+  if (existing !== undefined && isSameDiffSlice(existing, answer)) {
+    return { cursor: slices[index + 1]?.cursor ?? answer.cursor, slices };
+  }
+  return { cursor: answer.cursor, slices: [...slices.slice(0, index), answer] };
+}
+
+function isSameDiffSlice(existing: DiffSlice, next: DiffSlice): boolean {
+  return (
+    existing.patch === next.patch &&
+    existing.truncated === next.truncated &&
+    existing.nextCursor === next.nextCursor &&
+    existing.omittedFileStats.length === next.omittedFileStats.length &&
+    existing.omittedFileStats.every((file, index) => {
+      const refreshed = next.omittedFileStats[index];
+      return (
+        refreshed !== undefined &&
+        refreshed.path === file.path &&
+        refreshed.additions === file.additions &&
+        refreshed.deletions === file.deletions
+      );
+    })
+  );
 }

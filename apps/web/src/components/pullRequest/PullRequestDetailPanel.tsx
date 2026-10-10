@@ -809,7 +809,9 @@ export function PullRequestDetailPanel({
     nativeStackQuery.refresh();
   }, [activityQuery.refresh, detailQuery.refresh, nativeStackQuery.refresh]);
   const [refreshToken, setRefreshToken] = useState(0);
-  const codeRefreshToken = refreshToken + (turnRefresh ?? 0);
+  // A new revision or a finished turn may have moved the diff, but nobody asked to start over.
+  const [revisionToken, setRevisionToken] = useState(0);
+  const backgroundRefreshToken = revisionToken + (turnRefresh ?? 0);
   const activityRevision = useRef<{ readonly key: string; readonly updatedAt: string } | null>(
     null,
   );
@@ -821,7 +823,7 @@ export function PullRequestDetailPanel({
       // mutation's activity refresh can leave SWR displaying its previous value.
       if (activityQuery.isPending) return;
       activityQuery.refresh();
-      setRefreshToken((token) => token + 1);
+      setRevisionToken((token) => token + 1);
     }
     activityRevision.current = next;
   }, [activityQuery.isPending, activityQuery.refresh, coreDetail, tabScopeKey]);
@@ -2831,7 +2833,8 @@ export function PullRequestDetailPanel({
                     fixFindingLabel={handoffLabels.fixFinding}
                     {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
                     onRefresh={refreshDetail}
-                    refreshToken={codeRefreshToken}
+                    refreshToken={refreshToken}
+                    backgroundRefreshToken={backgroundRefreshToken}
                   />
                 </Suspense>
               </div>
