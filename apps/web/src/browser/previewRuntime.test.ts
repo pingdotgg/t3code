@@ -7,16 +7,21 @@ const state = vi.hoisted(() => ({
   serverBrowser: new Set<string>(),
 }));
 
-vi.mock("~/env", () => ({ isElectron: false }));
+vi.mock("~/env", () => ({ isElectron: true }));
 vi.mock("~/previewStateStore", () => ({ isPreviewSupportedInRuntime: () => state.desktop }));
 vi.mock("~/rpc/atomRegistry", () => ({ appAtomRegistry: { get: () => state.primary } }));
 vi.mock("~/state/primaryEnvironment", () => ({ primaryEnvironmentIdAtom: {} }));
 vi.mock("~/state/entities", () => ({
   readEnvironmentSupportsServerBrowser: (id: string) => state.serverBrowser.has(id),
+  useEnvironmentHasDesktopBrowser: () => false,
   useEnvironmentSupportsServerBrowser: () => false,
 }));
 
-import { alternatePreviewRuntime, previewRuntimeFor } from "./previewRuntime";
+import {
+  alternatePreviewRuntime,
+  previewRuntimeFor,
+  rendersServerTabNatively,
+} from "./previewRuntime";
 
 const local = "local" as EnvironmentId;
 const remote = "remote" as EnvironmentId;
@@ -56,5 +61,15 @@ describe("alternatePreviewRuntime", () => {
 
   it("offers no move outside the desktop app", () => {
     expect(alternatePreviewRuntime(remote, null, true, { runtime: "server" })).toBeNull();
+  });
+});
+
+describe("rendersServerTabNatively", () => {
+  it("draws the primary's server tabs natively only when it holds the desktop browser channel", () => {
+    expect(rendersServerTabNatively(local, local, true, { runtime: "server" })).toBe(true);
+    // A WSL-only primary has no channel, so a local <webview> would never reach its server.
+    expect(rendersServerTabNatively(local, local, false, { runtime: "server" })).toBe(false);
+    expect(rendersServerTabNatively(remote, local, true, { runtime: "server" })).toBe(false);
+    expect(rendersServerTabNatively(local, local, true, {})).toBe(false);
   });
 });
