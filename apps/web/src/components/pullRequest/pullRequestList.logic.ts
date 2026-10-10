@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import type {
   ProjectId,
+  PullRequestAction,
   PullRequestActor,
   PullRequestDiffStat,
   PullRequestInvolvement,
@@ -16,6 +17,7 @@ import type {
   PullRequestListCursors,
   PullRequestListFilters,
   PullRequestListState,
+  PullRequestState,
 } from "@t3tools/contracts";
 
 import { toSortableTimestamp } from "../../lib/threadSort";
@@ -1139,4 +1141,166 @@ export function withDiffStat<
   if (entry.additions !== 0 || entry.deletions !== 0) return entry;
   const stat = statsByRow.get(pullRequestDiffStatKey(entry));
   return stat === undefined ? entry : { ...entry, ...stat };
+}
+
+/**
+ * What a row should say the moment an action is sent, before any host has answered. The host
+ * is the record and a later read replaces this, but the reader pressed the button and should
+ * see the row answer at once: a closed pull request leaves an "open" list on the click, not
+ * after the reads that follow.
+ */
+export interface PullRequestListOverride {
+  readonly state: PullRequestState;
+  readonly isDraft?: boolean;
+  readonly updatedAt: string;
+  /** Which action wrote it, so a failure takes back its own note and not a later one's. */
+  readonly token: number;
+  /** When it was written, in the reader's clock. */
+  readonly at: number;
+}
+
+export function pullRequestOverrideAfterAction(
+  entry: Pick<PullRequestListEntry, "state" | "isDraft">,
+  action: PullRequestAction,
+  now: Date,
+  token: number,
+): PullRequestListOverride | null {
+  const stamp = { updatedAt: now.toISOString(), token, at: now.getTime() };
+  switch (action) {
+    case "close":
+      return { state: "closed", ...stamp };
+    case "reopen":
+      return { state: "open", ...stamp };
+    case "merge":
+      return { state: "merged", ...stamp };
+    case "draft":
+      return { state: entry.state, isDraft: true, ...stamp };
+    case "ready":
+      return { state: entry.state, isDraft: false, ...stamp };
+    default:
+      return null;
+  }
+}
+
+/** The rows with their pending answers written over them, and the ones the list's state filter no longer holds dropped. */
+export function applyPullRequestOverrides<Entry extends PullRequestListEntry>(
+  entries: ReadonlyArray<Entry>,
+  overrides: ReadonlyMap<string, PullRequestListOverride>,
+  keyOf: (entry: Entry) => string,
+  state: PullRequestListState,
+): ReadonlyArray<Entry> {
+  if (overrides.size === 0 && state === "all") return entries;
+  const out: Entry[] = [];
+  for (const entry of entries) {
+    const override = overrides.get(keyOf(entry));
+    if (state !== "all" && (override?.state ?? entry.state) !== state) continue;
+    out.push(override === undefined ? entry : { ...entry, ...override });
+  }
+  return overrides.size === 0 && out.length === entries.length ? entries : out;
+}
+
+/**
+ * A fresh answer with the rows it did not change handed back as the objects already held, so a
+ * memoized row whose data is the same does not render again. Every refresh otherwise rebuilds
+ * every entry, and a hundred rows repaint for the one that moved.
+ */
+export function reusePullRequestEntries<Entry extends PullRequestListEntry>(
+  previous: ReadonlyArray<Entry>,
+  next: ReadonlyArray<Entry>,
+  keyOf: (entry: Entry) => string,
+): ReadonlyArray<Entry> {
+  if (previous.length === 0) return next;
+  const held = new Map(previous.map((entry) => [keyOf(entry), entry]));
+  let reused = 0;
+  const out = next.map((entry) => {
+    const before = held.get(keyOf(entry));
+    if (before !== undefined && JSON.stringify(before) === JSON.stringify(entry)) {
+      reused += 1;
+      return before;
+    }
+    return entry;
+  });
+  return reused === next.length &&
+    previous.length === next.length &&
+    previous.every((entry, index) => keyOf(entry) === keyOf(next[index]!))
+    ? previous
+    : out;
+}
+
+/** How long a read that disagrees is taken for a stale one rather than for news. */
+const PULL_REQUEST_OVERRIDE_TRUST_MS = 60_000;
+
+/**
+ * The overrides an answer has confirmed, dropped; the rest kept. A read that started before
+ * the action can land after it and still say the old thing, so an override is not cleared
+ * because an answer arrived but because the answer agrees: the row is there in the state the
+ * override said. A row that is absent says nothing — the authored and reviewing groups are read
+ * apart from the feed, and a page is only a page — so absence never confirms. A row present in
+ * another state is taken for a stale read for a minute, and for the host's news after that,
+ * which is how a pull request reopened elsewhere comes back.
+ */
+export function settlePullRequestOverrides<Entry extends PullRequestListEntry>(
+  overrides: ReadonlyMap<string, PullRequestListOverride>,
+  answered: ReadonlyArray<Entry>,
+  keyOf: (entry: Entry) => string,
+  now: number,
+): ReadonlyMap<string, PullRequestListOverride> {
+  if (overrides.size === 0) return overrides;
+  const byKey = new Map(answered.map((entry) => [keyOf(entry), entry]));
+  const kept = new Map<string, PullRequestListOverride>();
+  for (const [key, override] of overrides) {
+    const row = byKey.get(key);
+    if (row === undefined) {
+      kept.set(key, override);
+      continue;
+    }
+    const agrees =
+      row.state === override.state &&
+      (override.isDraft === undefined || row.isDraft === override.isDraft);
+    const outranked = now - override.at > PULL_REQUEST_OVERRIDE_TRUST_MS;
+    if (!agrees && !outranked) kept.set(key, override);
+  }
+  return kept.size === overrides.size ? overrides : kept;
+}
+
+/** The row actions speed mode offers, in the order they are drawn. */
+export type PullRequestQuickAction = "close" | "merge" | "ready" | "reopen";
+
+/**
+ * Which actions each host can take on a listed row, before any row's detail is read. Hosts are
+ * matched by the host summary; a server that does not report actions per host only ever offered
+ * these on GitHub, so that is what it keeps getting.
+ */
+export function pullRequestHostActions(
+  providers: ReadonlyArray<PullRequestListResult["providers"][number]>,
+): (
+  entry: Pick<EnvironmentPullRequestEntry, "host" | "provider">,
+) => ReadonlySet<PullRequestAction> {
+  const byHost = new Map(
+    providers.flatMap((provider) =>
+      provider.actions === undefined
+        ? []
+        : [[provider.host.toLowerCase(), new Set(provider.actions)] as const],
+    ),
+  );
+  const legacy = new Set<PullRequestAction>(["close", "merge", "ready", "reopen"]);
+  const none = new Set<PullRequestAction>();
+  return (entry) =>
+    byHost.get(entry.host.toLowerCase()) ?? (entry.provider === "github" ? legacy : none);
+}
+
+/** The quick actions a row offers: what its state allows, narrowed to what its host can do. */
+export function pullRequestQuickActions(
+  entry: Pick<EnvironmentPullRequestEntry, "state" | "isDraft">,
+  hostActions: ReadonlySet<PullRequestAction>,
+): ReadonlyArray<PullRequestQuickAction> {
+  const forState: ReadonlyArray<PullRequestQuickAction> =
+    entry.state === "merged"
+      ? []
+      : entry.state === "closed"
+        ? ["reopen"]
+        : entry.isDraft
+          ? ["close", "ready"]
+          : ["close", "merge"];
+  return forState.filter((action) => hostActions.has(action));
 }

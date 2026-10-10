@@ -1,5 +1,5 @@
 import { Spinner } from "~/components/ui/spinner";
-import type { ProjectContentMatch } from "@t3tools/contracts";
+import { AuthFilesystemReadScope, type ProjectContentMatch } from "@t3tools/contracts";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
@@ -8,6 +8,7 @@ import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useProjectContentSearch } from "~/state/queries";
+import { readEnvironmentScope } from "~/state/session";
 
 import { PierreEntryIcon } from "../chat/PierreEntryIcon";
 import { CommandPaletteContent } from "../CommandPaletteContent";
@@ -56,6 +57,7 @@ function groupMatches(matches: ReadonlyArray<ProjectContentMatch>): MatchGroup[]
 
 function SearchOptionButton(props: {
   readonly active: boolean;
+  readonly disabled: boolean;
   readonly label: string;
   readonly onClick: () => void;
   readonly children: ReactNode;
@@ -66,15 +68,15 @@ function SearchOptionButton(props: {
         render={
           <Toggle
             aria-label={props.label}
+            disabled={props.disabled}
             pressed={props.active}
-            className="size-8 rounded-[5px] font-mono text-muted-foreground data-pressed:text-foreground sm:size-7"
-            size="compact"
-            variant="ghost"
+            size="segmented"
+            variant="segmented"
             onClick={props.onClick}
           />
         }
       >
-        {props.children}
+        <span className="font-mono">{props.children}</span>
       </TooltipTrigger>
       <TooltipPopup side="top">{props.label}</TooltipPopup>
     </Tooltip>
@@ -89,11 +91,13 @@ function EmptyContentSearchDialog() {
       footerActionLabel="Open file"
       inputProps={{ disabled: true, placeholder: "Search project contents…" }}
       mode="none"
-      panelClassName="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground"
+      panelSize="fill"
       testId="project-content-search"
       value=""
     >
-      Open a project to search its files.
+      <p className="m-auto px-6 text-center text-muted-foreground text-sm">
+        Open a project to search its files.
+      </p>
     </CommandPaletteContent>
   );
 }
@@ -120,7 +124,7 @@ function OpenContentSearchDialog(props: {
     wholeWord,
     useRegex,
   });
-  const canOpenMatches = !search.isPending;
+  const canOpenMatches = search.canReadFiles && !search.isPending && search.error === null;
   const matches = search.matches;
   const visibleMatches = useMemo(() => matches.slice(0, visibleCount), [matches, visibleCount]);
   const groups = useMemo(() => groupMatches(visibleMatches), [visibleMatches]);
@@ -152,13 +156,16 @@ function OpenContentSearchDialog(props: {
   }, []);
 
   const openMatch = (match: ProjectContentMatch) => {
-    if (!canOpenMatches) return;
+    if (!canOpenMatches || !readEnvironmentScope(target.environmentId, AuthFilesystemReadScope)) {
+      return;
+    }
     props.onOpenChange(false);
     useRightPanelStore.getState().openFile(target.threadRef, match.path, match.lineNumber);
   };
   const fileCount = useMemo(() => new Set(matches.map((match) => match.path)).size, [matches]);
   const showSearchStatus =
-    search.hasQuery || search.isPending || search.error !== null || search.invalidRegex;
+    search.canReadFiles &&
+    (search.hasQuery || search.isPending || search.error !== null || search.invalidRegex);
 
   return (
     <CommandPaletteContent
@@ -166,9 +173,10 @@ function OpenContentSearchDialog(props: {
       escapeLabel="Back"
       footerActionLabel="Open file"
       inputAccessory={
-        <div className="absolute inset-e-2.5 top-1/2 flex shrink-0 -translate-y-1/2 items-center gap-0.5 rounded-md border bg-muted/30 p-0.5">
+        <div className="absolute inset-e-2.5 top-1/2 flex shrink-0 -translate-y-1/2 items-center gap-0.5 rounded-lg border bg-muted/30 p-0.5">
           <SearchOptionButton
             active={caseSensitive}
+            disabled={!search.canReadFiles}
             label="Match case"
             onClick={() => setCaseSensitive((current) => !current)}
           >
@@ -176,6 +184,7 @@ function OpenContentSearchDialog(props: {
           </SearchOptionButton>
           <SearchOptionButton
             active={wholeWord}
+            disabled={!search.canReadFiles}
             label="Match whole word"
             onClick={() => setWholeWord((current) => !current)}
           >
@@ -183,6 +192,7 @@ function OpenContentSearchDialog(props: {
           </SearchOptionButton>
           <SearchOptionButton
             active={useRegex}
+            disabled={!search.canReadFiles}
             label="Use regular expression"
             onClick={() => setUseRegex((current) => !current)}
           >
@@ -192,6 +202,7 @@ function OpenContentSearchDialog(props: {
       }
       inputProps={{
         className: "pe-30",
+        disabled: !search.canReadFiles,
         placeholder: `Search in ${target.projectName}`,
         onKeyDown: (event) => {
           if (event.key === "ArrowDown" && matches.length > 0) {
@@ -218,7 +229,7 @@ function OpenContentSearchDialog(props: {
       }}
       mode="none"
       onValueChange={setQuery}
-      panelClassName="flex min-h-0 flex-1 flex-col"
+      panelSize="fill"
       testId="project-content-search"
       value={query}
     >
@@ -226,7 +237,7 @@ function OpenContentSearchDialog(props: {
         <div className="flex h-9 shrink-0 items-center border-b px-3 text-xs text-muted-foreground">
           {search.isPending ? (
             <span className="flex items-center gap-2">
-              <Spinner className="size-3.5" /> Searching…
+              <Spinner size="sm" /> Searching…
             </span>
           ) : search.error ? (
             <span className="text-destructive">{search.error}</span>
@@ -240,9 +251,13 @@ function OpenContentSearchDialog(props: {
 
       {matches.length === 0 ? (
         <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground">
-          {search.hasQuery && !search.isPending && !search.error
-            ? "No results found."
-            : "Type to search across your project."}
+          {search.isCheckingAccess
+            ? "Checking file access…"
+            : !search.canReadFiles
+              ? search.error
+              : search.hasQuery && !search.isPending && !search.error
+                ? "No results found."
+                : "Type to search across your project."}
         </div>
       ) : (
         <ScrollArea className="min-h-0 flex-1" scrollFade>
@@ -264,7 +279,7 @@ function OpenContentSearchDialog(props: {
                         {path.directory}
                       </span>
                     ) : null}
-                    <span className="ml-auto rounded-full bg-muted px-1.5 py-0.5 tabular-nums text-[10px] text-muted-foreground">
+                    <span className="ml-auto rounded-full bg-muted px-1.5 py-0.5 tabular-nums text-3xs text-muted-foreground">
                       {group.matches.length}
                     </span>
                   </div>

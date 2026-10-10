@@ -102,6 +102,9 @@ function row(overrides: Partial<EnvironmentPullRequestEntry>): ReactNode {
     showProjectTitle: false,
     showProvider: false,
     onSelect: () => {},
+    speedMode: false,
+    hostActions: new Set(),
+    onActed: () => {},
   });
 }
 

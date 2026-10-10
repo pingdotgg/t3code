@@ -1,15 +1,14 @@
 import type { SnapShotSource } from "@t3tools/contracts";
 import { ImageIcon, TextIcon } from "lucide-react";
-import { Suspense, use, useMemo, type CSSProperties } from "react";
+import { Suspense } from "react";
 
 import { useTheme } from "../../hooks/useTheme";
-import { resolveDiffThemeName } from "../../lib/diffRendering";
-import { getSyntaxHighlighterPromise } from "../../lib/syntaxHighlighting";
 import { cn } from "../../lib/utils";
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { HighlightedTokens } from "./HighlightedTokens";
 
 export const SNAP_SHOT_ATTACHMENT_FRAME_CLASS =
   "relative h-28 w-52 max-w-full overflow-hidden rounded-lg border border-border/80";
@@ -17,59 +16,6 @@ export const SNAP_SHOT_ATTACHMENT_FRAME_CLASS =
 export interface SnapShotAccessibilityDetails {
   content: string;
   format: "json" | "text";
-}
-
-interface SyntaxToken {
-  readonly content: string;
-  readonly offset: number;
-  readonly color?: string;
-  readonly fontStyle?: number;
-}
-
-function syntaxTokenStyle(token: SyntaxToken): CSSProperties {
-  const fontStyle = token.fontStyle ?? 0;
-  return {
-    ...(token.color ? { color: token.color } : {}),
-    ...(fontStyle & 1 ? { fontStyle: "italic" } : {}),
-    ...(fontStyle & 2 ? { fontWeight: 700 } : {}),
-    ...(fontStyle & 4 ? { textDecoration: "underline" } : {}),
-  };
-}
-
-function HighlightedAccessibilityJson({
-  content,
-  theme,
-}: {
-  content: string;
-  theme: "light" | "dark";
-}) {
-  const highlighter = use(getSyntaxHighlighterPromise("json"));
-  const lines = useMemo(
-    () =>
-      highlighter.codeToTokens(content, {
-        lang: "json",
-        theme: resolveDiffThemeName(theme),
-      }).tokens,
-    [content, highlighter, theme],
-  );
-
-  let lineOffset = 0;
-  return lines.map((line) => {
-    const lineContent = line.map((token) => token.content).join("");
-    const lineKey = `${lineOffset}:${lineContent}`;
-    const hasNextLine = lineOffset + lineContent.length < content.length;
-    lineOffset += lineContent.length + 1;
-    return (
-      <span key={lineKey}>
-        {line.map((token) => (
-          <span key={`${token.offset}:${token.content}`} style={syntaxTokenStyle(token)}>
-            {token.content}
-          </span>
-        ))}
-        {hasNextLine ? "\n" : null}
-      </span>
-    );
-  });
 }
 
 export function SnapShotAccessibilityData({
@@ -84,7 +30,7 @@ export function SnapShotAccessibilityData({
     details.format === "json" ? (
       <RenderErrorBoundary fallback={details.content}>
         <Suspense fallback={details.content}>
-          <HighlightedAccessibilityJson content={details.content} theme={resolvedTheme} />
+          <HighlightedTokens code={details.content} language="json" theme={resolvedTheme} />
         </Suspense>
       </RenderErrorBoundary>
     ) : (
@@ -150,10 +96,10 @@ export function SnapShotContentsButton({
                   aria-label={
                     includesAccessibility ? "View accessibility data" : "No accessibility data"
                   }
-                  className={cn("[--control-icon-color:currentColor]", className)}
+                  className={className}
                   onClick={(event) => event.stopPropagation()}
                   size="icon-micro"
-                  variant="ghost-muted"
+                  variant="overlay"
                 />
               }
             />
@@ -163,18 +109,13 @@ export function SnapShotContentsButton({
         </TooltipTrigger>
         <TooltipPopup side={side}>{tooltip}</TooltipPopup>
       </Tooltip>
-      <PopoverPopup
-        side={side}
-        align="center"
-        className="w-[min(24rem,calc(100vw-2rem))]"
-        viewportClassName="max-h-[min(28rem,70vh)]"
-      >
-        <div className="space-y-2">
-          <PopoverTitle className="text-sm leading-5">Accessibility data</PopoverTitle>
+      <PopoverPopup side={side} align="center" width="md">
+        <div className="max-h-[min(28rem,70vh)] space-y-2 overflow-y-auto">
+          <PopoverTitle>Accessibility data</PopoverTitle>
           {accessibilityDetails ? (
             <SnapShotAccessibilityData
               details={accessibilityDetails}
-              className="max-h-64 rounded-md border border-border/70 bg-muted/45 p-2.5 text-[11px] leading-4"
+              className="max-h-64 rounded-md border border-border/70 bg-muted/45 p-2.5 text-2xs leading-4"
             />
           ) : includesAccessibility ? (
             <div className="rounded-md border border-border/70 bg-muted/45 p-2.5 text-muted-foreground text-xs leading-4">
@@ -209,19 +150,16 @@ export function SnapShotAttachmentDetails({
       {source.appIconDataUrl ? (
         <img src={source.appIconDataUrl} alt="" className="size-7 shrink-0 rounded-md" />
       ) : (
-        <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-white/20 text-[10px] font-medium text-white uppercase">
+        <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-white/20 text-3xs font-medium text-white uppercase">
           {source.appName.slice(0, 1)}
         </div>
       )}
       <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium leading-3.5 text-white">
+        <div className="flex min-w-0 items-center gap-1.5 text-2xs font-medium leading-3.5 text-white">
           <span className="truncate">{source.appName}</span>
-          <SnapShotContentsButton
-            source={source}
-            className="pointer-events-auto text-white/60 hover:bg-white/10 hover:text-white focus-visible:ring-white/70"
-          />
+          <SnapShotContentsButton source={source} className="pointer-events-auto" />
         </div>
-        <div className="truncate text-[9px] leading-3.5 text-white/70">
+        <div className="truncate text-3xs leading-3.5 text-white/70">
           {source.windowTitle || "Captured window"}
         </div>
       </div>

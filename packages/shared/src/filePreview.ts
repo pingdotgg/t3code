@@ -1,5 +1,26 @@
 import { videoMimeType } from "./video.ts";
 
+const ICON_EXTENSION_BY_MIME_TYPE: Readonly<Record<string, string>> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  "application/pdf": "pdf",
+  "application/zip": "zip",
+  "application/vnd.sqlite3": "sqlite",
+  "text/x-python": "py",
+  "text/javascript": "js",
+  "text/x-ruby": "rb",
+  "text/x-shellscript": "sh",
+};
+
+/** A detected type fills in an unknown filename's icon; callers keep any
+ * specific icon already supplied by the filename. */
+export function fileIconPathForMimeType(path: string, mimeType?: string): string {
+  const extension = ICON_EXTENSION_BY_MIME_TYPE[mimeType ?? ""];
+  return extension ? `file.${extension}` : path;
+}
+
 export type FilePreviewKind =
   | "image"
   | "video"
@@ -171,8 +192,8 @@ export function mediaKindFromPath(path: string): "image" | "video" | null {
 }
 
 function hasPreviewExtension(path: string, extensions: ReadonlyArray<string>): boolean {
-  const pathWithoutQuery = path.split(/[?#]/, 1)[0]?.toLowerCase() ?? "";
-  return extensions.some((extension) => pathWithoutQuery.endsWith(extension));
+  const literalPath = path.toLowerCase();
+  return extensions.some((extension) => literalPath.endsWith(extension));
 }
 
 export function isWorkspaceBrowserPreviewPath(path: string): boolean {

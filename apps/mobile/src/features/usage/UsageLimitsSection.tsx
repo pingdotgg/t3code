@@ -1,12 +1,13 @@
 import { useAtomValue } from "@effect/atom-react";
-import type {
-  EnvironmentId,
-  ProviderConsumeResetCreditOutcome,
-  ProviderConsumeResetCreditInput,
-  ServerProvider,
-  ServerProviderResetCredits,
-  ServerProviderUsageWindow,
-  UsageProviderKind,
+import {
+  AuthProvidersManageScope,
+  type EnvironmentId,
+  type ProviderConsumeResetCreditOutcome,
+  type ProviderConsumeResetCreditInput,
+  type ServerProvider,
+  type ServerProviderResetCredits,
+  type ServerProviderUsageWindow,
+  type UsageProviderKind,
 } from "@t3tools/contracts";
 import {
   elapsedShare,
@@ -18,12 +19,13 @@ import {
 } from "@t3tools/shared/usageLimits";
 import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
 import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
-import { Alert, Pressable, View } from "react-native";
+import { Alert, Linking, Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useProviderColors } from "./usageProviders";
 
@@ -140,6 +142,7 @@ export function AccountLimits(props: {
   const color = useBarColor(props.driver);
   if (!limits) return null;
   const notice = limitsNotice(limits);
+  const externalUsage = limits.externalUsage;
   const padding = dense ? "px-4 py-3" : "p-4";
   return (
     <View
@@ -171,6 +174,15 @@ export function AccountLimits(props: {
           ))}
         </View>
       )}
+      {externalUsage ? (
+        <Pressable
+          accessibilityRole="link"
+          className="min-h-11 justify-center"
+          onPress={() => void Linking.openURL(externalUsage.url).catch(() => undefined)}
+        >
+          <Text className="text-sm font-t3-medium text-primary">Manage usage</Text>
+        </Pressable>
+      ) : null}
       {props.footer}
     </View>
   );
@@ -197,6 +209,7 @@ export function ResetCredits(props: {
   readonly dense?: boolean;
 }) {
   const { environmentId, input, credits, now, dense = false } = props;
+  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, {
     reportFailure: false,
   });
@@ -215,6 +228,7 @@ export function ResetCredits(props: {
         }`;
 
   const redeem = async () => {
+    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     setBusy(true);
     setStatus(null);
     const result = await consume({ environmentId, input });
@@ -231,6 +245,7 @@ export function ResetCredits(props: {
   };
 
   const confirm = () => {
+    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     Alert.alert(
       "Use a reset credit?",
       "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
@@ -247,13 +262,13 @@ export function ResetCredits(props: {
       {credits.availableCount > 0 ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityState={{ disabled: busy }}
-          disabled={busy}
+          accessibilityState={{ disabled: busy || !canManageProviders }}
+          disabled={busy || !canManageProviders}
           onPress={confirm}
           className={
             dense
-              ? "rounded-full bg-subtle-strong px-2.5 py-1"
-              : "min-h-[44px] justify-center rounded-full bg-subtle-strong px-3 py-1.5"
+              ? "rounded-full bg-subtle-strong px-2.5 py-1 disabled:opacity-[0.45]"
+              : "min-h-[44px] justify-center rounded-full bg-subtle-strong px-3 py-1.5 disabled:opacity-[0.45]"
           }
         >
           <Text
@@ -266,6 +281,11 @@ export function ResetCredits(props: {
             {busy ? "Using…" : "Use reset"}
           </Text>
         </Pressable>
+      ) : null}
+      {!canManageProviders ? (
+        <Text className="text-xs text-foreground-tertiary">
+          This connection cannot manage provider accounts.
+        </Text>
       ) : null}
       {status ? <Text className="text-sm text-foreground">{status}</Text> : null}
     </View>
@@ -294,7 +314,7 @@ export function useRefreshLimits(
   const [failedEnvironments, setFailedEnvironments] = useState<
     readonly { environmentId: EnvironmentId; label: string }[]
   >([]);
-  const refresh = async (automatic = false) => {
+  const refresh = async (automatic = false, afterPending = false) => {
     const connected = [...presentations].filter(
       ([environmentId, presentation]) =>
         presentation.connection.phase === "connected" &&
@@ -307,6 +327,7 @@ export function useRefreshLimits(
             environmentId,
             () => refreshProviders({ environmentId, input: {} }),
             automatic,
+            afterPending,
           );
           if (result === undefined) return;
           setFailedEnvironments((previous) => [
@@ -354,5 +375,11 @@ export function useRefreshLimits(
         selectedEnvironmentIds === null || selectedEnvironmentIds.has(environmentId),
     )
     .map(({ label }) => label);
-  return { now, refreshing, failedLabels, refresh: refreshManually };
+  return {
+    now,
+    refreshing,
+    failedLabels,
+    refresh: refreshManually,
+    refreshAfterEnable: () => refresh(false, true),
+  };
 }

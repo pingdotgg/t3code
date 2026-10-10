@@ -1,7 +1,15 @@
-import type { EnvironmentId, ProjectId, PullRequestListEntry } from "@t3tools/contracts";
+import { SourceControlProviderKind } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ProjectId,
+  PullRequestAction,
+  PullRequestListEntry,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  pullRequestHostActions,
+  pullRequestQuickActions,
   filterPullRequestsByInvolvement,
   findScopedProject,
   mergePullRequestLists,
@@ -32,6 +40,10 @@ import {
   resolveQueryEnvironmentIds,
   resolveSelectedEnvironmentId,
   type EnvironmentPullRequestEntry,
+  applyPullRequestOverrides,
+  pullRequestOverrideAfterAction,
+  reusePullRequestEntries,
+  settlePullRequestOverrides,
 } from "./pullRequestList.logic";
 import {
   pullRequestListPreferences,
@@ -326,7 +338,7 @@ describe("pull request involvement filtering", () => {
       entry({ number: 1, author: { login: "Bilal", name: null, avatarUrl: null } }),
       entry({
         number: 2,
-        provider: "gitlab",
+        provider: SourceControlProviderKind.make("gitlab"),
         host: "gitlab.com",
         author: { login: "Bilal", name: null, avatarUrl: null },
       }),
@@ -1318,7 +1330,7 @@ describe("merging the environments' own listings", () => {
           providers: [
             {
               host: "github.com",
-              kind: "github",
+              kind: SourceControlProviderKind.make("github"),
               searchesOnHost: false,
               projectCount: 2,
               configured: false,
@@ -1598,5 +1610,152 @@ describe("the priority groups against a paginated feed", () => {
     expect(
       groups.find((group) => group.key === "others")?.entries.map((row) => row.number),
     ).toEqual([6123]);
+  });
+});
+
+describe("pull request list overrides", () => {
+  const entry = (number: number, state: "open" | "closed" | "merged") =>
+    ({
+      host: "github.com",
+      repository: "pingdotgg/t3code",
+      number,
+      state,
+      isDraft: false,
+      updatedAt: "2026-07-01T00:00:00Z",
+      labels: [],
+    }) as unknown as PullRequestListEntry;
+  const key = (row: { number: number }) => `#${row.number}`;
+
+  it("maps the actions that change a row's state and nothing else", () => {
+    const now = new Date("2026-07-02T00:00:00Z");
+    expect(pullRequestOverrideAfterAction(entry(1, "open"), "close", now, 7)).toEqual({
+      state: "closed",
+      updatedAt: "2026-07-02T00:00:00.000Z",
+      token: 7,
+      at: now.getTime(),
+    });
+    expect(pullRequestOverrideAfterAction(entry(1, "closed"), "reopen", now, 1)?.state).toBe(
+      "open",
+    );
+    expect(pullRequestOverrideAfterAction(entry(1, "open"), "merge", now, 1)?.state).toBe("merged");
+    expect(pullRequestOverrideAfterAction(entry(1, "open"), "draft", now, 1)?.isDraft).toBe(true);
+    expect(pullRequestOverrideAfterAction(entry(1, "open"), "update-branch", now, 1)).toBeNull();
+  });
+
+  it("writes the override over the row and drops it from a list whose state it left", () => {
+    const rows = [entry(1, "open"), entry(2, "open")];
+    const overrides = new Map([
+      ["#1", { state: "closed" as const, updatedAt: "2026-07-03T00:00:00Z", token: 1, at: 0 }],
+    ]);
+    expect(
+      applyPullRequestOverrides(rows, overrides, key, "open").map((row) => row.number),
+    ).toEqual([2]);
+    const all = applyPullRequestOverrides(rows, overrides, key, "all");
+    expect(all.map((row) => [row.number, row.state])).toEqual([
+      [1, "closed"],
+      [2, "open"],
+    ]);
+    expect(applyPullRequestOverrides(rows, new Map(), key, "open")).toBe(rows);
+  });
+
+  it.each([
+    ["open", [1]],
+    ["closed", [2]],
+    ["merged", [3]],
+    ["all", [1, 2, 3]],
+  ] as const)("filters host rows by %s after pending actions settle", (state, expected) => {
+    const rows = [entry(1, "open"), entry(2, "closed"), entry(3, "merged")];
+    expect(applyPullRequestOverrides(rows, new Map(), key, state).map((row) => row.number)).toEqual(
+      expected,
+    );
+  });
+
+  it("keeps a confirmed close hidden when its override is cleared", () => {
+    const at = 1_000_000;
+    const rows = [entry(1, "closed"), entry(2, "open"), entry(3, "merged")];
+    const overrides = new Map([
+      ["#1", { state: "closed" as const, updatedAt: "2026-07-03T00:00:00Z", token: 1, at }],
+    ]);
+    const settled = settlePullRequestOverrides(overrides, rows, key, at + 5_000);
+    expect(settled.size).toBe(0);
+    expect(applyPullRequestOverrides(rows, settled, key, "open").map((row) => row.number)).toEqual([
+      2,
+    ]);
+  });
+
+  it("hands back the held object for a row a refresh did not change", () => {
+    const previous = [entry(1, "open"), entry(2, "open")];
+    const next = [{ ...entry(1, "open") }, { ...entry(2, "open"), state: "merged" as const }];
+    const reused = reusePullRequestEntries(previous, next, key);
+    expect(reused[0]).toBe(previous[0]);
+    expect(reused[1]).toBe(next[1]);
+    expect(
+      reusePullRequestEntries(previous, [{ ...entry(1, "open") }, { ...entry(2, "open") }], key),
+    ).toBe(previous);
+  });
+});
+
+describe("pull request list override settlement", () => {
+  const entry = (number: number, state: "open" | "closed" | "merged") =>
+    ({ number, state, isDraft: false, labels: [] }) as unknown as PullRequestListEntry;
+  const key = (row: { number: number }) => `#${row.number}`;
+
+  it("keeps an override until an answer agrees with it", () => {
+    const at = 1_000_000;
+    const closed = { state: "closed" as const, updatedAt: "2026-07-03T00:00:00Z", token: 1, at };
+    const overrides = new Map([["#1", closed]]);
+    // A read from before the action still says open: the override stands.
+    expect(settlePullRequestOverrides(overrides, [entry(1, "open")], key, at + 5_000)).toBe(
+      overrides,
+    );
+    // Absent from the answer says nothing: the row may live in another group or page.
+    expect(settlePullRequestOverrides(overrides, [entry(2, "open")], key, at + 5_000).size).toBe(1);
+    // Present as closed: confirmed.
+    expect(settlePullRequestOverrides(overrides, [entry(1, "closed")], key, at + 5_000).size).toBe(
+      0,
+    );
+    // Present as open a good while later: the host's news, which outranks the note.
+    expect(settlePullRequestOverrides(overrides, [entry(1, "open")], key, at + 90_000).size).toBe(
+      0,
+    );
+  });
+
+  it("does not hand back the old order when only the order changed", () => {
+    const previous = [entry(1, "open"), entry(2, "open")];
+    const swapped = reusePullRequestEntries(previous, [entry(2, "open"), entry(1, "open")], key);
+    expect(swapped).not.toBe(previous);
+    expect(swapped.map((row) => row.number)).toEqual([2, 1]);
+  });
+});
+
+describe("pull request quick actions", () => {
+  const summary = (host: string, kind: string, actions?: ReadonlyArray<PullRequestAction>) => ({
+    host,
+    kind: SourceControlProviderKind.make(kind),
+    searchesOnHost: true,
+    projectCount: 1,
+    configured: true,
+    detail: null,
+    ...(actions === undefined ? {} : { actions }),
+  });
+
+  it("offers what each host reports, and GitHub's legacy set when a server reports none", () => {
+    const actionsOf = pullRequestHostActions([
+      summary("bitbucket.org", "bitbucket", ["merge", "close"]),
+      summary("github.com", "github"),
+    ]);
+    const bitbucket = actionsOf({
+      host: "bitbucket.org",
+      provider: SourceControlProviderKind.make("bitbucket"),
+    });
+    expect(pullRequestQuickActions({ state: "closed", isDraft: false }, bitbucket)).toEqual([]);
+    const github = actionsOf({
+      host: "github.com",
+      provider: SourceControlProviderKind.make("github"),
+    });
+    expect(pullRequestQuickActions({ state: "open", isDraft: true }, github)).toEqual([
+      "close",
+      "ready",
+    ]);
   });
 });

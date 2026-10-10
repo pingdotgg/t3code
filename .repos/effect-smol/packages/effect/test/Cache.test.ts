@@ -1,9 +1,37 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Cache, Context, Data, Deferred, Duration, Effect, Exit, Fiber, Latch, MutableHashMap, Option } from "effect"
+import { Persistable, PersistedCache, Persistence } from "effect/persistence"
 import { TestClock } from "effect/testing"
-import { Persistable, PersistedCache, Persistence } from "effect/unstable/persistence"
+import { collectGarbage } from "./utils/gc.ts"
 
 describe("Cache", () => {
+  it.effect.skipIf(process.versions.bun !== undefined || process.versions.deno !== undefined)(
+    "does not retain prior equal object keys on cache hits",
+    () =>
+      Effect.gen(function*() {
+        const references: Array<WeakRef<object>> = []
+        const control = new WeakRef({})
+        let lookups = 0
+        const cache = yield* Cache.make({
+          capacity: 16,
+          lookup: (_key: { readonly region: string }) => Effect.sync(() => ++lookups)
+        })
+        for (let i = 0; i < 10; i++) {
+          const key = { region: "us-east-1" }
+          references.push(new WeakRef(key))
+          assert.strictEqual(yield* Cache.get(cache, key), 1)
+        }
+        assert.strictEqual(lookups, 1)
+        assert.strictEqual(yield* Cache.size(cache), 1)
+        // The last key may still be held by the cache.
+        references.pop()
+        yield* collectGarbage
+        assert.isUndefined(control.deref())
+        for (const reference of references) assert.isUndefined(reference.deref())
+        assert.strictEqual(yield* Cache.size(cache), 1)
+      })
+  )
+
   describe("constructors", () => {
     it.effect("make - creates cache with fixed capacity", () =>
       Effect.gen(function*() {
@@ -166,6 +194,99 @@ describe("Cache", () => {
 
   describe("basic operations", () => {
     describe("get", () => {
+      it.effect("does not retain a synchronous zero-TTL lookup", () =>
+        Effect.gen(function*() {
+          const cache = yield* Cache.makeWith(
+            (_key: string) => Effect.succeed(42),
+            { capacity: 1, timeToLive: () => Duration.zero }
+          )
+
+          assert.strictEqual(yield* Cache.get(cache, "key"), 42)
+          assert.strictEqual(yield* Cache.size(cache), 0)
+        }))
+
+      it.effect("removes a suspended zero-TTL lookup after completion", () =>
+        Effect.gen(function*() {
+          const started = yield* Latch.make()
+          const gate = yield* Deferred.make<number>()
+          const cache = yield* Cache.makeWith(
+            (_key: string) => started.open.pipe(Effect.andThen(Deferred.await(gate))),
+            { capacity: 1, timeToLive: () => Duration.zero }
+          )
+
+          const getter = yield* Cache.get(cache, "key").pipe(Effect.forkChild({ startImmediately: true }))
+          yield* started.await
+          assert.strictEqual(yield* Cache.size(cache), 1)
+
+          yield* Deferred.succeed(gate, 42)
+          assert.strictEqual(yield* Fiber.join(getter), 42)
+          assert.strictEqual(yield* Cache.size(cache), 0)
+        }))
+
+      it.effect("zero-TTL failure does not evict a live entry at capacity", () =>
+        Effect.gen(function*() {
+          const cache = yield* Cache.makeWith(
+            (key: string) => key === "bad" ? Effect.fail("error") : Effect.succeed(key.length),
+            { capacity: 2, timeToLive: (exit) => Exit.isFailure(exit) ? Duration.zero : Duration.hours(1) }
+          )
+
+          yield* Cache.get(cache, "a")
+          assert.deepStrictEqual(yield* Effect.exit(Cache.get(cache, "bad")), Exit.fail("error"))
+          assert.strictEqual(yield* Cache.size(cache), 1)
+          // Do not enumerate keys here: that would prune the expired entry and hide the eviction.
+          yield* Cache.get(cache, "b")
+
+          assert.deepStrictEqual(yield* Cache.getSuccess(cache, "a"), Option.some(1))
+          assert.deepStrictEqual(yield* Cache.getSuccess(cache, "b"), Option.some(1))
+          assert.strictEqual(yield* Cache.size(cache), 2)
+        }))
+
+      it.effect("zero-TTL lookup after expiration does not evict a live entry", () =>
+        Effect.gen(function*() {
+          let kLookups = 0
+          const cache = yield* Cache.makeWith(
+            (key: string) => key === "k" && ++kLookups === 2 ? Effect.fail("error") : Effect.succeed(1),
+            {
+              capacity: 2,
+              timeToLive: (exit, key) =>
+                Exit.isFailure(exit) ? Duration.zero : key === "k" ? Duration.minutes(1) : Duration.hours(1)
+            }
+          )
+
+          yield* Cache.get(cache, "a")
+          yield* Cache.get(cache, "k")
+          yield* TestClock.adjust("2 minutes")
+          assert.deepStrictEqual(yield* Effect.exit(Cache.get(cache, "k")), Exit.fail("error"))
+          // Do not enumerate keys: that would prune the stale entry and hide the eviction.
+          yield* Cache.get(cache, "b")
+
+          assert.deepStrictEqual(yield* Cache.getSuccess(cache, "a"), Option.some(1))
+          assert.deepStrictEqual(yield* Cache.getSuccess(cache, "b"), Option.some(1))
+          assert.strictEqual(yield* Cache.size(cache), 2)
+        }))
+
+      it.effect("zero-TTL completion does not remove a newer set value", () =>
+        Effect.gen(function*() {
+          const started = yield* Latch.make()
+          const gate = yield* Deferred.make<number, string>()
+          const cache = yield* Cache.makeWith(
+            (_key: string) => started.open.pipe(Effect.andThen(Deferred.await(gate))),
+            { capacity: 1, timeToLive: (exit) => Exit.isFailure(exit) ? Duration.zero : Duration.hours(1) }
+          )
+
+          const getter = yield* Cache.get(cache, "key").pipe(
+            Effect.exit,
+            Effect.forkChild({ startImmediately: true })
+          )
+          yield* started.await
+          yield* Cache.set(cache, "key", 99)
+          yield* Deferred.fail(gate, "error")
+
+          assert.deepStrictEqual(yield* Fiber.join(getter), Exit.fail("error"))
+          assert.deepStrictEqual(yield* Cache.getSuccess(cache, "key"), Option.some(99))
+          assert.strictEqual(yield* Cache.size(cache), 1)
+        }))
+
       it.effect("does not retain synchronously interrupted lookups", () =>
         Effect.gen(function*() {
           let calls = 0
@@ -339,6 +460,35 @@ describe("Cache", () => {
           assert.deepStrictEqual(yield* Fiber.await(third), Exit.succeed(42))
         }))
 
+      it.effect("interrupting a getOption waiter keeps the shared lookup available", () =>
+        Effect.gen(function*() {
+          const started = yield* Latch.make()
+          const finish = yield* Latch.make()
+          let lookups = 0
+          const cache = yield* Cache.make<string, number>({
+            capacity: 10,
+            lookup: () =>
+              Effect.gen(function*() {
+                lookups++
+                yield* started.open
+                yield* finish.await
+                return 42
+              })
+          })
+
+          const first = yield* Cache.get(cache, "key").pipe(Effect.forkChild({ startImmediately: true }))
+          yield* started.await
+          const waiter = yield* Cache.getOption(cache, "key").pipe(Effect.forkChild({ startImmediately: true }))
+          const second = yield* Cache.get(cache, "key").pipe(Effect.forkChild({ startImmediately: true }))
+          yield* Fiber.interrupt(waiter)
+          yield* finish.open
+
+          assert.deepStrictEqual(yield* Fiber.await(first), Exit.succeed(42))
+          assert.deepStrictEqual(yield* Fiber.await(second), Exit.succeed(42))
+          assert.deepStrictEqual(yield* Cache.getOption(cache, "key"), Option.some(42))
+          assert.strictEqual(lookups, 1)
+        }))
+
       it.effect("concurrent access - interrupting the last consumer interrupts the lookup", () =>
         Effect.gen(function*() {
           let lookupCount = 0
@@ -385,6 +535,37 @@ describe("Cache", () => {
           yield* lookupInterrupted.await
 
           assert.deepStrictEqual(yield* Cache.getSuccess(cache, "key"), Option.some(99))
+        }))
+
+      it.effect("concurrent access - a get made while an abandoned lookup is finalizing starts a new lookup", () =>
+        Effect.gen(function*() {
+          let lookups = 0
+          const started = yield* Latch.make()
+          const finalizing = yield* Latch.make()
+          const finishFinalizer = yield* Latch.make()
+          const cache = yield* Cache.make<string, number>({
+            capacity: 10,
+            lookup: () =>
+              Effect.suspend(() => {
+                if (++lookups > 1) return Effect.succeed(lookups)
+                return started.open.pipe(
+                  Effect.andThen(Effect.never),
+                  Effect.onInterrupt(() => finalizing.open.pipe(Effect.andThen(finishFinalizer.await)))
+                )
+              })
+          })
+
+          const getter = yield* Cache.get(cache, "key").pipe(Effect.forkChild({ startImmediately: true }))
+          yield* started.await
+          const interruptGetter = yield* Fiber.interrupt(getter).pipe(Effect.forkChild({ startImmediately: true }))
+          yield* finalizing.await
+          const fresh = yield* Cache.get(cache, "key").pipe(Effect.forkChild({ startImmediately: true }))
+          yield* finishFinalizer.open
+          yield* Fiber.join(interruptGetter)
+
+          assert.deepStrictEqual(yield* Fiber.await(fresh), Exit.succeed(2))
+          assert.strictEqual(yield* Cache.get(cache, "key"), 2)
+          assert.strictEqual(lookups, 2)
         }))
     })
 

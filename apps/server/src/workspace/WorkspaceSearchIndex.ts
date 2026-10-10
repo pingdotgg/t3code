@@ -25,7 +25,7 @@ import type {
   ProjectSearchContentsResult,
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
-import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import { isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 
 // fff-node stays external to the CLI bundle because it dlopens a native
 // library. A static `import` of an external package is a hard error inside a
@@ -169,7 +169,7 @@ function mapFileSearchResult(
 ): ProjectSearchEntriesResult {
   const entries = result.items.flatMap((item) => {
     const entry = toFileEntry(item);
-    return entry && (!imageOnly || isWorkspaceImagePreviewPath(entry.path)) ? [entry] : [];
+    return entry && (!imageOnly || isProjectFaviconPath(entry.path)) ? [entry] : [];
   });
   return {
     entries: entries.slice(0, limit),
@@ -365,6 +365,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       catch: (cause) => new WorkspaceSearchIndexDestroyFailed({ cwd, cause }),
     }).pipe(Effect.orDie),
   );
+  let initialScanTimedOut = false;
   yield* waitForIndexReady(
     cwd,
     finder,
@@ -374,7 +375,18 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         reason,
         cause,
       }),
+  ).pipe(
+    Effect.catchTags({
+      WorkspaceSearchIndexScanTimedOut: (error) =>
+        variant === "paths"
+          ? Effect.sync(() => {
+              initialScanTimedOut = true;
+            })
+          : Effect.fail(error),
+    }),
   );
+
+  const hasIncompleteInitialScan = () => initialScanTimedOut && finder.isScanning();
 
   const runSearch = Effect.fn("WorkspaceSearchIndex.runSearch")(function* <A>(
     query: string,
@@ -436,6 +448,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
 
   const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
     function* () {
+      const incompleteBeforeQuery = hasIncompleteInitialScan();
       const result = yield* runSearch("", WORKSPACE_INDEX_PAGE_SIZE, "mixedSearch", () =>
         finder.mixedSearch("", { pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
       );
@@ -446,7 +459,8 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       const entries = sortedEntries.slice(0, WORKSPACE_INDEX_MAX_ENTRIES);
       return {
         entries,
-        truncated: mapped.truncated || entries.length < sortedEntries.length,
+        truncated:
+          incompleteBeforeQuery || mapped.truncated || entries.length < sortedEntries.length,
       };
     },
   );
@@ -455,22 +469,26 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     "WorkspaceSearchIndex.search",
   )(function* (query, limit, kind, imageOnly) {
     const pageSize = imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, limit + 1);
+    const incompleteBeforeQuery = hasIncompleteInitialScan();
     if (kind === "file" || imageOnly) {
       const result = yield* runSearch(query, pageSize, "fileSearch", () =>
         finder.fileSearch(query, { pageSize }),
       );
-      return mapFileSearchResult(result, limit, imageOnly);
+      const mapped = mapFileSearchResult(result, limit, imageOnly);
+      return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
     }
     if (kind === "directory") {
       const result = yield* runSearch(query, pageSize, "directorySearch", () =>
         finder.directorySearch(query, { pageSize }),
       );
-      return mapDirectorySearchResult(result, limit);
+      const mapped = mapDirectorySearchResult(result, limit);
+      return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
     }
     const result = yield* runSearch(query, pageSize, "mixedSearch", () =>
       finder.mixedSearch(query, { pageSize }),
     );
-    return mapMixedSearchResult(result, limit);
+    const mapped = mapMixedSearchResult(result, limit);
+    return { ...mapped, truncated: incompleteBeforeQuery || mapped.truncated };
   });
 
   const searchContents: WorkspaceSearchIndex["Service"]["searchContents"] = Effect.fn(

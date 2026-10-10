@@ -234,19 +234,34 @@ export interface MemoMap {
 
 type MemoMapEntry = {
   observers: number
-  effect: Effect<Context.Context<any>, any>
+  readonly deferred: Deferred.Deferred<Context.Context<any>, any>
+  readonly scope: Scope.Closeable
   readonly finalizer: (exit: Exit.Exit<unknown, unknown>) => Effect<void>
 }
 
-const memoMapReuse = <RIn, E, ROut>(
-  entry: MemoMapEntry,
-  scope: Scope.Scope
-): Effect<Context.Context<ROut>, E, RIn> => {
+// The finalizer must not retain the caller of `getOrElseMemoize`.
+const makeMemoMapEntry = (memoMap: MemoMapImpl, layer: Layer<any, any, any>): MemoMapEntry => {
+  const entry: MemoMapEntry = {
+    observers: 0,
+    deferred: Deferred.makeUnsafe(),
+    scope: Scope.makeUnsafe(),
+    finalizer: (exit) =>
+      internalEffect.suspend(() => {
+        if (--entry.observers > 0) return internalEffect.void
+        memoMap.map.delete(layer)
+        return Scope.close(entry.scope, exit)
+      })
+  }
+  return entry
+}
+
+// Count and register synchronously so interruption cannot strand an observer.
+// A closed scope cannot own an entry.
+const memoMapObserve = (entry: MemoMapEntry, scope: Scope.Scope): boolean => {
+  if (scope.state._tag === "Closed") return false
   entry.observers++
-  return internalEffect.andThen(
-    internalEffect.scopeAddFinalizerExit(scope, (exit) => entry.finalizer(exit)),
-    entry.effect
-  )
+  internalEffect.scopeAddFinalizerUnsafe(scope, {}, entry.finalizer)
+  return true
 }
 
 /**
@@ -387,37 +402,6 @@ export const fromBuildMemo = <ROut, E, RIn>(
   return self
 }
 
-const memoMapBuild = <RIn, E, ROut>(
-  memoMap: MemoMapImpl,
-  layer: Layer<ROut, E, RIn>,
-  scope: Scope.Scope,
-  build: (memoMap: MemoMap, scope: Scope.Scope) => Effect<Context.Context<ROut>, E, RIn>
-): Effect<Context.Context<ROut>, E, RIn> => {
-  const layerScope = Scope.makeUnsafe()
-  const deferred = Deferred.makeUnsafe<Context.Context<ROut>, E>()
-  const entry: MemoMapEntry = {
-    observers: 1,
-    effect: Deferred.await(deferred),
-    finalizer: (exit: Exit.Exit<unknown, unknown>) =>
-      internalEffect.suspend(() => {
-        entry.observers--
-        if (entry.observers === 0) {
-          memoMap.map.delete(layer)
-          return Scope.close(layerScope, exit)
-        }
-        return internalEffect.void
-      })
-  }
-  memoMap.map.set(layer, entry)
-  return internalEffect.scopeAddFinalizerExit(scope, entry.finalizer).pipe(
-    internalEffect.flatMap(() => build(memoMap, layerScope)),
-    internalEffect.onExit((exit) => {
-      entry.effect = exit
-      return Deferred.done(deferred, exit)
-    })
-  )
-}
-
 class MemoMapImpl implements MemoMap {
   get [MemoMapTypeId](): typeof MemoMapTypeId {
     return MemoMapTypeId
@@ -437,7 +421,8 @@ class MemoMapImpl implements MemoMap {
   ): Effect<Context.Context<ROut>, E, RIn> | undefined {
     const local = this.map.get(layer)
     if (local) {
-      return memoMapReuse(local, scope)
+      memoMapObserve(local, scope)
+      return local.deferred.effect ?? Deferred.await(local.deferred)
     }
     return this.parent?.get(layer, scope)
   }
@@ -448,11 +433,24 @@ class MemoMapImpl implements MemoMap {
     build: (memoMap: MemoMap, scope: Scope.Scope) => Effect<Context.Context<ROut>, E, RIn>
   ): Effect<Context.Context<ROut>, E, RIn> {
     return internalEffect.suspend(() => {
-      const existing = this.get(layer, scope)
-      if (existing) {
-        return existing
-      }
-      return memoMapBuild(this, layer, scope, build)
+      // Install the exit handler before publishing an entry: it must complete
+      // the Deferred even if the first requester is interrupted.
+      let deferred: Deferred.Deferred<Context.Context<ROut>, E> | undefined
+      return internalEffect.onExitPrimitive(
+        internalEffect.suspend(() => {
+          const existing = this.get(layer, scope)
+          if (existing) return existing
+          const entry = makeMemoMapEntry(this, layer)
+          // A closed scope cannot own a shared entry; build in that scope instead.
+          if (!memoMapObserve(entry, scope)) return build(this, scope)
+          deferred = entry.deferred
+          this.map.set(layer, entry)
+          return build(this, entry.scope)
+        }),
+        (exit) => {
+          if (deferred) Deferred.doneUnsafe(deferred, exit)
+        }
+      )
     })
   }
 }

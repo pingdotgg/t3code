@@ -13,6 +13,8 @@
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { dotAlchemyDirectory } from "../AlchemyContext.ts";
+import { isPathWithin } from "./isPathWithin.ts";
 import { hashDirectory } from "../Command/Memo.ts";
 import { initialCwd } from "./Node.ts";
 import { sha256 } from "./sha256.ts";
@@ -117,6 +119,8 @@ export const hashExtraFiles = Effect.fn(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const runtimeBase = process.cwd();
+  const dotAlchemy = yield* dotAlchemyDirectory;
   const entries = yield* Effect.all(
     (extraFiles ?? []).map((extra) =>
       Effect.gen(function* () {
@@ -125,7 +129,8 @@ export const hashExtraFiles = Effect.fn(function* (
         const exists = yield* fs
           .exists(source)
           .pipe(Effect.orElseSucceed(() => false));
-        if (!exists) return [dest, ""] as const;
+        if (!exists || isPathWithin(dotAlchemy, source, runtimeBase))
+          return [dest, ""] as const;
         const stat = yield* fs.stat(source);
         const hash =
           stat.type === "Directory"
@@ -155,6 +160,9 @@ export const hashExtraFiles = Effect.fn(function* (
 export const copyTree = Effect.fn(function* (from: string, to: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const runtimeBase = process.cwd();
+  const dotAlchemy = yield* dotAlchemyDirectory;
+  if (isPathWithin(dotAlchemy, from, runtimeBase)) return;
   const stat = yield* fs
     .stat(from)
     .pipe(Effect.catch(() => Effect.succeed(undefined)));
@@ -170,7 +178,11 @@ export const copyTree = Effect.fn(function* (from: string, to: string) {
   const names = yield* fs.readDirectory(from, { recursive: true });
   yield* Effect.all(
     names.flatMap((name) => {
-      if (name.split(/[\\/]/).some(skipCopySegment)) return [];
+      if (
+        name.split(/[\\/]/).some(skipCopySegment) ||
+        isPathWithin(dotAlchemy, path.join(from, name), runtimeBase)
+      )
+        return [];
       return [
         Effect.gen(function* () {
           const src = path.join(from, name);

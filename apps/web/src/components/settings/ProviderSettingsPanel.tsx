@@ -1,5 +1,11 @@
 import { SettingsGroup } from "./SettingsGroup";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
+import {
+  AuthSettingsWriteScope,
+  AuthProvidersManageScope,
+  AuthOrchestrationReadScope,
+} from "@t3tools/contracts";
+import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { useAtomValue } from "@effect/atom-react";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
@@ -10,6 +16,7 @@ import {
 import {
   defaultInstanceIdForDriver,
   type EnvironmentId,
+  type AcpRegistryUrlAuthAction,
   PROVIDER_DISPLAY_NAMES,
   ProviderDriverKind,
   type ProviderInstanceConfig,
@@ -30,10 +37,9 @@ import { PlusIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
-import { isElectron } from "../../env";
-import { usePrimarySessionState } from "../../environments/primary";
 import {
   useEnvironmentSettings,
+  usePersistEnvironmentProviderInstanceMutation,
   useUpdateClientSettings,
   useUpdateEnvironmentSettings,
 } from "../../hooks/useSettings";
@@ -47,6 +53,7 @@ import {
 } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useEnvironmentSessionState } from "../../state/session";
+import { useProjects } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { getRelativeTimeState } from "../../timestampFormat";
 import {
@@ -59,6 +66,7 @@ import {
   isProviderUpdateActive,
   type ProviderSettingsUpdateCandidate,
 } from "../ProviderUpdateLaunchNotification.logic";
+import { ProviderUpdatesAction } from "../ProviderUpdatesAction";
 import { Button } from "../ui/button";
 import {
   Empty,
@@ -84,7 +92,10 @@ import { ExpandableText } from "./ExpandableText";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { UsageProviderSettings } from "./UsageProviderSettings";
 import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetupSection";
-import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
+import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
+import { CodexSetupSection, CodexManagedRuntimeFields } from "./CodexSetupSection";
+import { readCodexSetupMode } from "./CodexSetupSection.logic";
+import { providerClients } from "./providerDriverMeta";
 import { searchableSetting } from "./settingsSearch";
 import {
   backgroundActivityOverrideSettings,
@@ -108,7 +119,6 @@ import {
   isProviderSettingsEnvironmentAvailable,
   type ProviderEnvironmentAccess,
   type ProviderOperateAccess,
-  resolvePrimaryOperateAccess,
   resolveRemoteOperateAccess,
   resolveSelectedProviderEnvironmentId,
 } from "./ProviderSettingsPanel.logic";
@@ -129,8 +139,15 @@ function withoutProviderInstanceFavorites(
   return favorites.filter((favorite) => favorite.provider !== instanceId);
 }
 
-const PROVIDER_SETTINGS = DRIVER_OPTIONS.map((definition) => ({
-  provider: definition.value,
+function providerConfigString(config: unknown, key: string): string | null {
+  if (config === null || typeof config !== "object") return null;
+  const value = (config as Record<string, unknown>)[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+const PROVIDER_SETTINGS = providerClients.definitions.map((definition) => ({
+  provider: definition.driverKind,
+  hasDefaultInstance: definition.hasDefaultInstance !== false,
 }));
 
 function configuredBinaryPath(config: unknown): string {
@@ -201,9 +218,12 @@ function ProviderSettingsPlaceholder({
       ) : null}
       <SettingsGroup
         divided={false}
-        className={cn(providerCardHeightClassName, "flex overflow-x-hidden overflow-y-auto")}
+        className={cn(
+          providerCardHeightClassName,
+          "scrollbar-gutter-both flex overflow-x-hidden overflow-y-auto",
+        )}
       >
-        <Empty className="min-h-88">
+        <Empty>
           <EmptyMedia variant="icon">{icon}</EmptyMedia>
           <EmptyHeader>
             <EmptyTitle>{title}</EmptyTitle>
@@ -265,11 +285,12 @@ interface ProviderSettingsTarget {
   readonly environmentId?: EnvironmentId;
   readonly instanceId?: ProviderInstanceId;
   readonly scoped?: boolean;
+  readonly environmentIds?: readonly EnvironmentId[];
 }
 
 export function ProviderSettingsPanel(target: ProviderSettingsTarget) {
   return (
-    <SettingsPageContainer width="wide" className="@container/providers gap-8">
+    <SettingsPageContainer className="@container/providers gap-8">
       <ProviderSettingsPanelContent
         key={`${target.environmentId ?? ""}:${target.instanceId ?? ""}`}
         {...target}
@@ -283,8 +304,9 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const searchTargetId = useSettingsSearchTargetId();
   const options = useMemo(
-    () => buildProviderEnvironmentOptions(environments, primaryEnvironmentId),
-    [environments, primaryEnvironmentId],
+    () =>
+      buildProviderEnvironmentOptions(environments, primaryEnvironmentId, target.environmentIds),
+    [environments, primaryEnvironmentId, target.environmentIds],
   );
   // Raw user intent; the effective selection is re-derived every render so a
   // device that drops out of the catalog falls back without erasing the pick —
@@ -314,7 +336,25 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
       hasServerConfig: environment.serverConfig !== null,
     }),
   )?.environmentId;
+  const searchableCursorEnvironmentId = options.find(
+    (environment) =>
+      environment.serverConfig?.environment.platform.os === "darwin" &&
+      isProviderSettingsEnvironmentAvailable({
+        connectionPhase: environment.connection.phase,
+        hasServerConfig: true,
+      }),
+  )?.environmentId;
   useEffect(() => {
+    if (
+      !target.scoped &&
+      searchTargetId === searchableSetting("cursor-keychain-usage").id &&
+      (!selectedEnvironmentCanRenderSettings ||
+        selectedEnvironment?.serverConfig?.environment.platform.os !== "darwin") &&
+      searchableCursorEnvironmentId !== undefined
+    ) {
+      setSelectedEnvironmentId(searchableCursorEnvironmentId);
+      return;
+    }
     if (
       !target.scoped &&
       (searchTargetId === searchableSetting("provider-health-check-interval").id ||
@@ -326,7 +366,9 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
     }
   }, [
     searchTargetId,
+    searchableCursorEnvironmentId,
     searchableEnvironmentId,
+    selectedEnvironment,
     selectedEnvironmentCanRenderSettings,
     target.scoped,
   ]);
@@ -334,7 +376,7 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
     options.length === 1 && options[0]?.entry.target._tag === "PrimaryConnectionTarget";
   const deviceTabs =
     !target.scoped && !onlyPrimaryDevice && options.length > 0 ? (
-      <ScrollArea hideScrollbars scrollFade className="h-11 min-w-0 flex-1 rounded-none">
+      <ScrollArea radius="none" hideScrollbars scrollFade className="h-11 min-w-0 flex-1">
         <ToggleGroup
           aria-label="Devices"
           variant="segmented"
@@ -353,7 +395,7 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
               <Tooltip key={environment.environmentId}>
                 <TooltipTrigger
                   render={
-                    <Toggle value={environment.environmentId} className="gap-2 text-left">
+                    <Toggle value={environment.environmentId}>
                       <EnvironmentMachineIcon
                         kind={machine}
                         className="size-3.5 shrink-0"
@@ -430,58 +472,9 @@ function SelectedEnvironmentProviderSettings({
   readonly deviceTabs?: ReactNode;
   readonly targetInstanceId?: ProviderInstanceId | undefined;
 }) {
-  const isPrimary = environment.entry.target._tag === "PrimaryConnectionTarget";
-  if (isPrimary) {
-    // The desktop app owns its primary server outright; a browser session
-    // checks the scopes its cookie session was granted.
-    if (isElectron) {
-      return (
-        <AccessGatedProviderSettings
-          environment={environment}
-          operateAccess="granted"
-          deviceTabs={deviceTabs}
-          targetInstanceId={targetInstanceId}
-        />
-      );
-    }
-    return (
-      <PrimarySessionGatedProviderSettings
-        environment={environment}
-        deviceTabs={deviceTabs}
-        targetInstanceId={targetInstanceId}
-      />
-    );
-  }
   return (
     <RemoteSessionGatedProviderSettings
       environment={environment}
-      deviceTabs={deviceTabs}
-      targetInstanceId={targetInstanceId}
-    />
-  );
-}
-
-function PrimarySessionGatedProviderSettings({
-  environment,
-  deviceTabs,
-  targetInstanceId,
-}: {
-  readonly environment: EnvironmentPresentation;
-  readonly deviceTabs?: ReactNode;
-  readonly targetInstanceId?: ProviderInstanceId | undefined;
-}) {
-  const primarySessionState = usePrimarySessionState();
-  const operateAccess = resolvePrimaryOperateAccess({
-    isPrimary: true,
-    hasDesktopBridge: false,
-    session: primarySessionState.data,
-    isPending: primarySessionState.isPending,
-    hasError: primarySessionState.error !== null,
-  });
-  return (
-    <AccessGatedProviderSettings
-      environment={environment}
-      operateAccess={operateAccess}
       deviceTabs={deviceTabs}
       targetInstanceId={targetInstanceId}
     />
@@ -562,23 +555,32 @@ export function EnvironmentProviderSettings({
   readonly targetInstanceId?: ProviderInstanceId | undefined;
   /**
    * Grey out and freeze every write control when this session's credential
-   * lacks `orchestration:operate` on the environment. Selecting providers
+   * lacks `providers:manage` on the environment. Selecting providers
    * still works so the real configuration stays readable; switches, forms,
-   * and the health interval are inert so no write is offered and then rejected.
+   * are inert so no write is offered and then rejected.
    */
   readonly readOnly?: boolean;
 }) {
   const settings = useEnvironmentSettings(environmentId);
-  // Provider instances hold per-machine credentials and binaries, so this
-  // page always edits exactly the environment it displays.
+  const canWriteSettings = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
+  const canRefreshProviders = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
   const updateClientSettings = useUpdateClientSettings();
   const serverProviders =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
+  const projects = useProjects().filter((project) => project.environmentId === environmentId);
   const refreshServerProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
+    reportFailure: false,
+  });
+  const uninstallAcpRegistryManagedBinary = useAtomCommand(
+    serverEnvironment.uninstallAcpRegistryManagedBinary,
+    { reportFailure: false },
+  );
+  const acceptAcpRegistryUrlAuth = useAtomCommand(serverEnvironment.acceptAcpRegistryUrlAuth, {
     reportFailure: false,
   });
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
@@ -591,6 +593,34 @@ export function EnvironmentProviderSettings({
   >(() => new Set());
   const refreshingRef = useRef(false);
   const updatingInstanceIdsRef = useRef<Set<ProviderInstanceId>>(new Set());
+
+  const acceptUrlAuthentication = useCallback(
+    (instanceId: ProviderInstanceId, action: AcpRegistryUrlAuthAction) => {
+      void acceptAcpRegistryUrlAuth({
+        environmentId,
+        input: { instanceId, elicitationId: action.elicitationId },
+      }).then((result) => {
+        if (result._tag === "Success" && !result.value.accepted) {
+          toastManager.add({
+            type: "warning",
+            title: "Authentication request expired",
+            description: "Refresh the provider and start the authentication flow again.",
+          });
+          return;
+        }
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add({
+            type: "error",
+            title: "Could not continue authentication",
+            description:
+              error instanceof Error ? error.message : "The authentication request expired.",
+          });
+        }
+      });
+    },
+    [acceptAcpRegistryUrlAuth, environmentId],
+  );
 
   const providerUpdateCandidateByInstanceId = useMemo(
     () =>
@@ -628,7 +658,8 @@ export function EnvironmentProviderSettings({
       : null;
 
   const refreshProviders = useCallback(() => {
-    if (refreshingRef.current) return;
+    if (refreshingRef.current || !readEnvironmentScope(environmentId, AuthOrchestrationReadScope))
+      return;
     refreshingRef.current = true;
     setIsRefreshingProviders(true);
     void (async () => {
@@ -649,7 +680,11 @@ export function EnvironmentProviderSettings({
   }, [environmentId, refreshServerProviders]);
 
   const runProviderUpdate = useCallback(
-    async (candidate: ProviderSettingsUpdateCandidate) => {
+    async (
+      candidate: Pick<ProviderSettingsUpdateCandidate, "driver" | "instanceId">,
+      targetVersion?: string,
+    ) => {
+      if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
       // Ref-based re-entry guard, mirroring refreshProviders: a state updater
       // may run after this function returns, so it cannot gate the dispatch.
       if (updatingInstanceIdsRef.current.has(candidate.instanceId)) {
@@ -663,6 +698,7 @@ export function EnvironmentProviderSettings({
         input: {
           provider: candidate.driver,
           instanceId: candidate.instanceId,
+          ...(targetVersion ? { targetVersion } : {}),
         },
       });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -722,42 +758,22 @@ export function EnvironmentProviderSettings({
   );
 
   for (const providerSettings of visibleProviderSettings) {
-    type LegacyProviderSettings = (typeof settings.providers)[keyof typeof settings.providers];
-    const legacyProviders = settings.providers as Record<string, LegacyProviderSettings>;
-    const defaultLegacyProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<
-      string,
-      LegacyProviderSettings
-    >;
     const driver = providerSettings.provider;
     const defaultInstanceId = defaultInstanceIdForDriver(driver);
     const explicitInstance = settings.providerInstances?.[defaultInstanceId];
-    // A remote device may run a server version whose settings predate this
-    // driver, so the legacy mirror can be absent. Without either an explicit
-    // instance or a legacy blob there is nothing to render for the slot.
-    const legacyConfig = legacyProviders[providerSettings.provider];
-    const defaultLegacyConfig = defaultLegacyProviders[providerSettings.provider];
-    // The envelope is the single enabled flag: keep the legacy in-config
-    // flag out of the synthesized blob, or an explicit `enabled: false`
-    // would keep winning over the envelope and the Switch could never
-    // turn a default-off provider on.
-    const synthesizedInstance = (): ProviderInstanceConfig | undefined => {
-      if (legacyConfig === undefined) {
-        return undefined;
-      }
-      const { enabled: legacyEnabled, ...legacyConfigRest } = legacyConfig;
-      return {
-        driver,
-        enabled: legacyEnabled,
-        config: legacyConfigRest,
-      } satisfies ProviderInstanceConfig;
-    };
-    const effectiveInstance: ProviderInstanceConfig | undefined =
-      explicitInstance ?? synthesizedInstance();
-    // Only the default slot depends on the legacy blob; custom instances for
-    // the driver must still render even when the slot has nothing to show.
-    if (effectiveInstance !== undefined) {
-      const isDirty =
-        explicitInstance !== undefined || !Equal.equals(legacyConfig, defaultLegacyConfig);
+    // An unconfigured default slot runs with the driver's default config.
+    const effectiveInstance: ProviderInstanceConfig = explicitInstance ?? { driver };
+    const isDirty = explicitInstance !== undefined;
+    // Drivers without a default instance list only their configured instances.
+    const hasDefaultSlot = providerSettings.hasDefaultInstance || explicitInstance !== undefined;
+    if (
+      hasDefaultSlot &&
+      (driver === "codex" ||
+        driver === "claudeAgent" ||
+        isDirty ||
+        resolveProviderInstanceEnabled(effectiveInstance) ||
+        defaultInstanceId === targetInstanceId)
+    ) {
       rows.push({
         instanceId: defaultInstanceId,
         instance: effectiveInstance,
@@ -791,7 +807,7 @@ export function EnvironmentProviderSettings({
     rows.find((row) => row.instanceId === selectedInstanceId) ??
     (targetInstanceMissing ? null : (rows[0] ?? null));
 
-  const updateProviderInstance = (
+  const updateProviderInstance = async (
     row: InstanceRow,
     next: ProviderInstanceConfig,
     options?: {
@@ -800,22 +816,61 @@ export function EnvironmentProviderSettings({
       >[0]["textGenerationModelSelection"];
     },
   ) => {
-    updateSettings(
-      buildProviderInstanceUpdatePatch({
-        settings,
-        instanceId: row.instanceId,
-        instance: next,
-        driver: row.driver,
-        isDefault: row.isDefault,
-        textGenerationModelSelection: options?.textGenerationModelSelection,
-      }),
+    const { providerInstances: _providerInstances, ...patch } = buildProviderInstanceUpdatePatch({
+      settings,
+      instanceId: row.instanceId,
+      instance: next,
+      textGenerationModelSelection: options?.textGenerationModelSelection,
+    });
+    const result = await persistProviderInstance(
+      { operation: "upsert", instanceId: row.instanceId, instance: next },
+      patch,
     );
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add({
+        type: "error",
+        title: "Could not update provider instance",
+        description: error instanceof Error ? error.message : "The settings update failed.",
+      });
+    }
   };
 
-  const deleteProviderInstance = (id: ProviderInstanceId) => {
-    updateSettings({
-      providerInstances: withoutProviderInstanceKey(settings.providerInstances, id),
+  const deleteProviderInstance = async (row: InstanceRow) => {
+    const updateResult = await persistProviderInstance({
+      operation: "remove",
+      instanceId: row.instanceId,
     });
+    if (updateResult._tag === "Failure") {
+      const error = squashAtomCommandFailure(updateResult);
+      toastManager.add({
+        type: "error",
+        title: "Could not delete provider instance",
+        description: error instanceof Error ? error.message : "The settings update failed.",
+      });
+      return;
+    }
+
+    if (row.driver !== ProviderDriverKind.make("acpRegistry")) return;
+    if (providerConfigString(row.instance.config, "source") === "local") return;
+    const agentId = providerConfigString(row.instance.config, "agentId");
+    if (agentId === null) return;
+
+    // The server decides from its latest settings whether this was the last
+    // instance using the managed agent. A client-side snapshot check can race
+    // two removals and make both callers skip cleanup.
+    const uninstallResult = await uninstallAcpRegistryManagedBinary({
+      environmentId,
+      input: { agentId },
+    });
+    if (uninstallResult._tag === "Failure" && !isAtomCommandInterrupted(uninstallResult)) {
+      const error = squashAtomCommandFailure(uninstallResult);
+      toastManager.add({
+        type: "warning",
+        title: "Provider deleted, but managed files remain",
+        description: error instanceof Error ? error.message : "Managed binary cleanup failed.",
+      });
+    }
   };
 
   const updateProviderModelPreferences = (
@@ -862,34 +917,30 @@ export function EnvironmentProviderSettings({
     });
   };
 
-  const resetDefaultInstance = (driverKind: ProviderDriverKind) => {
-    type LegacyProviderSettings = (typeof settings.providers)[keyof typeof settings.providers];
-    const defaultLegacyProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<
-      string,
-      LegacyProviderSettings | undefined
-    >;
-    const defaultInstanceId = defaultInstanceIdForDriver(driverKind);
-    const defaultLegacyProvider = defaultLegacyProviders[driverKind];
-    if (defaultLegacyProvider === undefined) return;
-    updateSettings({
-      providers: {
-        ...settings.providers,
-        [driverKind]: defaultLegacyProvider,
-      } as typeof settings.providers,
-      providerInstances: withoutProviderInstanceKey(settings.providerInstances, defaultInstanceId),
+  const resetDefaultInstance = async (driverKind: ProviderDriverKind) => {
+    const result = await persistProviderInstance({
+      operation: "remove",
+      instanceId: defaultInstanceIdForDriver(driverKind),
     });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add({
+        type: "error",
+        title: "Could not reset provider instance",
+        description: error instanceof Error ? error.message : "The settings update failed.",
+      });
+    }
   };
 
   const renderProviderInstance = (row: InstanceRow, mode: "list" | "editor") => {
-    const driverOption = getDriverOption(row.driver);
+    const driverOption = providerClients.get(row.driver);
     const liveProvider = serverProviders.find(
       (candidate) => candidate.instanceId === row.instanceId,
     );
     const updateCandidate = providerUpdateCandidateByInstanceId.get(row.instanceId);
     const isInstanceUpdateRunning =
-      updateCandidate !== undefined &&
-      (updatingProviderInstanceIds.has(updateCandidate.instanceId) ||
-        isProviderUpdateActive(updateCandidate));
+      updatingProviderInstanceIds.has(row.instanceId) ||
+      (liveProvider !== undefined && isProviderUpdateActive(liveProvider));
     const showInlineUpdateButton = updateCandidate !== undefined;
     const canRunInlineUpdate = updateCandidate !== undefined && !isInstanceUpdateRunning;
     const modelPreferences = settings.providerModelPreferences?.[row.instanceId] ?? {
@@ -904,6 +955,11 @@ export function EnvironmentProviderSettings({
     return (
       <ProviderInstanceCard
         key={row.instanceId}
+        environmentId={environmentId}
+        acpProjects={projects}
+        onAcceptUrlAuth={
+          readOnly ? undefined : (action) => acceptUrlAuthentication(row.instanceId, action)
+        }
         instanceId={row.instanceId}
         instance={row.instance}
         driverOption={driverOption}
@@ -912,6 +968,18 @@ export function EnvironmentProviderSettings({
         selected={mode === "list" && selectedRow?.instanceId === row.instanceId}
         onSelect={mode === "list" ? () => setSelectedInstanceId(row.instanceId) : undefined}
         readOnly={readOnly}
+        runtime={
+          mode === "editor" &&
+          row.driver === "codex" &&
+          readCodexSetupMode(row.instance.config) === "managed" ? (
+            <CodexManagedRuntimeFields
+              environmentId={environmentId}
+              instanceId={row.instanceId}
+              provider={liveProvider}
+            />
+          ) : undefined
+        }
+        canWriteSettings={canWriteSettings}
         setup={
           mode === "editor" && row.driver === "antigravity" ? (
             <ProviderSetupSection
@@ -925,12 +993,60 @@ export function EnvironmentProviderSettings({
               readOnly={readOnly}
               onEnable={() => updateProviderInstance(row, { ...row.instance, enabled: true })}
             />
+          ) : mode === "editor" &&
+            row.driver === "codex" &&
+            readCodexSetupMode(row.instance.config) === "managed" ? (
+            <CodexSetupSection
+              environmentId={environmentId}
+              instanceId={row.instanceId}
+              provider={liveProvider}
+              mode={readCodexSetupMode(row.instance.config)}
+              enabled={resolveProviderInstanceEnabled(row.instance)}
+              readOnly={readOnly}
+              onModeChange={(setupMode) =>
+                updateProviderInstance(row, {
+                  ...row.instance,
+                  enabled: true,
+                  config: {
+                    ...(row.instance.config !== null && typeof row.instance.config === "object"
+                      ? row.instance.config
+                      : {}),
+                    enabled: true,
+                    setupMode,
+                  },
+                })
+              }
+            />
+          ) : mode === "editor" &&
+            !readOnly &&
+            liveProvider &&
+            (liveProvider.setup?.canAuthenticate ||
+              (liveProvider.driver === "acpRegistry" && liveProvider.installed)) ? (
+            <ProviderAuthenticationSection
+              key={`${environmentId}:${row.instanceId}`}
+              environmentId={environmentId}
+              environmentLabel={environmentLabel}
+              instanceId={row.instanceId}
+              provider={liveProvider}
+              readOnly={readOnly}
+            />
+          ) : mode === "editor" &&
+            !readOnly &&
+            row.driver === "cursor" &&
+            liveProvider?.setup?.canAuthenticate === false ? (
+            <SettingsRow
+              title="Cursor account"
+              description="Using CURSOR_API_KEY. Remove it from this provider's environment to use browser sign-in."
+            />
           ) : null
         }
         onUpdate={(next) => {
           const wasEnabled = resolveProviderInstanceEnabled(row.instance);
           const isDisabling = next.enabled === false && wasEnabled;
-          const shouldClearTextGen = isDisabling && textGenInstanceId === row.instanceId;
+          const shouldClearTextGen =
+            isDisabling &&
+            textGenInstanceId === row.instanceId &&
+            readEnvironmentScope(environmentId, AuthSettingsWriteScope);
           updateProviderInstance(
             row,
             next,
@@ -943,9 +1059,7 @@ export function EnvironmentProviderSettings({
           );
         }}
         onDelete={
-          mode === "editor" && !row.isDefault
-            ? () => deleteProviderInstance(row.instanceId)
-            : undefined
+          mode === "editor" && !row.isDefault ? () => deleteProviderInstance(row) : undefined
         }
         headerAction={
           mode === "editor" && row.isDefault && row.isDirty ? (
@@ -971,75 +1085,88 @@ export function EnvironmentProviderSettings({
             modelOrder,
           })
         }
+        onInstallRecommended={
+          !readOnly &&
+          liveProvider?.compatibilityAdvisory?.message &&
+          liveProvider.compatibilityAdvisory.recommendedVersion &&
+          liveProvider.versionAdvisory?.canInstallVersion
+            ? () => {
+                void runProviderUpdate(
+                  liveProvider,
+                  liveProvider.compatibilityAdvisory?.recommendedVersion ?? undefined,
+                );
+              }
+            : undefined
+        }
         onRunUpdate={
-          mode === "editor" && showInlineUpdateButton && updateCandidate
+          !readOnly && showInlineUpdateButton && updateCandidate
             ? () => {
                 if (canRunInlineUpdate) void runProviderUpdate(updateCandidate);
               }
             : undefined
         }
-        isUpdating={
-          mode === "editor" && showInlineUpdateButton ? isInstanceUpdateRunning : undefined
-        }
+        isUpdating={isInstanceUpdateRunning}
       />
     );
   };
 
   return (
     <>
-      <SettingsSection {...searchableSetting("providers")} variant="plain">
-        <div className="flex min-h-11 min-w-0 items-center gap-2 px-3 sm:px-4">
-          {deviceTabs}
-          <div className="ml-auto flex min-w-0 shrink-0 items-center gap-2">
-            {readOnly ? (
-              <span className="min-w-0 truncate text-xs text-muted-foreground">
-                <ProviderLastChecked lastCheckedAt={lastCheckedAt} />
-              </span>
-            ) : (
-              <>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        size="xs"
-                        variant="ghost-muted"
-                        disabled={isRefreshingProviders}
-                        aria-busy={isRefreshingProviders}
-                        onClick={() => void refreshProviders()}
-                      >
-                        <RefreshIcon refreshing={isRefreshingProviders} />
-                        <span className="sr-only">Refresh provider status</span>
-                        <span className="hidden min-w-0 truncate sm:inline">
-                          {isRefreshingProviders ? (
-                            "Refreshing providers"
-                          ) : (
-                            <ProviderLastChecked lastCheckedAt={lastCheckedAt} />
-                          )}
-                        </span>
-                      </Button>
-                    }
-                  />
-                  <TooltipPopup side="top">Refresh provider status</TooltipPopup>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        size="icon-xs"
-                        variant="ghost-muted"
-                        onClick={() => setIsAddInstanceDialogOpen(true)}
-                        aria-label="Add provider"
-                      >
-                        <PlusIcon />
-                      </Button>
-                    }
-                  />
-                  <TooltipPopup side="top">Add provider</TooltipPopup>
-                </Tooltip>
-              </>
-            )}
+      <SettingsSection
+        {...searchableSetting("providers")}
+        variant="plain"
+        titleAction={
+          !readOnly ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost-muted"
+                    onClick={() => setIsAddInstanceDialogOpen(true)}
+                    aria-label="Add provider"
+                  >
+                    <PlusIcon />
+                  </Button>
+                }
+              />
+              <TooltipPopup side="top">Add provider</TooltipPopup>
+            </Tooltip>
+          ) : null
+        }
+        headerAction={
+          <div className="flex min-w-0 items-center gap-2">
+            <ProviderUpdatesAction />
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="xs"
+                    variant="ghost-muted"
+                    disabled={isRefreshingProviders || !canRefreshProviders}
+                    aria-busy={isRefreshingProviders}
+                    onClick={() => void refreshProviders()}
+                  >
+                    <RefreshIcon refreshing={isRefreshingProviders} />
+                    <span className="sr-only">Refresh provider status</span>
+                    <span className="hidden min-w-0 truncate sm:inline">
+                      {isRefreshingProviders ? (
+                        "Refreshing providers"
+                      ) : (
+                        <ProviderLastChecked lastCheckedAt={lastCheckedAt} />
+                      )}
+                    </span>
+                  </Button>
+                }
+              />
+              <TooltipPopup side="top">Refresh provider status</TooltipPopup>
+            </Tooltip>
           </div>
-        </div>
+        }
+      >
+        {deviceTabs ? (
+          <div className="flex min-h-11 min-w-0 items-center gap-2 px-3 sm:px-4">{deviceTabs}</div>
+        ) : null}
         {readOnly ? (
           <SettingsGroup divided={false} className="overflow-hidden">
             <SettingsRow
@@ -1063,6 +1190,16 @@ export function EnvironmentProviderSettings({
             >
               <div className="divide-y divide-border/50">
                 {rows.map((row) => renderProviderInstance(row, "list"))}
+                {!readOnly ? (
+                  <button
+                    type="button"
+                    className="flex w-full cursor-pointer items-center gap-3 px-3 py-3 text-left text-sm text-muted-foreground transition-colors outline-none hover:bg-muted/25 hover:text-foreground focus-visible:bg-muted/25 focus-visible:text-foreground sm:px-4"
+                    onClick={() => setIsAddInstanceDialogOpen(true)}
+                  >
+                    <PlusIcon className="size-4 shrink-0" />
+                    Add provider
+                  </button>
+                ) : null}
               </div>
             </ScrollArea>
           </div>
@@ -1088,6 +1225,7 @@ export function EnvironmentProviderSettings({
         environmentId={environmentId}
         environmentLabel={environmentLabel}
         sources={settings.usageLimitSources}
+        cursorKeychainUsageEnabled={settings.cursorKeychainUsageEnabled}
         readOnly={readOnly}
       />
 
@@ -1107,7 +1245,10 @@ export function EnvironmentProviderSettings({
           description="Refresh provider status, versions, and models in the background. Set to 0 to disable."
           resetAction={
             providerHealthRefreshIntervalSeconds !== defaultProviderHealthRefreshIntervalSeconds ? (
-              <span inert={readOnly} className={readOnly ? "opacity-50" : undefined}>
+              <span
+                inert={!canWriteSettings}
+                className={!canWriteSettings ? "opacity-50" : undefined}
+              >
                 <SettingResetButton
                   label="provider health check interval"
                   onClick={() =>
@@ -1125,11 +1266,11 @@ export function EnvironmentProviderSettings({
           }
           control={
             <div
-              inert={readOnly}
-              aria-disabled={readOnly || undefined}
+              inert={!canWriteSettings}
+              aria-disabled={!canWriteSettings || undefined}
               className={cn(
                 "flex shrink-0 items-center gap-2",
-                readOnly && "opacity-50 select-none",
+                !canWriteSettings && "opacity-50 select-none",
               )}
             >
               <NumberField
@@ -1164,12 +1305,13 @@ export function EnvironmentProviderSettings({
         />
       </SettingsSection>
 
-      {isAddInstanceDialogOpen ? (
+      {isAddInstanceDialogOpen && !readOnly ? (
         <AddProviderInstanceDialog
           open
           environmentId={environmentId}
           environmentLabel={environmentLabel}
           onOpenChange={setIsAddInstanceDialogOpen}
+          onCreated={setSelectedInstanceId}
         />
       ) : null}
     </>

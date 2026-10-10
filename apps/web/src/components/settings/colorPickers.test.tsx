@@ -8,7 +8,7 @@ vi.mock("../ui/popover", () => ({
   Popover: ({ children }: { children: ReactNode }) => children,
   PopoverPopup: ({ children }: { children: ReactNode }) => children,
   PopoverTrigger: () => null,
-  PopoverClose: () => null,
+  PopoverClose: ({ render }: { render: ReactElement }) => render,
 }));
 vi.mock("../ui/tooltip", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => children,
@@ -225,6 +225,30 @@ describe("shared color controls in settings", () => {
     expect(onChange).toHaveBeenLastCalledWith("accent", "#ffffff");
     await act(async () => renderer!.update(render("#ffffff")));
     expect(slider(hue).props["aria-valuenow"]).toBe(10);
+  });
+
+  it("adds an accent only after choosing one and clears it back to no accent", async () => {
+    const onCommit = vi.fn();
+    await act(async () => {
+      renderer = create(
+        <ProviderAccentColorPicker displayName="Codex" value={undefined} onCommit={onCommit} />,
+      );
+    });
+    const clearButtons = () =>
+      renderer!.root.findAll(
+        (node) =>
+          node.type === "button" &&
+          Array.isArray(node.props.children) &&
+          node.props.children.includes("Clear color"),
+      );
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(clearButtons()).toHaveLength(0);
+    await key("Accent color hue", "ArrowRight", true);
+    expect(onCommit).toHaveBeenCalledOnce();
+    expect(clearButtons()).toHaveLength(1);
+    await act(async () => clearButtons()[0]!.props.onClick());
+    expect(onCommit).toHaveBeenLastCalledWith("");
+    expect(clearButtons()).toHaveLength(0);
   });
 
   it("keeps provider debounce at the consumer and commits pending color on unmount", async () => {

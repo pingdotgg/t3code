@@ -1,43 +1,26 @@
 import {
-  ConnectionPersistenceError,
-  EnvironmentCacheStore,
+  ORCHESTRATION_CACHE_SCHEMA_VERSION,
+  ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
+  StoredOrchestrationThreadSnapshot,
+  Persistence,
 } from "@t3tools/client-runtime/platform";
-import {
-  type EnvironmentId,
-  OrchestrationShellSnapshot,
-  OrchestrationThreadDetailSnapshot,
-  ServerConfig,
-  VcsListRefsResult,
-} from "@t3tools/contracts";
+import { type EnvironmentId, ServerConfig, VcsListRefsResult } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as MobileDatabase from "../persistence/mobile-database";
-import { attachProjectFaviconDatabase, projectFaviconCache } from "../lib/projectFaviconCache";
+import { makeStoredShellSnapshotEncoder } from "./shell-cache-encoding";
+import {
+  attachProjectFaviconDatabase,
+  projectFaviconDatabaseCache,
+} from "../lib/projectFaviconDatabaseCache";
+import { decodeStoredShellSnapshot } from "./shell-cache-decoding";
 
-const SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION = 1;
-// v3 adds windowed (paginated) snapshots carrying `page` metadata; the bump
-// makes pre-pagination clients discard the record instead of decoding a
-// partial thread as complete (rollback safety).
-// v4 reloads pre-thinking caches whose system-role fallback would otherwise
-// survive afterSequence resume and hide settled reasoning messages.
-const THREAD_SNAPSHOT_CACHE_SCHEMA_VERSION = 4;
 const SERVER_CONFIG_CACHE_SCHEMA_VERSION = 1;
 const VCS_REFS_CACHE_SCHEMA_VERSION = 1;
 
-const StoredShellSnapshot = Schema.Struct({
-  schemaVersion: Schema.Literal(SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION),
-  environmentId: Schema.String,
-  snapshot: OrchestrationShellSnapshot,
-});
-const StoredThreadSnapshot = Schema.Struct({
-  schemaVersion: Schema.Literal(THREAD_SNAPSHOT_CACHE_SCHEMA_VERSION),
-  environmentId: Schema.String,
-  threadId: Schema.String,
-  snapshot: OrchestrationThreadDetailSnapshot,
-});
 const StoredServerConfig = Schema.Struct({
   schemaVersion: Schema.Literal(SERVER_CONFIG_CACHE_SCHEMA_VERSION),
   environmentId: Schema.String,
@@ -50,14 +33,12 @@ const StoredVcsRefs = Schema.Struct({
   refs: VcsListRefsResult,
 });
 
-const decodeStoredShellSnapshot = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(StoredShellSnapshot),
-);
-const encodeStoredShellSnapshot = Schema.encodeEffect(Schema.fromJsonString(StoredShellSnapshot));
 const decodeStoredThreadSnapshot = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(StoredThreadSnapshot),
+  Schema.fromJsonString(StoredOrchestrationThreadSnapshot),
 );
-const encodeStoredThreadSnapshot = Schema.encodeEffect(Schema.fromJsonString(StoredThreadSnapshot));
+const encodeStoredThreadSnapshot = Schema.encodeEffect(
+  Schema.fromJsonString(StoredOrchestrationThreadSnapshot),
+);
 const decodeStoredServerConfig = Schema.decodeUnknownEffect(
   Schema.fromJsonString(StoredServerConfig),
 );
@@ -65,10 +46,10 @@ const encodeStoredServerConfig = Schema.encodeEffect(Schema.fromJsonString(Store
 const decodeStoredVcsRefs = Schema.decodeUnknownEffect(Schema.fromJsonString(StoredVcsRefs));
 const encodeStoredVcsRefs = Schema.encodeEffect(Schema.fromJsonString(StoredVcsRefs));
 
-type CacheOperation = ConnectionPersistenceError["operation"];
+type CacheOperation = Persistence.ConnectionPersistenceError["operation"];
 
 function persistenceError(operation: CacheOperation, cause: unknown) {
-  return new ConnectionPersistenceError({
+  return new Persistence.ConnectionPersistenceError({
     operation,
     message: `Could not ${operation.replaceAll("-", " ")}: ${String(cause)}`,
   });
@@ -86,7 +67,7 @@ function loadDecodedCache<A, B>(input: {
   readonly operation: CacheOperation;
   readonly decode: (raw: string) => Effect.Effect<A, unknown>;
   readonly select: (value: A) => Option.Option<B>;
-}): Effect.Effect<Option.Option<B>, ConnectionPersistenceError> {
+}): Effect.Effect<Option.Option<B>, Persistence.ConnectionPersistenceError> {
   return input.database.loadCache(input.environmentId, input.kind, input.cacheKey).pipe(
     Effect.mapError(mapDatabaseError(input.operation)),
     Effect.flatMap(
@@ -119,7 +100,8 @@ function loadDecodedCache<A, B>(input: {
 export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
   const database = yield* MobileDatabase.MobileDatabase;
   attachProjectFaviconDatabase(database);
-  return EnvironmentCacheStore.of({
+  const encodeStoredShellSnapshot = makeStoredShellSnapshotEncoder();
+  return Persistence.EnvironmentCacheStore.of({
     loadShell: Effect.fn("MobileEnvironmentCache.loadShell")((environmentId) =>
       loadDecodedCache({
         database,
@@ -130,16 +112,24 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
         decode: decodeStoredShellSnapshot,
         select: (stored) =>
           stored.environmentId === environmentId ? Option.some(stored.snapshot) : Option.none(),
-      }).pipe(Effect.tap(() => Effect.promise(() => projectFaviconCache.hydrate()))),
+      }).pipe(
+        // Read cached project icons in parallel with the shell so the first rows can show
+        // them, instead of making the thread list wait for the icon read after the decode.
+        Effect.zipWith(
+          Effect.promise(() => projectFaviconDatabaseCache.hydrate()),
+          (snapshot) => snapshot,
+          { concurrent: true },
+        ),
+      ),
     ),
     saveShell: Effect.fn("MobileEnvironmentCache.saveShell")(function* (environmentId, snapshot) {
       const payload = yield* encodeStoredShellSnapshot({
-        schemaVersion: SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION,
+        schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
         environmentId,
         snapshot,
       }).pipe(Effect.mapError((cause) => persistenceError("save-shell", cause)));
       yield* database
-        .saveCache(environmentId, "shell", "snapshot", SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION, payload)
+        .saveCache(environmentId, "shell", "snapshot", ORCHESTRATION_CACHE_SCHEMA_VERSION, payload)
         .pipe(Effect.mapError(mapDatabaseError("save-shell")));
     }),
     loadThread: Effect.fn("MobileEnvironmentCache.loadThread")((environmentId, threadId) =>
@@ -157,15 +147,21 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
       }),
     ),
     saveThread: Effect.fn("MobileEnvironmentCache.saveThread")(function* (environmentId, snapshot) {
-      const threadId = snapshot.thread.id;
+      const threadId = snapshot.projection.thread.id;
       const payload = yield* encodeStoredThreadSnapshot({
-        schemaVersion: THREAD_SNAPSHOT_CACHE_SCHEMA_VERSION,
+        schemaVersion: ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
         environmentId,
         threadId,
         snapshot,
       }).pipe(Effect.mapError((cause) => persistenceError("save-thread", cause)));
       yield* database
-        .saveCache(environmentId, "thread", threadId, THREAD_SNAPSHOT_CACHE_SCHEMA_VERSION, payload)
+        .saveCache(
+          environmentId,
+          "thread",
+          threadId,
+          ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
+          payload,
+        )
         .pipe(Effect.mapError(mapDatabaseError("save-thread")));
     }),
     removeThread: Effect.fn("MobileEnvironmentCache.removeThread")((environmentId, threadId) =>
@@ -241,7 +237,7 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
         .pipe(Effect.mapError(mapDatabaseError("clear-vcs-refs"))),
     ),
     clear: Effect.fn("MobileEnvironmentCache.clear")((environmentId) =>
-      Effect.promise(() => projectFaviconCache.clearEnvironment(environmentId)).pipe(
+      Effect.promise(() => projectFaviconDatabaseCache.clearEnvironment(environmentId)).pipe(
         Effect.andThen(database.clearEnvironmentCache(environmentId)),
         Effect.mapError(mapDatabaseError("clear-environment")),
       ),
@@ -249,4 +245,4 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
   });
 });
 
-export const layer = Layer.effect(EnvironmentCacheStore, make());
+export const layer = Layer.effect(Persistence.EnvironmentCacheStore, make());

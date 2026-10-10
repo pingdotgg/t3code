@@ -5,6 +5,17 @@ export default defineConfig([
     cwd: ".",
     entry: {
       "core/index": "src/core/index.ts",
+      "astro/neon": "src/astro/neon.ts",
+      "nextjs/neon": "src/nextjs/neon.ts",
+      "nuxt/neon": "src/nuxt/neon.ts",
+      "octane/neon": "src/octane/neon.ts",
+      "react-router/neon": "src/react-router/neon.ts",
+      "solidstart/neon": "src/solidstart/neon.ts",
+      "tanstack-start/neon": "src/tanstack-start/neon.ts",
+      "sveltekit/neon": "src/sveltekit/neon.ts",
+      "vite/neon": "src/vite/neon.ts",
+      "waku/neon": "src/waku/neon.ts",
+      "vocs/neon": "src/vocs/neon.ts",
       // Standalone child-process entries (spawned by BuildChild.ts /
       // DevChild.ts, never imported) — must keep their own stable files at
       // dist/core/.
@@ -48,6 +59,18 @@ export default defineConfig([
       "tanstack-start/aws": "src/tanstack-start/aws.ts",
       "tanstack-start/node": "src/tanstack-start/node.ts",
       "sveltekit/index": "src/sveltekit/index.ts",
+      "vinext/index": "src/vinext/index.ts",
+      "vinext/aws": "src/vinext/aws.ts",
+      "vinext/node": "src/vinext/node.ts",
+      "vinext/cloudflare": "src/vinext/cloudflare.ts",
+      "vinext/source": "src/vinext/source.ts",
+      "vinext/cache/index": "src/vinext/cache/index.ts",
+      "vinext/cache/kv": "src/vinext/cache/kv.ts",
+      "vinext/cache/kv-runtime": "src/vinext/cache/kv-runtime.ts",
+      "vinext/cache/redis": "src/vinext/cache/redis.ts",
+      "vinext/cache/redis-runtime": "src/vinext/cache/redis-runtime.ts",
+      "vinext/cache/s3": "src/vinext/cache/s3.ts",
+      "vinext/cache/s3-runtime": "src/vinext/cache/s3-runtime.ts",
       "vite/index": "src/vite/index.ts",
       "vite/aws": "src/vite/aws.ts",
       "vite/node": "src/vite/node.ts",
@@ -87,7 +110,12 @@ export default defineConfig([
       ],
     },
     inputOptions: {
-      external: [/^(?:astro|cloudflare|virtual):/, /^nitropack(?:\/|$)/],
+      external: [
+        /^(?:astro|cloudflare|virtual):/,
+        /^nitropack(?:\/|$)/,
+        /^alchemy(?:\/|$)/,
+        /^@distilled\.cloud\/aws(?:\/|$)/,
+      ],
       makeAbsoluteExternalsRelative: true,
     },
     outputOptions: {

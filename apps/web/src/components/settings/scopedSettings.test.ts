@@ -1,11 +1,13 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentAuthorizationError,
   EnvironmentId,
   ProjectId,
   type ServerSettings,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
+import * as Cause from "effect/Cause";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
@@ -158,6 +160,7 @@ describe("scoped settings writes", () => {
             worktreeOnDelete: true,
             worktreeOnMerge: true,
             worktreeUnchanged: false,
+            worktreeKeepWhen: "uncommitted-changes",
           },
         },
       },
@@ -181,12 +184,14 @@ describe("scoped settings writes", () => {
         worktreeOnDelete: false,
         worktreeOnMerge: true,
         worktreeUnchanged: false,
+        worktreeKeepWhen: "uncommitted-changes",
       },
       {
         worktreeAfterDays: null,
         worktreeOnDelete: false,
         worktreeOnMerge: false,
         worktreeUnchanged: false,
+        worktreeKeepWhen: "uncommitted-changes",
       },
     ]);
   });
@@ -293,6 +298,7 @@ describe("scoped settings writes", () => {
                 worktreeOnDelete: false,
                 worktreeOnMerge: true,
                 worktreeUnchanged: false,
+                worktreeKeepWhen: "uncommitted-changes",
               },
             },
           },
@@ -313,6 +319,7 @@ describe("scoped settings writes", () => {
               worktreeOnDelete: true,
               worktreeOnMerge: true,
               worktreeUnchanged: false,
+              worktreeKeepWhen: "uncommitted-changes",
             },
           },
         },
@@ -326,6 +333,7 @@ describe("scoped settings writes", () => {
               worktreeOnDelete: true,
               worktreeOnMerge: false,
               worktreeUnchanged: false,
+              worktreeKeepWhen: "uncommitted-changes",
             },
           },
         },
@@ -410,7 +418,15 @@ describe("scoped settings writes", () => {
     const persistServer = vi
       .fn()
       .mockResolvedValueOnce({ _tag: "Success" })
-      .mockResolvedValueOnce({ _tag: "Failure" })
+      .mockResolvedValueOnce({
+        _tag: "Failure",
+        cause: Cause.fail(
+          new EnvironmentAuthorizationError({
+            requiredScope: "settings:write",
+            message: "This connection lacks permission to change settings.",
+          }),
+        ),
+      })
       .mockRejectedValueOnce(new Error("Disconnected during save"))
       .mockResolvedValueOnce({ _tag: "Success" });
     const result = await persistScopedSettingsPatch(
@@ -419,6 +435,14 @@ describe("scoped settings writes", () => {
       vi.fn(),
     );
     expect(result.savedEnvironmentCount).toBe(2);
+    expect(result.savedEnvironments.map(({ label }) => label)).toEqual([
+      laptop.label,
+      fourth.label,
+    ]);
+    expect(result.failedEnvironments.map(({ message }) => message)).toEqual([
+      "This connection lacks permission to change settings.",
+      "Disconnected during save",
+    ]);
     expect(result.failedEnvironments.map(({ label }) => label)).toEqual([
       server.label,
       third.label,
@@ -507,6 +531,53 @@ describe("project overrides at environment scope", () => {
         },
       },
     ]);
+  });
+});
+
+describe("null patches at project scope", () => {
+  it("removes the override for keys that cannot store null and keeps it for keys that can", () => {
+    const environmentId = EnvironmentId.make("laptop");
+    const projectId = ProjectId.make("fleet");
+    const scope = {
+      kind: "project" as const,
+      group: {} as never,
+      environmentId: null,
+      label: "fleet",
+      members: [{ id: projectId, environmentId } as never],
+      environmentIds: [environmentId],
+    };
+    const environments = [
+      {
+        environmentId,
+        label: "Laptop",
+        connection: { phase: "connected" as const },
+        serverConfig: {
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            projectSettingsOverrides: {
+              [projectId]: { defaultThreadEnvMode: "worktree" as const, defaultAutoPull: true },
+            },
+          },
+          environment: { capabilities: { projectSettingsOverrides: true } },
+        },
+      },
+    ];
+    expect(
+      planScopedSettingsPatch(scope, environments, { defaultThreadEnvMode: null }).serverWrites[0]
+        ?.patch,
+    ).toEqual({ projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } } });
+    expect(
+      planScopedSettingsPatch(scope, environments, { defaultModelSelection: null }).serverWrites[0]
+        ?.patch,
+    ).toEqual({
+      projectSettingsOverrides: {
+        [projectId]: {
+          defaultThreadEnvMode: "worktree",
+          defaultAutoPull: true,
+          defaultModelSelection: null,
+        },
+      },
+    });
   });
 });
 

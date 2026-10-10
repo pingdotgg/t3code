@@ -17,7 +17,7 @@ export default function ReadOnlySourcePreview(props: {
   readonly name: string;
   readonly text: string;
   readonly cacheKey?: string;
-  readonly onPostRender?: FileOptions<unknown>["onPostRender"];
+  readonly onPostRender?: FileOptions<unknown, undefined>["onPostRender"];
 }) {
   const { resolvedTheme } = useTheme();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);

@@ -28,6 +28,7 @@ export interface GetObjectRequest extends Omit<S3.GetObjectRequest, "Bucket"> {}
  * ```
  *
  * @binding
+ * @product Bucket
  */
 export interface GetObject extends Binding.Service<
   GetObject,

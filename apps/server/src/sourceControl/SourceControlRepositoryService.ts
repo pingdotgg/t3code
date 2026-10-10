@@ -7,11 +7,12 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import {
+  SourceControlProviderError,
   SourceControlRepositoryError,
   type SourceControlCloneRepositoryInput,
   type SourceControlCloneRepositoryResult,
   type SourceControlCloneProtocol,
-  type SourceControlProviderKind,
+  SourceControlProviderKind,
   type SourceControlPublishRepositoryInput,
   type SourceControlPublishRepositoryResult,
   type SourceControlRepositoryCloneUrls,
@@ -19,15 +20,19 @@ import {
   type SourceControlRepositoryLookupInput,
 } from "@t3tools/contracts";
 
-import { ServerConfig } from "../config.ts";
-import { expandHomePathWith } from "../pathExpansion.ts";
+import * as ServerConfig from "../config.ts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
   parseGitCloneProgressLine,
   type GitCloneProgressLine,
 } from "../project/gitCloneProgress.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
+const isSourceControlProviderError = Schema.is(SourceControlProviderError);
+const isBitbucketRepositoryLocatorError = Schema.is(BitbucketApi.BitbucketRepositoryLocatorError);
 
 export class SourceControlRepositoryService extends Context.Service<
   SourceControlRepositoryService,
@@ -92,7 +97,12 @@ function mapRepositoryError(operation: string, provider: SourceControlProviderKi
       : new SourceControlRepositoryError({
           operation,
           provider,
-          detail: "The source control operation could not be completed.",
+          detail:
+            isSourceControlProviderError(cause) &&
+            cause.provider === "bitbucket" &&
+            isBitbucketRepositoryLocatorError(cause.cause)
+              ? BitbucketApi.BitbucketRepositoryLocatorError.detail
+              : "The source control operation could not be completed.",
           cause,
         }),
   );
@@ -155,7 +165,7 @@ function selectRemoteUrl(
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
-  const config = yield* ServerConfig;
+  const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const path = yield* Path.Path;
@@ -199,12 +209,12 @@ export const make = Effect.gen(function* () {
       if (trimmed.length === 0) {
         return yield* new SourceControlRepositoryError({
           operation: "cloneRepository",
-          provider: "unknown",
+          provider: SourceControlProviderKind.make("unknown"),
           detail: "Choose a destination path before cloning.",
         });
       }
 
-      return path.resolve(expandHomePathWith(trimmed, path));
+      return path.resolve(expandHomePath(trimmed, yield* HostProcess.HomeDirectory));
     },
   );
 
@@ -219,7 +229,7 @@ export const make = Effect.gen(function* () {
               (cause) =>
                 new SourceControlRepositoryError({
                   operation: "cloneRepository",
-                  provider: "unknown",
+                  provider: SourceControlProviderKind.make("unknown"),
                   detail: "Destination path already exists and is not a directory.",
                   cause,
                 }),
@@ -228,7 +238,7 @@ export const make = Effect.gen(function* () {
         if (entries.length > 0) {
           return yield* new SourceControlRepositoryError({
             operation: "cloneRepository",
-            provider: "unknown",
+            provider: SourceControlProviderKind.make("unknown"),
             detail: "Destination path already exists and is not empty.",
           });
         }
@@ -250,7 +260,8 @@ export const make = Effect.gen(function* () {
     const preparedDestination = yield* prepareDestination(input.destinationPath);
     let repository: SourceControlRepositoryInfo | null = null;
     let remoteUrl = input.remoteUrl?.trim() ?? null;
-    let provider: SourceControlProviderKind = input.provider ?? "unknown";
+    let provider: SourceControlProviderKind =
+      input.provider ?? SourceControlProviderKind.make("unknown");
 
     if (input.provider && input.repository) {
       repository = yield* lookupRepository({
@@ -303,7 +314,13 @@ export const make = Effect.gen(function* () {
       .execute({
         operation: "SourceControlRepositoryService.cloneRepository",
         cwd: path.dirname(prepared.destinationPath),
-        args: ["clone", "--progress", prepared.cloneUrl, path.basename(prepared.destinationPath)],
+        args: [
+          "clone",
+          "--progress",
+          "--",
+          prepared.cloneUrl,
+          path.basename(prepared.destinationPath),
+        ],
         timeoutMs: options?.timeoutMs === undefined ? CLONE_TIMEOUT_MS : options.timeoutMs,
         // Progress redraws add up on a slow multi-GB clone. The buffered copy
         // is never read (the tail is kept by hand above), so keep it small
@@ -319,7 +336,7 @@ export const make = Effect.gen(function* () {
           (cause) =>
             new SourceControlRepositoryError({
               operation: "cloneRepository",
-              provider: input.provider ?? "unknown",
+              provider: input.provider ?? SourceControlProviderKind.make("unknown"),
               detail:
                 stderrTail.length > 0
                   ? stderrTail.join(" ")
@@ -354,7 +371,7 @@ export const make = Effect.gen(function* () {
         (cause) =>
           new SourceControlRepositoryError({
             operation: "discardClone",
-            provider: "unknown",
+            provider: SourceControlProviderKind.make("unknown"),
             detail: "The clone destination could not be inspected.",
             cause,
           }),
@@ -363,7 +380,7 @@ export const make = Effect.gen(function* () {
     if (entries.length > 0 && !entries.includes(".git")) {
       return yield* new SourceControlRepositoryError({
         operation: "discardClone",
-        provider: "unknown",
+        provider: SourceControlProviderKind.make("unknown"),
         detail: "Destination path contains files that are not from the clone.",
       });
     }
@@ -377,7 +394,7 @@ export const make = Effect.gen(function* () {
         (cause) =>
           new SourceControlRepositoryError({
             operation: "discardClone",
-            provider: "unknown",
+            provider: SourceControlProviderKind.make("unknown"),
             detail: "The partial clone could not be removed.",
             cause,
           }),
@@ -446,13 +463,23 @@ export const make = Effect.gen(function* () {
     lookupRepository: (input) =>
       lookupRepository(input).pipe(mapRepositoryError("lookupRepository", input.provider)),
     prepareClone: (input) =>
-      prepareClone(input).pipe(mapRepositoryError("cloneRepository", input.provider ?? "unknown")),
+      prepareClone(input).pipe(
+        mapRepositoryError(
+          "cloneRepository",
+          input.provider ?? SourceControlProviderKind.make("unknown"),
+        ),
+      ),
     cloneRepository: (input, options) =>
       cloneRepository(input, options).pipe(
-        mapRepositoryError("cloneRepository", input.provider ?? "unknown"),
+        mapRepositoryError(
+          "cloneRepository",
+          input.provider ?? SourceControlProviderKind.make("unknown"),
+        ),
       ),
     discardClone: (destinationPath) =>
-      discardClone(destinationPath).pipe(mapRepositoryError("discardClone", "unknown")),
+      discardClone(destinationPath).pipe(
+        mapRepositoryError("discardClone", SourceControlProviderKind.make("unknown")),
+      ),
     publishRepository: (input) =>
       publishRepository(input).pipe(mapRepositoryError("publishRepository", input.provider)),
   });

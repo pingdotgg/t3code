@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type ComponentProps } from "react";
-import { BackHandler, Keyboard, type TextInput, View, type LayoutChangeEvent } from "react-native";
+import {
+  BackHandler,
+  Keyboard,
+  type TextInputInstance,
+  View,
+  type LayoutChangeEvent,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { MenuAction } from "@react-native-menu/menu";
 
@@ -12,7 +18,8 @@ import { MaterialSearchField } from "../../components/MaterialSearchField";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { WorkspaceConnectionTitle } from "./WorkspaceConnectionTitle";
 import { useWorkspaceState } from "../../state/workspace";
-import { useMaterialToolbarHeight } from "../../components/useMaterialToolbarHeight";
+import { useAndroidControlSizing } from "../../components/useAndroidControlSizing";
+import { useMaterialToolbarLayout } from "../../components/useMaterialToolbarLayout";
 
 /** One toolbar height for the compact list and expanded sidebar, including search. */
 export function MaterialThreadListToolbar(props: {
@@ -28,10 +35,11 @@ export function MaterialThreadListToolbar(props: {
   readonly onRequestVisibility?: () => void;
 }) {
   const insets = useSafeAreaInsets();
-  const toolbarHeight = useMaterialToolbarHeight();
+  const { fabSize } = useAndroidControlSizing();
+  const { height: toolbarHeight, ...headerPadding } = useMaterialToolbarLayout();
   const { state } = useWorkspaceState();
   const { onRequestVisibility, onSearchQueryChange } = props;
-  const searchRef = useRef<TextInput>(null);
+  const searchRef = useRef<TextInputInstance>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const searching = searchOpen || props.searchQuery.length > 0;
   const openSearch = useCallback(() => {
@@ -76,11 +84,9 @@ export function MaterialThreadListToolbar(props: {
       <View
         onLayout={props.onLayout}
         className={
-          props.sidebar
-            ? "absolute inset-x-0 top-0 z-[4] bg-header px-2 pb-2"
-            : "bg-header px-2 pb-2"
+          props.sidebar ? "absolute inset-x-0 top-0 z-[4] bg-header px-2" : "bg-header px-2"
         }
-        style={{ paddingTop: Math.max(insets.top, 12) }}
+        style={headerPadding}
       >
         <View className="flex-row items-center gap-1" style={{ minHeight: toolbarHeight }}>
           {searching ? (
@@ -116,21 +122,21 @@ export function MaterialThreadListToolbar(props: {
           )}
         </View>
       </View>
-      {/* Sit 8dp above the 56dp extended New thread FAB. */}
+      {/* Keep the filter above the New thread FAB at every text size. */}
       {state.hasConnections ? (
         <View
           className="absolute right-5 z-[5]"
           style={{
             bottom:
               (props.sidebar ? Math.max(insets.bottom, 12) + 6 : Math.max(insets.bottom, 16) + 16) +
-              56 +
+              fabSize +
               8,
           }}
         >
           <AndroidAnchoredMenu actions={props.filterActions} onPressAction={props.onFilterAction}>
             {(open) => (
               <MaterialFloatingActionButton
-                label="Filter and sort threads"
+                label="Filter threads"
                 icon={filterIcon}
                 onPress={open}
               />

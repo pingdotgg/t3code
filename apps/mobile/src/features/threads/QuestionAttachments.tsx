@@ -2,11 +2,7 @@ import { TextInputWrapper } from "expo-paste-input";
 import { AppTextInput as TextInput } from "../../components/AppText";
 import { useNativePaste } from "../../lib/useNativePaste";
 import { convertPastedImagesToAttachments } from "../../lib/composerImages";
-import {
-  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
-  type ApprovalRequestId,
-  type UserInputQuestion,
-} from "@t3tools/contracts";
+import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS, type UserInputQuestion } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { Alert, View } from "react-native";
 import { useEffect, useRef, useState } from "react";
@@ -32,7 +28,7 @@ import {
 } from "../../state/question-attachments";
 
 export function QuestionAttachments(props: {
-  requestId: ApprovalRequestId;
+  requestId: string;
   question: UserInputQuestion;
   questions: ReadonlyArray<UserInputQuestion>;
   disabled: boolean;
@@ -193,6 +189,8 @@ export function QuestionAttachments(props: {
       <TextInputWrapper onPaste={paste}>
         <TextInput
           value={props.value}
+          multiline={props.question.initialAnswer !== undefined}
+          submitBehavior={props.question.initialAnswer !== undefined ? "newline" : undefined}
           editable={!props.disabled}
           onChangeText={props.onChangeText}
           onFocus={() => props.onInputFocusChange?.(true)}

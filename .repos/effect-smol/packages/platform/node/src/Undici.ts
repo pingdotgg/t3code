@@ -12,17 +12,20 @@
  * dispatcher lifetimes, mocking, aborts, and request options follow Undici's
  * own semantics.
  *
+ * @stability unstable
  * @since 4.0.0
  */
 import Undici from "undici"
 
 /**
+ * @stability unstable
  * @category re-exports
  * @since 4.0.0
  */
 export * from "undici"
 
 /**
+ * @stability unstable
  * @category re-exports
  * @since 4.0.0
  */

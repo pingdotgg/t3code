@@ -29,13 +29,13 @@
 
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import type { ImageSourceLike } from "../ECR/ImageSource.ts";
+import { makeImageSource, type ImageSourceLike } from "../ECR/ImageSource.ts";
 import {
   flociProvidersUrl,
   makeDevWatchProvider,
 } from "../Local/DevWatchProvider.ts";
 import { imageSourceTrigger, restartFamilyTasks } from "./EcsDevWatch.ts";
-import { Task, TaskProvider, type TaskProps } from "./Task.ts";
+import { Task, TaskProvider, taskImageInput, type TaskProps } from "./Task.ts";
 
 export const FlociTaskProvider = () =>
   makeDevWatchProvider<Task, TaskProps, Task["Attributes"]>(
@@ -94,6 +94,7 @@ export const FlociTaskProvider = () =>
         ),
       startWatch: (ctx) =>
         Effect.gen(function* () {
+          const imageSource = yield* makeImageSource;
           const trigger = yield* imageSourceTrigger({
             id: ctx.id,
             source: ctx.news as ImageSourceLike,
@@ -103,7 +104,15 @@ export const FlociTaskProvider = () =>
             // The reconcile registers the new revision; the `onReconciled`
             // hook (shared with engine-driven updates) restarts the tasks.
             Stream.runForEach(() =>
-              ctx.rerunReconcile.pipe(
+              Effect.gen(function* () {
+                const current = yield* ctx.currentAttrs;
+                const hash = yield* imageSource.hash(taskImageInput(ctx.news));
+                // Bundle.watch emits its initial build too. Re-registering
+                // unchanged content would delete the ARN just returned by
+                // deploy before callers can launch a task with it.
+                if (hash !== undefined && hash === current.code.hash) return;
+                yield* ctx.rerunReconcile;
+              }).pipe(
                 Effect.catchCause((cause) =>
                   Effect.logWarning(
                     `[alchemy dev] ${ctx.id}: image swap failed`,

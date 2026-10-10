@@ -1,5 +1,7 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { Atom, AsyncResult } from "effect/reactivity";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 
 import {
   composerFileNeedsReattach,
@@ -10,11 +12,13 @@ import {
 } from "../composerDraftStore";
 
 const mocks = vi.hoisted(() => ({
+  connectionStateAtom: vi.fn(),
   createAssetUrl: vi.fn(),
   createUploadUrl: Symbol("create-upload-url"),
   executeAtomQuery: vi.fn(),
   removeUpload: Symbol("remove-upload"),
   runAtomCommand: vi.fn(),
+  readEnvironmentScope: vi.fn(),
   readPreparedConnection: vi.fn(),
 }));
 
@@ -24,7 +28,14 @@ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: (result: { readonly error: unknown }) => result.error,
 }));
 
-vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: {} }));
+vi.mock("../rpc/atomRegistry", async () => {
+  const { AtomRegistry } = await import("effect/reactivity");
+  return { appAtomRegistry: AtomRegistry.make() };
+});
+
+vi.mock("../connection/catalog", () => ({
+  environmentCatalog: { stateAtom: mocks.connectionStateAtom },
+}));
 
 vi.mock("../state/assets", () => ({
   assetEnvironment: { createUrl: mocks.createAssetUrl },
@@ -38,6 +49,7 @@ vi.mock("../state/attachments", () => ({
 }));
 
 vi.mock("../state/session", () => ({
+  readEnvironmentScope: mocks.readEnvironmentScope,
   readPreparedConnection: mocks.readPreparedConnection,
 }));
 
@@ -140,14 +152,29 @@ function makeFile(id: string): ComposerFileAttachment {
   };
 }
 
+const connectionStates = Atom.family((_environmentId: EnvironmentId) =>
+  Atom.make(AsyncResult.success({ phase: "connected" })),
+);
+
+function setConnected(environmentId: EnvironmentId, connected: boolean) {
+  appAtomRegistry.set(
+    connectionStates(environmentId),
+    AsyncResult.success({ phase: connected ? "connected" : "backoff" }),
+  );
+}
+
 describe("attachmentUploadQueue", () => {
   beforeEach(() => {
+    mocks.connectionStateAtom.mockImplementation(connectionStates);
+    setConnected(firstEnvironment, true);
+    setConnected(secondEnvironment, true);
     TestXmlHttpRequest.requests = [];
     mocks.createAssetUrl.mockReset();
     mocks.createAssetUrl.mockImplementation((target: unknown) => target);
     mocks.executeAtomQuery.mockReset();
     mocks.executeAtomQuery.mockResolvedValue({ _tag: "Success", value: {} });
     mocks.runAtomCommand.mockReset();
+    mocks.readEnvironmentScope.mockReset().mockReturnValue(true);
     mocks.readPreparedConnection.mockReset();
     mocks.readPreparedConnection.mockReturnValue({ httpBaseUrl: "https://environment.test/" });
     mocks.runAtomCommand.mockImplementation(
@@ -181,6 +208,173 @@ describe("attachmentUploadQueue", () => {
       releaseAttachmentUpload(imageId);
     }
     vi.unstubAllGlobals();
+  });
+
+  it.each([false, true])(
+    "retries a failed file once after reconnect, including a late HTTP failure: %s",
+    async (lateFailure) => {
+      const image = makeFile("reconnect");
+      startAttachmentUpload({ environmentId: firstEnvironment, image });
+      await Promise.resolve();
+      const firstSettled = awaitAttachmentUploads([image.id]);
+      setConnected(firstEnvironment, false);
+      if (lateFailure) setConnected(firstEnvironment, true);
+      TestXmlHttpRequest.requests[0]!.complete(503);
+      await firstSettled;
+      if (!lateFailure) setConnected(firstEnvironment, true);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(TestXmlHttpRequest.requests).toHaveLength(2);
+      const retrySettled = awaitAttachmentUploads([image.id]);
+      TestXmlHttpRequest.requests[1]!.complete(503);
+      await retrySettled;
+      setConnected(firstEnvironment, true);
+      await Promise.resolve();
+      expect(TestXmlHttpRequest.requests).toHaveLength(2);
+      expect(readAttachmentUpload(image.id)?.status).toBe("failed");
+
+      setConnected(firstEnvironment, false);
+      setConnected(firstEnvironment, true);
+      await Promise.resolve();
+      await Promise.resolve();
+      const finalSettled = awaitAttachmentUploads([image.id]);
+      TestXmlHttpRequest.requests[2]!.complete();
+      await finalSettled;
+      expect(
+        getUploadedAttachments({ environmentId: firstEnvironment, images: [image] }),
+      ).not.toBeNull();
+      setConnected(firstEnvironment, false);
+      setConnected(firstEnvironment, true);
+      await Promise.resolve();
+      expect(TestXmlHttpRequest.requests).toHaveLength(3);
+    },
+  );
+
+  it("does not retry for another environment or after the attachment is removed", async () => {
+    const image = makeFile("removed");
+    startAttachmentUpload({ environmentId: firstEnvironment, image });
+    await Promise.resolve();
+    const settled = awaitAttachmentUploads([image.id]);
+    TestXmlHttpRequest.requests[0]!.complete(503);
+    await settled;
+    setConnected(secondEnvironment, false);
+    setConnected(secondEnvironment, true);
+    await Promise.resolve();
+    expect(TestXmlHttpRequest.requests).toHaveLength(1);
+    setConnected(firstEnvironment, false);
+    setConnected(firstEnvironment, true);
+    releaseAttachmentUpload(image.id);
+    await Promise.resolve();
+    expect(TestXmlHttpRequest.requests).toHaveLength(1);
+    expect(readAttachmentUpload(image.id)).toBeUndefined();
+  });
+
+  it("keeps an attachment local until its own environment grants write access", async () => {
+    const image = makeImage("permission-gain");
+    mocks.readEnvironmentScope.mockImplementation(
+      (environmentId) => environmentId === firstEnvironment,
+    );
+
+    startAttachmentUpload({ environmentId: secondEnvironment, image });
+    expect(mocks.runAtomCommand).not.toHaveBeenCalled();
+    expect(TestXmlHttpRequest.requests).toHaveLength(0);
+    expect(readAttachmentUpload(image.id)).toBeUndefined();
+    expect(image.file).not.toBeNull();
+
+    mocks.readEnvironmentScope.mockReturnValue(true);
+    startAttachmentUpload({ environmentId: secondEnvironment, image });
+    await Promise.resolve();
+    const settled = awaitAttachmentUploads([image.id]);
+    TestXmlHttpRequest.requests[0]!.complete();
+    await settled;
+
+    expect(readAttachmentUpload(image.id)).toMatchObject({
+      status: "ready",
+      environmentId: secondEnvironment,
+    });
+  });
+
+  it("does not transfer bytes or retry when access is revoked while minting an upload", async () => {
+    const image = makeImage("revoke-before-bytes");
+    let finishMint: (() => void) | undefined;
+    mocks.runAtomCommand.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishMint = () =>
+            resolve({
+              _tag: "Success",
+              value: {
+                attachmentId: "pending-revoked",
+                relativeUrl: "/api/attachments/upload/pending-revoked",
+                expiresAt: 1,
+              },
+            });
+        }),
+    );
+    startAttachmentUpload({ environmentId: firstEnvironment, image });
+    const settled = awaitAttachmentUploads([image.id]);
+    mocks.readEnvironmentScope.mockReturnValue(false);
+    finishMint!();
+    await settled;
+
+    expect(TestXmlHttpRequest.requests).toHaveLength(0);
+    expect(readAttachmentUpload(image.id)).toMatchObject({
+      status: "failed",
+      reason: "This connection cannot upload attachments.",
+      attachmentId: "pending-revoked",
+    });
+    retryAttachmentUpload({ environmentId: firstEnvironment, image });
+    expect(readAttachmentUpload(image.id)?.status).toBe("failed");
+    releaseAttachmentUpload(image.id);
+    expect(readAttachmentUpload(image.id)).toBeUndefined();
+    expect(mocks.runAtomCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not mint queued uploads after access is revoked", async () => {
+    const images = Array.from({ length: 4 }, (_, index) => makeImage(`queued-${index}`));
+    for (const image of images) {
+      startAttachmentUpload({ environmentId: firstEnvironment, image });
+    }
+    await Promise.resolve();
+    expect(TestXmlHttpRequest.requests).toHaveLength(3);
+    const settled = awaitAttachmentUploads(images.map((image) => image.id));
+    mocks.readEnvironmentScope.mockReturnValue(false);
+    for (const request of TestXmlHttpRequest.requests) {
+      request.complete();
+    }
+    await settled;
+
+    expect(mocks.runAtomCommand).toHaveBeenCalledTimes(3);
+    expect(TestXmlHttpRequest.requests).toHaveLength(3);
+    expect(readAttachmentUpload(images[3]!.id)).toMatchObject({
+      status: "failed",
+      reason: "This connection cannot upload attachments.",
+    });
+  });
+
+  it("does not delete a persisted upload using another environment's grant", () => {
+    mocks.readEnvironmentScope.mockImplementation(
+      (environmentId) => environmentId === firstEnvironment,
+    );
+    releasePersistedAttachmentUpload({
+      id: "local-file",
+      environmentId: secondEnvironment,
+      attachmentId: "persisted-file",
+    });
+    expect(mocks.runAtomCommand).not.toHaveBeenCalled();
+
+    mocks.readEnvironmentScope.mockReturnValue(true);
+    releasePersistedAttachmentUpload({
+      id: "local-file",
+      environmentId: secondEnvironment,
+      attachmentId: "persisted-file",
+    });
+    expect(mocks.runAtomCommand).toHaveBeenCalledWith(
+      expect.anything(),
+      mocks.removeUpload,
+      { environmentId: secondEnvironment, input: { attachmentId: "persisted-file" } },
+      expect.anything(),
+    );
   });
 
   it("uploads images immediately and sends attachment references", async () => {

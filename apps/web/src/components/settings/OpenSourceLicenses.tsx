@@ -21,15 +21,35 @@ type LicenseManifestState =
   | { readonly status: "error"; readonly message: string }
   | { readonly status: "ready"; readonly manifest: ThirdPartyLicenseManifest };
 
-async function loadLicenseManifest(signal: AbortSignal): Promise<ThirdPartyLicenseManifest> {
-  const response = await fetch(
-    `${import.meta.env.BASE_URL.replace(/\/$/, "")}/third-party-licenses.json`,
-    { signal },
-  );
-  if (!response.ok) {
-    throw new Error(`The license manifest request failed with status ${String(response.status)}.`);
+let licenseManifestPromise: Promise<ThirdPartyLicenseManifest> | undefined;
+
+async function fetchLicenseManifest(): Promise<ThirdPartyLicenseManifest> {
+  const signal = AbortSignal.timeout(30_000);
+  try {
+    const response = await fetch(
+      `${import.meta.env.BASE_URL.replace(/\/$/, "")}/third-party-licenses.json`,
+      { signal },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `The license manifest request failed with status ${String(response.status)}.`,
+      );
+    }
+    return decodeThirdPartyLicenseManifest((await response.json()) as unknown);
+  } catch (error) {
+    if (signal.aborted) {
+      throw new Error("The license manifest took too long to load.", { cause: error });
+    }
+    throw error;
   }
-  return decodeThirdPartyLicenseManifest((await response.json()) as unknown);
+}
+
+function loadLicenseManifest(): Promise<ThirdPartyLicenseManifest> {
+  licenseManifestPromise ??= fetchLicenseManifest().catch((error: unknown) => {
+    licenseManifestPromise = undefined;
+    throw error;
+  });
+  return licenseManifestPromise;
 }
 
 function LicenseNoticeRow({
@@ -179,7 +199,7 @@ function LicenseManifestError({ message, onRetry }: { message: string; onRetry: 
     <div className="flex flex-col items-start gap-3 px-3 py-5 sm:px-4">
       <div className="flex flex-col gap-1">
         <h3 className="text-sm font-medium text-foreground">Open-source notices are unavailable</h3>
-        <p className="max-w-[70ch] text-pretty text-[13px] leading-[1.45] text-muted-foreground/80">
+        <p className="max-w-[70ch] text-pretty text-xs leading-normal text-muted-foreground/80">
           {message}
         </p>
       </div>
@@ -198,19 +218,23 @@ export function OpenSourceLicensesPanel() {
   const [requestVersion, setRequestVersion] = useState(0);
 
   useEffect(() => {
-    const controller = new AbortController();
+    let cancelled = false;
     setState({ status: "loading" });
-    void loadLicenseManifest(controller.signal).then(
-      (manifest) => setState({ status: "ready", manifest }),
+    void loadLicenseManifest().then(
+      (manifest) => {
+        if (!cancelled) setState({ status: "ready", manifest });
+      },
       (error: unknown) => {
-        if (controller.signal.aborted) return;
+        if (cancelled) return;
         setState({
           status: "error",
           message: error instanceof Error ? error.message : "The license manifest could not load.",
         });
       },
     );
-    return () => controller.abort();
+    return () => {
+      cancelled = true;
+    };
   }, [requestVersion]);
 
   const entries = state.status === "ready" ? state.manifest.entries : [];

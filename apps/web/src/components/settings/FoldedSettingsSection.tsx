@@ -16,12 +16,14 @@ export function FoldedSettingsSection({
   title,
   summary,
   control,
+  headerPlacement = "inside",
   children,
 }: {
   readonly id: string;
   readonly title: string;
   readonly summary?: string | null;
   readonly control?: ReactNode;
+  readonly headerPlacement?: "inside" | "outside";
   readonly children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -34,11 +36,43 @@ export function FoldedSettingsSection({
     if (!open) setOpen(true);
   }
 
+  if (headerPlacement === "outside") {
+    return (
+      <section id={id} ref={targetRef} tabIndex={-1} className="outline-none">
+        <Collapsible open={open} onOpenChange={setOpen}>
+          <div className="space-y-2.5">
+            <div
+              data-settings-scroll-target
+              className="flex min-h-7 items-start justify-between gap-4 px-3 sm:px-4"
+            >
+              <h2>
+                <CollapsibleTrigger className="flex min-h-7 items-center gap-2 rounded-md text-sm font-normal text-foreground/70 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+                  {title}
+                  <ChevronRightIcon
+                    aria-hidden
+                    className={cn(
+                      "size-4 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
+                      open && "rotate-90",
+                    )}
+                  />
+                </CollapsibleTrigger>
+              </h2>
+              {control}
+            </div>
+            <CollapsiblePanel>
+              <SettingsGroup>{children}</SettingsGroup>
+            </CollapsiblePanel>
+          </div>
+        </Collapsible>
+      </section>
+    );
+  }
+
   return (
     <section id={id} ref={targetRef} tabIndex={-1} className="outline-none">
       <Collapsible open={open} onOpenChange={setOpen} render={<SettingsGroup divided={false} />}>
         <div className="flex items-center gap-4 px-3 sm:px-4">
-          <CollapsibleTrigger className="flex min-h-11 min-w-0 flex-1 items-center gap-2 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-md">
+          <CollapsibleTrigger className="flex min-h-11 min-w-0 flex-1 items-center gap-2 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring rounded-md">
             <ChevronRightIcon
               aria-hidden
               className={cn(

@@ -1,8 +1,10 @@
 import type { HeaderBarButtonMailSearchToolbarItem } from "react-native-screens";
 import { useId } from "react";
+import { ActivityIndicator, Platform, View } from "react-native";
 import { createNativeHeaderMenu } from "./nativeHeaderMenu.ios";
 import { ScreenHeaderButton } from "./ScreenHeaderButton";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../native/StackHeader";
+import { useNativeWorkspaceColumnsSupported } from "../native/NativeWorkspaceColumns";
 import { useAdaptiveWorkspaceLayout } from "../features/layout/AdaptiveWorkspaceLayout";
 import {
   createNativeMailSearchToolbarItem,
@@ -11,6 +13,7 @@ import {
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import type { ScreenHeaderMenuItem, ScreenHeaderProps } from "./ScreenHeader.types";
 import type { AppSymbolName } from "./AppSymbol";
+import { useNativeMailSearchToolbar } from "../native/use-native-mail-search-toolbar";
 
 function iosIcon(icon: AppSymbolName) {
   return typeof icon === "string" ? icon : icon.ios;
@@ -32,15 +35,17 @@ function mailMenuItems(items: ReadonlyArray<ScreenHeaderMenuItem>): MailMenu["it
 }
 
 export function ScreenHeader(props: ScreenHeaderProps) {
+  const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const headerId = useId();
   const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
   const { themeVariables } = useAppearancePreferences();
+  const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
   const { search, menus } = props;
   const menu = menus?.[0];
   const compactSearch =
     search !== undefined &&
     (search.compactToolbar ?? !layout.usesSplitView) &&
-    NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED;
+    usesNativeMailSearchToolbar;
   const visibleMenus = compactSearch ? (menus?.slice(1) ?? []) : (menus ?? []);
   const refresh = search?.refreshInToolbar ? search.onRefresh : undefined;
   return (
@@ -53,6 +58,10 @@ export function ScreenHeader(props: ScreenHeaderProps) {
         ]}
         options={{
           headerShown: true,
+          headerBackVisible:
+            !layout.usesSplitView ||
+            !props.backInSplitView ||
+            !(props.backInSplitView.onPress || props.onBack),
           title: props.title,
           unstable_headerSubtitle: props.subtitle || undefined,
           ...(props.matchSearchSurface
@@ -83,7 +92,7 @@ export function ScreenHeader(props: ScreenHeaderProps) {
                           : undefined),
                       }),
                     ]
-                  : undefined,
+                  : () => [],
                 headerSearchBarOptions: compactSearch
                   ? undefined
                   : {
@@ -111,8 +120,12 @@ export function ScreenHeader(props: ScreenHeaderProps) {
               onPress={props.backInSplitView.onPress ?? props.onBack}
             />
           ) : null}
-          {props.sidebar !== false ? (
+          {props.sidebar !== false &&
+          (!usesNativeWorkspaceColumns ||
+            (Platform.OS === "ios" && Platform.isPad) ||
+            !panes.primarySidebarVisible) ? (
             <ScreenHeaderButton
+              axisBehavior={usesNativeWorkspaceColumns ? "horizontalOnly" : undefined}
               accessibilityLabel={
                 panes.primarySidebarVisible
                   ? `Maximize ${props.title.toLowerCase()}`
@@ -135,14 +148,25 @@ export function ScreenHeader(props: ScreenHeaderProps) {
         props.trailing) &&
       props.options?.unstable_headerRightItems === undefined ? (
         <NativeHeaderToolbar placement="right">
-          {props.actions?.map((action) => (
-            <ScreenHeaderButton
-              key={action.accessibilityLabel}
-              {...action}
-              icon={iosIcon(action.icon)}
-              separateBackground
-            />
-          ))}
+          {props.actions?.map(({ loading, ...action }) =>
+            loading ? (
+              <NativeHeaderToolbar.Custom key={action.accessibilityLabel}>
+                <View
+                  accessibilityLabel={action.accessibilityLabel}
+                  className="size-9 items-center justify-center"
+                >
+                  <ActivityIndicator color={action.tintColor} />
+                </View>
+              </NativeHeaderToolbar.Custom>
+            ) : (
+              <ScreenHeaderButton
+                key={action.accessibilityLabel}
+                {...action}
+                icon={iosIcon(action.icon)}
+                separateBackground
+              />
+            ),
+          )}
           {refresh && !compactSearch ? (
             <ScreenHeaderButton
               accessibilityLabel={search?.refreshAccessibilityLabel}

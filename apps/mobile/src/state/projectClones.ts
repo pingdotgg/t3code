@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { parseScopedProjectKey, scopedProjectKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ProjectCloneSnapshot, ScopedProjectRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import { serverEnvironment } from "./server";
 import { sourceControlEnvironment } from "./sourceControl";
@@ -34,6 +34,14 @@ const environmentProjectClonesAtom = Atom.family((environmentId: EnvironmentId) 
     if (result._tag === "Failure") return EMPTY_CLONES;
     return Option.getOrElse(AsyncResult.value(result), () => "pending" as const);
   }).pipe(Atom.withLabel(`mobile-project-clones:${environmentId}`)),
+);
+
+/** The environment's tracked clones, empty until the stream's first list. */
+export const environmentProjectCloneListAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get): ReadonlyArray<ProjectCloneSnapshot> => {
+    const clones = get(environmentProjectClonesAtom(environmentId));
+    return clones === "pending" ? EMPTY_CLONES : clones;
+  }).pipe(Atom.withLabel(`mobile-project-clone-list:${environmentId}`)),
 );
 
 const projectCloneAtom = Atom.family((key: string) => {
