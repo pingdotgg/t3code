@@ -5,7 +5,7 @@ import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
-import { EnvironmentAuthInvalidError } from "@t3tools/contracts";
+import { EnvironmentAuthInvalidError, EnvironmentInternalError } from "@t3tools/contracts";
 import {
   appendClientConnectionParams,
   bootstrapRemoteBearerSession,
@@ -21,6 +21,7 @@ import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 import * as RpcHttp from "../rpc/http.ts";
 
 const isEnvironmentAuthInvalidError = Schema.is(EnvironmentAuthInvalidError);
+const isEnvironmentInternalError = Schema.is(EnvironmentInternalError);
 
 type FetchCall = readonly [input: RequestInfo | URL, init: RequestInit];
 
@@ -422,6 +423,32 @@ describe("remote environment authorization", () => {
       if (isEnvironmentAuthInvalidError(error)) {
         expect(error.reason).toBe("missing_credential");
         expect(error.traceId).toBe("trace-auth-test");
+      }
+    }),
+  );
+
+  it.effect("revives the websocket ticket endpoint's own declared error", () =>
+    Effect.gen(function* () {
+      const fetch = recordedFetch(
+        Response.json(
+          {
+            _tag: "EnvironmentInternalError",
+            code: "internal_error",
+            reason: "access_token_issuance_failed",
+            traceId: "trace-ticket-test",
+          },
+          { status: 500 },
+        ),
+      );
+
+      const error = yield* issueRemoteWebSocketTicket({
+        httpBaseUrl: "https://remote.example.com/",
+        bearerToken: "bearer-token",
+      }).pipe(provideRemoteHttp(fetch.fetchFn), Effect.flip);
+
+      expect(isEnvironmentInternalError(error)).toBe(true);
+      if (isEnvironmentInternalError(error)) {
+        expect(error.traceId).toBe("trace-ticket-test");
       }
     }),
   );

@@ -16,7 +16,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
+import type * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
+import type * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 
 const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
 
@@ -109,6 +111,25 @@ export const makeEnvironmentHttpApiGroupClient = <
     HttpApiClient.group(EnvironmentHttpApi, {
       httpClient,
       group,
+      baseUrl: remoteApiBaseUrl(httpBaseUrl),
+    }),
+  );
+
+type EnvironmentAuthEndpointId = HttpApiGroup.EndpointsWithIdentifier<
+  typeof EnvironmentHttpApi extends HttpApi.HttpApi<infer _Id, infer Groups> ? Groups : never,
+  "auth"
+>["identifier"];
+
+/** Builds only the requested auth endpoint's codecs, avoiding per-request compilation of unrelated endpoints. */
+export const makeEnvironmentAuthEndpointClient = <const Endpoint extends EnvironmentAuthEndpointId>(
+  httpBaseUrl: string,
+  endpoint: Endpoint,
+) =>
+  Effect.flatMap(HttpClient.HttpClient, (httpClient) =>
+    HttpApiClient.endpoint(EnvironmentHttpApi, {
+      httpClient,
+      group: "auth",
+      endpoint,
       baseUrl: remoteApiBaseUrl(httpBaseUrl),
     }),
   );
