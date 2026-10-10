@@ -78,6 +78,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly projection?: OrchestrationV2ThreadProjection;
   readonly projectionRequests?: ThreadId[];
   readonly advertiseServerResolvedCommandContext?: boolean;
+  readonly advertiseThreadForkWorkspaceSelection?: boolean;
 }) {
   const client = {
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
@@ -128,6 +129,9 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
           ...(input.advertiseServerResolvedCommandContext === false
             ? {}
             : { serverResolvedCommandContext: true }),
+          ...(input.advertiseThreadForkWorkspaceSelection === false
+            ? {}
+            : { threadForkWorkspaceSelection: true }),
         },
       },
     } as never),
@@ -175,6 +179,79 @@ describe("V2 environment commands", () => {
       expect(launches[0]?.initialMessage).toBeUndefined();
     }).pipe(Effect.provide(layerTestCrypto)),
   );
+  it.effect("preserves history through the legacy fork transport in the same checkout", () =>
+    Effect.gen(function* () {
+      for (const worktreePath of [null, "/chosen/worktree"]) {
+        const commands: OrchestrationV2Command[] = [];
+        const launches: OrchestrationV2ThreadLaunchInput[] = [];
+        const supervisor = yield* makeSupervisor({
+          commands,
+          launches,
+          projects: [],
+          advertiseThreadForkWorkspaceSelection: false,
+          projection: {
+            ...v2Projection,
+            thread: { ...v2Projection.thread, worktreePath, branch: "main" },
+          },
+        });
+        yield* forkThreadFromRun({
+          commandId: CommandId.make("legacy-fork"),
+          sourceThreadId: v2ThreadId,
+          targetThreadId: ThreadId.make("destination"),
+          runId: RunId.make("run-1"),
+          workspaceStrategy: worktreePath
+            ? { type: "existing_worktree", worktreePath, branch: "main" }
+            : { type: "root", branch: "main" },
+        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+        expect(launches).toEqual([]);
+        expect(commands).toEqual([
+          {
+            type: "thread.fork",
+            commandId: "legacy-fork",
+            createdBy: "user",
+            creationSource: "web",
+            sourceThreadId: v2ThreadId,
+            targetThreadId: "destination",
+            sourcePoint: { type: "run", runId: "run-1" },
+          },
+        ]);
+      }
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  it.effect("rejects changed fork destinations on older servers before creating a thread", () =>
+    Effect.gen(function* () {
+      for (const workspaceStrategy of [
+        { type: "worktree", baseRef: "main" },
+        { type: "existing_worktree", worktreePath: "/displayed/worktree" },
+        { type: "root", branch: "other" },
+      ] as const) {
+        const commands: OrchestrationV2Command[] = [];
+        const launches: OrchestrationV2ThreadLaunchInput[] = [];
+        const supervisor = yield* makeSupervisor({
+          commands,
+          launches,
+          projects: [],
+          advertiseThreadForkWorkspaceSelection: false,
+        });
+        const error = yield* forkThreadFromRun({
+          commandId: CommandId.make("unsupported-fork"),
+          sourceThreadId: v2ThreadId,
+          targetThreadId: ThreadId.make("destination"),
+          runId: RunId.make("run-1"),
+          workspaceStrategy,
+        }).pipe(
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.flip,
+        );
+        expect(error._tag).toBe("OrchestrationV2ThreadLaunchError");
+        expect(error.message).toContain("Update this T3 Code server");
+        expect(commands).toEqual([]);
+        expect(launches).toEqual([]);
+      }
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
   it.effect("routes projects through the event-sourced project transport", () =>
     Effect.gen(function* () {
       const projects: ProjectMutation[] = [];
