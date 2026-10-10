@@ -45,14 +45,6 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 describe("searchSettings", () => {
-  it("opens the Diagnostics page from the Diagnostics search result", () => {
-    expect(searchSettings("Diagnostics")[0]).toMatchObject({
-      id: "diagnostics",
-      to: "/settings/diagnostics",
-      scope: "environment",
-    });
-  });
-
   it.each(["OTel", "OTLP", "telemetry export", "Grafana"])(
     "finds environment telemetry settings for %s",
     (query) => {

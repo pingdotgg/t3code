@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { OtlpEndpointCheckResult, OtlpSignal } from "@t3tools/contracts";
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -24,7 +24,7 @@ type SignalKey = (typeof SIGNALS)[number]["key"];
 /** The latest check for a signal; it describes the field only while `url` is still its value. */
 type EndpointCheck = { readonly url: string; readonly result: OtlpEndpointCheckResult | null };
 
-const isHttpUrl = (url: string) => /^https?:\/\/./.test(url);
+const isHttpUrl = (url: string) => /^https?:\/\/./i.test(url);
 
 function endpointStatus(url: string, check: EndpointCheck | undefined) {
   if (url === "") return { label: "Off", dot: "bg-muted-foreground/40" };
@@ -105,14 +105,16 @@ function TelemetryExportForm() {
     void sendCheck(key, signal, url);
   };
 
-  useEffect(() => {
-    if (!canCheck) return;
+  // Sends checks still pending, such as the saved endpoints' when the form opens.
+  const sendPendingChecks = useEffectEvent(() => {
     for (const { key, signal } of SIGNALS) {
       const check = checks[key];
-      // oxlint-disable-next-line react/set-state-in-effect -- State changes only after the response arrives.
       if (check?.result === null) void sendCheck(key, signal, check.url);
     }
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Sends the saved endpoints' checks once they are allowed; the form remounts per environment.
+  });
+  useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- State changes only after the response arrives.
+    if (canCheck) sendPendingChecks();
   }, [canCheck]);
 
   return (
@@ -171,13 +173,20 @@ function TelemetryExportForm() {
                   id={key}
                   size="sm"
                   type="url"
-                  pattern="https?://.*"
+                  pattern="[Hh][Tt][Tt][Pp][Ss]?://.*"
                   title="Enter an HTTP or HTTPS endpoint, or leave empty to disable export."
                   placeholder={`http://localhost:4318/v1/${signal}`}
                   value={values[key]}
                   disabled={saving || !canEdit}
                   onChange={(event) => {
-                    setDraft((previous) => ({ ...previous, [key]: event.target.value }));
+                    const value = event.target.value;
+                    // Restoring the saved value drops the draft, so a later save can't resend it
+                    // over another client's change.
+                    setDraft((previous) => {
+                      const next = { ...previous, [key]: value };
+                      if (value.trim() === saved[key]) delete next[key];
+                      return next;
+                    });
                     setMessage(null);
                   }}
                 />
@@ -214,6 +223,11 @@ function TelemetryExportForm() {
               onClick={() => {
                 setDraft({});
                 setMessage(null);
+                // A tested draft replaced the saved endpoint's status; check the saved one again.
+                if (!canCheck) return;
+                for (const { key, signal } of SIGNALS) {
+                  if (checks[key]?.url !== saved[key]) checkEndpoint(key, signal, saved[key]);
+                }
               }}
             >
               Discard
