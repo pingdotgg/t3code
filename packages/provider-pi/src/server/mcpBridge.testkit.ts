@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Executes the shipped Pi extension at its native JavaScript boundary.
 import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
 import * as NodeVM from "node:vm";
 import { PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
 
@@ -39,12 +40,14 @@ export async function loadMcpBridge(
     readonly toolSearchAvailable?: boolean;
     readonly toolSearchDisabled?: boolean;
     readonly allowsTool?: (name: string) => boolean;
+    readonly runtimeMode?: string;
   } = {},
 ) {
   const handlers = new Map<string, AgentStartHook>();
   const tools: RegisteredTool[] = [];
   const requests: Array<{ readonly method: string; readonly params?: unknown }> = [];
   let activeTools = ["read"];
+  let bridgeSourcePath = "/fixture/pi-t3-extension.ts";
   const transports: Array<{
     readonly url: string;
     readonly authorization: string;
@@ -52,9 +55,17 @@ export async function loadMcpBridge(
   }> = [];
   const servers: Array<{ readonly name: string; readonly config: Record<string, unknown> }> = [];
   const catalog = [
-    { name: "orchestrator_capabilities", description: "Discover available providers and models." },
+    {
+      name: "orchestrator_capabilities",
+      description: "Discover available providers and models.",
+      annotations: { readOnlyHint: true },
+    },
     { name: "delegate_task", description: "Delegate work to another agent." },
-    { name: "task_status", description: "Check delegated work." },
+    {
+      name: "task_status",
+      description: "Check delegated work.",
+      annotations: { readOnlyHint: false },
+    },
     { name: "preview_snapshot", description: "Inspect the collaborative browser." },
   ].map((tool) => ({
     ...tool,
@@ -69,9 +80,15 @@ export async function loadMcpBridge(
   );
   await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
     process: {
-      env: { T3_MCP_URL: "http://fixture.invalid/mcp", T3_MCP_BEARER_TOKEN: "fixture-token" },
+      env: {
+        T3_MCP_URL: "http://fixture.invalid/mcp",
+        T3_MCP_BEARER_TOKEN: "fixture-token",
+        T3_PI_MCP_EXTENSION_PATH: "/fixture/pi-t3-extension.ts",
+        T3_PI_RUNTIME_MODE: options.runtimeMode,
+      },
     },
     AbortSignal,
+    NodePath,
     Type: { Unsafe: (schema: unknown) => schema },
     fetch: async (
       url: string,
@@ -111,12 +128,14 @@ export async function loadMcpBridge(
       setActiveTools: (names: string[]) => {
         activeTools = names.filter((name) => options.allowsTool?.(name) ?? true);
       },
-      getAllTools: () =>
-        options.toolSearchAvailable &&
+      getAllTools: () => [
+        ...tools.map((tool) => ({ name: tool.name, sourceInfo: { path: bridgeSourcePath } })),
+        ...(options.toolSearchAvailable &&
         !options.toolSearchDisabled &&
         (options.allowsTool?.("tool_search") ?? true)
           ? [{ name: "tool_search", sourceInfo: { path: "builtin:tool-search" } }]
-          : [],
+          : []),
+      ],
       ...(options.modern
         ? {
             registerMcpServer: (name: string, config: Record<string, unknown>) =>
@@ -129,6 +148,9 @@ export async function loadMcpBridge(
   return {
     handlers,
     tools,
+    setBridgeSourcePath: (path: string) => {
+      bridgeSourcePath = path;
+    },
     requests,
     servers,
     transports,
