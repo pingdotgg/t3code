@@ -1307,22 +1307,34 @@ export const layerWithOptions = (
               Effect.tap((runtime) => Effect.sync(() => (attachedTo = runtime))),
               Effect.uninterruptible,
             );
+            // A thread stays attached to the session it ran on before switching
+            // providers, and the other provider's attach took over the thread's
+            // credential slot. A run returning to this session must take it
+            // back, or the process calls T3 tools scoped to the other provider.
+            const reclaimsCredential =
+              attached === undefined &&
+              McpProviderSession.readMcpProviderSession(input.threadId)?.providerInstanceId !==
+                input.providerInstanceId &&
+              (yield* Ref.get(sessions))
+                .get(sessionKey(input.providerSessionId))
+                ?.attachedThreadIds.has(input.threadId) === true;
+            if (attached === undefined && !reclaimsCredential) return;
+            const prepared = yield* prepareMcpSession(input.threadId, input.providerInstanceId);
+            preparedForCleanup = prepared;
+            if (prepared.mcpCredentialId !== undefined) {
+              const mcpCredentialId = prepared.mcpCredentialId;
+              yield* Ref.update(sessions, (current) => {
+                const key = sessionKey(input.providerSessionId);
+                const entry = current.get(key);
+                if (entry === undefined) return current;
+                const mcpCredentialIdByThread = new Map(entry.mcpCredentialIdByThread);
+                mcpCredentialIdByThread.set(input.threadId, mcpCredentialId);
+                const updated = new Map(current);
+                updated.set(key, { ...entry, mcpCredentialIdByThread });
+                return updated;
+              });
+            }
             if (attached !== undefined) {
-              const prepared = yield* prepareMcpSession(input.threadId, input.providerInstanceId);
-              preparedForCleanup = prepared;
-              if (prepared.mcpCredentialId !== undefined) {
-                const mcpCredentialId = prepared.mcpCredentialId;
-                yield* Ref.update(sessions, (current) => {
-                  const key = sessionKey(input.providerSessionId);
-                  const entry = current.get(key);
-                  if (entry === undefined) return current;
-                  const mcpCredentialIdByThread = new Map(entry.mcpCredentialIdByThread);
-                  mcpCredentialIdByThread.set(input.threadId, mcpCredentialId);
-                  const updated = new Map(current);
-                  updated.set(key, { ...entry, mcpCredentialIdByThread });
-                  return updated;
-                });
-              }
               const entry = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
               if (entry !== undefined) {
                 yield* withActivityError(

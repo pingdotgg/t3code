@@ -2465,6 +2465,61 @@ it.effect(
 );
 
 it.effect(
+  "ProviderSessionManagerV2 takes the thread's MCP credential back when a run returns to a still-attached session",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-returning-provider");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const tokenOf = (config: McpProviderSession.McpProviderSessionConfig | undefined) =>
+          config?.authorizationHeader.replace(/^Bearer\s+/, "") ?? "";
+
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+
+        // The thread switches to another provider, whose attach replaces the
+        // thread's credential while this session stays attached.
+        yield* registry.revokeThread(threadId);
+        const otherProvider = yield* registry.issue({
+          threadId,
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        });
+        McpProviderSession.setMcpProviderSession(otherProvider.config);
+
+        // The thread switches back and its next turn reuses this session.
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+
+        const reclaimed = McpProviderSession.readMcpProviderSession(threadId);
+        assert.equal(reclaimed?.providerInstanceId, modelSelection.instanceId);
+        assert.equal(
+          (yield* registry.resolve(tokenOf(reclaimed)))?.thread.providerInstanceId,
+          modelSelection.instanceId,
+        );
+        assert.isUndefined(yield* registry.resolve(tokenOf(otherProvider.config)));
+
+        // The session's record follows the new credential, so release revokes it.
+        yield* manager.close(providerSessionId);
+        assert.isUndefined(yield* registry.resolve(tokenOf(reclaimed)));
+        assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+      });
+
+      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1_000 })));
+    }),
+);
+
+it.effect(
   "ProviderSessionManagerV2 revokes a rotated credential despite a stale record on another live session",
   () =>
     Effect.gen(function* () {
