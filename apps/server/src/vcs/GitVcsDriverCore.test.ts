@@ -2673,6 +2673,58 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("filters refs by exact branch name when exact is true", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["checkout", "-b", "dev"]);
+        yield* git(cwd, ["checkout", "-b", "dev-feature"]);
+        yield* git(cwd, ["push", "-u", "origin", "dev"]);
+        yield* git(cwd, ["push", "-u", "origin", "dev-feature"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const substringRefs = yield* driver.listRefs({
+          cwd,
+          query: "dev",
+          includeMatchingRemoteRefs: true,
+        });
+        assert.equal(
+          substringRefs.refs.some((ref) => ref.name === "dev"),
+          true,
+        );
+        assert.equal(
+          substringRefs.refs.some((ref) => ref.name === "dev-feature"),
+          true,
+        );
+
+        const exactRefs = yield* driver.listRefs({
+          cwd,
+          query: "dev",
+          exact: true,
+          includeMatchingRemoteRefs: true,
+        });
+        assert.equal(
+          exactRefs.refs.some((ref) => ref.name === "dev"),
+          true,
+        );
+        assert.equal(
+          exactRefs.refs.some((ref) => ref.name === "origin/dev"),
+          true,
+        );
+        assert.equal(
+          exactRefs.refs.some((ref) => ref.name === "dev-feature"),
+          false,
+        );
+        assert.equal(
+          exactRefs.refs.some((ref) => ref.name === "origin/dev-feature"),
+          false,
+        );
+      }),
+    );
+
     it.effect("marks the origin default ref as default when no local copy exists", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

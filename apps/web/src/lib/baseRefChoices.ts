@@ -1,17 +1,11 @@
 import type { VcsRef } from "@t3tools/contracts";
+import { branchNameForRef } from "@t3tools/shared/projectSettings";
 
 export interface BaseRefChoice {
   readonly id: string;
   readonly label: string;
   readonly local: VcsRef | null;
   readonly remote: VcsRef | null;
-}
-
-function remoteBranchName(ref: VcsRef): string {
-  if (ref.remoteName && ref.name.startsWith(`${ref.remoteName}/`)) {
-    return ref.name.slice(ref.remoteName.length + 1);
-  }
-  return ref.name;
 }
 
 export function buildBaseRefChoices(
@@ -21,7 +15,7 @@ export function buildBaseRefChoices(
   const unusedRemoteRefs = new Set(remoteRefs);
   const pairedChoices = localRefs.map((local) => {
     const matches = remoteRefs.filter(
-      (remote) => unusedRemoteRefs.has(remote) && remoteBranchName(remote) === local.name,
+      (remote) => unusedRemoteRefs.has(remote) && branchNameForRef(remote) === local.name,
     );
     const remote =
       matches.find((candidate) => candidate.remoteName === "origin") ?? matches[0] ?? null;

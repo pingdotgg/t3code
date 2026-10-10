@@ -906,6 +906,10 @@ function ScheduledTaskEditorDialog({
       reportFailure("Checkout path is required", "Enter the path of the checkout to run in.");
       return;
     }
+    if (draft.workspaceMode === "worktree" && !draft.baseRef.trim()) {
+      reportFailure("Base branch is required", "Select a base branch for the worktree.");
+      return;
+    }
     // Keep the original selection object (with provider options) when the
     // picker still points at the same instance+model.
     const modelSelection =
@@ -921,7 +925,7 @@ function ScheduledTaskEditorDialog({
           ? { type: "existing_worktree", worktreePath: draft.existingWorktreePath.trim() }
           : {
               type: "worktree",
-              baseRef: draft.baseRef.trim() || "main",
+              baseRef: draft.baseRef.trim(),
               startFromOrigin: draft.startFromOrigin,
             };
     const input: ScheduledTaskUpsertInput = {
@@ -1046,7 +1050,7 @@ function ScheduledTaskEditorDialog({
                     setDraft((current) => ({
                       ...current,
                       projectId: projectId ?? "",
-                      baseRef: "",
+                      baseRef: projectId === current.projectId ? current.baseRef : "",
                     }))
                   }
                 >
@@ -1373,7 +1377,14 @@ function ScheduledTaskEditorDialog({
           </DialogClose>
           <Button
             size="sm"
-            disabled={!canOperate || saving || editingTaskMissing || !connected || !tasksQuery.data}
+            disabled={
+              !canOperate ||
+              saving ||
+              editingTaskMissing ||
+              !connected ||
+              !tasksQuery.data ||
+              (draft.workspaceMode === "worktree" && !draft.baseRef.trim())
+            }
             onClick={() => void submit()}
           >
             {draft.editingId ? "Save task" : "Create task"}

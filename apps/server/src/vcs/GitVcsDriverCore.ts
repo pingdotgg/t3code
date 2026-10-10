@@ -256,11 +256,21 @@ function parsePorcelainPath(line: string): string | null {
 function filterBranchesForListQuery(
   refs: ReadonlyArray<VcsRef>,
   query?: string,
+  exact?: boolean,
 ): ReadonlyArray<VcsRef> {
   if (!query) {
     return refs;
   }
 
+  if (exact) {
+    return refs.filter((ref) => {
+      if (ref.name === query) return true;
+      if (ref.isRemote && ref.remoteName) {
+        return ref.name === `${ref.remoteName}/${query}`;
+      }
+      return false;
+    });
+  }
   const normalizedQuery = query.toLowerCase();
   return refs.filter((refName) => refName.name.toLowerCase().includes(normalizedQuery));
 }
@@ -3376,7 +3386,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             ? allBranches.filter((ref) => ref.isRemote)
             : allBranches;
       const refs = paginateBranches({
-        refs: filterBranchesForListQuery(branchesForKind, input.query),
+        refs: filterBranchesForListQuery(branchesForKind, input.query, input.exact),
         cursor: input.cursor,
         limit: input.limit,
       });

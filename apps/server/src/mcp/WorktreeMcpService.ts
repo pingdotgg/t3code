@@ -8,9 +8,14 @@ import {
   type WorktreeMcpHandoffResult,
   type WorktreeMcpSetupScriptStatus,
   type WorktreeMcpStatusResult,
+  type VcsListRefsResult,
   type VcsRef,
 } from "@t3tools/contracts";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import {
+  branchNameForRef,
+  matchesRemoteBranch,
+  resolveProjectSettings,
+} from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -50,22 +55,6 @@ function errorMessage(error: unknown): string {
     return String((error as { message: unknown }).message);
   }
   return String(error);
-}
-
-function matchesRemoteBranch(ref: VcsRef, branchName: string): boolean {
-  return (
-    ref.isRemote === true &&
-    ref.remoteName !== undefined &&
-    ref.name === `${ref.remoteName}/${branchName}`
-  );
-}
-
-function branchNameForRef(ref: VcsRef): string {
-  return ref.isRemote === true &&
-    ref.remoteName !== undefined &&
-    ref.name.startsWith(`${ref.remoteName}/`)
-    ? ref.name.slice(ref.remoteName.length + 1)
-    : ref.name;
 }
 
 const asOperationFailed = (prefix: string) =>
@@ -241,25 +230,39 @@ const make = Effect.gen(function* () {
     }
 
     let baseRef = input.baseRef;
+    let worktreeStartRef: string | undefined = undefined;
     const worktreeDefaults = yield* readProjectWorktreeDefaults(project.id);
     if (baseRef === undefined) {
       const configuredBaseBranch = worktreeDefaults.baseBranch;
       if (configuredBaseBranch !== null && localBranchNames.includes(configuredBaseBranch)) {
         baseRef = configuredBaseBranch;
+        worktreeStartRef = configuredBaseBranch;
       } else if (configuredBaseBranch !== null) {
-        const configuredRemoteRefs = yield* gitWorkflow
-          .listRefs({
-            cwd: projectCwd,
-            query: configuredBaseBranch,
-            refKind: "remote",
-            includeMatchingRemoteRefs: true,
-            limit: 200,
-          })
-          .pipe(asOperationFailed("Unable to check the configured base branch"));
-        if (
-          configuredRemoteRefs.refs.some((ref) => matchesRemoteBranch(ref, configuredBaseBranch))
-        ) {
+        let cursor: number | undefined = undefined;
+        let matchedRemoteRef: VcsRef | undefined = undefined;
+        while (true) {
+          const configuredRemoteRefs: VcsListRefsResult = yield* gitWorkflow
+            .listRefs({
+              cwd: projectCwd,
+              query: configuredBaseBranch,
+              exact: true,
+              refKind: "remote",
+              includeMatchingRemoteRefs: true,
+              limit: 200,
+              cursor,
+            })
+            .pipe(asOperationFailed("Unable to check the configured base branch"));
+          matchedRemoteRef = configuredRemoteRefs.refs.find((ref: VcsRef) =>
+            matchesRemoteBranch(ref, configuredBaseBranch),
+          );
+          if (matchedRemoteRef !== undefined || configuredRemoteRefs.nextCursor == null) {
+            break;
+          }
+          cursor = configuredRemoteRefs.nextCursor;
+        }
+        if (matchedRemoteRef !== undefined) {
           baseRef = configuredBaseBranch;
+          worktreeStartRef = matchedRemoteRef.name;
         }
       }
       if (baseRef === undefined) {
@@ -267,7 +270,14 @@ const make = Effect.gen(function* () {
           .listRefs({ cwd: projectCwd, limit: 200 })
           .pipe(asOperationFailed("Unable to list branches"));
         const defaultRef = repoRefs.refs.find((ref) => ref.isDefault);
-        baseRef = defaultRef ? branchNameForRef(defaultRef) : (localStatus.refName ?? undefined);
+        if (defaultRef) {
+          baseRef = branchNameForRef(defaultRef);
+          worktreeStartRef =
+            defaultRef.isRemote && !localBranchNames.includes(baseRef) ? defaultRef.name : baseRef;
+        } else {
+          baseRef = localStatus.refName ?? undefined;
+          worktreeStartRef = baseRef;
+        }
       }
       if (baseRef === undefined) {
         return yield* failure(
@@ -279,7 +289,7 @@ const make = Effect.gen(function* () {
 
     const startFromOrigin = input.startFromOrigin ?? worktreeDefaults.startFromOrigin;
 
-    let worktreeBaseRef = baseRef;
+    let worktreeBaseRef = worktreeStartRef ?? baseRef;
     if (startFromOrigin) {
       yield* gitWorkflow
         .fetchRemote({ cwd: projectCwd, remoteName: "origin" })
@@ -292,6 +302,23 @@ const make = Effect.gen(function* () {
         })
         .pipe(asOperationFailed(`Unable to resolve the remote-tracking commit of '${baseRef}'`));
       worktreeBaseRef = resolvedRemoteBase.commitSha;
+    } else if (worktreeStartRef === undefined && !localBranchNames.includes(baseRef)) {
+      const remoteRefs: VcsListRefsResult = yield* gitWorkflow
+        .listRefs({
+          cwd: projectCwd,
+          query: baseRef,
+          exact: true,
+          refKind: "remote",
+          includeMatchingRemoteRefs: true,
+          limit: 200,
+        })
+        .pipe(asOperationFailed("Unable to check remote branch existence"));
+      const matchedRemote = remoteRefs.refs.find((ref: VcsRef) =>
+        matchesRemoteBranch(ref, baseRef),
+      );
+      if (matchedRemote !== undefined) {
+        worktreeBaseRef = matchedRemote.name;
+      }
     }
 
     const ids = yield* handoffIds(scope);

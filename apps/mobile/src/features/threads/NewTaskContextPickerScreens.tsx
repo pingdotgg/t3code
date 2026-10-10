@@ -1,6 +1,7 @@
 import { MaterialListRow } from "../../components/MaterialListRow";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { shouldCheckoutNewTaskBranch } from "./new-task-context-presentation";
+import { matchesRemoteBranch } from "@t3tools/shared/projectSettings";
 import type { VcsRef } from "@t3tools/client-runtime/state/vcs";
 import { AuthSourceControlWriteScope, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { LegendList } from "@legendapp/list/react-native";
@@ -443,9 +444,7 @@ export function BranchPickerScreen(props: {
         onSelect={props.onSelect}
         selected={
           selectedBranchName === item.name ||
-          (item.isRemote === true &&
-            item.remoteName !== undefined &&
-            item.name === `${item.remoteName}/${selectedBranchName}`)
+          (selectedBranchName !== null && matchesRemoteBranch(item, selectedBranchName))
         }
       />
     ),

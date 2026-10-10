@@ -52,6 +52,7 @@ import {
   resolveBranchTriggerLabel,
   resolveBranchToolbarPrBranch,
   resolveBranchSelectionTarget,
+  matchesRemoteBranch,
   resolveBranchToolbarValue,
   resolveDefaultWorktreeBaseBranch,
   resolveDraftEnvModeAfterBranchChange,
@@ -271,6 +272,7 @@ export function BranchToolbarBranchSelector({
           input: {
             cwd: branchCwd,
             query: defaultWorktreeBaseBranch,
+            exact: true,
             includeMatchingRemoteRefs: true,
             limit: 200,
           },
@@ -360,6 +362,7 @@ export function BranchToolbarBranchSelector({
           input: {
             cwd: branchCwd,
             query: resolvedActiveBranch,
+            exact: true,
             limit: 10,
           },
         })
@@ -370,11 +373,8 @@ export function BranchToolbarBranchSelector({
   );
   const configuredBaseBranchIsRemoteOnly =
     defaultWorktreeBaseBranch !== null &&
-    (configuredBaseBranchRefsQuery.data?.refs.some(
-      (ref) =>
-        ref.isRemote === true &&
-        ref.remoteName !== undefined &&
-        ref.name === `${ref.remoteName}/${defaultWorktreeBaseBranch}`,
+    (configuredBaseBranchRefsQuery.data?.refs.some((ref) =>
+      matchesRemoteBranch(ref, defaultWorktreeBaseBranch),
     ) ??
       false) &&
     !(
@@ -564,10 +564,7 @@ export function BranchToolbarBranchSelector({
 
   // Default the worktree base to the repo default branch (origin/HEAD), only
   // falling back to the checked-out branch when no default is known.
-  const defaultBranchName = useMemo(
-    () => refs.find((refName) => refName.isDefault)?.name ?? null,
-    [refs],
-  );
+  const defaultBranchRef = useMemo(() => refs.find((refName) => refName.isDefault) ?? null, [refs]);
   const isConfiguredBaseBranchLoadPending =
     !defaultWorktreeBaseBranchReady ||
     (defaultWorktreeBaseBranch !== null &&
@@ -580,7 +577,7 @@ export function BranchToolbarBranchSelector({
       : resolveDefaultWorktreeBaseBranch({
           configuredBranch: defaultWorktreeBaseBranch,
           configuredBranchRefs: configuredBaseBranchRefsQuery.data?.refs ?? [],
-          repoDefaultBranch: defaultBranchName,
+          repoDefaultBranch: defaultBranchRef,
           currentBranch: currentGitBranch,
         });
 

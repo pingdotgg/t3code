@@ -7,6 +7,7 @@ import { useEnvironmentQuery } from "../state/query";
 import { vcsEnvironment } from "../state/vcs";
 import { BranchPicker, BranchPickerRefItem } from "./BranchPicker";
 import {
+  matchesRemoteBranch,
   resolveBranchTriggerLabel,
   resolveDefaultWorktreeBaseBranch,
   sanitizeNewRefName,
@@ -49,7 +50,7 @@ export function WorktreeBaseBranchPicker({
     cwd && value
       ? vcsEnvironment.listRefs({
           environmentId,
-          input: { cwd, query: value, limit: 10 },
+          input: { cwd, query: value, exact: true, includeMatchingRemoteRefs: true, limit: 10 },
         })
       : null,
   );
@@ -60,6 +61,7 @@ export function WorktreeBaseBranchPicker({
           input: {
             cwd,
             query: defaultWorktreeBaseBranch,
+            exact: true,
             includeMatchingRemoteRefs: true,
             limit: 200,
           },
@@ -69,7 +71,7 @@ export function WorktreeBaseBranchPicker({
   const defaultBranch = resolveDefaultWorktreeBaseBranch({
     configuredBranch: defaultWorktreeBaseBranch ?? null,
     configuredBranchRefs: [...branches.refs, ...(defaultBranchRefsQuery.data?.refs ?? [])],
-    repoDefaultBranch: branches.refs.find((branch) => branch.isDefault)?.name ?? null,
+    repoDefaultBranch: branches.refs.find((branch) => branch.isDefault) ?? null,
     currentBranch: branches.refs.find((branch) => branch.current)?.name ?? null,
   });
   const defaultBranchIsPending =
@@ -87,12 +89,7 @@ export function WorktreeBaseBranchPicker({
   const selectedRef =
     branches.refs.find((branch) => branch.name === value) ??
     selectedRefQuery.data?.refs.find((branch) => branch.name === value) ??
-    defaultBranchRefsQuery.data?.refs.find(
-      (branch) =>
-        branch.isRemote === true &&
-        branch.remoteName !== undefined &&
-        branch.name === `${branch.remoteName}/${value}`,
-    );
+    defaultBranchRefsQuery.data?.refs.find((branch) => matchesRemoteBranch(branch, value));
   const selectedRefIsRemoteAlias = selectedRef?.isRemote === true && selectedRef.name !== value;
   const label = resolveBranchTriggerLabel({
     activeWorktreePath: null,

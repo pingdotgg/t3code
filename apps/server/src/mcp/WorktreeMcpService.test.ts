@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
+  type GitCommandError,
   EnvironmentId,
   type OrchestrationV2ThreadProjection,
   type Project,
@@ -9,6 +10,8 @@ import {
   ProviderInstanceId,
   ThreadId,
   type VcsRef,
+  type VcsListRefsInput,
+  type VcsListRefsResult,
   WorktreeMcpHandoffInput,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -97,6 +100,9 @@ interface HarnessOptions {
   readonly projectDefaultWorktreeBaseBranch?: string | null;
   readonly localBranchNames?: readonly string[];
   readonly refs?: readonly VcsRef[];
+  readonly listRefs?: (
+    input: VcsListRefsInput,
+  ) => Effect.Effect<VcsListRefsResult, GitCommandError>;
   readonly setupScript?: "started" | "no-script" | "fails" | "dies";
   readonly dispatchFails?: boolean;
   readonly dispatchDies?: boolean;
@@ -116,6 +122,7 @@ interface HarnessOptions {
   readonly removeWorktreeFails?: boolean;
   readonly deleteLocalBranchFails?: boolean;
   readonly createWorktreeGate?: Effect.Effect<void>;
+  readonly remoteBranchExists?: boolean;
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
@@ -222,6 +229,9 @@ const makeHarness = (options: HarnessOptions = {}) => {
       ? (Effect.fail("simulated remote resolve failure") as never)
       : Effect.succeed({ commitSha: "abc123", remoteRefName: "origin/dev" }),
   );
+  const remoteBranchExists = vi.fn((_: unknown) =>
+    Effect.succeed(options.remoteBranchExists ?? false),
+  );
   const createWorktree = vi.fn(
     (input: { readonly newRefName?: string | undefined; readonly path: string | null }) =>
       options.createWorktreeFails
@@ -237,33 +247,38 @@ const makeHarness = (options: HarnessOptions = {}) => {
             ),
           ),
   );
-  const listRefs = vi.fn((input: { readonly query?: string | undefined }) => {
-    const configuredRefs = (options.refs ?? []).filter(
-      (ref) =>
-        input.query === undefined ||
-        ref.name.includes(input.query) ||
-        (ref.isRemote === true && ref.name.endsWith(`/${input.query}`)),
-    );
-    const collisionRef =
-      options.existingBranchWorktreePath === undefined
-        ? []
-        : [
-            {
-              name: input.query ?? "",
-              current: false,
-              isDefault: false,
-              worktreePath: options.existingBranchWorktreePath,
-            },
-          ];
-    const refs = [...configuredRefs, ...collisionRef];
-    return Effect.succeed({
-      refs,
-      isRepo: true,
-      hasPrimaryRemote: true,
-      nextCursor: null,
-      totalCount: refs.length,
-    });
-  });
+  const listRefs = vi.fn(
+    (input: VcsListRefsInput): Effect.Effect<VcsListRefsResult, GitCommandError> => {
+      if (options.listRefs) {
+        return options.listRefs(input);
+      }
+      const configuredRefs = (options.refs ?? []).filter(
+        (ref) =>
+          input.query === undefined ||
+          ref.name.includes(input.query) ||
+          (ref.isRemote === true && ref.name.endsWith(`/${input.query}`)),
+      );
+      const collisionRef =
+        options.existingBranchWorktreePath === undefined
+          ? []
+          : [
+              {
+                name: input.query ?? "",
+                current: false,
+                isDefault: false,
+                worktreePath: options.existingBranchWorktreePath,
+              },
+            ];
+      const refs = [...configuredRefs, ...collisionRef];
+      return Effect.succeed({
+        refs,
+        isRepo: true,
+        hasPrimaryRemote: true,
+        nextCursor: null,
+        totalCount: refs.length,
+      });
+    },
+  );
   const localStatus = vi.fn((_: unknown) =>
     Effect.succeed({
       isRepo: options.notARepo !== true,
@@ -347,6 +362,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
           localStatus,
           fetchRemote,
           resolveRemoteTrackingCommit,
+          remoteBranchExists,
           createWorktree,
           removeWorktree,
           deleteLocalBranch,
@@ -369,6 +385,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     sendToThread,
     fetchRemote,
     resolveRemoteTrackingCommit,
+    remoteBranchExists,
     createWorktree,
     removeWorktree,
     deleteLocalBranch,
@@ -610,6 +627,147 @@ describe("t3_worktree_handoff", () => {
       });
     },
   );
+
+  it.effect(
+    "uses remote ref as worktree start point when configured base branch is remote-only and startFromOrigin is false",
+    () => {
+      const harness = makeHarness({
+        defaultWorktreeBaseBranch: "dev",
+        localBranchNames: ["main"],
+        refs: [
+          { name: "main", current: true, isDefault: true, worktreePath: "/repo/project" },
+          {
+            name: "origin/dev",
+            current: false,
+            isDefault: false,
+            isRemote: true,
+            remoteName: "origin",
+            worktreePath: null,
+          },
+        ],
+      });
+      return Effect.gen(function* () {
+        const result = yield* runHandoff(harness, { branch: "feature/remote-dev" });
+
+        expect(result.baseRef).toBe("dev");
+        expect(harness.createWorktree).toHaveBeenCalledWith(
+          expect.objectContaining({ refName: "origin/dev", baseRefName: "dev" }),
+        );
+      });
+    },
+  );
+
+  it.effect(
+    "uses remote default ref as worktree start point when default branch is remote-only and startFromOrigin is false",
+    () => {
+      const harness = makeHarness({
+        localBranchNames: [],
+        refs: [
+          {
+            name: "origin/main",
+            current: false,
+            isDefault: true,
+            isRemote: true,
+            remoteName: "origin",
+            worktreePath: null,
+          },
+        ],
+      });
+      return Effect.gen(function* () {
+        const result = yield* runHandoff(harness, { branch: "feature/remote-main" });
+
+        expect(result.baseRef).toBe("main");
+        expect(harness.createWorktree).toHaveBeenCalledWith(
+          expect.objectContaining({ refName: "origin/main", baseRefName: "main" }),
+        );
+      });
+    },
+  );
+
+  it.effect(
+    "uses remote ref as start point when explicit baseRef is remote-only and startFromOrigin is false",
+    () => {
+      const harness = makeHarness({
+        localBranchNames: ["main"],
+        refs: [
+          {
+            name: "upstream/dev",
+            current: false,
+            isDefault: false,
+            isRemote: true,
+            remoteName: "upstream",
+            worktreePath: null,
+          },
+        ],
+      });
+      return Effect.gen(function* () {
+        const result = yield* runHandoff(harness, {
+          branch: "feature/explicit-remote-dev",
+          baseRef: "dev",
+          startFromOrigin: false,
+        });
+
+        expect(result.baseRef).toBe("dev");
+        expect(harness.createWorktree).toHaveBeenCalledWith(
+          expect.objectContaining({ refName: "upstream/dev", baseRefName: "dev" }),
+        );
+      });
+    },
+  );
+
+  it.effect("paginates remote refs until the configured base branch is found", () => {
+    let callCount = 0;
+    const harness = makeHarness({
+      defaultWorktreeBaseBranch: "dev",
+      localBranchNames: ["main"],
+      listRefs: (input) => {
+        callCount++;
+        if (input.cursor === undefined) {
+          return Effect.succeed({
+            refs: [
+              {
+                name: "origin/other",
+                current: false,
+                isDefault: false,
+                isRemote: true,
+                remoteName: "origin",
+                worktreePath: null,
+              },
+            ],
+            nextCursor: 1,
+            totalCount: 2,
+            isRepo: true,
+            hasPrimaryRemote: true,
+          });
+        }
+        return Effect.succeed({
+          refs: [
+            {
+              name: "origin/dev",
+              current: false,
+              isDefault: false,
+              isRemote: true,
+              remoteName: "origin",
+              worktreePath: null,
+            },
+          ],
+          nextCursor: null,
+          totalCount: 2,
+          isRepo: true,
+          hasPrimaryRemote: true,
+        });
+      },
+    });
+    return Effect.gen(function* () {
+      const result = yield* runHandoff(harness, { branch: "feature/paginated-dev" });
+
+      expect(callCount).toBe(2);
+      expect(result.baseRef).toBe("dev");
+      expect(harness.createWorktree).toHaveBeenCalledWith(
+        expect.objectContaining({ refName: "origin/dev", baseRefName: "dev" }),
+      );
+    });
+  });
 
   it.effect("fails when the thread is already attached to a worktree", () => {
     const harness = makeHarness({

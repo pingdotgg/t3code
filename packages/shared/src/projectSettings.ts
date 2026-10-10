@@ -15,10 +15,29 @@ import {
 } from "@t3tools/contracts";
 import { isModelSelectionProviderEnabled } from "./serverSettings.ts";
 
+export function matchesRemoteBranch(
+  ref: Pick<VcsRef, "name" | "isRemote" | "remoteName">,
+  branchName: string,
+): boolean {
+  return (
+    ref.isRemote === true &&
+    ref.remoteName !== undefined &&
+    ref.name === `${ref.remoteName}/${branchName}`
+  );
+}
+
+export function branchNameForRef(ref: Pick<VcsRef, "name" | "isRemote" | "remoteName">): string {
+  return ref.isRemote === true &&
+    ref.remoteName !== undefined &&
+    ref.name.startsWith(`${ref.remoteName}/`)
+    ? ref.name.slice(ref.remoteName.length + 1)
+    : ref.name;
+}
+
 export function resolveDefaultWorktreeBaseBranch(input: {
   readonly configuredBranch: string | null;
   readonly configuredBranchRefs: readonly Pick<VcsRef, "name" | "isRemote" | "remoteName">[];
-  readonly repoDefaultBranch: string | null;
+  readonly repoDefaultBranch: Pick<VcsRef, "name" | "isRemote" | "remoteName"> | string | null;
   readonly currentBranch: string | null;
 }): string | null {
   const configuredBranch = input.configuredBranch?.trim();
@@ -26,13 +45,18 @@ export function resolveDefaultWorktreeBaseBranch(input: {
     configuredBranch &&
     input.configuredBranchRefs.some((ref) =>
       ref.isRemote === true
-        ? ref.remoteName !== undefined && ref.name === `${ref.remoteName}/${configuredBranch}`
+        ? matchesRemoteBranch(ref, configuredBranch)
         : ref.name === configuredBranch,
     )
   ) {
     return configuredBranch;
   }
-  return input.repoDefaultBranch ?? input.currentBranch;
+  if (input.repoDefaultBranch) {
+    return typeof input.repoDefaultBranch === "string"
+      ? input.repoDefaultBranch
+      : branchNameForRef(input.repoDefaultBranch);
+  }
+  return input.currentBranch;
 }
 
 /**

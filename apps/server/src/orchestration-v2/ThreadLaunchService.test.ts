@@ -1359,6 +1359,39 @@ it.effect("keeps the temporary branch when branch generation fails", () =>
   }),
 );
 
+it.effect(
+  "resolves remote-tracking commit when baseRef is remote-only and startFromOrigin is false",
+  () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        localBranches: ["main"],
+        refs: [
+          {
+            name: "upstream/dev",
+            isRemote: true,
+            remoteName: "upstream",
+            isDefault: false,
+            current: false,
+            worktreePath: null,
+          },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const launched = yield* launches.launch(
+          launchInput({
+            command: "command:launch:remote-only-dev",
+            thread: "thread:launch:remote-only-dev",
+            message: "Work from remote-only dev",
+            workspace: { type: "worktree", baseRef: "dev", startFromOrigin: false },
+          }),
+        );
+        yield* waitUntil(() => Effect.sync(() => harness.createWorktree.mock.calls.length === 1));
+        assert.equal(harness.createWorktree.mock.calls[0]?.[0]?.refName, "remote-main-sha");
+      }).pipe(Effect.provide(harness.layer));
+    }),
+);
+
 it.effect("renames a temporary branch on an existing worktree to a generated name", () =>
   Effect.gen(function* () {
     const harness = makeHarness();

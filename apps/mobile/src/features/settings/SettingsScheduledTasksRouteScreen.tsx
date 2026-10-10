@@ -616,6 +616,7 @@ function TaskForm({
           input: {
             cwd: selectedProject.workspaceRoot,
             query: defaultWorktreeBaseBranch,
+            exact: true,
             includeMatchingRemoteRefs: true,
             limit: 200,
           },
@@ -641,10 +642,12 @@ function TaskForm({
         ...branchState.refs,
         ...(defaultWorktreeBaseBranchRefsQuery.data?.refs ?? []),
       ],
-      repoDefaultBranch: branchState.refs.find((branch) => branch.isDefault)?.name ?? null,
+      repoDefaultBranch: branchState.refs.find((branch) => branch.isDefault) ?? null,
       currentBranch: branchState.refs.find((branch) => branch.current)?.name ?? null,
     });
-    setBaseRef(baseRef ?? "main");
+    if (baseRef !== null) {
+      setBaseRef(baseRef);
+    }
   }, [
     branchState.data,
     branchState.isPending,
@@ -716,11 +719,12 @@ function TaskForm({
       !draft.projectId ||
       !draft.modelSelection ||
       !schedule ||
-      (draft.workspace === "existing_worktree" && !draft.checkoutPath.trim())
+      (draft.workspace === "existing_worktree" && !draft.checkoutPath.trim()) ||
+      (draft.workspace === "worktree" && !draft.baseRef.trim())
     ) {
       Alert.alert(
         "Incomplete task",
-        "Add a name, prompt, project, model, valid schedule, and checkout path if needed.",
+        "Add a name, prompt, project, model, valid schedule, and checkout path or base branch if needed.",
       );
       return;
     }
@@ -744,7 +748,7 @@ function TaskForm({
             ? { type: "existing_worktree", worktreePath: draft.checkoutPath.trim() }
             : {
                 type: "worktree",
-                baseRef: draft.baseRef.trim() || "main",
+                baseRef: draft.baseRef.trim(),
                 startFromOrigin: draft.startFromOrigin,
               },
       runtimeMode: draft.runtimeMode,
@@ -837,7 +841,7 @@ function TaskForm({
               setDraft({
                 ...draft,
                 projectId: project.id,
-                baseRef: "",
+                baseRef: project.id === draft.projectId ? draft.baseRef : "",
                 modelSelection: draft.modelSelectionIsExplicit
                   ? draft.modelSelection
                   : scheduledTaskDefaultModel(config, project),

@@ -25,6 +25,7 @@ import {
 } from "@t3tools/contracts";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
 import {
+  matchesRemoteBranch,
   resolveDefaultWorktreeBaseBranch,
   resolveProjectSettings,
 } from "@t3tools/shared/projectSettings";
@@ -747,6 +748,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           input: {
             cwd: branchTarget.cwd,
             query: defaultWorktreeBaseBranch,
+            exact: true,
             includeMatchingRemoteRefs: true,
             limit: 200,
           },
@@ -1049,15 +1051,14 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     const configuredBranchRef = defaultWorktreeBaseBranch
       ? configuredBranchRefs.find((branch) =>
           branch.isRemote
-            ? branch.remoteName !== undefined &&
-              branch.name === `${branch.remoteName}/${defaultWorktreeBaseBranch}`
+            ? matchesRemoteBranch(branch, defaultWorktreeBaseBranch)
             : branch.name === defaultWorktreeBaseBranch,
         )
       : undefined;
     const preferredBranchName = resolveDefaultWorktreeBaseBranch({
       configuredBranch: defaultWorktreeBaseBranch,
       configuredBranchRefs,
-      repoDefaultBranch: allBranchRefs.find((branch) => branch.isDefault)?.name ?? null,
+      repoDefaultBranch: allBranchRefs.find((branch) => branch.isDefault) ?? null,
       currentBranch: availableBranches.find((branch) => branch.current)?.name ?? null,
     });
     const preferredBranch =

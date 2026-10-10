@@ -92,6 +92,22 @@ describe("resolveProjectSettings", () => {
         currentBranch: "feature/current",
       }),
     ).toBe("feature/current");
+    expect(
+      resolveDefaultWorktreeBaseBranch({
+        configuredBranch: null,
+        configuredBranchRefs: [],
+        repoDefaultBranch: { name: "origin/main", isRemote: true, remoteName: "origin" },
+        currentBranch: "feature/current",
+      }),
+    ).toBe("main");
+    expect(
+      resolveDefaultWorktreeBaseBranch({
+        configuredBranch: null,
+        configuredBranchRefs: [],
+        repoDefaultBranch: { name: "main", isRemote: false },
+        currentBranch: "feature/current",
+      }),
+    ).toBe("main");
   });
 
   it("applies overrides per key and reports their source", () => {

@@ -3085,8 +3085,9 @@ export function GeneralSettingsPanel() {
           {...searchableSetting("default-worktree-base-branch")}
           description="Leave empty to use the repository default branch, then the checked-out branch."
           resetAction={
+            mixedDefaultWorktreeBaseBranch ||
             settings.defaultWorktreeBaseBranch !==
-            DEFAULT_UNIFIED_SETTINGS.defaultWorktreeBaseBranch ? (
+              DEFAULT_UNIFIED_SETTINGS.defaultWorktreeBaseBranch ? (
               <SettingResetButton
                 label="default worktree base branch"
                 onClick={() =>
