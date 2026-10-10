@@ -157,6 +157,7 @@ and use **Attach again** or remove the missing file before sending.
 On supported iPhones with iOS 26 or later, use the composer's microphone to record,
 then confirm to transcribe. Text is inserted where your selection was when
 recording started, ready for you to review and edit before sending.
+To dictate in a language other than the app's, choose it in **Settings → Voice input**.
 
 The first use may download Apple's speech model and needs a network connection.
 Later transcription works offline for that language. Recordings can be up to five

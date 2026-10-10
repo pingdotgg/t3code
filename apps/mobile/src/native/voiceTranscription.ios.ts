@@ -33,8 +33,8 @@ function getNativeErrorCode(error: unknown): string | undefined {
   return typeof error.code === "string" ? error.code : undefined;
 }
 
-export function getLocalVoiceTranscriber(): VoiceTranscriber | null {
-  const locale = getDeviceLocale();
+export function getLocalVoiceTranscriber(language?: string): VoiceTranscriber | null {
+  const locale = language ?? getDeviceLocale();
   if (!AppleTranscription.isAvailable(locale)) return null;
   return { prepare: (options) => prepareVoiceTranscription(locale, options) };
 }

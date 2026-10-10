@@ -134,6 +134,31 @@ describe("resolveTranscriptCommit", () => {
     });
   });
 
+  it("adds word spacing for other space-delimited languages", () => {
+    const atEnd = draft({
+      text: "Revisá la caché.",
+      selection: { start: "Revisá la caché.".length, end: "Revisá la caché.".length },
+    });
+    expect(resolveTranscriptCommit(atEnd, atEnd, "Ésta también.", "es-ES")).toMatchObject({
+      kind: "commit",
+      text: "Revisá la caché. Ésta también.",
+    });
+  });
+
+  it("treats accented letters as word boundaries", () => {
+    const afterAccent = draft({ text: "café", selection: { start: 4, end: 4 } });
+    expect(resolveTranscriptCommit(afterAccent, afterAccent, "también", "es-ES")).toMatchObject({
+      kind: "commit",
+      text: "café también",
+    });
+
+    const beforeAccent = draft({ text: "él", selection: { start: 0, end: 0 } });
+    expect(resolveTranscriptCommit(beforeAccent, beforeAccent, "Dijo", "es-ES")).toMatchObject({
+      kind: "commit",
+      text: "Dijo él",
+    });
+  });
+
   it("does not add English boundary spaces to CJK or selected inline text", () => {
     const cjk = draft({ text: "修正キャッシュ", selection: { start: 8, end: 8 } });
     expect(resolveTranscriptCommit(cjk, cjk, "テストも", "ja-JP")).toMatchObject({
