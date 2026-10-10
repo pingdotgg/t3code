@@ -700,6 +700,17 @@ describe("vendored libghostty-vt WebAssembly", () => {
     free(releaseOutput, releaseSize);
     free(reportEventsPointer, reportEvents.length);
 
+    // Zeroing the active flags, which the server appends to history a dead
+    // process left enabled, silences releases again without a full reset.
+    const clearFlags = new TextEncoder().encode("\u001b[=0;1u");
+    const clearFlagsPointer = alloc(clearFlags.length);
+    new Uint8Array(memory.buffer, clearFlagsPointer, clearFlags.length).set(clearFlags);
+    call("ghostty_terminal_vt_write", terminal, clearFlagsPointer, clearFlags.length);
+    call("ghostty_key_encoder_setopt_from_terminal", keyEncoder, terminal);
+    expect(call("ghostty_key_encoder_encode", keyEncoder, keyEvent, 0, 0, written)).toBe(0);
+    expect(new DataView(memory.buffer, written, 4).getUint32(0, true)).toBe(0);
+    free(clearFlagsPointer, clearFlags.length);
+
     free(remappedOutput, remappedOutputSize);
     free(remappedTextPointer, remappedText.length);
     free(output, outputSize);
