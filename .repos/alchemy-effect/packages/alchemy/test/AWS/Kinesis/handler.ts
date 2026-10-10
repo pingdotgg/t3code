@@ -7,8 +7,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export class KinesisApiFunction extends AWS.Lambda.Function<AWS.Lambda.Function>()(
   "KinesisApiFunction",
@@ -50,7 +50,7 @@ export const StreamAndConsumerLive = Layer.effect(
 export const KinesisApiFunctionLive = KinesisApiFunction.make(
   {
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
     // The sink's bounded partial-failure retry can sleep up to ~6s, which
     // exceeds Lambda's 3s default timeout (see PATTERNS §7).
     timeout: Duration.seconds(30),

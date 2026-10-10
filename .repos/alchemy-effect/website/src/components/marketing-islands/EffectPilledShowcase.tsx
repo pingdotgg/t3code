@@ -261,7 +261,7 @@ export default function EffectPilledShowcase() {
   const splitKey = tab;
 
   return (
-    <div ref={wrapRef} className="eff-showcase">
+    <div ref={wrapRef} className="eff-showcase" data-nosnippet="">
       <div className="eff-showcase__chrome">
         <div className="eff-showcase__header">
           <span
@@ -467,7 +467,7 @@ function ContainerPanel() {
     {
       icon: "logos:docker-icon",
       label: "Image",
-      sub: "built from Dockerfile · pushed to registry",
+      sub: "Dockerfile generated · platform builds",
     },
     {
       icon: "mdi:server",

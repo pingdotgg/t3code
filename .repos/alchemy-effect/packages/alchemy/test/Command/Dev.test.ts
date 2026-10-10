@@ -6,12 +6,24 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schedule from "effect/Schedule";
 import * as pathe from "pathe";
+import { assertDead, lifecycleFixture } from "./fixture/lifecycle-support.ts";
 
 const { test } = Test.make({
   // DevServer is provider-agnostic — register it directly without dragging
   // in a cloud provider's auth chain.
   providers: Command.providers(),
   dev: true,
+});
+
+// Typed provider errors are an in-process contract: across the `alchemy dev`
+// RPC boundary (the default dev-test topology) a failed lifecycle op is
+// re-thrown as a flattened defect — `_tag`/`reason` do not survive
+// `Schema.Defect` serialization — so assertions on `CommandError`'s shape
+// must run against the in-process provider.
+const { test: inProcessTest } = Test.make({
+  providers: Command.providers(),
+  dev: true,
+  sidecar: false,
 });
 
 const fixtureDir = pathe.resolve(import.meta.dirname, "fixture");
@@ -92,7 +104,7 @@ test.provider(
       const all = yield* provider.list();
       expect(all).toEqual([]);
     }),
-  { timeout: 30_000 },
+  { tags: ["local"], timeout: 30_000 },
 );
 
 test.provider(
@@ -116,7 +128,7 @@ test.provider(
       yield* stack.destroy();
       yield* waitForDeath(pid);
     }),
-  { timeout: 30_000 },
+  { tags: ["local"], timeout: 30_000 },
 );
 
 test.provider(
@@ -152,7 +164,7 @@ test.provider(
       yield* waitForDeath(alpha.pid);
       yield* waitForDeath(beta.pid);
     }),
-  { timeout: 30_000 },
+  { tags: ["local"], timeout: 30_000 },
 );
 
 test.provider(
@@ -184,7 +196,7 @@ test.provider(
       yield* stack.destroy();
       yield* waitForDeath(first.pid);
     }),
-  { timeout: 30_000 },
+  { tags: ["local"], timeout: 30_000 },
 );
 
 test.provider(
@@ -221,7 +233,7 @@ test.provider(
       yield* stack.destroy();
       yield* waitForDeath(second.pid);
     }),
-  { timeout: 30_000 },
+  { tags: ["local"], timeout: 30_000 },
 );
 
 test.provider(
@@ -249,7 +261,7 @@ test.provider(
       yield* stack.destroy();
       yield* waitForDeath(pid);
     }),
-  { timeout: 30_000 },
+  { tags: ["local"], timeout: 30_000 },
 );
 
 test.provider(
@@ -278,7 +290,7 @@ test.provider(
       yield* stack.destroy();
       yield* waitForDeath(pid);
     }),
-  { timeout: 30_000 },
+  { tags: ["local"], timeout: 30_000 },
 );
 
 test.provider(
@@ -312,7 +324,7 @@ test.provider(
       yield* stack.destroy();
       yield* waitForDeath(pid);
     }),
-  { timeout: 30_000 },
+  { tags: ["local"], timeout: 30_000 },
 );
 
 test.provider(
@@ -344,7 +356,7 @@ test.provider(
       yield* stack.destroy();
       yield* waitForDeath(pid);
     }),
-  { timeout: 30_000 },
+  { tags: ["local"], timeout: 30_000 },
 );
 
 test.provider(
@@ -375,7 +387,7 @@ test.provider(
       yield* stack.destroy();
       yield* waitForDeath(pid);
     }),
-  { timeout: 30_000 },
+  { tags: ["local"], timeout: 30_000 },
 );
 
 test.provider(
@@ -406,7 +418,7 @@ test.provider(
       yield* stack.destroy();
       yield* waitForDeath(pid);
     }),
-  { timeout: 30_000 },
+  { tags: ["local"], timeout: 30_000 },
 );
 
 test.provider(
@@ -430,26 +442,29 @@ test.provider(
       yield* waitForDeath(pid);
       expect(yield* isAlive(pid)).toBe(false);
     }),
-  { timeout: 30_000 },
+  { tags: ["local"], timeout: 30_000 },
 );
 
-test.provider("errors when the command fails in first 5 seconds", (stack) =>
-  Effect.gen(function* () {
-    const error = yield* stack
-      .deploy(
-        Command.Dev("Dev", {
-          command: `node ${dieScript}`,
-        }),
-      )
-      .pipe(Effect.flip);
-    assert(Command.isCommandError(error));
-    assert(error.reason._tag === "UnexpectedExit");
-    expect(error.reason.exitCode).toBe(1);
-    expect(error.reason.stderr).toContain("I'm not feeling it...");
-  }),
+inProcessTest.provider(
+  "errors when the command fails in first 5 seconds",
+  (stack) =>
+    Effect.gen(function* () {
+      const error = yield* stack
+        .deploy(
+          Command.Dev("Dev", {
+            command: `node ${dieScript}`,
+          }),
+        )
+        .pipe(Effect.flip);
+      assert(Command.isCommandError(error));
+      assert(error.reason._tag === "UnexpectedExit");
+      expect(error.reason.exitCode).toBe(1);
+      expect(error.reason.stderr).toContain("I'm not feeling it...");
+    }),
+  { tags: ["local"] },
 );
 
-describe("extractUrl", () => {
+describe("extractUrl", { tags: ["unit", "local"] }, () => {
   it("returns a plain URL when it is the only match", () => {
     expect(Command.extractUrl("Local: http://localhost:5173/")).toBe(
       "http://localhost:5173/",
@@ -478,6 +493,17 @@ describe("extractUrl", () => {
     ).toBe("https://docs.astro.build/en/guides/x/");
   });
 
+  it("normalizes a bind-all address to localhost", () => {
+    // Nuxt prints its *bind* address (`0.0.0.0`), which is not a
+    // connectable host — consumers of `url` must be able to dial it.
+    expect(Command.extractUrl("Listening on http://0.0.0.0:3000/")).toBe(
+      "http://localhost:3000/",
+    );
+    expect(Command.extractUrl("Listening on http://[::]:3000/")).toBe(
+      "http://localhost:3000/",
+    );
+  });
+
   it("strips ANSI escapes before matching", () => {
     expect(Command.extractUrl("\x1b[36mhttp://localhost:5173/\x1b[0m")).toBe(
       "http://localhost:5173/",
@@ -488,3 +514,25 @@ describe("extractUrl", () => {
     expect(Command.extractUrl("no url here")).toBeUndefined();
   });
 });
+
+test.provider.skipIf(process.platform === "win32")(
+  "restart and destroy let wrappers clean their detached children",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+      const first = yield* lifecycleFixture();
+      const second = yield* lifecycleFixture();
+      yield* stack.deploy(Command.Dev("Graceful", first.props));
+      const old = yield* first.ready;
+      yield* stack.deploy(Command.Dev("Graceful", second.props));
+      const current = yield* second.ready;
+      expect(yield* first.has("wrapper.clean")).toBe(true);
+      yield* assertDead(old.wrapper);
+      yield* assertDead(old.leaf);
+      yield* stack.destroy();
+      expect(yield* second.has("wrapper.clean")).toBe(true);
+      yield* assertDead(current.wrapper);
+      yield* assertDead(current.leaf);
+    }),
+  { tags: ["local"], timeout: 30_000 },
+);

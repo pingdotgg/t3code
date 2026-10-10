@@ -82,15 +82,14 @@ export interface ClusterParameterGroup extends Resource<
  * Parameter groups are free and provision instantly. A {@link Cluster}
  * references one by name via `clusterParameterGroupName`; parameter changes
  * take effect after the cluster reboots.
- * @resource
- * @section Creating a Parameter Group
- * @example Default Parameter Group
+ * ### Creating a Parameter Group
+ * **Example:** Default Parameter Group
  * ```typescript
  * const params = yield* Redshift.ClusterParameterGroup("WarehouseParams", {
  *   family: "redshift-2.0",
  * });
  * ```
- * @example Overriding Parameters
+ * **Example:** Overriding Parameters
  * ```typescript
  * const params = yield* Redshift.ClusterParameterGroup("WarehouseParams", {
  *   family: "redshift-2.0",
@@ -100,6 +99,8 @@ export interface ClusterParameterGroup extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const ClusterParameterGroup = Resource<ClusterParameterGroup>(
   "AWS.Redshift.ClusterParameterGroup",

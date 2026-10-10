@@ -29,9 +29,8 @@ export type StartJobRunInput = Omit<
  * `iam:PassRole` (conditioned to `emr-serverless.amazonaws.com`) so the
  * function can hand the service the execution role. Provide the
  * implementation with `Effect.provide(AWS.EMRServerless.StartJobRunHttp)`.
- * @binding
- * @section Running Jobs
- * @example Submit A Spark Job
+ * ### Running Jobs
+ * **Example:** Submit A Spark Job
  * ```typescript
  * // init — bind the operation to the application
  * const startJobRun = yield* AWS.EMRServerless.StartJobRun(app);
@@ -49,6 +48,8 @@ export type StartJobRunInput = Omit<
  * });
  * yield* Effect.log(`started ${run.jobRunId}`);
  * ```
+ *
+ * @binding
  */
 export interface StartJobRun extends Binding.Service<
   StartJobRun,

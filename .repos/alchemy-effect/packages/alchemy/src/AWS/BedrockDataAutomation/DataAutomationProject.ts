@@ -114,9 +114,8 @@ export interface DataAutomationProject extends Resource<
  * turns documents, images, audio, and video into structured output, with
  * optional custom output driven by `Blueprint`s.
  *
- * @resource
- * @section Creating Projects
- * @example Project with default standard output
+ * ### Creating Projects
+ * **Example:** Project with default standard output
  * ```typescript
  * import * as BDA from "alchemy/AWS/BedrockDataAutomation";
  *
@@ -125,7 +124,7 @@ export interface DataAutomationProject extends Resource<
  * });
  * ```
  *
- * @example Document project with granular extraction
+ * **Example:** Document project with granular extraction
  * ```typescript
  * const project = yield* BDA.DataAutomationProject("Docs", {
  *   projectDescription: "invoice pipeline",
@@ -145,8 +144,8 @@ export interface DataAutomationProject extends Resource<
  * });
  * ```
  *
- * @section Custom Output
- * @example Attach blueprints for custom output
+ * ### Custom Output
+ * **Example:** Attach blueprints for custom output
  * ```typescript
  * const blueprint = yield* BDA.Blueprint("InvoiceBlueprint", {
  *   type: "DOCUMENT",
@@ -160,6 +159,8 @@ export interface DataAutomationProject extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const DataAutomationProject = Resource<DataAutomationProject>(
   "AWS.BedrockDataAutomation.DataAutomationProject",

@@ -48,9 +48,8 @@ export interface ParameterGroup extends Resource<
  *
  * Parameter groups are free and provision instantly. DAX does not support
  * tags on parameter groups.
- * @resource
- * @section Creating a Parameter Group
- * @example Parameter Group with Custom Cache TTLs
+ * ### Creating a Parameter Group
+ * **Example:** Parameter Group with Custom Cache TTLs
  * ```typescript
  * const params = yield* ParameterGroup("DaxParams", {
  *   description: "5 minute item and query TTLs",
@@ -61,8 +60,8 @@ export interface ParameterGroup extends Resource<
  * });
  * ```
  *
- * @section Attaching to a Cluster
- * @example Cluster Using the Parameter Group
+ * ### Attaching to a Cluster
+ * **Example:** Cluster Using the Parameter Group
  * ```typescript
  * const cluster = yield* Cluster("Cache", {
  *   nodeType: "dax.t3.small",
@@ -71,6 +70,8 @@ export interface ParameterGroup extends Resource<
  *   parameterGroupName: params.parameterGroupName,
  * });
  * ```
+ *
+ * @resource
  */
 export const ParameterGroup = Resource<ParameterGroup>(
   "AWS.DAX.ParameterGroup",

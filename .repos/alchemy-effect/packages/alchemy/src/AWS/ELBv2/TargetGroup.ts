@@ -93,9 +93,8 @@ export interface TargetGroup extends Resource<
  * An ELBv2 target group. A target group routes requests to one or more
  * registered targets (instances, IPs, Lambda functions, or another ALB) using
  * the configured protocol and port, and runs health checks against them.
- * @resource
- * @section Creating a Target Group
- * @example HTTP target group
+ * ### Creating a Target Group
+ * **Example:** HTTP target group
  * ```typescript
  * const tg = yield* TargetGroup("web", {
  *   vpcId: vpc.vpcId,
@@ -105,7 +104,7 @@ export interface TargetGroup extends Resource<
  * });
  * ```
  *
- * @example Lambda target group
+ * **Example:** Lambda target group
  * ```typescript
  * // No vpc/port/protocol — the target is a Lambda function.
  * const tg = yield* TargetGroup("fn", {
@@ -113,7 +112,7 @@ export interface TargetGroup extends Resource<
  * });
  * ```
  *
- * @example gRPC target group
+ * **Example:** gRPC target group
  * ```typescript
  * const tg = yield* TargetGroup("grpc", {
  *   vpcId: vpc.vpcId,
@@ -124,8 +123,8 @@ export interface TargetGroup extends Resource<
  * });
  * ```
  *
- * @section Health Checks
- * @example Custom health-check thresholds
+ * ### Health Checks
+ * **Example:** Custom health-check thresholds
  * ```typescript
  * const tg = yield* TargetGroup("api", {
  *   vpcId: vpc.vpcId,
@@ -137,6 +136,8 @@ export interface TargetGroup extends Resource<
  *   unhealthyThresholdCount: 3,
  * });
  * ```
+ *
+ * @resource
  */
 export const TargetGroup = Resource<TargetGroup>("AWS.ELBv2.TargetGroup");
 

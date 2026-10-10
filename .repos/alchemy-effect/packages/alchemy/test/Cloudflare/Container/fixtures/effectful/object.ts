@@ -1,7 +1,7 @@
 import * as Cloudflare from "@/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { MyContainer } from "./container.ts";
 import { Storage } from "./storage.ts";
 
@@ -28,6 +28,8 @@ export class Object extends Cloudflare.DurableObject<Object>()(
           bucket.put(key, value).pipe(Effect.asVoid),
         get: (key: string) => bucket.get(key),
         ping: () => container.ping(),
+        // The env var a `Binding.Service` injected into the container.
+        boundEnv: () => container.boundEnv(),
         // Read the object from inside the container over RPC.
         readObjectRpc: (key: string) => container.readObject(key),
         // Read the object from inside the container over its TCP port (fetch).

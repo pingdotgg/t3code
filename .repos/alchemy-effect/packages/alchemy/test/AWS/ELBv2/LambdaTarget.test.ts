@@ -16,7 +16,7 @@ import { resolve4 } from "node:dns/promises";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import { getDefaultVpc } from "../DefaultVpc.ts";
 import {
   ApiTargetFunction,
@@ -256,5 +256,14 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
         );
       expect(after).toBe(0);
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ec2",
+      "provider:aws:elbv2",
+      "provider:aws:lambda",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );

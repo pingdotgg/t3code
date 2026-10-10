@@ -9,7 +9,7 @@ import { DpopVerificationFailureCode, verifyDpopProof } from "@t3tools/shared/dp
 import * as RelayDb from "../db.ts";
 import { relayDpopProofs } from "../persistence/schema.ts";
 
-export class DpopProofReplayPersistenceError extends Schema.TaggedErrorClass<DpopProofReplayPersistenceError>()(
+export class DpopProofReplayPersistenceError extends Schema.TaggedError<DpopProofReplayPersistenceError>()(
   "DpopProofReplayPersistenceError",
   {
     operation: Schema.Literals(["consume", "prune-expired"]),
@@ -31,7 +31,7 @@ export const DpopProofFailureCode = Schema.Union([
 ]);
 export type DpopProofFailureCode = typeof DpopProofFailureCode.Type;
 
-export class DpopProofRejected extends Schema.TaggedErrorClass<DpopProofRejected>()(
+export class DpopProofRejected extends Schema.TaggedError<DpopProofRejected>()(
   "DpopProofRejected",
   {
     code: DpopProofFailureCode,

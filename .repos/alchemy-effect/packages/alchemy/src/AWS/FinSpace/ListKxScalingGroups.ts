@@ -7,14 +7,15 @@ import type { KxEnvironment } from "./KxEnvironment.ts";
  * Runtime binding for `finspace:ListKxScalingGroups` — lists the scaling groups of the bound environment.
  * Provide the implementation with
  * `Effect.provide(AWS.FinSpace.ListKxScalingGroupsHttp)`.
- * @binding
- * @section Managing Scaling Groups
- * @example List Scaling Groups
+ * ### Managing Scaling Groups
+ * **Example:** List Scaling Groups
  * ```typescript
  * const listScalingGroups = yield* AWS.FinSpace.ListKxScalingGroups(kdb);
  *
  * const { scalingGroups } = yield* listScalingGroups();
  * ```
+ *
+ * @binding
  */
 export interface ListKxScalingGroups extends Binding.Service<
   ListKxScalingGroups,

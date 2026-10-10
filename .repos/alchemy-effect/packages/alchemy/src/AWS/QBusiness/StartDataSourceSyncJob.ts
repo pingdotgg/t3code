@@ -20,14 +20,15 @@ export interface StartDataSourceSyncJobRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.QBusiness.StartDataSourceSyncJobHttp)`.
  *
- * @binding
- * @section Data Source Sync
- * @example Start a Sync Job
+ * ### Data Source Sync
+ * **Example:** Start a Sync Job
  * ```typescript
  * const startSync = yield* AWS.QBusiness.StartDataSourceSyncJob(source);
  *
  * const { executionId } = yield* startSync();
  * ```
+ *
+ * @binding
  */
 export interface StartDataSourceSyncJob extends Binding.Service<
   StartDataSourceSyncJob,

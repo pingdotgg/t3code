@@ -8,7 +8,7 @@ import * as ec2 from "@distilled.cloud/aws/ec2";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import { getAutoScalingTestSubnetId } from "./TestNetwork.ts";
+import { getAutoScalingTestSubnetId, getTestAmiId } from "./TestNetwork.ts";
 
 const { test } = Test.make({ providers: AWS.providers() });
 
@@ -52,7 +52,10 @@ test.provider(
     Effect.gen(function* () {
       yield* stack.destroy();
 
-      const imageId = (yield* amazonLinux2023()) ?? "ami-00000000000000000";
+      // The launch template is created out-of-band with the raw SDK, so the
+      // AMI id must be a plain string — `amazonLinux2023()` returns an
+      // Output, which only resolves inside `stack.deploy`.
+      const imageId = yield* getTestAmiId;
 
       yield* cleanupLaunchTemplate;
       yield* ec2.createLaunchTemplate({
@@ -88,7 +91,15 @@ test.provider(
       yield* stack.destroy();
       yield* assertGroupGone("alchemy-test-asg-list");
     }).pipe(Effect.ensuring(cleanupLaunchTemplate)),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:autoscaling",
+      "provider:aws:ec2",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );
 
 // Whole-resource `launchTemplate: template` spelling. The engine resolves the
@@ -121,7 +132,7 @@ test.provider(
 
       // Launch templates do not validate the AMI at creation time; fall back
       // to a syntactically valid id if the lookup returns nothing.
-      const imageId = (yield* amazonLinux2023()) ?? "ami-00000000000000000";
+      const imageId = amazonLinux2023();
 
       const subnetId = yield* getAutoScalingTestSubnetId;
 
@@ -177,5 +188,13 @@ test.provider(
       yield* stack.destroy();
       yield* assertGroupGone(wholeAsgName);
     }).pipe(Effect.ensuring(cleanupWholeAsg)),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:autoscaling",
+      "provider:aws:ec2",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );

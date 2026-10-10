@@ -73,15 +73,16 @@ export interface PublicKey extends Resource<
  *
  * The key body is immutable after creation — changing `encodedKey` triggers
  * a replacement (CloudFront returns no API to rotate a key in place).
- * @resource
- * @section Creating Public Keys
- * @example PEM-encoded RSA public key
+ * ### Creating Public Keys
+ * **Example:** PEM-encoded RSA public key
  * ```typescript
  * const key = yield* PublicKey("SignedUrlKey", {
  *   encodedKey: Redacted.make(yield* fs.readFileString("./public_key.pem")),
  *   comment: "RSA-2048 signed URL key for /private",
  * });
  * ```
+ *
+ * @resource
  */
 export const PublicKey = Resource<PublicKey>("AWS.CloudFront.PublicKey");
 

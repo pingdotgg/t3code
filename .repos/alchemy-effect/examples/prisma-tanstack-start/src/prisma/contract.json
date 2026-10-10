@@ -1,0 +1,304 @@
+{
+  "schemaVersion": "1",
+  "targetFamily": "sql",
+  "target": "postgres",
+  "profileHash": "sha256:1a8dbe044289f30a1de958fe800cc5a8378b285d2e126a8c44b58864bac2c18e",
+  "roots": {
+    "post": "Post",
+    "user": "User"
+  },
+  "models": {
+    "Post": {
+      "fields": {
+        "createdAt": {
+          "nullable": false,
+          "type": {
+            "codecId": "pg/timestamptz@1",
+            "kind": "scalar"
+          }
+        },
+        "excerpt": {
+          "nullable": false,
+          "type": {
+            "codecId": "pg/text@1",
+            "kind": "scalar"
+          }
+        },
+        "id": {
+          "nullable": false,
+          "type": {
+            "codecId": "sql/char@1",
+            "kind": "scalar",
+            "typeParams": {
+              "length": 36
+            }
+          }
+        },
+        "title": {
+          "nullable": false,
+          "type": {
+            "codecId": "pg/text@1",
+            "kind": "scalar"
+          }
+        },
+        "userId": {
+          "nullable": false,
+          "type": {
+            "codecId": "pg/text@1",
+            "kind": "scalar"
+          }
+        }
+      },
+      "relations": {
+        "user": {
+          "cardinality": "N:1",
+          "on": {
+            "localFields": [
+              "userId"
+            ],
+            "targetFields": [
+              "id"
+            ]
+          },
+          "to": "User"
+        }
+      },
+      "storage": {
+        "fields": {
+          "createdAt": {
+            "column": "createdAt"
+          },
+          "excerpt": {
+            "column": "excerpt"
+          },
+          "id": {
+            "column": "id"
+          },
+          "title": {
+            "column": "title"
+          },
+          "userId": {
+            "column": "userId"
+          }
+        },
+        "table": "post"
+      }
+    },
+    "User": {
+      "fields": {
+        "createdAt": {
+          "nullable": false,
+          "type": {
+            "codecId": "pg/timestamptz@1",
+            "kind": "scalar"
+          }
+        },
+        "email": {
+          "nullable": false,
+          "type": {
+            "codecId": "pg/text@1",
+            "kind": "scalar"
+          }
+        },
+        "id": {
+          "nullable": false,
+          "type": {
+            "codecId": "sql/char@1",
+            "kind": "scalar",
+            "typeParams": {
+              "length": 36
+            }
+          }
+        },
+        "name": {
+          "nullable": false,
+          "type": {
+            "codecId": "pg/text@1",
+            "kind": "scalar"
+          }
+        }
+      },
+      "relations": {
+        "posts": {
+          "cardinality": "1:N",
+          "on": {
+            "localFields": [
+              "id"
+            ],
+            "targetFields": [
+              "userId"
+            ]
+          },
+          "to": "Post"
+        }
+      },
+      "storage": {
+        "fields": {
+          "createdAt": {
+            "column": "createdAt"
+          },
+          "email": {
+            "column": "email"
+          },
+          "id": {
+            "column": "id"
+          },
+          "name": {
+            "column": "name"
+          }
+        },
+        "table": "user"
+      }
+    }
+  },
+  "storage": {
+    "storageHash": "sha256:ae5cf43e83687e08354eb6afa512ad5834d96164612280b204c5b7103b01e8e1",
+    "tables": {
+      "post": {
+        "columns": {
+          "createdAt": {
+            "codecId": "pg/timestamptz@1",
+            "default": {
+              "expression": "now()",
+              "kind": "function"
+            },
+            "nativeType": "timestamptz",
+            "nullable": false
+          },
+          "excerpt": {
+            "codecId": "pg/text@1",
+            "nativeType": "text",
+            "nullable": false
+          },
+          "id": {
+            "codecId": "sql/char@1",
+            "nativeType": "character",
+            "nullable": false,
+            "typeParams": {
+              "length": 36
+            }
+          },
+          "title": {
+            "codecId": "pg/text@1",
+            "nativeType": "text",
+            "nullable": false
+          },
+          "userId": {
+            "codecId": "pg/text@1",
+            "nativeType": "text",
+            "nullable": false
+          }
+        },
+        "foreignKeys": [
+          {
+            "columns": [
+              "userId"
+            ],
+            "constraint": true,
+            "index": true,
+            "references": {
+              "columns": [
+                "id"
+              ],
+              "table": "user"
+            }
+          }
+        ],
+        "indexes": [],
+        "primaryKey": {
+          "columns": [
+            "id"
+          ]
+        },
+        "uniques": []
+      },
+      "user": {
+        "columns": {
+          "createdAt": {
+            "codecId": "pg/timestamptz@1",
+            "default": {
+              "expression": "now()",
+              "kind": "function"
+            },
+            "nativeType": "timestamptz",
+            "nullable": false
+          },
+          "email": {
+            "codecId": "pg/text@1",
+            "nativeType": "text",
+            "nullable": false
+          },
+          "id": {
+            "codecId": "sql/char@1",
+            "nativeType": "character",
+            "nullable": false,
+            "typeParams": {
+              "length": 36
+            }
+          },
+          "name": {
+            "codecId": "pg/text@1",
+            "nativeType": "text",
+            "nullable": false
+          }
+        },
+        "foreignKeys": [],
+        "indexes": [],
+        "primaryKey": {
+          "columns": [
+            "id"
+          ]
+        },
+        "uniques": []
+      }
+    }
+  },
+  "execution": {
+    "executionHash": "sha256:8c5eef43d2153fd832b8288ed2d8ffc9f5afb62908f8b4b7e6a4b7018444c41f",
+    "mutations": {
+      "defaults": [
+        {
+          "onCreate": {
+            "id": "uuidv4",
+            "kind": "generator"
+          },
+          "ref": {
+            "column": "id",
+            "table": "post"
+          }
+        },
+        {
+          "onCreate": {
+            "id": "uuidv4",
+            "kind": "generator"
+          },
+          "ref": {
+            "column": "id",
+            "table": "user"
+          }
+        }
+      ]
+    }
+  },
+  "capabilities": {
+    "postgres": {
+      "jsonAgg": true,
+      "lateral": true,
+      "limit": true,
+      "orderBy": true,
+      "returning": true
+    },
+    "sql": {
+      "defaultInInsert": true,
+      "enums": true,
+      "returning": true
+    }
+  },
+  "extensionPacks": {},
+  "meta": {},
+  "_generated": {
+    "warning": "⚠️  GENERATED FILE - DO NOT EDIT",
+    "message": "This file is automatically generated by \"prisma-next contract emit\".",
+    "regenerate": "To regenerate, run: prisma-next contract emit"
+  }
+}

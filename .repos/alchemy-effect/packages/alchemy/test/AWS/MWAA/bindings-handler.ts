@@ -3,8 +3,8 @@ import * as Output from "@/Output";
 import * as EC2 from "@distilled.cloud/aws/ec2";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { getDefaultVpc } from "../DefaultVpc.ts";
 
 export class MWAATestFunction extends AWS.Lambda.Function<AWS.Lambda.Function>()(
@@ -77,7 +77,7 @@ const errorTagged = <A, E extends { _tag: string }, R>(
  * role) and a Lambda bound to all four MWAA bindings.
  */
 export default MWAATestFunction.make(
-  { main: import.meta.url, url: true },
+  { main: import.meta.url, functionUrl: true },
   Effect.gen(function* () {
     const { subnetIds, securityGroupIds } = yield* resolveNetwork;
 

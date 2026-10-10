@@ -4,8 +4,8 @@ import * as RedshiftServerless from "@/AWS/RedshiftServerless";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "data-api-handler.ts");
@@ -27,7 +27,7 @@ const isTerminal = (status: string | undefined): boolean =>
 export default RedshiftDataApiFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Data API statements are submitted then polled; a cold workgroup can
     // take ~30s to serve its first statement — allow generous headroom.
     timeout: Duration.seconds(240),

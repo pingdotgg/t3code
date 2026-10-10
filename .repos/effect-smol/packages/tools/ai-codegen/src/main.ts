@@ -3,14 +3,14 @@
  *
  * @since 4.0.0
  */
+import * as Command from "effect/cli/Command"
+import * as Flag from "effect/cli/Flag"
 import * as Console from "effect/Console"
 import * as Effect from "effect/Effect"
 import * as FileSystem from "effect/FileSystem"
+import * as FetchHttpClient from "effect/http/FetchHttpClient"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
-import * as Command from "effect/unstable/cli/Command"
-import * as Flag from "effect/unstable/cli/Flag"
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient"
 import * as ProviderDiscovery from "./Discovery.ts"
 import * as CodeGenerator from "./Generator.ts"
 import * as Glob from "./Glob.ts"
@@ -21,18 +21,20 @@ import * as SpecFetcher from "./SpecFetcher.ts"
 // Flags
 // =============================================================================
 
-const providerFlag = Flag.string("provider").pipe(
+const providerFlag = Flag.String("provider").pipe(
   Flag.withAlias("p"),
   Flag.withDescription("Generate for specific provider only"),
   Flag.optional
 )
 
-const skipLintFlag = Flag.boolean("skip-lint").pipe(
-  Flag.withDescription("Skip Oxlint step")
+const skipLintFlag = Flag.Boolean("skip-lint").pipe(
+  Flag.withDescription("Skip Oxlint step"),
+  Flag.withDefault(false)
 )
 
-const skipFormatFlag = Flag.boolean("skip-format").pipe(
-  Flag.withDescription("Skip Dprint step")
+const skipFormatFlag = Flag.Boolean("skip-format").pipe(
+  Flag.withDescription("Skip Dprint step"),
+  Flag.withDefault(false)
 )
 
 // =============================================================================
@@ -229,7 +231,7 @@ const ServicesLayer = Layer.mergeAll(
 /**
  * Run the CLI.
  *
- * @category execution
+ * @category running
  * @since 4.0.0
  */
 export const run = Command.run(root, { version: "0.0.0" }).pipe(

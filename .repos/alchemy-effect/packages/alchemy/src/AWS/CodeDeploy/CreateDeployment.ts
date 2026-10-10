@@ -15,9 +15,8 @@ export interface CreateDeploymentRequest extends Omit<
  *
  * The response carries the created `deploymentId`, which can be observed
  * with the {@link GetDeployment} binding.
- * @binding
- * @section Starting Deployments
- * @example Deploy a Registered Revision
+ * ### Starting Deployments
+ * **Example:** Deploy a Registered Revision
  * ```typescript
  * const createDeployment = yield* AWS.CodeDeploy.CreateDeployment(group);
  *
@@ -28,6 +27,8 @@ export interface CreateDeploymentRequest extends Omit<
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateDeployment extends Binding.Service<
   CreateDeployment,

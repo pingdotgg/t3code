@@ -10,9 +10,8 @@ import type { Adapter } from "./Adapter.ts";
  * automatically; the caller also needs read access to the manifest and
  * write access to the output bucket.
  *
- * @binding
- * @section Managing Adapters
- * @example Train a New Adapter Version
+ * ### Managing Adapters
+ * **Example:** Train a New Adapter Version
  * ```typescript
  * // init
  * const createAdapterVersion = yield* AWS.Textract.CreateAdapterVersion(adapter);
@@ -25,6 +24,8 @@ import type { Adapter } from "./Adapter.ts";
  *   OutputConfig: { S3Bucket: bucketName, S3Prefix: "training-output/" },
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateAdapterVersion extends Binding.Service<
   CreateAdapterVersion,

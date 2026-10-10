@@ -1,0 +1,202 @@
+---
+title: Vocs
+description: Deploy a Vocs docs site to Hetzner with Hetzner.Website.Vocs — prerendered HTML on a systemd unit, extensionless routes, and Vocs' own dev server under alchemy dev.
+sidebar:
+  order: 10
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`Hetzner.Website.Vocs` deploys a [Vocs](https://vocs.dev)
+documentation project to a Hetzner Cloud
+[Server](/hetzner/compute/servers) as a systemd
+[Service](/hetzner/compute/services) on port 3000. Vocs prerenders
+static HTML; unmatched paths serve extensionless pages (`/about` →
+`about/index.html`). The live URL is `http://{ipv4}:3000` — there is
+no TLS on the Service. Your `vocs.config.*` loads natively — there
+is no adapter to install.
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads
+`/vocs/node` from your project at deploy time. It is only used at
+build time, so a dev dependency is enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+Your Vocs project already needs `vocs` installed.
+
+## Configure Vocs
+
+Your `vocs.config.*` file loads natively — title, sidebar, and any
+other Vocs options work exactly as they do outside Alchemy:
+
+```typescript
+// vocs.config.ts
+import { defineConfig } from "vocs/config";
+
+export default defineConfig({
+  title: "Docs",
+  sidebar: [
+    { text: "Home", link: "/" },
+    { text: "Guide", link: "/guide" },
+  ],
+});
+```
+
+If `vocs.config.*` sets `outDir`, pass the same value on the
+resource (default `"dist"`) so generated output stays outside the
+rebuild hash:
+
+```typescript
+export const Website = Hetzner.Website.Vocs("Website", {
+  rootDir: "./docs",
+  outDir: "build",
+});
+```
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack):
+
+```typescript
+// alchemy.run.ts
+import * as Hetzner from "alchemy/Hetzner";
+
+export const Website = Hetzner.Website.Vocs("Website", {
+  rootDir: "./docs",
+});
+```
+
+Omit `server` to create a `cpx12` / `ubuntu-24.04` box in `fsn1`.
+Pass an existing `Hetzner.Server` when several sites or APIs should
+share one VM:
+
+```typescript
+export const Box = Hetzner.Server("box", {
+  serverType: "cpx12",
+  image: "ubuntu-24.04",
+  location: "fsn1",
+});
+
+export const Website = Hetzner.Website.Vocs("Website", {
+  rootDir: "./docs",
+  server: Box,
+});
+```
+
+## Add it to the Stack
+
+Yield the site from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyVocsSite",
+  {
+    providers: Hetzner.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+The live URL is `http://{ipv4}:3000`. The unit listens on port 3000
+and answers `GET /health` (`deployUnit` curls that path whenever
+`PORT` is set). `site.server` and `site.service` are set on deploy.
+
+## Add environment variables
+
+Top-level `env` is copied onto `process.env` before build and
+`alchemy dev`, and onto the systemd unit at deploy:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = Hetzner.Website.Vocs("Website", {
+  rootDir: "./docs",
++  env: {
++    DOCS_TITLE: "Hello from Alchemy!",
++  },
+});
+```
+
+These are process environment variables, not Worker bindings.
+
+## Read the environment
+
+Vocs prerenders at build time, so page content that reads
+`process.env` is baked into the HTML. The same values are set on
+the hosted Node process; there is no request-time Vocs server.
+
+```typescript
+const title = process.env.DOCS_TITLE ?? "Docs";
+```
+
+## Local development
+
+`alchemy dev` runs Vocs' own dev server (native HMR) instead of
+deploying; `site.url` is the local address and no Hetzner resources
+are created (`server` and `service` are `undefined`). Wrap the site
+in `Alchemy.remote()` to deploy the live Server and Service even
+during dev:
+
+```typescript
+export const Website = Hetzner.Website.Vocs("Website", {
+  rootDir: "./docs",
+}).pipe(Alchemy.remote());
+```
+
+## Custom domain
+
+`domain` requires an existing Hetzner DNS [Zone](/hetzner/networking/dns)
+(`zone`). Alchemy creates an A [RecordSet](/hetzner/networking/dns)
+pointing at the Server's public IPv4; `url` becomes
+`http://{domain}:3000`. v1 does not provision a Zone — omitting
+`zone` when `domain` is set fails:
+
+```typescript
+export const Dns = Hetzner.Zone("dns", {
+  name: "example.com",
+});
+
+export const Website = Hetzner.Website.Vocs("Website", {
+  rootDir: "./docs",
+  domain: "docs.example.com",
+  zone: Dns,
+});
+```
+
+There is no TLS on the Service.
+
+## Where next
+
+- [`Vocs` reference](/providers/hetzner/website/vocs) — every prop
+  and attribute
+- [Servers](/hetzner/compute/servers) and
+  [Services](/hetzner/compute/services) — the VM and systemd unit
+- [Zones & records](/hetzner/networking/dns) — the Zone `domain`
+  requires
+- [Hetzner](/hetzner) — the Hetzner provider hub

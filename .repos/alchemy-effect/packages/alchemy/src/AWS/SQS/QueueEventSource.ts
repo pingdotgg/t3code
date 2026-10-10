@@ -51,25 +51,43 @@ type MessagesHandler<Req> = (
  * );
  * ```
  */
-export function consumeQueueMessages<Q extends Queue, Req = never>(
-  queue: Q,
+export function consumeQueueMessages<
+  Q extends Queue,
+  Req = never,
+  ResourceReq = never,
+>(
+  queue: Q | Effect.Effect<Q, never, ResourceReq>,
   process: MessagesHandler<Req>,
-): Effect.Effect<void, never, QueueEventSource>;
-export function consumeQueueMessages<Q extends Queue, Req = never>(
-  queue: Q,
+): Effect.Effect<void, never, QueueEventSource | ResourceReq>;
+export function consumeQueueMessages<
+  Q extends Queue,
+  Req = never,
+  ResourceReq = never,
+>(
+  queue: Q | Effect.Effect<Q, never, ResourceReq>,
   props: MessagesProps,
   process: MessagesHandler<Req>,
-): Effect.Effect<void, never, QueueEventSource>;
-export function consumeQueueMessages<Q extends Queue, Req = never>(
-  queue: Q,
+): Effect.Effect<void, never, QueueEventSource | ResourceReq>;
+export function consumeQueueMessages<
+  Q extends Queue,
+  Req = never,
+  ResourceReq = never,
+>(
+  queue: Q | Effect.Effect<Q, never, ResourceReq>,
   propsOrProcess: MessagesProps | MessagesHandler<Req>,
   maybeProcess?: MessagesHandler<Req>,
-): Effect.Effect<void, never, QueueEventSource> {
+): Effect.Effect<void, never, QueueEventSource | ResourceReq> {
   const [props, process] =
     typeof propsOrProcess === "function"
       ? [{} as MessagesProps, propsOrProcess]
       : [propsOrProcess, maybeProcess!];
-  return QueueEventSource.use((source) => source(queue, props, process));
+  // Accept the queue or the Effect that declares it, like bindings do.
+  const resolved = Effect.isEffect(queue) ? queue : Effect.succeed(queue);
+  return resolved.pipe(
+    Effect.flatMap((value) =>
+      QueueEventSource.use((source) => source(value, props, process)),
+    ),
+  );
 }
 
 /**
@@ -80,9 +98,8 @@ export function consumeQueueMessages<Q extends Queue, Req = never>(
  * layers are `Lambda.QueueEventSource` (event-source mapping + runtime
  * dispatch) and `Server.SQSQueueEventSource` (long-poll receive loop).
  * Consume it through the {@link consumeQueueMessages} helper.
- * @binding
- * @section Consuming a Queue
- * @example Consume Messages in a Lambda Function
+ * ### Consuming a Queue
+ * **Example:** Consume Messages in a Lambda Function
  * ```typescript
  * export default WorkerFunction.make(
  *   { main: import.meta.url },
@@ -98,6 +115,8 @@ export function consumeQueueMessages<Q extends Queue, Req = never>(
  *   }).pipe(Effect.provide(Lambda.QueueEventSource)),
  * );
  * ```
+ *
+ * @binding
  */
 export interface QueueEventSource extends Binding.Service<
   QueueEventSource,

@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * register themselves (they are not Alchemy resources), so the caller
  * supplies the core device thing name at runtime. Provide the implementation
  * with `Effect.provide(AWS.GreengrassV2.GetCoreDeviceHttp)`.
- * @binding
- * @section Managing Core Devices
- * @example Check A Core Device's Health
+ * ### Managing Core Devices
+ * **Example:** Check A Core Device's Health
  * ```typescript
  * // init — account-level binding, no resource argument
  * const getCoreDevice = yield* AWS.GreengrassV2.GetCoreDevice();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  * const device = yield* getCoreDevice({ coreDeviceThingName: "MyCore" });
  * yield* Effect.log(`${device.coreDeviceThingName} is ${device.status}`);
  * ```
+ *
+ * @binding
  */
 export interface GetCoreDevice extends Binding.Service<
   GetCoreDevice,

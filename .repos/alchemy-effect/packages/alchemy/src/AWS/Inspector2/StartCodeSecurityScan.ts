@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide the implementation with
  * `Effect.provide(AWS.Inspector2.StartCodeSecurityScanHttp)`.
- * @binding
- * @section Code Security Scans
- * @example Scan a Repository
+ * ### Code Security Scans
+ * **Example:** Scan a Repository
  * ```typescript
  * // init
  * const startCodeSecurityScan = yield* AWS.Inspector2.StartCodeSecurityScan();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  *   resource: { projectId },
  * });
  * ```
+ *
+ * @binding
  */
 export interface StartCodeSecurityScan extends Binding.Service<
   StartCodeSecurityScan,

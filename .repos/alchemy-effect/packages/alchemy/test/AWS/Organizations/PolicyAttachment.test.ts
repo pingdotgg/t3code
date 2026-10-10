@@ -21,18 +21,21 @@ const { test } = Test.make({ providers: AWS.providers() });
 // account isn't an org management account / delegated administrator, the typed
 // AccessDeniedException / AWSOrganizationsNotInUseException catches degrade the
 // result to [], so the assertion holds without deploying anything.
-test.provider("list enumerates policy attachments", () =>
-  Effect.gen(function* () {
-    const provider = yield* Provider.findProvider(PolicyAttachment);
-    const all = yield* provider.list();
+test.provider(
+  "list enumerates policy attachments",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(PolicyAttachment);
+      const all = yield* provider.list();
 
-    expect(Array.isArray(all)).toBe(true);
+      expect(Array.isArray(all)).toBe(true);
 
-    for (const attachment of all) {
-      expect(typeof attachment.policyId).toBe("string");
-      expect(typeof attachment.targetId).toBe("string");
-    }
-  }),
+      for (const attachment of all) {
+        expect(typeof attachment.policyId).toBe("string");
+        expect(typeof attachment.targetId).toBe("string");
+      }
+    }),
+  { tags: ["provider:aws", "provider:aws:organizations", "live"] },
 );
 
 // Regression test for https://github.com/alchemy-run/alchemy/issues/736.
@@ -182,7 +185,7 @@ test.provider.skipIf(!process.env.AWS_ORG_MANAGEMENT_ACCOUNT)(
       // interrupted deploy leaves behind: `creating`, no attributes, and
       // every Output-valued prop lost in the round-trip.
       const state = yield* yield* State;
-      const stage = "test"; // scratch stacks default to the "test" stage
+      const stage = stack.stage;
       const fqns = yield* state.list({ stack: stack.name, stage });
       const rows = yield* Effect.forEach(fqns, (fqn) =>
         state
@@ -225,5 +228,8 @@ test.provider.skipIf(!process.env.AWS_ORG_MANAGEMENT_ACCOUNT)(
 
       yield* stack.destroy();
     }),
-  { timeout: 240_000 },
+  {
+    tags: ["provider:aws", "provider:aws:organizations", "live"],
+    timeout: 240_000,
+  },
 );

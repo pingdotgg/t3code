@@ -2,23 +2,17 @@ import {
   CommandId,
   MessageId,
   ThreadId,
+  type ChatAttachment,
   type ModelSelection,
+  type OrchestrationMessageContext,
   type ProjectId,
   type ProviderInteractionMode,
   type RuntimeMode,
 } from "@t3tools/contracts";
+import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
+import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 
-import { toUploadChatImageAttachments, type DraftComposerImageAttachment } from "./composerImages";
-
-export function deriveThreadTitleFromPrompt(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return "New thread";
-  }
-
-  const compact = trimmed.replace(/\s+/g, " ");
-  return compact.length <= 72 ? compact : `${compact.slice(0, 69).trimEnd()}...`;
-}
+import type { UploadedMobileAttachment } from "./attachmentUpload";
 
 export interface ProjectThreadStartTurnSpec {
   readonly projectId: ProjectId;
@@ -28,7 +22,9 @@ export interface ProjectThreadStartTurnSpec {
   readonly messageId: string;
   readonly createdAt: string;
   readonly text: string;
-  readonly attachments: ReadonlyArray<DraftComposerImageAttachment>;
+  readonly context?: OrchestrationMessageContext;
+  /** New uploads or server-owned attachments from a cancelled setup. */
+  readonly uploadedAttachments: ReadonlyArray<UploadedMobileAttachment | ChatAttachment>;
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
@@ -46,16 +42,18 @@ export interface ProjectThreadStartTurnSpec {
  * offline outbox drain so both deliver identical commands.
  */
 export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpec) {
-  const title = deriveThreadTitleFromPrompt(spec.text);
+  const title = deriveThreadTitleSeed({ text: spec.text, attachments: spec.uploadedAttachments });
   const isWorktree = spec.workspaceMode === "worktree";
   return {
     commandId: CommandId.make(spec.commandId),
+    creationSource: "mobile" as const,
     threadId: ThreadId.make(spec.threadId),
     message: {
       messageId: MessageId.make(spec.messageId),
       role: "user" as const,
       text: spec.text,
-      attachments: toUploadChatImageAttachments(spec.attachments),
+      ...(spec.context ? { context: spec.context } : {}),
+      attachments: spec.uploadedAttachments,
     },
     modelSelection: spec.modelSelection,
     titleSeed: title,
@@ -86,4 +84,14 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
     },
     createdAt: spec.createdAt,
   };
+}
+
+export function deriveThreadTitleFromPrompt(value: string): string {
+  const trimmed = assistantCitationsToPlainText(value).trim();
+  if (trimmed.length === 0) {
+    return "New thread";
+  }
+
+  const compact = trimmed.replace(/\s+/g, " ");
+  return compact.length <= 72 ? compact : `${compact.slice(0, 69).trimEnd()}...`;
 }

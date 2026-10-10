@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 
 /**
  * A Drizzle schema + PlanetScale Postgres database + feature branch. The
- * branch's `migrationsDir` is wired to the schema resource's `out` output, so
+ * branch's `migrations` prop is wired to the schema resource, so
  * the provider order becomes:
  *
  *   1. `Drizzle.Schema` regenerates pending migration SQL files.
@@ -41,7 +41,7 @@ export const PlanetscaleDb = Effect.gen(function* () {
 
   const branch = yield* Planetscale.PostgresBranch("app-branch", {
     database,
-    migrationsDir: schema.out,
+    migrations: schema,
   });
 
   const role = yield* Planetscale.PostgresRole("app-role", {

@@ -9,7 +9,7 @@ import {
   useAtomValue
 } from "@effect/atom-solid"
 import { assert, describe, it } from "@effect/vitest"
-import { AsyncResult, Atom, AtomRef, AtomRegistry } from "effect/unstable/reactivity"
+import { AsyncResult, Atom, AtomRef, AtomRegistry } from "effect/reactivity"
 import { type Accessor, createComponent, createEffect, createRoot, type Resource } from "solid-js"
 
 describe("atom-solid", () => {

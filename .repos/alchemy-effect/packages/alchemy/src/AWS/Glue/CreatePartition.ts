@@ -17,9 +17,8 @@ export interface CreatePartitionRequest extends Omit<
  * is already registered. The database/table names and catalog id are
  * injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.Glue.CreatePartitionHttp)`.
- * @binding
- * @section Managing Partitions
- * @example Register a New Partition
+ * ### Managing Partitions
+ * **Example:** Register a New Partition
  * ```typescript
  * // init
  * const createPartition = yield* AWS.Glue.CreatePartition(table);
@@ -32,6 +31,8 @@ export interface CreatePartitionRequest extends Omit<
  *   },
  * }).pipe(Effect.catchTag("AlreadyExistsException", () => Effect.void));
  * ```
+ *
+ * @binding
  */
 export interface CreatePartition extends Binding.Service<
   CreatePartition,

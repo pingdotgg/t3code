@@ -1,0 +1,19 @@
+---
+// Dynamic param route rendered per request. Under `output: "server"` there
+// is no `getStaticPaths` — any /greet/:name is rendered on demand by the
+// worker, which is exactly the SSR-first shape this fixture exists to prove.
+const { name } = Astro.params;
+const requestId = Astro.locals.requestId ?? "missing";
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Greet {name}</title>
+  </head>
+  <body>
+    <h1 id="greeting">Hello, {name}!</h1>
+    <p id="mode">on-demand</p>
+    <p id="request-id">{requestId}</p>
+  </body>
+</html>

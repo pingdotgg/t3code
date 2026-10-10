@@ -1,10 +1,5 @@
-import {
-  ExternalLinkIcon,
-  PackagePlusIcon,
-  PaletteIcon,
-  RefreshCwIcon,
-  SearchIcon,
-} from "lucide-react";
+import { RefreshIcon } from "~/components/ui/refresh-icon";
+import { ExternalLinkIcon, PackagePlusIcon, PaletteIcon, SearchIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   importOpenVsxThemeExtension,
@@ -29,6 +24,7 @@ import {
   AlertDialogPopup,
   AlertDialogTitle,
 } from "../ui/alert-dialog";
+import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -204,13 +200,12 @@ export function ThemeSearchSection({
       return;
     }
     void runSearch(debouncedQuery);
-    // `installingId` and `sortBy` are deliberately not dependencies: the
-    // guards above read the current values from the fresh render closure. An
-    // install finishing reruns the search only when the query or sort changed
-    // while it was in flight (checked via lastSearchKeyRef, recorded only
-    // once a search succeeds), so the install error the user needs to see is
-    // preserved across that rerun.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // `sortBy` is deliberately not a direct dependency: the guards above read
+    // the current value from the fresh render closure. An install finishing
+    // reruns the search only when the query or sort changed while it was in
+    // flight (checked via lastSearchKeyRef, recorded only once a search
+    // succeeds), so the install error the user needs to see is preserved
+    // across that rerun.
   }, [open, query, debouncedQuery, installingId, runSearch]);
 
   const handleSortChange = useCallback((value: OpenVsxThemeSort | null) => {
@@ -348,12 +343,9 @@ export function ThemeSearchSection({
       </div>
 
       {error ? (
-        <div
-          aria-live="polite"
-          className="rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-destructive text-sm"
-        >
-          {error}
-        </div>
+        <Alert variant="error" role="status" aria-live="polite">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       ) : null}
 
       {isSearching && results === null ? (
@@ -418,7 +410,7 @@ export function ThemeSearchSection({
                       {isInstalling ? (
                         <Spinner />
                       ) : isInstalled ? (
-                        <RefreshCwIcon />
+                        <RefreshIcon />
                       ) : (
                         <PackagePlusIcon />
                       )}

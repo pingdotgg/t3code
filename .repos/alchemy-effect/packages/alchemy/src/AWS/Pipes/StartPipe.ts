@@ -12,9 +12,8 @@ import type { Pipe } from "./Pipe.ts";
  * states; use {@link DescribePipe} to observe when the pipe settles. The
  * pipe name is injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.Pipes.StartPipeHttp)`.
- * @binding
- * @section Controlling a Pipe
- * @example Resume a Stopped Pipe
+ * ### Controlling a Pipe
+ * **Example:** Resume a Stopped Pipe
  * ```typescript
  * // init — bind the operation to the pipe
  * const startPipe = yield* AWS.Pipes.StartPipe(pipe);
@@ -23,6 +22,8 @@ import type { Pipe } from "./Pipe.ts";
  * const response = yield* startPipe();
  * // response.DesiredState === "RUNNING"
  * ```
+ *
+ * @binding
  */
 export interface StartPipe extends Binding.Service<
   StartPipe,

@@ -31,7 +31,12 @@ const html = highlightTS(code);
           />
           <span class="alc-code-block__filename">{filename}</span>
         </div>
-        <pre class="alc-code-block__pre" set:html={html} />
+        <pre
+        class="alc-code-block__pre"
+        tabindex="0"
+        aria-label={`${filename} source`}
+        set:html={html}
+      />
       </div>
       <div class="alc-code-block__caption">{caption}</div>
     </div>
@@ -49,7 +54,12 @@ const html = highlightTS(code);
         />
         <span class="alc-code-block__filename">{filename}</span>
       </div>
-      <pre class="alc-code-block__pre" set:html={html} />
+      <pre
+        class="alc-code-block__pre"
+        tabindex="0"
+        aria-label={`${filename} source`}
+        set:html={html}
+      />
     </div>
   )
 }

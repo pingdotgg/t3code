@@ -15,7 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import { findErrorTraceId } from "../errors/errorTrace.ts";
 import * as ManagedRelay from "./managedRelay.ts";
@@ -180,47 +180,15 @@ function readSessionClerkToken(
   session: ManagedRelaySession,
 ): Effect.Effect<string, ManagedRelaySessionError> {
   return session.readClerkToken().pipe(
-    Effect.flatMap((token) =>
-      token
-        ? Effect.succeed(token)
-        : Effect.fail(
-            new ManagedRelaySessionError({
-              message: "The T3 Connect session token is unavailable.",
-            }),
-          ),
+    Effect.filterOrFail(
+      (token): token is string => Boolean(token),
+      () =>
+        new ManagedRelaySessionError({
+          message: "The T3 Connect session token is unavailable.",
+        }),
     ),
   );
 }
-
-export const waitForManagedRelayClerkToken = Effect.fn(
-  "clientRuntime.managedRelaySession.waitForClerkToken",
-)(function* (registry: AtomRegistry.AtomRegistry) {
-  return yield* Effect.callback<string, ManagedRelaySessionError>((resume) => {
-    let unsubscribe: (() => void) | undefined;
-    let completed = false;
-    const readCurrentSession = () => {
-      if (completed) {
-        return true;
-      }
-      const session = registry.get(managedRelaySessionAtom);
-      if (!session) {
-        return false;
-      }
-      completed = true;
-      unsubscribe?.();
-      resume(readSessionClerkToken(session));
-      return true;
-    };
-
-    if (readCurrentSession()) {
-      return;
-    }
-
-    unsubscribe = registry.subscribe(managedRelaySessionAtom, readCurrentSession);
-    readCurrentSession();
-    return Effect.sync(() => unsubscribe?.());
-  });
-});
 
 /** Removes an environment from the signed-in account without contacting that environment. */
 export const deregisterManagedRelayEnvironment = Effect.fn(

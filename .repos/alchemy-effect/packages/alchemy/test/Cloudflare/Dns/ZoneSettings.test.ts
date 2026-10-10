@@ -76,143 +76,158 @@ const normalizeBaseline = (zoneId: string) =>
     );
   });
 
-describe.sequential("ZoneSettings", () => {
-  test.provider(
-    "pins flattenAllCnames and restores the pre-management value on destroy",
-    (stack) =>
+describe.sequential(
+  "ZoneSettings",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:dns",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+  },
+  () => {
+    test.provider(
+      "pins flattenAllCnames and restores the pre-management value on destroy",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = yield* resolveZoneId;
+
+          yield* stack.destroy();
+          yield* normalizeBaseline(zoneId);
+
+          const settings = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.DNS.ZoneDnsSettings("DnsSettings", {
+                zoneId,
+                flattenAllCnames: true,
+              });
+            }),
+          );
+
+          expect(settings.zoneId).toEqual(zoneId);
+          expect(settings.flattenAllCnames).toEqual(true);
+          // The pre-management snapshot was captured for restore-on-destroy.
+          expect(settings.initialSettings.flattenAllCnames).toEqual(
+            BASELINE_FLATTEN_ALL_CNAMES,
+          );
+          expect(settings.managedKeys).toContain("flattenAllCnames");
+
+          // Out-of-band verify via the SDK.
+          const live = yield* getSettings(zoneId);
+          expect(live.flattenAllCnames).toEqual(true);
+
+          yield* stack.destroy();
+
+          // Destroy restored the managed field to its pre-management value.
+          const restored = yield* getSettings(zoneId);
+          expect(restored.flattenAllCnames).toEqual(
+            BASELINE_FLATTEN_ALL_CNAMES,
+          );
+
+          // Re-running destroy is idempotent (nothing left to restore).
+          yield* stack.destroy();
+          const still = yield* getSettings(zoneId);
+          expect(still.flattenAllCnames).toEqual(BASELINE_FLATTEN_ALL_CNAMES);
+        }).pipe(logLevel),
+      { timeout: 300_000 },
+    );
+
+    test.provider(
+      "updates in place, unions managedKeys, restores all managed fields",
+      (stack) =>
+        Effect.gen(function* () {
+          const zoneId = yield* resolveZoneId;
+
+          yield* stack.destroy();
+          yield* normalizeBaseline(zoneId);
+
+          const initial = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.DNS.ZoneDnsSettings("DnsSettings", {
+                zoneId,
+                multiProvider: true,
+              });
+            }),
+          );
+          expect(initial.multiProvider).toEqual(true);
+          expect(initial.initialSettings.multiProvider).toEqual(
+            BASELINE_MULTI_PROVIDER,
+          );
+          expect(initial.managedKeys).toContain("multiProvider");
+
+          // Same singleton patched in place — new value plus a second managed
+          // field; the original snapshot survives the update.
+          const updated = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.DNS.ZoneDnsSettings("DnsSettings", {
+                zoneId,
+                multiProvider: true,
+                flattenAllCnames: true,
+              });
+            }),
+          );
+          expect(updated.zoneId).toEqual(zoneId);
+          expect(updated.multiProvider).toEqual(true);
+          expect(updated.flattenAllCnames).toEqual(true);
+          expect(updated.initialSettings.multiProvider).toEqual(
+            BASELINE_MULTI_PROVIDER,
+          );
+          expect(updated.initialSettings.flattenAllCnames).toEqual(
+            BASELINE_FLATTEN_ALL_CNAMES,
+          );
+          expect(updated.managedKeys).toContain("multiProvider");
+          expect(updated.managedKeys).toContain("flattenAllCnames");
+
+          const live = yield* getSettings(zoneId);
+          expect(live.multiProvider).toEqual(true);
+          expect(live.flattenAllCnames).toEqual(true);
+
+          // Drop `multiProvider` from props — the key stays managed (union
+          // across all reconciles) so destroy still restores it.
+          const dropped = yield* stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.DNS.ZoneDnsSettings("DnsSettings", {
+                zoneId,
+                flattenAllCnames: true,
+              });
+            }),
+          );
+          expect(dropped.managedKeys).toContain("multiProvider");
+          expect(dropped.managedKeys).toContain("flattenAllCnames");
+
+          yield* stack.destroy();
+
+          // Both managed fields were restored to their pre-management values.
+          const restored = yield* getSettings(zoneId);
+          expect(restored.multiProvider).toEqual(BASELINE_MULTI_PROVIDER);
+          expect(restored.flattenAllCnames).toEqual(
+            BASELINE_FLATTEN_ALL_CNAMES,
+          );
+        }).pipe(logLevel),
+      { timeout: 300_000 },
+    );
+
+    // Canonical `list()` test (zone-scoped singleton): there is no account-wide
+    // API for this per-zone settings object, so `list()` enumerates every zone
+    // via `listAllZones` and reads the singleton in each. Assert the result is
+    // non-empty and contains the standing test zone.
+    test.provider("list enumerates DNS settings across all zones", (stack) =>
       Effect.gen(function* () {
         const zoneId = yield* resolveZoneId;
 
-        yield* stack.destroy();
-        yield* normalizeBaseline(zoneId);
-
-        const settings = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.DNS.ZoneDnsSettings("DnsSettings", {
-              zoneId,
-              flattenAllCnames: true,
-            });
-          }),
+        const provider = yield* Provider.findProvider(
+          Cloudflare.DNS.ZoneDnsSettings,
         );
+        const all = yield* provider.list();
 
-        expect(settings.zoneId).toEqual(zoneId);
-        expect(settings.flattenAllCnames).toEqual(true);
-        // The pre-management snapshot was captured for restore-on-destroy.
-        expect(settings.initialSettings.flattenAllCnames).toEqual(
-          BASELINE_FLATTEN_ALL_CNAMES,
-        );
-        expect(settings.managedKeys).toContain("flattenAllCnames");
+        expect(all.length).toBeGreaterThan(0);
+        expect(all.some((s) => s.zoneId === zoneId)).toBe(true);
 
-        // Out-of-band verify via the SDK.
-        const live = yield* getSettings(zoneId);
-        expect(live.flattenAllCnames).toEqual(true);
-
+        // `stack` is unused here (the singleton always exists on every zone),
+        // but keep the destroy bookend so the harness state stays clean.
         yield* stack.destroy();
-
-        // Destroy restored the managed field to its pre-management value.
-        const restored = yield* getSettings(zoneId);
-        expect(restored.flattenAllCnames).toEqual(BASELINE_FLATTEN_ALL_CNAMES);
-
-        // Re-running destroy is idempotent (nothing left to restore).
-        yield* stack.destroy();
-        const still = yield* getSettings(zoneId);
-        expect(still.flattenAllCnames).toEqual(BASELINE_FLATTEN_ALL_CNAMES);
       }).pipe(logLevel),
-    { timeout: 300_000 },
-  );
-
-  test.provider(
-    "updates in place, unions managedKeys, restores all managed fields",
-    (stack) =>
-      Effect.gen(function* () {
-        const zoneId = yield* resolveZoneId;
-
-        yield* stack.destroy();
-        yield* normalizeBaseline(zoneId);
-
-        const initial = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.DNS.ZoneDnsSettings("DnsSettings", {
-              zoneId,
-              multiProvider: true,
-            });
-          }),
-        );
-        expect(initial.multiProvider).toEqual(true);
-        expect(initial.initialSettings.multiProvider).toEqual(
-          BASELINE_MULTI_PROVIDER,
-        );
-        expect(initial.managedKeys).toContain("multiProvider");
-
-        // Same singleton patched in place — new value plus a second managed
-        // field; the original snapshot survives the update.
-        const updated = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.DNS.ZoneDnsSettings("DnsSettings", {
-              zoneId,
-              multiProvider: true,
-              flattenAllCnames: true,
-            });
-          }),
-        );
-        expect(updated.zoneId).toEqual(zoneId);
-        expect(updated.multiProvider).toEqual(true);
-        expect(updated.flattenAllCnames).toEqual(true);
-        expect(updated.initialSettings.multiProvider).toEqual(
-          BASELINE_MULTI_PROVIDER,
-        );
-        expect(updated.initialSettings.flattenAllCnames).toEqual(
-          BASELINE_FLATTEN_ALL_CNAMES,
-        );
-        expect(updated.managedKeys).toContain("multiProvider");
-        expect(updated.managedKeys).toContain("flattenAllCnames");
-
-        const live = yield* getSettings(zoneId);
-        expect(live.multiProvider).toEqual(true);
-        expect(live.flattenAllCnames).toEqual(true);
-
-        // Drop `multiProvider` from props — the key stays managed (union
-        // across all reconciles) so destroy still restores it.
-        const dropped = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.DNS.ZoneDnsSettings("DnsSettings", {
-              zoneId,
-              flattenAllCnames: true,
-            });
-          }),
-        );
-        expect(dropped.managedKeys).toContain("multiProvider");
-        expect(dropped.managedKeys).toContain("flattenAllCnames");
-
-        yield* stack.destroy();
-
-        // Both managed fields were restored to their pre-management values.
-        const restored = yield* getSettings(zoneId);
-        expect(restored.multiProvider).toEqual(BASELINE_MULTI_PROVIDER);
-        expect(restored.flattenAllCnames).toEqual(BASELINE_FLATTEN_ALL_CNAMES);
-      }).pipe(logLevel),
-    { timeout: 300_000 },
-  );
-
-  // Canonical `list()` test (zone-scoped singleton): there is no account-wide
-  // API for this per-zone settings object, so `list()` enumerates every zone
-  // via `listAllZones` and reads the singleton in each. Assert the result is
-  // non-empty and contains the standing test zone.
-  test.provider("list enumerates DNS settings across all zones", (stack) =>
-    Effect.gen(function* () {
-      const zoneId = yield* resolveZoneId;
-
-      const provider = yield* Provider.findProvider(
-        Cloudflare.DNS.ZoneDnsSettings,
-      );
-      const all = yield* provider.list();
-
-      expect(all.length).toBeGreaterThan(0);
-      expect(all.some((s) => s.zoneId === zoneId)).toBe(true);
-
-      // `stack` is unused here (the singleton always exists on every zone),
-      // but keep the destroy bookend so the harness state stays clean.
-      yield* stack.destroy();
-    }).pipe(logLevel),
-  );
-});
+    );
+  },
+);

@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * DR automation. Source and target identifiers are runtime data, so the
  * grant spans the account's `cluster-snapshot` ARNs. Provide the
  * implementation with `Effect.provide(AWS.DocDB.CopyDBClusterSnapshotHttp)`.
- * @binding
- * @section Managing Snapshots
- * @example Copy a Snapshot to an Archive Name
+ * ### Managing Snapshots
+ * **Example:** Copy a Snapshot to an Archive Name
  * ```typescript
  * const copySnapshot = yield* DocDB.CopyDBClusterSnapshot();
  *
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   TargetDBClusterSnapshotIdentifier: "archive-2026-07-15",
  * });
  * ```
+ *
+ * @binding
  */
 export interface CopyDBClusterSnapshot extends Binding.Service<
   CopyDBClusterSnapshot,

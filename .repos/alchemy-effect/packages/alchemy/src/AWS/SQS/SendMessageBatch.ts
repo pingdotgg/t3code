@@ -18,9 +18,8 @@ export interface SendMessageBatchRequest extends Omit<
  *
  * For an unbounded stream of messages with automatic batching and bounded
  * retry of transient per-entry failures, prefer {@link QueueSink}.
- * @binding
- * @section Sending Message Batches
- * @example Send a Batch of Messages
+ * ### Sending Message Batches
+ * **Example:** Send a Batch of Messages
  * ```typescript
  * // init (provide SQS.SendMessageBatchHttp on the Function)
  * const sendMessageBatch = yield* SQS.SendMessageBatch(queue);
@@ -34,6 +33,8 @@ export interface SendMessageBatchRequest extends Omit<
  * });
  * // result.Successful / result.Failed
  * ```
+ *
+ * @binding
  */
 export interface SendMessageBatch extends Binding.Service<
   SendMessageBatch,

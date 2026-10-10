@@ -109,8 +109,8 @@ export interface Subscriber extends Resource<
  * A Security Lake subscriber — a consumer (account or service) granted access
  * to data in the Security Lake data lake for specific log sources.
  *
- * @section Creating a Subscriber
- * @example S3 data-access subscriber
+ * ### Creating a Subscriber
+ * **Example:** S3 data-access subscriber
  * ```typescript
  * const subscriber = yield* SecurityLake.Subscriber("Analytics", {
  *   subscriberIdentity: {
@@ -121,7 +121,7 @@ export interface Subscriber extends Resource<
  * });
  * ```
  *
- * @example Lake Formation (query) access
+ * **Example:** Lake Formation (query) access
  * ```typescript
  * const subscriber = yield* SecurityLake.Subscriber("Athena", {
  *   subscriberName: "athena-consumer",

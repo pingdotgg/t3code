@@ -56,8 +56,8 @@ export default Alchemy.Stack(
 );
 ```
 
-Neon's auth is API-key-based. The first `bun alchemy login` after
-this change adds a `Neon` step that either reads `NEON_API_KEY`
+Neon's auth is API-key-based. After this change,
+`bun alchemy profile edit --add Neon` either reads `NEON_API_KEY`
 from the environment (good for CI) or stores a key under
 `~/.alchemy/credentials/<profile>/neon-stored.json`.
 
@@ -82,8 +82,8 @@ export default Alchemy.Stack(
 );
 ```
 
-PlanetScale's auth uses an API token id + secret. `bun alchemy login`
-adds a `Planetscale` step that either reads `PLANETSCALE_API_TOKEN_ID`,
+PlanetScale's auth uses an API token id + secret.
+`bun alchemy profile edit --add Planetscale` either reads `PLANETSCALE_API_TOKEN_ID`,
 `PLANETSCALE_API_TOKEN`, and `PLANETSCALE_ORGANIZATION` from the
 environment (good for CI) or stores the credentials under
 `~/.alchemy/credentials/<profile>/planetscale-stored.json`.
@@ -109,8 +109,8 @@ export default Alchemy.Stack(
 );
 ```
 
-PlanetScale's auth uses an API token id + secret. `bun alchemy login`
-adds a `Planetscale` step that either reads `PLANETSCALE_API_TOKEN_ID`,
+PlanetScale's auth uses an API token id + secret.
+`bun alchemy profile edit --add Planetscale` either reads `PLANETSCALE_API_TOKEN_ID`,
 `PLANETSCALE_API_TOKEN`, and `PLANETSCALE_ORGANIZATION` from the
 environment (good for CI) or stores the credentials under
 `~/.alchemy/credentials/<profile>/planetscale-stored.json`.
@@ -387,7 +387,10 @@ inside a deployed Worker — the binding resolves it at runtime — so
 anything else that talks to the database (CI jobs, a container,
 `psql` on your laptop) should connect to the pooled URI directly:
 `branch.pooledConnectionUri` on Neon, `role.connectionUrlPooled` on
-PlanetScale. Just don't do the reverse — `origin` deliberately
+PlanetScale. For a container that means passing the pooled URI in as
+an environment variable — see
+[Connect to a SQL database](/cloudflare/compute/containers#connect-to-a-sql-database).
+Just don't do the reverse — `origin` deliberately
 points Hyperdrive at the *direct* endpoint, because Hyperdrive
 already pools, and stacking it on top of the provider's pooler
 means two poolers fighting over the same connections.
@@ -475,7 +478,7 @@ underlying `Hyperdrive` object:
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 +import * as Redacted from "effect/Redacted";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 +import { Client } from "pg";
 +import { Hyperdrive } from "./Db.ts";
 
@@ -521,7 +524,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 +import * as Redacted from "effect/Redacted";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 +import { Client } from "pg";
 +import { Hyperdrive } from "./Db.ts";
 
@@ -567,7 +570,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 +import * as Redacted from "effect/Redacted";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 +import { createConnection } from "mysql2/promise";
 +import { Hyperdrive } from "./Db.ts";
 
@@ -614,8 +617,8 @@ Two things to notice (regardless of engine):
 - The fetch handler opens a fresh connection per request and ends
   it on the way out. This is intentional — Hyperdrive does the
   pooling on Cloudflare's side, so the Worker doesn't need its
-  own. (The [Drizzle guide](/cloudflare/data/drizzle) revisits
-  this when we want long-lived clients.)
+  own. [Effect SQL](#use-effect-sql) and [Drizzle](/cloudflare/data/drizzle)
+  manage a client per execution scope rather than retaining sockets across requests.
 
 ## Wire the resources into the stack
 
@@ -657,6 +660,59 @@ URL and you should see something like:
 
 You're now talking to your database from the edge through
 Hyperdrive.
+
+## Use Effect SQL
+
+```typescript
+// src/Api.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as SQL from "alchemy/SQL/Postgres";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { Hyperdrive } from "./Db.ts";
+
+export default class Api extends Cloudflare.Worker<Api>()(
+  "Api",
+  { main: import.meta.url, compatibilityFlags: ["nodejs_compat"] },
+  Effect.gen(function* () {
+    const connection = yield* Cloudflare.Hyperdrive.Connect(Hyperdrive);
+    const sql = yield* SQL.Postgres({ url: connection.connectionString });
+    return {
+      fetch: Effect.gen(function* () {
+        const rows = yield* sql`SELECT NOW() AS now`;
+        return yield* HttpServerResponse.json({ ok: true, rows });
+      }),
+    };
+  }).pipe(Effect.provide(Cloudflare.Hyperdrive.ConnectBinding)),
+) {}
+```
+
+Install `@effect/sql-pg` and `pg` for this Postgres variant. The binding and stack
+stay the same; Effect SQL opens and closes a pool for each execution scope.
+
+For a MySQL origin, install `@effect/sql-mysql2` and `mysql2`, import
+`alchemy/SQL/MySQL`, and construct `SQL.MySQL({ url: connection.connectionString })`.
+The [Postgres](/sql/effect-sql/postgres) and [MySQL](/sql/effect-sql/mysql) client
+guides cover queries, typed errors, and transactions.
+
+## Workers defaults
+
+`SQL.MySQL` and `Drizzle.MySQL` disable prepared statements and mysql2's eval-based
+row parsers when running in workerd. Hyperdrive's MySQL proxy uses the text
+protocol, and Workers prohibit runtime JavaScript compilation.
+
+```typescript
+const sql = yield* SQL.MySQL({
+  url: connection.connectionString,
+  disablePreparedStatements: true,
+  poolConfig: { disableEval: true },
+});
+```
+
+These are detected defaults, not required boilerplate. Explicit configuration
+wins; direct connections outside workerd retain prepared statements and normal
+parsers by default. The adapter parses URL fields and query parameters into the
+driver configuration so `poolConfig` options reach mysql2.
 
 ## Where next
 

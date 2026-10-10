@@ -6,8 +6,8 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 import {
   IMPORT_CERTIFICATE_PEM,
@@ -47,7 +47,7 @@ export class AcmTestFunction extends Lambda.Function<Lambda.Function>()(
 export default AcmTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Above the 3s AWS default: distilled auto-retries retryable typed
     // errors (RequestInProgressException on /get is patched retryable, ~3s
     // of bounded backoff), which must complete within the invocation so the

@@ -6,55 +6,100 @@ import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import { findAvailablePort, isDockerReady } from "./Runtime.ts";
+import * as HttpClient from "effect/http/HttpClient";
+import { findAvailablePort } from "./Runtime.ts";
 
 const { test } = Test.make({
   providers: Docker.providers(),
   state: inMemoryState(),
 });
 
-test.provider("diff pulls again unless alwaysPull is disabled", () =>
-  Effect.gen(function* () {
-    const provider = yield* Provider.findProvider(Docker.RemoteImage);
-    const output = {
-      imageRef: "nginx:alpine",
-      imageId: "sha256:0",
-      createdAt: 0,
-      name: "nginx",
-      tag: "alpine",
-    };
+test.provider(
+  "diff pulls again unless alwaysPull is disabled",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(Docker.RemoteImage);
+      const output = {
+        imageRef: "nginx:alpine",
+        imageId: "sha256:0",
+        createdAt: 0,
+        name: "nginx",
+        tag: "alpine",
+      };
 
-    const pinned = yield* provider.diff!({
-      id: "nginx",
-      fqn: "nginx",
-      instanceId: "instance",
-      olds: { name: "nginx", tag: "alpine", alwaysPull: false },
-      news: { name: "nginx", tag: "alpine", alwaysPull: false },
-      oldBindings: [],
-      newBindings: [],
-      output,
-    });
-    expect(pinned).toBeUndefined();
+      const pinned = yield* provider.diff!({
+        id: "nginx",
+        fqn: "nginx",
+        instanceId: "instance",
+        olds: { name: "nginx", tag: "alpine", alwaysPull: false },
+        news: { name: "nginx", tag: "alpine", alwaysPull: false },
+        oldBindings: [],
+        newBindings: [],
+        output,
+      });
+      expect(pinned).toBeUndefined();
 
-    const refreshed = yield* provider.diff!({
-      id: "nginx",
-      fqn: "nginx",
-      instanceId: "instance",
-      olds: { name: "nginx", tag: "alpine", alwaysPull: false },
-      news: { name: "nginx", tag: "alpine" },
-      oldBindings: [],
-      newBindings: [],
-      output,
-    });
-    expect(refreshed).toEqual({ action: "update" });
-  }),
+      const refreshed = yield* provider.diff!({
+        id: "nginx",
+        fqn: "nginx",
+        instanceId: "instance",
+        olds: { name: "nginx", tag: "alpine", alwaysPull: false },
+        news: { name: "nginx", tag: "alpine" },
+        oldBindings: [],
+        newBindings: [],
+        output,
+      });
+      expect(refreshed).toEqual({ action: "update" });
+    }),
+  { tags: ["provider:docker", "provider:docker:remoteimage", "local"] },
 );
 
-describe("Docker.RemoteImage", { concurrent: false }, () => {
-  test.provider.skipIf(!isDockerReady)(
-    "pulls a Docker image reference",
-    (stack) =>
+test.provider(
+  "diff pulls again when Docker context changes",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(Docker.RemoteImage);
+      const output = {
+        imageRef: "nginx:alpine",
+        imageId: "sha256:0",
+        createdAt: 0,
+        name: "nginx",
+        tag: "alpine",
+      };
+
+      const changed = yield* provider.diff!({
+        id: "nginx",
+        fqn: "nginx",
+        instanceId: "instance",
+        olds: {
+          name: "nginx",
+          tag: "alpine",
+          alwaysPull: false,
+          context: "default",
+        },
+        news: {
+          name: "nginx",
+          tag: "alpine",
+          alwaysPull: false,
+          context: "remote-build",
+        },
+        oldBindings: [],
+        newBindings: [],
+        output,
+      });
+      expect(changed).toEqual({ action: "update" });
+    }),
+  { tags: ["provider:docker", "provider:docker:remoteimage", "local"] },
+);
+
+describe(
+  "Docker.RemoteImage",
+  {
+    tags: ["provider:docker", "provider:docker:remoteimage", "local"],
+    concurrent: false,
+  },
+  () => {
+    test.provider("pulls a Docker image reference", (stack) =>
       Effect.gen(function* () {
         const image = yield* stack.deploy(
           Docker.RemoteImage("remote-nginx", {
@@ -66,11 +111,9 @@ describe("Docker.RemoteImage", { concurrent: false }, () => {
         expect(image.imageRef).toBe("nginx:alpine");
         expect(image.imageId.length).toBeGreaterThan(0);
       }),
-  );
+    );
 
-  test.provider.skipIf(!isDockerReady)(
-    "pulls then re-tags under a new repository",
-    (stack) =>
+    test.provider("pulls then re-tags under a new repository", (stack) =>
       Effect.gen(function* () {
         const docker = yield* Docker.Docker;
         const targetName = "alchemy-test-hello";
@@ -97,11 +140,9 @@ describe("Docker.RemoteImage", { concurrent: false }, () => {
         const inspected = yield* docker.image.inspect(targetRef);
         expect(inspected.Id.length).toBeGreaterThan(0);
       }),
-  );
+    );
 
-  test.provider.skipIf(!isDockerReady)(
-    "pulls, re-tags, and pushes to a registry",
-    (stack) =>
+    test.provider("pulls, re-tags, and pushes to a registry", (stack) =>
       Effect.gen(function* () {
         const docker = yield* Docker.Docker;
         const client = yield* HttpClient.HttpClient;
@@ -155,5 +196,6 @@ describe("Docker.RemoteImage", { concurrent: false }, () => {
         expect(image.repoDigest).toBeDefined();
         expect(image.repoDigest).toContain(`${targetName}@sha256:`);
       }),
-  );
-});
+    );
+  },
+);

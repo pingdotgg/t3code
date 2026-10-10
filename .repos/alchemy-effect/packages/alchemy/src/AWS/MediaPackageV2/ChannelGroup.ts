@@ -55,16 +55,15 @@ export interface ChannelGroup extends Resource<
  * group share one egress domain, giving downstream players and CDNs
  * predictable URLs for stream delivery.
  *
- * @resource
- * @section Creating a Channel Group
- * @example Basic Channel Group
+ * ### Creating a Channel Group
+ * **Example:** Basic Channel Group
  * ```typescript
  * import * as MediaPackageV2 from "alchemy/AWS/MediaPackageV2";
  *
  * const group = yield* MediaPackageV2.ChannelGroup("Live");
  * ```
  *
- * @example Channel Group with Description and Tags
+ * **Example:** Channel Group with Description and Tags
  * ```typescript
  * const group = yield* MediaPackageV2.ChannelGroup("Live", {
  *   description: "Live sports streams",
@@ -72,13 +71,15 @@ export interface ChannelGroup extends Resource<
  * });
  * ```
  *
- * @section Egress Domain
- * @example Use the shared egress domain
+ * ### Egress Domain
+ * **Example:** Use the shared egress domain
  * ```typescript
  * const group = yield* MediaPackageV2.ChannelGroup("Live");
  * // e.g. abcde.egress.xyz.mediapackagev2.us-east-1.amazonaws.com
  * const domain = group.egressDomain;
  * ```
+ *
+ * @resource
  */
 export const ChannelGroup = Resource<ChannelGroup>(
   "AWS.MediaPackageV2.ChannelGroup",

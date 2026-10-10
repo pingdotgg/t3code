@@ -11,15 +11,17 @@ import * as Logger from "effect/Logger";
 import { MinimumLogLevel } from "effect/References";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as EffectHttp from "effect/unstable/http/HttpEffect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as EffectHttp from "effect/http/HttpEffect";
 import {
   makeEntrypointLayer,
   reifyBoundConfigProvider,
 } from "../../Runtime.ts";
+import { RuntimeContext } from "../../RuntimeContext.ts";
 import { Self } from "../../Self.ts";
-import { Stack } from "../../Stack.ts";
-import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
+import { StackContext } from "../../StackContext.ts";
+import { buildEventTelemetry } from "../../TelemetryRuntime.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironmentService.ts";
 import cloudflare_workers from "./cloudflare_workers.ts";
 import { isScopeEjected } from "./HttpServer.ts";
 import {
@@ -31,23 +33,27 @@ import {
 } from "./Rpc.ts";
 import {
   ExportedHandlerMethods,
-  Worker,
   WorkerEnvironment,
   WorkerExecutionContext,
   deferredExecutionContext,
   fromExecutionContext,
-} from "./Worker.ts";
+} from "./WorkerRuntime.ts";
+import type { Worker } from "./Worker.ts";
 import type { WorkerRuntimeContext } from "./WorkerRuntimeContext.ts";
 
 /**
  * The isolate-lifetime artifacts produced by a single layer build: the built
- * service Context, the resolved export for this entrypoint, and the user's
- * RPC shape (a thunk — the shape is only populated once `serve` has run).
+ * service Context, the resolved export for this entrypoint, the user's
+ * RPC shape (a thunk — the shape is only populated once `serve` has run),
+ * and the telemetry Layer override registered during init (a thunk for the
+ * same reason).
  */
 export interface WorkerBuild<Export = any> {
   readonly context: Context.Context<any>;
+  readonly runtimeContext: WorkerRuntimeContext;
   readonly export: Export;
   readonly shape: () => Record<string, any>;
+  readonly telemetry: () => Layer.Layer<never, any, any> | undefined;
 }
 
 /**
@@ -77,6 +83,7 @@ export const makeWorkerBridge = (
       build: WorkerBuild,
     ) => readonly [Effect.Effect<any, any, any>, Context.Context<never>],
     ctx: cf.ExecutionContext,
+    env: Record<string, unknown> | undefined,
     onExit: (
       exit: Exit.Exit<any, any>,
       scope: Scope.Closeable,
@@ -99,9 +106,20 @@ export const makeWorkerBridge = (
               Layer.mergeAll(
                 Layer.succeed(
                   WorkerExecutionContext,
-                  fromExecutionContext(ctx),
+                  fromExecutionContext(ctx, env),
                 ),
                 Layer.succeed(Scope.Scope, scope),
+                Layer.succeed(RuntimeContext, built.runtimeContext),
+                // The configured telemetry exporters. Constructed as part
+                // of this per-event layer, but `buildEventTelemetry`
+                // attaches their batching fibers and flush finalizers to
+                // the request `scope` (not this build's transient scope),
+                // so buffered telemetry flushes when the scope closes into
+                // `ctx.waitUntil` below — never on workerd's ephemeral
+                // isolate scope.
+                Layer.effectContext(
+                  buildEventTelemetry(built.context, scope, built.telemetry()),
+                ),
               ).pipe(
                 Layer.provideMerge(Layer.succeedContext(services)),
                 Layer.provideMerge(Layer.succeedContext(built.context)),
@@ -118,8 +136,15 @@ export const makeWorkerBridge = (
       .finally(() =>
         isScopeEjected(scope)
           ? undefined
-          : Scope.close(scope, Exit.void).pipe(Effect.runPromise, (promise) =>
-              ctx.waitUntil(promise),
+          : ctx.waitUntil(
+              // The HttpMiddleware tracer ends the request's root span in a
+              // dispatcher task scheduled after the handler effect resolves.
+              // Yield one macrotask before closing the scope so that span
+              // reaches the telemetry exporter's buffer before the scope's
+              // flush finalizer runs.
+              new Promise((resolve) => setTimeout(resolve, 0)).then(() =>
+                Effect.runPromise(Scope.close(scope, Exit.void)),
+              ),
             ),
       );
   };
@@ -139,6 +164,7 @@ export const makeWorkerBridge = (
                 Context.Context<never>,
               ],
             this.ctx,
+            this.env,
             (exit) =>
               exit._tag === "Success"
                 ? Promise.resolve(exit.value)
@@ -182,6 +208,7 @@ export const makeWorkerBridge = (
                 ] as const;
               },
               this.ctx,
+              this.env,
               handleRpcExit,
             );
         },
@@ -259,7 +286,7 @@ const getSharedBuild = (
       Effect.map(({ env }) =>
         layer.pipe(
           Layer.provideMerge(
-            Layer.succeed(Stack, {
+            Layer.succeed(StackContext, {
               name: stack.name,
               stage: stack.stage,
               bindings: {},
@@ -393,13 +420,13 @@ export const getWorkerExport = <Export = any>({
       .then((context) =>
         Effect.runPromise(
           Effect.all([exported, runtimeContext]).pipe(
-            Effect.map(
-              ([exp, rc]): WorkerBuild<Export> => ({
-                context,
-                export: exp,
-                shape: rc.shape,
-              }),
-            ),
+            Effect.map(([exp, rc]): WorkerBuild<Export> => ({
+              context,
+              runtimeContext: rc,
+              export: exp,
+              shape: rc.shape,
+              telemetry: () => rc.telemetry,
+            })),
             Effect.provideContext(context),
           ),
         ),

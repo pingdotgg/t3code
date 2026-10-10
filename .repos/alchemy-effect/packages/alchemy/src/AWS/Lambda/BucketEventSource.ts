@@ -14,6 +14,7 @@ import type {
   NotificationsProps,
 } from "../S3/BucketNotifications.ts";
 import type { S3EventType } from "../S3/S3Event.ts";
+import { normalizeBucketNotification } from "../S3/normalizeBucketNotification.ts";
 import * as Lambda from "./Function.ts";
 import { Permission as LambdaPermission } from "./Permission.ts";
 
@@ -23,9 +24,8 @@ import { Permission as LambdaPermission } from "./Permission.ts";
  * This layer listens for bucket notifications routed through the Lambda runtime
  * and exposes them as an `Effect.Stream`, while the companion policy configures
  * the invoke permission and bucket notification binding during deployment.
- * @binding
- * @section Wiring Events
- * @example Listen for Object Created Events
+ * ### Wiring Events
+ * **Example:** Listen for Object Created Events
  * ```typescript
  * yield* AWS.Lambda.BucketEventSource(
  *   bucket,
@@ -33,6 +33,8 @@ import { Permission as LambdaPermission } from "./Permission.ts";
  *   (events) => Stream.runForEach(events, (event) => Effect.log(event.key)),
  * );
  * ```
+ *
+ * @binding
  */
 export const BucketEventSource = Layer.effect(
   S3BucketEventSource,
@@ -114,14 +116,8 @@ export const BucketEventSource = Layer.effect(
               );
               if (events.length > 0) {
                 return process(
-                  Stream.fromArray(
-                    events.map((record: lambda.S3EventRecord) => ({
-                      type: record.eventName as S3EventType,
-                      bucket: record.s3.bucket.name,
-                      key: record.s3.object.key,
-                      size: record.s3.object.size,
-                      eTag: record.s3.object.eTag,
-                    })),
+                  Stream.fromArray(events).pipe(
+                    Stream.mapEffect(normalizeBucketNotification),
                   ),
                   // TODO(sam): don't die?
                 ).pipe(Effect.orDie);

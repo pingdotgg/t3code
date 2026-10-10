@@ -24,9 +24,8 @@ import * as Lambda from "./Function.ts";
  * 2. At runtime it matches incoming Lambda events against the schedule's
  *    typed envelope (`isScheduleEvent` + the stable route id) and dispatches
  *    them to the supplied handler.
- * @binding
- * @section Consuming Scheduled Invocations
- * @example Run A Handler Every 5 Minutes
+ * ### Consuming Scheduled Invocations
+ * **Example:** Run A Handler Every 5 Minutes
  * ```typescript
  * yield* AWS.Scheduler.consumeSchedule(
  *   AWS.Scheduler.every("5 minutes"),
@@ -34,7 +33,7 @@ import * as Lambda from "./Function.ts";
  * );
  * ```
  *
- * @example Nightly Cron With An Explicit Route Id
+ * **Example:** Nightly Cron With An Explicit Route Id
  * ```typescript
  * yield* AWS.Scheduler.consumeSchedule(
  *   "NightlyCleanup",
@@ -42,6 +41,8 @@ import * as Lambda from "./Function.ts";
  *   (event) => Effect.log(`cleanup ${event.executionId}`),
  * );
  * ```
+ *
+ * @binding
  */
 export const ScheduleEventSource = Layer.effect(
   SchedulerScheduleEventSource,

@@ -1,9 +1,7 @@
 {
   "dialect": "postgres",
   "id": "edc39bcb-0839-4baa-a331-9ce9b6cd6429",
-  "prevIds": [
-    "00000000-0000-0000-0000-000000000000"
-  ],
+  "prevIds": ["00000000-0000-0000-0000-000000000000"],
   "version": "8",
   "ddl": [
     {
@@ -65,9 +63,7 @@
       "table": "todos"
     },
     {
-      "columns": [
-        "id"
-      ],
+      "columns": ["id"],
       "nameExplicit": false,
       "name": "todos_pkey",
       "schema": "public",

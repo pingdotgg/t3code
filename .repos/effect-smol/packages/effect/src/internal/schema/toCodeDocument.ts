@@ -45,7 +45,7 @@ function renderEmittableAnnotation(input: unknown): string | undefined {
     if (rendered === undefined) return undefined
     entries.push(`${formatPropertyKey(key)}: ${rendered}`)
   }
-  return `{ ${entries.join(", ")} }`
+  return entries.length === 0 ? "{}" : `{ ${entries.join(", ")} }`
 }
 
 function renderAnnotations(
@@ -297,37 +297,17 @@ export function toCodeDocument(
     return representation?.schemas?.map((schema, index) => recur(schema, [...path, "schemas", index])) ?? []
   }
 
-  function checkBrands(
-    check: SchemaRepresentation.Check
-  ): ReadonlyArray<string> {
-    const own = InternalAnnotations.collectBrands(check.annotations)
-    if (
-      check._tag === "FilterGroup" &&
-      check.annotations?.toCode === undefined
-    ) {
-      return [...own, ...check.checks.flatMap(checkBrands)]
-    }
-    return own
-  }
-
-  function runtimeBrands(brands: ReadonlyArray<string>): string {
-    return brands.length === 0
-      ? ""
-      : `.pipe(${brands.map((brand) => `Schema.brand(${format(brand)})`).join(", ")})`
-  }
-
-  function typeBrands(brands: ReadonlyArray<string>): string {
-    if (brands.length === 0) return ""
-    addImport(`import type * as Brand from "effect/Brand"`)
-    return brands.map((brand) => ` & Brand.Brand<${format(brand)}>`).join("")
-  }
-
   function runtimeAnnotate(
     annotations: Schema.Annotations.Annotations | undefined,
     method: "annotate" | "annotateKey" = "annotate"
   ): string {
     const rendered = renderAnnotations(annotations)
     return rendered === undefined ? "" : `.${method}(${rendered})`
+  }
+
+  function unionOptionsRuntime(options: NonNullable<SchemaRepresentation.Union["options"]>): string {
+    if (!Object.hasOwn(options, "mode")) return "{}"
+    return `{ mode: ${options.mode === undefined ? "undefined" : format(options.mode)} }`
   }
 
   function compileCheck(
@@ -356,25 +336,19 @@ export function toCodeDocument(
   function applyNode(
     base: SchemaRepresentation.Code,
     representation: Exclude<SchemaRepresentation.Representation, SchemaRepresentation.Reference>,
-    path: Path,
-    includeTypeBrands: boolean = true
+    path: Path
   ): SchemaRepresentation.Code {
-    const nodeBrands = InternalAnnotations.collectBrands(representation.annotations)
-    let runtime = base.runtime + runtimeAnnotate(representation.annotations) + runtimeBrands(nodeBrands)
-    let Type = base.Type + (includeTypeBrands ? typeBrands(nodeBrands) : "")
+    let runtime = base.runtime + runtimeAnnotate(representation.annotations)
     for (let index = 0; index < representation.checks.length; index++) {
       const check = representation.checks[index]
-      const brands = checkBrands(check)
-      runtime += `.check(${compileCheck(check, [...path, "checks", index])})${runtimeBrands(brands)}`
-      if (includeTypeBrands) Type += typeBrands(brands)
+      runtime += `.check(${compileCheck(check, [...path, "checks", index])})`
     }
-    return makeCode(runtime, Type)
+    return makeCode(runtime, base.Type)
   }
 
   function recur(
     representation: SchemaRepresentation.Representation,
-    path: Path,
-    includeTypeBrands: boolean = true
+    path: Path
   ): SchemaRepresentation.Code {
     if (representation._tag === "Reference") {
       if (!Object.hasOwn(document.references, representation.$ref)) {
@@ -387,18 +361,14 @@ export function toCodeDocument(
       ) {
         return makeCode(`Schema.suspend((): Schema.Codec<${identifier}> => ${identifier})`, identifier)
       }
-      const Type = includeTypeBrands
-        ? identifier
-        : recur(document.references[representation.$ref], ["references", representation.$ref], false).Type
-      return makeCode(identifier, Type)
+      return makeCode(identifier, identifier)
     }
-    return applyNode(on(representation, path, includeTypeBrands), representation, path, includeTypeBrands)
+    return applyNode(on(representation, path), representation, path)
   }
 
   function on(
     representation: Exclude<SchemaRepresentation.Representation, SchemaRepresentation.Reference>,
-    path: Path,
-    includeTypeBrands: boolean
+    path: Path
   ): SchemaRepresentation.Code {
     switch (representation._tag) {
       case "Declaration": {
@@ -468,7 +438,7 @@ export function toCodeDocument(
         return makeCode(`Schema.Enum(${identifier})`, identifier)
       }
       case "TemplateLiteral": {
-        const parts = representation.parts.map((part, index) => recur(part, [...path, "parts", index], false))
+        const parts = representation.parts.map((part, index) => recur(part, [...path, "parts", index]))
         const Type = `\`${parts.map((part) => `\${${part.Type}}`).join("")}\``
         return makeCode(`Schema.TemplateLiteral([${parts.map((part) => part.runtime).join(", ")}])`, Type)
       }
@@ -479,92 +449,105 @@ export function toCodeDocument(
             `${element.isOptional ? "Schema.optionalKey(" : ""}${type.runtime}${element.isOptional ? ")" : ""}${
               runtimeAnnotate(element.annotations, "annotateKey")
             }`,
-            `${type.Type}${element.isOptional ? "?" : ""}`
+            element.isOptional ? `(${type.Type})?` : type.Type
           )
         })
         const rest = representation.rest.map((item, index) => recur(item, [...path, "rest", index]))
+        let code: SchemaRepresentation.Code
         if (Arr.isArrayNonEmpty(rest)) {
           const item = rest[0]
           if (elements.length === 0 && rest.length === 1) {
-            return makeCode(`Schema.Array(${item.runtime})`, `ReadonlyArray<${item.Type}>`)
+            code = makeCode(`Schema.Array(${item.runtime})`, `ReadonlyArray<${item.Type}>`)
+          } else {
+            const post = rest.slice(1)
+            code = makeCode(
+              `Schema.TupleWithRest(Schema.Tuple([${elements.map((element) => element.runtime).join(", ")}]), [${
+                rest.map((item) => item.runtime).join(", ")
+              }])`,
+              `readonly [${elements.map((element) => element.Type).join(", ")}, ...Array<${item.Type}>${
+                post.length > 0 ? `, ${post.map((item) => item.Type).join(", ")}` : ""
+              }]`
+            )
           }
-          const post = rest.slice(1)
-          return makeCode(
-            `Schema.TupleWithRest(Schema.Tuple([${elements.map((element) => element.runtime).join(", ")}]), [${
-              rest.map((item) => item.runtime).join(", ")
-            }])`,
-            `readonly [${elements.map((element) => element.Type).join(", ")}, ...Array<${item.Type}>${
-              post.length > 0 ? `, ${post.map((item) => item.Type).join(", ")}` : ""
-            }]`
+        } else {
+          code = makeCode(
+            `Schema.Tuple([${elements.map((element) => element.runtime).join(", ")}])`,
+            `readonly [${elements.map((element) => element.Type).join(", ")}]`
           )
         }
-        return makeCode(
-          `Schema.Tuple([${elements.map((element) => element.runtime).join(", ")}])`,
-          `readonly [${elements.map((element) => element.Type).join(", ")}]`
-        )
+        return code
       }
       case "Objects": {
         const properties = representation.propertySignatures.map((property, index) => {
           const isSymbol = typeof property.name === "symbol"
           const name = isSymbol
-            ? addSymbol(property.name)
+            ? `[${addSymbol(property.name)}]`
             : formatPropertyKey(property.name)
           const type = recur(property.type, [...path, "propertySignatures", index, "type"])
           let runtime = type.runtime
           if (property.isMutable) runtime = `Schema.mutableKey(${runtime})`
           if (property.isOptional) runtime = `Schema.optionalKey(${runtime})`
-          const runtimeName = isSymbol ? `[${name}]` : name
-          const typeName = `${property.isMutable ? "" : "readonly "}${runtimeName}${property.isOptional ? "?" : ""}`
-          return makeCode(
-            `${runtimeName}: ${runtime}${runtimeAnnotate(property.annotations, "annotateKey")}`,
-            `${typeName}: ${type.Type}`
-          )
+          runtime += runtimeAnnotate(property.annotations, "annotateKey")
+          const runtimeName = property.name === "__proto__" ? `[${name}]` : name
+          const typeName = `${property.isMutable ? "" : "readonly "}${name}${property.isOptional ? "?" : ""}`
+          return {
+            code: makeCode(`${runtimeName}: ${runtime}`, `${typeName}: ${type.Type}`)
+          }
         })
         const indexSignatures = representation.indexSignatures.map((signature, index) => ({
           parameter: recur(signature.parameter, [...path, "indexSignatures", index, "parameter"]),
           type: recur(signature.type, [...path, "indexSignatures", index, "type"])
         }))
-        const propertyRuntimes = properties.map((property) => property.runtime).join(", ")
-        const propertyTypes = properties.map((property) => property.Type).join(", ")
+        const propertyRuntimes = properties.map((property) => property.code.runtime).join(", ")
+        const propertyTypes = properties.map((property) => property.code.Type).join(", ")
+        let code: SchemaRepresentation.Code
         if (indexSignatures.length === 0) {
-          return makeCode(
+          code = makeCode(
             `Schema.Struct({ ${propertyRuntimes} })`,
             `{ ${propertyTypes} }`
           )
-        }
-        if (properties.length === 0 && indexSignatures.length === 1) {
+        } else if (properties.length === 0 && indexSignatures.length === 1) {
           const signature = indexSignatures[0]
-          return makeCode(
+          code = makeCode(
             `Schema.Record(${signature.parameter.runtime}, ${signature.type.runtime})`,
             `{ readonly [x: ${signature.parameter.Type}]: ${signature.type.Type} }`
           )
+        } else {
+          const indexRuntimes = indexSignatures.map((signature) =>
+            `Schema.Record(${signature.parameter.runtime}, ${signature.type.runtime})`
+          ).join(", ")
+          const indexTypes = indexSignatures.map((signature) =>
+            `readonly [x: ${signature.parameter.Type}]: ${signature.type.Type}`
+          )
+          code = properties.length === 0
+            ? makeCode(
+              `Schema.StructWithRest(Schema.Struct({ ${propertyRuntimes} }), [${indexRuntimes}])`,
+              `{ ${indexTypes.join(", ")} }`
+            )
+            : makeCode(
+              `Schema.StructWithRest(Schema.Struct({ ${propertyRuntimes} }), [${indexRuntimes}])`,
+              [`{ ${propertyTypes} }`, ...indexTypes.map((indexType) => `{ ${indexType} }`)].join(" & ")
+            )
         }
-        const indexRuntimes = indexSignatures.map((signature) =>
-          `Schema.Record(${signature.parameter.runtime}, ${signature.type.runtime})`
-        ).join(", ")
-        const indexTypes = indexSignatures.map((signature) =>
-          `readonly [x: ${signature.parameter.Type}]: ${signature.type.Type}`
-        ).join(", ")
-        return makeCode(
-          `Schema.StructWithRest(Schema.Struct({ ${propertyRuntimes} }), [${indexRuntimes}])`,
-          `{ ${propertyTypes}${properties.length > 0 ? ", " : ""}${indexTypes} }`
-        )
+        return code
       }
       case "Union": {
-        if (representation.types.length === 0) return makeCode("Schema.Never", "never")
-        if (representation.types.every(isSimpleLiveLiteral)) {
+        if (representation.options === undefined && representation.types.length === 0) {
+          return makeCode("Schema.Never", "never")
+        }
+        if (representation.options === undefined && representation.types.every(isSimpleLiveLiteral)) {
           const literals = representation.types.map((literal) => format(literal.literal))
           return literals.length === 1
             ? makeCode(`Schema.Literal(${literals[0]})`, literals[0])
             : makeCode(`Schema.Literals([${literals.join(", ")}])`, literals.join(" | "))
         }
-        const types = representation.types.map((type, index) =>
-          recur(type, [...path, "types", index], includeTypeBrands)
-        )
-        const mode = representation.mode === "anyOf" ? "" : `, { mode: "oneOf" }`
+        const types = representation.types.map((type, index) => recur(type, [...path, "types", index]))
+        const options = representation.options === undefined
+          ? ""
+          : `, ${unionOptionsRuntime(representation.options)}`
         return makeCode(
-          `Schema.Union([${types.map((type) => type.runtime).join(", ")}]${mode})`,
-          types.map((type) => type.Type).join(" | ")
+          `Schema.Union([${types.map((type) => type.runtime).join(", ")}]${options})`,
+          types.length === 0 ? "never" : types.map((type) => type.Type).join(" | ")
         )
       }
     }

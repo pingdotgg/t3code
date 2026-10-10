@@ -4,7 +4,7 @@
  * Define a service that uses the HttpClient module to fetch data from an external API
  */
 import { Context, Effect, flow, Layer, Schedule, Schema } from "effect"
-import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 
 class Todo extends Schema.Class<Todo>("Todo")({
   userId: Schema.Int,
@@ -97,6 +97,6 @@ export class JsonPlaceholder extends Context.Service<JsonPlaceholder, {
   )
 }
 
-export class JsonPlaceholderError extends Schema.TaggedErrorClass<JsonPlaceholderError>()("JsonPlaceholderError", {
+export class JsonPlaceholderError extends Schema.TaggedError<JsonPlaceholderError>()("JsonPlaceholderError", {
   cause: Schema.Defect()
 }) {}

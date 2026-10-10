@@ -10,9 +10,8 @@ import type { Endpoint } from "./Endpoint.ts";
  * `RefreshSchemas` run against it (`refreshing`, `successful`, `failed`).
  * Provide the implementation with
  * `Effect.provide(AWS.DMS.DescribeRefreshSchemasStatusHttp)`.
- * @binding
- * @section Polling a Schema Refresh
- * @example Wait for a Refresh to Complete
+ * ### Polling a Schema Refresh
+ * **Example:** Wait for a Refresh to Complete
  * ```typescript
  * // init — bind the operation to the endpoint
  * const refreshStatus = yield* AWS.DMS.DescribeRefreshSchemasStatus(source);
@@ -23,6 +22,8 @@ import type { Endpoint } from "./Endpoint.ts";
  *   // schemas are ready to describe
  * }
  * ```
+ *
+ * @binding
  */
 export interface DescribeRefreshSchemasStatus extends Binding.Service<
   DescribeRefreshSchemasStatus,

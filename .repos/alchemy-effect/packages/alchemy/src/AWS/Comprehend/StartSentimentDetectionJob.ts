@@ -32,9 +32,8 @@ export interface StartSentimentDetectionJobRequest extends Omit<
  * {@link DescribeSentimentDetectionJob} and stop it with
  * {@link StopSentimentDetectionJob}.
  *
- * @binding
- * @section Starting Analysis Jobs
- * @example Start an Asynchronous Sentiment Detection Job
+ * ### Starting Analysis Jobs
+ * **Example:** Start an Asynchronous Sentiment Detection Job
  * ```typescript
  * // deploy time — bind the Comprehend data-access role
  * const startSentimentDetectionJob = yield* AWS.Comprehend.StartSentimentDetectionJob(dataAccessRole);
@@ -47,6 +46,8 @@ export interface StartSentimentDetectionJobRequest extends Omit<
  * });
  * // job.JobId, job.JobStatus === "SUBMITTED"
  * ```
+ *
+ * @binding
  */
 export interface StartSentimentDetectionJob extends Binding.Service<
   StartSentimentDetectionJob,

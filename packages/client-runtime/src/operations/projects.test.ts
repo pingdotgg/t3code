@@ -76,6 +76,13 @@ describe("add project shared logic", () => {
         sshUrl: "git@github.com:imputnet/helium.git",
       }),
     ).toBe("https://github.com/imputnet/helium");
+    expect(
+      getDefaultCloneUrl({
+        provider: "forgejo",
+        url: "https://forgejo.example.test:8443/owner/repo.git",
+        sshUrl: "ssh://git@forgejo.example.test:2222/owner/repo.git",
+      }),
+    ).toBe("https://forgejo.example.test:8443/owner/repo.git");
   });
 
   it("preserves existing clone transport behavior for other providers", () => {
@@ -250,13 +257,12 @@ describe("add project shared logic", () => {
     );
   });
 
-  it("builds the existing project.create command shape", () => {
+  it("builds the V2 project.create mutation", () => {
     expect(
       buildProjectCreateCommand({
         commandId: CommandId.make("command"),
         projectId: ProjectId.make("project"),
         workspaceRoot: "/work/repo",
-        createdAt: "2026-01-01T00:00:00.000Z",
       }),
     ).toMatchObject({
       type: "project.create",

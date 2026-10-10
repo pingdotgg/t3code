@@ -67,9 +67,8 @@ export interface EmailContact extends Resource<
  * address owner. Contacts are immutable (no update API) — changing the
  * name or address replaces the contact; tags update in place.
  *
- * @resource
- * @section Creating an Email Contact
- * @example Basic email contact
+ * ### Creating an Email Contact
+ * **Example:** Basic email contact
  * ```typescript
  * import * as NotificationsContacts from "alchemy/AWS/NotificationsContacts";
  *
@@ -79,7 +78,7 @@ export interface EmailContact extends Resource<
  * // contact.status === "inactive" until the address owner confirms
  * ```
  *
- * @example Named contact with tags
+ * **Example:** Named contact with tags
  * ```typescript
  * const contact = yield* NotificationsContacts.EmailContact("OnCall", {
  *   name: "platform-oncall",
@@ -87,6 +86,8 @@ export interface EmailContact extends Resource<
  *   tags: { team: "platform" },
  * });
  * ```
+ *
+ * @resource
  */
 export const EmailContact = Resource<EmailContact>(
   "AWS.NotificationsContacts.EmailContact",

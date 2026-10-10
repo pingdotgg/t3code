@@ -1,5 +1,5 @@
 import type { DpopFailureReason } from "@t3tools/contracts";
-import type { RelayProtectedError } from "@t3tools/contracts/relay";
+import type { RelayEnvironmentStatusResponse, RelayProtectedError } from "@t3tools/contracts/relay";
 
 export const DPOP_CLOCK_HINT =
   "Hint: Check that automatic date and time is enabled on both devices, then try again.";
@@ -11,7 +11,7 @@ export const DPOP_UNKNOWN_HINT =
 
 export const DPOP_RETRY_HINT = "Hint: Try again. If the problem continues, copy the trace ID.";
 
-export function dpopFailureHint(reason: DpopFailureReason | undefined): string {
+function dpopFailureHint(reason: DpopFailureReason | undefined): string {
   if (reason === "time_window") return DPOP_CLOCK_HINT;
   if (reason === undefined) return DPOP_UNKNOWN_HINT;
   return DPOP_RETRY_HINT;
@@ -62,5 +62,23 @@ export function relayProtectedErrorMessage(error: RelayProtectedError): string {
       return `Relay rejected the agent activity publish proof (${error.reason}).`;
     case "RelayInternalError":
       return `Relay encountered an internal error (${error.reason}).`;
+  }
+}
+
+// A host with a current build gets a new tunnel on its own within minutes of
+// coming back, which clears this reason. While it is still reported, the host
+// is either still off or running a build too old to do that.
+export const RELAY_TUNNEL_RELEASED_MESSAGE =
+  "Offline for a while, so its T3 Connect tunnel was removed. Start T3 Code on that computer and update it to the latest version to reconnect.";
+
+/** User-facing text for an offline status, or null when the relay gave no known reason. */
+export function relayOfflineReasonMessage(
+  status: Pick<RelayEnvironmentStatusResponse, "offlineReason">,
+): string | null {
+  switch (status.offlineReason) {
+    case "tunnel_released":
+      return RELAY_TUNNEL_RELEASED_MESSAGE;
+    case undefined:
+      return null;
   }
 }

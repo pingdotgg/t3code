@@ -11,7 +11,7 @@ import type { Index } from "./VectorizeIndex.ts";
  * Context tag, its type, and the callable —
  * `yield* Cloudflare.Vectorize.SearchIndex(index)`.
  *
- * @example Querying an index inside a Worker
+ * **Example:** Querying an index inside a Worker
  * ```typescript
  * const vec = yield* Cloudflare.Vectorize.SearchIndex(MyIndex);
  * const matches = yield* vec.query([0.1, 0.2, 0.3], { topK: 5 });

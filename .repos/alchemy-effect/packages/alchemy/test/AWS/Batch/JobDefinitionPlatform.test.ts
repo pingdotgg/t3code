@@ -92,7 +92,11 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
           times: 60,
         }),
       );
-      expect(job?.status).toBe("SUCCEEDED");
+      // Include the reason so a FAILED run shows why (placement, pull, or a
+      // bootstrap crash all land here with different statusReasons).
+      expect(`${job?.status}: ${job?.statusReason ?? ""}`).toMatch(
+        /^SUCCEEDED:/,
+      );
 
       // The bundled Effect actually executed: its marker is in the job's
       // log stream (log delivery can lag the state change slightly).
@@ -143,5 +147,15 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
     }),
   // Docker build + push (~2-4 min) + CE/queue (~1-2 min) + Fargate job run
   // (~2-4 min) + destroy (~2-3 min).
-  { timeout: 1_200_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:batch",
+      "provider:aws:ec2",
+      "provider:aws:ecr",
+      "provider:aws:iam",
+      "live",
+    ],
+    timeout: 1_200_000,
+  },
 );

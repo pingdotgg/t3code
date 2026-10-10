@@ -59,7 +59,12 @@ test.provider(
       yield* stack.destroy();
       yield* assertSubscriptionDeleted(deployed.subscription.subscriptionArn);
     }),
-  { timeout: 120_000 },
+  // ~60s in isolation (Lambda bundling + role propagation + SNS eventual
+  // consistency); budget headroom for full-suite contention.
+  {
+    tags: ["provider:aws", "provider:aws:lambda", "provider:aws:sns", "live"],
+    timeout: 180_000,
+  },
 );
 
 // Canonical `list()` test (AWS account/region-scoped collection): deploy a
@@ -100,7 +105,10 @@ test.provider(
       yield* stack.destroy();
       yield* assertSubscriptionDeleted(deployed.subscription.subscriptionArn);
     }),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:aws", "provider:aws:sns", "provider:aws:sqs", "live"],
+    timeout: 180_000,
+  },
 );
 
 class SubscriptionStillExists extends Data.TaggedError(

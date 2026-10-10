@@ -7,7 +7,7 @@ import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import AiSearchCrawlTargetWorker from "./fixtures/crawl-target-worker.ts";
 
 const { test } = Test.make({ providers: Cloudflare.providers() });
@@ -50,14 +50,37 @@ const expectGone = (accountId: string, id: string, namespace = "default") =>
     }),
   );
 
+// Keep each stack's credential explicit so Cloudflare cannot reuse a token
+// owned by another test stack.
+const scopedToken = Effect.gen(function* () {
+  const { accountId } = yield* yield* CloudflareEnvironment;
+  const apiToken = yield* Cloudflare.ApiToken.AccountApiToken("TokenSource", {
+    policies: [
+      {
+        effect: "allow",
+        permissionGroups: ["AI Search Index Engine"],
+        resources: { [`com.cloudflare.api.account.${accountId}`]: "*" },
+      },
+    ],
+  });
+  return yield* Cloudflare.AI.SearchToken("Token", {
+    cfApiId: apiToken.tokenId,
+    cfApiKey: apiToken.value,
+  });
+});
+
 // One program deploying both the R2 source bucket and the AI Search
 // instance indexing it. The instance's `source` references the bucket
 // name so the engine orders instance-after-bucket on deploy (and the
 // reverse on destroy).
 const program = (props?: Partial<Cloudflare.AI.SearchInstanceProps>) =>
   Effect.gen(function* () {
-    const bucket = yield* Cloudflare.R2.Bucket("AiSearchSource", {});
+    const bucket = yield* Cloudflare.R2.Bucket("AiSearchSource", {
+      forceDestroy: true,
+    });
+    const token = yield* scopedToken;
     const instance = yield* Cloudflare.AI.SearchInstance("Search", {
+      tokenId: token.id,
       source: bucket.bucketName,
       ...props,
     });
@@ -144,7 +167,16 @@ test.provider(
       // Destroy again — delete must be idempotent (already gone).
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:apitoken",
+      "provider:cloudflare:r2",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );
 
 test.provider(
@@ -183,7 +215,16 @@ test.provider(
 
       yield* expectGone(accountId, replaced.instance.instanceId);
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:apitoken",
+      "provider:cloudflare:r2",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );
 
 test.provider(
@@ -225,7 +266,16 @@ test.provider(
 
       yield* expectGone(accountId, healed.instance.instanceId);
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:apitoken",
+      "provider:cloudflare:r2",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );
 
 // Canonical `list()` test: instances are namespace-scoped, so `list()`
@@ -256,13 +306,22 @@ test.provider(
         deployed.instance.instanceId,
       );
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:apitoken",
+      "provider:cloudflare:r2",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );
 
 // A web-crawler source crawls a seed URL and needs no service token (unlike
 // an R2 source). Cloudflare only crawls a domain the account owns, so the
 // crawl is seeded at a Worker we deploy (its `workers.dev` URL is owned by the
-// account); `parseType: "crawl"` walks pages instead of requiring a sitemap.
+// account); the fixture serves a sitemap so discovery always finds content.
 test.provider(
   "creates a web-crawler instance (no service token)",
   (stack) =>
@@ -300,12 +359,10 @@ test.provider(
             source: target.url.as<string>(),
             sourceParams: {
               webCrawler: {
-                parseType: "crawl",
-                // Discover URLs by following links only. Without this,
-                // crawl link-discovery defaults to also reading the seed's
-                // sitemap, and a freshly-deployed `workers.dev` URL serves
-                // none — Cloudflare rejects the create with `missing_sitemap`.
-                crawlOptions: { source: "links" },
+                // Cloudflare renamed `crawl` → `discover` and removed
+                // `crawlOptions` from the API. The fixture serves a
+                // sitemap, so discovery always finds content.
+                parseType: "discover",
               },
             },
           });
@@ -324,7 +381,15 @@ test.provider(
 
       yield* expectGone(accountId, initial.instance.instanceId);
     }).pipe(logLevel),
-  { timeout: 300_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:worker",
+      "live",
+    ],
+    timeout: 300_000,
+  },
 );
 
 // A program that places the instance in a custom namespace. The instance's
@@ -334,8 +399,12 @@ test.provider(
 const nsProgram = (props?: Partial<Cloudflare.AI.SearchInstanceProps>) =>
   Effect.gen(function* () {
     const namespace = yield* Cloudflare.AI.SearchNamespace("AiSearchNs", {});
-    const bucket = yield* Cloudflare.R2.Bucket("AiSearchSource", {});
+    const bucket = yield* Cloudflare.R2.Bucket("AiSearchSource", {
+      forceDestroy: true,
+    });
+    const token = yield* scopedToken;
     const instance = yield* Cloudflare.AI.SearchInstance("Search", {
+      tokenId: token.id,
       source: bucket.bucketName,
       namespace: namespace.name,
       ...props,
@@ -372,5 +441,14 @@ test.provider(
         initial.namespace.name,
       );
     }).pipe(logLevel),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:ai",
+      "provider:cloudflare:apitoken",
+      "provider:cloudflare:r2",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );

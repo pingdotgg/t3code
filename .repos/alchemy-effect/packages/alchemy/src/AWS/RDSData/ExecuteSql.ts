@@ -23,9 +23,8 @@ export interface ExecuteSqlRequest extends Omit<
  *
  * Bind it to a Data-API-enabled `DBCluster` and its credentials secret;
  * provide the implementation with `Effect.provide(AWS.RDSData.ExecuteSqlHttp)`.
- * @binding
- * @section Legacy SQL Execution
- * @example Run Raw SQL Statements
+ * ### Legacy SQL Execution
+ * **Example:** Run Raw SQL Statements
  * ```typescript
  * // init
  * const executeSql = yield* AWS.RDSData.ExecuteSql(db.cluster, {
@@ -36,6 +35,8 @@ export interface ExecuteSqlRequest extends Omit<
  * // runtime — statements are passed as a single string, no parameters
  * const result = yield* executeSql({ sqlStatements: "SELECT 1" });
  * ```
+ *
+ * @binding
  */
 export interface ExecuteSql extends Binding.Service<
   ExecuteSql,

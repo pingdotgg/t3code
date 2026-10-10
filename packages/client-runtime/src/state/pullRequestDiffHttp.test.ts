@@ -4,8 +4,11 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { PrimaryConnectionTarget, type PreparedConnection } from "../connection/model.ts";
-import { remoteHttpClientLayer } from "../rpc/http.ts";
-import { fetchEnvironmentPullRequestDiff } from "./pullRequestDiffHttp.ts";
+import * as RpcHttp from "../rpc/http.ts";
+import {
+  fetchEnvironmentPullRequestDiff,
+  PullRequestDiffCredentialRejectedError,
+} from "./pullRequestDiffHttp.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -47,7 +50,7 @@ describe("fetchEnvironmentPullRequestDiff", () => {
           number: 42,
           cursor: "next-page",
         },
-      }).pipe(Effect.provide(remoteHttpClientLayer(fetchFn)));
+      }).pipe(Effect.provide(RpcHttp.layerRemoteHttpClient(fetchFn)));
 
       expect(result).toEqual({
         patch: "diff --git a/file.ts b/file.ts",
@@ -68,13 +71,49 @@ describe("fetchEnvironmentPullRequestDiff", () => {
             : "";
       // The assertion deliberately inspects the serialized wire body rather than decoding a
       // domain value for use in application code.
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.parse(body)).toEqual({
         projectId: "project-1",
         repository: "owner/repository",
         number: 42,
         cursor: "next-page",
       });
+    }),
+  );
+
+  it.effect("gives rejected diff sessions a recovery action", () =>
+    Effect.gen(function* () {
+      const fetchFn = (() =>
+        Promise.resolve(
+          Response.json(
+            {
+              _tag: "EnvironmentAuthInvalidError",
+              code: "auth_invalid",
+              reason: "invalid_credential",
+              traceId: "trace-auth-test",
+            },
+            { status: 401 },
+          ),
+        )) satisfies typeof fetch;
+
+      const error = yield* fetchEnvironmentPullRequestDiff({
+        prepared: PREPARED,
+        signer: Option.none(),
+        diff: {
+          projectId: ProjectId.make("project-1"),
+          repository: "owner/repository",
+          number: 42,
+        },
+      }).pipe(Effect.provide(RpcHttp.layerRemoteHttpClient(fetchFn)), Effect.flip);
+
+      expect(error).toBeInstanceOf(PullRequestDiffCredentialRejectedError);
+      expect(error).toMatchObject({
+        repository: "owner/repository",
+        number: 42,
+        traceId: "trace-auth-test",
+      });
+      expect(error.message).toBe(
+        "This environment session is no longer valid (invalid_credential). Refresh the page or quit and reopen T3 Code.",
+      );
     }),
   );
 });

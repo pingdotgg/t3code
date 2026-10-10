@@ -1,6 +1,7 @@
 import * as cloudfront from "@distilled.cloud/aws/cloudfront";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
@@ -61,14 +62,15 @@ export interface KeyValueStore extends Resource<
  *
  * KeyValueStores can be associated with CloudFront Functions and are useful for
  * routing metadata or other small edge-time lookup tables.
- * @resource
- * @section Creating KeyValueStores
- * @example Basic Store
+ * ### Creating KeyValueStores
+ * **Example:** Basic Store
  * ```typescript
  * const store = yield* KeyValueStore("RouterStore", {
  *   comment: "Route metadata",
  * });
  * ```
+ *
+ * @resource
  */
 export const KeyValueStore = Resource<KeyValueStore>(
   "AWS.CloudFront.KeyValueStore",
@@ -196,35 +198,44 @@ export const KeyValueStoreProvider = () =>
             observed.KeyValueStore.Name,
           );
         }),
-        delete: Effect.fn(function* ({ output }) {
-          const current = yield* cloudfront
-            .describeKeyValueStore({
-              Name: output.keyValueStoreName,
-            })
-            .pipe(
-              Effect.catchTag("EntityNotFound", () =>
-                Effect.succeed(undefined),
-              ),
-            );
+        delete: Effect.fn(
+          function* ({ output }) {
+            const current = yield* cloudfront
+              .describeKeyValueStore({
+                Name: output.keyValueStoreName,
+              })
+              .pipe(
+                Effect.catchTag("EntityNotFound", () =>
+                  Effect.succeed(undefined),
+                ),
+              );
 
-          const etag = current?.ETag;
-          if (!etag) {
+            const etag = current?.ETag;
+            if (!etag) {
+              yield* Effect.logInfo(
+                `CloudFront KeyValueStore delete: ${output.keyValueStoreName} already absent`,
+              );
+              return;
+            }
+
             yield* Effect.logInfo(
-              `CloudFront KeyValueStore delete: ${output.keyValueStoreName} already absent`,
+              `CloudFront KeyValueStore delete: deleting ${output.keyValueStoreName} with etag=${etag}`,
             );
-            return;
-          }
-
-          yield* Effect.logInfo(
-            `CloudFront KeyValueStore delete: deleting ${output.keyValueStoreName} with etag=${etag}`,
-          );
-          yield* cloudfront
-            .deleteKeyValueStore({
-              Name: output.keyValueStoreName,
-              IfMatch: etag,
-            })
-            .pipe(Effect.catchTag("EntityNotFound", () => Effect.void));
-        }),
+            yield* cloudfront
+              .deleteKeyValueStore({
+                Name: output.keyValueStoreName,
+                IfMatch: etag,
+              })
+              .pipe(Effect.catchTag("EntityNotFound", () => Effect.void));
+          },
+          Effect.retry({
+            // KV writes can invalidate the control-plane ETag before Describe
+            // catches up. Retry the entire read/delete pair with a fresh ETag.
+            while: (error) => error._tag === "PreconditionFailed",
+            schedule: Schedule.spaced("500 millis"),
+            times: 8,
+          }),
+        ),
       };
     }),
   );

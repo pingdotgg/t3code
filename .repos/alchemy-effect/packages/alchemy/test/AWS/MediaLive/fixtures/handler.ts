@@ -3,8 +3,8 @@ import * as MediaLive from "@/AWS/MediaLive";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "handler.ts");
@@ -16,7 +16,7 @@ export class MediaLiveTestFunction extends Lambda.Function<Lambda.Function>()(
 export default MediaLiveTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     // The input the input-scoped binding is bound to. A URL_PULL input is

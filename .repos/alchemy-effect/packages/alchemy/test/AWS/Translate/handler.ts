@@ -9,8 +9,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 // Deterministic fixture names (bucket names are account-global; this suite
 // owns them in the testing account).
@@ -93,7 +93,7 @@ export const TranslateFixturesLive = Layer.effect(
 export default TranslateTestFunction.make(
   {
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
     // The job lifecycle route retries StartTextTranslationJob through
     // fresh-role IAM propagation (bounded ~40s).
     timeout: Duration.seconds(120),

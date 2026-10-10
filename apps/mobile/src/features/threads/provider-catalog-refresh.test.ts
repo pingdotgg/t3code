@@ -1,6 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -9,7 +9,7 @@ import {
 } from "./provider-catalog-refresh";
 
 describe("mobile provider catalog refresh", () => {
-  it("calls server discovery for the selected environment and deduplicates pending taps", async () => {
+  it("requests model discovery for the selected environment and deduplicates pending taps", async () => {
     let resolveRefresh: ((value: "refreshed") => void) | undefined;
     const refreshProviders = vi.fn(
       () =>
@@ -25,7 +25,10 @@ describe("mobile provider catalog refresh", () => {
 
     expect(second).toBe(first);
     expect(refreshProviders).toHaveBeenCalledOnce();
-    expect(refreshProviders).toHaveBeenCalledWith({ environmentId, input: {} });
+    expect(refreshProviders).toHaveBeenCalledWith({
+      environmentId,
+      input: { refreshModels: true },
+    });
 
     resolveRefresh?.("refreshed");
     await expect(first).resolves.toBe("refreshed");

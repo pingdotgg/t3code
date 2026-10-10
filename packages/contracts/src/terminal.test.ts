@@ -7,12 +7,18 @@ import {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
+  TerminalError,
   TerminalOpenInput,
+  TerminalProviderEnvironmentError,
   TerminalResizeInput,
   TerminalSessionSnapshot,
   TerminalThreadInput,
   TerminalWriteInput,
 } from "./terminal.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
+
+const encodeTerminalError = Schema.encodeUnknownSync(TerminalError);
+const decodeTerminalError = Schema.decodeUnknownSync(TerminalError);
 
 function decodeSync<S extends Schema.Top>(schema: S, input: unknown): Schema.Schema.Type<S> {
   return Schema.decodeUnknownSync(schema as never)(input) as Schema.Schema.Type<S>;
@@ -26,6 +32,28 @@ function decodes<S extends Schema.Top>(schema: S, input: unknown): boolean {
     return false;
   }
 }
+
+describe("TerminalProviderEnvironmentError", () => {
+  it("round-trips its required cause without exposing it in the message", () => {
+    const cause = { operation: "read-secret", detail: "secret backend unavailable" };
+    const error = new TerminalProviderEnvironmentError({
+      providerInstanceId: ProviderInstanceId.make("codex_work"),
+      cause,
+    });
+    const encoded = encodeTerminalError(error);
+    const decoded = decodeTerminalError(encoded);
+
+    expect(decoded).toMatchObject({
+      _tag: "TerminalProviderEnvironmentError",
+      providerInstanceId: "codex_work",
+      cause,
+    });
+    expect(decoded.message).toBe(
+      "Could not prepare the terminal environment for provider instance: codex_work",
+    );
+    expect(decoded.message).not.toContain("secret backend unavailable");
+  });
+});
 
 describe("TerminalOpenInput", () => {
   it("accepts valid open input", () => {
@@ -87,12 +115,14 @@ describe("TerminalOpenInput", () => {
         T3CODE_PROJECT_ROOT: "/tmp/project",
         CUSTOM_FLAG: "1",
       },
+      providerInstanceId: "codex_work",
     });
     expect(parsed.env).toMatchObject({
       T3CODE_PROJECT_ROOT: "/tmp/project",
       CUSTOM_FLAG: "1",
     });
     expect(parsed.worktreePath).toBe("/tmp/project/.t3/worktrees/feature-a");
+    expect(parsed.providerInstanceId).toBe("codex_work");
   });
 
   it("rejects invalid env keys", () => {
@@ -107,6 +137,19 @@ describe("TerminalOpenInput", () => {
         },
       }),
     ).toBe(false);
+  });
+
+  it("rejects invalid provider instance ids", () => {
+    for (const providerInstanceId of ["", "1invalid", "invalid id"]) {
+      expect(
+        decodes(TerminalOpenInput, {
+          threadId: "thread-1",
+          terminalId: DEFAULT_TERMINAL_ID,
+          cwd: "/tmp/project",
+          providerInstanceId,
+        }),
+      ).toBe(false);
+    }
   });
 });
 

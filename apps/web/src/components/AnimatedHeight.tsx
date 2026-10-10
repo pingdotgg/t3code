@@ -1,10 +1,18 @@
 "use client";
 
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { observeResize } from "../lib/observeResize";
 
 const HEIGHT_TRANSITION_FALLBACK_MS = 250;
 
-export function AnimatedHeight({ children }: { readonly children: ReactNode }) {
+export function AnimatedHeight({
+  children,
+  holdHeight = false,
+}: {
+  readonly children: ReactNode;
+  /** Retain the previous content height while a replacement is loading. */
+  readonly holdHeight?: boolean;
+}) {
   const contentRef = useRef<HTMLDivElement>(null);
   const [heightState, setHeightState] = useState<{
     readonly height: number | null;
@@ -22,6 +30,7 @@ export function AnimatedHeight({ children }: { readonly children: ReactNode }) {
   }, [heightState.height, heightState.isClipping]);
 
   useLayoutEffect(() => {
+    if (holdHeight) return;
     const element = contentRef.current;
     if (!element) return;
     let firstFrameId: number | null = null;
@@ -61,22 +70,21 @@ export function AnimatedHeight({ children }: { readonly children: ReactNode }) {
     };
 
     updateHeightAfterPaint();
-    const resizeObserver = new ResizeObserver(updateHeightAfterPaint);
-    resizeObserver.observe(element);
+    const stopObserving = observeResize(element, updateHeightAfterPaint);
     return () => {
-      resizeObserver.disconnect();
+      stopObserving();
       cancelPendingFrames();
     };
-  }, []);
+  }, [holdHeight]);
 
   return (
     <div
       data-slot="animated-height"
-      className="transition-[height] duration-200 ease-out motion-reduce:transition-none"
+      className="transition-[height] duration-200 ease-out motion-reduce:transition-none [overflow-clip-margin:2px]"
       style={
         heightState.height === null
           ? undefined
-          : { height: heightState.height, overflow: heightState.isClipping ? "hidden" : "visible" }
+          : { height: heightState.height, overflow: heightState.isClipping ? "clip" : "visible" }
       }
       onTransitionEnd={(event) => {
         if (event.target !== event.currentTarget || event.propertyName !== "height") return;
@@ -85,7 +93,9 @@ export function AnimatedHeight({ children }: { readonly children: ReactNode }) {
         );
       }}
     >
-      <div ref={contentRef}>{children}</div>
+      <div ref={contentRef} style={holdHeight ? { height: "100%" } : undefined}>
+        {children}
+      </div>
     </div>
   );
 }

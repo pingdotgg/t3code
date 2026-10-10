@@ -12,9 +12,8 @@ import type { Schema } from "./Schema.ts";
  * schema). The registry and schema names are injected from the binding; pass
  * `SchemaVersion` to read a specific version instead of the latest. Provide
  * the implementation with `Effect.provide(AWS.Schemas.DescribeSchemaHttp)`.
- * @binding
- * @section Reading Schemas
- * @example Fetch The Latest Schema Document
+ * ### Reading Schemas
+ * **Example:** Fetch The Latest Schema Document
  * ```typescript
  * // init — bind the operation to the schema
  * const describeSchema = yield* AWS.Schemas.DescribeSchema(schema);
@@ -23,6 +22,8 @@ import type { Schema } from "./Schema.ts";
  * const { Content, SchemaVersion } = yield* describeSchema();
  * const document = JSON.parse(Content!);
  * ```
+ *
+ * @binding
  */
 export interface DescribeSchema extends Binding.Service<
   DescribeSchema,

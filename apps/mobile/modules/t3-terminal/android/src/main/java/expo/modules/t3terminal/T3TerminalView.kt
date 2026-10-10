@@ -23,6 +23,30 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   private val inputView = EditText(context)
   private val onInput by EventDispatcher()
   private val onResize by EventDispatcher()
+  private val onCapture by EventDispatcher()
+  var captureRequest: Double = 0.0
+    set(value) {
+      if (field == value || value <= 0) return
+      field = value
+      val frame = if (terminalHandle !=
+        0L
+      ) {
+        TerminalFrame.decode(GhosttyBridge.nativeSnapshot(terminalHandle))
+      } else {
+        null
+      }
+      val text = frame?.let { snapshot ->
+        (0 until snapshot.rows).joinToString("\n") { row ->
+          (0 until snapshot.cols).joinToString("") { col ->
+            snapshot.cellText[
+              row * snapshot.cols +
+                col
+            ]
+          }.trimEnd()
+        }
+      } ?: ""
+      onCapture(mapOf("text" to text))
+    }
   private var terminalHandle = 0L
   private var fedBuffer = ""
   private var cols = 0
@@ -73,6 +97,16 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
       field = value
       if (value != previous && value > 0) {
         requestKeyboardFocus()
+      }
+    }
+
+  var readOnly: Boolean = false
+    set(value) {
+      field = value
+      inputView.isEnabled = !value
+      if (value) {
+        inputView.clearFocus()
+        hideKeyboard()
       }
     }
 
@@ -214,6 +248,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
       InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
     inputView.setPadding(0, 0, 0, 0)
     inputView.setOnEditorActionListener { _, actionId, event ->
+      if (readOnly) return@setOnEditorActionListener true
       val isKeyUp = event?.action == KeyEvent.ACTION_UP
       val isImeSend = actionId == EditorInfo.IME_ACTION_SEND && !isKeyUp
       val isHardwareEnter = event?.keyCode == KeyEvent.KEYCODE_ENTER &&
@@ -228,6 +263,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
       }
     }
     inputView.setOnKeyListener { _, keyCode, event ->
+      if (readOnly) return@setOnKeyListener true
       if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
       when {
         keyCode == KeyEvent.KEYCODE_DEL -> {
@@ -249,11 +285,11 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
         override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
 
         override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+          if (readOnly) return
           if (clearingInput || s == null || count <= 0) return
           val end = (start + count).coerceAtMost(s.length)
-          if (start >= end) return
-          val insertedText = s.subSequence(start, end).toString()
-          if (insertedText.isNotEmpty()) {
+          if (start < end) {
+            val insertedText = s.subSequence(start, end).toString()
             onInput(mapOf("data" to insertedText))
           }
         }
@@ -366,12 +402,13 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   }
 
   private fun emitResponse(response: ByteArray) {
-    if (response.isNotEmpty()) {
+    if (!readOnly && response.isNotEmpty()) {
       onInput(mapOf("data" to String(response, Charsets.UTF_8)))
     }
   }
 
   private fun requestKeyboardFocus() {
+    if (readOnly) return
     inputView.requestFocus()
     val inputMethodManager = context.getSystemService(
       Context.INPUT_METHOD_SERVICE

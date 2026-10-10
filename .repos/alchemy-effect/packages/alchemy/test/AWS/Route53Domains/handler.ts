@@ -4,8 +4,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "handler.ts");
@@ -41,7 +41,7 @@ const errorRoute = <A, E extends { _tag: string }>(
 export default Route53DomainsTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Route 53 Domains calls cross to us-east-1; give cold starts headroom
     // over the 3s default.
     timeout: Duration.seconds(30),

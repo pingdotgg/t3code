@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * user-supplied endpoint configuration before creating endpoints. Provide
  * the implementation with
  * `Effect.provide(AWS.DMS.DescribeEndpointSettingsHttp)`.
- * @binding
- * @section Inspecting Engine Settings
- * @example List the Settings MySQL Endpoints Accept
+ * ### Inspecting Engine Settings
+ * **Example:** List the Settings MySQL Endpoints Accept
  * ```typescript
  * // init — account-level, no target resource
  * const endpointSettings = yield* AWS.DMS.DescribeEndpointSettings();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   EngineName: "mysql",
  * });
  * ```
+ *
+ * @binding
  */
 export interface DescribeEndpointSettings extends Binding.Service<
   DescribeEndpointSettings,

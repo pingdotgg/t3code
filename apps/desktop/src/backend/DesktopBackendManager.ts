@@ -38,8 +38,8 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
   DesktopBackendBootstrap,
@@ -52,6 +52,7 @@ import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/http
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
+import * as DesktopBrowserHost from "../preview/DesktopBrowserHost.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 
 const INITIAL_RESTART_DELAY = Duration.millis(500);
@@ -129,7 +130,7 @@ const backendProcessContextSchema = {
   httpBaseUrl: Schema.URL,
 };
 
-export class BackendReadinessTimeoutError extends Schema.TaggedErrorClass<BackendReadinessTimeoutError>()(
+export class BackendReadinessTimeoutError extends Schema.TaggedError<BackendReadinessTimeoutError>()(
   "BackendReadinessTimeoutError",
   {
     ...backendProcessContextSchema,
@@ -143,7 +144,7 @@ export class BackendReadinessTimeoutError extends Schema.TaggedErrorClass<Backen
   }
 }
 
-export class BackendProcessBootstrapEncodeError extends Schema.TaggedErrorClass<BackendProcessBootstrapEncodeError>()(
+export class BackendProcessBootstrapEncodeError extends Schema.TaggedError<BackendProcessBootstrapEncodeError>()(
   "BackendProcessBootstrapEncodeError",
   {
     ...backendProcessContextSchema,
@@ -155,7 +156,7 @@ export class BackendProcessBootstrapEncodeError extends Schema.TaggedErrorClass<
   }
 }
 
-export class BackendProcessSpawnError extends Schema.TaggedErrorClass<BackendProcessSpawnError>()(
+export class BackendProcessSpawnError extends Schema.TaggedError<BackendProcessSpawnError>()(
   "BackendProcessSpawnError",
   {
     ...backendProcessContextSchema,
@@ -167,7 +168,7 @@ export class BackendProcessSpawnError extends Schema.TaggedErrorClass<BackendPro
   }
 }
 
-export class BackendProcessOutputReadError extends Schema.TaggedErrorClass<BackendProcessOutputReadError>()(
+export class BackendProcessOutputReadError extends Schema.TaggedError<BackendProcessOutputReadError>()(
   "BackendProcessOutputReadError",
   {
     ...backendProcessContextSchema,
@@ -181,7 +182,7 @@ export class BackendProcessOutputReadError extends Schema.TaggedErrorClass<Backe
   }
 }
 
-export class BackendProcessOutputHandlingError extends Schema.TaggedErrorClass<BackendProcessOutputHandlingError>()(
+export class BackendProcessOutputHandlingError extends Schema.TaggedError<BackendProcessOutputHandlingError>()(
   "BackendProcessOutputHandlingError",
   {
     ...backendProcessContextSchema,
@@ -200,7 +201,7 @@ export type BackendProcessOutputError =
   | BackendProcessOutputReadError
   | BackendProcessOutputHandlingError;
 
-export class BackendProcessExitStatusError extends Schema.TaggedErrorClass<BackendProcessExitStatusError>()(
+export class BackendProcessExitStatusError extends Schema.TaggedError<BackendProcessExitStatusError>()(
   "BackendProcessExitStatusError",
   {
     ...backendProcessContextSchema,
@@ -222,6 +223,10 @@ export type BackendProcessError = typeof BackendProcessError.Type;
 
 interface RunBackendProcessOptions extends DesktopBackendStartConfig {
   readonly desktopTelemetryStream: Stream.Stream<Uint8Array>;
+  /** Events for the desktop's browser tabs, written to `desktopBrowserFd`. */
+  readonly desktopBrowserStream?: Stream.Stream<Uint8Array>;
+  /** Each line the backend writes to `desktopBrowserControlFd`. */
+  readonly onDesktopBrowserCommand?: (line: string) => Effect.Effect<void>;
   readonly onDesktopTelemetryControl?: (
     message: DesktopTelemetryControlMessageValue,
   ) => Effect.Effect<void>;
@@ -423,7 +428,7 @@ function drainBackendOutput(
               cause,
             }),
         ),
-        Effect.catchTag("BackendProcessOutputHandlingError", onOutputFailure),
+        Effect.catchTags({ BackendProcessOutputHandlingError: onOutputFailure }),
       ),
     ),
     Effect.catchTags({
@@ -471,6 +476,18 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
       additionalFds[`fd${options.bootstrap.desktopTelemetryControlFd}`] = {
         type: "output",
       };
+    }
+    if (
+      options.bootstrap.desktopBrowserFd !== undefined &&
+      options.desktopBrowserStream !== undefined
+    ) {
+      additionalFds[`fd${options.bootstrap.desktopBrowserFd}`] = {
+        type: "input",
+        stream: options.desktopBrowserStream,
+      };
+    }
+    if (options.bootstrap.desktopBrowserControlFd !== undefined) {
+      additionalFds[`fd${options.bootstrap.desktopBrowserControlFd}`] = { type: "output" };
     }
   }
   const command = ChildProcess.make(options.executablePath, options.args, {
@@ -537,6 +554,26 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
           version: 1,
           type: "setDiagnosticsDemand",
           enabled: false,
+        }),
+      ),
+      Effect.forkScoped,
+    );
+  }
+  if (
+    options.bootstrap.desktopBrowserControlFd !== undefined &&
+    options.onDesktopBrowserCommand !== undefined
+  ) {
+    const browserFd = options.bootstrap.desktopBrowserControlFd;
+    const handleCommand = options.onDesktopBrowserCommand;
+    yield* handle.getOutputFd(browserFd).pipe(
+      Stream.decodeText(),
+      Stream.splitLines,
+      Stream.filter((line) => line.length > 0),
+      Stream.runForEach(handleCommand),
+      Effect.catchCause((cause) =>
+        logBackendProcessWarning("desktop browser command stream stopped", {
+          fd: browserFd,
+          cause: Cause.pretty(cause),
         }),
       ),
       Effect.forkScoped,
@@ -642,6 +679,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   | HttpClient.HttpClient
   | DesktopObservability.DesktopBackendOutputLogFactory
   | DesktopTelemetryPublisher.DesktopTelemetryPublisher
+  | DesktopBrowserHost.DesktopBrowserHost
   | DesktopWslEnvironment.DesktopWslEnvironment
   | Scope.Scope
 > {
@@ -650,6 +688,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   const backendOutputLogFactory = yield* DesktopObservability.DesktopBackendOutputLogFactory;
   const backendOutputLog = yield* backendOutputLogFactory.forInstance(spec.id);
   const desktopTelemetryPublisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
+  const desktopBrowserHost = yield* DesktopBrowserHost.DesktopBrowserHost;
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
@@ -663,15 +702,13 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
     Ref.update(state, withActiveRun(runId, f));
 
   const snapshot = Ref.get(state).pipe(
-    Effect.map(
-      (current): DesktopBackendSnapshot => ({
-        desiredRunning: current.desiredRunning,
-        ready: current.ready,
-        activePid: activePid(current.active),
-        restartAttempt: current.restartAttempt,
-        restartScheduled: Option.isSome(current.restartFiber),
-      }),
-    ),
+    Effect.map((current): DesktopBackendSnapshot => ({
+      desiredRunning: current.desiredRunning,
+      ready: current.ready,
+      activePid: activePid(current.active),
+      restartAttempt: current.restartAttempt,
+      restartScheduled: Option.isSome(current.restartFiber),
+    })),
   );
   const currentConfig = Ref.get(state).pipe(Effect.map((current) => current.config));
 
@@ -909,6 +946,9 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
         const program = runBackendProcess({
           ...config.value,
           desktopTelemetryStream: desktopTelemetryPublisher.encoded,
+          // Only a bootstrap that names the browser fds (the local primary) gets them.
+          desktopBrowserStream: desktopBrowserHost.events,
+          onDesktopBrowserCommand: desktopBrowserHost.handleCommandLine,
           onDesktopTelemetryControl: (message) =>
             desktopTelemetryPublisher.handleControlForSource(spec.id, message),
           onStarted: Effect.fn("desktop.backendInstance.onStarted")(function* (pid) {

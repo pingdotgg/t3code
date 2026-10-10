@@ -1,7 +1,11 @@
+import { MAX_SCRIPT_ID_LENGTH } from "@t3tools/contracts";
+import { shortcutLabelForCommand } from "./keybindings";
 import { describe, expect, it } from "vite-plus/test";
 import {
   projectScriptCwd,
   projectScriptRuntimeEnv,
+  projectScriptMenuLabel,
+  settleProjectScript,
   setupProjectScript,
 } from "@t3tools/shared/projectScripts";
 
@@ -11,6 +15,7 @@ import {
   nextProjectScriptId,
   primaryProjectScript,
   projectScriptIdFromCommand,
+  releaseClaimedRoles,
 } from "./projectScripts";
 
 describe("projectScripts helpers", () => {
@@ -21,6 +26,8 @@ describe("projectScripts helpers", () => {
         command: "pnpm dev",
         icon: "debug",
         runOnWorktreeCreate: false,
+        waitForSetup: false,
+        runOnSettle: false,
         previewUrl: "http://localhost:5733",
         autoOpenPreview: true,
       }),
@@ -42,6 +49,8 @@ describe("projectScripts helpers", () => {
         command: "pnpm test",
         icon: "test",
         runOnWorktreeCreate: false,
+        waitForSetup: false,
+        runOnSettle: false,
         previewUrl: null,
         autoOpenPreview: false,
       }),
@@ -54,11 +63,49 @@ describe("projectScripts helpers", () => {
     });
   });
 
+  it("only records async: false for setup scripts that should block the agent", () => {
+    const input = {
+      name: "Setup",
+      command: "pnpm i",
+      icon: "configure",
+      previewUrl: null,
+      autoOpenPreview: false,
+      runOnSettle: false,
+    } as const;
+    expect(
+      buildProjectScript("setup", { ...input, runOnWorktreeCreate: true, waitForSetup: true }),
+    ).toMatchObject({ runOnWorktreeCreate: true, async: false });
+    expect(
+      buildProjectScript("setup", { ...input, runOnWorktreeCreate: true, waitForSetup: false }),
+    ).not.toHaveProperty("async");
+    expect(
+      buildProjectScript("setup", { ...input, runOnWorktreeCreate: false, waitForSetup: true }),
+    ).not.toHaveProperty("async");
+  });
+
   it("builds and parses script run commands", () => {
     const command = commandForProjectScript("lint");
     expect(command).toBe("script.lint.run");
-    expect(projectScriptIdFromCommand(command)).toBe("lint");
+    expect(projectScriptIdFromCommand(command ?? "")).toBe("lint");
     expect(projectScriptIdFromCommand("terminal.toggle")).toBeNull();
+  });
+
+  it.each(["install-javascript-dependencies", "A", "a.b", "a b", "-a", "", "a".repeat(25)])(
+    "omits the shortcut for legacy script ID %j without crashing script menus",
+    (id) => {
+      const commands = ["lint", id, "test"].map(commandForProjectScript);
+      expect(commands).toEqual(["script.lint.run", null, "script.test.run"]);
+      expect(commands.map((command) => shortcutLabelForCommand([], command))).toEqual([
+        null,
+        null,
+        null,
+      ]);
+    },
+  );
+
+  it("preserves the exact ID at the shortcut length limit", () => {
+    const id = "a".repeat(MAX_SCRIPT_ID_LENGTH);
+    expect(projectScriptIdFromCommand(commandForProjectScript(id) ?? "")).toBe(id);
   });
 
   it("slugifies and dedupes project script ids", () => {
@@ -67,7 +114,7 @@ describe("projectScripts helpers", () => {
     expect(nextProjectScriptId("!!!", [])).toBe("script");
   });
 
-  it("resolves primary and setup scripts", () => {
+  it("resolves primary, setup, and settle scripts", () => {
     const scripts = [
       {
         id: "setup",
@@ -75,6 +122,14 @@ describe("projectScripts helpers", () => {
         command: "bun install",
         icon: "configure" as const,
         runOnWorktreeCreate: true,
+      },
+      {
+        id: "clean",
+        name: "Clean",
+        command: "cargo clean",
+        icon: "build" as const,
+        runOnWorktreeCreate: false,
+        runOnSettle: true,
       },
       {
         id: "test",
@@ -87,6 +142,53 @@ describe("projectScripts helpers", () => {
 
     expect(primaryProjectScript(scripts)?.id).toBe("test");
     expect(setupProjectScript(scripts)?.id).toBe("setup");
+    expect(settleProjectScript(scripts)?.id).toBe("clean");
+    // Cleanup is never the one-click run button, even when it is all there is.
+    expect(primaryProjectScript(scripts.filter((script) => script.id === "clean"))).toBeNull();
+  });
+
+  it("labels every lifecycle role a script runs in", () => {
+    const script = {
+      id: "both",
+      name: "Both",
+      command: "true",
+      icon: "play" as const,
+      runOnWorktreeCreate: true,
+    };
+    expect(projectScriptMenuLabel(script)).toBe("Both (setup)");
+    expect(projectScriptMenuLabel({ ...script, runOnSettle: true })).toBe(
+      "Both (setup, on settle)",
+    );
+    expect(projectScriptMenuLabel({ ...script, runOnWorktreeCreate: false })).toBe("Both");
+  });
+
+  it("moves the setup and settle roles to the script that claims them", () => {
+    const input = {
+      name: "Next",
+      command: "true",
+      icon: "play",
+      waitForSetup: false,
+      previewUrl: null,
+      autoOpenPreview: false,
+    } as const;
+    const holder = {
+      id: "holder",
+      name: "Holder",
+      command: "true",
+      icon: "play" as const,
+      runOnWorktreeCreate: true,
+      runOnSettle: true,
+    };
+
+    expect(
+      releaseClaimedRoles(holder, { ...input, runOnWorktreeCreate: false, runOnSettle: true }),
+    ).toMatchObject({ runOnWorktreeCreate: true, runOnSettle: false });
+    expect(
+      releaseClaimedRoles(holder, { ...input, runOnWorktreeCreate: true, runOnSettle: false }),
+    ).toMatchObject({ runOnWorktreeCreate: false, runOnSettle: true });
+    expect(
+      releaseClaimedRoles(holder, { ...input, runOnWorktreeCreate: false, runOnSettle: false }),
+    ).toBe(holder);
   });
 
   it("builds default runtime env for scripts", () => {

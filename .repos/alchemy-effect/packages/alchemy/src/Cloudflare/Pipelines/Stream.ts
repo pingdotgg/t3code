@@ -186,16 +186,13 @@ export type Stream = Resource<
  * The stream's `schema` and `format` are fixed at creation (changing them
  * triggers a replacement); the HTTP endpoint and Worker-binding toggles
  * are mutable in place.
- * @resource
- * @product Pipelines
- * @category Storage & Databases
- * @section Creating a Stream
- * @example Unstructured stream with default settings
+ * ### Creating a Stream
+ * **Example:** Unstructured stream with default settings
  * ```typescript
  * const stream = yield* Cloudflare.Pipelines.Stream("events", {});
  * ```
  *
- * @example Structured stream with a typed schema
+ * **Example:** Structured stream with a typed schema
  * ```typescript
  * const stream = yield* Cloudflare.Pipelines.Stream("clicks", {
  *   schema: {
@@ -207,8 +204,8 @@ export type Stream = Resource<
  * });
  * ```
  *
- * @section HTTP ingestion
- * @example Authenticated endpoint with CORS
+ * ### HTTP ingestion
+ * **Example:** Authenticated endpoint with CORS
  * ```typescript
  * const stream = yield* Cloudflare.Pipelines.Stream("events", {
  *   http: {
@@ -220,8 +217,8 @@ export type Stream = Resource<
  * // POST events to stream.endpoint with an API token
  * ```
  *
- * @section Wiring into a Pipeline
- * @example Stream → SQL Pipeline → R2 Sink
+ * ### Wiring into a Pipeline
+ * **Example:** Stream → SQL Pipeline → R2 Sink
  * ```typescript
  * const pipeline = yield* Cloudflare.Pipelines.Pipeline("etl", {
  *   sql: Output.interpolate`INSERT INTO ${sink.name} SELECT * FROM ${stream.name}`,
@@ -229,6 +226,10 @@ export type Stream = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/pipelines/
+ *
+ * @resource
+ * @product Pipelines
+ * @category Storage & Databases
  */
 export const Stream = Resource<Stream>(StreamTypeId);
 

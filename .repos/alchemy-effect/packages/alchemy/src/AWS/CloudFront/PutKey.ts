@@ -13,9 +13,8 @@ export interface PutKeyRequest extends Omit<kvs.PutKeyRequest, "KvsARN"> {}
  * `IfMatch` (from {@link DescribeKeyValueStore} or a previous write's
  * response). Provide the implementation with
  * `Effect.provide(AWS.CloudFront.PutKeyHttp)`.
- * @binding
- * @section Writing KeyValueStore Data
- * @example Put a Key
+ * ### Writing KeyValueStore Data
+ * **Example:** Put a Key
  * ```typescript
  * // init — bind the operations to the store
  * const describeStore = yield* CloudFront.DescribeKeyValueStore(store);
@@ -30,6 +29,8 @@ export interface PutKeyRequest extends Omit<kvs.PutKeyRequest, "KvsARN"> {}
  * });
  * // res.ETag is the store's new entity tag
  * ```
+ *
+ * @binding
  */
 export interface PutKey extends Binding.Service<
   PutKey,

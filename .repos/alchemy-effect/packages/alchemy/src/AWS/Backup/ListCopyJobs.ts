@@ -9,14 +9,15 @@ import * as Binding from "../../Binding.ts";
  * Lists the account's copy jobs, with optional filters (state, destination
  * vault, resource type). Provide the implementation with
  * `Effect.provide(AWS.Backup.ListCopyJobsHttp)`.
- * @binding
- * @section Copying Recovery Points
- * @example List Running Copy Jobs
+ * ### Copying Recovery Points
+ * **Example:** List Running Copy Jobs
  * ```typescript
  * const listCopyJobs = yield* AWS.Backup.ListCopyJobs();
  *
  * const page = yield* listCopyJobs({ ByState: "RUNNING" });
  * ```
+ *
+ * @binding
  */
 export interface ListCopyJobs extends Binding.Service<
   ListCopyJobs,

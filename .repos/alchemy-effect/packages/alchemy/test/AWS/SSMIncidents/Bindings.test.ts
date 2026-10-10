@@ -7,8 +7,8 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import IncidentsTestFunctionLive, { IncidentsTestFunction } from "./handler";
 
 const { test } = Test.make({ providers: AWS.providers() });
@@ -42,13 +42,17 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:ssmincidents", "live"] },
 );
 
-test.provider("listIncidentRecords answers with a summary list", () =>
-  Effect.gen(function* () {
-    const listed = yield* incidents.listIncidentRecords({});
-    expect(Array.isArray(listed.incidentRecordSummaries)).toBe(true);
-  }),
+test.provider(
+  "listIncidentRecords answers with a summary list",
+  () =>
+    Effect.gen(function* () {
+      const listed = yield* incidents.listIncidentRecords({});
+      expect(Array.isArray(listed.incidentRecordSummaries)).toBe(true);
+    }),
+  { tags: ["provider:aws", "provider:aws:ssmincidents", "live"] },
 );
 
 test.provider(
@@ -61,6 +65,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:ssmincidents", "live"] },
 );
 
 test.provider(
@@ -73,6 +78,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:ssmincidents", "live"] },
 );
 
 test.provider(
@@ -85,6 +91,7 @@ test.provider(
       );
       expect(Result.isSuccess(result)).toBe(true);
     }),
+  { tags: ["provider:aws", "provider:aws:ssmincidents", "live"] },
 );
 
 test.provider(
@@ -102,6 +109,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:ssmincidents", "live"] },
 );
 
 test.provider(
@@ -117,6 +125,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:ssmincidents", "live"] },
 );
 
 test.provider(
@@ -133,19 +142,23 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:ssmincidents", "live"] },
 );
 
-test.provider("deleteTimelineEvent on a nonexistent record is idempotent", () =>
-  Effect.gen(function* () {
-    const { recordArn } = yield* fakeArns;
-    const result = yield* Effect.result(
-      incidents.deleteTimelineEvent({
-        incidentRecordArn: recordArn,
-        eventId: "11111111-1111-1111-1111-111111111111",
-      }),
-    );
-    expect(Result.isSuccess(result)).toBe(true);
-  }),
+test.provider(
+  "deleteTimelineEvent on a nonexistent record is idempotent",
+  () =>
+    Effect.gen(function* () {
+      const { recordArn } = yield* fakeArns;
+      const result = yield* Effect.result(
+        incidents.deleteTimelineEvent({
+          incidentRecordArn: recordArn,
+          eventId: "11111111-1111-1111-1111-111111111111",
+        }),
+      );
+      expect(Result.isSuccess(result)).toBe(true);
+    }),
+  { tags: ["provider:aws", "provider:aws:ssmincidents", "live"] },
 );
 
 test.provider(
@@ -158,6 +171,7 @@ test.provider(
       });
       expect(listed.eventSummaries).toHaveLength(0);
     }),
+  { tags: ["provider:aws", "provider:aws:ssmincidents", "live"] },
 );
 
 test.provider(
@@ -170,6 +184,7 @@ test.provider(
       });
       expect(listed.relatedItems).toHaveLength(0);
     }),
+  { tags: ["provider:aws", "provider:aws:ssmincidents", "live"] },
 );
 
 test.provider(
@@ -193,6 +208,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:ssmincidents", "live"] },
 );
 
 test.provider(
@@ -205,6 +221,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:ssmincidents", "live"] },
 );
 
 test.provider(
@@ -220,6 +237,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:ssmincidents", "live"] },
 );
 
 // -- Gated end-to-end lifecycle -----------------------------------------------
@@ -431,5 +449,14 @@ test.provider.skipIf(!process.env.AWS_TEST_INCIDENT_MANAGER)(
       expect(after.replicationSetArns).toHaveLength(0);
     }),
   // onboarding (~1-2 min) + Lambda deploy + offboarding (~1-2 min).
-  { timeout: 900_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:batch",
+      "provider:aws:lambda",
+      "provider:aws:ssmincidents",
+      "live",
+    ],
+    timeout: 900_000,
+  },
 );

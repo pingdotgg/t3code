@@ -20,7 +20,7 @@ jobs:
       pull-requests: write
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           # This is required to ensure the `GITHUB_TOKEN` we provide below is
           # **always** used when pushing updates to the changesets release branch.
@@ -31,16 +31,20 @@ jobs:
         uses: ./.github/actions/setup
       - name: Upgrade npm for OIDC support
         run: npm install -g npm@11
-      - name: Set strip internals config
-        run: |
-          sed -i 's/"stripInternal": false/"stripInternal": true/' tsconfig.base.json
       - name: Create Release Pull Request or Publish
-        uses: changesets/action@v1
+        id: changesets
+        uses: changesets/action@d0ee272882939fa35f22d979828acb7e61e0bd47 # v2.0.0-next.4
         with:
-          version: pnpm changeset-version
-          publish: pnpm changeset-publish
-        env:
+          version-script: pnpm changeset-version
+          publish-script: pnpm changeset-publish
           # Use a personal access token instead of the one that GitHub generates
           # automatically to ensure workflows get triggered on the changesets
           # release branch.
-          GITHUB_TOKEN: ${{ secrets.CHANGESET_GITHUB_TOKEN }}
+          github-token: ${{ secrets.CHANGESET_GITHUB_TOKEN }}
+      - name: Deploy website
+        if: steps.changesets.outputs.published == 'true'
+        uses: ./.github/actions/deploy-website
+        with:
+          channel: v4
+          dispatch-token: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
+          revision: ${{ github.sha }}

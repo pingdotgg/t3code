@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "include": ["alchemy.run.ts", "src/**/*", "test/**/*"],
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "declaration": false,
+    "declarationMap": false
+  },
+  "references": [
+    { "path": "../../packages/alchemy/tsconfig.json" },
+    { "path": "../../packages/better-auth/tsconfig.json" }
+  ]
+}

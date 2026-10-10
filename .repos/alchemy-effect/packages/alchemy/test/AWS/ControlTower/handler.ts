@@ -2,8 +2,8 @@ import * as ControlTower from "@/AWS/ControlTower";
 import * as Lambda from "@/AWS/Lambda";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "handler.ts");
@@ -25,7 +25,7 @@ export class ControlTowerTestFunction extends Lambda.Function<Lambda.Function>()
 export default ControlTowerTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     // --- account-level bindings (Control Tower has no data plane; these

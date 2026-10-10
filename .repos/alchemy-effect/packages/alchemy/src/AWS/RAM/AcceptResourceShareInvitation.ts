@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * are chosen per request at runtime, so the binding takes no resource
  * argument. Provide the implementation with
  * `Effect.provide(AWS.RAM.AcceptResourceShareInvitationHttp)`.
- * @binding
- * @section Invitations
- * @example Accept an Invitation
+ * ### Invitations
+ * **Example:** Accept an Invitation
  * ```typescript
  * // init — account-level binding, no resource argument
  * const acceptResourceShareInvitation = yield* AWS.RAM.AcceptResourceShareInvitation();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *     resourceShareInvitationArn: invitationArn,
  *   });
  * ```
+ *
+ * @binding
  */
 export interface AcceptResourceShareInvitation extends Binding.Service<
   AcceptResourceShareInvitation,

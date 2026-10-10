@@ -184,17 +184,17 @@ export const scheduleFrom = dual<
     schedule: Schedule.Schedule<Output, Input, Error, Env>
   ) => <E, R>(
     self: Effect<Input, E, R>
-  ) => Effect<Output, E, R | Env>,
+  ) => Effect<Output, E | Error, R | Env>,
   <Input, E, R, Output, Error, Env>(
     self: Effect<Input, E, R>,
     initial: Input,
     schedule: Schedule.Schedule<Output, Input, Error, Env>
-  ) => Effect<Output, E, R | Env>
+  ) => Effect<Output, E | Error, R | Env>
 >(3, <Input, E, R, Output, Error, Env>(
   self: Effect<Input, E, R>,
   initial: Input,
   schedule: Schedule.Schedule<Output, Input, Error, Env>
-): Effect<Output, E, R | Env> =>
+): Effect<Output, E | Error, R | Env> =>
   effect.flatMap(Schedule.toStepWithMetadata(schedule), (step) => {
     let meta = Schedule.CurrentMetadata.defaultValue()
     const selfWithMeta = effect.suspend(() => effect.provideService(self, Schedule.CurrentMetadata, meta))
@@ -213,7 +213,7 @@ export const scheduleFrom = dual<
           }) as Effect<never, E, R | Env>
         }
       ),
-      (error) => core.isDone(error) ? effect.succeed(error.value as Output) : effect.fail(error as E)
+      (error) => core.isDone(error) ? effect.succeed(error.value as Output) : effect.fail(error as E | Error)
     )
   }))
 

@@ -84,9 +84,8 @@ export interface ResourceShare extends Resource<
  * A resource share grants principals (accounts, organizational units, or IAM
  * identities) access to a set of shared resources identified by ARN.
  *
- * @resource
- * @section Creating a Resource Share
- * @example Share subnets with an organizational unit
+ * ### Creating a Resource Share
+ * **Example:** Share subnets with an organizational unit
  * ```typescript
  * const share = yield* ResourceShare("NetworkShare", {
  *   resourceArns: [subnet.subnetArn],
@@ -95,7 +94,7 @@ export interface ResourceShare extends Resource<
  * });
  * ```
  *
- * @example Share with an external account
+ * **Example:** Share with an external account
  * ```typescript
  * const share = yield* ResourceShare("ExternalShare", {
  *   resourceArns: [resolverRule.arn],
@@ -104,6 +103,8 @@ export interface ResourceShare extends Resource<
  *   tags: { team: "platform" },
  * });
  * ```
+ *
+ * @resource
  */
 export const ResourceShare = Resource<ResourceShare>("AWS.RAM.ResourceShare");
 

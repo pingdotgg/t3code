@@ -34,7 +34,7 @@ const dashboardProps = {
     timeWindowStart: "qr-now-1h",
     timeWindowEnd: "qr-now",
   },
-} as const;
+};
 
 test.provider.skipIf(!hasAxiomCreds)(
   "list enumerates the deployed dashboard",
@@ -60,4 +60,5 @@ test.provider.skipIf(!hasAxiomCreds)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+  { tags: ["provider:axiom", "provider:axiom:dashboard", "live"] },
 );

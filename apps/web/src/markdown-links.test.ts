@@ -1,54 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
-import ReactMarkdown from "react-markdown";
 
 import {
-  extractMarkdownLinkHrefs,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
-  resolveMarkdownFileLinkTarget,
   rewriteMarkdownFileUriHref,
   shouldOpenMarkdownFileLinkInBrowserByDefault,
   shouldOpenMarkdownFileLinkInEditor,
 } from "./markdown-links";
-
-function renderMarkdownLinkHref(markdown: string): string | undefined {
-  let renderedHref: string | undefined;
-  renderToStaticMarkup(
-    createElement(
-      ReactMarkdown,
-      {
-        components: {
-          a({ href }) {
-            renderedHref = href;
-            return createElement("a", { href });
-          },
-        },
-      },
-      markdown,
-    ),
-  );
-  return renderedHref;
-}
-
-describe("extractMarkdownLinkHrefs", () => {
-  it("extracts angle-bracketed paths containing spaces", () => {
-    expect(
-      extractMarkdownLinkHrefs(
-        "[Open the Bike Receipts folder](</Users/dara/Downloads/Lime Ride Artifacts/Bike Receipts>)",
-      ),
-    ).toEqual(["/Users/dara/Downloads/Lime Ride Artifacts/Bike Receipts"]);
-  });
-
-  it("preserves ordinary destinations and ignores link titles", () => {
-    expect(
-      extractMarkdownLinkHrefs(
-        '[source](apps/web/src/markdown-links.ts "implementation") and [docs](https://example.com)',
-      ),
-    ).toEqual(["apps/web/src/markdown-links.ts", "https://example.com"]);
-  });
-});
 
 describe("shouldOpenMarkdownFileLinkInEditor", () => {
   it("uses command-click on macOS", () => {
@@ -119,147 +77,48 @@ describe("rewriteMarkdownFileUriHref", () => {
   });
 });
 
-describe("resolveMarkdownFileLinkTarget", () => {
-  it("resolves absolute posix file paths", () => {
-    expect(resolveMarkdownFileLinkTarget("/Users/julius/project/AGENTS.md")).toBe(
-      "/Users/julius/project/AGENTS.md",
-    );
-  });
-
-  it("resolves relative file paths against cwd", () => {
-    expect(resolveMarkdownFileLinkTarget("src/processRunner.ts:71", "/Users/julius/project")).toBe(
-      "/Users/julius/project/src/processRunner.ts:71",
-    );
-  });
-
-  it("does not treat filename line references as external schemes", () => {
-    expect(resolveMarkdownFileLinkTarget("script.ts:10", "/Users/julius/project")).toBe(
-      "/Users/julius/project/script.ts:10",
-    );
-  });
-
-  it("resolves bare file names against cwd", () => {
-    expect(resolveMarkdownFileLinkTarget("AGENTS.md", "/Users/julius/project")).toBe(
-      "/Users/julius/project/AGENTS.md",
-    );
-  });
-
-  it("maps #L line anchors to editor line suffixes", () => {
-    expect(resolveMarkdownFileLinkTarget("/Users/julius/project/src/main.ts#L42C7")).toBe(
-      "/Users/julius/project/src/main.ts:42:7",
-    );
-  });
-
-  it("ignores external urls", () => {
-    expect(resolveMarkdownFileLinkTarget("https://example.com/docs")).toBeNull();
-  });
-
-  it("does not double-decode file URLs", () => {
-    expect(resolveMarkdownFileLinkTarget("file:///Users/julius/project/file%2520name.md")).toBe(
-      "/Users/julius/project/file%20name.md",
-    );
-  });
-
-  it("resolves file uri authorities as windows UNC paths", () => {
-    expect(resolveMarkdownFileLinkTarget("file://server/share/workspace-image.svg")).toBe(
-      "\\\\server\\share\\workspace-image.svg",
-    );
-  });
-
-  it("resolves a localhost file uri as a local path", () => {
-    expect(resolveMarkdownFileLinkTarget("file://localhost/home/me/notes.md")).toBe(
-      "/home/me/notes.md",
-    );
-  });
-
-  it("formats tooltip display paths relative to the cwd when possible", () => {
-    expect(
-      resolveMarkdownFileLinkMeta(
-        "file:///C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts#L501",
-        "C:/Users/mike/dev-stuff/t3code",
-      ),
-    ).toMatchObject({
-      displayPath: "t3code/apps/web/src/session-logic.ts:501",
-      workspaceRelativePath: "apps/web/src/session-logic.ts",
-    });
-  });
-
-  it("resolves the encoded spaces emitted by the markdown renderer", () => {
-    expect(
-      resolveMarkdownFileLinkMeta(
-        "/Users/dara/Downloads/Lime%20Ride%20Artifacts/Bike%20Receipts",
-        "/Users/dara/Downloads/Lime Ride Artifacts",
-      ),
-    ).toMatchObject({
-      targetPath: "/Users/dara/Downloads/Lime Ride Artifacts/Bike Receipts",
-      workspaceRelativePath: "Bike Receipts",
-      basename: "Bike Receipts",
-    });
-  });
-
-  it("resolves relative spaced folders from the markdown renderer", () => {
-    const href = renderMarkdownLinkHref("[folder](<docs/My Folder>)");
-
-    expect(href).toBe("docs/My%20Folder");
-    expect(resolveMarkdownFileLinkMeta(href, "/repo/project")).toMatchObject({
-      targetPath: "/repo/project/docs/My Folder",
-      workspaceRelativePath: "docs/My Folder",
-      basename: "My Folder",
-    });
-  });
-
-  it.each(["md", "html", "xml"])(
-    "resolves a bare spaced .%s filename from the markdown renderer",
-    (extension) => {
-      const href = renderMarkdownLinkHref(`[checklist](<Updated cutover checklist.${extension}>)`);
-
-      expect(href).toBe(`Updated%20cutover%20checklist.${extension}`);
-      expect(resolveMarkdownFileLinkMeta(href, "/repo/project")).toMatchObject({
-        targetPath: `/repo/project/Updated cutover checklist.${extension}`,
-        workspaceRelativePath: `Updated cutover checklist.${extension}`,
-        basename: `Updated cutover checklist.${extension}`,
-      });
-    },
-  );
-
-  it("formats tooltip display paths relative to the cwd for slash-prefixed windows paths", () => {
-    expect(
-      resolveMarkdownFileLinkMeta(
-        "/C:/Users/mike/dev-stuff/t3code/apps/web/src/components/chat/MessagesTimeline.virtualization.browser.tsx",
-        "C:/Users/mike/dev-stuff/t3code",
-      ),
-    ).toMatchObject({
-      displayPath:
-        "t3code/apps/web/src/components/chat/MessagesTimeline.virtualization.browser.tsx",
-      workspaceRelativePath:
-        "apps/web/src/components/chat/MessagesTimeline.virtualization.browser.tsx",
-    });
-  });
-
-  it("does not create a preview path for files outside the workspace", () => {
-    expect(resolveMarkdownFileLinkMeta("/tmp/report.ts", "/repo/project")).toMatchObject({
+describe("relative links inside a rendered host file", () => {
+  it("anchor to the file's directory while workspace membership follows cwd", () => {
+    const meta = resolveMarkdownFileLinkMeta("appendix.md", "/repo", "/tmp/report");
+    expect(meta).toMatchObject({
+      filePath: "/tmp/report/appendix.md",
       workspaceRelativePath: null,
     });
+    const inline = resolveInlineCodeFileLinkMeta("Makefile:12", "/repo", "/tmp/report");
+    expect(inline).toMatchObject({ filePath: "/tmp/report/Makefile", line: 12 });
+    expect(resolveMarkdownFileLinkMeta("src/main.ts", "/repo", "/repo/docs")).toMatchObject({
+      filePath: "/repo/docs/src/main.ts",
+      workspaceRelativePath: "docs/src/main.ts",
+    });
   });
 
-  it("normalizes slash-prefixed windows drive paths before resolving", () => {
+  it("resolve multi-segment inline code from the workspace root in a workspace file", () => {
     expect(
-      resolveMarkdownFileLinkTarget(
-        "/D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx#L69",
-      ),
-    ).toBe("D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx:69");
-  });
-
-  it("resolves angle-bracketed windows drive paths", () => {
+      resolveInlineCodeFileLinkMeta("docs/ai/design.md", "/repo", "/repo/docs/ai"),
+    ).toMatchObject({ filePath: "/repo/docs/ai/design.md" });
     expect(
-      resolveMarkdownFileLinkTarget(
-        "</D:/Programme/t3code/apps/web/src/components/ChatMarkdown.tsx:1>",
-      ),
-    ).toBe("D:/Programme/t3code/apps/web/src/components/ChatMarkdown.tsx:1");
+      resolveInlineCodeFileLinkMeta("src/index.ts:4", "/repo", "/repo/packages/a"),
+    ).toMatchObject({ filePath: "/repo/src/index.ts", line: 4 });
   });
 
-  it("does not treat app routes as file links", () => {
-    expect(resolveMarkdownFileLinkTarget("/chat/settings")).toBeNull();
+  it("keep sibling and explicitly relative inline code beside the file", () => {
+    expect(resolveInlineCodeFileLinkMeta("design.md:12", "/repo", "/repo/docs/ai")).toMatchObject({
+      filePath: "/repo/docs/ai/design.md",
+      line: 12,
+    });
+    expect(
+      resolveInlineCodeFileLinkMeta("./src/index.ts", "/repo", "/repo/packages/a"),
+    ).toMatchObject({ filePath: "/repo/packages/a/./src/index.ts" });
+    expect(resolveInlineCodeFileLinkMeta("../b/notes.md", "/repo", "/repo/docs/a")).toMatchObject({
+      filePath: "/repo/docs/a/../b/notes.md",
+    });
+  });
+
+  it("keep multi-segment inline code beside a file outside the workspace", () => {
+    expect(resolveInlineCodeFileLinkMeta("src/main.ts", "/repo", "/tmp/report")).toMatchObject({
+      filePath: "/tmp/report/src/main.ts",
+      workspaceRelativePath: null,
+    });
   });
 });
 
@@ -430,5 +289,13 @@ describe("directory paths with a trailing separator", () => {
   it("does not produce an empty label for the filesystem root", () => {
     const meta = resolveMarkdownFileLinkMeta("/tmp/", "/repo/project");
     expect(meta?.basename).not.toBe("");
+  });
+});
+
+it("routes the project-root code link to the workspace explorer", () => {
+  const cwd = "/Users/saphid/.t3/worktrees/ov2-standalone-20260918";
+  expect(resolveInlineCodeFileLinkMeta(cwd, cwd)).toMatchObject({
+    workspaceRelativePath: ".",
+    filePath: cwd,
   });
 });

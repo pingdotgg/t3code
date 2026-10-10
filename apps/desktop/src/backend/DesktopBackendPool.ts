@@ -90,14 +90,15 @@ import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as FileSystem from "effect/FileSystem";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
+import * as DesktopBrowserHost from "../preview/DesktopBrowserHost.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
@@ -114,7 +115,7 @@ export type BackendInstanceSpec = DesktopBackendManager.BackendInstanceSpec;
 // Caller tried to register an id that's already in the pool. The pool
 // refuses overwrites so two independent orchestrators racing on the
 // same id surface as a typed failure instead of one silently winning.
-export class DesktopBackendPoolInstanceAlreadyRegisteredError extends Schema.TaggedErrorClass<DesktopBackendPoolInstanceAlreadyRegisteredError>()(
+export class DesktopBackendPoolInstanceAlreadyRegisteredError extends Schema.TaggedError<DesktopBackendPoolInstanceAlreadyRegisteredError>()(
   "DesktopBackendPoolInstanceAlreadyRegisteredError",
   {
     id: Schema.String,
@@ -128,7 +129,7 @@ export class DesktopBackendPoolInstanceAlreadyRegisteredError extends Schema.Tag
 // Primary instance is registered for the pool's lifetime. Unregister is
 // a no-op for it today (no real callers), but if someone wires it up
 // later it's a clear bug rather than something to "handle".
-export class DesktopBackendPoolCannotUnregisterPrimaryError extends Schema.TaggedErrorClass<DesktopBackendPoolCannotUnregisterPrimaryError>()(
+export class DesktopBackendPoolCannotUnregisterPrimaryError extends Schema.TaggedError<DesktopBackendPoolCannotUnregisterPrimaryError>()(
   "DesktopBackendPoolCannotUnregisterPrimaryError",
   {},
 ) {
@@ -180,6 +181,7 @@ export type BackendInstanceFactoryRequirements =
   | HttpClient.HttpClient
   | DesktopObservability.DesktopBackendOutputLogFactory
   | DesktopTelemetryPublisher.DesktopTelemetryPublisher
+  | DesktopBrowserHost.DesktopBrowserHost
   | DesktopWslEnvironment.DesktopWslEnvironment;
 
 interface ActiveRegisteredInstance {

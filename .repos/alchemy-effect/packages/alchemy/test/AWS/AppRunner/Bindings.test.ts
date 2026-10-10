@@ -4,13 +4,48 @@ import * as apprunner from "@distilled.cloud/aws/apprunner";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import AppRunnerTestFunctionLive, {
   AppRunnerTestFunction,
 } from "./fixtures/handler";
 
 const { test } = Test.make({ providers: AWS.providers() });
+
+/**
+ * POST a fixture route and decode its JSON body.
+ *
+ * Each binding is granted by its OWN inline policy on the Lambda role, and
+ * those propagate independently — a call can be rejected for seconds after
+ * a sibling binding's call already works, so every route retries. On a
+ * non-200 the fixture's body (the rendered cause) goes into the failure
+ * message; decoding it blind used to surface as a TypeError on a missing
+ * field, which said nothing about what App Runner refused.
+ */
+const postJson = <T>(url: string) =>
+  HttpClient.execute(HttpClientRequest.post(url)).pipe(
+    Effect.flatMap((response) =>
+      response.text.pipe(
+        Effect.flatMap((body) =>
+          response.status === 200
+            ? Effect.try({
+                try: () => JSON.parse(body) as T,
+                catch: () =>
+                  new Error(`POST ${url} returned unparseable body: ${body}`),
+              })
+            : Effect.fail(
+                new Error(`POST ${url} returned ${response.status}: ${body}`),
+              ),
+        ),
+      ),
+    ),
+    Effect.retry({
+      schedule: Schedule.max([
+        Schedule.exponential("1 second"),
+        Schedule.recurs(8),
+      ]),
+    }),
+  );
 
 /** Poll the service status out-of-band until it settles to `expected`. */
 const waitForStatus = (serviceArn: string, expected: string) =>
@@ -124,39 +159,28 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       expect(customDomains.dnsTarget).toContain("awsapprunner.com");
 
       // PauseService: the service settles to PAUSED.
-      const paused = yield* HttpClient.execute(
-        HttpClientRequest.post(`${baseUrl}/pause`),
-      ).pipe(
-        Effect.flatMap((response) => response.json),
-        Effect.map(
-          (json) => json as { serviceArn: string; operationId?: string },
-        ),
-      );
+      const paused = yield* postJson<{
+        serviceArn: string;
+        operationId?: string;
+      }>(`${baseUrl}/pause`);
       expect(paused.serviceArn).toContain(
         ":service/alchemy-test-apprunner-bind/",
       );
       yield* waitForStatus(paused.serviceArn, "PAUSED");
 
       // ResumeService: the service settles back to RUNNING.
-      const resumed = yield* HttpClient.execute(
-        HttpClientRequest.post(`${baseUrl}/resume`),
-      ).pipe(
-        Effect.flatMap((response) => response.json),
-        Effect.map(
-          (json) => json as { serviceArn: string; operationId?: string },
-        ),
-      );
+      const resumed = yield* postJson<{
+        serviceArn: string;
+        operationId?: string;
+      }>(`${baseUrl}/resume`);
       expect(resumed.serviceArn).toBe(paused.serviceArn);
       yield* waitForStatus(paused.serviceArn, "RUNNING");
 
       // StartDeployment: returns an operation id; the deployment then shows
       // up in ListOperations. (The provider's delete waits for the service
       // to settle, so the in-flight deployment doesn't block destroy.)
-      const deployed = yield* HttpClient.execute(
-        HttpClientRequest.post(`${baseUrl}/deploy`),
-      ).pipe(
-        Effect.flatMap((response) => response.json),
-        Effect.map((json) => json as { operationId?: string }),
+      const deployed = yield* postJson<{ operationId?: string }>(
+        `${baseUrl}/deploy`,
       );
       expect(deployed.operationId).toBeTruthy();
 
@@ -184,5 +208,13 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
     }),
   // create (~3-5 min) + pause (~1-2 min) + resume (~1-2 min) + delete
   // (~2-3 min), one sequential test.
-  { timeout: 1_200_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:apprunner",
+      "provider:aws:lambda",
+      "live",
+    ],
+    timeout: 1_200_000,
+  },
 );

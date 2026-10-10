@@ -1,0 +1,29 @@
+---
+// Content-collection-driven static page: prerendered at build time from the
+// `posts` collection (node prerendering); served from assets in production
+// and by Astro's node prerender middleware in dev.
+import { getCollection, render } from "astro:content";
+
+export const prerender = true;
+
+export async function getStaticPaths() {
+  const posts = await getCollection("posts");
+  return posts.map((post) => ({ params: { slug: post.id }, props: { post } }));
+}
+
+const { post } = Astro.props;
+const { Content } = await render(post);
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{post.data.title} — Astro Fixture</title>
+  </head>
+  <body>
+    <h1 id="post-title">{post.data.title}</h1>
+    <div id="post-body"><Content /></div>
+    <p><a href="/">home</a></p>
+  </body>
+</html>

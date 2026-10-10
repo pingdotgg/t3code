@@ -82,9 +82,8 @@ export interface DataSet extends Resource<
  * publish revisions of data into. An owned data set holds revisions, each of
  * which holds assets (e.g. S3 snapshot files) that subscribers receive.
  *
- * @resource
- * @section Creating Data Sets
- * @example Basic S3-snapshot data set
+ * ### Creating Data Sets
+ * **Example:** Basic S3-snapshot data set
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -93,7 +92,7 @@ export interface DataSet extends Resource<
  * });
  * ```
  *
- * @example Named data set with tags
+ * **Example:** Named data set with tags
  * ```typescript
  * const dataSet = yield* AWS.DataExchange.DataSet("Prices", {
  *   name: "commodity-prices",
@@ -103,14 +102,16 @@ export interface DataSet extends Resource<
  * });
  * ```
  *
- * @section Publishing Revisions
- * @example Add a revision to a data set
+ * ### Publishing Revisions
+ * **Example:** Add a revision to a data set
  * ```typescript
  * const revision = yield* AWS.DataExchange.Revision("PricesV1", {
  *   dataSetId: dataSet.dataSetId,
  *   comment: "Initial snapshot",
  * });
  * ```
+ *
+ * @resource
  */
 export const DataSet = Resource<DataSet>("AWS.DataExchange.DataSet");
 

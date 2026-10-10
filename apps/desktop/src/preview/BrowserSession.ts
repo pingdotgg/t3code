@@ -1,15 +1,27 @@
-import type { Session } from "electron";
-import { session } from "electron";
+import type { Session, WebContents } from "electron";
+import { BrowserWindow, session } from "electron";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
+
 const PREVIEW_PARTITION_PREFIX = "persist:t3code-preview-";
+/**
+ * Incognito partitions deliberately omit the `persist:` prefix, which is what
+ * makes Chromium keep them in memory and discard them with the process. They
+ * still carry the product prefix so `isPartition` can admit them — the
+ * `will-attach-webview` gate rejects anything it does not recognise.
+ */
+const PREVIEW_EPHEMERAL_PARTITION_PREFIX = "t3code-preview-ephemeral-";
+const PROFILE_PARTITION_MARKER = "profile-";
+
+export type BrowserSessionPartitionNamespace = "profile";
 
 // Permissions granted to preview web content. `clipboard-sanitized-write` is the
 // Electron permission behind `navigator.clipboard.writeText()` — note it is NOT
@@ -23,13 +35,52 @@ const ALLOWED_PREVIEW_PERMISSIONS: ReadonlySet<string> = new Set([
   "clipboard-sanitized-write",
   "notifications",
   "geolocation",
+  // The Fullscreen API. `DesktopWindow` disables HTML fullscreen window resizing
+  // for the app window and every preview guest, so a page that goes fullscreen
+  // fills its own webview instead of taking over the whole T3 window.
+  "fullscreen",
   // Deliberately NOT local-fonts: preview sessions run untrusted web content,
   // and silently granting it would hand every page the user's installed-font
   // fingerprint (and font file bytes via FontData.blob()). The app's own font
   // picker runs in the main window session, which is unaffected by this list.
 ]);
 
-export class BrowserSessionPartitionDerivationError extends Schema.TaggedErrorClass<BrowserSessionPartitionDerivationError>()(
+/**
+ * Schemes a preview page may never hand to the OS, even with the user's
+ * consent: they read local files, run script, or are web pages that belong in
+ * the preview itself.
+ */
+const NEVER_EXTERNAL_PROTOCOLS: ReadonlySet<string> = new Set([
+  "about:",
+  "blob:",
+  "chrome:",
+  "data:",
+  "devtools:",
+  "file:",
+  "filesystem:",
+  "http:",
+  "https:",
+  "javascript:",
+  "view-source:",
+]);
+
+/**
+ * The URL to offer the user when a preview page navigates to a custom scheme
+ * such as `slack://` or `zoom://`, or `null` when it must stay denied.
+ */
+const externalProtocolPromptUrl = (rawUrl: string | undefined): string | null => {
+  if (!rawUrl) return null;
+  try {
+    const url = new URL(rawUrl);
+    return NEVER_EXTERNAL_PROTOCOLS.has(url.protocol) ? null : url.href;
+  } catch {
+    return null;
+  }
+};
+
+const MAX_PROMPT_URL_LENGTH = 300;
+
+export class BrowserSessionPartitionDerivationError extends Schema.TaggedError<BrowserSessionPartitionDerivationError>()(
   "BrowserSessionPartitionDerivationError",
   {
     scope: Schema.String,
@@ -41,7 +92,7 @@ export class BrowserSessionPartitionDerivationError extends Schema.TaggedErrorCl
   }
 }
 
-export class BrowserSessionCreationError extends Schema.TaggedErrorClass<BrowserSessionCreationError>()(
+export class BrowserSessionCreationError extends Schema.TaggedError<BrowserSessionCreationError>()(
   "BrowserSessionCreationError",
   {
     scope: Schema.String,
@@ -54,7 +105,7 @@ export class BrowserSessionCreationError extends Schema.TaggedErrorClass<Browser
   }
 }
 
-export class BrowserSessionStorageClearError extends Schema.TaggedErrorClass<BrowserSessionStorageClearError>()(
+export class BrowserSessionStorageClearError extends Schema.TaggedError<BrowserSessionStorageClearError>()(
   "BrowserSessionStorageClearError",
   {
     partition: Schema.String,
@@ -66,7 +117,7 @@ export class BrowserSessionStorageClearError extends Schema.TaggedErrorClass<Bro
   }
 }
 
-export class BrowserSessionCacheClearError extends Schema.TaggedErrorClass<BrowserSessionCacheClearError>()(
+export class BrowserSessionCacheClearError extends Schema.TaggedError<BrowserSessionCacheClearError>()(
   "BrowserSessionCacheClearError",
   {
     partition: Schema.String,
@@ -83,7 +134,6 @@ export const BrowserSessionGetSessionError = Schema.Union([
   BrowserSessionCreationError,
 ]);
 export type BrowserSessionGetSessionError = typeof BrowserSessionGetSessionError.Type;
-export const isBrowserSessionGetSessionError = Schema.is(BrowserSessionGetSessionError);
 
 export const BrowserSessionError = Schema.Union([
   BrowserSessionPartitionDerivationError,
@@ -92,27 +142,134 @@ export const BrowserSessionError = Schema.Union([
   BrowserSessionCacheClearError,
 ]);
 export type BrowserSessionError = typeof BrowserSessionError.Type;
-export const isBrowserSessionError = Schema.is(BrowserSessionError);
 
 export class BrowserSession extends Context.Service<
   BrowserSession,
   {
     readonly getPartition: (
       scope?: string,
+      persistent?: boolean,
+      namespace?: BrowserSessionPartitionNamespace,
     ) => Effect.Effect<string, BrowserSessionPartitionDerivationError>;
     readonly isPartition: (partition: string) => boolean;
-    readonly getSession: (scope?: string) => Effect.Effect<Session, BrowserSessionGetSessionError>;
-    readonly clearCookies: () => Effect.Effect<void, BrowserSessionStorageClearError>;
-    readonly clearCache: () => Effect.Effect<void, BrowserSessionCacheClearError>;
+    readonly getSession: (
+      scope?: string,
+      persistent?: boolean,
+      namespace?: BrowserSessionPartitionNamespace,
+    ) => Effect.Effect<Session, BrowserSessionGetSessionError>;
+    /** Omit `partitions` to clear every known partition. */
+    readonly clearCookies: (
+      partitions?: ReadonlyArray<string>,
+    ) => Effect.Effect<void, BrowserSessionStorageClearError>;
+    readonly clearCache: (
+      partitions?: ReadonlyArray<string>,
+    ) => Effect.Effect<void, BrowserSessionCacheClearError>;
   }
 >()("@t3tools/desktop/preview/BrowserSession") {}
 
+/**
+ * Restricts a clear to the given partitions. Omitting them keeps the historical
+ * "every partition" behaviour, which callers now only use for an explicit
+ * "all profiles" action — a per-profile clear must never reach across profiles.
+ */
+const selectSessions = (
+  sessions: ReadonlyMap<string, Session>,
+  partitions: ReadonlyArray<string> | undefined,
+): ReadonlyArray<readonly [string, Session]> =>
+  [...sessions.entries()].filter(
+    ([partition]) => partitions === undefined || partitions.includes(partition),
+  );
+
+/**
+ * Scope bytes for the partition digest.
+ *
+ * `TextEncoder` replaces a lone UTF-16 surrogate with U+FFFD, so `"p\ud800"`
+ * and `"p\ufffd"` would hash to the same partition and share cookies. Those
+ * are distinct, supported ids, so lone surrogates are escaped to `\uXXXX`
+ * first — and a literal backslash is doubled so the escape cannot be forged.
+ * Every well-formed scope passes through byte-for-byte unchanged, which keeps
+ * existing partitions (and the logins in them) where they are.
+ */
+const encodeScopeForDigest = (scope: string): Uint8Array =>
+  new TextEncoder().encode(
+    scope
+      .replace(/\\/g, "\\\\")
+      .replace(
+        /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g,
+        (unit) => `\\u${unit.charCodeAt(0).toString(16).padStart(4, "0")}`,
+      ),
+  );
+
+/**
+ * The window showing a preview guest. A `<webview>` guest has no window of its
+ * own, so look it up through the page that embeds it.
+ */
+const previewHostWindow = (guest: WebContents | null): BrowserWindow | undefined => {
+  if (guest === null || guest.isDestroyed()) return undefined;
+  const host = guest.hostWebContents ?? guest;
+  if (host.isDestroyed()) return undefined;
+  return BrowserWindow.fromWebContents(host) ?? undefined;
+};
+
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* BrowserSessionMake() {
   const crypto = yield* Crypto.Crypto;
+  const electronDialog = yield* ElectronDialog.ElectronDialog;
+  const runFork = Effect.runForkWith(yield* Effect.context<never>());
+  // One prompt at a time, so a page cannot stack dialogs by looping a deep link.
+  let externalPromptOpen = false;
+  /**
+   * Electron grants an external-protocol navigation through the `openExternal`
+   * permission and then launches the OS handler itself. Ask first: previews run
+   * untrusted pages, and a silent grant would let any of them launch apps.
+   */
+  const confirmOpenExternal = (
+    requester: WebContents | null,
+    rawUrl: string | undefined,
+    callback: (granted: boolean) => void,
+  ): void => {
+    const url = externalProtocolPromptUrl(rawUrl);
+    if (url === null || externalPromptOpen) {
+      callback(false);
+      return;
+    }
+    externalPromptOpen = true;
+    const settle = (granted: boolean) =>
+      Effect.sync(() => {
+        externalPromptOpen = false;
+        callback(granted);
+      });
+    const shownUrl =
+      url.length > MAX_PROMPT_URL_LENGTH ? `${url.slice(0, MAX_PROMPT_URL_LENGTH)}…` : url;
+    runFork(
+      electronDialog
+        .showMessageBox(
+          {
+            type: "question",
+            buttons: ["Open", "Cancel"],
+            defaultId: 0,
+            cancelId: 1,
+            message: `Open this ${new URL(url).protocol.slice(0, -1)} link?`,
+            detail: `A page in the browser wants to open another application:\n\n${shownUrl}`,
+          },
+          previewHostWindow(requester),
+        )
+        .pipe(
+          Effect.map(({ response }) => response === 0),
+          Effect.orElseSucceed(() => false),
+          Effect.flatMap(settle),
+          Effect.onInterrupt(() => settle(false)),
+        ),
+    );
+  };
   const sessionsRef = yield* SynchronizedRef.make<ReadonlyMap<string, Session>>(new Map());
 
-  const getPartition = Effect.fn("BrowserSession.getPartition")(function* (scope = "shared") {
-    const digest = yield* crypto.digest("SHA-256", new TextEncoder().encode(scope)).pipe(
+  const getPartition = Effect.fn("BrowserSession.getPartition")(function* (
+    scope = "shared",
+    persistent = true,
+    namespace?: BrowserSessionPartitionNamespace,
+  ) {
+    const digest = yield* crypto.digest("SHA-256", encodeScopeForDigest(scope)).pipe(
       Effect.mapError(
         (cause) =>
           new BrowserSessionPartitionDerivationError({
@@ -121,25 +278,44 @@ export const make = Effect.gen(function* BrowserSessionMake() {
           }),
       ),
     );
-    return `${PREVIEW_PARTITION_PREFIX}${Encoding.encodeHex(digest).slice(0, 20)}`;
+    const prefix = persistent ? PREVIEW_PARTITION_PREFIX : PREVIEW_EPHEMERAL_PARTITION_PREFIX;
+    // Legacy/default partitions are prefix + hex digest. The non-hex profile
+    // marker creates a disjoint namespace while leaving every legacy default
+    // partition byte-for-byte unchanged.
+    return `${prefix}${namespace === "profile" ? PROFILE_PARTITION_MARKER : ""}${Hex.encode(digest).slice(0, 20)}`;
   });
 
-  const getSession = Effect.fn("BrowserSession.getSession")(function* (scope = "shared") {
-    const partition = yield* getPartition(scope);
+  const getSession = Effect.fn("BrowserSession.getSession")(function* (
+    scope = "shared",
+    persistent = true,
+    namespace?: BrowserSessionPartitionNamespace,
+  ) {
+    const partition = yield* getPartition(scope, persistent, namespace);
     return yield* SynchronizedRef.modifyEffect(sessionsRef, (sessions) => {
       const existing = sessions.get(partition);
       if (existing) return Effect.succeed([existing, sessions] as const);
       return Effect.try({
         try: () => {
           const browserSession = session.fromPartition(partition);
-          const userAgent = browserSession
-            .getUserAgent()
-            .replace(/Electron\/[\d.]+ /, "")
-            .replace(/\s*t3code\/[\d.]+/, "");
-          browserSession.setUserAgent(userAgent);
-          browserSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-            callback(ALLOWED_PREVIEW_PERMISSIONS.has(permission));
-          });
+          // The guest keeps Electron's native User-Agent. Rewriting it in any
+          // form — even variants that keep the Electron token — makes Cloudflare
+          // Turnstile fail its integrity check with error 600010 and recreate
+          // the challenge every few seconds, so logins behind it never complete
+          // (#5002). Re-setting the unchanged native string is harmless, so it
+          // is the rewritten string itself that trips the check.
+          browserSession.setPermissionRequestHandler(
+            (webContents, permission, callback, details) => {
+              if (permission === "openExternal") {
+                confirmOpenExternal(
+                  webContents,
+                  "externalURL" in details ? details.externalURL : undefined,
+                  callback,
+                );
+                return;
+              }
+              callback(ALLOWED_PREVIEW_PERMISSIONS.has(permission));
+            },
+          );
           browserSession.setPermissionCheckHandler((_webContents, permission) =>
             ALLOWED_PREVIEW_PERMISSIONS.has(permission),
           );
@@ -159,16 +335,19 @@ export const make = Effect.gen(function* BrowserSessionMake() {
 
   return BrowserSession.of({
     getPartition,
-    isPartition: (partition) => partition.startsWith(PREVIEW_PARTITION_PREFIX),
+    isPartition: (partition) =>
+      partition.startsWith(PREVIEW_PARTITION_PREFIX) ||
+      partition.startsWith(PREVIEW_EPHEMERAL_PARTITION_PREFIX),
     getSession,
-    clearCookies: Effect.fn("BrowserSession.clearCookies")(function* () {
+    clearCookies: Effect.fn("BrowserSession.clearCookies")(function* (partitions?) {
       const sessions = yield* SynchronizedRef.get(sessionsRef);
-      yield* Effect.all(
-        [...sessions.entries()].map(([partition, browserSession]) =>
+      yield* Effect.forEach(
+        selectSessions(sessions, partitions),
+        ([partition, browserSession]) =>
           Effect.tryPromise({
             try: () =>
               browserSession.clearStorageData({
-                storages: ["cookies", "localstorage", "indexdb", "websql", "serviceworkers"],
+                storages: ["cookies", "localstorage", "indexdb", "serviceworkers"],
               }),
             catch: (cause) =>
               new BrowserSessionStorageClearError({
@@ -176,14 +355,14 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                 cause,
               }),
           }),
-        ),
         { concurrency: "unbounded", discard: true },
       );
     }),
-    clearCache: Effect.fn("BrowserSession.clearCache")(function* () {
+    clearCache: Effect.fn("BrowserSession.clearCache")(function* (partitions?) {
       const sessions = yield* SynchronizedRef.get(sessionsRef);
-      yield* Effect.all(
-        [...sessions.entries()].map(([partition, browserSession]) =>
+      yield* Effect.forEach(
+        selectSessions(sessions, partitions),
+        ([partition, browserSession]) =>
           Effect.tryPromise({
             try: () => browserSession.clearCache(),
             catch: (cause) =>
@@ -192,7 +371,6 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                 cause,
               }),
           }),
-        ),
         { concurrency: "unbounded", discard: true },
       );
     }),

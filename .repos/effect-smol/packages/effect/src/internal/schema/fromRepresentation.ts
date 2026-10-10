@@ -2,9 +2,11 @@ import * as Arr from "../../Array.ts"
 import * as Result from "../../Result.ts"
 import * as Schema from "../../Schema.ts"
 import type * as SchemaAST from "../../SchemaAST.ts"
+import * as SchemaParser from "../../SchemaParser.ts"
 import type * as SchemaRepresentation from "../../SchemaRepresentation.ts"
 import { errorWithPath } from "../errors.ts"
 import * as InternalRecord from "../record.ts"
+import * as InternalToCodec from "./toCodec.ts"
 
 type Path = ReadonlyArray<string | number>
 
@@ -12,7 +14,7 @@ type Path = ReadonlyArray<string | number>
 export function fromRepresentations(
   document: SchemaRepresentation.MultiDocument,
   revivers: ReadonlyArray<SchemaRepresentation.AnyReviver>
-): SchemaRepresentation.SchemaMultiDocument {
+): readonly [Schema.Top, ...Array<Schema.Top>] {
   return revivePersisted(document.representations, document.references, makeReviverMap(revivers), false)
 }
 
@@ -43,7 +45,7 @@ function makeReviverMap(
     }
     out.set(reviver.id, {
       ...reviver,
-      payloadSchema: Schema.toCodecJson(reviver.payloadSchema)
+      payloadSchema: InternalToCodec.toCodecJson(reviver.payloadSchema)
     })
   }
 
@@ -58,18 +60,17 @@ function revivePersisted(
   references: SchemaRepresentation.References,
   reviverMap: ReadonlyMap<string, SchemaRepresentation.AnyReviver>,
   singleRoot: boolean
-): SchemaRepresentation.SchemaMultiDocument {
+): readonly [Schema.Top, ...Array<Schema.Top>] {
   const slots = new Map<string, ReferenceSlot>()
-  const referenceKeys = Object.keys(references)
-
-  for (const key of referenceKeys) {
-    slots.set(key, new ReferenceSlot(key))
-  }
 
   function resolveReference(key: string, path: Path): Schema.Top {
-    const slot = slots.get(key)
+    let slot = slots.get(key)
     if (slot === undefined) {
-      throw errorWithPath(`Invalid reference ${key}`, [...path, "$ref"])
+      if (!Object.hasOwn(references, key)) {
+        throw errorWithPath(`Invalid reference ${key}`, [...path, "$ref"])
+      }
+      slot = new ReferenceSlot(key)
+      slots.set(key, slot)
     }
     if (slot.body !== undefined) {
       return slot.body
@@ -103,7 +104,7 @@ function revivePersisted(
     reviver: SchemaRepresentation.AnyReviver,
     path: Path
   ): any {
-    const decoded = Schema.decodeUnknownResult(reviver.payloadSchema)(representation.payload)
+    const decoded = SchemaParser.decodeUnknownResult(reviver.payloadSchema)(representation.payload)
     if (Result.isFailure(decoded)) {
       throw errorWithPath(`Invalid representation payload for ${representation.id}`, path)
     }
@@ -315,20 +316,15 @@ function revivePersisted(
       }
       case "Union": {
         const members = representation.types.map((member, index) => recur(member, [...path, "types", index]))
-        return finishStructural(Schema.Union(members, { mode: representation.mode }), representation, path)
+        return finishStructural(Schema.Union(members, representation.options), representation, path)
       }
     }
-  }
-
-  const definitions: Record<string, Schema.Top> = {}
-  for (const key of referenceKeys) {
-    InternalRecord.assignProperty(definitions, key, resolveReference(key, ["references", key]))
   }
 
   const schemas = representations.map((representation, index) =>
     recur(representation, singleRoot ? ["representation"] : ["representations", index])
   ) as [Schema.Top, ...Array<Schema.Top>]
-  return { schemas, definitions }
+  return schemas
 }
 
 /** @internal */
@@ -341,5 +337,5 @@ export function fromRepresentation(
     document.references,
     makeReviverMap(revivers),
     true
-  ).schemas[0]
+  )[0]
 }

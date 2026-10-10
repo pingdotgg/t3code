@@ -1,4 +1,5 @@
 import type * as Credentials from "@distilled.cloud/aws/Credentials";
+import type * as SigV4 from "@distilled.cloud/aws/SigV4";
 import * as Data from "effect/Data";
 import type * as Effect from "effect/Effect";
 import * as Binding from "../../Binding.ts";
@@ -54,7 +55,7 @@ export interface GraphQLClient {
     request: GraphQLRequest,
   ): Effect.Effect<
     GraphQLResult<T>,
-    GraphQLApiError | Credentials.CredentialsError
+    GraphQLApiError | Credentials.CredentialsError | SigV4.SigningError
   >;
 }
 
@@ -67,9 +68,8 @@ export interface GraphQLClient {
  * additional provider). Provide `AppSync.GraphQLHttp` on the hosting
  * function's Effect to implement the binding.
  *
- * @binding
- * @section Executing GraphQL Operations
- * @example Query an IAM-authenticated API
+ * ### Executing GraphQL Operations
+ * **Example:** Query an IAM-authenticated API
  * ```typescript
  * const api = yield* AppSync.GraphqlApi("Api", {
  *   authenticationType: "AWS_IAM",
@@ -83,6 +83,8 @@ export interface GraphQLClient {
  * });
  * // result.data?.add === 5; field errors appear on result.errors
  * ```
+ *
+ * @binding
  */
 export interface GraphQL extends Binding.Service<
   GraphQL,

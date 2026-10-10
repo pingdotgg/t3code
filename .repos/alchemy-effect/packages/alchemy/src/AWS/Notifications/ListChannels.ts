@@ -18,9 +18,8 @@ export interface ListChannelsRequest extends Omit<
  * List the delivery channel ARNs associated with a notification
  * configuration. Provide the implementation with
  * `Effect.provide(AWS.Notifications.ListChannelsHttp)`.
- * @binding
- * @section Reading Configuration Channels
- * @example List a Configuration's Channels
+ * ### Reading Configuration Channels
+ * **Example:** List a Configuration's Channels
  * ```typescript
  * // init — bind the operation to the configuration
  * const listChannels = yield* AWS.Notifications.ListChannels(config);
@@ -29,6 +28,8 @@ export interface ListChannelsRequest extends Omit<
  * const result = yield* listChannels();
  * const channelArns = result.channels;
  * ```
+ *
+ * @binding
  */
 export interface ListChannels extends Binding.Service<
   ListChannels,

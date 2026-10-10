@@ -4,152 +4,183 @@
  * the single yantra geometry source in `src/brand/yantra.ts`.
  *
  * The per-page OG images are rendered separately by the static endpoint at
- * `src/pages/og/[...slug].png.ts` during `astro build`; this script only
+ * `src/pages/og/[...slug].webp.ts` during `astro build`; this script only
  * produces brand artifacts that need to exist on disk before Astro starts
  * (so they're picked up by the public/ asset pipeline).
  */
 
-import { Resvg } from "@resvg/resvg-js";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { YANTRA_COLORS, yantraSvg } from "../src/brand/yantra.ts";
+import { render, renderSvg } from "takumi-js";
+import { brandFonts } from "../src/brand/fonts.ts";
+import {
+  OG_DEFAULT_H,
+  OG_DEFAULT_W,
+  OgDefault,
+} from "../src/brand/OgDefault.tsx";
+import {
+  YANTRA_THEMES,
+  type YantraTheme,
+  yantraSvg,
+} from "../src/brand/yantra.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(here, "../public");
+/** Rasterize the geometric icon artwork with Takumi. */
+function rasterize(svg: string, size: number): Promise<Uint8Array> {
+  return render(
+    {
+      type: "image",
+      src: `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`,
+      style: { width: size, height: size },
+    },
+    { width: size, height: size, format: "png" },
+  );
+}
 
-/** Render an SVG string to PNG bytes at a target square size. */
-function rasterize(svg: string, size: number): Uint8Array {
-  const resvg = new Resvg(svg, {
-    fitTo: { mode: "width", value: size },
-    background: "rgba(0, 0, 0, 0)",
-  });
-  return resvg.render().asPng();
+/** Favicons use exactly the same geometry and margins as the logo SVG. */
+function faviconMarkSvg(theme: YantraTheme): string {
+  return yantraSvg({ size: 64, theme });
 }
 
 /**
- * A favicon-friendly variant of the yantra: parchment tile with a small
- * inner padding so the glyph reads well at 16px. The stroke weight is bumped
- * because the lines collapse below ~1.4 viewBox units when downscaled.
+ * The vector favicon carries both themes in one file: a `prefers-color-scheme`
+ * block re-paints the light mark, and CSS rules beat the presentation
+ * attributes underneath. Chrome, Firefox and Safari 16.4+ re-evaluate it live
+ * when the OS theme flips; anything that ignores the `<style>` (older browsers,
+ * rasterizers) still renders the light mark from the attributes.
+ *
+ * The bindu is the only element carrying a `fill` attribute, so `circle[fill]`
+ * targets it without also hitting the outer circle.
  */
-function faviconTileSvg(): string {
-  return yantraSvg({
-    size: 64,
-    bg: YANTRA_COLORS.bg,
-    stroke: YANTRA_COLORS.stroke,
-    dot: YANTRA_COLORS.dot,
-    strokeWidth: 1.4,
-  });
+function faviconVectorSvg(): string {
+  const { stroke, dot } = YANTRA_THEMES.dark;
+  const style = `<style>@media (prefers-color-scheme: dark){svg{stroke:${stroke}}circle[fill]{fill:${dot}}}</style>`;
+  return faviconMarkSvg("light").replace(/(<svg[^>]*>)/, `$1${style}`);
+}
+
+/** Canonical standalone logo, also used by app icons and the OG fallback. */
+function brandMarkSvg(theme: YantraTheme): string {
+  return yantraSvg({ size: 512, theme });
+}
+
+/** Opaque background treatment with a slightly smaller centered mark. */
+function backgroundLogoSvg(theme: YantraTheme, background: string): string {
+  const size = 512;
+  const markSize = 448;
+  const offset = (size - markSize) / 2;
+  const mark = brandMarkSvg(theme).replace(
+    'width="512" height="512"',
+    `width="${markSize}" height="${markSize}"`,
+  );
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+    <rect width="${size}" height="${size}" fill="${background}"/>
+    <g transform="translate(${offset} ${offset})">${mark}</g>
+  </svg>`;
 }
 
 /**
- * apple-touch-icon needs an opaque background and generous padding —
- * iOS renders it inside its own rounded-rect mask.
+ * apple-touch-icon: opaque and generously padded. The one asset that cannot be
+ * transparent — iOS composites the alpha channel against black when it masks
+ * the web clip into its squircle. Light only: iOS web clips have no dark
+ * variant and `<link rel="apple-touch-icon">` ignores `media`.
  */
 function appleTouchSvg(): string {
-  // Embed the standard 24-unit yantra centered inside a 32-unit padded canvas.
-  const inner = yantraSvg({
-    size: 24,
-    stroke: YANTRA_COLORS.stroke,
-    dot: YANTRA_COLORS.dot,
-    strokeWidth: 1.1,
-  });
-  // Strip the outer <svg> wrapper so we can re-mount the geometry inside a
-  // padded canvas — easier than computing translate() in two places.
-  const innerBody = inner.replace(/^<svg[^>]*>/, "").replace(/<\/svg>$/, "");
+  const { bg } = YANTRA_THEMES.light;
+  const inner = yantraSvg();
   return `<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180" viewBox="0 0 32 32">
-    <rect width="32" height="32" fill="${YANTRA_COLORS.bg}"/>
-    <g transform="translate(4 4)" fill="none" stroke="${YANTRA_COLORS.stroke}" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round">${innerBody}</g>
+    <rect width="32" height="32" fill="${bg}"/>
+    <g transform="translate(4 4)">${inner}</g>
   </svg>`;
 }
 
-/**
- * Static OG fallback (1200×630). Simple, hand-crafted SVG so this script
- * has no satori/font dependency. Used when a page has no slug-specific OG
- * image (e.g. external referrers hitting the bare domain).
- */
-function ogFallbackSvg(): string {
-  const W = 1200;
-  const H = 630;
-  // Yantra glyph centered, large.
-  const glyphSize = 220;
-  const glyph = yantraSvg({
-    size: glyphSize,
-    stroke: YANTRA_COLORS.stroke,
-    dot: YANTRA_COLORS.dot,
-    strokeWidth: 0.7,
-  })
-    .replace(/^<svg[^>]*>/, "")
-    .replace(/<\/svg>$/, "");
-
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
-    <rect width="${W}" height="${H}" fill="${YANTRA_COLORS.bg}"/>
-    <!-- subtle hairline frame -->
-    <rect x="24" y="24" width="${W - 48}" height="${H - 48}" fill="none" stroke="${YANTRA_COLORS.stroke}" stroke-opacity="0.18" stroke-width="1"/>
-    <!-- yantra centered, slightly above midline so wordmark sits below -->
-    <g transform="translate(${(W - glyphSize) / 2} ${H / 2 - glyphSize - 20})" viewBox="0 0 24 24">
-      <svg width="${glyphSize}" height="${glyphSize}" viewBox="0 0 24 24" fill="none" stroke="${YANTRA_COLORS.stroke}" stroke-width="0.7" stroke-linecap="round" stroke-linejoin="round">${glyph}</svg>
-    </g>
-    <!-- wordmark -->
-    <text x="${W / 2}" y="${H / 2 + 60}" text-anchor="middle"
-      font-family="'Source Serif 4', 'Source Serif Pro', Georgia, serif"
-      font-style="italic" font-weight="500" font-size="96" fill="#2a2620"
-      letter-spacing="-2">alchemy</text>
-    <text x="${W / 2}" y="${H / 2 + 120}" text-anchor="middle"
-      font-family="'JetBrains Mono', ui-monospace, monospace"
-      font-size="20" fill="${YANTRA_COLORS.stroke}" letter-spacing="4">
-      ZERO &#8594; PRODUCTION
-    </text>
-    <!-- bottom-right url tag -->
-    <text x="${W - 48}" y="${H - 48}" text-anchor="end"
-      font-family="'JetBrains Mono', ui-monospace, monospace"
-      font-size="18" fill="#85714f">alchemy.run</text>
-  </svg>`;
-}
+const OG_PIXEL_RATIO = 2.5;
 
 async function main() {
   await mkdir(publicDir, { recursive: true });
 
-  // 1. Vector favicon — parchment tile, bumped stroke for tab legibility.
-  const favSvg = faviconTileSvg();
-  await writeFile(path.join(publicDir, "favicon.svg"), favSvg);
+  // 1. Vector favicon — one file, both themes via prefers-color-scheme.
+  await writeFile(path.join(publicDir, "favicon.svg"), faviconVectorSvg());
 
-  // 2. Raster favicons.
-  await writeFile(
-    path.join(publicDir, "favicon-32.png"),
-    rasterize(favSvg, 32),
-  );
-  await writeFile(
-    path.join(publicDir, "favicon-16.png"),
-    rasterize(favSvg, 16),
-  );
+  // 2. Raster favicons, one pair per theme. Media queries don't survive
+  //    rasterization, so each PNG comes from an explicit-color mark and the
+  //    <link> tags pick between them with `media`.
+  const favLight = faviconMarkSvg("light");
+  const favDark = faviconMarkSvg("dark");
+  for (const size of [16, 32] as const) {
+    await writeFile(
+      path.join(publicDir, `favicon-${size}.png`),
+      await rasterize(favLight, size),
+    );
+    await writeFile(
+      path.join(publicDir, `favicon-${size}-dark.png`),
+      await rasterize(favDark, size),
+    );
+  }
 
-  // 3. apple-touch-icon (180×180, padded, opaque parchment).
-  const apple = appleTouchSvg();
+  // 3. apple-touch-icon (180×180, padded, opaque).
   await writeFile(
     path.join(publicDir, "apple-touch-icon.png"),
-    rasterize(apple, 180),
+    await rasterize(appleTouchSvg(), 180),
   );
 
-  // 4. Larger PWA / share fallback at 512×512.
-  await writeFile(path.join(publicDir, "icon-512.png"), rasterize(apple, 512));
+  // 4. The brand mark at 512, per theme — emitted as a transparent standalone
+  //    vector, a transparent PWA/share raster, and an opaque logo raster using
+  //    the theme background. None of the variants adds a frame or border.
+  for (const theme of ["light", "dark"] as const) {
+    const mark = brandMarkSvg(theme);
+    await writeFile(path.join(publicDir, `alchemy-logo-${theme}.svg`), mark);
+    await writeFile(
+      path.join(publicDir, `icon-512${theme === "dark" ? "-dark" : ""}.png`),
+      await rasterize(mark, 512),
+    );
+    await writeFile(
+      path.join(publicDir, `alchemy-logo-${theme}-bg.png`),
+      await rasterize(backgroundLogoSvg(theme, YANTRA_THEMES[theme].bg), 2048),
+    );
+  }
 
-  // 5. Backwards-compat: keep the old /favicon.png reference (used by
+  // 5. Light brand mark on a true-white ground for consumers that cannot use
+  //    the warmer theme background or composite the transparent asset.
+  await writeFile(
+    path.join(publicDir, "alchemy-logo-512-white-bg.png"),
+    await rasterize(backgroundLogoSvg("light", "#ffffff"), 2048),
+  );
+
+  // 6. Backwards-compat: keep the old /favicon.png reference (used by
   //    some cached nav code) pointing to the 32px raster.
-  await writeFile(path.join(publicDir, "favicon.png"), rasterize(favSvg, 32));
+  await writeFile(
+    path.join(publicDir, "favicon.png"),
+    await rasterize(favLight, 32),
+  );
 
-  // 6. OG fallback (1200×630). Per-page OG images come from the static
-  //    endpoint; this is the bare-domain fallback.
-  const ogSvg = ogFallbackSvg();
-  await writeFile(path.join(publicDir, "og-default.svg"), ogSvg);
+  // 7. Fallback OG: Takumi emits both PNG and outlined SVG from one layout.
+  const card = OgDefault();
+  const options = {
+    width: OG_DEFAULT_W,
+    height: OG_DEFAULT_H,
+    fonts: await brandFonts,
+    emoji: "from-font" as const,
+  };
+  await writeFile(
+    path.join(publicDir, "og-default.svg"),
+    await renderSvg(card, options),
+  );
   await writeFile(
     path.join(publicDir, "og-default.png"),
-    rasterize(ogSvg, 1200),
+    await render(card, {
+      ...options,
+      format: "png",
+      width: OG_DEFAULT_W * OG_PIXEL_RATIO,
+      height: OG_DEFAULT_H * OG_PIXEL_RATIO,
+      devicePixelRatio: OG_PIXEL_RATIO,
+    }),
   );
 
   // eslint-disable-next-line no-console
   console.log(
-    "[brand] wrote favicon.{svg,png}, favicon-{16,32}.png, apple-touch-icon.png, icon-512.png, og-default.{svg,png}",
+    "[brand] wrote favicon.{svg,png}, favicon-{16,32}[-dark].png, apple-touch-icon.png, icon-512[-dark].png, alchemy-logo-{light,dark}.svg, alchemy-logo-{light,dark}-bg.png (2048px), alchemy-logo-512-white-bg.png (2048px), og-default.{svg,png}",
   );
 }
 

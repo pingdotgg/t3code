@@ -47,12 +47,12 @@ attaches an `events:PutEvents` policy statement scoped to the bus ARN
 // src/api.ts
 import * as AWS from "alchemy/AWS";
 import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Events } from "./bus.ts";
 
 export default class Api extends AWS.Lambda.Function<Api>()(
   "Api",
-  { main: import.meta.url, url: true },
+  { main: import.meta.url, functionUrl: true },
   Effect.gen(function* () {
     const bus = yield* Events;
     const putEvents = yield* AWS.EventBridge.PutEvents(bus);

@@ -2,12 +2,14 @@ import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
 import type {
   CommandId,
   EnvironmentId,
-  OrchestrationCommand,
+  ProjectMutation,
   ProjectId,
+  ServerConfig,
   SourceControlDiscoveryResult,
   SourceControlProviderKind,
   SourceControlRepositoryInfo,
 } from "@t3tools/contracts";
+import { newProjectFolderName } from "@t3tools/shared/path";
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
@@ -25,7 +27,7 @@ import type { EnvironmentProject } from "../state/models.ts";
 
 export type AddProjectRemoteProviderKind = Extract<
   SourceControlProviderKind,
-  "github" | "gitlab" | "bitbucket" | "azure-devops"
+  "github" | "gitlab" | "forgejo" | "bitbucket" | "azure-devops"
 >;
 export type AddProjectRemoteSource = AddProjectRemoteProviderKind | "url";
 
@@ -33,6 +35,19 @@ export function canCreateProjectInEnvironment(
   connectionPhase: EnvironmentConnectionPhase | null | undefined,
 ): boolean {
   return connectionPhase === "connected";
+}
+
+/**
+ * The Scratch folder an environment offers threads without a project right
+ * now, or null while it is not connected or has none.
+ */
+export function availableScratchWorkspaceRoot(
+  connectionPhase: EnvironmentConnectionPhase | null | undefined,
+  serverConfig: Pick<ServerConfig, "scratchWorkspaceRoot"> | null | undefined,
+): string | null {
+  return canCreateProjectInEnvironment(connectionPhase)
+    ? (serverConfig?.scratchWorkspaceRoot ?? null)
+    : null;
 }
 
 export type AddProjectRemoteSourceReadiness = Record<
@@ -59,6 +74,7 @@ const ADD_PROJECT_REMOTE_SOURCES: ReadonlyArray<AddProjectRemoteSource> = [
   "url",
   "github",
   "gitlab",
+  "forgejo",
   "bitbucket",
   "azure-devops",
 ];
@@ -66,6 +82,7 @@ const ADD_PROJECT_REMOTE_SOURCES: ReadonlyArray<AddProjectRemoteSource> = [
 const ADD_PROJECT_REMOTE_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProviderKind> = [
   "github",
   "gitlab",
+  "forgejo",
   "bitbucket",
   "azure-devops",
 ];
@@ -74,6 +91,8 @@ export function addProjectRemoteSourceLabel(source: AddProjectRemoteSource): str
   switch (source) {
     case "github":
       return "GitHub";
+    case "forgejo":
+      return "Forgejo / Gitea";
     case "gitlab":
       return "GitLab";
     case "bitbucket":
@@ -87,6 +106,7 @@ export function addProjectRemoteSourceLabel(source: AddProjectRemoteSource): str
 
 export function addProjectRemoteSourcePathHint(source: AddProjectRemoteSource): string {
   switch (source) {
+    case "forgejo":
     case "github":
       return "owner/repo";
     case "gitlab":
@@ -117,11 +137,13 @@ export function normalizePastedCloneUrl(input: string): string {
   return `https://github.com/${repository}`;
 }
 
-/** GitHub defaults to HTTPS; other providers retain their existing SSH default. */
+/** GitHub and Forgejo default to HTTPS; other providers retain their existing SSH default. */
 export function getDefaultCloneUrl(
   repository: Pick<SourceControlRepositoryInfo, "provider" | "url" | "sshUrl">,
 ): string {
-  return repository.provider === "github" ? repository.url : repository.sshUrl;
+  return repository.provider === "github" || repository.provider === "forgejo"
+    ? repository.url
+    : repository.sshUrl;
 }
 
 export function sortAddProjectProviderSources(
@@ -153,6 +175,7 @@ export function buildAddProjectRemoteSourceReadiness(
     url: { ready: true, hint: null },
     github: unavailable,
     gitlab: unavailable,
+    forgejo: unavailable,
     bitbucket: unavailable,
     "azure-devops": unavailable,
   };
@@ -243,6 +266,36 @@ export function getCloneDestinationPath(
 }
 
 /**
+ * Where `projects.createNew` will put a project named `name`. The server adds
+ * `-2`, `-3`, ... when that folder is taken, so this is a preview.
+ */
+export function getNewProjectPathPreview(newProjectsRoot: string, name: string): string {
+  return getCloneDestinationPath(newProjectsRoot, newProjectFolderName(name));
+}
+
+/**
+ * The GitHub account a new project would be published under, or null when
+ * GitHub is not ready on that environment. A ready GitHub with an unknown
+ * account still publishes; `gh` picks the signed-in user.
+ */
+export function getNewProjectGitHubTarget(
+  discovery: SourceControlDiscoveryResult | null,
+): { readonly account: string | null } | null {
+  if (!buildAddProjectRemoteSourceReadiness(discovery).github.ready) return null;
+  const github = discovery?.sourceControlProviders.find((provider) => provider.kind === "github");
+  return { account: github ? Option.getOrNull(github.auth.account) : null };
+}
+
+/** `owner/folder` for publishing a new project, or just the folder for `gh` to place. */
+export function getNewProjectGitHubRepository(
+  target: { readonly account: string | null },
+  workspaceRoot: string,
+): string {
+  const folderName = workspaceRoot.split(/[\\/]/).filter(Boolean).at(-1) ?? "";
+  return target.account ? `${target.account}/${folderName}` : folderName;
+}
+
+/**
  * Destination query after choosing a directory while the clone folder is
  * pinned in the path input. Selecting an existing directory with the pinned
  * name uses that directory directly instead of producing `repo/repo`.
@@ -301,8 +354,7 @@ export function buildProjectCreateCommand(input: {
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
   readonly workspaceRoot: string;
-  readonly createdAt: string;
-}): Extract<OrchestrationCommand, { type: "project.create" }> {
+}): Extract<ProjectMutation, { type: "project.create" }> {
   return {
     type: "project.create",
     commandId: input.commandId,
@@ -311,6 +363,5 @@ export function buildProjectCreateCommand(input: {
     workspaceRoot: input.workspaceRoot,
     createWorkspaceRootIfMissing: true,
     defaultModelSelection: null,
-    createdAt: input.createdAt,
   };
 }

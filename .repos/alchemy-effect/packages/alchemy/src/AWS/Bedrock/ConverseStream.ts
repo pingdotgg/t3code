@@ -35,9 +35,8 @@ export interface ConverseStreamRequest extends Omit<
  * console (Model access) before invoking, otherwise calls fail with
  * `AccessDeniedException`.
  *
- * @binding
- * @section Streaming a Conversation
- * @example Aggregate Streamed Text Deltas
+ * ### Streaming a Conversation
+ * **Example:** Aggregate Streamed Text Deltas
  * ```typescript
  * // init
  * const converseStream = yield* Bedrock.ConverseStream("us.amazon.nova-micro-v1:0");
@@ -52,6 +51,8 @@ export interface ConverseStreamRequest extends Omit<
  *   .map((event) => event.contentBlockDelta?.delta.text ?? "")
  *   .join("");
  * ```
+ *
+ * @binding
  */
 export interface ConverseStream extends Binding.Service<
   ConverseStream,

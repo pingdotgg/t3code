@@ -79,9 +79,8 @@ export interface DBProxyTargetGroup extends Resource<
  * adopts it, tunes its connection pool, and reconciles the registered
  * cluster/instance targets. Deleting it deregisters the targets rather than
  * deleting the group itself.
- * @resource
- * @section Registering Targets
- * @example Register a Cluster Behind a Proxy
+ * ### Registering Targets
+ * **Example:** Register a Cluster Behind a Proxy
  * ```typescript
  * const targets = yield* DBProxyTargetGroup("ProxyTargets", {
  *   dbProxyName: proxy.dbProxyName,
@@ -89,7 +88,7 @@ export interface DBProxyTargetGroup extends Resource<
  * });
  * ```
  *
- * @example Tune the Connection Pool
+ * **Example:** Tune the Connection Pool
  * ```typescript
  * const targets = yield* DBProxyTargetGroup("ProxyTargets", {
  *   dbProxyName: proxy.dbProxyName,
@@ -100,6 +99,8 @@ export interface DBProxyTargetGroup extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const DBProxyTargetGroup = Resource<DBProxyTargetGroup>(
   "AWS.RDS.DBProxyTargetGroup",

@@ -121,9 +121,8 @@ export interface AppSyncDataSource extends Resource<
  * role is created automatically (unless an explicit `serviceRoleArn` is
  * given): `lambda:InvokeFunction` on the function, or the DynamoDB
  * read/write actions on the table and its indexes.
- * @resource
- * @section Creating Data Sources
- * @example Lambda data source (auto-created invoke role)
+ * ### Creating Data Sources
+ * **Example:** Lambda data source (auto-created invoke role)
  * ```typescript
  * const ds = yield* AppSync.DataSource("LambdaDS", {
  *   api,
@@ -132,7 +131,7 @@ export interface AppSyncDataSource extends Resource<
  * });
  * ```
  *
- * @example NONE data source (local compute)
+ * **Example:** NONE data source (local compute)
  * ```typescript
  * const local = yield* AppSync.DataSource("Local", {
  *   api,
@@ -140,7 +139,7 @@ export interface AppSyncDataSource extends Resource<
  * });
  * ```
  *
- * @example DynamoDB data source
+ * **Example:** DynamoDB data source
  * ```typescript
  * const ds = yield* AppSync.DataSource("TableDS", {
  *   api,
@@ -148,6 +147,8 @@ export interface AppSyncDataSource extends Resource<
  *   dynamodbConfig: { tableName: table.tableName },
  * });
  * ```
+ *
+ * @resource
  */
 export const DataSourceResource = Resource<AppSyncDataSource>(
   "AWS.AppSync.DataSource",

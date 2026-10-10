@@ -201,14 +201,8 @@ export class Reporter extends Context.Service<Reporter>()(
             { concurrency: fixtures.length }
           )
 
-          const [currentStats, previousStats] = yield* Effect.all([
-            rollup.bundleAll({
-              paths: currentPaths
-            }),
-            rollup.bundleAll({
-              paths: previousPaths
-            })
-          ], { concurrency: 2 })
+          const currentStats = yield* rollup.bundleAll({ paths: currentPaths })
+          const previousStats = yield* rollup.bundleAll({ paths: previousPaths })
 
           yield* Effect.logInfo("Bundling complete! Generating bundle size report...")
 
@@ -261,10 +255,8 @@ export class Reporter extends Context.Service<Reporter>()(
             { concurrency: currentPaths.length }
           )
 
-          const [currentStats, previousStats] = yield* Effect.all([
-            rollup.bundleAll({ paths: currentPaths }),
-            rollup.bundleAll({ paths: previousPaths })
-          ], { concurrency: 2 })
+          const currentStats = yield* rollup.bundleAll({ paths: currentPaths })
+          const previousStats = yield* rollup.bundleAll({ paths: previousPaths })
 
           const entries: Array<{
             readonly current: BundleStats

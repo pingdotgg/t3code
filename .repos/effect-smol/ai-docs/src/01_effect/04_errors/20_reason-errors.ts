@@ -8,19 +8,19 @@
 
 import { Effect, Schema } from "effect"
 
-export class RateLimitError extends Schema.TaggedErrorClass<RateLimitError>()("RateLimitError", {
+export class RateLimitError extends Schema.TaggedError<RateLimitError>()("RateLimitError", {
   retryAfter: Schema.Finite
 }) {}
 
-export class QuotaExceededError extends Schema.TaggedErrorClass<QuotaExceededError>()("QuotaExceededError", {
+export class QuotaExceededError extends Schema.TaggedError<QuotaExceededError>()("QuotaExceededError", {
   limit: Schema.Int
 }) {}
 
-export class SafetyBlockedError extends Schema.TaggedErrorClass<SafetyBlockedError>()("SafetyBlockedError", {
+export class SafetyBlockedError extends Schema.TaggedError<SafetyBlockedError>()("SafetyBlockedError", {
   category: Schema.String
 }) {}
 
-export class AiError extends Schema.TaggedErrorClass<AiError>()("AiError", {
+export class AiError extends Schema.TaggedError<AiError>()("AiError", {
   reason: Schema.Union([RateLimitError, QuotaExceededError, SafetyBlockedError])
 }) {}
 

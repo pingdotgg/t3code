@@ -52,8 +52,8 @@ verify process ownership. Concurrent screenshot harnesses in different worktrees
 collide or attach to the wrong Metro process.
 
 Every configured device defaults to dark appearance and the `t3-code` palette, so plain
-`pnpm screenshots:mobile` produces 30 dark PNGs. Pass `--appearance light`, `--appearance dark`, or
-`--appearance both` to override the configured appearance; `both` produces 60 PNGs.
+`pnpm screenshots:mobile` produces 35 dark PNGs. Pass `--appearance light`, `--appearance dark`, or
+`--appearance both` to override the configured appearance; `both` produces 70 PNGs.
 
 Pass `--theme <id>` (repeatable) or `--theme all` to capture the app's other palettes: `t3-code`,
 `t3-chat`, `grove`, `ocean`, `ember`, and `iris`. The runner hands the palette to the app as a launch
@@ -63,32 +63,41 @@ multiplies the run by six; only the native build is shared.
 
 The default matrix is:
 
-| Output folder                         | Capture target            | Upload dimensions | Store slot                                |
-| ------------------------------------- | ------------------------- | ----------------- | ----------------------------------------- |
-| `apple/iphone-6.9/dark/t3-code/`      | iPhone 17 Pro Max         | 1320×2868         | App Store Connect iPhone 6.9-inch         |
-| `apple/iphone-6.5/dark/t3-code/`      | disposable iPhone 14 Plus | 1284×2778         | App Store Connect iPhone 6.5-inch         |
-| `apple/ipad-13/dark/t3-code/`         | iPad Pro 13-inch (M5)     | 2752×2064         | App Store Connect iPad 13-inch, landscape |
-| `google-play/phone/dark/t3-code/`     | Pixel AVD at 420 dpi      | 1080×1920         | Google Play phone, portrait 9:16          |
-| `google-play/tablet-7/dark/t3-code/`  | Pixel AVD at 600dp width  | 1080×1920         | Google Play 7-inch tablet, portrait 9:16  |
-| `google-play/tablet-10/dark/t3-code/` | Pixel AVD at 800dp width  | 1440×2560         | Google Play 10-inch tablet, portrait 9:16 |
+| Output folder                         | Capture target               | Upload dimensions | Store slot                                |
+| ------------------------------------- | ---------------------------- | ----------------- | ----------------------------------------- |
+| `apple/iphone-6.9/dark/t3-code/`      | disposable iPhone 17 Pro Max | 1320×2868         | App Store Connect iPhone 6.9-inch         |
+| `apple/iphone-6.5/dark/t3-code/`      | disposable iPhone 14 Plus    | 1284×2778         | App Store Connect iPhone 6.5-inch         |
+| `apple/ipad-13/dark/t3-code/`         | iPad Pro 13-inch (M5)        | 2752×2064         | App Store Connect iPad 13-inch, landscape |
+| `google-play/phone/dark/t3-code/`     | Pixel AVD at 420 dpi         | 1080×1920         | Google Play phone, portrait 9:16          |
+| `google-play/tablet-7/dark/t3-code/`  | Pixel AVD at 600dp width     | 1080×1920         | Google Play 7-inch tablet, portrait 9:16  |
+| `google-play/tablet-10/dark/t3-code/` | Pixel AVD at 800dp width     | 1440×2560         | Google Play 10-inch tablet, portrait 9:16 |
 
-Each target captures thread, terminal, review, thread list, and environments. Each palette folder's
-five screenshots satisfy the configured Apple limit of 1–10, Google
+Each target captures thread, terminal, review, thread list, and environments, and every target but
+the iPad also captures agent activity. Each palette folder's five or six screenshots satisfy the configured Apple limit of 1–10, Google
 phone requirement of 2–8, and Google tablet recommendation/slot minimum of 4 with a maximum of 8.
 Every palette gets its own leaf folder so one upload slot never mixes themes and each folder keeps a
 store-legal screenshot count.
+
+The agent-activity scene shows what a user sees away from the app. The app stages the same Live
+Activity (iOS) or ongoing Live Update (Android) the relay would publish for four seeded threads. On
+iOS the runner then locks the simulator and pushes the matching approval alert with `simctl push`;
+on Android the staged update carries the alert and the runner opens the notification shade. Locking
+the simulator and answering the notification permission prompt use
+[AXe](https://github.com/cameroncooke/AXe), so install it (`brew tap cameroncooke/axe && brew
+install axe`) or set `AXE_PATH` before capturing iOS. The iPad skips the scene because the lock
+screen does not follow the app's landscape self-rotation.
 
 The generated tree is deliberately aligned with the store upload fields:
 
     artifacts/app-store/screenshots/
     ├── apple/
-    │   ├── iphone-6.9/dark/t3-code/{thread,terminal,review,threads,environments}.png
-    │   ├── iphone-6.5/dark/t3-code/{thread,terminal,review,threads,environments}.png
+    │   ├── iphone-6.9/dark/t3-code/{thread,terminal,review,threads,environments,agent-activity}.png
+    │   ├── iphone-6.5/dark/t3-code/{thread,terminal,review,threads,environments,agent-activity}.png
     │   └── ipad-13/dark/t3-code/{thread,terminal,review,threads,environments}.png
     └── google-play/
-        ├── phone/dark/t3-code/{thread,terminal,review,threads,environments}.png
-        ├── tablet-7/dark/t3-code/{thread,terminal,review,threads,environments}.png
-        └── tablet-10/dark/t3-code/{thread,terminal,review,threads,environments}.png
+        ├── phone/dark/t3-code/{thread,terminal,review,threads,environments,agent-activity}.png
+        ├── tablet-7/dark/t3-code/{thread,terminal,review,threads,environments,agent-activity}.png
+        └── tablet-10/dark/t3-code/{thread,terminal,review,threads,environments,agent-activity}.png
 
 A light-only run writes the same tree under `light/`; `--appearance both` writes both appearance
 folders, and each requested theme adds a sibling folder next to `t3-code/`.

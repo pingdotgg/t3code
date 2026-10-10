@@ -10,15 +10,16 @@ import * as Binding from "../../Binding.ts";
  * grant is on `*`. Provide the implementation with
  * `Effect.provide(AWS.Location.GetJobHttp)`.
  *
- * @binding
- * @section Managing Batch Jobs
- * @example Poll a Batch Job
+ * ### Managing Batch Jobs
+ * **Example:** Poll a Batch Job
  * ```typescript
  * const getJob = yield* Location.GetJob();
  *
  * const job = yield* getJob({ JobId: jobId });
  * // job.Status → "IN_PROGRESS" | "SUCCEEDED" | …
  * ```
+ *
+ * @binding
  */
 export interface GetJob extends Binding.Service<
   GetJob,

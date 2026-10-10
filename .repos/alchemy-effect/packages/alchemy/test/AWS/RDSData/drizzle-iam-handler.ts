@@ -1,12 +1,12 @@
 import * as Lambda from "@/AWS/Lambda";
 import * as RDS from "@/AWS/RDS";
-import * as Drizzle from "@/Drizzle/index.ts";
+import * as Drizzle from "@/Drizzle/Postgres.ts";
 import { sql } from "drizzle-orm";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 import { RDSDataInfra } from "./infra.ts";
 
@@ -37,7 +37,7 @@ export class RDSDrizzleIamFunction extends Lambda.Function<Lambda.Function>()(
 export default RDSDrizzleIamFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // First query per execution builds the pool + TLS handshake while the
     // serverless cluster may be scaling from idle.
     timeout: Duration.seconds(60),

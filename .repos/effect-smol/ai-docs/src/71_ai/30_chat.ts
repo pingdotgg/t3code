@@ -6,15 +6,15 @@
  */
 import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
 import { Config, Context, DateTime, Effect, Layer, Ref, Schema } from "effect"
-import { AiError, Chat, Prompt, Tool, Toolkit } from "effect/unstable/ai"
-import { FetchHttpClient } from "effect/unstable/http"
+import { AiError, Chat, Prompt, Tool, Toolkit } from "effect/ai"
+import { FetchHttpClient } from "effect/http"
 
 // ---------------------------------------------------------------------------
 // Provider setup
 // ---------------------------------------------------------------------------
 
 const OpenAiClientLayer = OpenAiClient.layerConfig({
-  apiKey: Config.redacted("OPENAI_API_KEY")
+  apiKey: Config.Redacted("OPENAI_API_KEY")
 }).pipe(Layer.provide(FetchHttpClient.layer))
 
 // ---------------------------------------------------------------------------
@@ -43,7 +43,7 @@ const ToolsLayer = Tools.toLayer(Effect.gen(function*() {
 // Service that wraps Chat for a domain use-case
 // ---------------------------------------------------------------------------
 
-export class AiAssistantError extends Schema.TaggedErrorClass<AiAssistantError>()("AiAssistantError", {
+export class AiAssistantError extends Schema.TaggedError<AiAssistantError>()("AiAssistantError", {
   reason: AiError.AiErrorReason
 }) {
   static fromAiError(error: AiError.AiError) {

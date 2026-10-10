@@ -1,7 +1,15 @@
 import * as OpenApiGenerator from "@effect/openapi-generator/OpenApiGenerator"
 import { assert, describe, it } from "@effect/vitest"
 import * as Effect from "effect/Effect"
-import type { OpenAPISpec } from "effect/unstable/httpapi/OpenApi"
+import type { OpenAPISpec, OpenAPISpecOperation, OpenAPISpecPathItem } from "effect/http-api/OpenApi"
+import type * as JsonSchema from "effect/JsonSchema"
+import { spawnSync } from "node:child_process"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
+
+// These integration checks start a fresh TypeScript compiler under CI load.
+const compilationTimeout = 60_000
 
 function assertRuntime(spec: OpenAPISpec, expected: string) {
   return Effect.gen(function*() {
@@ -35,7 +43,11 @@ function assertTypeOnly(spec: OpenAPISpec, expected: string) {
   )
 }
 
-function assertRuntimeIncludes(spec: OpenAPISpec, includes: ReadonlyArray<string>) {
+function assertRuntimeIncludes(
+  spec: OpenAPISpec,
+  includes: ReadonlyArray<string>,
+  excludes: ReadonlyArray<string> = []
+) {
   return Effect.gen(function*() {
     const generator = yield* OpenApiGenerator.OpenApiGenerator
 
@@ -47,9 +59,101 @@ function assertRuntimeIncludes(spec: OpenAPISpec, includes: ReadonlyArray<string
     for (const expected of includes) {
       assert.include(result, expected)
     }
+    for (const excluded of excludes) {
+      assert.notInclude(result, excluded)
+    }
   }).pipe(
     Effect.provide(OpenApiGenerator.layerTransformerSchema)
   )
+}
+
+function assertTypeOnlyIncludes(
+  spec: OpenAPISpec,
+  includes: ReadonlyArray<string>,
+  excludes: ReadonlyArray<string> = []
+) {
+  return Effect.gen(function*() {
+    const generator = yield* OpenApiGenerator.OpenApiGenerator
+
+    const result = yield* generator.generate(spec, {
+      name: "TestClient",
+      format: "httpclient-type-only"
+    })
+
+    for (const expected of includes) {
+      assert.include(result, expected)
+    }
+    for (const excluded of excludes) {
+      assert.notInclude(result, excluded)
+    }
+  }).pipe(
+    Effect.provide(OpenApiGenerator.layerTransformerTs)
+  )
+}
+
+function assertGeneratedClientsCompile(
+  spec: OpenAPISpec,
+  options: {
+    readonly exactOptionalPropertyTypes?: boolean | undefined
+    readonly formats?: ReadonlyArray<"httpclient" | "httpclient-type-only"> | undefined
+    readonly usage?: string | undefined
+  } = {}
+) {
+  const generate = (
+    format: "httpclient" | "httpclient-type-only",
+    layer: typeof OpenApiGenerator.layerTransformerSchema
+  ) =>
+    Effect.gen(function*() {
+      const generator = yield* OpenApiGenerator.OpenApiGenerator
+      return yield* generator.generate(spec, { name: "TestClient", format })
+    }).pipe(Effect.provide(layer))
+
+  return Effect.gen(function*() {
+    const formats = options.formats ?? ["httpclient", "httpclient-type-only"]
+    const clients = yield* Effect.all(formats.map((format) =>
+      generate(
+        format,
+        format === "httpclient"
+          ? OpenApiGenerator.layerTransformerSchema
+          : OpenApiGenerator.layerTransformerTs
+      )
+    ))
+    const directory = mkdtempSync(join(dirname(fileURLToPath(import.meta.url)), ".generated-clients-"))
+    try {
+      const files = clients.map((client, index) => {
+        const path = join(directory, `Client${index}.ts`)
+        writeFileSync(path, `${client}\n${options.usage ?? ""}`)
+        return path
+      })
+      const configPath = join(directory, "tsconfig.json")
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          compilerOptions: {
+            allowImportingTsExtensions: true,
+            exactOptionalPropertyTypes: options.exactOptionalPropertyTypes ?? true,
+            lib: ["ESNext", "DOM"],
+            module: "NodeNext",
+            noEmit: true,
+            skipLibCheck: true,
+            strict: true,
+            target: "ES2022",
+            types: [],
+            verbatimModuleSyntax: true
+          },
+          files
+        })
+      )
+      const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "../../../..")
+      const result = spawnSync(join(repositoryRoot, "node_modules/.bin/tsc"), ["-p", configPath, "--pretty", "false"], {
+        cwd: repositoryRoot,
+        encoding: "utf8"
+      })
+      assert.strictEqual(result.status, 0, `${result.stdout}${result.stderr}`)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
 }
 
 function assertHttpApiIncludes(
@@ -286,7 +390,258 @@ const regressionSpec: OpenAPISpec = {
   tags: [{ name: "Users" }]
 }
 
-describe("OpenApiGenerator", () => {
+const responseMatchingSpec: OpenAPISpec = {
+  openapi: "3.1.0",
+  info: {
+    title: "Response matching API",
+    version: "1.0.0"
+  },
+  paths: {
+    "/auth/device/token": {
+      post: {
+        operationId: "pollDeviceToken",
+        parameters: [],
+        tags: ["ResponseMatching"],
+        security: [],
+        responses: {
+          400: {
+            description: "Problem details or OAuth polling state",
+            content: {
+              "application/problem+json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    kind: { const: "InvalidRequestError" },
+                    code: { type: "string" }
+                  },
+                  required: ["kind", "code"],
+                  additionalProperties: false
+                }
+              },
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    kind: { const: "DeviceTokenOAuthError" },
+                    error: { type: "string" }
+                  },
+                  required: ["kind", "error"],
+                  additionalProperties: false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/archive": {
+      get: {
+        operationId: "downloadArchive",
+        parameters: [],
+        tags: ["ResponseMatching"],
+        security: [],
+        responses: {
+          200: {
+            description: "Archive",
+            content: {
+              "application/zip": {
+                schema: { type: "string", format: "binary" }
+              }
+            }
+          },
+          404: {
+            description: "Not found",
+            content: {
+              "application/problem+json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    title: { type: "string" }
+                  },
+                  required: ["title"],
+                  additionalProperties: false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/avatar": {
+      get: {
+        operationId: "downloadAvatar",
+        parameters: [],
+        tags: ["ResponseMatching"],
+        security: [],
+        responses: {
+          200: {
+            description: "Avatar",
+            content: {
+              "image/png": {
+                schema: { type: "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/custom-binary": {
+      get: {
+        operationId: "downloadCustomBinary",
+        parameters: [],
+        tags: ["ResponseMatching"],
+        security: [],
+        responses: {
+          200: {
+            description: "Custom binary",
+            content: {
+              "application/vnd.example.data": {
+                schema: { type: "string", format: "binary" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mixed-content": {
+      get: {
+        operationId: "downloadMixedContent",
+        parameters: [],
+        tags: ["ResponseMatching"],
+        security: [],
+        responses: {
+          200: {
+            description: "JSON metadata or binary content",
+            content: {
+              "application/json; charset=utf-8": {
+                schema: {
+                  type: "object",
+                  properties: { href: { type: "string" } },
+                  required: ["href"],
+                  additionalProperties: false
+                }
+              },
+              "application/octet-stream; boundary=payload": {
+                schema: { type: "string" }
+              }
+            }
+          },
+          400: {
+            description: "Invalid request",
+            content: {
+              "application/problem+json; charset=utf-8": {
+                schema: {
+                  type: "object",
+                  properties: { title: { type: "string" } },
+                  required: ["title"],
+                  additionalProperties: false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/resources/{id}": {
+      head: {
+        operationId: "checkResource",
+        parameters: [{
+          name: "id",
+          in: "path",
+          required: true,
+          schema: { type: "string" }
+        }],
+        tags: ["ResponseMatching"],
+        security: [],
+        responses: {
+          200: { description: "Exists" },
+          404: { description: "Not found" },
+          500: { description: "Server error" }
+        }
+      }
+    }
+  },
+  components: {
+    schemas: {},
+    securitySchemes: {}
+  },
+  security: [],
+  tags: [{ name: "ResponseMatching" }]
+}
+
+const voidSuccessSpec: OpenAPISpec = {
+  openapi: "3.1.0",
+  info: {
+    title: "Void success API",
+    version: "1.0.0"
+  },
+  paths: {
+    "/mixed": {
+      get: {
+        operationId: "mixedSuccess",
+        parameters: [],
+        tags: ["VoidSuccess"],
+        security: [],
+        responses: {
+          200: {
+            description: "JSON value",
+            content: {
+              "application/json": {
+                schema: { type: "string" }
+              }
+            }
+          },
+          204: { description: "No content" }
+        }
+      }
+    },
+    "/cached": {
+      get: {
+        operationId: "cached",
+        parameters: [],
+        tags: ["VoidSuccess"],
+        security: [],
+        responses: {
+          304: { description: "Not modified" }
+        }
+      }
+    }
+  },
+  components: {
+    schemas: {},
+    securitySchemes: {}
+  },
+  security: [],
+  tags: [{ name: "VoidSuccess" }]
+}
+
+function multipartSpec(schema: JsonSchema.JsonSchema, schemas: JsonSchema.Definitions = {}): OpenAPISpec {
+  return {
+    openapi: "3.1.0",
+    info: { title: "Upload API", version: "1.0.0" },
+    paths: {
+      "/upload": {
+        post: {
+          operationId: "upload",
+          parameters: [],
+          requestBody: {
+            required: true,
+            content: { "multipart/form-data": { schema } }
+          },
+          responses: { "204": { description: "Uploaded" } },
+          tags: ["Upload"],
+          security: []
+        }
+      }
+    },
+    components: { schemas, securitySchemes: {} },
+    security: [],
+    tags: [{ name: "Upload" }]
+  }
+}
+
+// spawnSync blocks this worker, so compilation must not consume another test's deadline.
+describe("OpenApiGenerator", { concurrent: false }, () => {
   describe("schema", () => {
     it.effect("get operation", () =>
       assertRuntime(
@@ -349,10 +704,10 @@ describe("OpenApiGenerator", () => {
 import * as Effect from "effect/Effect"
 import type { SchemaError } from "effect/Schema"
 import * as Schema from "effect/Schema"
-import type * as HttpClient from "effect/unstable/http/HttpClient"
-import * as HttpClientError from "effect/unstable/http/HttpClientError"
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse"
+import type * as HttpClient from "effect/http/HttpClient"
+import * as HttpClientError from "effect/http/HttpClientError"
+import * as HttpClientRequest from "effect/http/HttpClientRequest"
+import * as HttpClientResponse from "effect/http/HttpClientResponse"
 // schemas
 export type GetUser200 = { readonly "id": string, readonly "name": string }
 export const GetUser200 = Schema.Struct({ "id": Schema.String, "name": Schema.String }).annotate({ "description": "User object" })
@@ -375,9 +730,11 @@ export interface OperationConfig {
  * of an operation based upon the value of the \`includeResponse\` configuration
  * option.
  */
-export type WithOptionalResponse<A, Config extends OperationConfig> = Config extends {
+export type WithOptionalResponse<A, Config extends OperationConfig | undefined> = Config extends {
   readonly includeResponse: true
-} ? [A, HttpClientResponse.HttpClientResponse] : A
+} ? [A, HttpClientResponse.HttpClientResponse]
+  : Config extends { readonly includeResponse?: false | undefined } | undefined ? A
+  : A | [A, HttpClientResponse.HttpClientResponse]
 
 export const make = (
   httpClient: HttpClient.HttpClient,
@@ -415,6 +772,35 @@ export const make = (
           )
       : (request) => Effect.flatMap(httpClient.execute(request), withOptionalResponse)
   }
+  const __encodePathParam = encodeURIComponent
+  const __makePathRequest = (
+    method: (url: string) => HttpClientRequest.HttpClientRequest,
+    parameters: ReadonlyArray<string>,
+    getPath: () => string,
+  ) => Effect.suspend(() => {
+    const fail = (description: string, cause?: unknown) => Effect.fail(
+      new HttpClientError.HttpClientError({
+        reason: new HttpClientError.InvalidUrlError({
+          request: method(""),
+          cause,
+          description,
+        }),
+      }),
+    )
+    if (parameters.some((value) => value === "" || /^(?:\\.|%2e){1,2}$/i.test(value))) {
+      return fail("Path parameters must be non-empty and cannot be dot segments")
+    }
+    let path: string
+    try {
+      path = getPath()
+    } catch (cause) {
+      return fail("Failed to encode path parameter", cause)
+    }
+    if (path.split("/").some((segment) => /^(?:\\.|%2e){1,2}$/i.test(segment))) {
+      return fail("Request paths cannot contain dot segments")
+    }
+    return Effect.succeed(method(path))
+  })
   const decodeSuccess =
     <Schema extends Schema.Constraint>(schema: Schema) =>
     (response: HttpClientResponse.HttpClientResponse) =>
@@ -428,18 +814,23 @@ export const make = (
       )
   return {
     httpClient,
-    "getUser": (id, options) => HttpClientRequest.get(\`/users/\${id}\`).pipe(
-    withResponse(options?.config)(HttpClientResponse.matchStatus({
+    "getUser": (id, options: Parameters<TestClient["getUser"]>[1]) => __makePathRequest(HttpClientRequest.get, [id], () => "/users/" + __encodePathParam(id) + "").pipe(
+    Effect.flatMap((request) => request.pipe(
+      withResponse(options?.config)(HttpClientResponse.matchStatus({
       "2xx": decodeSuccess(GetUser200),
       orElse: unexpectedStatus
     }))
+    ))
   )
   }
 }
 
 export interface TestClient {
   readonly httpClient: HttpClient.HttpClient
-  readonly "getUser": <Config extends OperationConfig>(id: string, options: { readonly config?: Config | undefined } | undefined) => Effect.Effect<WithOptionalResponse<typeof GetUser200.Type, Config>, HttpClientError.HttpClientError | SchemaError>
+  readonly "getUser": {
+    <Config extends OperationConfig | undefined = undefined>(id: string, options: { readonly config: Config }): Effect.Effect<WithOptionalResponse<typeof GetUser200.Type, Config>, HttpClientError.HttpClientError | SchemaError>;
+    <Config extends OperationConfig | undefined = undefined>(id: string, options: { readonly config?: Config | undefined } | undefined): Effect.Effect<WithOptionalResponse<typeof GetUser200.Type, Config | undefined>, HttpClientError.HttpClientError | SchemaError>;
+  }
 }
 
 export interface TestClientError<Tag extends string, E> {
@@ -467,6 +858,59 @@ export const TestClientError = <Tag extends string, E>(
     response,
     request: response.request,
   }) as any`
+      ))
+
+    it.effect("resolves JSON Pointer-escaped local references", () =>
+      assertRuntimeIncludes(
+        {
+          openapi: "3.1.0",
+          info: {
+            title: "Test API",
+            version: "1.0.0"
+          },
+          paths: {
+            "/widgets": {
+              get: {
+                operationId: "listWidgets",
+                parameters: [
+                  { $ref: "#/components/parameters/Page~1Limit" } as any,
+                  { $ref: "#/components/parameters/Tilde~0Name" } as any
+                ],
+                responses: {
+                  204: {
+                    description: "No content"
+                  }
+                },
+                tags: ["Widgets"],
+                security: []
+              }
+            }
+          },
+          components: {
+            schemas: {},
+            parameters: {
+              "Page/Limit": {
+                name: "limit",
+                in: "query",
+                required: false,
+                schema: { type: "integer" }
+              },
+              "Tilde~Name": {
+                name: "tilde",
+                in: "query",
+                required: false,
+                schema: { type: "string" }
+              }
+            }
+          } as any,
+          security: [],
+          tags: [{ name: "Widgets" }]
+        },
+        [
+          `readonly "limit"?: number`,
+          `readonly "tilde"?: string`,
+          `HttpClientRequest.setUrlParams({ "limit": options?.params?.["limit"] as any, "tilde": options?.params?.["tilde"] as any })`
+        ]
       ))
 
     it.effect("sse operation decodes event payload from json string", () =>
@@ -517,11 +961,72 @@ export const TestClientError = <Tag extends string, E>(
           tags: []
         },
         [
-          `import * as Sse from "effect/unstable/encoding/Sse"`,
-          `readonly "streamEventsSse": () => Stream.Stream<{ readonly event: string; readonly id: string | undefined; readonly data: typeof StreamEvents200Sse.Type }, HttpClientError.HttpClientError | SchemaError | Sse.Retry, typeof StreamEvents200Sse.DecodingServices>`,
-          `"streamEventsSse": () => HttpClientRequest.get(\`/events\`).pipe(`,
+          `import * as Sse from "effect/encoding/Sse"`,
+          `readonly "streamEventsSse": () => Stream.Stream<{ readonly event: string; readonly id: string | undefined; readonly data: typeof StreamEvents200Sse.Type }, HttpClientError.HttpClientError | SchemaError | Sse.Retry | Sse.SseError, typeof StreamEvents200Sse.DecodingServices>`,
+          `"streamEventsSse": () => HttpClientRequest.get("/events").pipe(`,
           `sseRequest(StreamEvents200Sse)`,
           `schema: Schema.ConstraintDecoder<Type, DecodingServices>`
+        ]
+      ))
+
+    it.effect("annotated sse operation decodes the full event schema", () =>
+      assertRuntimeIncludes(
+        {
+          openapi: "3.1.0",
+          info: {
+            title: "Test API",
+            version: "1.0.0"
+          },
+          paths: {
+            "/events": {
+              get: {
+                operationId: "streamEvents",
+                parameters: [],
+                responses: {
+                  200: {
+                    description: "Events streamed successfully",
+                    content: {
+                      "text/event-stream": {
+                        schema: {
+                          type: "object",
+                          properties: {
+                            id: {
+                              anyOf: [{ type: "string" }, { type: "null" }]
+                            },
+                            event: { const: "message" },
+                            data: { type: "string" }
+                          },
+                          required: ["id", "event", "data"],
+                          additionalProperties: false
+                        },
+                        "x-effect-stream": {
+                          encoding: "sse",
+                          errorSchema: {},
+                          causeSchema: {},
+                          failureEvent: "effect/http-api/stream/failure"
+                        }
+                      }
+                    }
+                  }
+                },
+                tags: ["Events"],
+                security: []
+              }
+            }
+          },
+          components: {
+            schemas: {},
+            securitySchemes: {}
+          },
+          security: [],
+          tags: []
+        },
+        [
+          `"id": Schema.optionalKey(Schema.String), "event": Schema.Literal("message"), "data": Schema.String`,
+          `"id": Schema.optionalKey(Schema.String), "event": Schema.Literal("effect/http-api/stream/failure"), "data": Schema.String`,
+          `readonly "streamEventsSse": () => Stream.Stream<typeof StreamEvents200Sse.Type, HttpClientError.HttpClientError | SchemaError | Sse.Retry | Sse.SseError, typeof StreamEvents200Sse.DecodingServices>`,
+          `sseEventRequest(StreamEvents200Sse)`,
+          `Stream.pipeThroughChannel(Sse.decodeSchema(schema))`
         ]
       ))
 
@@ -588,6 +1093,48 @@ export const TestClientError = <Tag extends string, E>(
           `readonly payload: typeof IssueTokenRequestFormUrlEncoded.Encoded`
         ]
       ))
+
+    it.effect("preserves response variants and routes binary and bodiless statuses", () =>
+      assertRuntimeIncludes(responseMatchingSpec, [
+        `export const PollDeviceToken400 = Schema.Union(`,
+        `Schema.Literal("InvalidRequestError")`,
+        `Schema.Literal("DeviceTokenOAuthError")`,
+        `"400": decodeError("PollDeviceToken400", PollDeviceToken400)`,
+        `export type DownloadArchive404 = { readonly "title": string }`,
+        `const decodeBinary = (response: HttpClientResponse.HttpClientResponse) =>`,
+        `Effect.map(response.arrayBuffer, (buffer) => new Uint8Array(buffer))`,
+        `"2xx": decodeBinary`,
+        `readonly "downloadArchive": {`,
+        `<Config extends OperationConfig | undefined = undefined>(options: { readonly config: Config }): Effect.Effect<WithOptionalResponse<Uint8Array, Config>`,
+        `<Config extends OperationConfig | undefined = undefined>(options: { readonly config?: Config | undefined } | undefined): Effect.Effect<WithOptionalResponse<Uint8Array, Config | undefined>`,
+        `readonly "downloadArchiveStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
+        `readonly "downloadAvatarStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
+        `"downloadAvatar": (options: Parameters<TestClient["downloadAvatar"]>[0]) => HttpClientRequest.get("/avatar").pipe(
+      withResponse(options?.config)(HttpClientResponse.matchStatus({
+      "2xx": decodeBinary`,
+        `readonly "downloadCustomBinaryStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
+        `"400": decodeError("DownloadMixedContent400", DownloadMixedContent400)`,
+        `readonly "downloadMixedContent": {`,
+        `<Config extends OperationConfig | undefined = undefined>(options: { readonly config: Config }): Effect.Effect<WithOptionalResponse<Uint8Array, Config>`,
+        `<Config extends OperationConfig | undefined = undefined>(options: { readonly config?: Config | undefined } | undefined): Effect.Effect<WithOptionalResponse<Uint8Array, Config | undefined>`,
+        `readonly "downloadMixedContentStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
+        `"200": () => Effect.void`,
+        `"404": decodeVoidError("404")`,
+        `"500": decodeVoidError("500")`,
+        `TestClientError<"404", undefined>`,
+        `TestClientError<"500", undefined>`
+      ], [
+        `"200": decodeSuccess(DownloadMixedContent200)`,
+        `typeof DownloadMixedContent200.Type | Uint8Array`
+      ]))
+
+    it.effect("routes mixed and non-2xx bodiless success responses", () =>
+      assertRuntimeIncludes(voidSuccessSpec, [
+        `"200": decodeSuccess(MixedSuccess200)`,
+        `"204": () => Effect.void`,
+        `"304": () => Effect.void`,
+        `WithOptionalResponse<typeof MixedSuccess200.Type | void, Config>`
+      ]))
   })
 
   describe("type-only", () => {
@@ -649,10 +1196,10 @@ export const TestClientError = <Tag extends string, E>(
         },
         `import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
-import type * as HttpClient from "effect/unstable/http/HttpClient"
-import * as HttpClientError from "effect/unstable/http/HttpClientError"
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse"
+import type * as HttpClient from "effect/http/HttpClient"
+import * as HttpClientError from "effect/http/HttpClientError"
+import * as HttpClientRequest from "effect/http/HttpClientRequest"
+import * as HttpClientResponse from "effect/http/HttpClientResponse"
 // schemas
 export type GetUser200 = { readonly "id": string, readonly "name": string }
 
@@ -674,9 +1221,11 @@ export interface OperationConfig {
  * of an operation based upon the value of the \`includeResponse\` configuration
  * option.
  */
-export type WithOptionalResponse<A, Config extends OperationConfig> = Config extends {
+export type WithOptionalResponse<A, Config extends OperationConfig | undefined> = Config extends {
   readonly includeResponse: true
-} ? [A, HttpClientResponse.HttpClientResponse] : A
+} ? [A, HttpClientResponse.HttpClientResponse]
+  : Config extends { readonly includeResponse?: false | undefined } | undefined ? A
+  : A | [A, HttpClientResponse.HttpClientResponse]
 
 export const make = (
   httpClient: HttpClient.HttpClient,
@@ -714,6 +1263,35 @@ export const make = (
           )
       : (request) => Effect.flatMap(httpClient.execute(request), withOptionalResponse)
   }
+  const __encodePathParam = encodeURIComponent
+  const __makePathRequest = (
+    method: (url: string) => HttpClientRequest.HttpClientRequest,
+    parameters: ReadonlyArray<string>,
+    getPath: () => string,
+  ) => Effect.suspend(() => {
+    const fail = (description: string, cause?: unknown) => Effect.fail(
+      new HttpClientError.HttpClientError({
+        reason: new HttpClientError.InvalidUrlError({
+          request: method(""),
+          cause,
+          description,
+        }),
+      }),
+    )
+    if (parameters.some((value) => value === "" || /^(?:\\.|%2e){1,2}$/i.test(value))) {
+      return fail("Path parameters must be non-empty and cannot be dot segments")
+    }
+    let path: string
+    try {
+      path = getPath()
+    } catch (cause) {
+      return fail("Failed to encode path parameter", cause)
+    }
+    if (path.split("/").some((segment) => /^(?:\\.|%2e){1,2}$/i.test(segment))) {
+      return fail("Request paths cannot contain dot segments")
+    }
+    return Effect.succeed(method(path))
+  })
   const decodeSuccess = <A>(response: HttpClientResponse.HttpClientResponse) =>
     response.json as Effect.Effect<A, HttpClientError.HttpClientError>
   const decodeVoid = (_response: HttpClientResponse.HttpClientResponse) =>
@@ -750,15 +1328,20 @@ export const make = (
   }
   return {
     httpClient,
-    "getUser": (id, options) => HttpClientRequest.get(\`/users/\${id}\`).pipe(
-    onRequest(options?.config)(["2xx"])
+    "getUser": (id, options: Parameters<TestClient["getUser"]>[1]) => __makePathRequest(HttpClientRequest.get, [id], () => "/users/" + __encodePathParam(id) + "").pipe(
+    Effect.flatMap((request) => request.pipe(
+      onRequest(options?.config)(["2xx"])
+    ))
   )
   }
 }
 
 export interface TestClient {
   readonly httpClient: HttpClient.HttpClient
-  readonly "getUser": <Config extends OperationConfig>(id: string, options: { readonly config?: Config | undefined } | undefined) => Effect.Effect<WithOptionalResponse<GetUser200, Config>, HttpClientError.HttpClientError>
+  readonly "getUser": {
+    <Config extends OperationConfig | undefined = undefined>(id: string, options: { readonly config: Config }): Effect.Effect<WithOptionalResponse<GetUser200, Config>, HttpClientError.HttpClientError>;
+    <Config extends OperationConfig | undefined = undefined>(id: string, options: { readonly config?: Config | undefined } | undefined): Effect.Effect<WithOptionalResponse<GetUser200, Config | undefined>, HttpClientError.HttpClientError>;
+  }
 }
 
 export interface TestClientError<Tag extends string, E> {
@@ -787,6 +1370,48 @@ export const TestClientError = <Tag extends string, E>(
     request: response.request,
   }) as any`
       ))
+
+    it.effect("preserves response variants and routes binary and bodiless statuses", () =>
+      assertTypeOnlyIncludes(responseMatchingSpec, [
+        `export type PollDeviceToken400 =`,
+        `readonly "kind": "InvalidRequestError"`,
+        `readonly "kind": "DeviceTokenOAuthError"`,
+        `onRequest(options?.config)([], {"400":"PollDeviceToken400"})`,
+        `const decodeBinary = (response: HttpClientResponse.HttpClientResponse) =>`,
+        `onRequest(options?.config)([], {"404":"DownloadArchive404"}, {"binary":["2xx"],"voidSuccess":[],"voidError":[]})`,
+        `readonly "downloadArchive": {`,
+        `<Config extends OperationConfig | undefined = undefined>(options: { readonly config: Config }): Effect.Effect<WithOptionalResponse<Uint8Array, Config>`,
+        `<Config extends OperationConfig | undefined = undefined>(options: { readonly config?: Config | undefined } | undefined): Effect.Effect<WithOptionalResponse<Uint8Array, Config | undefined>`,
+        `readonly "downloadAvatarStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
+        `"downloadAvatar": (options: Parameters<TestClient["downloadAvatar"]>[0]) => HttpClientRequest.get("/avatar").pipe(
+      onRequest(options?.config)([], undefined, {"binary":["2xx"],"voidSuccess":[],"voidError":[]})`,
+        `readonly "downloadCustomBinaryStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
+        `import * as HttpClient from "effect/http/HttpClient"`,
+        `onRequest(options?.config)([], {"400":"DownloadMixedContent400"}, {"binary":["2xx"],"voidSuccess":[],"voidError":[]})`,
+        `readonly "downloadMixedContent": {`,
+        `<Config extends OperationConfig | undefined = undefined>(options: { readonly config: Config }): Effect.Effect<WithOptionalResponse<Uint8Array, Config>`,
+        `<Config extends OperationConfig | undefined = undefined>(options: { readonly config?: Config | undefined } | undefined): Effect.Effect<WithOptionalResponse<Uint8Array, Config | undefined>`,
+        `readonly "downloadMixedContentStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
+        `onRequest(options?.config)([], undefined, {"binary":[],"voidSuccess":["200"],"voidError":["404","500"]})`,
+        `cases[code] = decodeVoidError(code)`,
+        `TestClientError<"404", undefined>`,
+        `TestClientError<"500", undefined>`
+      ], [
+        `DownloadMixedContent200 | Uint8Array`
+      ]))
+
+    it.effect("routes mixed and non-2xx bodiless success responses", () =>
+      assertTypeOnlyIncludes(voidSuccessSpec, [
+        `onRequest(options?.config)(["200"], undefined, {"binary":[],"voidSuccess":["204"],"voidError":[]})`,
+        `onRequest(options?.config)([], undefined, {"binary":[],"voidSuccess":["304"],"voidError":[]})`,
+        `WithOptionalResponse<MixedSuccess200 | void, Config>`
+      ]))
+
+    it.effect(
+      "emits compilable clients for schema-backed and type-only formats",
+      () => assertGeneratedClientsCompile(responseMatchingSpec),
+      compilationTimeout
+    )
   })
 
   describe("httpapi", () => {
@@ -871,7 +1496,7 @@ export const TestClientError = <Tag extends string, E>(
           ]
         },
         [
-          `import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, HttpApiSecurity, OpenApi } from "effect/unstable/httpapi"`,
+          `import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, HttpApiSecurity, OpenApi } from "effect/http-api"`,
           `export type GetUserPathParams = { readonly "id": string }`,
           `export const GetUserPathParams = Schema.Struct({ "id": Schema.String })`,
           `class UsersGroup extends HttpApiGroup.make("Users")`,
@@ -924,7 +1549,7 @@ export const TestClientError = <Tag extends string, E>(
                 tags: ["Applications"],
                 security: []
               }
-            } as any
+            }
           },
           components: {
             schemas: {},
@@ -1138,7 +1763,7 @@ export const TestClientError = <Tag extends string, E>(
           tags: [{ name: "Payload" }]
         },
         [
-          `import { Multipart } from "effect/unstable/http"`,
+          `import { Multipart } from "effect/http"`,
           `export type __HttpApiMultipartSingleFile = Multipart.PersistedFile
 export const __HttpApiMultipartSingleFile = Multipart.SingleFileSchema`,
           `export type __HttpApiMultipartFiles = ReadonlyArray<Multipart.PersistedFile>
@@ -1154,6 +1779,65 @@ export const CreatePayloadRequestText = Schema.String`,
         [
           "Schema.Opaque",
           `extends Schema.Class<CreatePayloadRequestJson>("CreatePayloadRequestJson")`
+        ]
+      ))
+
+    it.effect("preserves multiple JSON response representations with application/json preferred", () =>
+      assertHttpApiIncludes(
+        {
+          openapi: "3.1.0",
+          info: {
+            title: "Test API",
+            version: "1.0.0"
+          },
+          paths: {
+            "/dual": {
+              get: {
+                operationId: "dualJson",
+                parameters: [],
+                responses: {
+                  200: {
+                    description: "Dual JSON response",
+                    content: {
+                      "application/problem+json": {
+                        schema: {
+                          type: "object",
+                          properties: {
+                            title: { type: "string" }
+                          },
+                          required: ["title"],
+                          additionalProperties: false
+                        }
+                      },
+                      "application/json": {
+                        schema: {
+                          type: "object",
+                          properties: {
+                            value: { type: "string" }
+                          },
+                          required: ["value"],
+                          additionalProperties: false
+                        }
+                      }
+                    }
+                  }
+                },
+                tags: ["DualJson"],
+                security: []
+              }
+            }
+          },
+          components: {
+            schemas: {},
+            securitySchemes: {}
+          },
+          security: [],
+          tags: [{ name: "DualJson" }]
+        },
+        [
+          `export type DualJson200 = { readonly "value": string }`,
+          `export type DualJson200ApplicationProblemJson = { readonly "title": string }`,
+          `HttpApiEndpoint.get("dualJson", "/dual", { success: [DualJson200, DualJson200ApplicationProblemJson.pipe(HttpApiSchema.asJson({ contentType: "application/problem+json" }))] })`
         ]
       ))
 
@@ -1197,7 +1881,7 @@ export const CreatePayloadRequestText = Schema.String`,
                           causeSchema: {
                             type: "object"
                           },
-                          failureEvent: "effect/httpapi/stream/failure"
+                          failureEvent: "effect/http-api/stream/failure"
                         }
                       }
                     }
@@ -1238,7 +1922,7 @@ export const CreatePayloadRequestText = Schema.String`,
                           causeSchema: {
                             type: "object"
                           },
-                          failureEvent: "effect/httpapi/stream/failure"
+                          failureEvent: "effect/http-api/stream/failure"
                         }
                       }
                     }
@@ -1312,7 +1996,7 @@ export const CreatePayloadRequestText = Schema.String`,
                           causeSchema: {
                             type: "object"
                           },
-                          failureEvent: "effect/httpapi/stream/failure"
+                          failureEvent: "effect/http-api/stream/failure"
                         } as any
                       }
                     }
@@ -1527,7 +2211,7 @@ export const CreatePayloadRequestText = Schema.String`,
           tags: [{ name: "Payload" }]
         },
         [
-          `import { Multipart } from "effect/unstable/http"`,
+          `import { Multipart } from "effect/http"`,
           `export type __HttpApiMultipartSingleFile = Multipart.PersistedFile
 export const __HttpApiMultipartSingleFile = Multipart.SingleFileSchema`,
           `export type __HttpApiMultipartFiles = ReadonlyArray<Multipart.PersistedFile>
@@ -1734,7 +2418,7 @@ export const __HttpApiMultipartFiles = Multipart.FilesSchema`,
           tags: [{ name: "Payload" }]
         },
         [
-          `import { Multipart } from "effect/unstable/http"`,
+          `import { Multipart } from "effect/http"`,
           `export type UploadWithContentEncodingRequestFormData = { readonly "file": __HttpApiMultipartSingleFile, readonly "files": __HttpApiMultipartFiles }`,
           `export const UploadWithContentEncodingRequestFormData = Schema.Struct({ "file": __HttpApiMultipartSingleFile, "files": __HttpApiMultipartFiles })`,
           `HttpApiEndpoint.post("uploadWithContentEncoding", "/upload-content-encoding", { payload: UploadWithContentEncodingRequestFormData.pipe(HttpApiSchema.asMultipart()), success: HttpApiSchema.Empty(200) })`
@@ -2200,7 +2884,228 @@ export const __HttpApiMultipartFiles = Multipart.FilesSchema`,
       ))
   })
 
+  describe("QUERY", () => {
+    const queryOperation: OpenAPISpecOperation = {
+      operationId: "search",
+      parameters: [],
+      tags: ["Search"],
+      security: [],
+      requestBody: {
+        required: true,
+        content: {
+          "application/json": {
+            schema: {
+              type: "object",
+              properties: { query: { type: "string" } },
+              required: ["query"],
+              additionalProperties: false
+            }
+          }
+        }
+      },
+      responses: { "204": { description: "No content" } }
+    }
+
+    const makeQuerySpec = (pathItem: OpenAPISpecPathItem & { query?: OpenAPISpecOperation }): OpenAPISpec => ({
+      openapi: "3.1.0",
+      info: { title: "QUERY API", version: "1.0.0" },
+      components: { schemas: {}, securitySchemes: {} },
+      security: [],
+      tags: [{ name: "Search" }],
+      paths: {
+        "/search": {
+          get: {
+            operationId: "list",
+            parameters: [],
+            tags: ["Search"],
+            security: [],
+            responses: { "204": { description: "No content" } }
+          },
+          ...pathItem
+        }
+      }
+    })
+
+    it.effect.each([
+      {
+        name: "OpenAPI 3.1 extension",
+        spec: makeQuerySpec({ "x-oai-additionalOperations": { QUERY: queryOperation } })
+      },
+      {
+        name: "native OpenAPI 3.2 field",
+        spec: {
+          ...makeQuerySpec({
+            query: queryOperation,
+            "x-oai-additionalOperations": { QUERY: { ...queryOperation, operationId: "legacySearch" } }
+          }),
+          openapi: "3.2.0"
+        } as unknown as OpenAPISpec
+      }
+    ])("generates QUERY request bodies from the $name", ({ spec }) =>
+      Effect.all([
+        assertRuntimeIncludes(spec, [
+          `HttpClientRequest.get("/search")`,
+          `HttpClientRequest.query("/search")`,
+          `export const SearchRequestJson = Schema.Struct({ "query": Schema.String })`,
+          `HttpClientRequest.bodyJsonUnsafe(options.payload)`,
+          `readonly payload: typeof SearchRequestJson.Encoded`
+        ], ["legacySearch", "LegacySearch"]),
+        assertTypeOnlyIncludes(spec, [
+          `HttpClientRequest.get("/search")`,
+          `HttpClientRequest.query("/search")`,
+          `HttpClientRequest.bodyJsonUnsafe(options.payload)`,
+          `export type SearchRequestJson = { readonly "query": string }`,
+          `readonly payload: SearchRequestJson`
+        ], ["legacySearch", "LegacySearch"]),
+        assertHttpApiIncludes(spec, [
+          `HttpApiEndpoint.get("list", "/search"`,
+          `export const SearchRequestJson = Schema.Struct({ "query": Schema.String })`,
+          `HttpApiEndpoint.query("search", "/search", { payload: SearchRequestJson, success: HttpApiSchema.Empty(204) })`
+        ], ["legacySearch", "LegacySearch"])
+      ]))
+  })
+
   describe("regression", () => {
+    for (const format of ["httpclient", "httpclient-type-only"] as const) {
+      for (const exactOptionalPropertyTypes of [true, false]) {
+        it.effect(
+          `preserves includeResponse success types (${format}, exactOptionalPropertyTypes=${exactOptionalPropertyTypes})`,
+          () =>
+            assertGeneratedClientsCompile({
+              openapi: "3.1.0",
+              info: { title: "Value", version: "1.0.0" },
+              components: { schemas: {}, securitySchemes: {} },
+              security: [],
+              tags: [],
+              paths: {
+                "/value": {
+                  get: {
+                    operationId: "getValue",
+                    parameters: [],
+                    security: [],
+                    tags: ["Value"],
+                    responses: {
+                      "200": {
+                        description: "Value",
+                        content: { "application/json": { schema: { type: "string" } } }
+                      }
+                    }
+                  }
+                }
+              }
+            }, {
+              formats: [format],
+              exactOptionalPropertyTypes,
+              usage: `type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends
+  (<T>() => T extends B ? 1 : 2) ? true : false
+type Assert<T extends true> = T
+type WithResponse = [string, HttpClientResponse.HttpClientResponse]
+declare const client: TestClient
+declare const dynamic: boolean
+declare const optionalTrue: { readonly includeResponse?: true }
+declare const optionalBoolean: { readonly includeResponse?: boolean }
+declare const nullableConfig: { readonly includeResponse: true } | undefined
+
+const enabled = client.getValue({ config: { includeResponse: true } })
+const disabled = client.getValue({ config: { includeResponse: false } })
+const omitted = client.getValue(undefined)
+const emptyOptions = client.getValue({})
+const undefinedConfig = client.getValue({ config: undefined })
+const dynamicResult = client.getValue({ config: { includeResponse: dynamic } })
+const optionalTrueResult = client.getValue({ config: optionalTrue })
+const optionalBooleanResult = client.getValue({ config: optionalBoolean })
+const nullableConfigResult = client.getValue({ config: nullableConfig })
+const conditionalConfig = Math.random() > 0.5 ? { includeResponse: true as const } : undefined
+const conditionalConfigResult = client.getValue({ config: conditionalConfig })
+
+export type Enabled = Assert<Equal<Effect.Success<typeof enabled>, WithResponse>>
+export type Disabled = Assert<Equal<Effect.Success<typeof disabled>, string>>
+export type Omitted = Assert<Equal<Effect.Success<typeof omitted>, string>>
+export type EmptyOptions = Assert<Equal<Effect.Success<typeof emptyOptions>, string>>
+export type UndefinedConfig = Assert<Equal<Effect.Success<typeof undefinedConfig>, string>>
+export type Dynamic = Assert<Equal<Effect.Success<typeof dynamicResult>, string | WithResponse>>
+export type OptionalTrue = Assert<Equal<Effect.Success<typeof optionalTrueResult>, string | WithResponse>>
+export type OptionalBoolean = Assert<Equal<Effect.Success<typeof optionalBooleanResult>, string | WithResponse>>
+export type NullableConfig = Assert<Equal<Effect.Success<typeof nullableConfigResult>, string | WithResponse>>
+export type ConditionalConfig = Assert<Equal<Effect.Success<typeof conditionalConfigResult>, string | WithResponse>>
+`
+            }),
+          compilationTimeout
+        )
+      }
+    }
+
+    it.effect("quotes static path text with and without parameters", () => {
+      const prefix = "/files/\"`\\\n/"
+      const suffix = "/content\"`"
+      const operation: OpenAPISpecOperation = {
+        operationId: "read",
+        parameters: [],
+        tags: ["Files"],
+        security: [],
+        responses: { "204": { description: "No content" } }
+      }
+      return assertRuntimeIncludes({
+        openapi: "3.1.0",
+        info: { title: "Quoted paths", version: "1.0.0" },
+        components: { schemas: {}, securitySchemes: {} },
+        security: [],
+        tags: [],
+        paths: {
+          [prefix + suffix]: { get: operation },
+          [prefix + "{id}" + suffix]: {
+            get: {
+              ...operation,
+              operationId: "readById",
+              parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }]
+            }
+          }
+        }
+      }, [
+        `HttpClientRequest.get(${JSON.stringify(prefix + suffix)})`,
+        `() => ${JSON.stringify(prefix)} + __encodePathParam(id) + ${JSON.stringify(suffix)}`
+      ])
+    })
+
+    it.effect("emits compilable clients when schema examples are invalid", () =>
+      assertGeneratedClientsCompile({
+        openapi: "3.0.3",
+        info: {
+          title: "Invalid examples API",
+          version: "1.0.0"
+        },
+        paths: {
+          "/triggers": {
+            get: {
+              operationId: "getTriggers",
+              parameters: [],
+              responses: {
+                200: {
+                  description: "OK",
+                  content: {
+                    "application/json": {
+                      schema: {
+                        type: "array",
+                        items: { type: "string" },
+                        example: "create"
+                      }
+                    }
+                  }
+                }
+              },
+              tags: ["Triggers"],
+              security: []
+            }
+          }
+        },
+        components: {
+          schemas: {},
+          securitySchemes: {}
+        },
+        security: [],
+        tags: [{ name: "Triggers" }]
+      } as unknown as OpenAPISpec), compilationTimeout)
+
     it.effect("runtime warnings do not report additional-tags-dropped outside httpapi", () =>
       assertRuntimeStableWithWarnings(
         {
@@ -2265,5 +3170,151 @@ export const __HttpApiMultipartFiles = Multipart.FilesSchema`,
           operationId: "getUser"
         }
       ]))
+
+    it.effect("emits compilable open objects with optional properties", () =>
+      assertGeneratedClientsCompile(
+        {
+          openapi: "3.1.0",
+          info: {
+            title: "Open object regression API",
+            version: "1.0.0"
+          },
+          paths: {
+            "/widget": {
+              get: {
+                operationId: "getWidget",
+                parameters: [],
+                responses: {
+                  200: {
+                    description: "OK",
+                    content: {
+                      "application/json": {
+                        schema: {
+                          type: "object",
+                          properties: {
+                            optionalValue: {
+                              type: "string"
+                            }
+                          },
+                          additionalProperties: true
+                        }
+                      }
+                    }
+                  }
+                },
+                tags: ["Widgets"],
+                security: []
+              }
+            }
+          },
+          components: {
+            schemas: {},
+            securitySchemes: {}
+          },
+          security: [],
+          tags: []
+        },
+        {
+          exactOptionalPropertyTypes: false,
+          formats: ["httpclient"]
+        }
+      ), compilationTimeout)
+
+    it.effect("types multipart binary fields as File | Blob for generated clients", () =>
+      assertGeneratedClientsCompile(
+        multipartSpec({
+          type: "object",
+          properties: { file: { type: "string", format: "binary" } },
+          required: ["file"],
+          additionalProperties: false
+        }),
+        {
+          usage: `export const withFile: UploadRequestFormData = { file: new File([], "upload.txt") }
+export const withBlob: UploadRequestFormData = { file: new Blob([]) }
+// @ts-expect-error Binary multipart fields do not accept strings.
+export const withString: UploadRequestFormData = { file: "upload.txt" }
+`
+        }
+      ), compilationTimeout)
+
+    it.effect(
+      "types recursive multipart binary references as File | Blob for generated clients",
+      () =>
+        assertGeneratedClientsCompile(
+          multipartSpec({ $ref: "#/components/schemas/Node" }, {
+            Node: {
+              type: "object",
+              properties: {
+                file: { type: "string", format: "binary" },
+                child: { $ref: "#/components/schemas/Node" }
+              },
+              required: ["file"],
+              additionalProperties: false
+            }
+          }),
+          {
+            usage: `const file = new File([], "upload.txt")
+const blob = new Blob([])
+export const payload: UploadRequestFormData = { file, child: { file: blob, child: { file } } }
+// @ts-expect-error Recursive binary fields do not accept strings.
+export const withString: UploadRequestFormData = { file, child: { file: "upload.txt" } }
+`
+          }
+        ),
+      compilationTimeout
+    )
+
+    for (
+      const [format, assertIncludes] of [
+        ["httpclient", assertRuntimeIncludes],
+        ["httpclient-type-only", assertTypeOnlyIncludes]
+      ] as const
+    ) {
+      it.effect(`preserves named multipart components without binary fields (${format})`, () =>
+        assertIncludes(
+          multipartSpec({ $ref: "#/components/schemas/FormBody" }, {
+            FormBody: {
+              type: "object",
+              properties: {
+                name: { type: "string" },
+                meta: { $ref: "#/components/schemas/Meta" }
+              },
+              required: ["name"],
+              additionalProperties: false
+            },
+            Meta: {
+              type: "object",
+              properties: { k: { type: "string" } },
+              required: ["k"],
+              additionalProperties: false
+            }
+          }),
+          [
+            "export type Meta =",
+            "export type FormBody =",
+            "export type UploadRequestFormData = FormBody"
+          ]
+        ))
+    }
+
+    it.effect(
+      "types multipart binary arrays as File | Blob arrays for generated clients",
+      () =>
+        assertGeneratedClientsCompile(
+          multipartSpec({
+            type: "object",
+            properties: { files: { type: "array", items: { type: "string", format: "binary" } } },
+            required: ["files"],
+            additionalProperties: false
+          }),
+          {
+            usage: `export const payload: UploadRequestFormData = { files: [new File([], "upload.txt"), new Blob([])] }
+// @ts-expect-error Binary multipart arrays do not accept strings.
+export const withString: UploadRequestFormData = { files: ["upload.txt"] }
+`
+          }
+        ),
+      compilationTimeout
+    )
   })
 })

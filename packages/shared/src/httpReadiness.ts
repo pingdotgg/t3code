@@ -3,9 +3,9 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 
-export const DEFAULT_HTTP_READY_PROBE_TIMEOUT_MS = 1_000;
+const DEFAULT_HTTP_READY_PROBE_TIMEOUT_MS = 1_000;
 
 /**
  * Normalizes an arbitrary readiness probe failure into a plain, structured value
@@ -106,17 +106,13 @@ export const waitForHttpReady = Effect.fn("shared.httpReadiness.waitForHttpReady
           Effect.timeoutOption(Duration.millis(probeTimeoutMs)),
           Effect.mapError((cause) => fail(cause)),
         );
-        return yield* Option.match(responseOption, {
-          onSome: Effect.succeed,
-          onNone: () =>
-            Effect.fail(
-              fail({
-                kind: "probe-timeout",
-                attempt,
-                probeTimeoutMs,
-              }),
-            ),
-        });
+        return yield* Effect.fromOption(responseOption, () =>
+          fail({
+            kind: "probe-timeout",
+            attempt,
+            probeTimeoutMs,
+          }),
+        );
       }).pipe(
         Effect.mapError((cause) => (isMadeError(cause) ? cause : fail(cause))),
         Effect.tapError((cause) =>

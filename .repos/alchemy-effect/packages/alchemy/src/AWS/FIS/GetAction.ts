@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * description, parameters, and the targets it applies to (e.g.
  * `aws:ec2:stop-instances`). Provide the implementation with
  * `Effect.provide(AWS.FIS.GetActionHttp)`.
- * @binding
- * @section Browsing the Action Catalog
- * @example Inspect an Action's Parameters
+ * ### Browsing the Action Catalog
+ * **Example:** Inspect an Action's Parameters
  * ```typescript
  * // init — account-level binding, no resource argument
  * const getAction = yield* AWS.FIS.GetAction();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * const { action } = yield* getAction({ id: "aws:fis:wait" });
  * console.log(Object.keys(action?.parameters ?? {}));
  * ```
+ *
+ * @binding
  */
 export interface GetAction extends Binding.Service<
   GetAction,

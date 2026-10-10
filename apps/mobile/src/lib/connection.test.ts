@@ -1,11 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId } from "@t3tools/contracts";
 
-import {
-  isRelayManagedConnection,
-  redactPairingCredential,
-  toStableSavedRemoteConnection,
-} from "./connection";
+import { isRelayManagedConnection, toStableSavedRemoteConnection } from "./connection";
 import { authClientMetadata } from "./authClientMetadata";
 
 const mobilePlatform = vi.hoisted(() => ({ OS: "ios" as "ios" | "android" }));
@@ -81,23 +77,6 @@ describe("mobile remote connection records", () => {
       surface: "mobile",
       appVersion: "1.2.3",
     });
-  });
-
-  it("removes one-time bootstrap credentials before persisting pairing URLs", () => {
-    expect(redactPairingCredential("https://desktop.example/#token=bootstrap-token")).toBe(
-      "https://desktop.example/",
-    );
-    expect(redactPairingCredential("https://desktop.example/?token=bootstrap-token")).toBe(
-      "https://desktop.example/",
-    );
-  });
-
-  it("removes hosted pairing credentials while keeping the advertised host", () => {
-    expect(
-      redactPairingCredential(
-        "https://app.t3.codes/pair?host=https%3A%2F%2Fdesktop.example&token=bootstrap-token&label=Desktop",
-      ),
-    ).toBe("https://app.t3.codes/pair?host=https%3A%2F%2Fdesktop.example&label=Desktop");
   });
 
   it("recognizes explicitly managed relay connections", () => {

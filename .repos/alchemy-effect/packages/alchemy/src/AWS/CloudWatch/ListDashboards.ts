@@ -10,9 +10,8 @@ export interface ListDashboardsRequest extends cloudwatch.ListDashboardsInput {}
  *
  * Provide `CloudWatch.ListDashboardsHttp` on the hosting Lambda Function
  * to satisfy the requirement.
- * @binding
- * @section Reading Dashboards
- * @example List Dashboards
+ * ### Reading Dashboards
+ * **Example:** List Dashboards
  * ```typescript
  * // init — grants cloudwatch:ListDashboards
  * const listDashboards = yield* AWS.CloudWatch.ListDashboards();
@@ -21,6 +20,8 @@ export interface ListDashboardsRequest extends cloudwatch.ListDashboardsInput {}
  * const result = yield* listDashboards();
  * const names = (result.DashboardEntries ?? []).map((e) => e.DashboardName);
  * ```
+ *
+ * @binding
  */
 export interface ListDashboards extends Binding.Service<
   ListDashboards,

@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * Provide the implementation with
  * `Effect.provide(AWS.Personalize.GetActionRecommendationsHttp)`.
  *
- * @binding
- * @section Serving Recommendations
- * @example Recommend Actions for a User
+ * ### Serving Recommendations
+ * **Example:** Recommend Actions for a User
  * ```typescript
  * // init
  * const getActionRecommendations = yield* Personalize.GetActionRecommendations();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   userId: "user-1",
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetActionRecommendations extends Binding.Service<
   GetActionRecommendations,
