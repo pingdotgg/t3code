@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Net from "@t3tools/shared/Net";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -9,6 +10,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ServerConfig from "../config.ts";
 import * as DeviceHost from "./DeviceHost.ts";
@@ -26,7 +28,7 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
         if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
-        const forwarding = command.args.includes("-N");
+        const forwarding = command.args.includes("-L");
         let output = "";
         if (forwarding) {
           if (failForward) {
@@ -135,4 +137,70 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     yield* host.stop;
     expect(forwards).toBe(0);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  "ends the tunnel when the server's end of its stdin pipe closes",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const real = yield* ChildProcessSpawner.ChildProcessSpawner;
+      let tunnel: ChildProcessSpawner.ChildProcessHandle | undefined;
+      let tunnelStdin: unknown;
+      const target = "test.example";
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
+          if (command.args.includes("-L")) {
+            // Run the tunnel's remote command locally, as the remote shell would.
+            const remote = command.args.slice(command.args.indexOf(target) + 1).join(" ");
+            tunnelStdin = command.options.stdin;
+            tunnel = yield* real.spawn(
+              ChildProcess.make("sh", ["-c", remote], { ...command.options, stdin: "pipe" }),
+            );
+            return tunnel;
+          }
+          const output = JSON.stringify({
+            nodePath: "/node",
+            platforms: [],
+            hubPort: 1234,
+            helpers: { serveSimAxSettings: null, serveSimCli: null },
+          });
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(123),
+            stdout: Stream.make(new TextEncoder().encode(output)),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            stdin: Sink.drain,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+            unref: Effect.succeed(Effect.void),
+          });
+        }),
+      );
+      const host = yield* SshDeviceHost.make({ id: "test", label: "Test", target }).pipe(
+        Effect.provide(Layer.mergeAll(ServerConfig.layerTest(home, home), Net.layer)),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.succeed(HttpClientResponse.fromWeb(request, new Response("ok"))),
+          ),
+        ),
+      );
+      yield* host.ensureReady(() => Effect.void);
+      const handle = tunnel;
+      if (!handle) return yield* Effect.die("Tunnel was not spawned");
+      expect(tunnelStdin).toBe("pipe");
+      // A pipe buffers at most 64 KiB, so this write only completes while the remote command
+      // keeps reading stdin; one that has already exited fails it with EPIPE. The sink then
+      // ends stdin, which is what the server's death does.
+      yield* Stream.make(new Uint8Array(1 << 20)).pipe(Stream.run(handle.stdin));
+      expect(yield* handle.exitCode).toBe(0);
+      yield* host.stop;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
