@@ -562,7 +562,11 @@ function isT3ManagedWorktree(
   );
 }
 
-/** Extract `cwd` from a session-meta record, tolerating the shapes each CLI writes. */
+/**
+ * Extract `cwd` from a session-meta record, tolerating the shapes each CLI writes.
+ * Returns an empty string for Codex subagent rollouts so the scan stops there
+ * and skips them: they belong to the parent conversation, not the user.
+ */
 function extractCwd(line: string): string | null {
   let parsed: unknown;
   try {
@@ -579,6 +583,15 @@ function extractCwd(line: string): string | null {
   // Codex nests session metadata under `payload`.
   const payload = record.payload;
   if (typeof payload === "object" && payload !== null) {
+    // Top-level Codex sessions record a string source such as "cli" or `{ custom }`.
+    // Spawned, review, compact and other agents record `{ subagent: ... }` on disk,
+    // spelled `subAgent` in the app-server schema.
+    const source = (payload as Record<string, unknown>).source;
+    const isSubagent =
+      typeof source === "object" &&
+      source !== null &&
+      ("subagent" in source || "subAgent" in source);
+    if (record.type === "session_meta" && isSubagent) return "";
     const nested = (payload as Record<string, unknown>).cwd;
     if (typeof nested === "string" && nested.trim().length > 0) {
       return nested;
@@ -1056,7 +1069,7 @@ export const make = Effect.gen(function* () {
 
     for (const transcript of transcripts) {
       const cwd = yield* readCwd(transcript, budget);
-      if (cwd === null) continue;
+      if (!cwd) continue;
       const key = `${transcript.providerInstanceId}\0${cwd}`;
       const existing = byOwnerAndCwd.get(key);
       if (existing) {
