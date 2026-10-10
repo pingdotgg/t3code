@@ -432,7 +432,14 @@ const make = Effect.gen(function* () {
         if (!eligible && (settings.worktreeUnchanged || settings.worktreeOnMerge)) {
           const repositoryCwd = path.resolve(project.workspaceRoot);
           const remote = yield* git.resolvePrimaryRemoteName(repositoryCwd);
-          const branch = yield* git.resolveDefaultBranchName(repositoryCwd, remote);
+          let branch = yield* git.resolveDefaultBranchName(repositoryCwd, remote);
+          // A remote added with `git remote add` has no HEAD ref, so probe the
+          // conventional names before giving up.
+          for (const refName of ["main", "master"]) {
+            if (branch !== null) break;
+            if (yield* git.remoteBranchExists({ cwd: repositoryCwd, remoteName: remote, refName }))
+              branch = refName;
+          }
           if (branch === null) return keep("default branch is unavailable");
           const defaultRef = `refs/remotes/${remote}/${branch}`;
           const refreshed = refreshedDefaultRefs.get(repositoryCwd) ?? new Set<string>();
