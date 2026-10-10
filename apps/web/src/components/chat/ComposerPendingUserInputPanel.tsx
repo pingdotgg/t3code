@@ -317,12 +317,13 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               })}
             </div>
             <div className="mt-2">
-              {/* Back to message stays available when the question cannot be answered. */}
+              {/* Back to message only switches drafts, so it stays available even
+                  when the question cannot be answered or operated. */}
               <Button
                 type="button"
                 size="xs"
                 variant="outline"
-                disabled={isAnswering ? disabled : responseDisabled}
+                disabled={!isAnswering && responseDisabled}
                 onClick={onToggleAnswering}
               >
                 {isAnswering ? "Back to message" : "Answer question"}
