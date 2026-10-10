@@ -414,6 +414,113 @@ const stopEarlierBackgroundWork = ({
 
         const codexProviderThread = (yield* orchestrator.getThreadProjection(threadId))
           .providerThreads[0]!;
+        // A native subagent's own thread, still showing its runless root turn as working.
+        const subagentThread = (name: string) =>
+          Effect.gen(function* () {
+            const subagentThreadId = ThreadId.make(`thread:${name}`);
+            const rootId = NodeId.make(`node:${name}-root`);
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make(`create-${name}`),
+              threadId: subagentThreadId,
+              projectId: ProjectId.make("project:background-work-stop"),
+              title: name,
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+              createdBy: "agent",
+              creationSource: "provider",
+            });
+            yield* sink.write({
+              events: [
+                {
+                  id: EventId.make(`${name}-root`),
+                  type: "node.updated",
+                  threadId: subagentThreadId,
+                  occurredAt: now,
+                  payload: {
+                    id: rootId,
+                    threadId: subagentThreadId,
+                    runId: null,
+                    parentNodeId: null,
+                    rootNodeId: rootId,
+                    kind: "root_turn",
+                    status: "running",
+                    countsForRun: false,
+                    providerThreadId: null,
+                    providerTurnId: null,
+                    nativeItemRef: null,
+                    runtimeRequestId: null,
+                    checkpointScopeId: null,
+                    startedAt: now,
+                    completedAt: null,
+                  },
+                },
+              ],
+            });
+            return { threadId: subagentThreadId, rootId };
+          });
+        const { threadId: reviewerThreadId, rootId: reviewerRootId } =
+          yield* subagentThread("reviewer");
+        // The reviewer starts a tester, which runs on a thread of its own.
+        const tester = yield* subagentThread("tester");
+        const nestedSubagentId = NodeId.make("subagent:nested");
+        const nestedItemId = TurnItemId.make("turn-item:nested-subagent");
+        const nested = {
+          threadId: reviewerThreadId,
+          runId: null,
+          origin: "provider_native",
+          driver,
+          providerInstanceId: instanceId,
+          providerThreadId: null,
+          childThreadId: tester.threadId,
+          prompt: "Check the tests",
+          title: null,
+          status: "running",
+          result: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+        } as const;
+        yield* sink.write({
+          events: [
+            // A subagent the reviewer started, which the provider records on the
+            // reviewer's own thread.
+            {
+              id: EventId.make("nested-subagent-item"),
+              type: "turn-item.updated",
+              threadId: reviewerThreadId,
+              occurredAt: now,
+              payload: {
+                ...nested,
+                id: nestedItemId,
+                nodeId: nestedSubagentId,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                type: "subagent",
+                subagentId: nestedSubagentId,
+              },
+            },
+            {
+              id: EventId.make("nested-subagent"),
+              type: "subagent.updated",
+              threadId: reviewerThreadId,
+              occurredAt: now,
+              payload: {
+                ...nested,
+                id: nestedSubagentId,
+                parentNodeId: reviewerRootId,
+                createdBy: "agent",
+                nativeTaskRef: null,
+                model: null,
+              },
+            },
+          ],
+        });
         // A settled run with its root node, attempt, provider turn and,
         // optionally, a command or native subagent it left running.
         const settledRun = (input: {
@@ -550,11 +657,35 @@ const stopEarlierBackgroundWork = ({
                       origin: "provider_native",
                       driver,
                       providerInstanceId: instanceId,
-                      childThreadId: null,
+                      childThreadId: reviewerThreadId,
                       prompt: "Review the change",
                       result: null,
                     },
             });
+            if (item.kind === "subagent") {
+              events.push({
+                id: EventId.make(`subagent:${input.ordinal}`),
+                type: "subagent.updated",
+                threadId,
+                runId,
+                occurredAt: now,
+                payload: {
+                  ...base,
+                  id: NodeId.make(`subagent:${input.ordinal}`),
+                  parentNodeId: nodeId,
+                  origin: "provider_native",
+                  createdBy: "agent",
+                  driver,
+                  providerInstanceId: instanceId,
+                  providerThreadId: null,
+                  childThreadId: reviewerThreadId,
+                  nativeTaskRef: null,
+                  prompt: "Review the change",
+                  model: null,
+                  result: null,
+                },
+              });
+            }
           }
           return { runId, providerTurnId, events };
         };
@@ -747,6 +878,17 @@ const stopEarlierBackgroundWork = ({
             ? ["interrupted", "interrupted"]
             : ["interrupted", "interrupted", "interrupted"],
         );
+        // The reviewer died with its provider process, so it no longer reads as running.
+        assert.equal(after.subagents[0]?.status, "interrupted");
+        const reviewerThread = yield* orchestrator.getThreadProjection(reviewerThreadId);
+        assert.equal(reviewerThread.nodes[0]?.status, "interrupted");
+        assert.equal(reviewerThread.subagents[0]?.status, "interrupted");
+        assert.equal(
+          reviewerThread.turnItems.find((item) => item.id === nestedItemId)?.status,
+          "interrupted",
+        );
+        const testerThread = yield* orchestrator.getThreadProjection(tester.threadId);
+        assert.equal(testerThread.nodes[0]?.status, "interrupted");
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(
