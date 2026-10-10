@@ -440,6 +440,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["queue steer running turn send default behavior composer"],
   },
   {
+    id: "thread-cycle-order",
+    title: "Conversation switching",
+    to: "/settings/general",
+    searchTerms: [
+      "ctrl control tab shift recent previous next thread sidebar order keyboard arc chrome preview switcher",
+    ],
+  },
+  {
     id: "provider-update-checks",
     title: "Provider update checks",
     to: "/settings/general",

@@ -687,6 +687,22 @@ describe("ClientSettings follow-up behavior", () => {
   });
 });
 
+describe("ClientSettings conversation switching", () => {
+  it("defaults to recency and persists either order", () => {
+    expect(decodeClientSettings({}).threadCycleOrder).toBe("recent");
+    for (const threadCycleOrder of ["recent", "sidebar"]) {
+      const settings = decodeClientSettings({ threadCycleOrder });
+      expect(decodeClientSettings(encodeClientSettings(settings)).threadCycleOrder).toBe(
+        threadCycleOrder,
+      );
+      expect(decodeClientSettingsPatch({ threadCycleOrder }).threadCycleOrder).toBe(
+        threadCycleOrder,
+      );
+    }
+    expect(() => decodeClientSettingsPatch({ threadCycleOrder: "invalid" })).toThrow();
+  });
+});
+
 describe("ClientSettings composer collapse", () => {
   it("collapses on scroll by default and accepts opting out", () => {
     expect(decodeClientSettings({}).composerCollapseOnScroll).toBe(true);

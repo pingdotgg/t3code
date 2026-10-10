@@ -48,6 +48,28 @@ function event(overrides: Partial<ShortcutEventLike> = {}): ShortcutEventLike {
   };
 }
 
+describe("conversation cycling defaults", () => {
+  it.each(["MacIntel", "Win32", "Linux"])("uses Control on %s", (platform) => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "Tab", ctrlKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform,
+      }),
+      "thread.cycleNext",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "Tab", ctrlKey: true, shiftKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        { platform },
+      ),
+      "thread.cyclePrevious",
+    );
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "Tab" }), DEFAULT_RESOLVED_KEYBINDINGS, { platform }),
+    );
+  });
+});
+
 function modShortcut(
   key: string,
   overrides: Partial<Omit<KeybindingShortcut, "key">> = {},

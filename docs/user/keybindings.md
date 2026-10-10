@@ -39,6 +39,26 @@ on macOS and Ctrl on Windows and Linux, including GNOME, KDE Plasma, Niri, and
 Hyprland. If a custom desktop shortcut takes the same keys, choose another binding
 in Settings.
 
+## Switch conversations
+
+Choose **Settings → General → Conversation switching**:
+
+- **Arc-style** (default): hold Ctrl and press Tab to preview recent conversations
+  in a mini switcher. Release Ctrl to open the selected conversation, or press Esc
+  to cancel. A quick Ctrl+Tab switches to your previous conversation; repeat to
+  return. Previewing alone does not visit a conversation or mark it read.
+- **Chrome-style**: each Ctrl+Tab immediately opens the next conversation in
+  sidebar order.
+
+Use `Ctrl+Shift+Tab` to reverse direction. On macOS, use Control, not Command.
+Switching includes pinned, active, and working threads, including the collapsed
+Working shelf. The legacy sidebar uses its visible threads. Recency is local to
+this app window and resets when you reload it.
+
+Change the keys in **Settings → Keybindings** under **Thread: Cycle Conversations
+Forward** and **Backward**. If your browser reserves Ctrl+Tab for browser tabs,
+choose another binding.
+
 ## Copy pull request references
 
 With a PR open in the right panel or on the Pull Requests page, use `mod+shift+c`

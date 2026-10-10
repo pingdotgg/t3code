@@ -1,4 +1,5 @@
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
+import { ThreadCycleShortcut } from "./ThreadCycleShortcut";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { Spinner } from "~/components/ui/spinner";
 import {
@@ -3908,6 +3909,16 @@ export default function LegacySidebar() {
         suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
         attachProjectListAutoAnimateRef={attachProjectListAutoAnimateRef}
         projectsLength={projects.length}
+      />
+      <ThreadCycleShortcut
+        keybindings={keybindings}
+        threadKeys={orderedSidebarThreadKeys}
+        currentThreadKey={routeThreadKey}
+        terminalOpen={routeTerminalOpen}
+        navigateToThread={(key) => {
+          const ref = parseScopedThreadKey(key);
+          if (ref) navigateToThread(ref);
+        }}
       />
       <SidebarChromeFooter />
     </>

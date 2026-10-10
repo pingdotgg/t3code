@@ -11,6 +11,7 @@ import {
 import { discardComposerDraft } from "../lib/discardComposerDraft";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
+import { ThreadCycleShortcut } from "./ThreadCycleShortcut";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { useAtomValue } from "@effect/atom-react";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
@@ -4865,6 +4866,13 @@ export default function Sidebar() {
       ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
       : false,
   );
+  const cycleThreadKeys = useMemo(
+    () =>
+      [...pinnedThreads, ...activeThreads, ...workingThreads].map((thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      ),
+    [pinnedThreads, activeThreads, workingThreads],
+  );
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.repeat || isCommandPaletteOpen() || isModelPickerOpen()) {
@@ -5576,6 +5584,16 @@ export default function Sidebar() {
           ) : null}
         </SidebarGroup>
       </SidebarContent>
+      <ThreadCycleShortcut
+        keybindings={keybindings}
+        threadKeys={cycleThreadKeys}
+        currentThreadKey={routeThreadKey}
+        terminalOpen={routeTerminalOpen}
+        navigateToThread={(key) => {
+          const ref = parseScopedThreadKey(key);
+          if (ref) navigateToThread(ref);
+        }}
+      />
       <SidebarChromeFooter />
     </>
   );
