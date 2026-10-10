@@ -21,7 +21,7 @@ import {
   type PullRequestReviewThread,
   type PullRequestState,
   type PullRequestUpdateMethod,
-  type SourceControlProviderKind,
+  SourceControlProviderKind,
   type ThreadLinkedPullRequest,
   type ThreadPullRequestLink,
   type VcsRef,
@@ -140,7 +140,7 @@ export function pullRequestCheckoutCommand(
       }
       return `git clone --single-branch --branch ${headBranch} https://bitbucket.org/${headRepositoryNameWithOwner}.git t3code-pr-${number}`;
     }
-    case "unknown":
+    default:
       return null;
   }
 }
@@ -155,10 +155,11 @@ export function loadingPullRequestCheckoutCommand(
     identity?.provider ??
     (host === "github.com" ? "github" : host === "gitlab.com" ? "gitlab" : null);
   if (provider !== "github" && provider !== "gitlab" && provider !== "azure-devops") return null;
-  if (identity?.provider !== undefined && host && pullRequestHostOf(identity, provider) !== host) {
+  const kind = SourceControlProviderKind.make(provider);
+  if (identity?.provider !== undefined && host && pullRequestHostOf(identity, kind) !== host) {
     return null;
   }
-  return pullRequestCheckoutCommand(provider, reference.number, "");
+  return pullRequestCheckoutCommand(kind, reference.number, "");
 }
 
 /** Activity changes only when the same host resource reports a newer revision. */
@@ -1304,7 +1305,10 @@ export function resolvePullRequestReferenceHost(
 ): PullRequestRef {
   // Other providers may resolve an SSH remote to a different web authority on the server.
   if (reference.host !== undefined || identity?.provider !== "github") return reference;
-  return { ...reference, host: pullRequestHostOf(identity, "github") };
+  return {
+    ...reference,
+    host: pullRequestHostOf(identity, SourceControlProviderKind.make("github")),
+  };
 }
 
 export interface PullRequestDetailSnapshotRef {

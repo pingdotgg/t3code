@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   EnvironmentId,
@@ -71,14 +72,14 @@ describe("add project shared logic", () => {
   it("uses HTTPS for repositories selected through a provider", () => {
     expect(
       getDefaultCloneUrl({
-        provider: "github",
+        provider: SourceControlProviderKind.make("github"),
         url: "https://github.com/imputnet/helium",
         sshUrl: "git@github.com:imputnet/helium.git",
       }),
     ).toBe("https://github.com/imputnet/helium");
     expect(
       getDefaultCloneUrl({
-        provider: "forgejo",
+        provider: SourceControlProviderKind.make("forgejo"),
         url: "https://forgejo.example.test:8443/owner/repo.git",
         sshUrl: "ssh://git@forgejo.example.test:2222/owner/repo.git",
       }),
@@ -88,7 +89,7 @@ describe("add project shared logic", () => {
   it("preserves existing clone transport behavior for other providers", () => {
     expect(
       getDefaultCloneUrl({
-        provider: "gitlab",
+        provider: SourceControlProviderKind.make("gitlab"),
         url: "https://gitlab.com/group/project.git",
         sshUrl: "git@gitlab.com:group/project.git",
       }),
@@ -187,7 +188,7 @@ describe("add project shared logic", () => {
       versionControlSystems: [],
       sourceControlProviders: [
         {
-          kind: "github",
+          kind: SourceControlProviderKind.make("github"),
           label: "GitHub",
           status: "available",
           installHint: "Install gh",
@@ -201,7 +202,7 @@ describe("add project shared logic", () => {
           },
         },
         {
-          kind: "gitlab",
+          kind: SourceControlProviderKind.make("gitlab"),
           label: "GitLab",
           status: "available",
           installHint: "Install glab",

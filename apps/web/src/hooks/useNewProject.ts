@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { getNewProjectGitHubRepository } from "@t3tools/client-runtime/operations/projects";
 import {
@@ -45,7 +46,7 @@ export function useNewProject() {
         environmentId: input.environmentId,
         input: {
           cwd: input.workspaceRoot,
-          provider: "github",
+          provider: SourceControlProviderKind.make("github"),
           repository: getNewProjectGitHubRepository(input, input.workspaceRoot),
           visibility: "private",
         },

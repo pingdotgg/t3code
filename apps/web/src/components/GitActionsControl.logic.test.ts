@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import type { VcsStatusResult } from "@t3tools/contracts";
 import { assert, describe, it } from "vite-plus/test";
 import {
@@ -343,7 +344,7 @@ describe("when: source control provider uses merge requests", () => {
     const gitlabStatus = status({
       aheadCount: 2,
       sourceControlProvider: {
-        kind: "gitlab",
+        kind: SourceControlProviderKind.make("gitlab"),
         name: "GitLab",
         baseUrl: "https://gitlab.com",
       },

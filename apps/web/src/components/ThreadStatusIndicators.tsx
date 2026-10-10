@@ -13,6 +13,7 @@ import {
   type ThreadLinkedPullRequest,
   type ThreadPullRequestLink,
   type VcsStatusResult,
+  SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { FolderGit2Icon, TerminalIcon } from "lucide-react";
@@ -154,7 +155,7 @@ export function linkedPullRequestSnapshotStatus(
       baseRef: snapshot.baseBranch,
       ...(snapshot.updatedAt === null ? {} : { updatedAt: snapshot.updatedAt }),
     },
-    sourceControlProvider: { kind, name: kind, baseUrl: "" },
+    sourceControlProvider: { kind: SourceControlProviderKind.make(kind), name: kind, baseUrl: "" },
   };
 }
 

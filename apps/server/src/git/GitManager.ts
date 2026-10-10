@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
@@ -1787,7 +1788,9 @@ export const make = Effect.gen(function* () {
   ) {
     const terms = yield* sourceControlProvider(cwd).pipe(
       Effect.map((provider) => getChangeRequestTerminologyForKind(provider.kind)),
-      Effect.orElseSucceed(() => getChangeRequestTerminologyForKind("unknown")),
+      Effect.orElseSucceed(() =>
+        getChangeRequestTerminologyForKind(SourceControlProviderKind.make("unknown")),
+      ),
     );
     const summary = summarizeGitActionResult(result, terms);
     let latestOpenPr: PullRequestInfo | null = null;
@@ -2853,7 +2856,9 @@ export const make = Effect.gen(function* () {
         const changeRequestTerms = wantsPr
           ? yield* sourceControlProvider(input.cwd).pipe(
               Effect.map((provider) => getChangeRequestTerminologyForKind(provider.kind)),
-              Effect.orElseSucceed(() => getChangeRequestTerminologyForKind("unknown")),
+              Effect.orElseSucceed(() =>
+                getChangeRequestTerminologyForKind(SourceControlProviderKind.make("unknown")),
+              ),
             )
           : null;
 

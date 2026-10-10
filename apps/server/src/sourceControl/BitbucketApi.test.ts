@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it, vi } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -362,7 +363,7 @@ it.effect.each([false, true])(
               ? {
                   context: {
                     provider: {
-                      kind: "bitbucket" as const,
+                      kind: SourceControlProviderKind.make("bitbucket"),
                       name: "Bitbucket",
                       baseUrl: "https://bitbucket.org",
                     },
@@ -396,7 +397,11 @@ it.effect("prefers an explicit repository and uses context when the repository i
   return Effect.gen(function* () {
     const bitbucket = yield* BitbucketApi.BitbucketApi;
     const context = {
-      provider: { kind: "bitbucket" as const, name: "Bitbucket", baseUrl: "https://bitbucket.org" },
+      provider: {
+        kind: SourceControlProviderKind.make("bitbucket"),
+        name: "Bitbucket",
+        baseUrl: "https://bitbucket.org",
+      },
       remoteName: "origin",
       remoteUrl: "git@bitbucket.org:another/context.git",
     };
@@ -838,7 +843,7 @@ it.effect("checks out same-repository pull requests with the existing Bitbucket 
       cwd: "/repo",
       context: {
         provider: {
-          kind: "bitbucket",
+          kind: SourceControlProviderKind.make("bitbucket"),
           name: "Bitbucket",
           baseUrl: "https://bitbucket.org",
         },

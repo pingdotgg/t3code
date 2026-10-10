@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { MaterialListRow } from "../../components/MaterialListRow";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
@@ -812,7 +813,7 @@ export function AddProjectRepositoryScreen(props: {
     const result = await lookupRepositoryQuery({
       environmentId: environment.environmentId,
       input: {
-        provider,
+        provider: SourceControlProviderKind.make(provider),
         repository: repositoryInput.trim(),
       },
     });
@@ -1079,7 +1080,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
           environmentId: environment.environmentId,
           input: {
             cwd: workspaceRoot,
-            provider: "github",
+            provider: SourceControlProviderKind.make("github"),
             repository: getNewProjectGitHubRepository(githubTarget, workspaceRoot),
             visibility: "private",
           },

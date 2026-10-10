@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
@@ -157,7 +158,7 @@ export const make = Effect.gen(function* () {
   const fail =
     (operation: string) => (error: AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCliError) =>
       new PullRequestProviderError({
-        provider: "azure-devops",
+        provider: SourceControlProviderKind.make("azure-devops"),
         operation,
         ...azureDevOpsProviderFailure(error),
         detail: error.detail,
@@ -168,7 +169,7 @@ export const make = Effect.gen(function* () {
   const unsupported = (operation: string) =>
     Effect.fail(
       new PullRequestProviderError({
-        provider: "azure-devops",
+        provider: SourceControlProviderKind.make("azure-devops"),
         operation,
         reason: "failed",
         detail: "Azure DevOps reviews cannot be written from here yet.",
@@ -296,7 +297,7 @@ export const make = Effect.gen(function* () {
   };
 
   const provider: PullRequestProviderApi = {
-    kind: "azure-devops",
+    kind: SourceControlProviderKind.make("azure-devops"),
     capabilities: CAPABILITIES,
     // The bare repository name repeats across an organization; the project path does not.
     repositoryKey: ({ canonicalKey }) => canonicalKey,
@@ -612,7 +613,7 @@ export const make = Effect.gen(function* () {
     listReviewerCandidates: () =>
       Effect.fail(
         new PullRequestProviderError({
-          provider: "azure-devops",
+          provider: SourceControlProviderKind.make("azure-devops"),
           operation: "listReviewerCandidates",
           reason: "failed",
           detail: "Azure DevOps cannot say who may review a pull request.",

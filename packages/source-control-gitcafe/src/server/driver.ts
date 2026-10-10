@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 /**
  * The GitCafe driver: repository operations and discovery through `cafe` and git, and pull
  * requests through GitCafe's REST API on git.cafe and staging.git.cafe.
@@ -11,7 +12,7 @@ import * as GitCafePullRequestProvider from "./GitCafePullRequestProvider.ts";
 import * as GitCafeSourceControlProvider from "./GitCafeSourceControlProvider.ts";
 
 export const driver = defineSourceControlDriver({
-  kind: "gitcafe",
+  kind: SourceControlProviderKind.make("gitcafe"),
   make: Effect.all({
     sourceControl: GitCafeSourceControlProvider.make,
     discovery: Effect.succeed(GitCafeSourceControlProvider.discovery),
