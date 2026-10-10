@@ -94,6 +94,34 @@ function shouldDropMissingPartialTurnItem(
   if (projection.visibleTurnItems.some((row) => row.sourceItemId === item.id)) {
     return false;
   }
+  if (item.runId === null) {
+    return isBelowPartialWindow(projection, item, latestLocalTurnOrdinal);
+  }
+  // A queued run keeps the ordinal it got when queued, so a steer sent later
+  // can raise the watermark past it. The orchestrator commits its first item
+  // while the run is still queued, so that item is new, not unloaded history.
+  if (projection.runs.some((run) => run.id === item.runId && run.status === "queued")) {
+    return false;
+  }
+  // Later items of a run already in the window can raise the watermark first.
+  if (
+    projection.visibleTurnItems.some(
+      (row) =>
+        row.visibility === "local" &&
+        row.item.runId === item.runId &&
+        row.item.ordinal <= item.ordinal,
+    )
+  ) {
+    return false;
+  }
+  return isBelowPartialWindow(projection, item, latestLocalTurnOrdinal);
+}
+
+function isBelowPartialWindow(
+  projection: OrchestrationV2ThreadProjection,
+  item: OrchestrationV2TurnItem,
+  latestLocalTurnOrdinal: number | null | undefined,
+): boolean {
   if (
     latestLocalTurnOrdinal !== null &&
     latestLocalTurnOrdinal !== undefined &&
