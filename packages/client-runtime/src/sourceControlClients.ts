@@ -12,6 +12,7 @@ import * as Bitbucket from "@t3tools/source-control-bitbucket/client/definition"
 import { makeSourceControlClientRegistry } from "@t3tools/source-control-core/client/definition";
 
 export {
+  UNKNOWN_SOURCE_CONTROL_CLIENT,
   type ChangeRequestTerminology,
   type SourceControlClientDefinition,
 } from "@t3tools/source-control-core/client/definition";
