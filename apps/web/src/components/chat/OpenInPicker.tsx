@@ -32,6 +32,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import {
+  AndroidStudioIcon,
   AntigravityIcon,
   CursorIcon,
   FileExplorerIcon,
@@ -126,6 +127,11 @@ export const resolveOpenInOptions = (
     {
       Icon: IntelliJIdeaIcon,
       value: "idea",
+      kind: "brand",
+    },
+    {
+      Icon: AndroidStudioIcon,
+      value: "android-studio",
       kind: "brand",
     },
     {
