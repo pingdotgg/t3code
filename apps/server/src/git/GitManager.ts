@@ -1,5 +1,6 @@
 import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as ByteSize from "effect/ByteSize";
@@ -130,10 +131,14 @@ export class GitManager extends Context.Service<
       input: VcsStatusInput,
       options?: GitRemoteStatusOptions,
     ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
-    /** Resolve the PR for a saved branch without changing the current checkout. */
+    /**
+     * Resolve the PR for a saved branch without changing the current checkout.
+     * `refresh` asks the host again. `freshGitState` rereads the branch's git
+     * state without forcing a host refresh; use it before persisting a result.
+     */
     readonly branchPullRequest: (
       input: { readonly cwd: string; readonly branch: string },
-      options?: { readonly refresh?: boolean },
+      options?: { readonly refresh?: boolean; readonly freshGitState?: boolean },
     ) => Effect.Effect<GitBranchPullRequest | null, GitManagerServiceError>;
     readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
@@ -182,6 +187,10 @@ const PR_LOOKUP_NO_OPEN_PR_CACHE_TTL = Duration.minutes(5);
 const PR_LOOKUP_FAILURE_BASE_TTL = Duration.seconds(20);
 const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
+// How long branchPullRequest reuses the git state around a cached PR answer.
+// Matches PR_LOOKUP_NO_OPEN_PR_CACHE_TTL, the delay already accepted for a
+// change made outside the app.
+const PR_LOOKUP_GIT_STATE_TTL = Duration.minutes(5);
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 
 /**
@@ -1484,20 +1493,6 @@ export const make = Effect.gen(function* () {
           { concurrency: "unbounded" },
         );
 
-  const resolvePrLookupRepositoryIdentity = Effect.fn("resolvePrLookupRepositoryIdentity")(
-    function* (cwd: string, branch: string, remoteNameOverride?: string) {
-      const remoteName =
-        remoteNameOverride ?? (yield* readConfigValueNullable(cwd, `branch.${branch}.remote`));
-      const [headRemote, targetRemote] = yield* resolveHeadAndOriginContexts(cwd, remoteName);
-      return {
-        remoteName,
-        headRemoteUrlKey:
-          headRemote.remoteUrlKey ?? (remoteName === null ? targetRemote.remoteUrlKey : null),
-        targetRemoteUrlKey: targetRemote.remoteUrlKey,
-      };
-    },
-  );
-
   const resolveBranchHeadContext = Effect.fn("resolveBranchHeadContext")(function* (
     cwd: string,
     details: { branch: string; upstreamRef: string | null; remoteName?: string },
@@ -2242,32 +2237,134 @@ export const make = Effect.gen(function* () {
     });
     return mergeGitStatusParts(local, remote);
   });
-  const branchPullRequest: GitManager["Service"]["branchPullRequest"] = Effect.fn(
-    "branchPullRequest",
-  )(function* ({ cwd, branch }, options) {
-    const cacheCwd = yield* normalizeStatusCacheKey(cwd);
-    const remotes = yield* gitCore.execute({
-      operation: "GitManager.branchPullRequest.remotes",
-      cwd: cacheCwd,
-      args: ["remote"],
+  // Discovery and the settlement sweep call branchPullRequest for every thread
+  // each minute, and most calls find the PR answer already cached. The git
+  // state around that answer (remotes, the branch's upstream, the remote HEAD,
+  // remote URLs) is remembered per checkout for PR_LOOKUP_GIT_STATE_TTL, so
+  // those calls start no git process. T3's own git actions (invalidateStatus)
+  // and `refresh` read it again, and a change made outside T3 shows within the
+  // TTL. A merged or closed answer can settle a thread or remove its worktree,
+  // so branchPullRequest confirms one against fresh reads, and discovery asks
+  // for fresh reads (`freshGitState`) before it persists an answer.
+  const prLookupGitStateByKey = new Map<
+    string,
+    { readonly readAtMs: number; readonly value: string | null }
+  >();
+  const rememberPrLookupGitState = <E>(
+    cwd: string,
+    key: string,
+    fresh: boolean,
+    read: Effect.Effect<string | null, E>,
+  ) =>
+    Effect.gen(function* () {
+      const entryKey = `${cwd}\u0000${key}`;
+      const readAtMs = yield* Clock.currentTimeMillis;
+      const remembered = prLookupGitStateByKey.get(entryKey);
+      if (
+        !fresh &&
+        remembered !== undefined &&
+        readAtMs - remembered.readAtMs < Duration.toMillis(PR_LOOKUP_GIT_STATE_TTL)
+      ) {
+        return remembered.value;
+      }
+      // invalidateStatus bumps the epoch. A read that started before a T3 git
+      // action, or before a newer read finished, must not replace their state.
+      const epoch = prLookupEpoch(cwd);
+      const value = yield* read;
+      const latest = prLookupGitStateByKey.get(entryKey);
+      if (prLookupEpoch(cwd) !== epoch || (latest !== undefined && latest.readAtMs > readAtMs)) {
+        return value;
+      }
+      prLookupGitStateByKey.delete(entryKey);
+      if (prLookupGitStateByKey.size >= PR_LOOKUP_CACHE_CAPACITY) {
+        const oldestKey = prLookupGitStateByKey.keys().next().value;
+        if (oldestKey !== undefined) prLookupGitStateByKey.delete(oldestKey);
+      }
+      prLookupGitStateByKey.set(entryKey, { readAtMs, value });
+      return value;
     });
-    const remoteNames = remotes.stdout
+  const forgetPrLookupGitState = (cwd: string) =>
+    normalizeStatusCacheKey(cwd).pipe(
+      Effect.map((cacheCwd) => {
+        const prefix = `${cacheCwd}\u0000`;
+        for (const key of prLookupGitStateByKey.keys()) {
+          if (key.startsWith(prefix)) prLookupGitStateByKey.delete(key);
+        }
+      }),
+    );
+  const resolvePrLookupRepositoryIdentity = Effect.fn("resolvePrLookupRepositoryIdentity")(
+    function* (
+      cwd: string,
+      branch: string,
+      remoteNameOverride: string | undefined,
+      fresh: boolean,
+    ) {
+      const readConfig = (key: string) =>
+        rememberPrLookupGitState(
+          cwd,
+          `config\u0000${key}`,
+          fresh,
+          gitCore.readConfigValue(cwd, key),
+        ).pipe(Effect.orElseSucceed(() => null));
+      const readRemoteUrlKey = (remoteName: string | null) =>
+        remoteName === null
+          ? Effect.succeed(null)
+          : readConfig(`remote.${remoteName}.url`).pipe(
+              Effect.map((remoteUrl) => (remoteUrl ? normalizeGitRemoteUrl(remoteUrl) : null)),
+            );
+      const remoteName = remoteNameOverride ?? (yield* readConfig(`branch.${branch}.remote`));
+      const [headRemoteUrlKey, targetRemoteUrlKey] =
+        remoteName === "origin"
+          ? yield* readRemoteUrlKey("origin").pipe(Effect.map((key) => [key, key] as const))
+          : yield* Effect.all([readRemoteUrlKey(remoteName), readRemoteUrlKey("origin")], {
+              concurrency: "unbounded",
+            });
+      return {
+        remoteName,
+        headRemoteUrlKey: headRemoteUrlKey ?? (remoteName === null ? targetRemoteUrlKey : null),
+        targetRemoteUrlKey,
+      };
+    },
+  );
+  const lookupBranchPullRequest = Effect.fn("lookupBranchPullRequest")(function* (
+    cacheCwd: string,
+    branch: string,
+    options: { readonly refresh: boolean; readonly freshGitState: boolean },
+  ) {
+    const remember = <E>(key: string, read: Effect.Effect<string | null, E>) =>
+      rememberPrLookupGitState(cacheCwd, key, options.freshGitState, read);
+    const remotes = yield* remember(
+      "remotes",
+      gitCore
+        .execute({
+          operation: "GitManager.branchPullRequest.remotes",
+          cwd: cacheCwd,
+          args: ["remote"],
+        })
+        .pipe(Effect.map((result) => result.stdout)),
+    );
+    const remoteNames = (remotes ?? "")
       .split("\n")
       .map((remoteName) => remoteName.trim())
       .filter((remoteName) => remoteName.length > 0);
     const [firstRemoteName] = remoteNames;
     if (firstRemoteName === undefined) return null;
-    const branchRef = yield* gitCore.execute({
-      operation: "GitManager.branchPullRequest.branchRef",
-      cwd: cacheCwd,
-      args: [
-        "for-each-ref",
-        "--format=%(refname)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream:remoteref)",
-        `refs/heads/${branch}`,
-      ],
-    });
+    const branchRef = yield* remember(
+      `branchRef\u0000${branch}`,
+      gitCore
+        .execute({
+          operation: "GitManager.branchPullRequest.branchRef",
+          cwd: cacheCwd,
+          args: [
+            "for-each-ref",
+            "--format=%(refname)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream:remoteref)",
+            `refs/heads/${branch}`,
+          ],
+        })
+        .pipe(Effect.map((result) => result.stdout)),
+    );
     const expectedRefName = `refs/heads/${branch}`;
-    const exactBranch = branchRef.stdout
+    const exactBranch = (branchRef ?? "")
       .split("\n")
       .find((line) => line.split("\u0000", 1)[0] === expectedRefName);
     const [refName = "", savedUpstream = "", savedRemoteName = "", savedRemoteRef = ""] =
@@ -2287,20 +2384,31 @@ export const make = Effect.gen(function* () {
       const upstreamBranch = savedRemoteRef.replace(/^refs\/heads\//, "");
       upstreamRef = `${remoteName}/${upstreamBranch}`;
     } else if (!localBranchExists) {
-      const trackingRefs = yield* gitCore.execute({
-        operation: "GitManager.branchPullRequest.remoteTrackingRefs",
-        cwd: cacheCwd,
-        args: ["for-each-ref", "--format=%(refname)", "refs/remotes"],
-      });
-      const refNames = new Set(
-        trackingRefs.stdout
-          .split("\n")
-          .map((remoteRef) => remoteRef.trim())
-          .filter((remoteRef) => remoteRef.length > 0),
+      const trackingRemotes = yield* remember(
+        `trackingRemotes\u0000${branch}`,
+        gitCore
+          .execute({
+            operation: "GitManager.branchPullRequest.remoteTrackingRefs",
+            cwd: cacheCwd,
+            args: ["for-each-ref", "--format=%(refname)", "refs/remotes"],
+          })
+          .pipe(
+            Effect.map((trackingRefs) => {
+              const refNames = new Set(
+                trackingRefs.stdout
+                  .split("\n")
+                  .map((remoteRef) => remoteRef.trim())
+                  .filter((remoteRef) => remoteRef.length > 0),
+              );
+              return remoteNames
+                .filter((candidate) => refNames.has(`refs/remotes/${candidate}/${branch}`))
+                .join("\n");
+            }),
+          ),
       );
-      const matchingRemoteNames = remoteNames.filter((candidate) =>
-        refNames.has(`refs/remotes/${candidate}/${branch}`),
-      );
+      const matchingRemoteNames = (trackingRemotes ?? "")
+        .split("\n")
+        .filter((candidate) => candidate.length > 0);
       if (matchingRemoteNames.length > 1) {
         return yield* new GitManagerError({
           operation: "branchPullRequest",
@@ -2314,9 +2422,10 @@ export const make = Effect.gen(function* () {
       }
     }
     const defaultRemoteName = remoteNames.includes("origin") ? "origin" : firstRemoteName;
-    const defaultBranch = yield* gitCore
-      .resolveDefaultBranchName(cacheCwd, defaultRemoteName)
-      .pipe(Effect.orElseSucceed(() => null));
+    const defaultBranch = yield* remember(
+      `defaultBranch\u0000${defaultRemoteName}`,
+      gitCore.resolveDefaultBranchName(cacheCwd, defaultRemoteName),
+    ).pipe(Effect.orElseSucceed(() => null));
     const cacheKey = prLookupCacheKey(cacheCwd, {
       branch,
       upstreamRef,
@@ -2324,7 +2433,7 @@ export const make = Effect.gen(function* () {
       localBranchExists,
       ...(localBranchExists ? {} : { remoteName }),
     });
-    if (options?.refresh) {
+    if (options.refresh) {
       // A completed turn can create a PR or reuse a merged PR's branch.
       // Refresh successful answers, but keep failed lookups' retry backoff.
       const cached = yield* Cache.getOption(prLookupCache, cacheKey).pipe(
@@ -2338,10 +2447,11 @@ export const make = Effect.gen(function* () {
     // is looked up on the fork. Verify against the remote the lookup used.
     const identityRemoteName = (headContext: BranchHeadContext) =>
       headContext.remoteName ?? remoteName ?? undefined;
-    const currentIdentity = yield* resolvePrLookupRepositoryIdentity(
+    let currentIdentity = yield* resolvePrLookupRepositoryIdentity(
       cacheCwd,
       branch,
       identityRemoteName(cached.headContext),
+      options.freshGitState,
     );
     const canVerifyIdentity = (headContext: BranchHeadContext, identity: typeof currentIdentity) =>
       !(
@@ -2351,6 +2461,22 @@ export const make = Effect.gen(function* () {
     const hasSameIdentity = (headContext: BranchHeadContext, identity: typeof currentIdentity) =>
       headContext.headRemoteUrlKey === identity.headRemoteUrlKey &&
       headContext.targetRemoteUrlKey === identity.targetRemoteUrlKey;
+    // A remembered URL can be older than the cached answer; ask git before
+    // treating the difference as real.
+    if (
+      !options.freshGitState &&
+      !(
+        canVerifyIdentity(cached.headContext, currentIdentity) &&
+        hasSameIdentity(cached.headContext, currentIdentity)
+      )
+    ) {
+      currentIdentity = yield* resolvePrLookupRepositoryIdentity(
+        cacheCwd,
+        branch,
+        identityRemoteName(cached.headContext),
+        true,
+      );
+    }
     if (!canVerifyIdentity(cached.headContext, currentIdentity)) {
       return yield* new GitManagerError({
         operation: "branchPullRequest",
@@ -2365,6 +2491,7 @@ export const make = Effect.gen(function* () {
         cacheCwd,
         branch,
         identityRemoteName(cached.headContext),
+        true,
       );
       if (
         !canVerifyIdentity(cached.headContext, refreshedIdentity) ||
@@ -2396,6 +2523,22 @@ export const make = Effect.gen(function* () {
       repositoryKey: pullRequestRepositoryKey(latest.url),
     };
   });
+  const branchPullRequest: GitManager["Service"]["branchPullRequest"] = Effect.fn(
+    "branchPullRequest",
+  )(function* ({ cwd, branch }, options) {
+    const cacheCwd = yield* normalizeStatusCacheKey(cwd);
+    const refresh = options?.refresh === true;
+    const freshGitState = refresh || options?.freshGitState === true;
+    const pullRequest = yield* lookupBranchPullRequest(cacheCwd, branch, {
+      refresh,
+      freshGitState,
+    });
+    if (pullRequest === null || pullRequest.state === "open" || freshGitState) return pullRequest;
+    return yield* lookupBranchPullRequest(cacheCwd, branch, {
+      refresh: false,
+      freshGitState: true,
+    });
+  });
   const invalidateLocalStatus: GitManager["Service"]["invalidateLocalStatus"] = Effect.fn(
     "invalidateLocalStatus",
   )(function* (cwd) {
@@ -2414,6 +2557,7 @@ export const make = Effect.gen(function* () {
       // refresh); it also bypasses the slow PR-lookup cache. The periodic
       // status poll only invalidates local/remote and keeps the PR cache warm.
       yield* bumpPrLookupEpoch(cwd);
+      yield* forgetPrLookupGitState(cwd);
     },
   );
 
