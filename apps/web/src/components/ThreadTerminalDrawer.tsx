@@ -1469,6 +1469,13 @@ export default function ThreadTerminalDrawer({
     }
 
     const onWindowResize = () => {
+      // React only renders the stored preference, so clamp a live drag height here.
+      const resizeState = resizeStateRef.current;
+      const liveHeight = clampDrawerHeight(drawerHeightRef.current);
+      if (resizeState && liveHeight !== drawerHeightRef.current) {
+        drawerHeightRef.current = liveHeight;
+        resizeState.drawer?.style.setProperty("height", `${liveHeight}px`);
+      }
       setWindowMaxDrawerHeight(maxDrawerHeight());
       setResizeEpoch((value) => value + 1);
     };
