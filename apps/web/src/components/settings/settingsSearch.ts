@@ -472,6 +472,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["base directory folder browser path home"],
   },
   {
+    id: "task-graph-auto-run",
+    title: "Run task graphs automatically",
+    to: "/settings/general",
+    scope: "environment-defaults",
+    searchTerms: ["agent plan parallel tasks worktrees draft start immediately wait edit run"],
+  },
+  {
+    id: "task-graph-concurrency",
+    title: "Task graph nodes at once",
+    to: "/settings/general",
+    scope: "environment-defaults",
+    searchTerms: ["parallel concurrent limit maximum agents running worktrees"],
+  },
+  {
     id: "unpin-confirmation",
     title: "Unpin confirmation",
     to: "/settings/general",
@@ -907,6 +921,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/connections",
     searchTerms: [
       "automatic machine environment resources cpu memory capacity preference weight shared projects",
+    ],
+  },
+  {
+    id: "task-graph-machines",
+    title: "Task graph machines",
+    to: "/settings/connections",
+    searchTerms: [
+      "task graphs peers remote machines nodes pairing link distribute agents worktrees preference weight",
     ],
   },
   {

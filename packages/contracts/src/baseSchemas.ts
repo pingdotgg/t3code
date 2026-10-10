@@ -384,6 +384,8 @@ export const RuntimeRequestId = makeEntityId("RuntimeRequestId");
 export type RuntimeRequestId = typeof RuntimeRequestId.Type;
 export const RuntimeTaskId = makeEntityId("RuntimeTaskId");
 export type RuntimeTaskId = typeof RuntimeTaskId.Type;
+export const TaskGraphId = makeEntityId("TaskGraphId");
+export type TaskGraphId = typeof TaskGraphId.Type;
 export const ScheduledTaskId = makeEntityId("ScheduledTaskId");
 /** A one-use handle to a secret the user entered for an agent; the agent never sees the value. */
 export const SecretRef = makeEntityId("SecretRef");

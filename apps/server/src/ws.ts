@@ -123,6 +123,8 @@ import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
+import * as TaskGraphPeers from "./taskGraph/TaskGraphPeers.ts";
+import * as TaskGraphs from "./taskGraph/TaskGraphService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import {
   archivedShellStreamItemFromThreadShell,
@@ -1221,6 +1223,8 @@ const layerWsRpc = (
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
+      const taskGraphs = yield* TaskGraphs.TaskGraphService;
+      const taskGraphPeers = yield* TaskGraphPeers.TaskGraphPeers;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
@@ -2041,6 +2045,18 @@ const layerWsRpc = (
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),
+        [WS_METHODS.taskGraphsSubscribe]: (input) => taskGraphs.subscribeThread(input.threadId),
+        [WS_METHODS.taskGraphsEdit]: (input) =>
+          taskGraphs.edit(input.graphId, input.edits).pipe(Effect.map((graph) => ({ graph }))),
+        [WS_METHODS.taskGraphsRun]: (input) =>
+          taskGraphs.run(input.graphId).pipe(Effect.map((graph) => ({ graph }))),
+        [WS_METHODS.taskGraphsCancel]: (input) =>
+          taskGraphs.cancel(input.graphId).pipe(Effect.map((graph) => ({ graph }))),
+        [WS_METHODS.taskGraphPeersSubscribe]: (_input) => taskGraphPeers.subscribe,
+        [WS_METHODS.taskGraphPeersAdd]: (input) => taskGraphPeers.add(input),
+        [WS_METHODS.taskGraphPeersRemove]: (input) => taskGraphPeers.remove(input.environmentId),
+        [WS_METHODS.taskGraphPeersSetWeight]: (input) =>
+          taskGraphPeers.setWeight(input.environmentId, input.weight),
         [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.setEnabled(input)),

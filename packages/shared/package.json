@@ -431,6 +431,14 @@
       "types": "./src/markdownListIndentation.ts",
       "import": "./src/markdownListIndentation.ts"
     },
+    "./loadBalancing": {
+      "types": "./src/loadBalancing.ts",
+      "import": "./src/loadBalancing.ts"
+    },
+    "./taskGraph": {
+      "types": "./src/taskGraph.ts",
+      "import": "./src/taskGraph.ts"
+    },
     "./proposedPlanText": {
       "types": "./src/proposedPlanText.ts",
       "import": "./src/proposedPlanText.ts"

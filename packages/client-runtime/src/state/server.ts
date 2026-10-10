@@ -1089,6 +1089,16 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:scheduled-tasks:live",
       tag: WS_METHODS.scheduledTasksSubscribe,
     }),
+    /** Machines this environment may run task graph nodes on, with connection status. */
+    taskGraphPeersLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:task-graph-peers:live",
+      tag: WS_METHODS.taskGraphPeersSubscribe,
+    }),
+    /** A thread's task graphs: snapshot on subscribe, fresh list after every change. */
+    taskGraphsLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:task-graphs:live",
+      tag: WS_METHODS.taskGraphsSubscribe,
+    }),
     // A cold transcript scan is measured in seconds, so keep the result around
     // long enough that switching windows or re-rendering does not rescan.
     // Slow sources answer from cache first: that summary stays on screen, with
@@ -1320,6 +1330,40 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.scheduledTasksRotateWebhookToken,
       scheduler: configScheduler,
       concurrency: configConcurrency,
+    }),
+    addTaskGraphPeer: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:task-graph-peer:add",
+      tag: WS_METHODS.taskGraphPeersAdd,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    removeTaskGraphPeer: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:task-graph-peer:remove",
+      tag: WS_METHODS.taskGraphPeersRemove,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    setTaskGraphPeerWeight: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:task-graph-peer:set-weight",
+      tag: WS_METHODS.taskGraphPeersSetWeight,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    // One lane per graph so edits from the editor apply in the order they were made.
+    editTaskGraph: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:task-graph:edit",
+      tag: WS_METHODS.taskGraphsEdit,
+      concurrency: { mode: "serial", key: ({ input }) => input.graphId },
+    }),
+    runTaskGraph: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:task-graph:run",
+      tag: WS_METHODS.taskGraphsRun,
+      concurrency: { mode: "singleFlight", key: ({ input }) => input.graphId },
+    }),
+    cancelTaskGraph: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:task-graph:cancel",
+      tag: WS_METHODS.taskGraphsCancel,
+      concurrency: { mode: "singleFlight", key: ({ input }) => input.graphId },
     }),
     // Off the config lane: answering a card must not queue behind settings
     // edits. One answer per card at a time.
