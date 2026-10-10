@@ -12,7 +12,7 @@ import {
   ServerSettingsError,
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
-import { HostProcessPlatform, HostProcessArchitecture } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Data from "effect/Data";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -315,7 +315,7 @@ const createManager = (
   );
 
 const layerWithHostPlatform = (platform: NodeJS.Platform) =>
-  Layer.succeed(HostProcessPlatform, platform);
+  Layer.succeed(HostProcess.Platform, platform);
 
 // Apply the existing line policy, then find the longest code-point-aligned byte tail.
 function retainedHistory(text: string, maxLines: number, maxBytes = Infinity): string {
@@ -619,7 +619,7 @@ it.layer(
 
   it.effect("preserves non-notFound cwd stat failures", () =>
     Effect.gen(function* () {
-      if ((yield* HostProcessPlatform) === "win32") return;
+      if ((yield* HostProcess.Platform) === "win32") return;
 
       const path = yield* Path.Path;
 
@@ -1826,7 +1826,7 @@ it.layer(
 
   it.effect("retries with fallback shells when preferred shell spawn fails", () =>
     Effect.gen(function* () {
-      const platform = yield* HostProcessPlatform;
+      const platform = yield* HostProcess.Platform;
       const missingShell =
         platform === "win32" ? "C:\\definitely\\missing-shell.exe" : "/definitely/missing-shell -l";
       const { manager, ptyAdapter } = yield* createManager(5, {
@@ -1933,7 +1933,7 @@ it.layer(
         Effect.provide(
           Layer.merge(
             layerWithHostPlatform("win32"),
-            Layer.succeed(HostProcessArchitecture, "x64"),
+            Layer.succeed(HostProcess.Architecture, "x64"),
           ),
         ),
       );
@@ -2513,7 +2513,7 @@ it.layer(
 
   it.effect("starts zsh with prompt spacer disabled to avoid `%` end markers", () =>
     Effect.gen(function* () {
-      if ((yield* HostProcessPlatform) === "win32") return;
+      if ((yield* HostProcess.Platform) === "win32") return;
       const { manager, ptyAdapter } = yield* createManager(5, {
         shellResolver: () => "/bin/zsh",
       });

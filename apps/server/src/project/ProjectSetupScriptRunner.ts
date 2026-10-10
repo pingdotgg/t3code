@@ -1,5 +1,5 @@
 import { ProjectId, type ProjectScript } from "@t3tools/contracts";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   projectScriptRuntimeEnv,
   resolveProjectScripts,
@@ -206,8 +206,8 @@ export const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const crypto = yield* Crypto.Crypto;
   const completionShell = resolveCompletionShell(
-    yield* HostProcessPlatform,
-    yield* HostProcessEnvironment,
+    yield* HostProcess.Platform,
+    yield* HostProcess.Environment,
   );
 
   /**

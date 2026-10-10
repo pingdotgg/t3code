@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -41,7 +41,7 @@ const noSpawner = ChildProcessSpawner.make(() =>
 );
 
 // The `#!/bin/sh` stub below cannot be resolved as an executable on Windows.
-const windowsHost = HostProcessPlatform.defaultValue() === "win32";
+const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 
 it.layer(layerTest)("GrokDriver", (it) => {
   it.effect.skipIf(windowsHost)("updates through the configured executable's own updater", () =>

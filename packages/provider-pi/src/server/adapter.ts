@@ -23,7 +23,8 @@
  * Terminal-only decoration such as status, widget, title, and editor-text
  * updates has no matching T3 surface and is ignored.
  */
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import {
   defaultInstanceIdForDriver,
@@ -387,6 +388,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
   options: PiAdapterV2Options,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const agentScope = yield* AgentScope;
   const fileSystem = yield* FileSystem.FileSystem;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
@@ -440,9 +442,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         extensionPath,
         runtimeMode: input.runtimePolicy.runtimeMode,
       });
-      const connection: PiRpcConnection = yield* makePiRpcConnection({
+      const scopedLaunch = yield* agentScope.wrap({
         command: options.settings.binaryPath || "pi",
         args: launch.args,
+        name: "pi",
+        threadId: input.threadId,
+        env: launch.env,
+      });
+      const connection: PiRpcConnection = yield* makePiRpcConnection({
+        command: scopedLaunch.command,
+        args: scopedLaunch.args,
         cwd,
         env: launch.env,
       }).pipe(
@@ -3271,12 +3280,12 @@ export const PiAdapterV2Driver: ProviderAdapterDriver<PiSettings, PiAdapterV2Dri
   defaultConfig: (): PiSettings => DEFAULT_PI_SETTINGS,
   create: Effect.fn("PiAdapterV2Driver.create")(
     function* (input: ProviderAdapterDriverCreateInput<PiSettings>) {
-      const hostEnvironment = yield* HostProcessEnvironment;
+      const hostEnvironment = yield* HostProcess.Environment;
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       return yield* makePiAdapterV2({
         instanceId: input.instanceId,
         settings: { ...input.config, enabled: input.enabled },
-        environment: mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
+        environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
         continuationRequests,
       });
     },
@@ -3299,7 +3308,7 @@ const layer: Layer.Layer<ProviderAdapter.ProviderAdapterV2, never, PiAdapterV2Dr
   Layer.effect(
     ProviderAdapter.ProviderAdapterV2,
     Effect.gen(function* () {
-      const hostEnvironment = yield* HostProcessEnvironment;
+      const hostEnvironment = yield* HostProcess.Environment;
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       return yield* makePiAdapterV2({
         instanceId: PI_DEFAULT_INSTANCE_ID,

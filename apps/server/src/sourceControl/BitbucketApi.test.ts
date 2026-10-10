@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it, vi } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -11,11 +12,13 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import { GitCommandError } from "@t3tools/contracts";
-import * as BitbucketApi from "./BitbucketApi.ts";
+import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import type * as VcsDriver from "../vcs/VcsDriver.ts";
+import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 
 const isBitbucketRepositoryLocatorError = Schema.is(BitbucketApi.BitbucketRepositoryLocatorError);
 
@@ -139,6 +142,8 @@ function makeLayer(input: {
   );
 
   const layer = BitbucketApi.layer.pipe(
+    Layer.provide(ServerSourceControlHost.layer),
+    Layer.provide(Layer.mock(VcsProcess.VcsProcess)({})),
     Layer.provide(
       Layer.succeed(
         HttpClient.HttpClient,
@@ -358,7 +363,7 @@ it.effect.each([false, true])(
               ? {
                   context: {
                     provider: {
-                      kind: "bitbucket" as const,
+                      kind: SourceControlProviderKind.make("bitbucket"),
                       name: "Bitbucket",
                       baseUrl: "https://bitbucket.org",
                     },
@@ -392,7 +397,11 @@ it.effect("prefers an explicit repository and uses context when the repository i
   return Effect.gen(function* () {
     const bitbucket = yield* BitbucketApi.BitbucketApi;
     const context = {
-      provider: { kind: "bitbucket" as const, name: "Bitbucket", baseUrl: "https://bitbucket.org" },
+      provider: {
+        kind: SourceControlProviderKind.make("bitbucket"),
+        name: "Bitbucket",
+        baseUrl: "https://bitbucket.org",
+      },
       remoteName: "origin",
       remoteUrl: "git@bitbucket.org:another/context.git",
     };
@@ -834,7 +843,7 @@ it.effect("checks out same-repository pull requests with the existing Bitbucket 
       cwd: "/repo",
       context: {
         provider: {
-          kind: "bitbucket",
+          kind: SourceControlProviderKind.make("bitbucket"),
           name: "Bitbucket",
           baseUrl: "https://bitbucket.org",
         },
