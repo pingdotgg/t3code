@@ -390,6 +390,10 @@
     "./state/mcp-apps": {
       "types": "./src/state/mcpApps.ts",
       "default": "./src/state/mcpApps.ts"
+    },
+    "./source-control-clients": {
+      "types": "./src/sourceControlClients.ts",
+      "default": "./src/sourceControlClients.ts"
     }
   },
   "scripts": {
@@ -399,6 +403,13 @@
   "dependencies": {
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
+    "@t3tools/source-control-azure-devops": "workspace:*",
+    "@t3tools/source-control-bitbucket": "workspace:*",
+    "@t3tools/source-control-core": "workspace:*",
+    "@t3tools/source-control-forgejo": "workspace:*",
+    "@t3tools/source-control-gitcafe": "workspace:*",
+    "@t3tools/source-control-github": "workspace:*",
+    "@t3tools/source-control-gitlab": "workspace:*",
     "effect": "catalog:",
     "three": "0.180.0"
   },
