@@ -877,7 +877,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
 
   const planExecutionSelection = (
-    projection: OrchestrationV2ThreadProjection,
+    projection: Pick<
+      OrchestrationV2ThreadProjection,
+      "thread" | "providerThreads" | "providerTurns" | "providerSessions" | "runs"
+    >,
     targetModelSelection: ModelSelection,
   ) => {
     const activeThread = projection.providerThreads.find(
@@ -899,6 +902,48 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       targetModelSelection,
     });
   };
+
+  const detachSelectionSessions = Effect.fnUntraced(function* (
+    command: Extract<
+      OrchestrationV2Command,
+      { readonly type: "message.dispatch" | "prepared-run.release" }
+    >,
+    sessions: OrchestrationV2ThreadProjection["providerSessions"],
+    now: DateTime.Utc,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    for (const session of sessions) {
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "provider-session.detached",
+        threadId: command.threadId,
+        driver: session.driver,
+        providerInstanceId: session.providerInstanceId,
+        occurredAt: now,
+        payload: {
+          providerSessionId: session.id,
+          detachedAt: now,
+          reason: "Provider or model selection changed.",
+        },
+      });
+      yield* Ref.update(effects, (existing) => [
+        ...existing,
+        {
+          id: `effect:${command.commandId}:provider-session.detach:${session.id}`,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          request: {
+            type: "provider-session.detach",
+            providerSessionId: session.id,
+            detail: "Provider or model selection changed.",
+          },
+        } satisfies PendingOrchestrationEffectV2,
+      ]);
+    }
+  });
 
   const enforceCommandPolicy =
     (command: OrchestrationV2Command) =>
@@ -5206,38 +5251,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             .pipe(mapDispatchError(command))
         : undefined;
       if (dispatchMode.type !== "defer_start") {
-        for (const session of projection.providerSessions.filter((session) =>
-          switchPlan.releaseProviderSessionIds.includes(session.id),
-        )) {
-          yield* emit(
-            events,
-            command,
-          )({
-            type: "provider-session.detached",
-            threadId: command.threadId,
-            driver: session.driver,
-            providerInstanceId: session.providerInstanceId,
-            occurredAt: now,
-            payload: {
-              providerSessionId: session.id,
-              detachedAt: now,
-              reason: "Provider or model selection changed.",
-            },
-          });
-          yield* Ref.update(effects, (existing) => [
-            ...existing,
-            {
-              id: `effect:${command.commandId}:provider-session.detach:${session.id}`,
-              commandId: command.commandId,
-              threadId: command.threadId,
-              request: {
-                type: "provider-session.detach",
-                providerSessionId: session.id,
-                detail: "Provider or model selection changed.",
-              },
-            } satisfies PendingOrchestrationEffectV2,
-          ]);
-        }
+        yield* detachSelectionSessions(
+          command,
+          projection.providerSessions.filter((session) =>
+            switchPlan.releaseProviderSessionIds.includes(session.id),
+          ),
+          now,
+          events,
+          effects,
+        );
       }
 
       if (
@@ -7860,7 +7882,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.gen(function* () {
       const projection = yield* loadProjectionForCommand(
         command,
-        ["runs", "attempts", "nodes", "providerThreads", "turnItems"],
+        [
+          "runs",
+          "attempts",
+          "nodes",
+          "providerThreads",
+          "providerTurns",
+          "providerSessions",
+          "turnItems",
+        ],
         { turnItemTypes: ["command_execution"], turnItemRunId: command.runId },
       );
       const state = preparedRunState(command, projection);
@@ -7930,6 +7960,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: { ...state.run, status: "starting" },
       });
+      const switchPlan = yield* planExecutionSelection(projection, state.run.modelSelection).pipe(
+        mapDispatchError(command),
+      );
+      yield* detachSelectionSessions(
+        command,
+        projection.providerSessions.filter((session) =>
+          switchPlan.releaseProviderSessionIds.includes(session.id),
+        ),
+        now,
+        events,
+        effects,
+      );
       yield* Ref.update(effects, (existing) => [
         ...existing,
         {
