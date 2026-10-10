@@ -384,6 +384,8 @@ export interface OpenCode2Model {
   readonly id: string;
   readonly name: string;
   readonly variants: ReadonlyArray<{ readonly id: string }>;
+  /** Display name of the model's OpenCode provider, such as "OpenCode Go". */
+  readonly providerName?: string | undefined;
 }
 
 /**
@@ -541,12 +543,16 @@ const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
   }
   const models = providerModelsFromSettings(
     result.value
-      .map((model) => ({
-        slug: `${model.providerID}/${model.id}`,
-        name: model.name,
-        isCustom: false,
-        capabilities: openCode2ModelCapabilities(model),
-      }))
+      .map((model) => {
+        const subProvider = nonEmptyTrimmed(model.providerName);
+        return {
+          slug: `${model.providerID}/${model.id}`,
+          name: model.name,
+          ...(subProvider ? { subProvider } : {}),
+          isCustom: false,
+          capabilities: openCode2ModelCapabilities(model),
+        };
+      })
       .toSorted((left, right) => left.name.localeCompare(right.name)),
     settings.customModels,
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,

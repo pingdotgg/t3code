@@ -586,6 +586,44 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
     }),
   );
 
+  it.effect("labels OpenCode 2 models with their OpenCode provider's name", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "opencode v2.0.18\n";
+      const snapshot = yield* checkProvider(
+        makeOpenCodeSettings(),
+        process.cwd(),
+        undefined,
+        undefined,
+        Effect.succeed([
+          {
+            providerID: "opencode",
+            id: "kimi-k2.6",
+            name: "Kimi K2.6",
+            variants: [],
+            providerName: "OpenCode Zen",
+          },
+          {
+            providerID: "opencode-go",
+            id: "kimi-k2.6",
+            name: "Kimi K2.6",
+            variants: [],
+            providerName: "OpenCode Go",
+          },
+          { providerID: "local", id: "qwen", name: "Qwen", variants: [], providerName: " " },
+        ]),
+      );
+
+      NodeAssert.deepEqual(
+        snapshot.models.map((model) => [model.slug, model.subProvider]),
+        [
+          ["opencode/kimi-k2.6", "OpenCode Zen"],
+          ["opencode-go/kimi-k2.6", "OpenCode Go"],
+          ["local/qwen", undefined],
+        ],
+      );
+    }),
+  );
+
   it.effect("reports a failed OpenCode 2 model list without the server's response", () =>
     Effect.gen(function* () {
       runtimeMock.state.versionStdout = "opencode v2.0.18\n";

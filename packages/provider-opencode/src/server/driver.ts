@@ -306,8 +306,29 @@ export const OpenCodeDriver: ProviderDriver<
       });
       const loadOpenCode2Models = yield* makeOpenCode2ModelLoader(
         openCode2Server.withConnection((connection) =>
-          connection.client.model.list({ location: { directory: host.paths.cwd } }).pipe(
-            Effect.map((models) => models.data),
+          Effect.all(
+            {
+              models: connection.client.model.list({ location: { directory: host.paths.cwd } }),
+              // Names tell same-named models from different OpenCode providers apart
+              // (OpenCode Zen and OpenCode Go); the catalog still loads without them.
+              providers: connection.client.provider
+                .list({ location: { directory: host.paths.cwd } })
+                .pipe(
+                  Effect.map((providers) => providers.data),
+                  Effect.orElseSucceed(() => []),
+                ),
+            },
+            { concurrency: "unbounded" },
+          ).pipe(
+            Effect.map(({ models, providers }) => {
+              const providerNames = new Map(
+                providers.map((provider) => [provider.id as string, provider.name]),
+              );
+              return models.data.map((model) => ({
+                ...model,
+                providerName: providerNames.get(model.providerID),
+              }));
+            }),
             Effect.mapError(
               (cause) =>
                 new OpenCodeRuntime.OpenCodeRuntimeError({
