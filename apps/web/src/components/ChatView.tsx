@@ -7802,6 +7802,18 @@ export default function ChatView(props: ChatViewProps) {
       }),
     [feedbackSubmissions, routeThreadKey],
   );
+  const fallbackTargetForBanner = useMemo(() => {
+    if (!activeThreadShell?.modelSelection) return null;
+    return resolveFallbackModelSelection(
+      activeThreadShell.fallbackModelSelection ?? { mode: "auto" },
+      activeThreadShell.modelSelection,
+      providerInstanceEntries,
+    );
+  }, [
+    activeThreadShell?.fallbackModelSelection,
+    activeThreadShell?.modelSelection,
+    providerInstanceEntries,
+  ]);
   const limitRecoveryBanner =
     serverRuntime?.status === "failed" &&
     serverRuntime.lastErrorClass === "usage_limit" &&
@@ -7812,36 +7824,36 @@ export default function ChatView(props: ChatViewProps) {
           stoppedAt: activeThreadShell.latestRun.completedAt ?? activeThreadShell.updatedAt,
           recovery: activeThreadShell.limitRecovery ?? null,
           snoozedUntil: activeThreadShell.snoozedUntil,
-          onFallbackNow: async () => {
-            const fallbackTarget = resolveFallbackModelSelection(
-              activeThreadShell.fallbackModelSelection ?? { mode: "auto" },
-              activeThreadShell.modelSelection,
-              providerInstanceEntries,
-            );
-            if (fallbackTarget) {
-              onProviderModelSelect(fallbackTarget.instanceId, fallbackTarget.model, {
-                focusComposer: false,
-              });
-              const result = await startThreadTurn({
-                environmentId,
-                input: {
-                  threadId: activeThreadShell.id,
-                  manualContinuationOfRunId: activeThreadShell.latestRun?.runId,
-                  modelSelection: fallbackTarget,
-                  message: {
-                    messageId: newMessageId(),
-                    role: "user",
-                    text: "Continue where you left off.",
-                    attachments: [],
-                  },
-                  runtimeMode,
-                  interactionMode,
-                  dispatchMode: "start",
+          onFallbackNow:
+            fallbackTargetForBanner === null
+              ? undefined
+              : async () => {
+                  onProviderModelSelect(
+                    fallbackTargetForBanner.instanceId,
+                    fallbackTargetForBanner.model,
+                    {
+                      focusComposer: false,
+                    },
+                  );
+                  const result = await startThreadTurn({
+                    environmentId,
+                    input: {
+                      threadId: activeThreadShell.id,
+                      manualContinuationOfRunId: activeThreadShell.latestRun?.runId,
+                      modelSelection: fallbackTargetForBanner,
+                      message: {
+                        messageId: newMessageId(),
+                        role: "user",
+                        text: "Continue where you left off.",
+                        attachments: [],
+                      },
+                      runtimeMode,
+                      interactionMode,
+                      dispatchMode: "start",
+                    },
+                  });
+                  if (result._tag === "Failure") throw squashAtomCommandFailure(result);
                 },
-              });
-              if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-            }
-          },
           onChange: async (limitRecovery) => {
             const result = await updateThreadMetadata({
               environmentId,

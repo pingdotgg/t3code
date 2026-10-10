@@ -1,8 +1,4 @@
-import {
-  type ModelSelection,
-  type OrchestrationV2FallbackSelection,
-  type ProviderInstanceId,
-} from "@t3tools/contracts";
+import { type OrchestrationV2FallbackSelection, type ProviderInstanceId } from "@t3tools/contracts";
 import { memo, useMemo } from "react";
 import { ShieldAlertIcon } from "lucide-react";
 import {
@@ -112,24 +108,24 @@ export const FallbackModelPicker = memo(function FallbackModelPicker(
             </MenuTrigger>
           }
         />
-        <TooltipPopup side="top" className="text-xs">
+        <TooltipPopup side="top">
           Configure fallback AI agent when rate or usage limits occur
         </TooltipPopup>
       </Tooltip>
 
-      <MenuPopup className="w-64 max-h-[24rem] overflow-y-auto p-1 text-xs">
+      <MenuPopup className="max-h-[24rem] w-64 overflow-y-auto">
         <MenuGroup>
-          <div className="px-2 pt-1 font-semibold uppercase tracking-wider text-[10px] text-muted-foreground">
+          <div className="px-2 pt-1 font-semibold uppercase tracking-wider text-3xs text-muted-foreground">
             Rate Limit Fallback
           </div>
-          <div className="px-2 pb-1.5 text-[11px] text-muted-foreground">
+          <div className="px-2 pb-1.5 text-2xs text-muted-foreground">
             Action when active AI agent hits usage or rate limits.
           </div>
           <MenuRadioGroup value={currentValue} onValueChange={handleValueChange}>
             <MenuRadioItem value="off" closeOnClick>
               <span className="flex flex-col">
                 <span className="font-medium">Off</span>
-                <span className="text-[11px] text-muted-foreground">
+                <span className="text-2xs text-muted-foreground">
                   Pause and wait for limits to reset
                 </span>
               </span>
@@ -137,7 +133,7 @@ export const FallbackModelPicker = memo(function FallbackModelPicker(
             <MenuRadioItem value="auto" closeOnClick>
               <span className="flex flex-col">
                 <span className="font-medium text-warning">Auto Fallback</span>
-                <span className="text-[11px] text-muted-foreground">
+                <span className="text-2xs text-muted-foreground">
                   Seamlessly hand off to another available provider
                 </span>
               </span>
@@ -153,7 +149,7 @@ export const FallbackModelPicker = memo(function FallbackModelPicker(
             <div key={entry.instanceId}>
               <MenuDivider />
               <MenuGroup>
-                <div className="flex items-center gap-1.5 px-2 pt-1.5 pb-1 font-medium text-[11px] text-muted-foreground">
+                <div className="flex items-center gap-1.5 px-2 pt-1.5 pb-1 font-medium text-2xs text-muted-foreground">
                   <ProviderInstanceIcon
                     driverKind={entry.driverKind}
                     displayName={entry.displayName}

@@ -112,14 +112,16 @@ const makeSweep = Effect.gen(function* () {
         .getThreadProjection(thread.id)
         .pipe(Effect.catchCause(() => Effect.succeed(null)));
       const fallbackSelection = projection?.thread.fallbackModelSelection;
-      const currentModelSelection = projection?.thread.modelSelection;
-      if (!fallbackSelection || !currentModelSelection) {
+      const failedModelSelection =
+        projection?.runs.find((r) => r.id === thread.latestRunId)?.modelSelection ??
+        projection?.thread.modelSelection;
+      if (!fallbackSelection || !failedModelSelection) {
         continue;
       }
 
       const fallbackTarget = resolveFallbackModelSelection(
         fallbackSelection,
-        currentModelSelection,
+        failedModelSelection,
         providers,
       );
       if (!fallbackTarget) {

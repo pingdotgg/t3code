@@ -3582,7 +3582,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           SELECT t.payload_json, r.run_id, r.completed_at,
             item.payload_json AS failure_payload_json,
             (
-              SELECT json_extract(session.payload_json, $.lastError)
+              SELECT json_extract(session.payload_json, '$.lastError')
               FROM orchestration_v2_projection_provider_sessions session
               INNER JOIN orchestration_v2_projection_provider_session_bindings binding
                 ON binding.provider_session_id = session.provider_session_id
@@ -3595,35 +3595,35 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           INNER JOIN orchestration_v2_projection_runs r ON r.run_id = (
             SELECT latest.run_id FROM orchestration_v2_projection_runs latest
             WHERE latest.thread_id = t.thread_id
-              AND latest.status <> queued
+              AND latest.status <> 'queued'
               AND NOT (
-                latest.status = cancelled
-                AND json_extract(latest.payload_json, $.startedAt) IS NULL
+                latest.status = 'cancelled'
+                AND json_extract(latest.payload_json, '$.startedAt') IS NULL
               )
             ORDER BY latest.completed_at IS NULL DESC, latest.completed_at DESC,
               latest.ordinal DESC, latest.run_id DESC
             LIMIT 1
-          ) AND r.status = failed
+          ) AND r.status = 'failed'
           INNER JOIN orchestration_v2_projection_turn_items item ON item.turn_item_id = (
             SELECT error.turn_item_id FROM orchestration_v2_projection_turn_items error
             WHERE error.thread_id = t.thread_id AND error.run_id = r.run_id
-              AND error.type = error AND error.status = failed
-              AND error.node_id IS json_extract(r.payload_json, $.rootNodeId)
+              AND error.type = 'error' AND error.status = 'failed'
+              AND error.node_id IS json_extract(r.payload_json, '$.rootNodeId')
             ORDER BY error.updated_at DESC, error.ordinal DESC, error.turn_item_id DESC
             LIMIT 1
           )
           WHERE t.deleted_at IS NULL
-            AND json_extract(t.payload_json, $.archivedAt) IS NULL
-            AND json_extract(t.payload_json, $.settledOverride) IS NOT settled
-            AND json_extract(item.payload_json, $.failure.class) = usage_limit
-            AND json_extract(t.payload_json, $.fallbackModelSelection) IS NOT NULL
+            AND json_extract(t.payload_json, '$.archivedAt') IS NULL
+            AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'
+            AND json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
+            AND json_extract(t.payload_json, '$.fallbackModelSelection') IS NOT NULL
             AND (
-              json_extract(t.payload_json, $.limitRecovery.runId) IS NOT r.run_id
-              OR COALESCE(json_extract(t.payload_json, $.limitRecovery.fallbackTriggered), 0) = 0
+              json_extract(t.payload_json, '$.limitRecovery.runId') IS NOT r.run_id
+              OR COALESCE(json_extract(t.payload_json, '$.limitRecovery.fallbackTriggered'), 0) = 0
             )
             AND NOT EXISTS (
               SELECT 1 FROM orchestration_v2_projection_runtime_requests request
-              WHERE request.thread_id = t.thread_id AND request.status = pending
+              WHERE request.thread_id = t.thread_id AND request.status = 'pending'
             )
           ORDER BY t.thread_id
         `;
@@ -6241,16 +6241,16 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                   thread.deletedAt === null &&
                   thread.archivedAt === null &&
                   thread.settledOverride !== "settled" &&
-                  thread.fallbackModelSelection != null &&
-                  (thread.limitRecovery?.fallbackTriggered !== true ||
-                    thread.limitRecovery?.runId !== thread.latestRunId),
+                  thread.fallbackModelSelection != null,
               )
               .map(threadShellFromProjection)
               .filter(
                 (thread) =>
                   thread.status === "failed" &&
                   thread.lastErrorClass === "usage_limit" &&
-                  thread.pendingRuntimeRequest === null,
+                  thread.pendingRuntimeRequest === null &&
+                  (thread.limitRecovery?.fallbackTriggered !== true ||
+                    thread.limitRecovery?.runId !== thread.latestRunId),
               )
               .toSorted((left, right) => left.id.localeCompare(right.id)),
           ),
