@@ -1,7 +1,238 @@
 import { assert, it } from "@effect/vitest";
+import type { ServerProviderModel } from "@t3tools/contracts";
+import {
+  buildExplicitProviderOptionSelectionsFromDescriptors,
+  getProviderOptionDescriptors,
+} from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { chatGptModels } from "./CodexChatGptModels.ts";
+import { mapCodexModelCapabilities } from "./CodexProvider.ts";
+
+const accountModel = {
+  slug: "gpt-6.1-sol",
+  display_name: "GPT-6.1-Sol",
+  visibility: "list",
+  default_reasoning_level: "low",
+  supported_reasoning_levels: [
+    { effort: "low", description: "Fast responses with lighter reasoning" },
+    { effort: "medium", description: "Balances speed and reasoning depth for everyday tasks" },
+    { effort: "high", description: "Greater reasoning depth for complex problems" },
+    { effort: "xhigh", description: "Extra high reasoning depth for complex problems" },
+    { effort: "max", description: "Maximum reasoning depth for the hardest problems" },
+    { effort: "ultra", description: "Maximum reasoning with automatic task delegation" },
+  ],
+};
+
+const catalogClient = (models: ReadonlyArray<unknown>) =>
+  HttpClient.make((request) =>
+    Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ models }))),
+  );
+
+it.effect("exposes account reasoning controls when the model is absent from native discovery", () =>
+  Effect.gen(function* () {
+    const models = yield* chatGptModels("account-a", []).pipe(
+      Effect.provideService(HttpClient.HttpClient, catalogClient([accountModel])),
+    );
+    const capabilities = models[0]!.capabilities;
+    assert.isNotNull(capabilities);
+    assert.deepStrictEqual(capabilities!.optionDescriptors, [
+      {
+        id: "reasoningEffort",
+        label: "Reasoning",
+        type: "select",
+        options: [
+          { id: "low", label: "Low", isDefault: true },
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High" },
+          { id: "xhigh", label: "Extra High" },
+          { id: "max", label: "Max" },
+          { id: "ultra", label: "Ultra" },
+        ],
+        currentValue: "low",
+      },
+    ]);
+    assert.isUndefined(
+      buildExplicitProviderOptionSelectionsFromDescriptors(
+        getProviderOptionDescriptors({ caps: capabilities! }),
+        undefined,
+      ),
+    );
+    const selections = [{ id: "reasoningEffort", value: "high" }];
+    assert.deepStrictEqual(
+      buildExplicitProviderOptionSelectionsFromDescriptors(
+        getProviderOptionDescriptors({ caps: capabilities!, selections }),
+        selections,
+      ),
+      selections,
+    );
+  }),
+);
+
+it.effect("preserves the account Astra default without changing the native override", () =>
+  Effect.gen(function* () {
+    const models = yield* chatGptModels("account-a", []).pipe(
+      Effect.provideService(
+        HttpClient.HttpClient,
+        catalogClient([{ ...accountModel, slug: "gpt-6-astra", display_name: "GPT-6-Astra" }]),
+      ),
+    );
+    const descriptor = models[0]!.capabilities!.optionDescriptors![0]!;
+    assert.strictEqual(descriptor.currentValue, "low");
+    if (descriptor.type === "select") {
+      assert.deepStrictEqual(
+        descriptor.options.filter((option) => option.isDefault),
+        [{ id: "low", label: "Low", isDefault: true }],
+      );
+    }
+    const native = mapCodexModelCapabilities({
+      model: "gpt-6-astra",
+      id: "gpt-6-astra",
+      displayName: "GPT-6-Astra",
+      description: "Test model",
+      hidden: false,
+      isDefault: false,
+      defaultReasoningEffort: "low",
+      supportedReasoningEfforts: accountModel.supported_reasoning_levels.map((level) => ({
+        reasoningEffort: level.effort,
+        description: level.description,
+      })),
+      additionalSpeedTiers: [],
+    });
+    assert.strictEqual(native.optionDescriptors![0]!.currentValue, "medium");
+  }),
+);
+
+it.effect("preserves existing native reasoning controls and other capabilities", () =>
+  Effect.gen(function* () {
+    const native: ReadonlyArray<ServerProviderModel> = [
+      {
+        slug: accountModel.slug,
+        name: "Cached model",
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "reasoningEffort",
+              label: "Reasoning",
+              type: "select",
+              options: [{ id: "medium", label: "Medium", isDefault: true }],
+              currentValue: "medium",
+            },
+            { id: "nativeOption", label: "Native option", type: "boolean", currentValue: true },
+          ],
+        },
+      },
+    ];
+    for (const levels of [accountModel.supported_reasoning_levels, [], null]) {
+      const models = yield* chatGptModels("account-a", native).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          catalogClient([{ ...accountModel, supported_reasoning_levels: levels }]),
+        ),
+      );
+      assert.deepStrictEqual(models[0]!.capabilities, native[0]!.capabilities);
+    }
+  }),
+);
+
+it.effect("fills missing native reasoning controls while preserving other capabilities", () =>
+  Effect.gen(function* () {
+    const native: ReadonlyArray<ServerProviderModel> = [
+      {
+        slug: accountModel.slug,
+        name: "Cached model",
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            { id: "nativeOption", label: "Native option", type: "boolean", currentValue: true },
+          ],
+        },
+      },
+    ];
+    const models = yield* chatGptModels("account-a", native).pipe(
+      Effect.provideService(HttpClient.HttpClient, catalogClient([accountModel])),
+    );
+    const descriptors = models[0]!.capabilities!.optionDescriptors!;
+    assert.strictEqual(descriptors[0]!.id, "reasoningEffort");
+    assert.strictEqual(descriptors[0]!.currentValue, "low");
+    assert.deepStrictEqual(descriptors[1], native[0]!.capabilities!.optionDescriptors![0]);
+  }),
+);
+
+it.effect("accepts null and empty defaults without inventing a default", () =>
+  Effect.gen(function* () {
+    for (const defaultReasoning of [null, ""]) {
+      const models = yield* chatGptModels("account-a", []).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          catalogClient([{ ...accountModel, default_reasoning_level: defaultReasoning }]),
+        ),
+      );
+      const descriptor = models[0]!.capabilities!.optionDescriptors![0]!;
+      assert.strictEqual(descriptor.type, "select");
+      assert.isUndefined(descriptor.currentValue);
+      if (descriptor.type === "select") {
+        assert.isFalse(descriptor.options.some((option) => option.isDefault));
+      }
+    }
+  }),
+);
+
+it.effect("isolates malformed reasoning metadata without discarding the catalog", () =>
+  Effect.gen(function* () {
+    for (const levels of [null, [], "invalid", [{ effort: null }]]) {
+      const models = yield* chatGptModels("account-a", []).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          catalogClient([
+            accountModel,
+            { ...accountModel, slug: "invalid-model", supported_reasoning_levels: levels },
+            {
+              ...accountModel,
+              slug: "hidden-model",
+              visibility: "hidden",
+              default_reasoning_level: {},
+              supported_reasoning_levels: [{ effort: null, description: null }],
+            },
+          ]),
+        ),
+      );
+      assert.deepStrictEqual(
+        models.map((model) => model.slug),
+        [accountModel.slug, "invalid-model"],
+      );
+      assert.strictEqual(models[0]!.capabilities!.optionDescriptors![0]!.currentValue, "low");
+      assert.isNull(models[1]!.capabilities);
+    }
+  }),
+);
+
+it.effect("accepts new account effort values without inventing a default", () =>
+  Effect.gen(function* () {
+    const models = yield* chatGptModels("account-a", []).pipe(
+      Effect.provideService(
+        HttpClient.HttpClient,
+        catalogClient([
+          {
+            slug: "account-model",
+            display_name: "Account model",
+            visibility: "list",
+            supported_reasoning_levels: [{ effort: "future-effort" }],
+          },
+        ]),
+      ),
+    );
+    assert.deepStrictEqual(models[0]!.capabilities!.optionDescriptors, [
+      {
+        id: "reasoningEffort",
+        label: "Reasoning",
+        type: "select",
+        options: [{ id: "future-effort", label: "future-effort" }],
+      },
+    ]);
+  }),
+);
 
 it.effect(
   "uses each selected profile's token and the server's visible catalog order and names",
