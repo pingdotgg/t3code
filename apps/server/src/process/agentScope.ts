@@ -121,19 +121,28 @@ const make = Effect.gen(function* () {
       const systemdRun = yield* resolve("systemd-run", hostEnvironment);
       const systemctl = yield* resolve("systemctl", hostEnvironment);
       if (systemdRun._tag === "None" || systemctl._tag === "None") return undefined;
-      const probe = yield* run(systemdRun.value, [
-        "--user",
-        "--scope",
-        "--quiet",
-        "--collect",
-        `--slice=${AGENT_SLICE}`,
-        "--",
-        "true",
-      ]);
-      if (probe._tag === "None" || probe.value.code !== 0) {
-        yield* Effect.logInfo("Agent scopes are off: no systemd user manager", {
-          stderr: probe._tag === "Some" ? probe.value.stderr.trim() : undefined,
-        });
+      const probe = (options: ReadonlyArray<string>) =>
+        run(systemdRun.value, [
+          "--user",
+          "--scope",
+          "--quiet",
+          "--collect",
+          `--slice=${AGENT_SLICE}`,
+          ...options,
+          "--",
+          "true",
+        ]).pipe(Effect.map((result) => result._tag === "Some" && result.value.code === 0));
+      // Stop the whole scope when the kernel kills one of its processes, and
+      // record the result as oom-kill. Scopes take OOMPolicy from systemd 253;
+      // older user managers still get plain scopes, without the OOM label.
+      const oomOptions = ["--property=OOMPolicy=stop"];
+      const scopeOptions = (yield* probe(oomOptions))
+        ? oomOptions
+        : (yield* probe([]))
+          ? []
+          : undefined;
+      if (scopeOptions === undefined) {
+        yield* Effect.logInfo("Agent scopes are off: no systemd user manager");
         return undefined;
       }
       const limits = agentSliceMemoryLimits(NodeOS.totalmem());
@@ -150,8 +159,17 @@ const make = Effect.gen(function* () {
           stderr: limited._tag === "Some" ? limited.value.stderr.trim() : undefined,
         });
       }
-      yield* Effect.logInfo("Agent scopes are on", { slice: AGENT_SLICE, ...limits });
-      return { systemdRun: systemdRun.value, systemctl: systemctl.value, runtimeDir };
+      yield* Effect.logInfo("Agent scopes are on", {
+        slice: AGENT_SLICE,
+        ...limits,
+        oomPolicy: scopeOptions.length > 0,
+      });
+      return {
+        systemdRun: systemdRun.value,
+        systemctl: systemctl.value,
+        runtimeDir,
+        scopeOptions,
+      };
     }),
   );
 
@@ -265,6 +283,9 @@ const make = Effect.gen(function* () {
         runtimeDir: scope.runtimeDir,
         slice: AGENT_SLICE,
         unit,
+        // Without a thread nothing reads the result, so let systemd unload
+        // the unit even when it fails.
+        options: threadId === undefined ? [...scope.scopeOptions, "--collect"] : scope.scopeOptions,
       };
       return agentScopeCommand({ command: resolved.value, args, scope: systemdScope });
     }),

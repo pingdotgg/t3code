@@ -81,6 +81,8 @@ export interface AgentSystemdScope {
   readonly slice: string;
   readonly unit: string;
   readonly runtimeDir: string;
+  /** Extra `systemd-run` options, such as `--property=OOMPolicy=stop`. */
+  readonly options: ReadonlyArray<string>;
 }
 
 /**
@@ -111,9 +113,7 @@ export function agentScopeCommand(input: {
       "--quiet",
       `--slice=${scope.slice}`,
       `--unit=${scope.unit}`,
-      // Stop the whole scope when the kernel kills one of its processes, and
-      // record the result as oom-kill. With "continue", systemd records nothing.
-      "--property=OOMPolicy=stop",
+      ...scope.options,
       "--",
       command,
       ...args,
