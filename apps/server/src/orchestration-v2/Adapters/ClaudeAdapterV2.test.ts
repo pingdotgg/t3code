@@ -2191,6 +2191,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
     readonly interrupt?: Effect.Effect<void>;
     readonly environment?: NodeJS.ProcessEnv;
+    readonly subagentLaunchToolUseId?: ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["subagentLaunchToolUseId"];
     // A CLI process opened after the first streams from its own queue, so the
     // first one can exit (Queue.shutdown) and a later turn can start another.
     readonly freshQueueOnReopen?: boolean;
@@ -2291,7 +2292,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               };
             }),
           forkSession: () => Effect.die("unused forkSession"),
-          subagentLaunchToolUseId: () => Effect.succeed(null),
+          subagentLaunchToolUseId: options?.subagentLaunchToolUseId ?? (() => Effect.succeed(null)),
           assertComplete: Effect.void,
         },
       });
@@ -2358,6 +2359,79 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       };
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
+
+  it.effect("looks up a resumed subagent's launch in the instance's environment", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const SEND = "toolu-instance-home-sendmessage";
+        const lookups: Array<ClaudeAdapterV2.ClaudeAgentSdkSubagentLookupInput> = [];
+        const harness = yield* makeWakeHarnessWithOptions({
+          environment: { CLAUDE_CONFIG_DIR: "/instance/claude-home" },
+          subagentLaunchToolUseId: (input) =>
+            Effect.sync(() => {
+              lookups.push(input);
+              return null;
+            }),
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-instance-home-resume"),
+            text: "Ask the auditor to check again.",
+            attachments: [],
+          }),
+        );
+        // A subagent launched before a restart: its SendMessage resume names
+        // a task this session never saw start.
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              model: "claude-sonnet-4-6",
+              id: "msg_instance_home_sendmessage",
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: SEND,
+                  name: "SendMessage",
+                  input: { to: "task-before-restart", message: "Check again." },
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000002101",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: "task-before-restart",
+            tool_use_id: SEND,
+            description: "Audit recent commits",
+            is_backgrounded: true,
+            task_type: "local_agent",
+            prompt: "Check again.",
+            uuid: "00000000-0000-4000-8000-000000002102",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        assert.deepEqual(
+          lookups.map((lookup) => lookup.environment?.CLAUDE_CONFIG_DIR),
+          ["/instance/claude-home"],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
 
   it.effect.each([
     { isError: false, title: "Check weather" },
