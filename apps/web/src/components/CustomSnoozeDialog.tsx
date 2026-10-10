@@ -9,7 +9,8 @@ import {
 import { Button } from "./ui/button";
 import { CalendarIcon } from "lucide-react";
 import { Calendar } from "./ui/calendar";
-import { weekStartsOn } from "../timestampFormat";
+import { calendarWeekStartsOn } from "../timestampFormat";
+import { useClientSettings } from "../hooks/useSettings";
 import { Popover, PopoverTrigger, PopoverPopup } from "./ui/popover";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -63,6 +64,7 @@ function CustomSnoozeDialog() {
   const [amount, setAmount] = useState("2");
   const [unit, setUnit] = useState<"minutes" | "hours" | "days">("hours");
   const [error, setError] = useState<string | null>(null);
+  const weekStartsOn = calendarWeekStartsOn(useClientSettings((s) => s.firstDayOfWeek));
   const input: CustomSnoozeInput =
     mode === "date" ? { mode, date: localSnoozeDate(date), time } : { mode, amount, unit };
   return (

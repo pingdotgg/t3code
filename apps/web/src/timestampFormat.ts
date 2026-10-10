@@ -1,4 +1,4 @@
-import { type TimestampFormat } from "@t3tools/contracts/settings";
+import { type FirstDayOfWeek, type TimestampFormat } from "@t3tools/contracts/settings";
 
 function getTimestampFormatOptions(
   timestampFormat: TimestampFormat,
@@ -79,8 +79,25 @@ export function resolveWeekStartsOn(locale: string | undefined): WeekdayIndex | 
   }
 }
 
-/** Week start for calendars, from the same locale timestamps are shown in. */
-export const weekStartsOn = resolveWeekStartsOn(timestampLocale);
+const localeWeekStartsOn = resolveWeekStartsOn(timestampLocale);
+
+/**
+ * Week start for calendars: the user's explicit choice, otherwise the same
+ * locale timestamps are shown in.
+ */
+export function calendarWeekStartsOn(firstDayOfWeek: FirstDayOfWeek): WeekdayIndex | undefined {
+  if (firstDayOfWeek === "sunday") return 0;
+  if (firstDayOfWeek === "monday") return 1;
+  return localeWeekStartsOn;
+}
+
+/**
+ * Week start for the "Next week" snooze. It means the start of the work week,
+ * so the automatic setting stays on Monday even where calendars start on Sunday.
+ */
+export function snoozeWeekStartsOn(firstDayOfWeek: FirstDayOfWeek): WeekdayIndex {
+  return firstDayOfWeek === "sunday" ? 0 : 1;
+}
 
 const timestampFormatterCache = new Map<string, Intl.DateTimeFormat>();
 
