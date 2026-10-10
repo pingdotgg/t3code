@@ -835,10 +835,11 @@ const make = Effect.gen(function* () {
 
         // A Scratch thread launched at the project root runs in a folder of its
         // own. Only the first attempt claims one; a retry replays its create.
-        const workspaceStrategy: ThreadLaunchWorkspaceStrategy =
-          input.forkSource === undefined &&
-          input.workspaceStrategy.type === "root" &&
-          Option.isNone(launchReceipt)
+        // Clients open a new-worktree fork while it prepares, so it is named up
+        // front; an unbound thread would invite them to pick a checkout.
+        const workspaceStrategy: ThreadLaunchWorkspaceStrategy = Option.isSome(launchReceipt)
+          ? input.workspaceStrategy
+          : input.forkSource === undefined && input.workspaceStrategy.type === "root"
             ? Option.match(
                 yield* managedFolders
                   .folderForThread({
@@ -852,7 +853,18 @@ const make = Effect.gen(function* () {
                   onSome: (worktreePath) => ({ type: "existing_worktree", worktreePath }),
                 },
               )
-            : input.workspaceStrategy;
+            : input.forkSource !== undefined &&
+                input.workspaceStrategy.type === "worktree" &&
+                input.workspaceStrategy.branch === undefined
+              ? {
+                  ...input.workspaceStrategy,
+                  branch: yield* randomUuidV4.pipe(
+                    Effect.map((uuid) =>
+                      buildTemporaryWorktreeBranchName(() => uuid.replaceAll("-", "")),
+                    ),
+                  ),
+                }
+              : input.workspaceStrategy;
         const initialBranch = workspaceStrategy.branch ?? null;
         const initialWorktreePath =
           workspaceStrategy.type === "existing_worktree" ? workspaceStrategy.worktreePath : null;

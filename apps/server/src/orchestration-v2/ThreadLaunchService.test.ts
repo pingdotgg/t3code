@@ -459,6 +459,50 @@ it.effect.each([
   },
 );
 
+it.effect("names a new-worktree fork's branch before its checkout finishes", () =>
+  Effect.gen(function* () {
+    const checkoutEntered = yield* Deferred.make<void>();
+    const allowCheckout = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      createWorktree: (input) =>
+        Deferred.succeed(checkoutEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(allowCheckout)),
+          Effect.as({
+            worktree: {
+              path: "/repo-worktrees/feature",
+              refName: input.newRefName,
+              headSha: "abc",
+            },
+          } as never),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const forkSource = yield* seedForkSource();
+      const input = {
+        ...launchInput({
+          command: "fork:named-branch",
+          thread: "thread:named-branch",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+        forkSource,
+      };
+      const launch = yield* launches.launch(input).pipe(Effect.forkChild);
+      yield* Deferred.await(checkoutEntered);
+      // Clients already show the fork; an unbound one would let them pick a checkout.
+      const pending = yield* threads.getThreadProjection(ThreadId.make("thread:named-branch"));
+      assert.isNull(pending.thread.worktreePath);
+      assert.match(pending.thread.branch ?? "", /^t3\/[0-9a-f]{8}$/);
+      assert.equal(harness.createWorktree.mock.calls[0]?.[0].newRefName, pending.thread.branch);
+      yield* Deferred.succeed(allowCheckout, undefined);
+      const result = yield* Fiber.join(launch);
+      assert.equal(result.projection.thread.branch, pending.thread.branch);
+      assert.equal(result.projection.thread.worktreePath, "/repo-worktrees/feature");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect("waits for the original fork's checkout when its accepted launch is replayed", () =>
   Effect.gen(function* () {
     const checkoutEntered = yield* Deferred.make<void>();
