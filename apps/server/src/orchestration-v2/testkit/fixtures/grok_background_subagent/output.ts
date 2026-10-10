@@ -82,7 +82,10 @@ export function assertGrokBackgroundSubagentOutput(
     .get("while-subagent-runs")
     ?.threads.find((thread) => thread.id === projection.thread.id);
   assert.deepEqual(
-    waitingShell?.pendingBackgroundTasks?.map((task) => [task.kind, task.childThreadId]),
+    waitingShell?.pendingBackgroundTasks?.map((task) => [
+      task.kind,
+      task.kind === "subagent" ? task.childThreadId : undefined,
+    ]),
     [["subagent", subagent?.childThreadId]],
     "the Waiting strip names the running subagent",
   );
