@@ -18,6 +18,8 @@ export function ThreadBrowserFloat(props: {
   readonly threadId: ThreadId;
   readonly tabs: ReadonlyArray<PreviewSessionSnapshot>;
   readonly loaded: boolean;
+  /** Keeps tracking reveals while something else needs the space. */
+  readonly hidden?: boolean;
   readonly top: number;
   readonly onOpen: (tabId: string) => void;
 }) {
@@ -54,7 +56,7 @@ export function ThreadBrowserFloat(props: {
     onOpen(tabId);
   }, [onOpen, tabId]);
   const close = useCallback(() => setTabId(null), []);
-  if (!tab || !focused) return null;
+  if (!tab || !focused || props.hidden) return null;
   return (
     <FloatingBrowserPlayer
       environmentId={props.environmentId}
