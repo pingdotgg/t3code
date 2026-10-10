@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import {
   NonNegativeInt,
@@ -381,6 +382,8 @@ export const make = Effect.gen(function* () {
       after = batch.next;
       if (after === null || after === previous || batch.items.length === 0) break;
     }
+    // A hunk read that loses a race with a push leaves the counts at zero rather than dropping
+    // the file count with them.
     const counted =
       files.some((file) => file.additions !== undefined) ||
       files.length > LINE_STATS_MAX_FILES ||
@@ -390,7 +393,7 @@ export const make = Effect.gen(function* () {
             chunk(detailablePaths(files), DIFF_FILES_BATCH),
             (paths) => readDiffFiles(input, revision, paths),
             { concurrency: 4 },
-          )).flat();
+          ).pipe(Effect.orElseSucceed(() => [[]]))).flat();
     return {
       changedFiles: files.length,
       additions: counted.reduce((total, file) => total + (file.additions ?? 0), 0),
@@ -461,17 +464,30 @@ export const make = Effect.gen(function* () {
         const involved = input.involvement === "authored" || input.involvement === "reviewing";
         let actorId: string | undefined;
         if (involved) {
+          // A host narrows as far as it can: when the actor list can't be read, the listing comes
+          // back unnarrowed and the page's own involvement filter does the rest. A refused token
+          // or a rate limit still fails, since the service acts on those for the whole host.
           const options = yield* read(
             "listChangeRequests",
             input,
             { path: `${base}/filter-options` },
             FilterOptions,
+          ).pipe(
+            Effect.map(Option.some),
+            Effect.catchTags({
+              PullRequestProviderError: (error) =>
+                error.reason === "unauthenticated" || error.reason === "rate-limited"
+                  ? Effect.fail(error)
+                  : Effect.succeed(Option.none()),
+            }),
           );
-          actorId = options.actors.find(
-            (actor) => actor.handle.toLowerCase() === input.viewer.toLowerCase(),
-          )?.actorId;
-          // A viewer GitCafe knows no actor for has authored and been asked to review nothing.
-          if (actorId === undefined) return { items: [], truncated: false, continues: false };
+          if (Option.isSome(options)) {
+            actorId = options.value.actors.find(
+              (actor) => actor.handle.toLowerCase() === input.viewer.toLowerCase(),
+            )?.actorId;
+            // A viewer GitCafe knows no actor for has authored and been asked to review nothing.
+            if (actorId === undefined) return { items: [], truncated: false, continues: false };
+          }
         }
         const limit = Math.max(1, input.limit);
         const items: Array<Json.GitCafePull> = [];

@@ -16,8 +16,10 @@
  */
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -38,6 +40,8 @@ interface SentRequest {
   readonly query: URLSearchParams;
   readonly host: string;
   readonly body: unknown;
+  /** The `redirect` mode FetchHttpClient would hand to fetch for this request. */
+  readonly redirect: string | undefined;
 }
 
 /**
@@ -49,30 +53,33 @@ function fakeGitCafe(
   options: { readonly status?: number; readonly env?: NodeJS.ProcessEnv } = {},
 ) {
   const sent: Array<SentRequest> = [];
-  const client = HttpClient.make((request: HttpClientRequest.HttpClientRequest) => {
-    const url = new URL(request.url);
-    assert.isTrue(url.pathname.startsWith("/api/"), url.pathname);
-    assert.strictEqual(request.headers.authorization, "Bearer env-token");
-    const entry: SentRequest = {
-      method: request.method,
-      path: url.pathname.slice("/api".length),
-      query: url.searchParams,
-      host: url.host,
-      body:
-        request.body._tag === "Uint8Array"
-          ? decodeJson(new TextDecoder().decode(request.body.body))
-          : undefined,
-    };
-    sent.push(entry);
-    const route = routes[`${entry.method} ${entry.path}`];
-    const response =
-      route === undefined
-        ? new Response(encodeJson({ type: "https://cafe.sh/errors/not-found" }), { status: 404 })
-        : new Response(encodeJson(typeof route === "function" ? route(entry) : route), {
-            status: options.status ?? 200,
-          });
-    return Effect.succeed(HttpClientResponse.fromWeb(request, response));
-  });
+  const client = HttpClient.make(
+    (request: HttpClientRequest.HttpClientRequest, _url, _signal, fiber) => {
+      const url = new URL(request.url);
+      assert.isTrue(url.pathname.startsWith("/api/"), url.pathname);
+      assert.strictEqual(request.headers.authorization, "Bearer env-token");
+      const entry: SentRequest = {
+        method: request.method,
+        path: url.pathname.slice("/api".length),
+        query: url.searchParams,
+        host: url.host,
+        body:
+          request.body._tag === "Uint8Array"
+            ? decodeJson(new TextDecoder().decode(request.body.body))
+            : undefined,
+        redirect: Context.getOrUndefined(fiber.context, FetchHttpClient.RequestInit)?.redirect,
+      };
+      sent.push(entry);
+      const route = routes[`${entry.method} ${entry.path}`];
+      const response =
+        route === undefined
+          ? new Response(encodeJson({ type: "https://cafe.sh/errors/not-found" }), { status: 404 })
+          : new Response(encodeJson(typeof route === "function" ? route(entry) : route), {
+              status: options.status ?? 200,
+            });
+      return Effect.succeed(HttpClientResponse.fromWeb(request, response));
+    },
+  );
   const layer = GitCafeApi.layer.pipe(
     Layer.provide(GitCafeCredentials.layer),
     Layer.provide(TestSourceControlHost.layer()),
@@ -218,8 +225,6 @@ describe("GitCafePullRequestProvider", () => {
       for (const [status, reason] of [
         [401, "unauthenticated"],
         [429, "rate-limited"],
-        // A redirect is never followed with the token, so it answers as a failed request.
-        [302, "failed"],
       ] as const) {
         const server = fakeGitCafe(
           { "GET /repos/owner/repo/pulls/7/stack": { stack: null } },
@@ -236,6 +241,22 @@ describe("GitCafePullRequestProvider", () => {
       }
     }),
   );
+
+  it.effect("never lets fetch follow a redirect with the token", () => {
+    const server = fakeGitCafe({ "GET /repos/owner/repo/pulls/7/stack": { stack: null } });
+    return GitCafePullRequestProvider.make.pipe(
+      Effect.flatMap((provider) => provider.getChangeRequestStack!(target)),
+      Effect.tap(() =>
+        Effect.sync(() =>
+          assert.deepStrictEqual(
+            server.sent.map((r) => r.redirect),
+            ["manual"],
+          ),
+        ),
+      ),
+      Effect.provide(server.layer),
+    );
+  });
 
   it.effect("reads the stack a pull request belongs to", () => {
     const server = fakeGitCafe({
@@ -542,6 +563,24 @@ describe("GitCafePullRequestProvider", () => {
         server.sent.map((request) => request.path),
         ["/repos/owner/repo/filter-options"],
       );
+    }).pipe(Effect.provide(server.layer));
+  });
+
+  it.effect("lists unnarrowed when GitCafe can't say who the viewer is", () => {
+    // No `filter-options` route: the fake answers 404, which is an ordinary failure.
+    const server = fakeGitCafe({ "GET /repos/owner/repo/pulls": { items: [], next: null } });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      yield* provider.listChangeRequests({
+        ...target,
+        state: "open",
+        involvement: "authored",
+        viewer: "alice",
+        limit: 10,
+      });
+      const listing = server.sent.find((request) => request.path === "/repos/owner/repo/pulls");
+      assert.isDefined(listing);
+      assert.isNull(listing!.query.get("authors"));
     }).pipe(Effect.provide(server.layer));
   });
 
