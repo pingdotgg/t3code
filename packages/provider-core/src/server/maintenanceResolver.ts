@@ -270,6 +270,28 @@ export function npmGlobalPrefixFromCommandPath(
   return packageIndex === 0 ? "/" : slashPath.slice(0, packageIndex);
 }
 
+/**
+ * The Windows npm prefix a binary path inside a global package belongs to:
+ * `<prefix>\node_modules\<pkg>\…`. The layout alone is not proof, because a
+ * project checkout has the same shape. `resolveNpmGlobalPrefix` also requires
+ * the `<cmd>.cmd` shim npm writes into the prefix; a project keeps its shims
+ * in `node_modules\.bin`.
+ */
+export function windowsNpmPrefixFromPackagePath(
+  realCommandPath: string,
+  packageName: string,
+): string | null {
+  const normalized = normalizeCommandPath(realCommandPath);
+  const packageIndex = normalized.lastIndexOf(`/node_modules/${packageName.toLowerCase()}/`);
+  if (packageIndex <= 0 || normalized.slice(0, packageIndex).includes("/node_modules/")) {
+    return null;
+  }
+  // npm reads a bare `C:` as the drive's current directory, so keep the root separator.
+  return /^[a-z]:$/i.test(normalized.slice(0, packageIndex))
+    ? realCommandPath.slice(0, packageIndex + 1)
+    : realCommandPath.slice(0, packageIndex);
+}
+
 // `<prefix>/Cellar/<name>/<version>/…` or `<prefix>/Caskroom/<name>/<version>/…`.
 // Homebrew always nests a version directory under the keg.
 const HOMEBREW_KEG_PATTERN = /^(.*)\/(cellar|caskroom)\/([^/]+)\/[^/]+\//i;
@@ -577,7 +599,8 @@ const isVoltaPackageInstall = Effect.fn("isVoltaPackageInstall")(function* (
 /**
  * POSIX npm links `<prefix>/bin/<cmd>` into the package, so the real path is
  * proof. Windows npm writes `.cmd` shims beside `node_modules`, so the proof
- * is the package manifest next to the shim.
+ * is the package manifest next to the shim, or, for a binary path inside the
+ * package, the `<cmd>.cmd` shim next to `node_modules`.
  */
 const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (
   context: ProviderMaintenanceResolutionContext,
@@ -608,17 +631,10 @@ const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (
   if (hasManifest) {
     return shimDir;
   }
-  // A binary path can also name the package's own executable,
-  // `<prefix>\node_modules\<pkg>\bin\<cmd>.exe`, skipping the shim. The shim
-  // still proves the prefix: a project checkout keeps its shims in
-  // `node_modules\.bin`, never beside `node_modules`.
-  const packageSegment = `/node_modules/${packageName.toLowerCase()}/`;
-  const normalized = normalizeCommandPath(context.realCommandPath);
-  const packageIndex = normalized.lastIndexOf(packageSegment);
-  if (packageIndex <= 0 || normalized.slice(0, packageIndex).includes("/node_modules/")) {
+  const prefix = windowsNpmPrefixFromPackagePath(context.realCommandPath, packageName);
+  if (!prefix) {
     return null;
   }
-  const prefix = context.realCommandPath.slice(0, packageIndex);
   const command = path.basename(context.realCommandPath, path.extname(context.realCommandPath));
   const hasShim = yield* fileSystem
     .exists(path.join(prefix, `${command}.cmd`))

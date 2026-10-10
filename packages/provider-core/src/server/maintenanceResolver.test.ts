@@ -30,6 +30,7 @@ import {
   resolveLatestProviderVersion,
   resolvePackageManagedProviderMaintenance,
   resolveProviderMaintenanceCapabilitiesEffect,
+  windowsNpmPrefixFromPackagePath,
   type ProviderMaintenanceCapabilities,
 } from "./maintenanceResolver.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -302,6 +303,28 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       npmGlobalPrefixFromCommandPath(
         "/work/app/node_modules/@openai/codex/bin/codex.js",
         "@openai/codex",
+      ),
+    ).toBeNull();
+  });
+
+  it("derives the Windows npm prefix from a binary path inside the package", () => {
+    expect(
+      windowsNpmPrefixFromPackagePath(
+        "C:\\Users\\Theo\\AppData\\Roaming\\npm\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe",
+        "@anthropic-ai/claude-code",
+      ),
+    ).toBe("C:\\Users\\Theo\\AppData\\Roaming\\npm");
+    // `--prefix C:` would mean the drive's current directory, not its root.
+    expect(
+      windowsNpmPrefixFromPackagePath(
+        "C:\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe",
+        "@anthropic-ai/claude-code",
+      ),
+    ).toBe("C:\\");
+    expect(
+      windowsNpmPrefixFromPackagePath(
+        "C:\\npm\\node_modules\\other\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe",
+        "@anthropic-ai/claude-code",
       ),
     ).toBeNull();
   });
