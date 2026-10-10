@@ -2875,6 +2875,90 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect.each(["timeout", "release"] as const)(
+    "shares agent screenshot throttling with a recording and restores it after %s",
+    (endCapture) =>
+      Effect.gen(function* () {
+        const browserHost = yield* DesktopBrowserHost.DesktopBrowserHost;
+        const manager = yield* PreviewManager.PreviewManager;
+        const serverTab = { threadId: "thread-capture", tabId: "server-capture" };
+        const lines = yield* Queue.unbounded<string>();
+        yield* browserHost.events.pipe(
+          Stream.runForEach((line) => Queue.offer(lines, new TextDecoder().decode(line))),
+          Effect.forkScoped,
+        );
+        yield* browserHost.captureRequests.pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              if (event.active) browserHost.acknowledgeCapture(event.requestId);
+            }),
+          ),
+          Effect.forkScoped,
+        );
+        const image = {
+          toJPEG: () => Buffer.from("jpeg"),
+          getSize: () => ({ width: 100, height: 80 }),
+        };
+        const capturePage = vi.fn(async () => image);
+        const contents = Object.assign(makeTestPreviewWebContents(capturePage), {
+          isDevToolsOpened: () => false,
+          getUserAgent: () => "Electron",
+        });
+        fromId.mockReturnValue(contents);
+        yield* manager.createTab("capture", { serverTab });
+        yield* manager.registerWebview("capture", 42);
+        expect(yield* Queue.take(lines)).toContain('"attached"');
+        const restored = Promise.withResolvers<void>();
+        const setBackgroundThrottling = vi.fn((enabled: boolean) => {
+          if (enabled) restored.resolve();
+        });
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          webContents: { setBackgroundThrottling },
+        } as never);
+        yield* manager.startRecording("capture");
+        const started = Promise.withResolvers<void>();
+        const pending = Promise.withResolvers<typeof image>();
+        const pendingScreenshot = Promise.withResolvers<unknown>();
+        vi.mocked(contents.debugger.sendCommand).mockImplementation((method) =>
+          method === "Page.captureScreenshot"
+            ? pendingScreenshot.promise
+            : Promise.resolve(undefined),
+        );
+        capturePage.mockImplementationOnce(() => {
+          started.resolve();
+          return pending.promise;
+        });
+        yield* browserHost.handleCommandLine(
+          JSON.stringify({
+            type: "cdp",
+            ...serverTab,
+            message: JSON.stringify({
+              id: 1,
+              method: "Page.captureScreenshot",
+              sessionId: "t3-preview-page",
+            }),
+          }),
+        );
+        yield* Effect.promise(() => started.promise);
+        yield* manager.stopRecording("capture");
+        expect(setBackgroundThrottling.mock.calls).toEqual([[false]]);
+        expect(contents.setBackgroundThrottling.mock.calls).toEqual([[false]]);
+        if (endCapture === "timeout") {
+          yield* TestClock.adjust("8 seconds");
+          expect(yield* Queue.take(lines)).toContain("within 8 seconds");
+        } else {
+          yield* browserHost.handleCommandLine(JSON.stringify({ type: "release", ...serverTab }));
+        }
+        yield* Effect.promise(() => restored.promise);
+        expect(setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
+        expect(contents.setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
+        pending.resolve(image);
+        pendingScreenshot.resolve({ data: "discarded" });
+      }).pipe(Effect.provide(managerLayer()), Effect.scoped),
+  );
+
   effectIt.effect("tells the server when a tab it renders natively closes", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.DesktopBrowserHost;

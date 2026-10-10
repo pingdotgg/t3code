@@ -27,6 +27,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as NodeURL from "node:url";
 
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
@@ -36,12 +37,20 @@ import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts"
 import { PREVIEW_WEBVIEW_PREFERENCES } from "../../preview/WebviewPreferences.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
+import * as DesktopBrowserHost from "../../preview/DesktopBrowserHost.ts";
 
 export const installPreviewEventForwarding = Effect.fn(
   "desktop.ipc.preview.installEventForwarding",
 )(function* () {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const manager = yield* PreviewManager.PreviewManager;
+  const browserHost = yield* DesktopBrowserHost.DesktopBrowserHost;
+  yield* browserHost.captureRequests.pipe(
+    Stream.runForEach((event) =>
+      electronWindow.sendAll(IpcChannels.PREVIEW_CAPTURE_REQUEST_CHANNEL, event),
+    ),
+    Effect.forkScoped,
+  );
   yield* manager.subscribeStateChanges((tabId, state) =>
     electronWindow.sendAll(IpcChannels.PREVIEW_STATE_CHANGE_CHANNEL, tabId, state),
   );
@@ -57,6 +66,18 @@ export const installPreviewEventForwarding = Effect.fn(
   yield* manager.subscribeOpenLinks((event) =>
     electronWindow.sendAll(IpcChannels.PREVIEW_OPEN_LINK_CHANNEL, event),
   );
+});
+
+export const acknowledgeCapture = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_CAPTURE_READY_CHANNEL,
+  payload: Schema.String,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.acknowledgeCapture")(function* (requestId, event) {
+    const main = yield* (yield* ElectronWindow.ElectronWindow).main;
+    if (!event || Option.isNone(main) || main.value.webContents.id !== event.sender.id) return;
+    const host = yield* DesktopBrowserHost.DesktopBrowserHost;
+    host.acknowledgeCapture(requestId);
+  }),
 });
 
 export const setForwardedShortcuts = DesktopIpc.makeIpcMethod({

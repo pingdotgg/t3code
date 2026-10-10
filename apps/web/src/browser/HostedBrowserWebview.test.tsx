@@ -5,6 +5,7 @@ import {
   ThreadId,
   type ClientSettings,
   type DesktopPreviewBridge,
+  type DesktopPreviewCaptureRequest,
 } from "@t3tools/contracts";
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -99,6 +100,91 @@ afterEach(async () => {
 });
 
 describe("HostedBrowserWebview settings hydration", () => {
+  it("keeps concurrent captures paintable until release without selecting their tab", async () => {
+    mocks.getClientSettings.mockResolvedValue(DEFAULT_CLIENT_SETTINGS);
+    const listeners = new Set<(event: DesktopPreviewCaptureRequest) => void>();
+    const acknowledgeCapture = vi.fn(async (_requestId: string) => undefined);
+    vi.stubGlobal("desktopBridge", {
+      preview: {
+        onCaptureRequest: (listener: (event: DesktopPreviewCaptureRequest) => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+        acknowledgeCapture,
+      },
+    });
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+      frames.push(callback),
+    );
+    const runtimeTabId = "capture-background";
+    await act(async () => {
+      renderer = create(
+        <HostedBrowserWebview
+          threadRef={{
+            environmentId: EnvironmentId.make("capture-host"),
+            threadId: ThreadId.make("capture-thread"),
+          }}
+          tabId="capture-tab"
+          runtimeTabId={runtimeTabId}
+          initialUrl="https://example.com"
+          viewport={FILL_PREVIEW_VIEWPORT}
+          pictureInPicture={false}
+          profileId="work"
+          zoomFactor={1}
+        />,
+        {
+          createNodeMock: (element) =>
+            element.type === "webview"
+              ? Object.assign(new EventTarget(), { getWebContentsId: () => 41 })
+              : { scrollLeft: 0, scrollTop: 0, scrollTo: () => undefined },
+        },
+      );
+    });
+    const send = (requestId: string, active: boolean, webContentsId = 41) =>
+      act(() => {
+        for (const listener of listeners) listener({ requestId, active, webContentsId });
+      });
+    await send("other-guest", true, 42);
+    expect(useBrowserSurfaceStore.getState().activityByTabId[runtimeTabId]).toBeUndefined();
+    let releaseOtherActivity: () => void = () => undefined;
+    await act(() => {
+      releaseOtherActivity = useBrowserSurfaceStore.getState().acquireActivity(runtimeTabId);
+    });
+    await send("cancelled", true);
+    expect(useBrowserSurfaceStore.getState().activityByTabId[runtimeTabId]).toBe(2);
+    await act(() => {
+      for (const frame of frames.splice(0)) frame(1);
+    });
+    await send("cancelled", false);
+    await act(() => {
+      for (const frame of frames.splice(0)) frame(2);
+    });
+    expect(acknowledgeCapture).not.toHaveBeenCalled();
+    // Cancelling a screenshot must preserve another consumer's activity lease.
+    expect(useBrowserSurfaceStore.getState().activityByTabId[runtimeTabId]).toBe(1);
+    await act(releaseOtherActivity);
+    await send("first", true);
+    await send("second", true);
+    await send("first", true); // Duplicate IPC delivery must not leak a lease.
+    expect(useBrowserSurfaceStore.getState().activityByTabId[runtimeTabId]).toBe(2);
+    expect(acknowledgeCapture).not.toHaveBeenCalled();
+    await act(() => {
+      for (const frame of frames.splice(0)) frame(1);
+    });
+    await act(() => {
+      for (const frame of frames.splice(0)) frame(2);
+    });
+    expect(acknowledgeCapture.mock.calls.map(([id]) => id)).toEqual(["first", "second"]);
+    expect(useBrowserSurfaceStore.getState().byTabId[runtimeTabId]?.visible).not.toBe(true);
+    await send("first", false);
+    expect(useBrowserSurfaceStore.getState().activityByTabId[runtimeTabId]).toBe(1);
+    await act(() => renderer?.unmount());
+    renderer = undefined;
+    expect(useBrowserSurfaceStore.getState().activityByTabId[runtimeTabId]).toBeUndefined();
+    expect(listeners.size).toBe(0);
+  });
+
   it("starts a retained background tab only after a settings read succeeds on retry", async () => {
     const firstRead = deferred<ClientSettings | null>();
     const retryRead = deferred<ClientSettings | null>();

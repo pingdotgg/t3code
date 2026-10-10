@@ -37,6 +37,7 @@ const makeDebuggee = () => {
   };
   return {
     tab: {
+      withCaptureActivity: <A, E>(capture: Effect.Effect<A, E>) => capture,
       webContents: webContents as unknown as Electron.WebContents,
       debugger: debuggee as unknown as Electron.Debugger,
     },
@@ -80,7 +81,7 @@ describe("DesktopBrowserHost", () => {
             message: encodeJson({ id, method, sessionId: "t3-preview-page" }),
           }),
         );
-      yield* command(1, "Page.captureScreenshot");
+      yield* command(1, "DOM.getDocument");
       yield* host.handleCommandLine(encodeJson({ type: "release", ...key }));
       yield* command(2, "DOM.enable");
       debuggee.release();
