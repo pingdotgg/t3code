@@ -40,6 +40,15 @@ export class GitWorkflowService extends Context.Service<
       readonly cwd: string;
       readonly refName: string;
     }) => Effect.Effect<boolean, GitCommandError>;
+    /**
+     * Whether a ref in any namespace ends in this name: a local branch, a
+     * remote-tracking branch of any remote, a tag. Git falls back to these
+     * when a branch name is not a revision by itself.
+     */
+    readonly hasRefNamed: (input: {
+      readonly cwd: string;
+      readonly refName: string;
+    }) => Effect.Effect<boolean, GitCommandError>;
     readonly status: (
       input: VcsStatusInput,
     ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
@@ -300,6 +309,25 @@ export const make = Effect.gen(function* () {
         ),
         Effect.map((result) => result.exitCode === 0),
       ),
+    hasRefNamed: (input) =>
+      // No ref name holds a pattern character, and one here would widen the match.
+      /[*?[\\]/.test(input.refName)
+        ? Effect.succeed(false)
+        : ensureGitCommand("GitWorkflowService.hasRefNamed", input.cwd).pipe(
+            Effect.andThen(
+              git.execute({
+                operation: "GitWorkflowService.hasRefNamed",
+                cwd: input.cwd,
+                args: [
+                  "for-each-ref",
+                  "--count=1",
+                  "--format=%(refname)",
+                  `refs/**/${input.refName}`,
+                ],
+              }),
+            ),
+            Effect.map((result) => result.stdout.trim().length > 0),
+          ),
     status: (input) =>
       detectGitRepositoryForStatus("GitWorkflowService.status", input.cwd).pipe(
         Effect.flatMap((isGitRepository) =>
