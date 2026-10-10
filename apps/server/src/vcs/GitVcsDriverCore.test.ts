@@ -496,6 +496,91 @@ it.effect("coalesces concurrent ref pages into one repository snapshot", () =>
   ).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 
+describe("pull output beyond the output cap", () => {
+  // A fast-forward that prints over 1 MB takes thousands of files, so the real pull's output is
+  // padded past the cap instead.
+  const withPaddedPull = (stream: "stdout" | "stderr") =>
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const padding = new Uint8Array(1_000_001).fill(0x20);
+      const paddingSpawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          const handle = yield* delegate.spawn(command);
+          const isPull =
+            ChildProcess.isStandardCommand(command) &&
+            command.args.includes("pull") &&
+            command.args.includes("--ff-only");
+          return isPull
+            ? ChildProcessSpawner.makeHandle({
+                ...handle,
+                [stream]: Stream.concat(handle[stream], Stream.make(padding)),
+              })
+            : handle;
+        }),
+      );
+      return yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, paddingSpawner),
+      );
+    });
+
+  const cloneBehindRemote = Effect.gen(function* () {
+    const cwd = yield* makeTmpDir();
+    const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+    const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+    const { initialBranch } = yield* initRepoWithCommit(cwd);
+    yield* git(remote, ["init", "--bare"]);
+    yield* git(cwd, ["remote", "add", "origin", remote]);
+    yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+    yield* git(updater, ["clone", remote, "."]);
+    yield* git(updater, ["config", "user.email", "test@test.com"]);
+    yield* git(updater, ["config", "user.name", "Test"]);
+    yield* writeTextFile(updater, "remote.txt", "remote\n");
+    yield* git(updater, ["add", "remote.txt"]);
+    yield* git(updater, ["commit", "-m", "remote commit"]);
+    yield* git(updater, ["push", "origin", initialBranch]);
+    return { cwd, remoteHead: yield* git(updater, ["rev-parse", "HEAD"]) };
+  });
+
+  it.effect.each(["stdout", "stderr"] as const)(
+    "reports a fast-forward whose %s passes the cap as pulled",
+    (stream) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const driver = yield* withPaddedPull(stream);
+          yield* Effect.gen(function* () {
+            const { cwd, remoteHead } = yield* cloneBehindRemote;
+
+            const result = yield* driver.pullCurrentBranch(cwd);
+
+            assert.equal(result.status, "pulled");
+            assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), remoteHead);
+          }).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, driver));
+        }),
+      ).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
+  );
+
+  it.effect("still fails a pull that Git rejects, whatever its output size", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const driver = yield* withPaddedPull("stderr");
+        yield* Effect.gen(function* () {
+          const { cwd } = yield* cloneBehindRemote;
+          // A local commit the remote lacks: `pull --ff-only` cannot fast-forward and exits 128.
+          yield* writeTextFile(cwd, "local.txt", "local\n");
+          yield* git(cwd, ["add", "local.txt"]);
+          yield* git(cwd, ["commit", "-m", "local commit"]);
+
+          const error = yield* Effect.flip(driver.pullCurrentBranch(cwd));
+
+          assert.equal(error.operation, "GitVcsDriver.pullCurrentBranch.pull");
+          assert.equal(error.exitCode, 128);
+          assert.notInclude(error.detail, "exceeded");
+        }).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, driver));
+      }),
+    ).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
+  );
+});
+
 it.effect("retries an in-flight ref snapshot invalidated by a mutation", () =>
   Effect.scoped(
     Effect.gen(function* () {
