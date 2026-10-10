@@ -274,13 +274,36 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const readStack = (operation: string, input: PullRef) =>
-    pullPath(operation, input).pipe(
-      Effect.flatMap((path) =>
-        read(operation, input, { path: `${path}/stack` }, Json.GitCafeStackEnvelope),
-      ),
-      Effect.map(({ stack }) => stack),
+  /**
+   * The stack a pull request belongs to, with each unmerged layer's head. GitCafe's stack lists no
+   * heads, and they are what a land or restack is fenced on, so each open layer's pull is read.
+   */
+  const readStack = Effect.fn("GitCafePullRequestProvider.readStack")(function* (
+    operation: string,
+    input: PullRef,
+  ) {
+    const path = yield* pullPath(operation, input);
+    const { stack } = yield* read(
+      operation,
+      input,
+      { path: `${path}/stack` },
+      Json.GitCafeStackEnvelope,
     );
+    if (stack === null) return null;
+    const members = yield* Effect.forEach(
+      stack.members,
+      (member) =>
+        member.state === "merged"
+          ? Effect.succeed(member)
+          : readPull(operation, { ...input, number: member.pullRequestNumber }).pipe(
+              Effect.map((pull) =>
+                pull.headOid == null ? member : { ...member, headOid: pull.headOid },
+              ),
+            ),
+      { concurrency: 4 },
+    );
+    return { ...stack, members };
+  });
 
   /** One `/diff-files` read, refused if GitCafe answers from another revision than the page. */
   const readDiffFiles = Effect.fn("GitCafePullRequestProvider.readDiffFiles")(function* (

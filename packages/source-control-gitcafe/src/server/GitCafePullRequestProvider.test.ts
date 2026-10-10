@@ -150,22 +150,35 @@ const root = {
     unresolve: false,
   },
 };
-const stack = (members: ReadonlyArray<{ number: number; headOid: string; state?: string }>) => ({
-  stack: {
-    id: "stack-one",
-    number: 3,
-    revision: 5,
-    landingBase: "main",
-    members: members.map((member, index) => ({
-      pullRequestNumber: member.number,
-      title: `Layer ${member.number}`,
-      state: member.state ?? "open",
-      draft: false,
-      sourceBranch: `layer-${member.number}`,
-      headOid: member.headOid,
-      position: index + 1,
-    })),
+/**
+ * GitCafe's stack route for pull 7, as it answers: members carry no heads, so each unmerged
+ * layer's head comes from its own pull.
+ */
+const stack = (
+  members: ReadonlyArray<{ number: number; headOid: string; state?: string }>,
+): Record<string, unknown> => ({
+  "GET /repos/owner/repo/pulls/7/stack": {
+    stack: {
+      id: "stack-one",
+      number: 3,
+      revision: 5,
+      landingBase: "main",
+      members: members.map((member, index) => ({
+        pullRequestNumber: member.number,
+        title: `Layer ${member.number}`,
+        state: member.state ?? "open",
+        draft: false,
+        sourceBranch: `layer-${member.number}`,
+        position: index + 1,
+      })),
+    },
   },
+  ...Object.fromEntries(
+    members.map((member) => [
+      `GET /repos/owner/repo/pulls/${member.number}`,
+      { ...pull, number: member.number, headOid: member.headOid },
+    ]),
+  ),
 });
 
 /** GitCafe refuses a write without an idempotency key. */
@@ -267,17 +280,23 @@ describe("GitCafePullRequestProvider", () => {
     );
   });
 
-  it.effect("reads the stack a pull request belongs to", () => {
-    const server = fakeGitCafe({
-      "GET /repos/owner/repo/pulls/7/stack": stack([{ number: 7, headOid }]),
-    });
+  it.effect("reads the stack a pull request belongs to, with each open layer's head", () => {
+    const { "GET /repos/owner/repo/pulls/6": _merged, ...routes } = stack([
+      { number: 6, headOid: baseOid, state: "merged" },
+      { number: 7, headOid },
+    ]);
+    const server = fakeGitCafe(routes);
     return Effect.gen(function* () {
       const provider = yield* GitCafePullRequestProvider.make;
       const result = yield* provider.getChangeRequestStack!(target);
       assert.strictEqual(result?.number, 3);
+      // A merged layer is not fenced on, so its pull is never read.
       assert.deepStrictEqual(
         result?.layers.map((layer) => [layer.number, layer.headSha]),
-        [[7, headOid]],
+        [
+          [6, undefined],
+          [7, headOid],
+        ],
       );
     }).pipe(Effect.provide(server.layer));
   });
@@ -462,7 +481,7 @@ describe("GitCafePullRequestProvider", () => {
         { number: 7, headOid },
       ];
       const server = fakeGitCafe({
-        "GET /repos/owner/repo/pulls/7/stack": stack(layers),
+        ...stack(layers),
         "POST /repos/owner/repo/pulls/stacks/3/land-through": {
           id: "land-1",
           state: "completed",
@@ -509,7 +528,7 @@ describe("GitCafePullRequestProvider", () => {
 
   it.effect("restacks from a layer on update-branch", () => {
     const server = fakeGitCafe({
-      "GET /repos/owner/repo/pulls/7/stack": stack([{ number: 7, headOid }]),
+      ...stack([{ number: 7, headOid }]),
       "POST /repos/owner/repo/pulls/stacks/3/restack": {
         id: "restack-1",
         state: "completed",
