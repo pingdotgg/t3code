@@ -4021,7 +4021,7 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect("keeps annotation send grants isolated and updates an active pick", () =>
+  effectIt.effect("keeps annotation IDs and send grants isolated across tabs", () =>
     withManager((manager) =>
       Effect.gen(function* () {
         const picked = new Map<number, (event: unknown, ...args: unknown[]) => void>();
@@ -4069,6 +4069,8 @@ describe("PreviewManager", () => {
           screenshot: null,
           createdAt: "2026-09-05T00:00:00.000Z",
         };
+        // Guest counters restart after navigation and collide across tabs.
+        const annotationIds = new Set<string>();
         for (const [tabId, id, nextGrant, expected] of [
           ["tab_b", 43, undefined, "attach"],
           ["tab_a", 42, false, "attach"],
@@ -4081,21 +4083,29 @@ describe("PreviewManager", () => {
           }
           picked.get(id)?.({}, annotation, null, "send");
           const result = yield* Fiber.join(pick);
-          expect(result?.annotation.id).toBe(annotation.id);
+          expect(result).not.toBeNull();
+          expect(annotationIds.has(result!.annotation.id)).toBe(false);
+          annotationIds.add(result!.annotation.id);
+          expect(result?.annotation.comment).toBe(annotation.comment);
           expect(result?.submission).toBe(expected);
         }
         yield* manager.registerWebview("tab_a", 44);
         const replacementPick = yield* manager.pickElement("tab_a").pipe(Effect.forkChild);
         yield* Effect.yieldNow;
         picked.get(44)?.({}, annotation, null, "send");
-        expect((yield* Fiber.join(replacementPick))?.submission).toBe("send");
+        const replacementResult = yield* Fiber.join(replacementPick);
+        expect(replacementResult?.submission).toBe("send");
+        expect(annotationIds.has(replacementResult!.annotation.id)).toBe(false);
+        annotationIds.add(replacementResult!.annotation.id);
         yield* manager.closeTab("tab_a");
         yield* manager.createTab("tab_a");
         yield* manager.registerWebview("tab_a", 44);
         const reopenedPick = yield* manager.pickElement("tab_a").pipe(Effect.forkChild);
         yield* Effect.yieldNow;
         picked.get(44)?.({}, annotation, null, "send");
-        expect((yield* Fiber.join(reopenedPick))?.submission).toBe("attach");
+        const reopenedResult = yield* Fiber.join(reopenedPick);
+        expect(reopenedResult?.submission).toBe("attach");
+        expect(annotationIds.has(reopenedResult!.annotation.id)).toBe(false);
       }),
     ),
   );
@@ -4315,11 +4325,18 @@ describe("PreviewManager", () => {
         expect(webviewSend).not.toHaveBeenCalledWith("preview:annotation-captured");
         expect(secondPick.pollUnsafe()).toBeUndefined();
 
-        onPicked?.({}, { ...annotation, id: "annotation_2" }, null, "attach");
+        onPicked?.(
+          {},
+          { ...annotation, id: "annotation_2", comment: "Second pick" },
+          null,
+          "attach",
+        );
         yield* TestClock.adjust("6 seconds");
         const result = yield* Fiber.join(secondPick);
-        expect(result?.annotation.id).toBe("annotation_2");
+        expect(result?.annotation.comment).toBe("Second pick");
         expect(result?.submission).toBe("attach");
+        expect(result?.annotation.id).not.toBe(annotation.id);
+        expect(result?.annotation.id).not.toBe("annotation_2");
       }),
     ),
   );

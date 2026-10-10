@@ -2179,6 +2179,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const wc = yield* requireWebContents(tabId);
     yield* cancelPickElement(tabId);
     const annotationTheme = yield* Ref.get(annotationThemeRef);
+    // Guest counters restart on navigation and collide across tabs. Annotation
+    // IDs also key draft screenshots and their cached uploads in the renderer.
+    const annotationId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
     return yield* Effect.callback<PreviewAnnotationSubmissionResult | null, PreviewManagerError>(
       (resume) => {
         // Declared first so cleanup can check slot ownership by identity
@@ -2251,6 +2254,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             settle(null);
             return;
           }
+          const annotation = { ...payload, id: annotationId };
           const cropRect = normalizeCaptureRect(args[1]);
           const submission =
             args[2] === "send" && annotationSendEnabled.get(tabId) === true ? "send" : "attach";
@@ -2276,14 +2280,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               // flagged on the result.
               Effect.match({
                 onFailure: (): PreviewAnnotationSubmissionResult => ({
-                  annotation: payload,
+                  annotation,
                   submission,
                   screenshotFailed: true,
                 }),
                 onSuccess: (screenshot): PreviewAnnotationSubmissionResult =>
                   screenshot === null
-                    ? { annotation: payload, submission, screenshotFailed: true }
-                    : { annotation: { ...payload, screenshot }, submission },
+                    ? { annotation, submission, screenshotFailed: true }
+                    : { annotation: { ...annotation, screenshot }, submission },
               }),
               Effect.flatMap((result) => {
                 // A capture that outlives its session must not touch the
