@@ -17,7 +17,10 @@ vi.mock("../SidebarStageBackdrop", () => ({
 
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 
-function renderPendingActions(isRunning: boolean) {
+function renderPendingActions(
+  isRunning: boolean,
+  overrides: Partial<ComponentProps<typeof ComposerPrimaryActions>> = {},
+) {
   return renderToStaticMarkup(
     createElement(ComposerPrimaryActions, {
       compact: true,
@@ -42,6 +45,7 @@ function renderPendingActions(isRunning: boolean) {
       onPreviousPendingQuestion: () => {},
       onInterrupt: () => {},
       onImplementPlanInNewThread: () => {},
+      ...overrides,
     }),
   );
 }
@@ -108,14 +112,25 @@ describe("ComposerPrimaryActions", () => {
     expect(send).toBeGreaterThan(attach);
   });
 
-  it("keeps the leading actions before the send button when there is no chip", () => {
-    const markup = renderSendButton(null, {
-      leadingActions: createElement("button", { type: "button" }, "Attach"),
-    });
+  it("keeps the leading actions before every primary action", () => {
+    const leadingActions = createElement("button", { type: "button" }, "Attach");
+    const planFollowUp = { leadingActions, showPlanFollowUpPrompt: true };
+    const cases = [
+      [renderSendButton(null, { leadingActions }), 'aria-label="Submit message"'],
+      [renderPendingActions(false, { leadingActions }), ">Submit</button>"],
+      [renderSendButton(null, planFollowUp), ">Refine</button>"],
+      [renderSendButton(null, { ...planFollowUp, promptHasText: false }), ">Implement</button>"],
+      [
+        renderSendButton(null, { leadingActions, canInterrupt: true, hasSendableContent: false }),
+        'aria-label="Stop generation"',
+      ],
+    ] as const;
 
-    const attach = markup.indexOf("Attach</button>");
-    expect(attach).toBeGreaterThan(-1);
-    expect(markup.indexOf('aria-label="Submit message"')).toBeGreaterThan(attach);
+    for (const [markup, primaryAction] of cases) {
+      const attach = markup.indexOf("Attach</button>");
+      expect(attach).toBeGreaterThan(-1);
+      expect(markup.indexOf(primaryAction)).toBeGreaterThan(attach);
+    }
   });
 
   it("renders stage artwork inside the send button when artwork identification is active", () => {
