@@ -1,12 +1,11 @@
-import Svg, { Circle, Defs, G, LinearGradient, Path, Stop } from "react-native-svg";
+import Svg, { Circle, Defs, G, LinearGradient, Path, Rect, Stop } from "react-native-svg";
 import { withUniwind } from "uniwind";
 
 const ThemedSvg = withUniwind(Svg);
 
-export type SourceControlIconKind = "github" | "gitlab" | "forgejo" | "bitbucket" | "azure-devops";
-
+/** Draws a host's glyph by its client definition's `icon` key; null for a key it has no art for. */
 export function SourceControlIcon(props: {
-  readonly kind: SourceControlIconKind;
+  readonly kind: string;
   readonly size?: number;
   readonly color?: string;
   readonly colorClassName?: string;
@@ -252,5 +251,14 @@ export function SourceControlIcon(props: {
           />
         </Svg>
       );
+    case "gitcafe":
+      // GitCafe's own mark from https://git.cafe/favicon.svg, inset like the web icon.
+      return (
+        <Svg width={size} height={size} viewBox="0 0 64 64">
+          <Rect x={4.8} y={4.8} width={54.4} height={54.4} fill="#a78bfa" />
+        </Svg>
+      );
+    default:
+      return null;
   }
 }
