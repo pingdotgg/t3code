@@ -82,14 +82,17 @@ describe("resolveSearchUrlTemplate", () => {
     ).toBe("https://search.example/?q=%s");
   });
 
-  it.each(["", "https://search.example/?q=", "javascript:alert('%s')", "not a url %s"])(
-    "falls back to DuckDuckGo for an unusable custom template: %j",
-    (browserCustomSearchUrl) => {
-      expect(
-        resolveSearchUrlTemplate({ browserSearchEngine: "custom", browserCustomSearchUrl }),
-      ).toBe("https://duckduckgo.com/?q=%s");
-    },
-  );
+  it.each([
+    "",
+    "https://search.example/?q=",
+    "javascript:alert('%s')",
+    "not a url %s",
+    "https://%s.example.com/",
+  ])("falls back to DuckDuckGo for an unusable custom template: %j", (browserCustomSearchUrl) => {
+    expect(
+      resolveSearchUrlTemplate({ browserSearchEngine: "custom", browserCustomSearchUrl }),
+    ).toBe("https://duckduckgo.com/?q=%s");
+  });
 });
 
 describe("newPreviewTabId", () => {

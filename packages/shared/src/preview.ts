@@ -83,7 +83,7 @@ const KNOWN_NON_WEB_SCHEMES: ReadonlySet<string> = new Set([
 ]);
 
 /** Address bar search URL templates; `%s` is replaced with the encoded query. */
-export const BROWSER_SEARCH_URL_TEMPLATES = {
+const BROWSER_SEARCH_URL_TEMPLATES = {
   duckduckgo: "https://duckduckgo.com/?q=%s",
   google: "https://www.google.com/search?q=%s",
   bing: "https://www.bing.com/search?q=%s",
@@ -96,12 +96,17 @@ function fillSearchUrlTemplate(template: string, query: string) {
   return template.replaceAll("%s", encodeURIComponent(query));
 }
 
-/** Whether a custom search URL is an http(s) URL with `%s` where the query goes. */
+/**
+ * Whether a custom search URL is an http(s) URL with `%s` where the query goes.
+ * `%s` in the host is rejected: any query with spaces would make it unreachable.
+ */
 export function isValidSearchUrlTemplate(template: string) {
   if (!template.includes("%s")) return false;
   try {
-    const { protocol } = new URL(fillSearchUrlTemplate(template, "test"));
-    return protocol === "http:" || protocol === "https:";
+    const url = new URL(fillSearchUrlTemplate(template, "t3query"));
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") && !url.hostname.includes("t3query")
+    );
   } catch {
     return false;
   }
