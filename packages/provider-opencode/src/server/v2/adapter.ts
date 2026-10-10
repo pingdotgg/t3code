@@ -291,6 +291,8 @@ interface SubagentCall {
   model: string | null;
   /** The tool returned while the subagent runs on; the report OpenCode gives its parent settles it. */
   background: boolean;
+  /** The running call whose subagent run this call joined, so that run's one report settles both. */
+  joined: SubagentCall | undefined;
   child: ThreadState | undefined;
   status: OrchestrationV2Subagent["status"];
   result: string | null;
@@ -1493,6 +1495,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       // ran (each one's native id is its own), its grants and rules, and the
       // background work an earlier call left running, which Stop must reach.
       const previous = threads.get(childId);
+      // Called again while it runs, the subagent takes the prompt as a steer
+      // and OpenCode reports that run once, for every call that joined it.
+      if (previous?.active !== undefined) {
+        call.joined = [...call.state.calls.values()].findLast(
+          (candidate) =>
+            candidate !== call && candidate.child === previous && candidate.joined === undefined,
+        );
+      }
       const subagent = {
         call,
         appThread,
@@ -2179,6 +2189,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         agent: undefined,
         model: null,
         background: false,
+        joined: undefined,
         child: undefined,
         status: "running",
         result: null,
@@ -2244,8 +2255,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           if (call !== undefined) {
             const childId = stringField(event.data.metadata, "sessionID");
             if (childId !== undefined) yield* attachChild(call, childId);
-            // A background call returns at launch; its report settles it.
-            if (event.data.metadata?.["status"] === "running") return;
+            // A background call returns at launch, and so does one that joined a
+            // background run; the report settles it.
+            if (event.data.metadata?.["status"] === "running") {
+              if (call.background) return;
+              call.background = true;
+              return yield* emitSubagent(call);
+            }
             return yield* settleCall(call, "completed", subagentOutput(textOf(event.data.content)));
           }
           const output = textOf(event.data.content);
@@ -2383,6 +2399,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const call = [...state.calls.values()].find(
         (candidate) => candidate.child?.sessionId === childId,
       );
+      const calls = [...state.calls.values()].filter(
+        (candidate) => candidate === call || (call !== undefined && candidate.joined === call),
+      );
       const outcome = reportOutcome(stringField(payload.metadata, "state"));
       state.reports.set(inboxId, {
         inboxId,
@@ -2395,18 +2414,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           outcome,
         },
       });
-      if (call === undefined) return;
-      yield* settleCall(
-        call,
-        state.stoppedChildren.has(childId)
-          ? "interrupted"
-          : outcome === "failed"
-            ? "failed"
-            : outcome === "cancelled"
-              ? "cancelled"
-              : "completed",
-        subagentOutput(payload.text),
-      );
+      const status = state.stoppedChildren.has(childId)
+        ? "interrupted"
+        : outcome === "failed"
+          ? "failed"
+          : outcome === "cancelled"
+            ? "cancelled"
+            : "completed";
+      for (const each of calls) yield* settleCall(each, status, subagentOutput(payload.text));
     });
 
     /**
