@@ -51,7 +51,10 @@ import type { SidebarThreadSummary } from "../types";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { formatWorktreePathForDisplay } from "../worktreeCleanup";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
-import { pullRequestListLines } from "./pullRequest/pullRequestListLines";
+import {
+  groupPullRequestListLinesByRepository,
+  pullRequestListLines,
+} from "./pullRequest/pullRequestListLines";
 import {
   PULL_REQUEST_STATE_PRESENTATION,
   PullRequestGlyph,
@@ -368,48 +371,51 @@ export function ThreadPullRequestsMiniList({
   );
   if (lines.length === 0) return null;
   // A bare number reads as one of the project's own, so another repo's PR needs a heading.
-  const groupByRepository = lines.some(
+  const groups = lines.some(
     (line) => project === null || findProjectForChangeRequest([project], line.link) === undefined,
-  );
+  )
+    ? groupPullRequestListLinesByRepository(lines)
+    : [{ key: "", label: null, lines }];
   return (
     <ul className="flex flex-col gap-1">
-      {lines.map((line, index) => {
-        const snapshot = line.link.snapshot;
-        const presentation =
-          snapshot === null
-            ? null
-            : resolvePullRequestState({ state: snapshot.state, isDraft: snapshot.isDraft });
-        const heading =
-          groupByRepository && lines[index - 1]?.link.repository !== line.link.repository;
-        return (
-          <Fragment key={`${line.link.host}/${line.link.repository}#${line.link.number}`}>
-            {heading ? (
-              <li
-                className={cn(
-                  "flex min-w-0 font-mono text-3xs text-muted-foreground/60",
-                  index > 0 && "pt-1",
-                )}
-              >
-                <MiddleTruncate value={line.link.repository} />
-              </li>
-            ) : null}
-            <ThreadPullRequestMiniListItem
-              number={line.link.number}
-              url={line.link.url}
-              title={snapshot?.title ?? line.link.repository}
-              presentation={presentation}
-              depth={line.depth}
-              onOpenPullRequest={onOpenPullRequest}
+      {groups.map((group, groupIndex) => (
+        <Fragment key={group.key}>
+          {group.label !== null ? (
+            <li
+              className={cn(
+                "flex min-w-0 font-mono text-3xs text-muted-foreground/60",
+                groupIndex > 0 && "pt-1",
+              )}
             >
-              {line.stack ? (
-                <span className="ml-auto shrink-0 pl-1 text-3xs">
-                  {line.stack.kind === "native" ? "stack" : "chain"} · {line.stack.size}
-                </span>
-              ) : null}
-            </ThreadPullRequestMiniListItem>
-          </Fragment>
-        );
-      })}
+              <MiddleTruncate value={group.label} />
+            </li>
+          ) : null}
+          {group.lines.map((line) => {
+            const snapshot = line.link.snapshot;
+            const presentation =
+              snapshot === null
+                ? null
+                : resolvePullRequestState({ state: snapshot.state, isDraft: snapshot.isDraft });
+            return (
+              <ThreadPullRequestMiniListItem
+                key={`${line.link.host}/${line.link.repository}#${line.link.number}`}
+                number={line.link.number}
+                url={line.link.url}
+                title={snapshot?.title ?? line.link.repository}
+                presentation={presentation}
+                depth={line.depth}
+                onOpenPullRequest={onOpenPullRequest}
+              >
+                {line.stack ? (
+                  <span className="ml-auto shrink-0 pl-1 text-3xs">
+                    {line.stack.kind === "native" ? "stack" : "chain"} · {line.stack.size}
+                  </span>
+                ) : null}
+              </ThreadPullRequestMiniListItem>
+            );
+          })}
+        </Fragment>
+      ))}
     </ul>
   );
 }
