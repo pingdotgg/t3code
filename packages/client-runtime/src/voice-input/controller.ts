@@ -99,11 +99,11 @@ export function resolveTranscriptCommit(
     const right = captured.text[captured.selection.start];
     const leftNeedsBoundary =
       left !== undefined &&
-      /[A-Za-z0-9.!?,:;)\]}'"]/.test(left) &&
+      /[\p{L}\p{N}.!?,:;)\]}'"]/u.test(left) &&
       (right === undefined || /\s/.test(right));
     const rightNeedsBoundary =
       right !== undefined &&
-      /[A-Za-z0-9([{'"]/.test(right) &&
+      /[\p{L}\p{N}([{'"]/u.test(right) &&
       (left === undefined || /\s/.test(left));
     insertion = `${leftNeedsBoundary ? " " : ""}${replacement}${rightNeedsBoundary ? " " : ""}`;
   }
