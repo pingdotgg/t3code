@@ -969,7 +969,7 @@ function PullRequestCodeTab({
           canEditPullRequestComment(detail, {
             author: comment.author,
             kind: "review-comment",
-            ...(comment.canEdit === undefined ? {} : { canEdit: comment.canEdit }),
+            canEdit: comment.canEdit,
           })
         }
         onEditComment={(commentId, body) =>

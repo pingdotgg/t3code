@@ -211,7 +211,8 @@ export const PullRequestComment = Schema.Struct({
   reactions: Schema.optional(Schema.Array(PullRequestReaction)),
   /**
    * The host's own answer to whether this reader may rewrite this remark. Absent where the host
-   * doesn't say, which leaves the page to guess from authorship.
+   * doesn't say, which leaves the page to guess from authorship. A remark on a line appears both
+   * here and in its review thread; a host that sets this sets it on both copies alike.
    */
   canEdit: Schema.optional(Schema.Boolean),
 });
@@ -239,7 +240,8 @@ export const PullRequestThreadComment = Schema.Struct({
   reactions: Schema.optional(Schema.Array(PullRequestReaction)),
   /**
    * The host's own answer to whether this reader may rewrite this remark. Absent where the host
-   * doesn't say, which leaves the page to guess from authorship.
+   * doesn't say, which leaves the page to guess from authorship. A remark on a line appears both
+   * here and in its review thread; a host that sets this sets it on both copies alike.
    */
   canEdit: Schema.optional(Schema.Boolean),
 });
