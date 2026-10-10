@@ -31,6 +31,8 @@ import {
 import type { ProviderAuthController } from "./ProviderAuthService.ts";
 
 const AUTH_TIMEOUT_MS = 300_000;
+// Packaged runtimes can take tens of seconds to start; browser consent keeps the full deadline.
+const AUTH_PROGRESS_TIMEOUT_MS = 90_000;
 const FORWARDING_FAILED_MESSAGE = "Could not deliver the sign-in response. Start sign-in again.";
 const isSetupError = Schema.is(ProviderSetupError);
 const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
@@ -157,6 +159,15 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
 
   const setupError = (name: string, detail: string) =>
     new ProviderSetupError({ instanceId: options.instanceId, operation: name, detail });
+  const authTimeout = (flow: AuthFlow) =>
+    setupError(
+      "start",
+      flow.state.phase === "waiting"
+        ? "Google sign-in expired. Start sign-in again."
+        : flow.state.phase === "starting"
+          ? "Antigravity did not respond while starting sign-in. Check the environment's connection to Google and try again."
+          : "Antigravity did not respond while checking account access. Check the environment's connection to Google and try again.",
+    );
   const currentState = (ownerSessionId: string) =>
     SubscriptionRef.get(snapshot).pipe(
       Effect.map((value) => visibleSnapshot(value, ownerSessionId)),
@@ -264,33 +275,61 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
       ),
     );
 
+  const progressDeadline = (flow: AuthFlow) =>
+    SubscriptionRef.changes(snapshot).pipe(
+      Stream.filter(({ state }) => state.flowId === flow.id),
+      Stream.map(({ state }) => state.phase),
+      Stream.changes,
+      Stream.switchMap((phase) =>
+        phase === "starting" || phase === "verifying"
+          ? Stream.fromEffect(
+              Effect.never.pipe(
+                Effect.timeoutOrElse({
+                  duration: AUTH_PROGRESS_TIMEOUT_MS,
+                  orElse: () => Effect.fail(authTimeout(flow)),
+                }),
+              ),
+            )
+          : Stream.never,
+      ),
+      Stream.runDrain,
+    );
+
   const runSignIn = (flow: AuthFlow, stopSessions: Effect.Effect<void, ProviderSetupError>) =>
     Effect.gen(function* () {
       yield* stopSessions.pipe(Effect.ensuring(stopOwnedProcesses));
-      const runtime = yield* options.makeRuntime({
-        onAuthorizationUrl: (url) => receiveAuthorizationUrl(flow, url),
-      });
-      const started = yield* runtime.start();
-      yield* lock.withPermits(1)(
-        Effect.gen(function* () {
-          if (activeFlow !== flow) return;
-          flow.pending = undefined;
-          yield* publishFlow(flow, {
-            ...flow.state,
-            phase: "verifying",
-            authorizationUrl: null,
-            message: "Checking Antigravity access and models.",
-          });
-        }),
+      yield* progressDeadline(flow).pipe(
+        Effect.raceFirst(
+          Effect.gen(function* () {
+            const runtime = yield* options.makeRuntime({
+              onAuthorizationUrl: (url) => receiveAuthorizationUrl(flow, url),
+            });
+            const started = yield* runtime.start();
+            yield* lock.withPermits(1)(
+              Effect.gen(function* () {
+                if (activeFlow !== flow) return;
+                flow.pending = undefined;
+                yield* publishFlow(flow, {
+                  ...flow.state,
+                  phase: "verifying",
+                  authorizationUrl: null,
+                  message: "Checking Antigravity access and models.",
+                });
+              }),
+            );
+            yield* options.onAuthenticated(started, runtime);
+          }),
+        ),
       );
-      yield* options.onAuthenticated(started, runtime);
     }).pipe(
       Effect.scoped,
       Effect.timeoutOrElse({
         duration: AUTH_TIMEOUT_MS,
-        orElse: () =>
-          Effect.fail(setupError("start", "Google sign-in expired. Start sign-in again.")),
+        orElse: () => Effect.fail(authTimeout(flow)),
       }),
+      Effect.onError(() =>
+        flow.forwarding ? Fiber.interrupt(flow.forwarding).pipe(Effect.asVoid) : Effect.void,
+      ),
       Effect.exit,
       Effect.flatMap((result) => finishFlow(flow, result)),
     );
