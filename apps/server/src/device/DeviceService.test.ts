@@ -8,15 +8,21 @@ import {
   type DeviceServiceState,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NetService from "@t3tools/shared/Net";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import * as ServerConfig from "../config.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
@@ -738,4 +744,66 @@ it.effect("failed manual installation leaves lifecycle state unchanged and can b
     expect(starts).toEqual([]);
     expect(agentStarts).toEqual([]);
   }).pipe(Effect.scoped),
+);
+
+it.effect("a failed tool update reports npm's exit code but not its output", () =>
+  Effect.gen(function* () {
+    const host: DeviceHost.DeviceHost["Service"] = {
+      id: LOCAL_DEVICE_HOST_ID,
+      summary: Effect.succeed({
+        id: LOCAL_DEVICE_HOST_ID,
+        kind: "local",
+        label: "Test server",
+        platforms: [],
+        hubInstalled: false,
+        agentDeviceInstalled: false,
+      }),
+      platformAvailability: (platform) => Effect.succeed({ platform, available: false }),
+      ensureReady: () => Effect.die("Updating a tool does not start the hub"),
+      ensureAgentReady: () => Effect.die("Updating a tool does not start the agent"),
+      current: Effect.succeed(null),
+      stopAgent: Effect.void,
+      stop: Effect.void,
+    };
+    const npmFailure = {
+      code: ChildProcessSpawner.ExitCode(243),
+      stdout: "",
+      stderr: "npm error EACCES https://private:credential@registry.example.test/expo-device-hub",
+      timedOut: false,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      stdoutInvalidUtf8: false,
+      stderrInvalidUtf8: false,
+    };
+    const service = yield* DeviceService.make.pipe(
+      Effect.provideService(DeviceHost.DeviceHost, host),
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: () => Effect.succeed(npmFailure),
+      }),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("Updating a tool makes no hub requests")),
+      ),
+    );
+
+    const error = yield* service.updateTool("hub").pipe(Effect.flip);
+    expect(error).toMatchObject({
+      _tag: "DeviceOperationError",
+      reason: "command_failed",
+      exitCode: 243,
+    });
+    expect(error.message).toBe(
+      "Device update device tool failed: The device command failed (exit code 243).",
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        ServerSettings.layerTest({ enableDeviceSupport: true }),
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-device-update-" }),
+        NodeCrypto.layer,
+        NetService.layer,
+      ).pipe(Layer.provideMerge(NodeServices.layer)),
+    ),
+    Effect.scoped,
+  ),
 );
