@@ -9,9 +9,11 @@ import {
   type EnvironmentId,
   type TaskGraph,
   type TaskGraphEdit,
+  type TaskGraphNode,
+  type TaskGraphNodeInput,
   type ThreadId,
 } from "@t3tools/contracts";
-import { applyTaskGraphEdits } from "@t3tools/shared/taskGraph";
+import { applyTaskGraphEdits, newTaskGraphNode } from "@t3tools/shared/taskGraph";
 import { useState } from "react";
 import { create } from "zustand";
 
@@ -75,8 +77,13 @@ export function useTaskGraphCommands(environmentId: EnvironmentId, graph: TaskGr
 
 export type TaskGraphCommands = ReturnType<typeof useTaskGraphCommands>;
 
-/** The first task of a graph started from the composer; the editor opens on it. */
-const FIRST_TASK_KEY = "task-1";
+/** The task a graph started from the composer begins with; the editor opens on it. */
+const FIRST_TASK: TaskGraphNodeInput = {
+  key: "task-1",
+  title: "New task",
+  prompt: "Describe what this task should do.",
+  dependsOn: [],
+};
 
 /**
  * A graph whose editor should open as soon as its card mounts. Set when the
@@ -95,38 +102,103 @@ export const useTaskGraphEditorRequest = create<{
 }));
 
 /**
- * Starts an empty draft graph on a thread and opens its editor, for the
- * composer's New task graph button. Resolves to an error message or null.
+ * Creates graphs from the composer. `start` puts an empty draft on an
+ * existing thread and opens its editor; `create` sends a finished graph.
+ * Both resolve to an error message or null.
  */
 export function useNewTaskGraph(environmentId: EnvironmentId) {
   const canCreate = useAtomValue(serverEnvironment.createTaskGraph.permissionAtom(environmentId));
   const createGraph = useAtomCommand(serverEnvironment.createTaskGraph, "task graph create");
   const request = useTaskGraphEditorRequest((state) => state.request);
-  const start = async (threadId: ThreadId): Promise<string | null> => {
+  const send = async (
+    threadId: ThreadId,
+    nodes: ReadonlyArray<TaskGraphNodeInput>,
+    run: boolean,
+  ): Promise<{ readonly graphId: string } | { readonly error: string | null }> => {
     if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
-      return "You don't have permission to start task graphs here.";
+      return { error: "You don't have permission to start task graphs here." };
     }
     const result = await createGraph({
       environmentId,
-      input: {
-        threadId,
-        title: "New task graph",
-        nodes: [
-          {
-            key: FIRST_TASK_KEY,
-            title: "New task",
-            prompt: "Describe what this task should do.",
-            dependsOn: [],
-          },
-        ],
-        run: false,
-      },
+      input: { threadId, title: "New task graph", nodes, run },
     });
-    if (result._tag === "Success") {
-      request(result.value.graph.id, FIRST_TASK_KEY);
-      return null;
-    }
-    return failureMessage(result);
+    return result._tag === "Success"
+      ? { graphId: result.value.graph.id }
+      : { error: failureMessage(result) };
   };
-  return { canCreate, start };
+  const start = async (threadId: ThreadId): Promise<string | null> => {
+    const result = await send(threadId, [FIRST_TASK], false);
+    if ("error" in result) return result.error;
+    request(result.graphId, FIRST_TASK.key);
+    return null;
+  };
+  const createAndRun = async (
+    threadId: ThreadId,
+    nodes: ReadonlyArray<TaskGraphNode>,
+  ): Promise<string | null> => {
+    const result = await send(threadId, nodes.map(taskGraphNodeInput), true);
+    return "error" in result ? result.error : null;
+  };
+  return { canCreate, start, createAndRun };
+}
+
+function taskGraphNodeInput(node: TaskGraphNode): TaskGraphNodeInput {
+  return {
+    key: node.key,
+    title: node.title,
+    prompt: node.prompt,
+    dependsOn: node.dependsOn,
+    ...(node.pullRequest === null ? {} : { pullRequest: node.pullRequest }),
+    ...(node.modelSelection === null ? {} : { modelSelection: node.modelSelection }),
+    environmentId: node.environmentId,
+    workspace: node.workspace,
+    startAt: node.startAt,
+  };
+}
+
+/**
+ * Commands for a graph drafted on a new chat, before its thread exists. Edits
+ * stay in the client, checked by the same rules the server applies; `run`
+ * hands the nodes to `onRun`, which creates the thread and the graph together.
+ */
+export function useDraftTaskGraph(input: {
+  readonly canRun: boolean;
+  readonly onRun: (nodes: ReadonlyArray<TaskGraphNode>) => Promise<string | null>;
+  readonly onDiscard: () => void;
+}) {
+  const [nodes, setNodes] = useState<ReadonlyArray<TaskGraphNode>>(() => [
+    newTaskGraphNode(FIRST_TASK),
+  ]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const commands: TaskGraphCommands = {
+    canEdit: true,
+    canRun: input.canRun,
+    canCancel: true,
+    busy,
+    error,
+    clearError: () => setError(null),
+    edit: (edits) => {
+      const checked = applyTaskGraphEdits(nodes, edits, new Date().toISOString());
+      setError(checked.ok ? null : checked.error);
+      if (checked.ok) setNodes(checked.nodes);
+      return Promise.resolve(checked.ok);
+    },
+    run: async () => {
+      if (busy) return false;
+      setBusy(true);
+      setError(null);
+      const message = await input.onRun(nodes);
+      setBusy(false);
+      setError(message);
+      return message === null;
+    },
+    cancel: () => {
+      setNodes([newTaskGraphNode(FIRST_TASK)]);
+      setError(null);
+      input.onDiscard();
+      return Promise.resolve(true);
+    },
+  };
+  return { nodes, commands, firstNodeKey: FIRST_TASK.key };
 }

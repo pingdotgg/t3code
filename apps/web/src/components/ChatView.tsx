@@ -83,6 +83,7 @@ import {
   resolveEnvironmentMachineKind,
   RuntimeMode,
   TerminalOpenInput,
+  type TaskGraphNode,
   type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
@@ -485,7 +486,7 @@ import {
   type QueuedRunsControlHandle,
   type EditQueuedRunRequest,
 } from "./chat/QueuedRunsControl";
-import { TaskGraphCards } from "./chat/TaskGraphCard";
+import { DraftTaskGraphDialog, TaskGraphCards } from "./chat/TaskGraphCard";
 import { useNewTaskGraph } from "./chat/useTaskGraphCommands";
 import { useLinkedThreadPullRequest } from "./ThreadStatusIndicators";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
@@ -10681,70 +10682,81 @@ export default function ChatView(props: ChatViewProps) {
   ]);
 
   const newTaskGraph = useNewTaskGraph(environmentId);
-  // A graph hangs off a server thread. On a new chat there is none yet, so
-  // this creates an empty thread for the graph and opens it.
+  // On a new chat the graph is drafted in the client; its thread and the
+  // graph are only created when the user runs it.
+  const [draftTaskGraphOpen, setDraftTaskGraphOpen] = useState(false);
+  // The composer's model when the draft opened: shown as the graph default and used on Run.
+  const [draftTaskGraphModel, setDraftTaskGraphModel] = useState<ModelSelection | null>(null);
   const onNewTaskGraph = useCallback(async () => {
     if (!activeThread) return;
-    if (isServerThread) {
-      const error = await newTaskGraph.start(activeThread.id);
-      if (error !== null) {
-        toastManager.add({
-          type: "error",
-          title: "Could not start a task graph",
-          description: error,
-        });
-      }
+    if (!isServerThread) {
+      setDraftTaskGraphModel(composerRef.current?.getSendContext()?.selectedModelSelection ?? null);
+      setDraftTaskGraphOpen(true);
       return;
     }
-    const modelSelection = composerRef.current?.getSendContext()?.selectedModelSelection;
-    if (!activeProject || !modelSelection) return;
-    const nextThreadId = newThreadId();
-    const createResult = await createThread({
-      environmentId,
-      input: {
-        threadId: nextThreadId,
-        projectId: activeProject.id,
-        title: "New task graph",
-        modelSelection,
-        runtimeMode,
-        interactionMode: "default",
-        branch: activeThreadBranch,
-        worktreePath: activeThread.worktreePath,
-        createdAt: new Date().toISOString(),
-      },
-    });
-    let error: string | null = null;
-    if (createResult._tag === "Failure") {
-      const failure = squashAtomCommandFailure(createResult);
-      error = failure instanceof Error ? failure.message : "Could not create the thread.";
-    } else {
-      const threadRef = scopeThreadRef(environmentId, nextThreadId);
-      error =
-        (await newTaskGraph.start(nextThreadId)) ??
-        ((await waitForServerThreadShell(threadRef)) ? null : "The new thread did not load.");
-      if (error === null) {
-        await navigate({
-          to: "/$environmentId/$threadId",
-          params: { environmentId, threadId: nextThreadId },
-        });
-        return;
-      }
-      await deleteThread({ environmentId, input: { threadId: nextThreadId } });
+    const error = await newTaskGraph.start(activeThread.id);
+    if (error !== null) {
+      toastManager.add({
+        type: "error",
+        title: "Could not start a task graph",
+        description: error,
+      });
     }
-    toastManager.add({ type: "error", title: "Could not start a task graph", description: error });
-  }, [
-    activeProject,
-    activeThread,
-    activeThreadBranch,
-    composerRef,
-    createThread,
-    deleteThread,
-    environmentId,
-    isServerThread,
-    navigate,
-    newTaskGraph,
-    runtimeMode,
-  ]);
+  }, [activeThread, composerRef, isServerThread, newTaskGraph]);
+  const onRunDraftTaskGraph = useCallback(
+    async (nodes: ReadonlyArray<TaskGraphNode>): Promise<string | null> => {
+      const modelSelection = draftTaskGraphModel;
+      if (!activeThread || !activeProject || !modelSelection) {
+        return "Pick a project and model before running the graph.";
+      }
+      const nextThreadId = newThreadId();
+      const createResult = await createThread({
+        environmentId,
+        input: {
+          threadId: nextThreadId,
+          projectId: activeProject.id,
+          title: "New task graph",
+          modelSelection,
+          runtimeMode,
+          interactionMode: "default",
+          branch: activeThreadBranch,
+          worktreePath: activeThread.worktreePath,
+          createdAt: new Date().toISOString(),
+        },
+      });
+      if (createResult._tag === "Failure") {
+        const failure = squashAtomCommandFailure(createResult);
+        return failure instanceof Error ? failure.message : "Could not create the thread.";
+      }
+      const error =
+        (await newTaskGraph.createAndRun(nextThreadId, nodes)) ??
+        ((await waitForServerThreadShell(scopeThreadRef(environmentId, nextThreadId)))
+          ? null
+          : "The new thread did not load.");
+      if (error !== null) {
+        await deleteThread({ environmentId, input: { threadId: nextThreadId } });
+        return error;
+      }
+      setDraftTaskGraphOpen(false);
+      await navigate({
+        to: "/$environmentId/$threadId",
+        params: { environmentId, threadId: nextThreadId },
+      });
+      return null;
+    },
+    [
+      activeProject,
+      activeThread,
+      activeThreadBranch,
+      createThread,
+      deleteThread,
+      draftTaskGraphModel,
+      environmentId,
+      navigate,
+      newTaskGraph,
+      runtimeMode,
+    ],
+  );
 
   const getModelDisabledReason = useCallback(
     (instanceId: ProviderInstanceId, model: string): string | null => {
@@ -12149,6 +12161,18 @@ export default function ChatView(props: ChatViewProps) {
         </AlertDialogPopup>
       </AlertDialog>
       <LinkPullRequestDialogHost />
+      {!isServerThread && activeThread && activeProject ? (
+        <DraftTaskGraphDialog
+          environmentId={environmentId}
+          projectId={activeProject.id}
+          threadId={activeThread.id}
+          baseRef={activeThreadBranch}
+          modelSelection={draftTaskGraphModel}
+          open={draftTaskGraphOpen}
+          onOpenChange={setDraftTaskGraphOpen}
+          onRun={onRunDraftTaskGraph}
+        />
+      ) : null}
       {expandedImage && (
         <ExpandedImageDialog
           key={expandedImageKey(expandedImage)}

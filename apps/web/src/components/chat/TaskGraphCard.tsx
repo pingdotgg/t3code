@@ -1,4 +1,12 @@
-import type { EnvironmentId, TaskGraph, ThreadId } from "@t3tools/contracts";
+import {
+  TaskGraphId,
+  type EnvironmentId,
+  type ModelSelection,
+  type ProjectId,
+  type TaskGraph,
+  type TaskGraphNode,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { ChevronDownIcon, Maximize2Icon, PlayIcon, SquareIcon, WorkflowIcon } from "lucide-react";
 import { lazy, Suspense, useId, useState } from "react";
 import { create } from "zustand";
@@ -21,7 +29,11 @@ import {
   taskGraphPullRequestLinks,
   taskGraphResourcesLabel,
 } from "./taskGraphView";
-import { useTaskGraphCommands, useTaskGraphEditorRequest } from "./useTaskGraphCommands";
+import {
+  useDraftTaskGraph,
+  useTaskGraphCommands,
+  useTaskGraphEditorRequest,
+} from "./useTaskGraphCommands";
 import { useTaskGraphLabels } from "./useTaskGraphLabels";
 
 // The canvas, dagre and xyflow load only when someone opens the editor.
@@ -250,5 +262,64 @@ function TaskGraphCard(props: {
         </DialogPopup>
       </Dialog>
     </ComposerBanner.Attachment>
+  );
+}
+
+/**
+ * The editor for a graph drafted on a new chat. Nothing reaches the server
+ * until Run, which creates the chat's thread and the graph together; closing
+ * keeps the draft for as long as the new chat stays open.
+ */
+export function DraftTaskGraphDialog(props: {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+  readonly threadId: ThreadId;
+  readonly baseRef: string | null;
+  readonly modelSelection: ModelSelection | null;
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly onRun: (nodes: ReadonlyArray<TaskGraphNode>) => Promise<string | null>;
+}) {
+  const draft = useDraftTaskGraph({
+    canRun: true,
+    onRun: props.onRun,
+    onDiscard: () => props.onOpenChange(false),
+  });
+  const [createdAt] = useState(() => new Date().toISOString());
+  const graph: TaskGraph = {
+    id: TaskGraphId.make("draft"),
+    projectId: props.projectId,
+    threadId: props.threadId,
+    title: "New task graph",
+    baseRef: props.baseRef ?? "HEAD",
+    modelSelection: props.modelSelection,
+    status: "draft",
+    nodes: draft.nodes,
+    createdAt,
+    updatedAt: createdAt,
+  };
+  const labels = useTaskGraphLabels(props.environmentId, graph);
+  return (
+    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+      <DialogPopup className="h-[min(85vh,52rem)] max-w-6xl overflow-hidden">
+        {props.open ? (
+          <Suspense
+            fallback={
+              <div className="grid flex-1 place-items-center">
+                <Spinner />
+              </div>
+            }
+          >
+            <TaskGraphEditor
+              environmentId={props.environmentId}
+              graph={graph}
+              commands={draft.commands}
+              labels={labels}
+              initialNodeKey={draft.firstNodeKey}
+            />
+          </Suspense>
+        ) : null}
+      </DialogPopup>
+    </Dialog>
   );
 }
