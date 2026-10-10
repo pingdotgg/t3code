@@ -4,6 +4,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -21,9 +22,10 @@ const UPDATE_LOOKAHEAD = Duration.minutes(5);
  */
 const QUIET_PERIOD = Duration.minutes(15);
 /**
- * Tasks repeating more often than this always have a run due soon. A run that
- * starts mid-install waits for the admission permit, and a run missed during a
- * restart catches up afterwards, so these only block while running.
+ * Tasks repeating more often than this always have a run due soon, so they
+ * only block while running. A run that starts mid-install waits for the
+ * admission permit; one that fires during a server handoff is recorded as
+ * interrupted and the task runs again on its next interval.
  */
 const FREQUENT_TASK_INTERVAL = Duration.minutes(15);
 
@@ -49,7 +51,7 @@ export class UpdateWindow extends Context.Service<
 const make = Effect.fn("updates.UpdateWindow.make")(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
-  const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
+  const sql = yield* SqlClient.SqlClient;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const providers = yield* ProviderRegistry.ProviderRegistry;
   const admission = yield* ProviderMaintenanceCoordinator.ProviderMaintenanceAdmission;
@@ -84,27 +86,21 @@ const make = Effect.fn("updates.UpdateWindow.make")(function* () {
       found.push("recent-interaction");
     }
 
-    const tasks = yield* scheduledTasks.list().pipe(
+    // Corrupt task rows are skipped, so one bad row cannot close the window for good.
+    const tasks = yield* ScheduledTaskService.listRunningOrDueTasks(horizon).pipe(
+      Effect.provideService(SqlClient.SqlClient, sql),
       Effect.tapError((cause) =>
         Effect.logWarning("Update window could not read scheduled tasks", { cause }),
       ),
       Effect.option,
     );
     if (Option.isNone(tasks)) return [...found, "scheduled-task"];
-    for (const task of tasks.value.tasks) {
-      if (task.lastRunStatus === "running") {
-        found.push("scheduled-task");
-        continue;
-      }
-      if (!task.enabled || task.nextRunAt === null) continue;
+    for (const task of tasks.value) {
       if (
-        task.schedule.type === "interval" &&
-        task.schedule.everyMs < Duration.toMillis(FREQUENT_TASK_INTERVAL)
+        task.lastRunStatus === "running" ||
+        task.schedule.type !== "interval" ||
+        task.schedule.everyMs >= Duration.toMillis(FREQUENT_TASK_INTERVAL)
       ) {
-        continue;
-      }
-      const runsAt = DateTime.make(task.nextRunAt);
-      if (Option.isSome(runsAt) && !DateTime.isGreaterThan(runsAt.value, horizon)) {
         found.push("scheduled-task");
       }
     }

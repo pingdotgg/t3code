@@ -352,6 +352,35 @@ const decodeRow = (row: ScheduledTaskRow, origin: WebhookOrigin | null = null) =
   );
 
 /** Select poll candidates before decoding their schedules or other JSON payloads. */
+/** Decodes rows for background readers, skipping corrupt ones so one bad row cannot stall them. */
+const decodeTaskRowsLeniently = Effect.fn("ScheduledTaskService.decodeTaskRowsLeniently")(
+  function* (rows: ReadonlyArray<ScheduledTaskRow>) {
+    const tasks: ScheduledTask[] = [];
+    for (const row of rows) {
+      const decoded = yield* Effect.result(decodeRow(row));
+      if (Result.isSuccess(decoded)) {
+        const task = decoded.success;
+        // next_run_at is a freeform string at the schema level; a stored value
+        // that cannot parse as a DateTime would defect the poll below, so the
+        // row is skipped here like any other corrupt row.
+        if (task.nextRunAt === null || Option.isSome(DateTime.make(task.nextRunAt))) {
+          tasks.push(task);
+        } else {
+          yield* Effect.logWarning("Skipping schedule task row with invalid next_run_at", {
+            taskId: row.task_id,
+          });
+        }
+      } else {
+        yield* Effect.logWarning("Skipping undecodable schedule task row", {
+          taskId: row.task_id,
+          cause: decoded.failure,
+        });
+      }
+    }
+    return tasks;
+  },
+);
+
 export const listDueTasks = Effect.fn("ScheduledTaskService.listDueTasks")(function* (
   now: DateTime.DateTime,
 ) {
@@ -362,30 +391,21 @@ export const listDueTasks = Effect.fn("ScheduledTaskService.listDueTasks")(funct
       AND next_run_at <= ${iso(now)} AND last_run_status <> 'running'
     ORDER BY next_run_at ASC, task_id ASC
   `;
-  const tasks: ScheduledTask[] = [];
-  for (const row of rows) {
-    const decoded = yield* Effect.result(decodeRow(row));
-    if (Result.isSuccess(decoded)) {
-      const task = decoded.success;
-      // next_run_at is a freeform string at the schema level; a stored value
-      // that cannot parse as a DateTime would defect the poll below, so the
-      // row is skipped here like any other corrupt row.
-      if (task.nextRunAt === null || Option.isSome(DateTime.make(task.nextRunAt))) {
-        tasks.push(task);
-      } else {
-        yield* Effect.logWarning("Skipping schedule task row with invalid next_run_at", {
-          taskId: row.task_id,
-        });
-      }
-    } else {
-      yield* Effect.logWarning("Skipping undecodable schedule task row", {
-        taskId: row.task_id,
-        cause: decoded.failure,
-      });
-    }
-  }
-  return tasks;
+  return yield* decodeTaskRowsLeniently(rows);
 });
+
+/** Tasks running now or due by `by`, for background work that must not start under them. */
+export const listRunningOrDueTasks = Effect.fn("ScheduledTaskService.listRunningOrDueTasks")(
+  function* (by: DateTime.DateTime) {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<ScheduledTaskRow>`
+      SELECT * FROM scheduled_tasks
+      WHERE last_run_status = 'running'
+        OR (enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ${iso(by)})
+    `;
+    return yield* decodeTaskRowsLeniently(rows);
+  },
+);
 
 export const layer = Layer.effect(
   ScheduledTaskService,
