@@ -77,7 +77,8 @@ export type BuiltInUsageReadersEnv =
   | ProviderUsageReaderEnv<typeof GrokDriver>
   | ProviderUsageReaderEnv<typeof OpenCodeDriver>
   | ProviderUsageReaderEnv<typeof AntigravityDriver>
-  | ProviderUsageReaderEnv<typeof CursorDriver>;
+  | ProviderUsageReaderEnv<typeof CursorDriver>
+  | ProviderUsageReaderEnv<typeof PiDriver>;
 
 /**
  * The drivers that keep usage history, in the order the usage page reads
@@ -86,4 +87,12 @@ export type BuiltInUsageReadersEnv =
  */
 export const BUILT_IN_USAGE_DRIVERS: ReadonlyArray<
   AnyProviderDriver<BuiltInDriversEnv, BuiltInUsageReadersEnv>
-> = [ClaudeDriver, CodexDriver, GrokDriver, OpenCodeDriver, AntigravityDriver, CursorDriver];
+> = [
+  ClaudeDriver,
+  CodexDriver,
+  GrokDriver,
+  PiDriver,
+  OpenCodeDriver,
+  AntigravityDriver,
+  CursorDriver,
+];

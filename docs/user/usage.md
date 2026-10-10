@@ -6,8 +6,8 @@ desktop when the terminal is not focused. Customize `usage.open` in
 
 ## Understand your usage
 
-**Usage** combines Codex, Claude Code, Grok Build, OpenCode, Antigravity, and Cursor history from your connected
-environments. It shows token use, cache savings, model breakdowns, and estimated API-equivalent
+**Usage** combines Codex, Claude Code, Grok Build, OpenCode, Antigravity, Pi, and Cursor history
+from your connected environments. It shows token use, cache savings, model breakdowns, and estimated API-equivalent
 cost, split by token type and by speed. These estimates are not your subscription bill.
 **Premium** is what Fast and Ultrafast requests cost above standard rates. Cost that cannot be
 split, such as a provider-reported cost for a model without public rates, shows as **Other**.
@@ -30,9 +30,13 @@ you to allow access on the server Mac.
 
 Usage includes each configured account's history, including disabled accounts. Custom homes follow
 the account's home setting or its `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, or `GROK_HOME` environment
-variable. Use absolute paths or `~/` paths in the account's environment settings; relative
-environment paths depend on each project's working directory and cannot be reliably discovered
-by Usage. Accounts sharing a history directory count once.
+variable. Pi reads `~/.pi/agent/sessions`, or the `sessions` directory under
+`PI_CODING_AGENT_DIR`. Set `PI_CODING_AGENT_SESSION_DIR` to read a different session directory.
+To include sessions saved through `--session-dir` or Pi's `sessionDir` setting, set this environment
+variable to the same directory. Pi includes recorded tool and summary costs under `Tools/summaries`.
+Use absolute paths or `~/` paths in the account's environment settings; relative environment paths
+depend on each project's working directory and cannot be reliably discovered by Usage. Accounts
+sharing a history directory count once.
 
 When your app and server support different providers, usage totals may cover only the providers
 your app understands. Update the app to include newly supported providers.
