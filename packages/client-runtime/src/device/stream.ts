@@ -944,7 +944,12 @@ export function createDeviceStreamClient(
             if (!isCurrent() || epoch !== decoderEpoch) return;
             configuring = false;
             awaitingKeyframe = true;
-            if (configured) requestKeyframe();
+            if (!configured) return;
+            // Decode the keyframe that carried the SPS. Asking serve-emu for a
+            // fresh one restarts its encoder with a new video-session, which
+            // closes this decoder and starts the same cycle again.
+            if (isKey) decode(true, packet.data, packet.timestamp);
+            else requestKeyframe();
           },
         );
         return;

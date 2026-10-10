@@ -725,6 +725,18 @@ describe("shared device stream readiness and recovery", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("decodes the Android keyframe that configured the decoder instead of resetting the encoder", async () => {
+    const { client, sockets, sps } = recoveryFixture("android");
+    client.start();
+    sockets[0]!.onmessage?.({ data: sps });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.mocked(globalThis.EncodedVideoChunk)).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "key" }),
+    );
+    expect(sockets[0]!.send).not.toHaveBeenCalledWith(expect.stringContaining("reset-video"));
+    client.stop();
+  });
+
   it("discards decoder support results and output from a previous Android socket", async () => {
     const { client, sockets, sps, events, Decoder, decoders, decodedFrame, drawImage } =
       recoveryFixture("android");
