@@ -2449,8 +2449,10 @@ function useChatMarkdownState({
     }
     return metaByHref;
   }, [cwd, imageBaseDir, text]);
+  const filePathChips = useClientSettings((settings) => settings.filePathChips);
   const inlineCodeFileLinkMetaByText = useMemo(() => {
     const metaByText = new Map<string, MarkdownFileLinkMeta>();
+    if (!filePathChips) return metaByText;
     for (const span of extractInlineCodeSpans(text)) {
       if (metaByText.has(span)) continue;
       const meta = resolveInlineCodeFileLinkMeta(span, cwd, imageBaseDir ?? cwd);
@@ -2459,7 +2461,7 @@ function useChatMarkdownState({
       }
     }
     return metaByText;
-  }, [cwd, imageBaseDir, text]);
+  }, [cwd, imageBaseDir, filePathChips, text]);
   const fileLinkParentSuffixByPath = useMemo(() => {
     const filePaths = [
       ...[...markdownFileLinkMetaByHref.values()].map((meta) => meta.filePath),
@@ -2730,6 +2732,7 @@ function useChatMarkdownState({
       headingLevelOffset,
       imageBaseDir,
       inlineCodeFileLinkMetaByText,
+      filePathChips,
       isStreaming,
       linkTargetPreference,
       markdownFileLinkMetaByHref,
@@ -2763,6 +2766,7 @@ function useChatMarkdownState({
       headingLevelOffset,
       imageBaseDir,
       inlineCodeFileLinkMetaByText,
+      filePathChips,
       isStreaming,
       linkTargetPreference,
       markdownFileLinkMetaByHref,
@@ -3173,10 +3177,10 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   code: function MarkdownCode({ node, children, className, ...props }) {
-    const { cwd, imageBaseDir, inlineCodeFileLinkMetaByText, fileLinkChip } = use(
+    const { cwd, imageBaseDir, inlineCodeFileLinkMetaByText, filePathChips, fileLinkChip } = use(
       ChatMarkdownRendererContext,
     );
-    if (node?.properties?.dataInlineCode != null) {
+    if (filePathChips && node?.properties?.dataInlineCode != null) {
       const codeText = nodeToPlainText(children);
       const fileLinkMeta =
         inlineCodeFileLinkMetaByText.get(codeText.trim()) ??

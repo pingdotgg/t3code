@@ -29,6 +29,12 @@ The controls retreat as the composer docks after you send the first message.
 Turn on **Composer context** to keep those controls visible after the thread starts. This preference
 applies to the web and desktop clients.
 
+## File path chips
+
+Agent messages show file paths as chips you can click to open the file. Turn off **File path chips**
+to show paths written in code formatting as the agent wrote them. File paths written as markdown
+links stay links. This preference applies to the web and desktop clients.
+
 ## Motion
 
 The main sidebar, right panel, and terminal drawer open and close immediately by default. Move the
