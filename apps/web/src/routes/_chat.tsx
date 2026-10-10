@@ -17,7 +17,10 @@ import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useScratchProject } from "../hooks/useScratchProject";
-import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import {
+  startNewThreadFromContext,
+  startNewThreadInCurrentCheckout,
+} from "../lib/chatThreadActions";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isEditableFocused } from "../lib/editableFocus";
@@ -105,6 +108,18 @@ function ChatRouteGlobalShortcuts() {
         event.preventDefault();
         event.stopPropagation();
         void startNewThreadFromContext({
+          activeDraftThread,
+          activeThread: activeThread ?? undefined,
+          defaultProjectRef,
+          handleNewThread,
+        });
+        return;
+      }
+
+      if (command === "chat.newInWorktree") {
+        event.preventDefault();
+        event.stopPropagation();
+        void startNewThreadInCurrentCheckout({
           activeDraftThread,
           activeThread: activeThread ?? undefined,
           defaultProjectRef,

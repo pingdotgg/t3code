@@ -12,6 +12,7 @@ import {
   resolveNewDraftStartFromOrigin,
   resolveNewThreadModelSelectionOverride,
   startNewThreadFromContext,
+  startNewThreadInCurrentCheckout,
   type ChatThreadActionContext,
 } from "./chatThreadActions";
 
@@ -167,5 +168,49 @@ describe("chatThreadActions", () => {
 
     expect(didStart).toBe(false);
     expect(handleNewThread).not.toHaveBeenCalled();
+  });
+
+  it("joins the active thread's worktree instead of applying new-thread defaults", async () => {
+    const handleNewThread = vi.fn<ChatThreadActionContext["handleNewThread"]>(async () => {});
+
+    await startNewThreadInCurrentCheckout({
+      ...createContext({ handleNewThread }),
+      activeDraftThread: null,
+      activeThread: {
+        environmentId: ENVIRONMENT_ID,
+        projectId: PROJECT_ID,
+        branch: "feature/a",
+        worktreePath: "/worktrees/a",
+      },
+    });
+
+    expect(handleNewThread).toHaveBeenCalledWith(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), {
+      branch: "feature/a",
+      worktreePath: "/worktrees/a",
+      envMode: "worktree",
+      startFromOrigin: false,
+    });
+  });
+
+  it("keeps a local-checkout thread's branch on the local checkout", async () => {
+    const handleNewThread = vi.fn<ChatThreadActionContext["handleNewThread"]>(async () => {});
+
+    await startNewThreadInCurrentCheckout({
+      ...createContext({ handleNewThread }),
+      activeThread: undefined,
+      activeDraftThread: {
+        environmentId: ENVIRONMENT_ID,
+        projectId: PROJECT_ID,
+        branch: "main",
+        worktreePath: null,
+      },
+    });
+
+    expect(handleNewThread).toHaveBeenCalledWith(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), {
+      branch: "main",
+      worktreePath: null,
+      envMode: "local",
+      startFromOrigin: false,
+    });
   });
 });

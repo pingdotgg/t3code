@@ -154,6 +154,10 @@ through the pages you have visited, like a browser's back and forward buttons.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread). `chat.newWithoutProject`
 (`mod+alt+n`) starts a thread [without a project](./thread-sidebar.md#start-without-a-project).
+`chat.newInWorktree` (`mod+shift+t`) skips those defaults and starts the thread
+in the current thread's worktree, or on its branch in the local checkout, like
+**New thread on {branch}** in the thread menu. Browsers keep `mod+shift+t` for
+reopening a closed tab, so rebind it to use it on the web.
 
 ## Reserved shortcuts
 
@@ -162,7 +166,7 @@ tab. When nothing remains to close, it closes the window. In a browser, `mod+w`
 closes the browser tab; rebind `rightPanel.close` and `terminal.close` to an available
 shortcut such as `alt+w`.
 
-`mod+shift+t` reopens the last closed tab across the app, including files,
+`mod+alt+shift+t` reopens the last closed tab across the app, including files,
 diffs, pull requests, browsers, and devices, in the order you closed them.
 A browser opens in a fresh session without its old page history. Incognito tabs
 can reopen until you reload or quit the app. This shortcut does not undo deleted work.

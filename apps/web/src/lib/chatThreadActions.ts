@@ -100,3 +100,35 @@ export async function startNewThreadFromContext(
   await context.handleNewThread(projectRef);
   return true;
 }
+
+interface CheckoutContextLike extends ThreadContextLike {
+  branch: string | null;
+  worktreePath: string | null;
+}
+
+/**
+ * Keyboard twin of the thread menu's "New thread on {branch}": joins the
+ * active thread's worktree, or its branch on the local checkout, instead of
+ * applying new-thread defaults.
+ */
+export async function startNewThreadInCurrentCheckout(
+  context: Omit<ChatThreadActionContext, "activeDraftThread" | "activeThread"> & {
+    readonly activeDraftThread: CheckoutContextLike | null;
+    readonly activeThread: CheckoutContextLike | undefined;
+  },
+): Promise<boolean> {
+  const projectRef = resolveThreadActionProjectRef(context);
+  if (!projectRef) {
+    return false;
+  }
+
+  const source = context.activeThread ?? context.activeDraftThread;
+  const worktreePath = source?.worktreePath ?? null;
+  await context.handleNewThread(projectRef, {
+    branch: source?.branch ?? null,
+    worktreePath,
+    envMode: worktreePath ? "worktree" : "local",
+    startFromOrigin: false,
+  });
+  return true;
+}
