@@ -431,7 +431,7 @@ describe("welcome agent terminal setup", () => {
     expect(hasViewport()).toBe(false);
     expect(state.close).not.toHaveBeenCalled();
     await click("Continue");
-    expect(text(renderer!.root)).toContain("Choose your projects");
+    expect(text(renderer!.root)).toContain("Import your projects");
   });
 
   it("settles accepted pretyping locally after revocation without closing the PTY", async () => {

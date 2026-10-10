@@ -40,9 +40,9 @@ type Outcome =
 const runOnServer = (
   connection: OpenCode2Server.OpenCode2Connection,
   input: TextGenerationOperations.Request<Schema.Top>,
-  resolveAttachmentPath: ProviderHost.ProviderHost["Service"]["resolveAttachmentPath"],
 ) =>
   Effect.gen(function* () {
+    const { resolveAttachmentPath } = yield* ProviderHost.ProviderHost;
     const { client } = connection;
     const parsed = OpenCodeRuntime.parseOpenCodeModelSlug(input.modelSelection.model);
     if (parsed === null) {
@@ -184,11 +184,12 @@ const runOnServer = (
 /** Text generation for an instance whose server is OpenCode 2. */
 export const make = Effect.fn("OpenCode2TextGeneration.make")(function* () {
   const server = yield* OpenCode2Server.OpenCode2Server;
-  const { resolveAttachmentPath } = yield* ProviderHost.ProviderHost;
+  const host = yield* ProviderHost.ProviderHost;
   const run: TextGenerationOperations.Runner = (input) =>
     server
-      .withConnection((connection) => runOnServer(connection, input, resolveAttachmentPath))
+      .withConnection((connection) => runOnServer(connection, input))
       .pipe(
+        Effect.provideService(ProviderHost.ProviderHost, host),
         Effect.mapError((cause) =>
           isTextGenerationError(cause)
             ? cause

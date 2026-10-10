@@ -1,9 +1,8 @@
-import * as NodeOS from "node:os";
-
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { mergeProviderInstanceEnvironment } from "./instanceEnvironment.ts";
 
@@ -18,7 +17,7 @@ describe("mergeProviderInstanceEnvironment", () => {
         CODEX_HOME: "~/.inherited-codex",
         CLAUDE_CONFIG_DIR: "~/.inherited-claude",
       };
-      const environment = mergeProviderInstanceEnvironment(
+      const environment = yield* mergeProviderInstanceEnvironment(
         [
           { name: "CODEX_HOME", value, sensitive: false },
           { name: "CLAUDE_CONFIG_DIR", value, sensitive: false },
@@ -28,41 +27,48 @@ describe("mergeProviderInstanceEnvironment", () => {
       );
 
       expect(environment).toEqual({
-        CODEX_HOME: path.join(NodeOS.homedir(), tail),
-        CLAUDE_CONFIG_DIR: path.join(NodeOS.homedir(), tail),
+        CODEX_HOME: path.join("/home/ada", tail),
+        CLAUDE_CONFIG_DIR: path.join("/home/ada", tail),
         CUSTOM_VALUE: value,
       });
       expect(baseEnv).toEqual({
         CODEX_HOME: "~/.inherited-codex",
         CLAUDE_CONFIG_DIR: "~/.inherited-claude",
       });
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.provideService(HostProcess.HomeDirectory, "/home/ada"),
+      Effect.provide(NodeServices.layer),
+    ),
   );
 
-  it("leaves inherited provider homes unchanged", () => {
-    const baseEnv = { CODEX_HOME: "~/.codex", CLAUDE_CONFIG_DIR: "~\\.claude" };
+  it.effect("leaves inherited provider homes unchanged", () =>
+    Effect.gen(function* () {
+      const baseEnv = { CODEX_HOME: "~/.codex", CLAUDE_CONFIG_DIR: "~\\.claude" };
 
-    expect(
-      mergeProviderInstanceEnvironment(
-        [{ name: "CUSTOM_VALUE", value: "~/.custom", sensitive: false }],
-        baseEnv,
-      ),
-    ).toEqual({ ...baseEnv, CUSTOM_VALUE: "~/.custom" });
-  });
+      expect(
+        yield* mergeProviderInstanceEnvironment(
+          [{ name: "CUSTOM_VALUE", value: "~/.custom", sensitive: false }],
+          baseEnv,
+        ),
+      ).toEqual({ ...baseEnv, CUSTOM_VALUE: "~/.custom" });
+    }),
+  );
 
-  it("overrides inherited environment values and preserves empty strings", () => {
-    expect(
-      mergeProviderInstanceEnvironment(
-        [
-          { name: "OPENROUTER_API_KEY", value: "sk-or-test", sensitive: true },
-          { name: "ANTHROPIC_API_KEY", value: "", sensitive: false },
-        ],
-        { ANTHROPIC_API_KEY: "inherited", PATH: "/bin" },
-      ),
-    ).toMatchObject({
-      OPENROUTER_API_KEY: "sk-or-test",
-      ANTHROPIC_API_KEY: "",
-      PATH: "/bin",
-    });
-  });
+  it.effect("overrides inherited environment values and preserves empty strings", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* mergeProviderInstanceEnvironment(
+          [
+            { name: "OPENROUTER_API_KEY", value: "sk-or-test", sensitive: true },
+            { name: "ANTHROPIC_API_KEY", value: "", sensitive: false },
+          ],
+          { ANTHROPIC_API_KEY: "inherited", PATH: "/bin" },
+        ),
+      ).toMatchObject({
+        OPENROUTER_API_KEY: "sk-or-test",
+        ANTHROPIC_API_KEY: "",
+        PATH: "/bin",
+      });
+    }),
+  );
 });

@@ -76,7 +76,8 @@ export const redactRelayHookUrl = (url: string): string => {
   const path = url.split("?", 1)[0] ?? url;
   const segments = path.split("/");
   if (segments.length >= 6) {
-    segments[5] = "<redacted>";
+    // URL-safe, so span attributes built from the parsed URL keep it readable.
+    segments[5] = "redacted";
   }
   return segments.join("/");
 };

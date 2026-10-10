@@ -26,7 +26,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { OPENCODE_PROVIDER } from "@t3tools/provider-opencode/testing";
 import {
   OpenCodeReplayController,
@@ -267,7 +267,7 @@ const makeReplayAdapter = (
     );
   });
 
-const layerReplayHost = layerTestProviderHost().pipe(Layer.provide(NodeServices.layer));
+const layerReplayHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
 
 function layerRegistry(
   transcript: OpenCode2ReplayTranscript,
