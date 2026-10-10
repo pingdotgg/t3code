@@ -283,6 +283,18 @@ export class ExternalLauncherCommandNotFoundError extends Schema.TaggedError<Ext
   }
 }
 
+/** The target path cannot reach the editor intact, so it was not started. */
+export class ExternalLauncherUnsupportedTargetError extends Schema.TaggedError<ExternalLauncherUnsupportedTargetError>()(
+  "ExternalLauncherUnsupportedTargetError",
+  {
+    editor: EditorId,
+  },
+) {
+  override get message(): string {
+    return `${this.editor} cannot open a path containing line breaks or double quotes`;
+  }
+}
+
 const ExternalLauncherSpawnFields = {
   command: Schema.String,
   args: Schema.Array(Schema.String),
@@ -318,6 +330,7 @@ export const ExternalLauncherError = Schema.Union([
   ExternalLauncherUnknownEditorError,
   ExternalLauncherUnsupportedEditorError,
   ExternalLauncherCommandNotFoundError,
+  ExternalLauncherUnsupportedTargetError,
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherEditorSpawnError,
 ]);
