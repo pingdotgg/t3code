@@ -85,6 +85,7 @@ function createClient(overrides?: Partial<ManagedRelay.ManagedRelayClient["Servi
     registerLiveActivity: () => Effect.die("unused"),
     getAgentActivitySnapshot: () => Effect.die("unused"),
     resetTokenCache: Effect.void,
+    checkReachable: Effect.succeed(true),
     ...overrides,
   });
 }

@@ -264,13 +264,19 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const usesRelay = connectionRoutes(entry).some(
     (route) => route.target._tag === "RelayConnectionTarget",
   );
-  const setupTimeoutDetail = `${target.label} did not respond during connection setup.${
-    usesRelay ? ` ${NETWORK_BLOCKING_HINT}` : ""
-  }`;
   yield* annotateTarget(target);
 
   const connectivity = yield* Connectivity.Connectivity;
   const driver = yield* ConnectionDriver.ConnectionDriver;
+  // A stalled T3 Connect setup looks the same whether this device or the
+  // environment lost its network, so ask the relay which side it was.
+  const setupTimeoutDetail = Effect.gen(function* () {
+    const detail = `${target.label} did not respond during connection setup.`;
+    if (!usesRelay) return detail;
+    return (yield* driver.checkRelay)
+      ? `${detail} It may be asleep or offline, or its network may be blocking T3 Connect.`
+      : `This device could not reach T3 Connect. Check your internet connection. ${NETWORK_BLOCKING_HINT}`;
+  });
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
   const initialIntent: SupervisorIntent = {
     desired: options?.initiallyDesired ?? false,
@@ -721,7 +727,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         failure: {
           error: new ConnectionTransientError({
             reason: "timeout",
-            detail: setupTimeoutDetail,
+            detail: yield* setupTimeoutDetail,
           }),
           attemptSpan: Option.none(),
         },

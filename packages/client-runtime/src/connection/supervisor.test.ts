@@ -159,6 +159,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
   readonly probe?: (attempt: number) => Effect.Effect<void, ConnectionAttemptError>;
   readonly initialConfig?: (attempt: number) => Effect.Effect<ServerConfig, ConnectionAttemptError>;
   readonly checkRoute?: (route: ConnectionRoute) => Effect.Effect<ConnectionDriver.RouteCheck>;
+  readonly relayReachable?: boolean;
 }) {
   const networkStatus = yield* SubscriptionRef.make<NetworkStatus>(
     options?.networkStatus ?? "online",
@@ -256,6 +257,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
         checkRoute: (_entry, route) => checkRoute(route),
         preflight: (_entry, route) =>
           checkRoute(route).pipe(Effect.map((check) => check === "answered")),
+        checkRelay: Effect.succeed(options?.relayReachable ?? true),
       }),
     ),
   );
@@ -550,7 +552,7 @@ describe("EnvironmentSupervisor", () => {
   );
 
   it.effect(
-    "shows a network hint for a stalled relay connection and clears it after recovery",
+    "blames the environment for a stalled relay connection this device can reach, and clears it after recovery",
     () =>
       Effect.gen(function* () {
         const harness = yield* makeHarness({
@@ -565,7 +567,7 @@ describe("EnvironmentSupervisor", () => {
         yield* TestClock.adjust("15 seconds");
         const failed = yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
         expect(failed.lastFailure?.message).toBe(
-          `Test environment did not respond during connection setup. ${NETWORK_BLOCKING_HINT}`,
+          "Test environment did not respond during connection setup. It may be asleep or offline, or its network may be blocking T3 Connect.",
         );
 
         yield* TestClock.adjust("3 seconds");
@@ -575,6 +577,27 @@ describe("EnvironmentSupervisor", () => {
         );
         expect(recovered.lastFailure).toBeNull();
         expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect(
+    "blames this device's network when a stalled relay connection cannot reach T3 Connect",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          prepare: () => Effect.never,
+          relayReachable: false,
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        yield* awaitState(supervisor.state, (state) => state.phase === "connecting");
+        yield* TestClock.adjust("15 seconds");
+        const failed = yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+        expect(failed.lastFailure?.message).toBe(
+          `This device could not reach T3 Connect. Check your internet connection. ${NETWORK_BLOCKING_HINT}`,
+        );
       }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -1550,6 +1573,7 @@ describe("EnvironmentSupervisor", () => {
         registerLiveActivity: unused,
         getAgentActivitySnapshot: unused,
         resetTokenCache: Effect.void,
+        checkReachable: Effect.succeed(true),
       });
       const layerHttp = RpcHttp.layerRemoteHttpClient(fetchFn);
       const remoteAuthorization = yield* RemoteEnvironmentAuthorization.make.pipe(

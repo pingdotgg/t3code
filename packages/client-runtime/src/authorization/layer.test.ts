@@ -193,6 +193,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
     registerLiveActivity: unexpected,
     getAgentActivitySnapshot: unexpected,
     resetTokenCache: Effect.void,
+    checkReachable: Effect.succeed(true),
   });
   const layer = RemoteEnvironmentAuthorization.layer.pipe(
     Layer.provide(

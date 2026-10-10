@@ -572,6 +572,25 @@ describe("ManagedRelayClient", () => {
     }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)));
   });
 
+  it.effect("counts any relay response as reachable, but not a failed or stalled request", () =>
+    Effect.gen(function* () {
+      const checkWith = (fetchFn: typeof globalThis.fetch) =>
+        Effect.gen(function* () {
+          const relayClient = yield* ManagedRelay.ManagedRelayClient;
+          const check = yield* Effect.forkScoped(relayClient.checkReachable);
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust("3 seconds");
+          return yield* Fiber.join(check);
+        }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)));
+
+      expect(
+        yield* checkWith(() => Promise.resolve(new Response("Unavailable", { status: 503 }))),
+      ).toBe(true);
+      expect(yield* checkWith(() => Promise.reject(new TypeError("Failed to fetch")))).toBe(false);
+      expect(yield* checkWith(() => new Promise<Response>(() => undefined))).toBe(false);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("preserves typed relay trace IDs on client errors", () => {
     const fetchFn = (() =>
       Promise.resolve(

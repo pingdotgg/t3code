@@ -41,6 +41,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
+import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
 import type * as HttpMethod from "effect/http/HttpMethod";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
@@ -223,6 +224,7 @@ export class ManagedRelayDpopSigner extends Context.Service<
 >()("@t3tools/client-runtime/relay/managedRelay/ManagedRelayDpopSigner") {}
 
 export const MANAGED_RELAY_REQUEST_TIMEOUT_MS = 10_000;
+const MANAGED_RELAY_REACHABILITY_TIMEOUT_MS = 2_500;
 
 export interface ManagedRelayAccessTokenCacheEntry {
   readonly accountId: string;
@@ -301,6 +303,12 @@ export class ManagedRelayClient extends Context.Service<
       readonly clerkToken: string;
     }) => Effect.Effect<RelayAgentActivitySnapshotResponse, ManagedRelayClientError>;
     readonly resetTokenCache: Effect.Effect<void>;
+    /**
+     * Whether this device can reach the relay's public health check. A stalled
+     * T3 Connect connection uses it to tell this device's network apart from
+     * the environment's.
+     */
+    readonly checkReachable: Effect.Effect<boolean>;
   }
 >()("@t3tools/client-runtime/relay/managedRelay/ManagedRelayClient") {}
 
@@ -426,6 +434,7 @@ function disabledManagedRelayClient(relayUrl: string): ManagedRelayClient["Servi
     resetTokenCache: Effect.void.pipe(
       Effect.withSpan("clientRuntime.managedRelay.resetTokenCache"),
     ),
+    checkReachable: Effect.succeed(false),
   });
 }
 
@@ -438,6 +447,7 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
     return disabledManagedRelayClient(options.relayUrl);
   }
   const signer = yield* ManagedRelayDpopSigner;
+  const httpClient = yield* HttpClient.HttpClient;
   const client = yield* HttpApiClient.make(RelayApi, { baseUrl: relayUrl });
   const initialTokens = options.accessTokenStore ? yield* options.accessTokenStore.load : [];
   const cachedTokens = yield* SynchronizedRef.make<
@@ -931,6 +941,14 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
     resetTokenCache: SynchronizedRef.set(cachedTokens, []).pipe(
       Effect.andThen(options.accessTokenStore ? options.accessTokenStore.clear : Effect.void),
       Effect.withSpan("clientRuntime.managedRelay.resetTokenCache"),
+      withRelayClientTracing,
+    ),
+    // Any response counts: an unhealthy relay still proves this device can reach it.
+    checkReachable: httpClient.get(urlBuilder.health.health()).pipe(
+      Effect.timeoutOption(Duration.millis(MANAGED_RELAY_REACHABILITY_TIMEOUT_MS)),
+      Effect.map(Option.isSome),
+      Effect.orElseSucceed(() => false),
+      Effect.withSpan("clientRuntime.managedRelay.checkReachable"),
       withRelayClientTracing,
     ),
   });
