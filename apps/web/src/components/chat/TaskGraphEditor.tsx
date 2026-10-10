@@ -69,11 +69,14 @@ import {
   type TaskGraphCanvasPoint,
 } from "./taskGraphCanvasLayout";
 import {
+  canContinueTaskGraphWorktree,
   isTaskGraphFinished,
   pullRequestLabel,
   TASK_GRAPH_NODE_STATUS_DOT_CLASS,
   TASK_GRAPH_NODE_STATUS_LABEL,
   TASK_GRAPH_STATUS_LABEL,
+  type TaskGraphJoinMachine,
+  taskGraphJoinMachines,
   taskGraphNodeKeyFromTitle,
   taskGraphNodeWaitDetail,
   taskGraphProgressLabel,
@@ -205,10 +208,12 @@ export default function TaskGraphEditor(props: {
   };
 
   // Adds a placeholder task to the graph and selects it for editing: after the
-  // selected task, or with nothing selected, as the parent of the unstarted
-  // tasks at the start (a started task can no longer be made to wait).
+  // selected task, continuing its worktree where it can, or with nothing
+  // selected, as the parent of the unstarted tasks at the start (a started
+  // task can no longer be made to wait).
   const addTask = async () => {
     const after = selection.kind === "node" ? selection.key : null;
+    const parent = graph.nodes.find((node) => node.key === after);
     const key = taskGraphNodeKeyFromTitle(
       "New task",
       graph.nodes.map((node) => node.key),
@@ -227,6 +232,9 @@ export default function TaskGraphEditor(props: {
           title: "New task",
           prompt: "Describe what this task should do.",
           dependsOn: after === null ? [] : [after],
+          ...(parent !== undefined && canContinueTaskGraphWorktree(graph.nodes, parent)
+            ? { workspace: "dependency" as const }
+            : {}),
         },
       },
       ...children.map((child) => ({
@@ -418,8 +426,66 @@ function SelectionPanel(props: {
       <p>Tasks that nothing depends on open a pull request unless you turn it off.</p>
       <p>Select a task or dependency to change it.</p>
       <p>
-        Add task puts the new task after the selected one. With nothing selected, it becomes the
-        parent of the tasks at the start.
+        Add task puts the new task after the selected one, continuing its worktree. With nothing
+        selected, it becomes the parent of the tasks at the start.
+      </p>
+    </div>
+  );
+}
+
+const JOIN_AUTO = "auto";
+
+/**
+ * Where a task that merges branches from several machines brings them
+ * together: on one dependency's machine, continuing its worktree and pulling
+ * the other branches in through origin, or in a new worktree wherever load
+ * balancing puts it.
+ */
+function TaskJoinMachineField(props: {
+  readonly node: TaskGraphNode;
+  readonly options: ReadonlyArray<TaskGraphJoinMachine>;
+  readonly labels: TaskGraphLabels;
+  readonly disabled: boolean;
+  readonly onChoose: (dependencyKey: string | null) => void;
+}) {
+  const id = useId();
+  const current =
+    props.node.workspace === "dependency" ? (props.node.dependsOn[0] ?? JOIN_AUTO) : JOIN_AUTO;
+  const optionLabel = (option: TaskGraphJoinMachine) =>
+    `${props.labels.machineLabel(option.machine)}, continuing ${option.dependency.title}`;
+  const chosen = props.options.find((option) => option.dependency.key === current);
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={`${id}-join`}>Bring branches together on</Label>
+      <Select
+        value={current}
+        disabled={props.disabled}
+        onValueChange={(value) => {
+          if (value === current) return;
+          props.onChoose(value === JOIN_AUTO ? null : value);
+        }}
+      >
+        <SelectTrigger id={`${id}-join`} size="sm">
+          <SelectValue>
+            {chosen === undefined ? "Any machine (new worktree)" : optionLabel(chosen)}
+          </SelectValue>
+        </SelectTrigger>
+        <SelectPopup>
+          <SelectItem value={JOIN_AUTO}>Any machine (new worktree)</SelectItem>
+          {props.options.map((option) => (
+            <SelectItem
+              key={option.dependency.key}
+              value={option.dependency.key}
+              disabled={!option.available}
+            >
+              {optionLabel(option)}
+            </SelectItem>
+          ))}
+        </SelectPopup>
+      </Select>
+      <p className="text-xs text-muted-foreground">
+        The branches this task merges are on different machines. The other branches are pushed and
+        pulled in through origin.
       </p>
     </div>
   );
@@ -480,11 +546,42 @@ function NodePanel(props: {
     </div>
   );
 
+  const joinMachines = taskGraphJoinMachines(graph.nodes, node);
+
   if (isUnstartedTaskGraphNode(node)) {
     return (
       <div className="space-y-4">
         {wait !== null ? <p className="text-xs text-muted-foreground">{wait}</p> : null}
+        {joinMachines !== null ? (
+          <TaskJoinMachineField
+            node={node}
+            options={joinMachines}
+            labels={props.labels}
+            disabled={!canEdit}
+            onChoose={(dependencyKey) =>
+              void commands.edit([
+                {
+                  type: "update_node",
+                  key: node.key,
+                  ...(dependencyKey === null
+                    ? { workspace: "worktree" }
+                    : {
+                        dependsOn: [
+                          dependencyKey,
+                          ...node.dependsOn.filter((key) => key !== dependencyKey),
+                        ],
+                        workspace: "dependency",
+                        // Continuing a worktree runs where it is, so a pin no longer applies.
+                        environmentId: null,
+                      }),
+                },
+              ])
+            }
+          />
+        ) : null}
         <TaskNodeForm
+          // Reset unsaved fields when the workspace changes elsewhere, so Save cannot undo it.
+          key={`${node.key}:${node.workspace}:${node.dependsOn.join(",")}`}
           heading={`Task ${node.key}`}
           initial={{
             title: node.title,

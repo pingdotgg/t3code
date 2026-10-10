@@ -137,6 +137,55 @@ export function taskGraphNodeMachine(
 }
 
 /**
+ * Whether a new or edited task may continue `dependency`'s worktree: the
+ * dependency has one, and no other task already continues it.
+ */
+export function canContinueTaskGraphWorktree(
+  nodes: ReadonlyArray<TaskGraphNode>,
+  dependency: TaskGraphNode,
+  exceptKey: string | null = null,
+): boolean {
+  return (
+    dependency.workspace !== "root" &&
+    !nodes.some(
+      (other) =>
+        other.key !== exceptKey &&
+        other.workspace === "dependency" &&
+        other.dependsOn[0] === dependency.key,
+    )
+  );
+}
+
+export interface TaskGraphJoinMachine {
+  readonly dependency: TaskGraphNode;
+  readonly machine: EnvironmentId;
+  /** False when that dependency's worktree cannot be continued. */
+  readonly available: boolean;
+}
+
+/**
+ * For a task that joins branches known to be on different machines, the
+ * machines it could bring them together on, each by continuing that
+ * dependency's worktree there. Null when there is nothing to reconcile: fewer
+ * than two dependencies, or no two on known, different machines.
+ */
+export function taskGraphJoinMachines(
+  nodes: ReadonlyArray<TaskGraphNode>,
+  node: TaskGraphNode,
+): ReadonlyArray<TaskGraphJoinMachine> | null {
+  const placed = node.dependsOn.flatMap((key) => {
+    const dependency = nodes.find((candidate) => candidate.key === key);
+    const machine = dependency === undefined ? null : taskGraphNodeMachine(nodes, dependency);
+    return dependency === undefined || machine === null ? [] : [{ dependency, machine }];
+  });
+  if (new Set(placed.map((entry) => entry.machine)).size < 2) return null;
+  return placed.map((entry) => ({
+    ...entry,
+    available: canContinueTaskGraphWorktree(nodes, entry.dependency, node.key),
+  }));
+}
+
+/**
  * The models and machines a graph spreads over, for the card header, such as
  * "Claude Opus 5.5 · GPT-5 +1 · 2 machines". Machines count only where nodes
  * started or are pinned; with none of either the graph is "auto-balanced".

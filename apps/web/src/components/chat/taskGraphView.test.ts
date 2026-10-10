@@ -5,9 +5,11 @@ import { taskGraphLayers } from "@t3tools/shared/taskGraph";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  canContinueTaskGraphWorktree,
   pullRequestLabel,
   TASK_GRAPH_DIAGRAM,
   taskGraphDiagramLayout,
+  taskGraphJoinMachines,
   taskGraphNodeKeyFromTitle,
   taskGraphNodeMachine,
   taskGraphNodeStatusText,
@@ -235,5 +237,54 @@ describe("taskGraphDiagramLayout", () => {
 
   it("is empty for an empty graph", () => {
     expect(taskGraphDiagramLayout([])).toEqual({ width: 0, height: 0, nodes: [], edges: [] });
+  });
+});
+
+describe("task graph joins across machines", () => {
+  const local = EnvironmentId.make("local");
+  const buildBox = EnvironmentId.make("build-box");
+
+  it("offers each dependency's machine when the joined branches are on different machines", () => {
+    const nodes = [
+      node("a", { environmentId: local }),
+      node("b", { assignedEnvironmentId: buildBox }),
+      node("c", { workspace: "root", environmentId: buildBox }),
+      node("join", { dependsOn: ["a", "b", "c"] }),
+    ];
+    const options = taskGraphJoinMachines(nodes, nodes[3]!);
+    expect(
+      options?.map((option) => [option.dependency.key, option.machine, option.available]),
+    ).toEqual([
+      ["a", local, true],
+      ["b", buildBox, true],
+      ["c", buildBox, false],
+    ]);
+  });
+
+  it("has nothing to reconcile on one machine, unplaced, or with a single dependency", () => {
+    const nodes = [
+      node("a", { environmentId: local }),
+      node("b", { environmentId: local }),
+      node("c"),
+      node("same", { dependsOn: ["a", "b"] }),
+      node("unplaced", { dependsOn: ["a", "c"] }),
+      node("single", { dependsOn: ["a"] }),
+    ];
+    expect(nodes.slice(3).map((entry) => taskGraphJoinMachines(nodes, entry))).toEqual([
+      null,
+      null,
+      null,
+    ]);
+  });
+
+  it("lets only one task continue a worktree", () => {
+    const nodes = [
+      node("a"),
+      node("b", { workspace: "dependency", dependsOn: ["a"] }),
+      node("c", { workspace: "root" }),
+    ];
+    expect(canContinueTaskGraphWorktree(nodes, nodes[0]!)).toBe(false);
+    expect(canContinueTaskGraphWorktree(nodes, nodes[0]!, "b")).toBe(true);
+    expect(canContinueTaskGraphWorktree(nodes, nodes[2]!)).toBe(false);
   });
 });

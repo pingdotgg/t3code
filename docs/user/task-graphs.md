@@ -6,9 +6,10 @@ fix what you find", and it can plan a graph: one node per area, then a node
 that combines their work. Each node runs as its own thread in its own git
 worktree, and starts as soon as the nodes it depends on have succeeded.
 
-You can also start one yourself: in a thread that has messages, choose the
-task graph button next to the attach button in the composer. It opens the
-editor on an empty draft, where you add tasks and choose **Run**.
+You can also start one yourself: choose the task graph button next to the
+attach button in the composer. It opens the editor on a draft, where you add
+tasks and choose **Run**. On a new chat, nothing is created until you choose
+**Run**, which creates the chat and the graph together.
 
 The graph appears above the composer of the thread that planned it. Open a
 node to watch its thread, or open the editor to change the plan.
@@ -41,7 +42,9 @@ waiting task will go again. Cancel the branch to stop waiting.
 Hover a task to see its prompt, model, machine and workspace. Double-click it
 to open the editor with that task selected.
 
-In the editor you can add tasks, edit or delete tasks that have not started,
+In the editor, **Add task** adds a task after the selected one, continuing its
+worktree. With nothing selected, the new task goes first and the tasks at the
+start wait for it. You can edit or delete tasks that have not started,
 and drag between tasks to add a dependency. For each task that has not
 started you can also choose its model, the machine it runs on, and its
 workspace. While the graph runs:
@@ -72,7 +75,10 @@ Each task has a workspace:
   read-only work such as reviews.
 
 A task with several dependencies starts from the first one's branch and merges
-the others; its agent resolves any merge conflicts. Agents only add such a
+the others; its agent resolves any merge conflicts. When those branches are on
+different machines, the editor offers **Bring branches together on**: pick a
+dependency's machine to continue its worktree there, and the other branches
+come in through your remote. Agents only add such a
 combining task when you ask for the work to be reconciled or the pieces cannot
 work apart. Otherwise each branch stays separate and ends in its own pull
 request.
