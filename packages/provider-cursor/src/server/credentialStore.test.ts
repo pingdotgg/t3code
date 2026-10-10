@@ -4,14 +4,13 @@ import { ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as Option from "effect/Option";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
-import { layerTestProviderHost } from "@t3tools/provider-testing/host";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as Layer from "effect/Layer";
 import { makeCursorCredentialStore } from "./credentialStore.ts";
 
-const layerHost = Layer.provideMerge(layerTestProviderHost(), NodeServices.layer);
+const layerHost = Layer.provideMerge(TestProviderHost.layer(), NodeServices.layer);
 
 const legacyCredentials = {
   version: 1 as const,

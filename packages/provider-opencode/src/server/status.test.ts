@@ -9,7 +9,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { beforeEach } from "vite-plus/test";
 
 import { OpenCodeSettings } from "../settings.ts";
@@ -161,7 +162,7 @@ it.effect("keeps Go entitlement absence distinct from failed or malformed usage 
  * are deleted. The snapshot-producing logic they wrapped now lives in the
  * standalone `checkOpenCodeProviderStatus(settings, cwd)` Effect, which
  * drivers call directly when building their per-instance snapshot
- * `ServerProviderShape`. Tests mirror that shape: build a settings payload,
+ * `ManagedServerProvider`. Tests mirror that shape: build a settings payload,
  * invoke the check, assert on the returned snapshot.
  */
 
@@ -202,7 +203,7 @@ const runtimeMock = {
   },
 };
 
-const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
+const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
   startOpenCodeServerProcess: ({ serverPassword, environment }) =>
     Effect.gen(function* () {
       yield* Effect.addFinalizer(() =>
@@ -264,7 +265,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
   createOpenCodeSdkClient: (input) => {
     runtimeMock.state.sdkClientInputs.push(input);
     return {} as unknown as ReturnType<
-      OpenCodeRuntime.OpenCodeRuntimeShape["createOpenCodeSdkClient"]
+      OpenCodeRuntime.OpenCodeRuntime["Service"]["createOpenCodeSdkClient"]
     >;
   },
   loadOpenCodeInventory: () =>

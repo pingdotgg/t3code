@@ -13,7 +13,7 @@ import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/http";
+import * as HttpClient from "effect/http/HttpClient";
 import { readCursorUsageLimits } from "./usageLimits.ts";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -40,6 +40,10 @@ import { probeCursorSkills } from "./skills.ts";
 import { makeCursorAuth } from "./auth.ts";
 import * as CursorCredentialStore from "./credentialStore.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
+import * as CursorSdk from "./CursorSdk.ts";
+import * as CursorKeychain from "./CursorKeychain.ts";
+import * as CursorUsageAccounts from "./CursorUsageAccounts.ts";
+
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 const isSdkRunnerError = Schema.is(CursorAgentSdk.CursorAgentSdkRunnerError);
 
@@ -55,9 +59,15 @@ export type CursorDriverEnv =
   | FileSystem.FileSystem
   | Path.Path
   | HttpClient.HttpClient
-  | ProviderHost.ProviderHost;
+  | CursorSdk.CursorSdk
+  | ProviderHost.ProviderHost
+  | CursorKeychain.CursorKeychain;
 
-export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
+export const CursorDriver: ProviderDriver<
+  CursorSettings,
+  CursorDriverEnv,
+  CursorUsageAccounts.CursorUsageAccounts
+> = {
   driverKind: DRIVER_KIND,
   metadata: {
     displayName: "Cursor",
@@ -65,14 +75,31 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
   },
   configSchema: CursorSettings,
   defaultConfig: (): CursorSettings => decodeCursorSettings({}),
+  // One account source per environment: the host's Cursor CLI login.
+  usage: {
+    kind: "scan",
+    provider: "cursor",
+    scan: ({ settings, windowStartMs, retentionCutoffMs, awaitRefresh }) =>
+      CursorUsageAccounts.CursorUsageAccounts.pipe(
+        Effect.flatMap((accounts) =>
+          accounts.scan({
+            keychainUsageEnabled: settings.cursorKeychainUsageEnabled,
+            windowStartMs,
+            retentionCutoffMs,
+            awaitRefresh,
+          }),
+        ),
+      ),
+  },
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const host = yield* ProviderHost.ProviderHost;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
+      const keychain = yield* CursorKeychain.CursorKeychain;
       const sdkRunner = yield* CursorAgentSdk.CursorAgentSdkRunner;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
+      const processEnv = yield* mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
@@ -219,11 +246,12 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         Effect.provideService(HttpClient.HttpClient, httpClient),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
+        Effect.provideService(CursorKeychain.CursorKeychain, keychain),
         Effect.map(stampSnapshot),
         Effect.provide(CursorSdkCatalog.layer),
       );
 
-      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, host.settings);
+      const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<CursorSettings>>({
         resolveMaintenance: () => Effect.succeed(MAINTENANCE_CAPABILITIES),
         getSettings: snapshotSettings.getSettings,
@@ -238,7 +266,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
             new ProviderDriverError({
               driver: DRIVER_KIND,
               instanceId,
-              detail: `Failed to build Cursor snapshot: ${cause.message ?? String(cause)}`,
+              detail: "Failed to build Cursor snapshot.",
               cause,
             }),
         ),

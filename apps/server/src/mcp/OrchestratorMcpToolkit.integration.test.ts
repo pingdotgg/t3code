@@ -57,14 +57,10 @@ import { threadShellFromProjection } from "../orchestration-v2/ProjectionStore.t
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
-import {
-  type ProviderAdapterV2Event,
-  ProviderAdapterProtocolError,
-  type ProviderAdapterV2Shape,
-  type ProviderAdapterV2TurnInput,
-} from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
-import * as ProviderContinuationRequests from "@t3tools/provider-core/server/continuationRequests";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import {
@@ -79,6 +75,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { delegatedTaskRun, hasPendingChildRuns } from "./OrchestratorMcpService.ts";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 // Effect returns a declared tool failure as `isError` with its encoded payload
 // as JSON text, never as `structuredContent`.
@@ -146,7 +143,7 @@ interface CapturedTurn {
 }
 
 function unsupported(driver: ProviderDriverKind, detail: string) {
-  return Effect.fail(new ProviderAdapterProtocolError({ driver, detail }));
+  return Effect.fail(new ProviderAdapter.ProviderAdapterProtocolError({ driver, detail }));
 }
 
 function makeProviderSnapshot(input: {
@@ -185,10 +182,12 @@ function makeDeterministicAdapter(input: {
   readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
-  readonly shouldComplete: (turn: ProviderAdapterV2TurnInput) => boolean;
-  readonly terminalGate?: (turn: ProviderAdapterV2TurnInput) => Deferred.Deferred<void> | undefined;
-  readonly response: (turn: ProviderAdapterV2TurnInput) => string;
-}): ProviderAdapterV2Shape {
+  readonly shouldComplete: (turn: ProviderAdapter.ProviderAdapterV2TurnInput) => boolean;
+  readonly terminalGate?: (
+    turn: ProviderAdapter.ProviderAdapterV2TurnInput,
+  ) => Deferred.Deferred<void> | undefined;
+  readonly response: (turn: ProviderAdapter.ProviderAdapterV2TurnInput) => string;
+}): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: input.instanceId,
     driver: input.driver,
@@ -196,7 +195,7 @@ function makeDeterministicAdapter(input: {
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (sessionInput) =>
       Effect.gen(function* () {
-        const events = yield* PubSub.unbounded<ProviderAdapterV2Event>();
+        const events = yield* PubSub.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const now = yield* DateTime.now;
         const providerSession: OrchestrationV2ProviderSession = {
           id: sessionInput.providerSessionId,
@@ -211,12 +210,12 @@ function makeDeterministicAdapter(input: {
           lastError: null,
         };
 
-        const publish = (providerEvents: ReadonlyArray<ProviderAdapterV2Event>) =>
+        const publish = (providerEvents: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
           Effect.forEach(providerEvents, (event) => PubSub.publish(events, event), {
             discard: true,
           });
         const runOrdinals = new Map<ProviderTurnId, number>();
-        const turnInputs = new Map<ProviderTurnId, ProviderAdapterV2TurnInput>();
+        const turnInputs = new Map<ProviderTurnId, ProviderAdapter.ProviderAdapterV2TurnInput>();
 
         return {
           instanceId: input.instanceId,
@@ -682,6 +681,7 @@ describe("orchestrator MCP toolkit", () => {
             Layer.provide(layerRegistry),
             Layer.provide(layerProviderRegistry),
             Layer.provide(layerScheduledTaskStub),
+            Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
             Layer.provide(
               Layer.mock(ProjectService.ProjectService)({
                 getById: (id) =>
@@ -1782,6 +1782,9 @@ describe("orchestrator MCP toolkit", () => {
             expect(delegatedStatus.resultContextTransferId).not.toBeNull();
             expect(delegatedStatus.latestTerminalResultContextTransferId).not.toBeNull();
 
+            // Wait-mode completion already returned its result while the parent was live.
+            yield* expectOffersToStay(0);
+
             const childFollowupCall = yield* invoke("t3_thread_send", {
               threadId: delegated.childThreadId,
               message: "Confirm the delegated API boundary remains inspected.",
@@ -1924,10 +1927,14 @@ describe("orchestrator MCP toolkit", () => {
               latestTerminalStatus: "interrupted",
             });
 
-            // A wait-mode child (completionWake settled_only) that completes
-            // while the parent run is live does not offer a wake: the
-            // blocking delegate_task call above already returned the result.
-            yield* expectOffersToStay(0);
+            // Later requested work has its own delivery, including an interrupted follow-up.
+            expect(childFollowup.taskId).toBeDefined();
+            expect(activeChildFollowup.taskId).toBeDefined();
+            yield* waitForContinuationOffers(2);
+            yield* expectOffersToStay(2);
+            yield* invoke("task_status", { taskId: childFollowup.taskId });
+            yield* invoke("task_status", { taskId: activeChildFollowup.taskId });
+            yield* Ref.set(continuationOffers, []);
 
             const repeatedDelegatedCall = yield* invoke("delegate_task", {
               task: delegatedPrompt,
@@ -3813,7 +3820,9 @@ describe("orchestrator MCP toolkit", () => {
           Layer.provideMerge(McpServer.McpServer.layer),
           Layer.provideMerge(layerOrchestration),
           Layer.provide(
-            CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(transcript),
+            CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(transcript).pipe(
+              Layer.provide(McpProviderSessions.layer),
+            ),
           ),
           Layer.provide(layerProviderRegistry),
           Layer.provide(layerUnusedScheduledTaskStub),
@@ -4005,6 +4014,18 @@ describe("orchestrator MCP toolkit", () => {
           const pendingProjection = yield* orchestrator.getThreadProjection(
             delegated.childThreadId,
           );
+          const followupTasks = (yield* orchestrator.getThreadProjection(
+            parentThreadId,
+          )).subagents.filter(
+            (task) =>
+              task.childThreadId === delegated.childThreadId && task.id !== delegated.taskId,
+          );
+          expect(followupTasks).toHaveLength(2);
+          expect(followupTasks.every((task) => task.result === null)).toBe(true);
+          expect(followupTasks.map((task) => task.id)).toEqual([
+            runningFollowup.taskId,
+            queuedFollowup.taskId,
+          ]);
           expect(
             pendingProjection.runs.find((run) => run.id === delegated.childRunId)?.status,
           ).toBe("completed");
@@ -4080,6 +4101,47 @@ describe("orchestrator MCP toolkit", () => {
           expect(finalProjection.runs.find((run) => run.id === queuedFollowup.runId)?.status).toBe(
             "completed",
           );
+          yield* orchestrator
+            .streamStoredEventsFrom({
+              threadId: parentThreadId,
+              afterSequence: finalSequence,
+            })
+            .pipe(
+              Stream.filter(
+                (stored) =>
+                  stored.event.type === "subagent.updated" &&
+                  stored.event.payload.id === followupTasks[1]!.id &&
+                  stored.event.payload.status === "completed",
+              ),
+              Stream.runHead,
+              Effect.flatMap(
+                Option.match({
+                  onNone: () => Effect.die("Follow-up task did not settle."),
+                  onSome: () => Effect.void,
+                }),
+              ),
+            );
+          const finishedParent = yield* orchestrator.getThreadProjection(parentThreadId);
+          expect(
+            finishedParent.subagents.find((task) => task.id === followupTasks[0]!.id)?.status,
+          ).toBe("interrupted");
+          expect(
+            finishedParent.subagents.find((task) => task.id === followupTasks[1]!.id),
+          ).toMatchObject({
+            status: "completed",
+            result: queuedFollowupResult,
+          });
+          expect(
+            finishedParent.contextTransfers.filter(
+              (transfer) =>
+                transfer.type === "subagent_result" &&
+                transfer.sourceThreadId === delegated.childThreadId,
+            ),
+          ).toHaveLength(3);
+          expect(
+            finishedParent.subagents.find((task) => task.id === followupTasks[1]!.id)
+              ?.completionDelivery?.state,
+          ).toBe("claimed");
           const finalStatusCall = yield* invoke("task_status", {
             taskId: delegated.taskId,
           });
@@ -4095,8 +4157,18 @@ describe("orchestrator MCP toolkit", () => {
             latestTerminalRunId: queuedFollowup.runId,
             latestTerminalStatus: "completed",
             latestTerminalSummary: queuedFollowupResult,
-            latestTerminalResultContextTransferId: null,
           });
+          expect(finalStatus.latestTerminalResultContextTransferId).not.toBeNull();
+          const read = yield* invoke("t3_thread_read", {
+            threadId: delegated.childThreadId,
+            limit: 100,
+          });
+          expect(read.isError).not.toBe(true);
+          const afterRead = yield* orchestrator.getThreadProjection(parentThreadId);
+          expect(
+            afterRead.subagents.find((task) => task.id === queuedFollowup.taskId)
+              ?.completionDelivery?.state,
+          ).toBe("acknowledged");
         }).pipe(Effect.provide(layerTest));
       }),
     ),

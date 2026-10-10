@@ -1,6 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Grok's plan file lives under the OS home dir.
-import * as NodeOS from "node:os";
-
 import type { ProviderUserInputAnswers, UserInputQuestion } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -1088,11 +1085,13 @@ function addGrokSessionPrefix(
 export interface GrokPlanPathHost {
   readonly platform: NodeJS.Platform;
   readonly environment: NodeJS.ProcessEnv;
+  readonly homeDirectory: string;
 }
 
-function grokPlanSessionPrefixes(environment: NodeJS.ProcessEnv): ReadonlySet<string> {
+function grokPlanSessionPrefixes(host: GrokPlanPathHost): ReadonlySet<string> {
+  const { environment } = host;
   const prefixes = new Set<string>();
-  addGrokSessionPrefix(prefixes, NodeOS.homedir(), true);
+  addGrokSessionPrefix(prefixes, host.homeDirectory, true);
   addGrokSessionPrefix(prefixes, "~", true);
   addGrokSessionPrefix(prefixes, environment.HOME ?? "", true);
   addGrokSessionPrefix(prefixes, environment.USERPROFILE ?? "", true);
@@ -1134,7 +1133,7 @@ export function isGrokPlanMarkdownPath(
   ) {
     return false;
   }
-  for (const prefix of grokPlanSessionPrefixes(host.environment)) {
+  for (const prefix of grokPlanSessionPrefixes(host)) {
     const needle = win32 ? prefix.toLowerCase() : prefix;
     if (!haystack.startsWith(needle)) {
       continue;

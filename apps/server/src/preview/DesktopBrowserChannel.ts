@@ -27,7 +27,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as Ndjson from "effect/encoding/Ndjson";
 import * as NodeCrypto from "node:crypto";
-import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
 
 import * as ServerConfig from "../config.ts";
 import { writeAllToFileDescriptor } from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
@@ -102,8 +102,10 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  // Socket reads can be cancelled while the desktop keeps its write end open.
+  // Filesystem reads on this pipe keep Node alive after scope shutdown.
   const readable = yield* Effect.acquireRelease(
-    Effect.sync(() => NodeFS.createReadStream("", { fd: inputFd, autoClose: true })),
+    Effect.sync(() => new NodeNet.Socket({ fd: inputFd, readable: true, writable: false })),
     (stream) => Effect.sync(() => stream.destroy()),
   );
   yield* NodeStream.fromReadable<Uint8Array, Error>({

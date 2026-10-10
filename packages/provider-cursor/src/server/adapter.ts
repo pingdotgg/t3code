@@ -9,7 +9,7 @@ import type {
   ToolCall,
 } from "@cursor/sdk";
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   isOrchestrationV2WorkActive,
   defaultInstanceIdForDriver,
@@ -34,7 +34,6 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
@@ -44,6 +43,7 @@ import * as Stream from "effect/Stream";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import { CursorTransportFailure } from "./transportFailure.ts";
 import { cursorSdkModelSelection } from "./sdkModel.ts";
@@ -201,8 +201,9 @@ export function cursorRuntimeAgentPolicy(
   };
 }
 
-export function cursorMcpServers(threadId: ThreadId): Record<string, McpServerConfig> | undefined {
-  const session = McpProviderSession.readMcpProviderSession(threadId);
+export function cursorMcpServers(
+  session: McpProviderSession.McpProviderSessionConfig | undefined,
+): Record<string, McpServerConfig> | undefined {
   if (session === undefined) {
     return undefined;
   }
@@ -239,7 +240,7 @@ function providerSession(input: {
 }
 
 function makeProviderThread(input: {
-  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly providerInstanceId: ProviderInstanceId;
   readonly appThreadId: OrchestrationV2ProviderThread["appThreadId"];
   readonly providerSessionId: OrchestrationV2ProviderThread["providerSessionId"];
@@ -306,9 +307,10 @@ export function makeCursorAgentOptions(input: {
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
   readonly threadId: ThreadId;
+  readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
 }): AgentOptions {
   const policy = cursorRuntimeAgentPolicy(input.runtimePolicy);
-  const mcpServers = cursorMcpServers(input.threadId);
+  const mcpServers = cursorMcpServers(input.mcpSession);
   return {
     model: cursorSdkModelSelection(input.modelSelection),
     name: `T3 Code ${input.threadId}`,
@@ -844,17 +846,18 @@ export interface CursorAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly settings: CursorSettings;
   readonly environment: NodeJS.ProcessEnv;
-  readonly fileSystem: FileSystem.FileSystem;
-  readonly path: Path.Path;
-  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
-  readonly runner: CursorAgentSdk.CursorAgentSdkRunnerShape;
-  readonly host: ProviderHost.ProviderHostShape;
 }
 
-export function makeCursorAdapterV2(
-  adapterOptions: CursorAdapterV2Options,
-): ProviderAdapter.ProviderAdapterV2Shape {
-  const { fileSystem, path, idAllocator, runner, host } = adapterOptions;
+export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
+  options: CursorAdapterV2Options,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const idAllocator = yield* IdAllocator.IdAllocatorV2;
+  const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
+  const host = yield* ProviderHost.ProviderHost;
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const adapterOptions = options;
   const apiKey = adapterOptions.environment.CURSOR_API_KEY?.trim() || undefined;
 
   return ProviderAdapter.ProviderAdapterV2.of({
@@ -2091,6 +2094,7 @@ export function makeCursorAdapterV2(
               modelSelection: openInput.modelSelection,
               runtimePolicy: openInput.runtimePolicy,
               threadId: openInput.threadId,
+              mcpSession: yield* mcpSessions.read(openInput.threadId),
             }),
             threadId: openInput.threadId,
             providerSessionId: input.providerSessionId,
@@ -2106,6 +2110,7 @@ export function makeCursorAdapterV2(
         let cursorSkillNames: ReadonlySet<string> | undefined;
         const resolveUserMessage = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+          mcpServers: Record<string, McpServerConfig> | undefined,
         ) {
           const rawText = turnInput.message.text;
           if (rawText.trim() === "/compress" && turnInput.message.attachments.length === 0) {
@@ -2135,7 +2140,7 @@ export function makeCursorAdapterV2(
               resolveAttachmentPath: host.resolveAttachmentPath,
             }),
             runOrdinal: turnInput.runOrdinal,
-            hasT3Mcp: cursorMcpServers(turnInput.threadId) !== undefined,
+            hasT3Mcp: mcpServers !== undefined,
           });
           const images = yield* Effect.forEach(
             turnInput.message.attachments.filter(isProviderNativeImageAttachment),
@@ -2197,8 +2202,8 @@ export function makeCursorAdapterV2(
               modelSelection: turnInput.modelSelection,
               runtimePolicy: turnInput.runtimePolicy,
             });
-            const message = yield* resolveUserMessage(turnInput);
-            const mcpServers = cursorMcpServers(turnInput.threadId);
+            const mcpServers = cursorMcpServers(yield* mcpSessions.read(turnInput.threadId));
+            const message = yield* resolveUserMessage(turnInput, mcpServers);
             const pendingUpdates: Array<InteractionUpdate> = [];
             let context: ActiveCursorTurn | null = null;
             const sdkRun = yield* agent.session.send({
@@ -2596,13 +2601,14 @@ export function makeCursorAdapterV2(
         ),
     ),
   });
-}
+});
 
 export type CursorAdapterV2DriverEnv =
   | CursorAgentSdk.CursorAgentSdkRunner
   | FileSystem.FileSystem
   | Path.Path
   | IdAllocator.IdAllocatorV2
+  | McpProviderSessions.McpProviderSessions
   | ProviderHost.ProviderHost;
 
 export const CursorAdapterV2Driver: ProviderAdapterDriver<
@@ -2614,24 +2620,14 @@ export const CursorAdapterV2Driver: ProviderAdapterDriver<
   defaultConfig: (): CursorSettings => DEFAULT_CURSOR_SETTINGS,
   create: Effect.fn("CursorAdapterV2Driver.create")(
     function* (input: ProviderAdapterDriverCreateInput<CursorSettings>) {
-      const hostEnvironment = yield* HostProcessEnvironment;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
-      const host = yield* ProviderHost.ProviderHost;
-      return makeCursorAdapterV2({
+      const hostEnvironment = yield* HostProcess.Environment;
+      return yield* makeCursorAdapterV2({
         instanceId: input.instanceId,
         settings: {
           ...input.config,
           enabled: input.enabled,
         },
-        environment: mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
-        fileSystem,
-        path,
-        idAllocator,
-        runner,
-        host,
+        environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
       });
     },
     (effect, input) =>
@@ -2648,33 +2644,3 @@ export const CursorAdapterV2Driver: ProviderAdapterDriver<
       ),
   ),
 };
-
-const layer: Layer.Layer<
-  ProviderAdapter.ProviderAdapterV2,
-  never,
-  | CursorAgentSdk.CursorAgentSdkRunner
-  | FileSystem.FileSystem
-  | Path.Path
-  | IdAllocator.IdAllocatorV2
-  | ProviderHost.ProviderHost
-> = Layer.effect(
-  ProviderAdapter.ProviderAdapterV2,
-  Effect.gen(function* () {
-    const hostEnvironment = yield* HostProcessEnvironment;
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const idAllocator = yield* IdAllocator.IdAllocatorV2;
-    const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
-    const host = yield* ProviderHost.ProviderHost;
-    return makeCursorAdapterV2({
-      instanceId: CURSOR_DEFAULT_INSTANCE_ID,
-      settings: DEFAULT_CURSOR_SETTINGS,
-      environment: hostEnvironment,
-      fileSystem,
-      path,
-      idAllocator,
-      runner,
-      host,
-    });
-  }),
-);

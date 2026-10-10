@@ -13,8 +13,10 @@ import { withTerminalOutputWindow } from "./OutputProtocol.ts";
 describe("terminal output window", () => {
   it.effect.each([
     { tag: WS_METHODS.terminalAttach, size: 1, limit: 8 },
+    { tag: WS_METHODS.terminalObserve, size: 1, limit: 8 },
     { tag: WS_METHODS.subscribeTerminalEvents, size: 1, limit: 8 },
     { tag: WS_METHODS.terminalAttach, size: 64 * 1024, limit: 1 },
+    { tag: WS_METHODS.terminalObserve, size: 64 * 1024, limit: 1 },
     { tag: WS_METHODS.subscribeTerminalMetadata, size: 1, limit: 1 },
   ])("limits $tag with $size-byte values to $limit pending chunks", ({ tag, size, limit }) =>
     Effect.gen(function* () {
