@@ -209,6 +209,77 @@ describe("threadHistoryPaging", () => {
     );
   });
 
+  it("counts notification-started turns toward the 150-turn ceiling", () => {
+    // PR watches and task completions start their runs with a notification item
+    // (notificationTurnItem rewrites the run's user_message), so a thread woken
+    // by them has few user messages. Without counting these turns the window
+    // reached back to the first user turn and loaded the whole thread.
+    // A row of the same run may come before the starting notification (a handoff,
+    // a subagent); a notification steered into the running turn is no turn start.
+    const inRun = (row: OrchestrationV2ProjectedTurnItem, turn: number) =>
+      ({
+        ...row,
+        item: { ...row.item, runId: RunId.make(`run-${turn}`) },
+      }) as OrchestrationV2ProjectedTurnItem;
+    const notification = (index: number, turn: number) => {
+      const row = makeRow(index);
+      return inRun(
+        {
+          ...row,
+          item: {
+            ...row.item,
+            type: "notification",
+            source: { kind: "monitor" },
+            outcome: "completed",
+            summary: `Wake ${turn}`,
+          },
+        } as OrchestrationV2ProjectedTurnItem,
+        turn,
+      );
+    };
+    const items = Array.from({ length: 161 }, (_, turn) => {
+      const row = makeRow(turn * 4 + 1);
+      if (row.item.type !== "command_execution") throw new Error("Expected command fixture");
+      const start =
+        turn === 0
+          ? inRun(
+              {
+                ...row,
+                item: {
+                  ...row.item,
+                  type: "user_message",
+                  createdBy: "user",
+                  creationSource: "web",
+                  inputIntent: "turn_start",
+                  messageId: MessageId.make(`prompt-${turn}`),
+                  text: `Prompt ${turn}`,
+                  attachments: [],
+                },
+              },
+              turn,
+            )
+          : notification(turn * 4 + 1, turn);
+      return [
+        inRun(makeRow(turn * 4), turn),
+        start,
+        notification(turn * 4 + 2, turn),
+        inRun(makeRow(turn * 4 + 3), turn),
+      ];
+    }).flat();
+    const first = selectRecentTimelineWindow({ items, snapshotSequence: 1 });
+    // 150 runs from the start of run 11; its earlier row goes to the older page.
+    expect(first.items).toHaveLength(150 * 4 - 1);
+    expect(first.items[0]?.sourceItemId).toBe(`item-${11 * 4 + 1}`);
+    const older = selectHistoryPageFromCursor({
+      items,
+      cursor: first.nextCursor!,
+      snapshotSequence: 1,
+    });
+    expect([...older.items, ...first.items].map((row) => row.sourceItemId)).toEqual(
+      items.map((row) => row.sourceItemId),
+    );
+  });
+
   it("pages agent-only child transcripts instead of dropping their earlier activity", () => {
     const commandRows = Array.from({ length: 90 }, (_, index) => makeRow(index + 1));
     const first = makeRow(0);

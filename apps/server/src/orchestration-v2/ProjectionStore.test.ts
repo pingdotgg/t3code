@@ -837,6 +837,225 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("caps a SQL window by runs that a notification started", () =>
+    Effect.gen(function* () {
+      // A thread woken by PR watches and task completions: a few user turns, then
+      // hundreds of runs whose first input is a notification, with a user turn every
+      // 50 runs. The user-turn window reached back to the 12th-newest user turn and
+      // returned almost every row.
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const nowIso = DateTime.formatIso(now);
+      const threadId = ThreadId.make("thread:notification-turn-pages");
+      yield* projectionStore.apply({
+        id: EventId.make("event:notification-turn-pages:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:notification-turn-pages"),
+          title: "Woken by notifications",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+
+      const userTurns = 12;
+      const wakes = 400;
+      const allIds: string[] = [];
+      const itemRow = (input: {
+        readonly ordinal: number;
+        readonly runId: string;
+        readonly nodeId?: string;
+        readonly item: Record<string, unknown>;
+      }) => {
+        const id = `turn-item:notification-turn-pages:${input.ordinal}`;
+        allIds.push(id);
+        const item = {
+          id,
+          threadId,
+          runId: input.runId,
+          nodeId: input.nodeId ?? null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: input.ordinal,
+          status: "completed",
+          title: null,
+          startedAt: nowIso,
+          completedAt: nowIso,
+          updatedAt: nowIso,
+          ...input.item,
+        };
+        return {
+          turn_item_id: id,
+          thread_id: threadId,
+          run_id: input.runId,
+          node_id: input.nodeId ?? null,
+          provider_thread_id: null,
+          provider_turn_id: null,
+          parent_item_id: null,
+          ordinal: input.ordinal,
+          type: String(input.item.type),
+          status: "completed",
+          updated_at: nowIso,
+          payload_json: encodeUnknownJsonString(item),
+        };
+      };
+      let ordinal = 0;
+      for (let run = 1; run <= userTurns + wakes; run += 1) {
+        const runId = `run:notification-turn-pages:${run}`;
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_runs (
+            run_id, thread_id, ordinal, provider, provider_thread_id, status,
+            requested_at, completed_at, payload_json
+          ) VALUES (
+            ${runId}, ${threadId}, ${run}, 'codex', NULL, 'completed', ${nowIso}, ${nowIso},
+            ${encodeUnknownJsonString({
+              id: runId,
+              threadId,
+              ordinal: run,
+              providerInstanceId,
+              modelSelection,
+              providerThreadId: null,
+              userMessageId: `message:notification-turn-pages:${run}`,
+              rootNodeId: `node:notification-turn-pages:${run}`,
+              activeAttemptId: null,
+              status: "completed",
+              requestedAt: nowIso,
+              startedAt: nowIso,
+              completedAt: nowIso,
+              checkpointId: null,
+              contextHandoffId: null,
+            })}
+          )
+        `;
+        const userRun = run <= userTurns || run % 50 === 0;
+        const start = userRun
+          ? {
+              type: "user_message",
+              createdBy: "user",
+              creationSource: "web",
+              messageId: `message:notification-turn-pages:${run}`,
+              inputIntent: "turn_start",
+              text: `Turn ${run}`,
+              attachments: [],
+            }
+          : {
+              type: "notification",
+              source: { kind: "monitor" },
+              outcome: "completed",
+              summary: `Wake ${run}`,
+            };
+        // A wake steered into the running turn is on the root node too, but follows
+        // the run's first input, so it starts no turn. A row of the run (a handoff,
+        // a subagent) may come before the first input.
+        const steered = {
+          type: "notification",
+          source: { kind: "monitor" },
+          outcome: "completed",
+          summary: `Steer ${run}`,
+        };
+        const rows = [
+          itemRow({
+            ordinal: (ordinal += 1),
+            runId,
+            item: { type: "command_execution", input: "command", output: "w", exitCode: 0 },
+          }),
+          itemRow({
+            ordinal: (ordinal += 1),
+            runId,
+            nodeId: `node:notification-turn-pages:${run}`,
+            item: start,
+          }),
+          itemRow({
+            ordinal: (ordinal += 1),
+            runId,
+            item: { type: "command_execution", input: "command", output: "x", exitCode: 0 },
+          }),
+          itemRow({
+            ordinal: (ordinal += 1),
+            runId,
+            nodeId: `node:notification-turn-pages:${run}`,
+            item: steered,
+          }),
+        ];
+        yield* sql`INSERT INTO orchestration_v2_projection_turn_items ${sql.insert(rows)}`;
+      }
+
+      const { statements, tracer } = traceSqlStatements();
+      const initial = yield* projectionStore
+        .getThreadSnapshotWindow(threadId, { rowLimit: 77, userTurnLimit: 10 })
+        .pipe(Effect.withTracer(tracer));
+      // Wake anchors must come from the newest runs, each run's items found by run ID,
+      // never from a walk over every turn item in the thread.
+      const windowStatement = statements.find((statement) => statement.includes("wake_anchors"));
+      assert.isDefined(windowStatement);
+      const windowPlan = yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${windowStatement}`,
+      );
+      assert.include(
+        windowPlan.map((row) => row.detail),
+        "SEARCH item USING INDEX orchestration_v2_projection_turn_items_run_ordinal_idx (run_id=? AND ordinal<?)",
+      );
+      // The newest 152 turns are the newest 152 runs (only 3 of them user turns, short
+      // of the 12 the user-turn window needs), so the window starts at the first input
+      // of run 261.
+      const firstWindowRun = userTurns + wakes - 151;
+      assert.deepEqual(
+        initial.projection.turnItems.map((item) => String(item.id)),
+        allIds.slice((firstWindowRun - 1) * 4 + 1),
+      );
+      const bounded = buildBoundedThreadProjection({
+        projection: initial.projection,
+        snapshotSequence: 0,
+      });
+      const loaded = bounded.projection.visibleTurnItems.map((row) => String(row.sourceItemId));
+      let cursor = bounded.historyCursor;
+      let pages = 0;
+      while (cursor !== null) {
+        pages += 1;
+        assert.isAtMost(pages, 100);
+        const anchor = decodeThreadHistoryCursor(cursor);
+        const snapshot = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+          rowLimit: 77,
+          userTurnLimit: 20,
+          anchorItemId: TurnItemId.make(anchor.si),
+          anchorThreadId: ThreadId.make(anchor.st),
+        });
+        // Older pages stay bounded too, instead of returning the rest of the thread.
+        assert.isAtMost(snapshot.projection.turnItems.length, 4 * 152 + 77);
+        const page = selectHistoryPageFromCursor({
+          items: snapshot.projection.visibleTurnItems,
+          cursor,
+          snapshotSequence: 0,
+        });
+        loaded.unshift(...page.items.map((row) => String(row.sourceItemId)));
+        cursor = page.nextCursor;
+      }
+      assert.deepEqual(loaded, allIds);
+    }),
+  );
+
   it.effect(
     "bounds completed nodes within one long run while preserving ancestry and live work",
     () =>
