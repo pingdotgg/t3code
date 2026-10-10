@@ -44,13 +44,14 @@ const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const host = yield* ProviderHost.ProviderHost;
-  const hostEnvironment = yield* HostProcess.Environment;
   const cache = makeAntigravityUsageCache();
 
-  /** `ANTIGRAVITY_DATA_DIR` (comma-separated) or the defaults, canonicalized. */
-  const dataRoots = Effect.gen(function* () {
+  /** An instance's `ANTIGRAVITY_DATA_DIR` (comma-separated) or the defaults, canonicalized. */
+  const dataRoots = Effect.fn("AntigravityUsage.dataRoots")(function* (
+    environment: NodeJS.ProcessEnv,
+  ) {
     const home = yield* HostProcess.HomeDirectory;
-    const configured = hostEnvironment["ANTIGRAVITY_DATA_DIR"]
+    const configured = environment["ANTIGRAVITY_DATA_DIR"]
       ?.split(",")
       .map((value) => value.trim())
       .filter(Boolean);
@@ -74,7 +75,8 @@ const make = Effect.gen(function* () {
     instances,
     windowStartMs,
   }) {
-    const roots = yield* dataRoots;
+    const roots: Array<string> = [];
+    for (const instance of instances) roots.push(...(yield* dataRoots(instance.environment)));
     // Only configured instances have a profile; the implicit default never ran.
     for (const { instanceId } of instances.filter((instance) => instance.configured)) {
       const directories = yield* resolveAntigravityInstanceDirectories(
