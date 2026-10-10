@@ -1,9 +1,11 @@
-import type {
-  EnvironmentId,
-  ProjectId,
-  ProviderInteractionMode,
-  ServerProvider,
-  ThreadId,
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+  type PluginAction,
+  type ProjectId,
+  type ProviderInteractionMode,
+  type ServerProvider,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
@@ -48,6 +50,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { serverEnvironment } from "../../state/server";
+import { useEnvironmentScope } from "../../state/session";
+import {
+  canRunPluginActionsNow,
+  runPluginAction,
+  usePluginActions,
+} from "../../state/plugin-actions";
+import {
+  type PluginActionContext,
+  pluginActionsAt,
+} from "@t3tools/client-runtime/state/pluginActions";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useComposerPathSearch, useComposerPullRequestSearch } from "../../state/queries";
 import type { ComposerCommandItem } from "./ComposerCommandPopover";
@@ -169,6 +181,31 @@ export function resolveComposerCommandSelection(input: {
   };
 }
 
+/**
+ * Slash entries for the plugin actions matching `query` (lowercase) by name or title.
+ * They run when picked, so they are offered anywhere in the message.
+ */
+export function buildPluginActionSlashItems(
+  actions: ReadonlyArray<PluginAction>,
+  query: string,
+  context: PluginActionContext,
+): ComposerCommandItem[] {
+  return pluginActionsAt(actions, "composer-slash", context)
+    .filter(
+      // Names are lowercase today, but the wire accepts any string from a newer server.
+      ({ action }) =>
+        action.name.toLowerCase().includes(query) || action.title.toLowerCase().includes(query),
+    )
+    .map(({ action, target }) => ({
+      id: `plugin-action:${action.id}`,
+      type: "plugin-action" as const,
+      action,
+      target,
+      label: `/${action.name}`,
+      description: `${action.title} · ${action.pluginName}`,
+    }));
+}
+
 /** Shared autocomplete for thread composers and unsent new-task drafts. */
 export function useComposerCommandMenu({
   draftMessage,
@@ -176,6 +213,7 @@ export function useComposerCommandMenu({
   environmentId,
   threadShells = EMPTY_THREAD_SHELLS,
   currentThreadId = null,
+  projectId,
   projectCwd,
   pullRequestProjectId = null,
   pullRequestRepository = null,
@@ -195,6 +233,8 @@ export function useComposerCommandMenu({
   readonly threadShells?: ReadonlyArray<EnvironmentThreadShell>;
   /** Left out of `@` thread suggestions: a thread is never context for itself. */
   readonly currentThreadId?: ThreadId | null;
+  /** The project plugin actions with a project target run on; required so no composer drops them. */
+  readonly projectId: ProjectId | null;
   readonly projectCwd: string | null;
   readonly pullRequestProjectId?: ProjectId | null;
   readonly pullRequestRepository?: string | null;
@@ -211,6 +251,7 @@ export function useComposerCommandMenu({
 }) {
   const [selection, setSelection] = useState(() => composerSelectionAtEnd(draftMessage));
   const previousOwnerKeyRef = useRef(ownerKey);
+  const pluginActionRunningRef = useRef(false);
   const onSelectionChange = useCallback((nextSelection: ComposerEditorSelection) => {
     setSelection(nextSelection);
   }, []);
@@ -360,6 +401,9 @@ export function useComposerCommandMenu({
     query: trigger?.kind === "pull-request" ? trigger.query : null,
   });
 
+  const pluginActions = usePluginActions(environmentId);
+  // Running a plugin action needs `orchestration:operate`.
+  const canRunPluginActions = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const items = useMemo<ComposerCommandItem[]>(() => {
     if (!trigger) return [];
 
@@ -412,7 +456,16 @@ export function useComposerCommandMenu({
           description: skill.shortDescription ?? skill.description ?? "",
         }));
 
-      return [...commandItems, ...skillItems];
+      return [
+        ...commandItems,
+        ...skillItems,
+        ...(canRunPluginActions
+          ? buildPluginActionSlashItems(pluginActions, q, {
+              threadId: currentThreadId,
+              projectId,
+            })
+          : []),
+      ];
     }
 
     if (trigger.kind === "skill") {
@@ -531,7 +584,10 @@ export function useComposerCommandMenu({
     hasThread,
     hasCompactableConversation,
     onUpdateInteractionMode,
+    canRunPluginActions,
     pathSearch.entries,
+    pluginActions,
+    projectId,
     pullRequestSearch.entries,
     projectCwd,
     selectedProviderStatus,
@@ -612,6 +668,29 @@ export function useComposerCommandMenu({
         return;
       }
 
+      if (item.type === "plugin-action") {
+        // Keep the typed command when this connection may no longer run actions.
+        // The live grant is read because the menu may predate a permission change.
+        if (
+          environmentId === null ||
+          !canRunPluginActions ||
+          !canRunPluginActionsNow(environmentId)
+        ) {
+          return;
+        }
+        // A second tap before this render's draft updates must not run it twice.
+        if (pluginActionRunningRef.current) return;
+        pluginActionRunningRef.current = true;
+        const cleared = replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, "");
+        setSelection({ start: cleared.cursor, end: cleared.cursor });
+        onChangeDraftMessage(cleared.text);
+        void runPluginAction({ environmentId, action: item.action, target: item.target }).finally(
+          () => {
+            pluginActionRunningRef.current = false;
+          },
+        );
+        return;
+      }
       if (
         item.type === "provider-slash-command" &&
         item.command.name === USAGE_LIMITS_COMMAND.name &&
@@ -639,7 +718,9 @@ export function useComposerCommandMenu({
       }
     },
     [
+      canRunPluginActions,
       draftMessage,
+      environmentId,
       ownerKey,
       items,
       onChangeDraftMessage,

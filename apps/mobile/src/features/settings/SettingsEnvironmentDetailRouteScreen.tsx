@@ -22,6 +22,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { ConnectionEnvironmentRow } from "../connection/ConnectionEnvironmentRow";
 import { EnvironmentRoutesSection } from "./EnvironmentRoutesSection";
+import { PluginSettingsSections } from "../plugins/PluginSettingsSections";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
@@ -372,6 +373,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                       </View>
                     ))}
                 </SettingsSection>
+                <PluginSettingsSections environmentId={environmentId} capabilities={capabilities} />
               </>
             ) : null}
           </>

@@ -76,21 +76,16 @@ async function renderPanel(overrides: Partial<ComponentProps<typeof RightPanelTa
         onCloseSurfacesToRight={noop}
         onCloseAllSurfaces={noop}
         onCopyFilePath={noop}
-        onAddBrowser={noop}
+        panels={{
+          preview: { available: false, onOpen: noop },
+          diff: { available: false, onOpen: noop },
+          terminal: { available: false, onOpen: noop },
+          device: { available: false, onOpen: noop },
+          "pull-request": { available: false, onOpen: noop },
+          "pull-requests": { available: false, onOpen: noop },
+          files: { available: true, onOpen: addFiles },
+        }}
         onAddBrowserInProfile={noop}
-        onAddTerminal={noop}
-        onAddDiff={noop}
-        onAddFiles={addFiles}
-        onAddPullRequest={noop}
-        onAddPullRequests={noop}
-        onAddDevice={noop}
-        browserAvailable={false}
-        terminalAvailable={false}
-        diffAvailable={false}
-        filesAvailable
-        pullRequestAvailable={false}
-        pullRequestsAvailable={false}
-        deviceAvailable={false}
         {...overrides}
       >
         content

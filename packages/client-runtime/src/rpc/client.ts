@@ -5,6 +5,7 @@ import {
   type EnvironmentId,
   type ClientGuardedRpcTag,
   ORCHESTRATION_V2_WS_METHODS,
+  type ServerConfig,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -59,12 +60,17 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeServerLifecycle
   | typeof WS_METHODS.scheduledTasksSubscribe
   | typeof WS_METHODS.serverGetStorageCleanupReport
+  | typeof WS_METHODS.pluginsSubscribe
+  | typeof WS_METHODS.pluginsSettingsSubscribe
+  | typeof WS_METHODS.pluginActionsSubscribe
+  | typeof WS_METHODS.pluginViewsSubscribe
   | typeof WS_METHODS.subscribeTerminalEvents
   | typeof WS_METHODS.subscribeTerminalMetadata
   | typeof WS_METHODS.subscribePreviewEvents
   | typeof WS_METHODS.subscribeDiscoveredLocalServers
   | typeof WS_METHODS.subscribeDeviceState
   | typeof WS_METHODS.subscribeResourceTelemetry
+  | typeof WS_METHODS.subscribeContributionStatus
   | typeof WS_METHODS.pullRequestsSubscribeRefreshes
   | typeof WS_METHODS.subscribeVcsStatus
   | typeof WS_METHODS.subscribeWorktreeSetup
@@ -186,6 +192,21 @@ const authorizeRequest = Effect.fn("EnvironmentRpc.authorize")(function* (
   yield* guard.authorize(supervisor.target.environmentId, method, input);
 });
 
+const requestOnSession = Effect.fn("EnvironmentRpc.requestOnSession")(function* <
+  TTag extends EnvironmentUnaryRpcTag,
+>(session: RpcSession, tag: TTag, input: EnvironmentRpcInput<TTag>) {
+  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+  const observer = yield* EnvironmentRpcRequestObserver;
+  const method = session.client[tag] as (
+    input: EnvironmentRpcInput<TTag>,
+  ) => Effect.Effect<EnvironmentRpcSuccess<TTag>, EnvironmentRpcFailure<TTag>>;
+  const completeObservation = yield* observer.observe({
+    environmentId: supervisor.target.environmentId,
+    method: tag,
+  });
+  return yield* method(input).pipe(Effect.ensuring(completeObservation));
+});
+
 export const requestGuarded = Effect.fn("EnvironmentRpc.request")(function* <
   TTag extends EnvironmentUnaryRpcTag,
 >(tag: TTag, input: EnvironmentRpcInput<TTag>) {
@@ -196,15 +217,38 @@ export const requestGuarded = Effect.fn("EnvironmentRpc.request")(function* <
   });
   const session = yield* currentSession();
   yield* authorizeRequest(tag, input);
-  const observer = yield* EnvironmentRpcRequestObserver;
-  const method = session.client[tag] as (
-    input: EnvironmentRpcInput<TTag>,
-  ) => Effect.Effect<EnvironmentRpcSuccess<TTag>, EnvironmentRpcFailure<TTag>>;
-  const completeObservation = yield* observer.observe({
-    environmentId: supervisor.target.environmentId,
-    method: tag,
+  return yield* requestOnSession(session, tag, input);
+});
+
+/**
+ * Like `request`, but only to a server whose capabilities pass `supported`.
+ * The check and the request use the same session, so a reconnect to an older
+ * server in between cannot receive the call. Otherwise fails with
+ * `EnvironmentRpcUnavailableError` and sends nothing.
+ */
+export const requestIfSupported = Effect.fn("EnvironmentRpc.requestIfSupported")(function* <
+  TTag extends Exclude<EnvironmentUnaryRpcTag, ClientGuardedRpcTag>,
+>(
+  tag: TTag,
+  input: EnvironmentRpcInput<TTag>,
+  supported: (capabilities: ServerConfig["environment"]["capabilities"]) => boolean,
+) {
+  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+  yield* Effect.annotateCurrentSpan({
+    "environment.id": supervisor.target.environmentId,
+    "rpc.method": tag,
   });
-  return yield* method(input).pipe(Effect.ensuring(completeObservation));
+  const session = yield* currentSession();
+  const isSupported = yield* session.initialConfig.pipe(
+    Effect.map((config) => supported(config.environment.capabilities)),
+    Effect.orElseSucceed(() => false),
+  );
+  if (!isSupported)
+    return yield* new EnvironmentRpcUnavailableError({
+      environmentId: supervisor.target.environmentId,
+      message: `${supervisor.target.label} runs a server version without this feature.`,
+    });
+  return yield* requestOnSession(session, tag, input);
 });
 
 export function runStreamGuarded<TTag extends EnvironmentStreamCommandRpcTag>(
