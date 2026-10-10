@@ -233,6 +233,57 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("uses the display name a skill declares for Codex", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const skillsDir = path.join(tempDir, "claude-home", "skills");
+      const codexMetadata = {
+        "hr-handoff": 'interface:\n  display_name: "HR: Handoff"\n',
+        "same-name": "interface:\n  display_name: same-name\n",
+        "blank-name": 'interface:\n  display_name: "  "\n',
+        "broken-yaml": "interface: [unclosed\n",
+        "no-interface": "policy:\n  allow_implicit_invocation: true\n",
+        "scalar-document": "just text\n",
+        "not-a-string": "interface:\n  display_name: 3\n",
+      };
+      for (const [directoryName, metadata] of Object.entries(codexMetadata)) {
+        yield* writeSkill(skillsDir, directoryName, "---\ndescription: A skill.\n---\n");
+        yield* fs.makeDirectory(path.join(skillsDir, directoryName, "agents"));
+        yield* fs.writeFileString(
+          path.join(skillsDir, directoryName, "agents", "openai.yaml"),
+          metadata,
+        );
+      }
+      yield* writeSkill(skillsDir, "no-metadata", "---\ndescription: A skill.\n---\n");
+      yield* writeSkill(skillsDir, "directory-metadata", "---\ndescription: A skill.\n---\n");
+      yield* fs.makeDirectory(path.join(skillsDir, "directory-metadata", "agents", "openai.yaml"), {
+        recursive: true,
+      });
+
+      const skills = yield* discoverClaudeSkills(
+        { homePath: path.join(tempDir, "claude-home") },
+        undefined,
+      );
+
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.displayName, skill.description]),
+        [
+          ["blank-name", undefined, "A skill."],
+          ["broken-yaml", undefined, "A skill."],
+          ["directory-metadata", undefined, "A skill."],
+          ["hr-handoff", "HR: Handoff", "A skill."],
+          ["no-interface", undefined, "A skill."],
+          ["no-metadata", undefined, "A skill."],
+          ["not-a-string", undefined, "A skill."],
+          ["same-name", undefined, "A skill."],
+          ["scalar-document", undefined, "A skill."],
+        ],
+      );
+    }),
+  );
+
   it.effect("honors CLAUDE_CONFIG_DIR from the environment when homePath is unset", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

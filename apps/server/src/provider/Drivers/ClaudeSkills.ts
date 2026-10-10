@@ -116,6 +116,26 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
 }
 
 /**
+ * The display name a skill declares for Codex in `agents/openai.yaml` beside
+ * its `SKILL.md`. Claude Code has no display-name field and requires a
+ * lowercase `name`, so a skill shared with Codex would otherwise show its
+ * title-cased directory name here and its chosen label under Codex.
+ */
+function parseCodexDisplayName(contents: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = parseYamlDocument(contents);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null) return undefined;
+  const skillInterface = (parsed as Record<string, unknown>).interface;
+  if (typeof skillInterface !== "object" || skillInterface === null) return undefined;
+  const displayName = (skillInterface as Record<string, unknown>).display_name;
+  return typeof displayName === "string" && displayName.trim() ? displayName.trim() : undefined;
+}
+
+/**
  * Where an administrator installs the policy file whose settings outrank every
  * user and project one. Absent on almost every machine, which is why a missing
  * file is the normal case rather than an error.
@@ -377,6 +397,12 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         continue;
       }
 
+      const codexMetadata = yield* fileSystem
+        .readFileString(path.join(root.directory, entry, "agents", "openai.yaml"))
+        .pipe(Effect.orElseSucceed(() => undefined));
+      const displayName =
+        codexMetadata === undefined ? undefined : parseCodexDisplayName(codexMetadata);
+
       const override = skillOverrides.get(name);
       const userInvocationOnly =
         (frontmatter.kind === "parsed" && frontmatter.userInvocationOnly === true) ||
@@ -386,6 +412,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         path: skillPath,
         enabled: override?.enabled ?? true,
         scope: root.scope,
+        ...(displayName && displayName !== name ? { displayName } : {}),
         ...(frontmatter.kind === "parsed" && frontmatter.description
           ? { description: frontmatter.description }
           : {}),
