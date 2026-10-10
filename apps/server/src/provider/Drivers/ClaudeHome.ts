@@ -1,11 +1,10 @@
-import * as NodeOS from "node:os";
-
 import type { ClaudeSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const quotePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
@@ -21,16 +20,17 @@ export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function
   environment?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<string, never, Path.Path> {
   const path = yield* Path.Path;
+  const home = yield* HostProcess.HomeDirectory;
   const homePath = config.homePath.trim();
   if (homePath.length > 0) {
-    return path.resolve(expandHomePath(homePath));
+    return path.resolve(expandHomePath(homePath, home));
   }
   // Inherited env vars are not shell-expanded, so a literal `~` stays literal.
   const inherited = environment?.CLAUDE_CONFIG_DIR?.trim() ?? "";
   if (inherited.length > 0) {
     return path.resolve(inherited);
   }
-  return path.resolve(path.join(NodeOS.homedir(), ".claude"));
+  return path.resolve(path.join(home, ".claude"));
 });
 
 export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function* (

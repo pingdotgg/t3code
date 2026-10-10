@@ -6,11 +6,7 @@ import {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "../settings.ts";
-import {
-  HostProcessArchitecture,
-  HostProcessEnvironment,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -63,9 +59,9 @@ function layerResolver(
   return Layer.mergeAll(
     NodeServices.layer,
     TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
-    Layer.succeed(HostProcessPlatform, "linux"),
-    Layer.succeed(HostProcessArchitecture, "x64"),
-    Layer.succeed(HostProcessEnvironment, environment),
+    Layer.succeed(HostProcess.Platform, "linux"),
+    Layer.succeed(HostProcess.Architecture, "x64"),
+    Layer.succeed(HostProcess.Environment, environment),
     Layer.succeed(HttpClient.HttpClient, HttpClient.make(execute)),
   );
 }
@@ -229,7 +225,7 @@ describe("AcpRegistrySupport", () => {
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
-      }).pipe(Effect.provideService(HostProcessEnvironment, hostEnvironment));
+      }).pipe(Effect.provideService(HostProcess.Environment, hostEnvironment));
       const localSettings = decodeAcpRegistrySettings({
         source: "local",
         commandPath: "dsh",
@@ -279,7 +275,7 @@ describe("AcpRegistrySupport", () => {
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
-      }).pipe(Effect.provideService(HostProcessEnvironment, environment));
+      }).pipe(Effect.provideService(HostProcess.Environment, environment));
       const resolved = yield* resolver.resolve(
         decodeAcpRegistrySettings({ source: "local", commandPath }),
         "/workspace",
@@ -300,7 +296,7 @@ describe("AcpRegistrySupport", () => {
           toolsDir: `${cacheDir}/tools`,
           registryUrl,
         }).pipe(
-          Effect.provideService(HostProcessPlatform, "win32"),
+          Effect.provideService(HostProcess.Platform, "win32"),
           Effect.provideService(SpawnExecutableResolution, () => `C:\\bin\\dsh${extension}`),
         );
         const localSettings = decodeAcpRegistrySettings({ source: "local", commandPath: "dsh" });
@@ -432,7 +428,7 @@ describe("AcpRegistrySupport", () => {
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
-      }).pipe(Effect.provideService(HostProcessEnvironment, toolchain.environment));
+      }).pipe(Effect.provideService(HostProcess.Environment, toolchain.environment));
 
       const first = yield* resolver.resolve(settings(), "/workspace", toolchain.environment);
       const second = yield* resolver.resolve(settings(), "/workspace", toolchain.environment);
@@ -478,7 +474,7 @@ describe("AcpRegistrySupport", () => {
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
-      }).pipe(Effect.provideService(HostProcessEnvironment, environment));
+      }).pipe(Effect.provideService(HostProcess.Environment, environment));
 
       const resolved = yield* resolver.resolve(settings(), "/workspace", environment);
       const userGlobalBin = toolchain.globalBin;
@@ -559,7 +555,7 @@ describe("AcpRegistrySupport", () => {
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
       }).pipe(
-        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(HostProcess.Platform, "win32"),
         Effect.provideService(SpawnExecutableResolution, (command) => {
           if (command === "uv") return toolchain.uvPath;
           if (command === "fast-agent") return toolchain.executablePath;
@@ -677,7 +673,7 @@ describe("AcpRegistrySupport", () => {
           cacheDir,
           toolsDir: `${cacheDir}/tools`,
           registryUrl,
-        }).pipe(Effect.provideService(HostProcessEnvironment, environment));
+        }).pipe(Effect.provideService(HostProcess.Environment, environment));
         yield* resolver.search({ query: "example" });
         expect(yield* resolver.inspect(settings(), environment)).toMatchObject({
           status: "unprepared",
@@ -781,8 +777,8 @@ describe("AcpRegistrySupport", () => {
           TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
         ),
       ),
-      Effect.provideService(HostProcessPlatform, "linux"),
-      Effect.provideService(HostProcessArchitecture, "x64"),
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provideService(HostProcess.Architecture, "x64"),
     );
   });
 
@@ -1097,7 +1093,7 @@ describe("AcpRegistrySupport", () => {
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
-      }).pipe(Effect.provideService(HostProcessEnvironment, toolchain.environment));
+      }).pipe(Effect.provideService(HostProcess.Environment, toolchain.environment));
       const prepared = yield* resolver.prepare({ agentId: agent.id });
       expect(prepared).toEqual({
         agentId: "example-agent",

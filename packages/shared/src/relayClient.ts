@@ -21,7 +21,7 @@ import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { HostProcessArchitecture, HostProcessPlatform } from "./hostProcess.ts";
+import * as HostProcess from "./HostProcess.ts";
 
 export const CLOUDFLARED_VERSION = "2026.10.0";
 // The oldest release that accepts every flag the connector is started with
@@ -257,8 +257,8 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const installSemaphore = yield* Semaphore.make(1);
-  const platform = yield* HostProcessPlatform;
-  const arch = yield* HostProcessArchitecture;
+  const platform = yield* HostProcess.Platform;
+  const arch = yield* HostProcess.Architecture;
   const releaseAsset = options.releaseAsset ?? resolveReleaseAsset(platform, arch);
   const loadCloudflaredConfig = Effect.suspend(() => CloudflaredConfig).pipe(Effect.orDie);
   const managedRoot = path.join(options.baseDir, "tools", "cloudflared");

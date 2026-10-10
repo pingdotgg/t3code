@@ -72,7 +72,7 @@ const rpcSpans = (ended: ReadonlyArray<Tracer.NativeSpan>) =>
 // RpcTest keeps Effect's own RpcServer/RpcClient spans, which ws.ts turns off with
 // `disableTracing: true`. Everything else comes from the middleware or the handlers.
 const appSpans = (ended: ReadonlyArray<Tracer.NativeSpan>) =>
-  ended.filter((span) => !/^Rpc(Server|Client)\./.test(span.name));
+  ended.filter((span) => span.attributes.get("rpc.system.name") !== "effect_rpc");
 
 const exitTag = (span: Tracer.NativeSpan | undefined) =>
   span?.status._tag === "Ended" ? span.status.exit._tag : undefined;

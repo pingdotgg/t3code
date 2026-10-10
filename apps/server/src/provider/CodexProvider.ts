@@ -47,6 +47,7 @@ import {
   type CodexRateLimitSnapshot,
   type CodexResetCreditsSummary,
 } from "./codexUsageLimits.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import packageJson from "../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
 const RATE_LIMITS_PROBE_TIMEOUT_MS = 3_000;
@@ -374,7 +375,9 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   // so `CODEX_HOME=~/.codex_work` would reach codex verbatim and trip
   // "CODEX_HOME points to '~/.codex_work', but that path does not exist".
   // Expand here for parity with `CodexTextGeneration`.
-  const resolvedHomePath = input.homePath ? expandHomePath(input.homePath) : undefined;
+  const resolvedHomePath = input.homePath
+    ? expandHomePath(input.homePath, yield* HostProcess.HomeDirectory)
+    : undefined;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const environment = {
     ...input.environment,

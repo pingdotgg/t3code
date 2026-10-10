@@ -52,11 +52,7 @@ import * as ProviderHostLive from "./provider/ProviderHostLive.ts";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
-import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
-import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
-import * as GitHubApi from "./sourceControl/GitHubApi.ts";
-import * as GitLabCli from "./sourceControl/GitLabCli.ts";
-import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
+import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as ProviderInstanceRegistryHydration from "./provider/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
@@ -105,7 +101,7 @@ import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as PullRequestReadCache from "./pullRequest/PullRequestReadCache.ts";
-import * as SourceControlRateLimit from "./sourceControl/SourceControlRateLimit.ts";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as Observability from "./observability/Observability.ts";
@@ -157,7 +153,10 @@ import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClien
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinary.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
-import * as CursorUsageReader from "./usage/cursorUsageReader.ts";
+import * as AntigravityUsage from "./provider/Drivers/AntigravityUsage.ts";
+import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAccountReader";
+import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
+import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
@@ -255,8 +254,15 @@ const layerBackground = BackgroundPolicy.layer.pipe(
 );
 
 const layerUsage = UsageService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      AntigravityUsage.layer,
+      CursorUsageAccounts.layer.pipe(
+        Layer.provide(CursorAccountReader.layer.pipe(Layer.provide(CursorKeychain.layer))),
+      ),
+    ).pipe(Layer.provide(ProviderHostLive.layer.pipe(Layer.provide(ServerSecretStore.layer)))),
+  ),
   Layer.provide(layerServerSettings),
-  Layer.provide(CursorUsageReader.layer),
 );
 
 const layerResourceDiagnostics = Layer.mergeAll(
@@ -298,15 +304,7 @@ const layerPersistence = Layer.empty.pipe(Layer.provideMerge(SqlitePersistence.l
 const layerVcsDriverRegistry = VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer));
 
 const layerSourceControlProviderRegistry = SourceControlProviderRegistry.layer.pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      AzureDevOpsCli.layer,
-      BitbucketApi.layer,
-      GitHubApi.layerWithDependencies,
-      GitLabCli.layer,
-      ForgejoCli.layer,
-    ),
-  ),
+  Layer.provideMerge(SourceControlBuiltInDrivers.layer),
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(layerVcsDriverRegistry),
 );
@@ -316,32 +314,21 @@ const layerRepositoryIdentityResolver = Layer.effect(
   Effect.gen(function* () {
     const registry = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
     return yield* RepositoryIdentityResolver.make({
+      // Each host that can refine an identity gets a turn; the first one that changes it wins.
       refine: Effect.fn(function* (identity: RepositoryIdentity) {
-        const remote = ForgejoCli.parseForgejoRemote(identity.locator.remoteUrl);
-        if (
-          !remote ||
-          !identity.rootPath ||
-          (identity.provider !== undefined &&
-            identity.provider !== "unknown" &&
-            identity.provider !== "forgejo")
-        )
-          return identity;
-        const handle = yield* registry.resolveHandle({
-          cwd: identity.rootPath,
-          context: {
-            provider: { kind: "unknown", name: "Unknown", baseUrl: "" },
-            remoteName: identity.locator.remoteName,
-            remoteUrl: identity.locator.remoteUrl,
-          },
-        });
-        if (handle.context?.provider.kind !== "forgejo") return identity;
-        const baseUrl = handle.context.provider.baseUrl.replace(/\/+$/, "");
-        const basePath = new URL(baseUrl).pathname.replace(/^\/+|\/+$/g, "");
-        const path =
-          !remote.ssh && basePath && remote.path.startsWith(`${basePath}/`)
-            ? remote.path.slice(basePath.length + 1)
-            : remote.path;
-        return { ...identity, provider: "forgejo", webUrl: `${baseUrl}/${path}` };
+        for (const kind of SourceControlBuiltInDrivers.BUILT_IN_SOURCE_CONTROL_DRIVERS.map(
+          (driver) => driver.kind,
+        )) {
+          const provider = yield* registry.get(kind);
+          if (provider.refineRepositoryIdentity === undefined) continue;
+          const refined = yield* provider.refineRepositoryIdentity({
+            identity,
+            resolveContext: (input) =>
+              registry.resolveHandle(input).pipe(Effect.map((handle) => handle.context)),
+          });
+          if (refined !== identity) return refined;
+        }
+        return identity;
       }),
     });
   }),
@@ -560,9 +547,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Asks T3 Connect to deliver webhooks it held while this environment was offline.
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
-  Layer.effectDiscard(StorageCleanup.make.pipe(Effect.flatMap((service) => service.start()))).pipe(
-    Layer.provide(ProjectionStoreV2.layer),
-  ),
+  StorageCleanup.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
   layerThreadPullRequestWorker,
   Layer.effectDiscard(
     Effect.gen(function* () {
@@ -595,9 +580,9 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
   Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
   Layer.provideMerge(layerServerSettings),
-  // The asset route uses the registry's GitHub credential for private PR media.
+  // The asset route uses the registry's GitHub credential for private PR media, which the
+  // built-in drivers' layer provides alongside the registry.
   Layer.provideMerge(layerSourceControlProviderRegistry),
-  Layer.provideMerge(GitHubApi.layerWithDependencies),
   Layer.provideMerge(layerGit),
   Layer.provideMerge(layerVcs),
   Layer.provideMerge(Layer.mergeAll(layerTerminal, layerPreview, layerDevice)),
@@ -677,9 +662,11 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
 
 const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   // Misc.
+  // Usage reads provider history through the ProviderHost, which needs the
+  // background policy below it.
+  Layer.provideMerge(layerUsage),
   Layer.provideMerge(layerBackground),
   Layer.provideMerge(layerResourceDiagnostics),
-  Layer.provideMerge(layerUsage),
   Layer.provideMerge(TraceDiagnostics.layer),
   Layer.provideMerge(AnalyticsService.layer),
   Layer.provideMerge(ExternalLauncher.layer),

@@ -31,6 +31,31 @@ import {
   type CheckpointServiceError,
 } from "./Errors.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
+import { isGitImport, parseTurnDiffFilesFromNumstat, type TurnDiffFileSummary } from "./Diffs.ts";
+
+// Windows limits a command line to 32,767 characters. Leave room for the rest of git's arguments.
+const MAX_PATHSPEC_CHARS = 24_000;
+
+/** Splits files into pathspec lists that each fit on one git command line. Renames keep both paths together. */
+function batchFilePaths(files: ReadonlyArray<TurnDiffFileSummary>) {
+  const batches: string[][] = [];
+  let batch: string[] = [];
+  let length = 0;
+  for (const file of files) {
+    const paths = file.previousPath === undefined ? [file.path] : [file.previousPath, file.path];
+    // Each pathspec also carries a `:(top,literal)` prefix and a separator.
+    const size = paths.reduce((total, path) => total + path.length + 16, 0);
+    if (batch.length > 0 && length + size > MAX_PATHSPEC_CHARS) {
+      batches.push(batch);
+      batch = [];
+      length = 0;
+    }
+    batch.push(...paths);
+    length += size;
+  }
+  if (batch.length > 0) batches.push(batch);
+  return batches;
+}
 
 /** Service tag for checkpoint diff queries. */
 export class CheckpointDiffQuery extends Context.Service<
@@ -182,15 +207,40 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      const diff = yield* checkpointStore
-        .diffCheckpoints({
-          cwd: toScope.cwd,
-          fromCheckpointRef,
-          toCheckpointRef: toCheckpoint.ref,
-          fallbackFromToHead: false,
-          ignoreWhitespace,
-        })
-        .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"));
+      const comparison = {
+        cwd: toScope.cwd,
+        fromCheckpointRef,
+        toCheckpointRef: toCheckpoint.ref,
+        fallbackFromToHead: false,
+        ignoreWhitespace,
+      };
+      // Leave out files that a pull, merge, or rebase brought in, matching the turn's file summary.
+      // Filtering is optional: when it cannot run, the complete diff still loads.
+      const authoredPaths = yield* checkpointStore
+        .listAuthoredPaths(comparison)
+        .pipe(Effect.orElseSucceed(() => null));
+      const files =
+        authoredPaths === null
+          ? []
+          : yield* checkpointStore.diffCheckpoints({ ...comparison, format: "numstat" }).pipe(
+              Effect.map(parseTurnDiffFilesFromNumstat),
+              Effect.orElseSucceed(() => []),
+            );
+      const retainedFiles = files.filter((file) => !isGitImport(file, authoredPaths));
+      // Select retained paths before generating a patch, so imported bulk cannot exhaust its output limit.
+      const diff =
+        retainedFiles.length === files.length
+          ? yield* checkpointStore
+              .diffCheckpoints(comparison)
+              .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"))
+          : (yield* Effect.forEach(
+              batchFilePaths(retainedFiles),
+              (filePaths) =>
+                checkpointStore
+                  .diffCheckpoints({ ...comparison, filePaths })
+                  .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints")),
+              { concurrency: 4 },
+            )).join("");
 
       const turnDiff = buildTurnDiffResult(input, diff);
       if (!isTurnDiffResult(turnDiff)) {

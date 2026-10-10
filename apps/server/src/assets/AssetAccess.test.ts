@@ -2,7 +2,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
 import {
   AssetAccessError,
   AssetPreviewTypeValidationError,
@@ -35,17 +34,13 @@ import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "./AssetAccess.t
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { openMediaFile } from "./MediaFile.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
-import * as GitHubCredentials from "../sourceControl/GitHubCredentials.ts";
+import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
 import { githubMediaResponse } from "./GitHubMediaFetch.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeFSP>();
   return { ...actual, open: vi.fn(actual.open), realpath: vi.fn(actual.realpath) };
-});
-
-vi.mock("node:os", async (importOriginal) => {
-  const actual = await importOriginal<typeof NodeOS>();
-  return { ...actual, homedir: vi.fn(actual.homedir) };
 });
 
 const layerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
@@ -299,8 +294,7 @@ describe("AssetAccess", () => {
       yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
       yield* fs.writeFileString(filePath, "recording bytes");
       const canonicalFile = yield* fs.realPath(filePath);
-      const homeSpy = vi.mocked(NodeOS.homedir).mockReturnValue(home);
-      try {
+      yield* Effect.gen(function* () {
         for (const workspaceRoot of [
           path.join(home, "project"),
           path.join(directory, "srv", "project"),
@@ -332,9 +326,7 @@ describe("AssetAccess", () => {
             expect(yield* Effect.promise(() => response.text())).toBe("recording bytes");
           }
         }
-      } finally {
-        homeSpy.mockRestore();
-      }
+      }).pipe(Effect.provideService(HostProcess.HomeDirectory, home));
     }).pipe(Effect.provide(layerTest)),
   );
 
