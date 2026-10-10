@@ -100,9 +100,16 @@ export function resolveChatCanvasLayout({
     };
     // A resize keeps its anchored edge and consumes card height first. A drag
     // clears the full card whenever it can, so moving alone never folds it.
-    // The find bar cannot fold, so it stays clear either way. It shares the
-    // card's columns, and an open card already reaches up past it.
-    const cardObstacle = preview.lastInteraction === "resize" ? findBar : (detailsCard ?? findBar);
+    // The find bar can be wider than the inline card when the root font is enlarged.
+    const dragObstacle =
+      detailsCard && findBar
+        ? {
+            left: Math.min(detailsCard.left, findBar.left),
+            right: Math.max(detailsCard.right, findBar.right),
+            bottom: Math.max(detailsCard.bottom, findBar.bottom),
+          }
+        : (detailsCard ?? findBar);
+    const cardObstacle = preview.lastInteraction === "resize" ? findBar : dragObstacle;
     frame = {
       ...frame,
       ...clampPreviewMiniPlayerPosition(

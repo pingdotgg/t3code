@@ -158,6 +158,23 @@ describe("chat canvas layout", () => {
       expect(result.chat).toEqual({ left: 424, width: 736, insetStart: 0, insetEnd: 0 });
     }
   });
+  it("keeps a preview clear of a find bar wider than the inline details card", () => {
+    const result = resolveChatCanvasLayout({
+      container: { width: 1800, height: 1000 },
+      findBar: { left: 1362, right: 1782, bottom: 72 },
+      detailsCard: { left: 1508, right: 1788, bottom: 400 },
+      preview: {
+        ...preview,
+        width: 240,
+        source: { width: 240, height: 365 },
+        position: { x: 1200, y: 12 },
+        lastInteraction: "drag",
+      },
+    });
+    const frame = result.frame!;
+    expect(frame.x + frame.width <= 1362 || frame.y >= 84).toBe(true);
+    expect(result.overlapsDetailsCard).toBe(false);
+  });
   it("uses space beside the full card if a tall preview cannot fit below it", () => {
     const result = resolveChatCanvasLayout({
       container: { width: 1584, height: 988 },
