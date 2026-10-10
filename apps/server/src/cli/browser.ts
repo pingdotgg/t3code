@@ -5,7 +5,7 @@
  *
  * - installs the AppArmor profile that lets Chrome's sandbox run where the host
  *   restricts unprivileged user namespaces (Ubuntu 23.10+), and
- * - installs the Debian packages for any libraries the browser cannot load.
+ * - installs the Debian packages for missing browser libraries and fonts.
  *
  * Both need root. Without it, the command prints what it would change and the
  * `sudo` line to run. It is safe to run again; it skips what is already done.
@@ -101,7 +101,7 @@ const installedBrowser = Effect.fn("browserSetup.installedBrowser")(function* (b
 
 const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe(
   Command.withDescription(
-    "Set up this Linux host for T3's browser: allow Chrome's sandbox and install its libraries.",
+    "Set up this Linux host for T3's browser: allow Chrome's sandbox and install its libraries and fonts.",
   ),
   Command.withHandler(({ baseDir }) =>
     Effect.gen(function* () {
@@ -117,9 +117,23 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
       const missing = Option.isSome(browser)
         ? yield* PreviewBrowserHost.missingLibraries(browser.value)
         : [];
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      // Chrome can start without fonts, but pages then render without text.
+      const fontAvailable = spawner
+        .string(
+          ChildProcess.make("fc-match", ["--format=%{file}", "sans-serif"], {
+            stdin: "ignore",
+            stderr: "ignore",
+          }),
+        )
+        .pipe(
+          Effect.map((font) => font.trim() !== ""),
+          Effect.orElseSucceed(() => false),
+        );
+      const needsFonts = !(yield* fontAvailable);
       const hasApt = yield* fs.exists("/usr/bin/apt-get").pipe(Effect.orElseSucceed(() => false));
 
-      if (!needsProfile && missing.length === 0) {
+      if (!needsProfile && missing.length === 0 && !needsFonts) {
         return yield* Console.log(
           Option.isSome(browser)
             ? "This host is ready for T3's browser."
@@ -135,6 +149,11 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
         }
         if (missing.length > 0) {
           yield* Console.log(`T3's browser is missing ${missing.join(", ")}; setup installs them.`);
+        }
+        if (needsFonts) {
+          yield* Console.log(
+            "T3's browser needs fontconfig and system fonts; setup installs them.",
+          );
         }
         return yield* Console.log(`\nThis needs root. Run:\n\n  ${setupCommand}\n`);
       }
@@ -178,6 +197,32 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
           ...packages,
         ]);
         yield* Console.log("Installed the browser's libraries.");
+      }
+
+      if (needsFonts) {
+        if (!hasApt) {
+          return yield* Console.log(
+            "T3's browser needs fontconfig and system fonts. Install them with your package manager, then run this again.",
+          );
+        }
+        if (missing.length === 0) {
+          yield* runStep("refresh the package lists", "apt-get", ["update"]);
+        }
+        yield* runStep("install the browser's fonts", "apt-get", [
+          "install",
+          "-y",
+          "--no-install-recommends",
+          "fontconfig",
+          "fonts-liberation",
+        ]);
+        if (!(yield* fontAvailable)) {
+          return yield* Console.log(
+            "Font packages are installed, but Fontconfig still finds no system font. Check its configuration and run setup again.",
+          );
+        }
+        yield* Console.log(
+          "Installed the browser's fonts. Restart the T3 server if browser tabs were already open.",
+        );
       }
 
       yield* Console.log("This host is ready for T3's browser.");
