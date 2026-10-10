@@ -62,6 +62,28 @@ function makeShell(input: {
   };
 }
 
+// Production shells carry runtime, not session: runtime.updatedAt is the
+// projection's activity time, which any later event advances.
+function makeFailedRuntimeShell(input: {
+  readonly snoozedAt?: string | null;
+  readonly runCompletedAt: string;
+  readonly runtimeUpdatedAt: string;
+}): ThreadSnoozeShell {
+  return {
+    snoozedUntil: FUTURE_WAKE,
+    snoozedAt: input.snoozedAt === undefined ? SNOOZED_AT : input.snoozedAt,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    runtime: { status: "failed", updatedAt: input.runtimeUpdatedAt },
+    latestRun: {
+      status: "failed",
+      requestedAt: "2026-04-10T08:00:00.000Z",
+      startedAt: "2026-04-10T08:00:00.000Z",
+      completedAt: input.runCompletedAt,
+    },
+  };
+}
+
 type QueuedTurnShell = Parameters<typeof hasQueuedTurnStart>[0];
 
 function makeQueuedTurnShell(overrides: Partial<QueuedTurnShell> = {}): QueuedTurnShell {
@@ -119,6 +141,57 @@ describe("effectiveSnoozed", () => {
         { now: NOW },
       ),
     ).toBe(true);
+  });
+
+  it("stays snoozed when only projection activity moves after a limit snooze", () => {
+    // Snoozed until the usage-limit reset at 9:00 after the 8:30 failure; a
+    // rename at 11:00 bumps runtime.updatedAt without a new failure.
+    expect(
+      effectiveSnoozed(
+        makeFailedRuntimeShell({
+          runCompletedAt: "2026-04-10T08:30:00.000Z",
+          runtimeUpdatedAt: "2026-04-10T11:00:00.000Z",
+        }),
+        { now: NOW },
+      ),
+    ).toBe(true);
+  });
+
+  it("stays snoozed when the failed run ended at the snooze instant", () => {
+    expect(
+      effectiveSnoozed(
+        makeFailedRuntimeShell({
+          runCompletedAt: SNOOZED_AT,
+          runtimeUpdatedAt: "2026-04-10T11:00:00.000Z",
+        }),
+        { now: NOW },
+      ),
+    ).toBe(true);
+  });
+
+  it("wakes early when a run fails after the snooze was set", () => {
+    expect(
+      effectiveSnoozed(
+        makeFailedRuntimeShell({
+          runCompletedAt: "2026-04-10T10:30:00.000Z",
+          runtimeUpdatedAt: "2026-04-10T11:00:00.000Z",
+        }),
+        { now: NOW },
+      ),
+    ).toBe(false);
+  });
+
+  it("wakes a failed runtime snoozed without a snooze timestamp", () => {
+    expect(
+      effectiveSnoozed(
+        makeFailedRuntimeShell({
+          snoozedAt: null,
+          runCompletedAt: "2026-04-10T08:30:00.000Z",
+          runtimeUpdatedAt: "2026-04-10T08:30:00.000Z",
+        }),
+        { now: NOW },
+      ),
+    ).toBe(false);
   });
 
   it("stays snoozed while the session keeps working — snooze never pauses the agent", () => {
@@ -283,6 +356,18 @@ describe("threadWokeAt", () => {
         now: NOW,
       }),
     ).toBe("2026-04-10T11:00:00.000Z");
+  });
+
+  it("reports the failure time, not projection activity, for a fresh failure wake", () => {
+    expect(
+      threadWokeAt(
+        makeFailedRuntimeShell({
+          runCompletedAt: "2026-04-10T10:30:00.000Z",
+          runtimeUpdatedAt: "2026-04-10T11:00:00.000Z",
+        }),
+        { now: NOW },
+      ),
+    ).toBe("2026-04-10T10:30:00.000Z");
   });
 
   it("keeps the early wake authoritative after the scheduled time passes", () => {
