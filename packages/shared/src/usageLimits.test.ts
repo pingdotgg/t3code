@@ -186,15 +186,20 @@ describe("credit balances", () => {
     ).toBe("20");
     expect(collectLimitAccounts(makePresentations(null))[0]?.limits.credits).toBeNull();
   });
-  it.each(["native", "source"])(
-    "honors a newer %s clear without windows and retains another environment's quota",
-    (kind) => {
+  it.each([
+    ["native", null],
+    ["source", null],
+    ["native", { hasCredits: true, unlimited: false, balance: "20" }],
+    ["source", { hasCredits: true, unlimited: false, balance: "20" }],
+  ] as const)(
+    "honors a newer %s credit-only snapshot and retains the freshest quota windows",
+    (kind, credits) => {
       const oldLimits = {
         checkedAt: "2026-09-03T10:00:00.000Z",
         windows: [window],
         credits: { hasCredits: true, unlimited: false, balance: "42" },
       };
-      const cleared = { checkedAt: "2026-09-03T11:00:00.000Z", windows: [], credits: null };
+      const cleared = { checkedAt: "2026-09-03T11:00:00.000Z", windows: [], credits };
       const auth = { status: "authenticated", email: "test@example.com" } as const;
       const newer = {
         entry: { target: { label: "Laptop" } },
@@ -228,21 +233,44 @@ describe("credit balances", () => {
           usageLimitSources: [],
         },
       };
+      const middle = {
+        entry: { target: { label: "Tablet" } },
+        serverConfig: {
+          providers: [
+            provider({
+              auth,
+              usageLimits: {
+                checkedAt: "2026-09-03T10:30:00.000Z",
+                windows: [{ ...window, usedPercent: 60 }],
+              },
+            }),
+          ],
+          usageLimitSources: [],
+        },
+      };
       const entries = [
         [EnvironmentId.make("desktop"), older],
         [EnvironmentId.make("laptop"), newer],
+        [EnvironmentId.make("tablet"), middle],
       ] as const;
       for (const order of [entries, entries.toReversed()]) {
         const accounts = collectLimitAccounts(new Map(order));
         expect(accounts).toHaveLength(1);
-        expect(accounts[0]?.limits.credits).toBeNull();
-        expect(accounts[0]?.limits.windows).toEqual([window]);
+        expect(accounts[0]?.limits.credits).toEqual(credits);
+        expect(accounts[0]?.limits.windows).toEqual([{ ...window, usedPercent: 60 }]);
       }
-      expect(collectLimitAccounts(new Map([[EnvironmentId.make("laptop"), newer]]))).toEqual([]);
+      const lone = collectLimitAccounts(new Map([[EnvironmentId.make("laptop"), newer]]));
+      expect(lone).toHaveLength(credits === null ? 0 : 1);
+      if (credits !== null) {
+        expect(lone[0]?.limits.credits).toEqual(credits);
+        expect(lone[0]?.limits.windows).toEqual([]);
+      }
       older.serverConfig.providers = [
         provider({ auth, usageLimits: { ...oldLimits, windows: [] } }),
       ];
-      expect(collectLimitAccounts(new Map(entries))).toEqual([]);
+      const withoutWindows = collectLimitAccounts(new Map(entries.slice(0, 2)));
+      expect(withoutWindows).toHaveLength(credits === null ? 0 : 1);
+      expect(withoutWindows[0]?.limits.windows ?? []).toEqual([]);
     },
   );
 });

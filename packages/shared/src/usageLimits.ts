@@ -204,6 +204,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
   const balanceSources = new Map<string, LimitAccount>();
+  const windowSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
   const merge = (key: string, next: LimitAccount) => {
     const previousBalance = balanceSources.get(key);
@@ -217,6 +218,15 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     }
     // A clear without windows still invalidates older balances from another environment.
     if (limitsNotice(next.limits) !== null) return;
+
+    const previousWindow = windowSources.get(key);
+    if (
+      next.limits.windows.length > 0 &&
+      (!previousWindow ||
+        Date.parse(next.limits.checkedAt) > Date.parse(previousWindow.limits.checkedAt))
+    ) {
+      windowSources.set(key, next);
+    }
 
     // Redeeming through a hub also clears the routing cooldown that hub holds
     // for the account. Redeeming natively against the same subscription resets
@@ -270,6 +280,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem)),
       limits: {
         ...winner.limits,
+        windows: windowSources.get(key)?.limits.windows ?? winner.limits.windows,
         ...(creditSource?.limits.resetCredits
           ? { resetCredits: creditSource.limits.resetCredits }
           : { resetCredits: undefined }),
