@@ -11,6 +11,7 @@
  * Uses `./GitCafeApi.ts` and `./GitCafeCredentials.ts` as pinned in the sibling tests.
  */
 import { assert, describe, it } from "@effect/vitest";
+import { GitCommandError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -118,6 +119,66 @@ describe("GitCafeSourceControlProvider", () => {
       ),
     );
   });
+
+  it.effect(
+    "reads a bare owner/name on git.cafe without a remote, and no other host's pulls",
+    () => {
+      const urls: Array<string> = [];
+      const client = HttpClient.make((request) => {
+        urls.push(request.url);
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(encodeJson({ name: "project", defaultBranch: "trunk" })),
+          ),
+        );
+      });
+      return Effect.gen(function* () {
+        const provider = yield* GitCafeSourceControlProvider.make;
+        // The checkout has no remote at all, as when a repository is about to be created.
+        assert.deepStrictEqual(
+          yield* provider.getRepositoryCloneUrls({ cwd: "/repo", repository: "team/project" }),
+          {
+            nameWithOwner: "team/project",
+            url: "https://git.cafe/team/project",
+            sshUrl: "ssh@git.cafe:team/project.git",
+          },
+        );
+        const foreign = yield* provider
+          .getChangeRequest({
+            cwd: "/repo",
+            reference: "https://example.com/team/project/pulls/42",
+          })
+          .pipe(Effect.flip);
+        assert.strictEqual(foreign._tag, "SourceControlProviderError");
+        assert.deepStrictEqual(urls, ["https://git.cafe/api/repos/team/project"]);
+      }).pipe(
+        Effect.provide(
+          GitCafeApi.layer.pipe(
+            Layer.provide(GitCafeCredentials.layer),
+            Layer.provideMerge(
+              TestSourceControlHost.layer({
+                git: {
+                  resolvePrimaryRemoteName: () =>
+                    Effect.fail(
+                      new GitCommandError({
+                        operation: "resolvePrimaryRemoteName",
+                        command: "git remote",
+                        cwd: "/repo",
+                        detail: "No git remote is configured.",
+                      }),
+                    ),
+                },
+              }),
+            ),
+            Layer.provide(Layer.succeed(HostProcess.Environment, { CAFE_TOKEN: "env-token" })),
+            Layer.provide(Layer.succeed(HostProcess.WorkingDirectory, "/server")),
+            Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+          ),
+        ),
+      );
+    },
+  );
 
   it.effect.each([
     ["no context", undefined, "https://git.cafe/fork/project.git"],

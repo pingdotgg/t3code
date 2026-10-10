@@ -197,14 +197,22 @@ export const make = Effect.gen(function* () {
     const named =
       input.repository === undefined ? null : GitCafeHosts.parseGitCafeRemote(input.repository);
     if (named) return named;
+    // A bare owner/name only asks the checkout which GitCafe host it is on, so a checkout with no
+    // remote (a repository being created) still resolves, on git.cafe.
+    const readRemote = host.git
+      .resolvePrimaryRemoteName(input.cwd)
+      .pipe(
+        Effect.flatMap((remote) => host.git.readConfigValue(input.cwd, `remote.${remote}.url`)),
+      );
     const remoteUrl =
       input.context?.remoteUrl ??
-      (yield* host.git.resolvePrimaryRemoteName(input.cwd).pipe(
-        Effect.flatMap((remote) => host.git.readConfigValue(input.cwd, `remote.${remote}.url`)),
-        Effect.mapError((cause) =>
-          error(operation, input.cwd, "Could not read the GitCafe remote.", cause),
-        ),
-      ));
+      (input.repository === undefined
+        ? yield* readRemote.pipe(
+            Effect.mapError((cause) =>
+              error(operation, input.cwd, "Could not read the GitCafe remote.", cause),
+            ),
+          )
+        : yield* readRemote.pipe(Effect.orElseSucceed(() => null)));
     const remote = remoteUrl ? GitCafeHosts.parseGitCafeRemote(remoteUrl) : null;
     if (input.repository === undefined) {
       if (remote) return remote;
@@ -232,7 +240,12 @@ export const make = Effect.gen(function* () {
       urlHost && match?.[2]
         ? { host: urlHost, repository: match[2] }
         : yield* resolveTarget("getChangeRequest", input);
-    const number = match?.[3] ?? /^#?([1-9]\d*)$/u.exec(input.reference.trim())?.[1];
+    // A pull request URL on another host is not a GitCafe pull request number.
+    const number = match
+      ? urlHost
+        ? match[3]
+        : undefined
+      : /^#?([1-9]\d*)$/u.exec(input.reference.trim())?.[1];
     if (number === undefined)
       return yield* error(
         "getChangeRequest",

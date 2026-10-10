@@ -517,8 +517,9 @@ export const make = Effect.gen(function* () {
         return {
           items: items.slice(0, limit).map((pull) => {
             const item = Json.toChangeRequest(pull, input);
-            // GitCafe filtered by reviewer, so the viewer is one even where the pull omits it.
-            return input.involvement === "reviewing"
+            // GitCafe filtered by reviewer, so the viewer is one even where the pull omits it. An
+            // unnarrowed listing (no actor to filter by) says nothing about who was asked.
+            return input.involvement === "reviewing" && actorId !== undefined
               ? {
                   ...item,
                   reviewRequestLogins: [...new Set([...item.reviewRequestLogins, input.viewer])],

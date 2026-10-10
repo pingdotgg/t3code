@@ -566,23 +566,28 @@ describe("GitCafePullRequestProvider", () => {
     }).pipe(Effect.provide(server.layer));
   });
 
-  it.effect("lists unnarrowed when GitCafe can't say who the viewer is", () => {
-    // No `filter-options` route: the fake answers 404, which is an ordinary failure.
-    const server = fakeGitCafe({ "GET /repos/owner/repo/pulls": { items: [], next: null } });
-    return Effect.gen(function* () {
-      const provider = yield* GitCafePullRequestProvider.make;
-      yield* provider.listChangeRequests({
-        ...target,
-        state: "open",
-        involvement: "authored",
-        viewer: "alice",
-        limit: 10,
-      });
-      const listing = server.sent.find((request) => request.path === "/repos/owner/repo/pulls");
-      assert.isDefined(listing);
-      assert.isNull(listing!.query.get("authors"));
-    }).pipe(Effect.provide(server.layer));
-  });
+  it.effect.each(["authored", "reviewing"] as const)(
+    "lists %s unnarrowed when GitCafe can't say who the viewer is",
+    (involvement) => {
+      // No `filter-options` route: the fake answers 404, which is an ordinary failure.
+      const server = fakeGitCafe({ "GET /repos/owner/repo/pulls": { items: [pull], next: null } });
+      return Effect.gen(function* () {
+        const provider = yield* GitCafePullRequestProvider.make;
+        const page = yield* provider.listChangeRequests({
+          ...target,
+          state: "open",
+          involvement,
+          viewer: "alice",
+          limit: 10,
+        });
+        const listing = server.sent.find((request) => request.path === "/repos/owner/repo/pulls");
+        assert.isDefined(listing);
+        assert.isNull(listing!.query.get(involvement === "reviewing" ? "reviewers" : "authors"));
+        // An unnarrowed row says nothing about who was asked to review it.
+        assert.notInclude(page.items[0]?.reviewRequestLogins ?? [], "alice");
+      }).pipe(Effect.provide(server.layer));
+    },
+  );
 
   it.effect("counts lines from hunk reads and offers only strategies no blocker names", () => {
     const snapshot = { version: 4, headOid, comparisonBaseOid: baseOid };

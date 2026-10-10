@@ -178,6 +178,14 @@ describe("toViewerPermissions", () => {
     assert.isTrue(locked(true).comment);
     assert.deepStrictEqual(locked(true).verdicts, []);
   });
+
+  it("offers no composer to a viewer GitCafe won't let comment", () => {
+    const silent = permissions({
+      capabilities: { comment: false, review: true, merge: true, edit: true, moderate: true },
+    });
+    assert.isFalse(silent.comment);
+    assert.isFalse(silent.resolve);
+  });
 });
 
 describe("toActivity", () => {

@@ -297,9 +297,9 @@ export function toChangeRequest(
 
 /** What GitCafe's own capabilities let this viewer do with the pull request. */
 export function toViewerPermissions(detail: GitCafePullDetail): PullRequestViewerPermissions {
-  const { edit, review, merge, moderate } = detail.capabilities;
+  const { comment, edit, review, merge, moderate } = detail.capabilities;
   // A locked conversation keeps its composer for moderators only.
-  const open = detail.lockedAt == null || moderate;
+  const open = comment && (detail.lockedAt == null || moderate);
   return {
     actions: [
       // A merged pull request is settled; a closed one can only be reopened.
