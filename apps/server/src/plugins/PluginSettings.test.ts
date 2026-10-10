@@ -835,67 +835,72 @@ it.layer(NodeServices.layer)("PluginSettings", (it) => {
       ),
     );
 
-    it.effect("stops reading a plugin that does not read its answers, and loses none", () => {
-      const backedUp = Deferred.makeUnsafe<void>();
-      const logger = Logger.make(({ message }) => {
-        if (String(message).includes("not reading the server's answers"))
-          Deferred.doneUnsafe(backedUp, Exit.void);
-      });
-      return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const maxMessageBytes = 128 * 1024;
-        const supervisor = yield* makeSupervisor(yield* Scope.Scope, RAW_CHILD_PATH, {
-          maxMessageBytes,
+    // Below the channel's 64 KiB buffer a full bound can come without a write that waits for drain.
+    it.effect.each([
+      { maxMessageBytes: 128 * 1024, answerBytes: 60_000 },
+      { maxMessageBytes: 32 * 1024, answerBytes: 20_000 },
+    ])(
+      "stops reading a plugin that does not read its answers, and loses none ($maxMessageBytes bytes)",
+      ({ maxMessageBytes, answerBytes }) => {
+        const backedUp = Deferred.makeUnsafe<void>();
+        const logger = Logger.make(({ message }) => {
+          if (String(message).includes("not reading the server's answers"))
+            Deferred.doneUnsafe(backedUp, Exit.void);
         });
-        const answerBytes = 60_000;
-        let served = 0;
-        yield* supervisor
-          .serveHostMethod("flood.get", () =>
-            Effect.sync(() => {
-              served++;
-              return { data: "x".repeat(answerBytes) };
-            }),
-          )
-          .pipe(Effect.provideService(Scope.Scope, yield* Scope.Scope));
-        const requests = 400;
-        const flood = yield* prepareRawPlugin("test.flood", {
-          mode: "flood",
-          requests,
-          method: "flood.get",
-        });
-        const echo = yield* prepareRawPlugin("test.echo", { mode: "echo" });
-        yield* supervisor.enable(flood.registration);
-        yield* supervisor.enable(echo.registration);
-        const summary = yield* awaitLog(supervisor, "test.flood", (message) =>
-          message.startsWith("answered"),
-        );
-        const first = yield* supervisor
-          .invoke(flood.registration.manifest.id, "ping", 1)
-          .pipe(Effect.forkChild({ startImmediately: true }));
+        return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const supervisor = yield* makeSupervisor(yield* Scope.Scope, RAW_CHILD_PATH, {
+            maxMessageBytes,
+          });
+          let served = 0;
+          yield* supervisor
+            .serveHostMethod("flood.get", () =>
+              Effect.sync(() => {
+                served++;
+                return { data: "x".repeat(answerBytes) };
+              }),
+            )
+            .pipe(Effect.provideService(Scope.Scope, yield* Scope.Scope));
+          const requests = 400;
+          const flood = yield* prepareRawPlugin("test.flood", {
+            mode: "flood",
+            requests,
+            method: "flood.get",
+          });
+          const echo = yield* prepareRawPlugin("test.echo", { mode: "echo" });
+          yield* supervisor.enable(flood.registration);
+          yield* supervisor.enable(echo.registration);
+          const summary = yield* awaitLog(supervisor, "test.flood", (message) =>
+            message.startsWith("answered"),
+          );
+          const first = yield* supervisor
+            .invoke(flood.registration.manifest.id, "ping", 1)
+            .pipe(Effect.forkChild({ startImmediately: true }));
 
-        yield* Deferred.await(backedUp);
-        // Other plugins keep working while this one is not read.
-        expect(yield* supervisor.invoke(echo.registration.manifest.id, "ping", 2)).toBe(2);
-        // Without backpressure all 400 answers (24 MB) would sit in the server's write buffer.
-        expect(served).toBeGreaterThan(0);
-        expect(served).toBeLessThan(40);
+          yield* Deferred.await(backedUp);
+          // Other plugins keep working while this one is not read.
+          expect(yield* supervisor.invoke(echo.registration.manifest.id, "ping", 2)).toBe(2);
+          // Without backpressure all 400 answers would sit in the server's write buffer.
+          expect(served).toBeGreaterThan(0);
+          expect(served).toBeLessThan(40);
 
-        // Once the plugin reads again, every request gets exactly one answer.
-        const pid = Number(yield* fs.readFileString(path.join(flood.directory, "raw-child.pid")));
-        process.kill(pid, "SIGUSR2");
-        const answered = yield* Fiber.join(summary);
-        const [, total, refused, messages] = /^answered (\d+), refused (\d+): (.*)$/.exec(
-          answered,
-        )!;
-        expect(Number(total)).toBe(requests);
-        expect(served + Number(refused)).toBe(requests);
-        // A refusal can only be the cap, while answers wait for the plugin to read.
-        for (const message of parseRefusals(messages!))
-          expect(message).toBe("16 calls to the server are already in flight.");
-        expect(yield* Fiber.join(first)).toBe(1);
-      }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
-    });
+          // Once the plugin reads again, every request gets exactly one answer.
+          const pid = Number(yield* fs.readFileString(path.join(flood.directory, "raw-child.pid")));
+          process.kill(pid, "SIGUSR2");
+          const answered = yield* Fiber.join(summary);
+          const [, total, refused, messages] = /^answered (\d+), refused (\d+): (.*)$/.exec(
+            answered,
+          )!;
+          expect(Number(total)).toBe(requests);
+          expect(served + Number(refused)).toBe(requests);
+          // A refusal can only be the cap, while answers wait for the plugin to read.
+          for (const message of parseRefusals(messages!))
+            expect(message).toBe("16 calls to the server are already in flight.");
+          expect(yield* Fiber.join(first)).toBe(1);
+        }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+      },
+    );
 
     it.effect("refuses past 16 host calls from a plugin that bypasses the API", () =>
       Effect.gen(function* () {

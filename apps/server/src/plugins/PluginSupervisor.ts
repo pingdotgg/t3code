@@ -466,8 +466,12 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
     );
   });
 
+  // Only a write that filled the stream's own buffer is followed by `drain`, so a bound
+  // below that buffer waits for nothing else.
   const hasRoom = (child: Child) =>
-    child.channel.destroyed || child.channel.writableLength < maxMessageBytes;
+    child.channel.destroyed ||
+    child.channel.writableLength < maxMessageBytes ||
+    !child.channel.writableNeedDrain;
 
   /** Waits until the child has read enough of what was sent to it, or can no longer read. */
   const awaitRoom = (child: Child) =>
