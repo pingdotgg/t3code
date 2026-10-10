@@ -585,12 +585,9 @@ import {
   AlertDialogTitle,
 } from "./ui/alert-dialog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
-import { ServerUpdateAction } from "./ServerUpdateAction";
+import { ServerUpdateAction, serverUpdateStageLabel } from "./ServerUpdateAction";
 import { useAutoBalanceUpdateBanner } from "./chat/useAutoBalanceUpdateBanner";
-import {
-  ComposerServerUpdateIcon,
-  ComposerServerUpdateStatus,
-} from "./chat/ComposerServerUpdateStatus";
+import { ComposerServerUpdateIcon } from "./chat/ComposerServerUpdateStatus";
 import {
   buildVersionMismatchDismissalKey,
   dismissServerUpdateFailure,
@@ -3155,10 +3152,7 @@ export default function ChatView(props: ChatViewProps) {
         icon: <ComposerServerUpdateIcon status={serverUpdateState.status} />,
         title:
           updateInProgress || updateFailed ? (
-            <ComposerServerUpdateStatus
-              state={serverUpdateState}
-              serverLabel={versionMismatchServerLabel}
-            />
+            `${updateFailed ? "Could not update" : "Updating"} ${versionMismatchServerLabel}`
           ) : versionMismatch ? (
             <Tooltip>
               <TooltipTrigger
@@ -3180,12 +3174,15 @@ export default function ChatView(props: ChatViewProps) {
             "Server update available"
           ),
         description:
-          !updateInProgress &&
-          !updateFailed &&
-          versionMismatchSelfUpdate !== null &&
-          (versionMismatchSelfUpdate !== "desktop-managed" || !versionMismatchDesktopAppUpdate)
-            ? serverUpdateGuidance(versionMismatchSelfUpdate)
-            : undefined,
+          serverUpdateState.status === "failed"
+            ? serverUpdateState.message
+            : serverUpdateState.status === "running"
+              ? serverUpdateStageLabel(serverUpdateState.stage)
+              : versionMismatchSelfUpdate !== null &&
+                  (versionMismatchSelfUpdate !== "desktop-managed" ||
+                    !versionMismatchDesktopAppUpdate)
+                ? serverUpdateGuidance(versionMismatchSelfUpdate)
+                : undefined,
         actions: updateInProgress ? (
           disconnectAction
         ) : !versionMismatch ||
