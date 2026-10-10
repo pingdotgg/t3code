@@ -443,7 +443,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   );
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
   const [submittedMessageId, setSubmittedMessageId] = useState<MessageId | null>(null);
-  const [endFollowEnabled, setEndFollowEnabled] = useState(true);
+  const [scrollToEndVisible, setScrollToEndVisible] = useState(false);
   // Android keys the safe-area padding on keyboard visibility (#5988): the
   // back gesture closes the keyboard while the editor stays focused, and a
   // focus-keyed inset would leave the toolbar under the gesture bar. iOS must
@@ -745,8 +745,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     [userInputCoverageApplies],
   );
   const { freeze, scrollMessageToEnd } = useKeyboardScrollToEnd({ listRef });
+  // Only the overlay re-pin reads follow, so keep it out of render state.
   const endFollowEnabledRef = useRef(true);
-  endFollowEnabledRef.current = endFollowEnabled;
+  const handleEndFollowEnabledChange = useCallback((enabled: boolean) => {
+    endFollowEnabledRef.current = enabled;
+  }, []);
   const overlayRepinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previousWorkingControlStateRef = useRef({
     threadKey: selectedThreadKey,
@@ -941,7 +944,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     setAnchorMessageId(null);
     setSubmittedMessageId(null);
     lastScrolledSubmittedMessageIdRef.current = null;
-    setEndFollowEnabled(true);
+    endFollowEnabledRef.current = true;
+    setScrollToEndVisible(false);
     freeze.set(false);
   }, [freeze, selectedThreadKey]);
 
@@ -1084,7 +1088,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     });
   }, [freeze, scrollMessageToEnd]);
 
-  const showScrollToEndButton = contentPresentationKind === "ready" && !endFollowEnabled;
+  const showScrollToEndButton = contentPresentationKind === "ready" && scrollToEndVisible;
   const { themeAppearance } = useAppearancePreferences();
   const isDarkMode = themeAppearance === "dark";
 
@@ -1182,7 +1186,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               layoutVariant={layoutVariant}
               usesAutomaticContentInsets={props.usesAutomaticContentInsets}
               onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
-              onEndFollowEnabledChange={setEndFollowEnabled}
+              onEndFollowEnabledChange={handleEndFollowEnabledChange}
+              onScrollToEndVisibleChange={setScrollToEndVisible}
               skills={selectedProviderSkills}
               onUseArtifactTemplate={handleUseArtifactTemplate}
             />

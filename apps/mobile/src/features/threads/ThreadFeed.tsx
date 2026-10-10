@@ -303,6 +303,9 @@ export interface ThreadFeedProps {
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly onEndFollowEnabledChange?: (enabled: boolean) => void;
+  // Reports whether the scroll-to-end button should show: follow is off and
+  // the list sits above the end. Overscrolling past the end does not count.
+  readonly onScrollToEndVisibleChange?: (visible: boolean) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
 }
@@ -2231,6 +2234,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // momentum; scroll events only break follow inside that session, so MVCP
   // compensations and programmatic scrolls never strand a follower.
   const userScrollSessionRef = useRef(false);
+  // Any drag pauses follow, including one that pulls past the end. The
+  // scroll-to-end button only shows once the list is actually above the end,
+  // so overscroll and its bounce back never flash it. Refs only: the parent
+  // renders the button, so this feed never re-renders for it.
+  const isAtEndRef = useRef(true);
+  const scrollToEndVisibleRef = useRef(false);
   const setEndFollow = useCallback(
     (enabled: boolean) => {
       if (endFollowEnabledRef.current === enabled) {
@@ -2244,9 +2253,17 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   );
   const transitionEndFollow = useCallback(
     (event: ThreadFeedLiveFollowEvent) => {
+      if ("isAtEnd" in event) {
+        isAtEndRef.current = event.isAtEnd;
+      }
       setEndFollow(resolveThreadFeedLiveFollow(endFollowEnabledRef.current, event));
+      const scrollToEndVisible = !endFollowEnabledRef.current && !isAtEndRef.current;
+      if (scrollToEndVisibleRef.current !== scrollToEndVisible) {
+        scrollToEndVisibleRef.current = scrollToEndVisible;
+        props.onScrollToEndVisibleChange?.(scrollToEndVisible);
+      }
     },
-    [setEndFollow],
+    [props.onScrollToEndVisibleChange, setEndFollow],
   );
   const [interactionState, setInteractionState] = useState<{
     readonly copiedRowId: string | null;
@@ -2623,10 +2640,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const handleScrollBeginDrag = useCallback(() => {
     clearUserScrollSettle();
     userScrollSessionRef.current = true;
+    isAtEndRef.current = props.listRef.current?.getState().isAtEnd ?? isAtEndRef.current;
     // Pause before the first scroll event. Otherwise a stream update can run
     // maintainScrollAtEnd between touch-down and the drag leaving its threshold.
     transitionEndFollow({ type: "user-scroll-begin" });
-  }, [clearUserScrollSettle, transitionEndFollow]);
+  }, [clearUserScrollSettle, props.listRef, transitionEndFollow]);
   const finishUserScroll = useCallback(
     (releaseIsAtEnd?: boolean) => {
       clearUserScrollSettle();
