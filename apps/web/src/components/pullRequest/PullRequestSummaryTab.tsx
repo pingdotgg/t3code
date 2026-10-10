@@ -1,3 +1,4 @@
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { useAtomCommand } from "~/state/use-atom-command";
 import type {
   EnvironmentId,
@@ -83,10 +84,9 @@ function CommentIdentity({
   detail: PullRequestDetailView;
 }) {
   const actor = comment.author;
-  const profileUrl =
-    detail.provider === "github" && actor && !actor.login.endsWith("[bot]")
-      ? new URL(`/${encodeURIComponent(actor.login)}`, detail.url).toString()
-      : null;
+  const profileUrl = actor
+    ? sourceControlClients.get(detail.provider).authorProfileUrl(actor.login, detail.url)
+    : null;
   return (
     <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
       <PullRequestActorLabel actor={actor} profileUrl={profileUrl} className="max-w-full" />

@@ -1,3 +1,4 @@
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 /**
  * The single floating control over a pull request. Commenting on the change and submitting the
  * review that carries the Code tab's line comments used to float as two buttons that crowded
@@ -158,7 +159,9 @@ export function PullRequestComposer({
               environmentId={environmentId}
               reference={reference}
               verdicts={verdicts}
-              requestChangesSummaryRequired={detail.provider === "forgejo"}
+              requestChangesSummaryRequired={sourceControlClients
+                .get(detail.provider)
+                .reviewSummaryRequired("request-changes")}
               textareaRef={reviewRef}
               pending={reviewPending}
               onPendingChange={setReviewPending}

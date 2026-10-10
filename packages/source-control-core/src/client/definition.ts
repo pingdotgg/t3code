@@ -101,7 +101,7 @@ export function defineSourceControlClient<const Definition extends SourceControl
 }
 
 /** What clients show for a host they ship no definition for, including `unknown`. */
-const UNKNOWN_SOURCE_CONTROL_CLIENT: SourceControlClientDefinition = {
+export const UNKNOWN_SOURCE_CONTROL_CLIENT: SourceControlClientDefinition = {
   kind: SourceControlProviderKind.make("unknown"),
   label: "source control",
   pickerLabel: "source control",
