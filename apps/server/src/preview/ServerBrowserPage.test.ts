@@ -319,3 +319,104 @@ describe("server browser drag", () => {
     }
   });
 });
+
+describe("server browser snapshot size", () => {
+  /** Width and height from the PNG's IHDR chunk. */
+  const pngSize = (data: string) => {
+    const bytes = Buffer.from(data, "base64");
+    return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+  };
+
+  // Chromium sizes a scaled capture by the window's real ratio, so each case launches at its own,
+  // as a display does for a tab the desktop draws.
+  it.each([1, 1.5, 2])(
+    "captures a 1280x800 viewport at 1280x800 when the render scale is the page's %sx",
+    async (deviceScaleFactor) => {
+      const browser = await chromium.launch({
+        headless: true,
+        args: [`--force-device-scale-factor=${deviceScaleFactor}`],
+      });
+      try {
+        const context = await browser.newContext({
+          viewport: { width: 1280, height: 800 },
+          deviceScaleFactor,
+        });
+        const page = await context.newPage();
+        const cdp = await context.newCDPSession(page);
+        await page.setContent("<p>sized</p>");
+        // A just-launched browser can refuse a capture until it has painted.
+        await page.evaluate(
+          "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+        );
+        const result = await ServerBrowserPage.snapshot({
+          page,
+          cdp,
+          renderScale: deviceScaleFactor,
+          consoleEntries: [],
+          networkEntries: [],
+          actionTimeline: [],
+        });
+        expect(pngSize(result.screenshot.data)).toEqual({ width: 1280, height: 800 });
+        expect(result.screenshot).toMatchObject({ width: 1280, height: 800 });
+      } finally {
+        await browser.close();
+      }
+    },
+  );
+
+  it("reads the page's own ratio and viewport after page script reassigns them", async () => {
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const context = await browser.newContext({
+        viewport: { width: 1280, height: 800 },
+        deviceScaleFactor: 1.5,
+      });
+      const page = await context.newPage();
+      const cdp = await context.newCDPSession(page);
+      await page.setContent(
+        "<script>devicePixelRatio = -1.5; innerHeight = 1e7; innerWidth = 99999;</script>",
+      );
+      expect(await page.evaluate("[devicePixelRatio, innerWidth, innerHeight]")).toEqual([
+        -1.5, 99999, 1e7,
+      ]);
+      expect(await ServerBrowserPage.readPageMetrics(cdp)).toEqual({
+        ratio: 1.5,
+        width: 1280,
+        height: 800,
+        zoom: 1,
+      });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it("reports the captured image's size when the given viewport is a pixel off", async () => {
+    const browser = await chromium.launch({
+      headless: true,
+      args: ["--force-device-scale-factor=1"],
+    });
+    try {
+      const context = await browser.newContext({ viewport: { width: 539, height: 939 } });
+      const page = await context.newPage();
+      const cdp = await context.newCDPSession(page);
+      await page.setContent("<p>sized</p>");
+      await page.evaluate(
+        "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+      );
+      // A zoomed desktop page's integer CSS size times its zoom can miss its real width by one.
+      const result = await ServerBrowserPage.snapshot({
+        page,
+        cdp,
+        renderScale: 1,
+        viewport: { width: 538, height: 940 },
+        consoleEntries: [],
+        networkEntries: [],
+        actionTimeline: [],
+      });
+      expect(pngSize(result.screenshot.data)).toEqual({ width: 539, height: 939 });
+      expect(result.screenshot).toMatchObject({ width: 539, height: 939 });
+    } finally {
+      await browser.close();
+    }
+  });
+});

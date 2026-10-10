@@ -150,19 +150,68 @@ const SNAPSHOT_SCRIPT = `(() => {
   };
 })()`;
 
+/**
+ * Width and height from a PNG's header, so the reported size is the image's own. Null for data
+ * that is not a PNG.
+ */
+const pngSize = (base64: string) => {
+  const header = Buffer.from(base64.slice(0, 32), "base64");
+  return header.length >= 24 && header.toString("latin1", 12, 16) === "IHDR"
+    ? { width: header.readUInt32BE(16), height: header.readUInt32BE(20) }
+    : null;
+};
+
+/** A page's viewport in device-independent pixels, the units a capture clip is given in. */
+type Viewport = { readonly width: number; readonly height: number };
+
+/**
+ * A page's display ratio and CSS viewport, and its zoom. The ratio and viewport are read in an
+ * isolated world, since page script can reassign `devicePixelRatio`, `innerWidth`, and
+ * `innerHeight` in its own.
+ */
+export const readPageMetrics = async (cdp: CDPSession) => {
+  const { frameTree } = await cdp.send("Page.getFrameTree");
+  const { executionContextId } = await cdp.send("Page.createIsolatedWorld", {
+    frameId: frameTree.frame.id,
+    // Chromium reuses a named world; an unnamed one is created again on each call.
+    worldName: "t3-preview-metrics",
+  });
+  const { result } = await cdp.send("Runtime.evaluate", {
+    expression: "({ ratio: devicePixelRatio, width: innerWidth, height: innerHeight })",
+    contextId: executionContextId,
+    returnByValue: true,
+  });
+  const { cssVisualViewport } = await cdp.send("Page.getLayoutMetrics");
+  return {
+    ...(result.value as {
+      readonly ratio: number;
+      readonly width: number;
+      readonly height: number;
+    }),
+    zoom: cssVisualViewport.zoom ?? 1,
+  };
+};
+
 // Scaled captures repaint live screencasts, so callers pause them. Clips use document offsets.
 export const captureViewport = async (
   page: Page,
   cdp: CDPSession,
-  options: { readonly format: "png" | "jpeg"; readonly quality?: number; readonly scale: number },
+  options: {
+    readonly format: "png" | "jpeg";
+    readonly quality?: number;
+    readonly scale: number;
+    readonly viewport?: Viewport;
+  },
 ) => {
   let clip;
   if (options.scale < 1) {
-    const viewport = page.viewportSize() ?? { width: 1280, height: 800 };
+    const viewport = options.viewport ?? page.viewportSize() ?? { width: 1280, height: 800 };
     const { cssVisualViewport } = await cdp.send("Page.getLayoutMetrics");
+    // The offsets are CSS pixels; a clip is in device-independent pixels, which page zoom scales.
+    const zoom = cssVisualViewport.zoom ?? 1;
     clip = {
-      x: cssVisualViewport.pageX,
-      y: cssVisualViewport.pageY,
+      x: cssVisualViewport.pageX * zoom,
+      y: cssVisualViewport.pageY * zoom,
       ...viewport,
       scale: options.scale,
     };
@@ -179,11 +228,13 @@ export const snapshot = async (input: {
   readonly page: Page;
   readonly cdp: CDPSession;
   readonly renderScale: number;
+  /** For a page Playwright did not size, such as one the desktop draws. */
+  readonly viewport?: Viewport;
   readonly consoleEntries: ReadonlyArray<PreviewAutomationConsoleEntry>;
   readonly networkEntries: ReadonlyArray<PreviewAutomationNetworkEntry>;
   readonly actionTimeline: PreviewAutomationSnapshot["actionTimeline"];
 }): Promise<PreviewAutomationSnapshot> => {
-  const viewport = input.page.viewportSize() ?? { width: 1280, height: 800 };
+  const viewport = input.viewport ?? input.page.viewportSize() ?? { width: 1280, height: 800 };
   const scale = Math.min(1, MAX_SCREENSHOT_WIDTH / (viewport.width * input.renderScale));
   const state = refsFor(input.page);
   invalidateRefs(input.page);
@@ -196,7 +247,7 @@ export const snapshot = async (input: {
       >
     >,
     input.page.ariaSnapshot({ mode: "ai", boxes: true, timeout: DEFAULT_TIMEOUT_MS }),
-    captureViewport(input.page, input.cdp, { format: "png", scale }),
+    captureViewport(input.page, input.cdp, { format: "png", scale, viewport }),
   ]);
   if (state.generation !== generation) {
     throw new ServerBrowserOperationError(
@@ -220,8 +271,10 @@ export const snapshot = async (input: {
     screenshot: {
       mimeType: "image/png",
       data,
-      width: Math.round(viewport.width * input.renderScale * scale),
-      height: Math.round(viewport.height * input.renderScale * scale),
+      ...(pngSize(data) ?? {
+        width: Math.round(viewport.width * input.renderScale * scale),
+        height: Math.round(viewport.height * input.renderScale * scale),
+      }),
     },
   };
 };

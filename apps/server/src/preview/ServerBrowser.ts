@@ -1490,6 +1490,25 @@ const make = Effect.gen(function* () {
     return started;
   };
 
+  /**
+   * What sizes a snapshot. Chromium sizes a capture in device-independent pixels times the
+   * display's scale, without page zoom. A headless tab renders at RENDER_SCALE in the viewport
+   * Playwright set. A tab the desktop draws has neither: its page reports the display's scale
+   * times its zoom, and its viewport in CSS pixels. The zoom comes from the page too, because
+   * the desktop applies a zoom change some time after the server publishes it.
+   */
+  const snapshotRendering = async (tab: ServerTab) => {
+    if (!tab.desktop) return { renderScale: RENDER_SCALE };
+    const page = await ServerBrowserPage.readPageMetrics(tab.cdp);
+    return {
+      renderScale: page.ratio / page.zoom,
+      viewport: {
+        width: Math.round(page.width * page.zoom),
+        height: Math.round(page.height * page.zoom),
+      },
+    };
+  };
+
   // Scaled captures repaint every screencast; pause them to avoid leaking that frame.
   const withScreencastsPaused = <A>(tab: ServerTab, capture: () => Promise<A>): Promise<A> =>
     withCaptureLock(tab, async () => {
@@ -1912,8 +1931,8 @@ const make = Effect.gen(function* () {
         return { tabId: tab.tabId, colorScheme };
       }
       case "snapshot": {
-        return withScreencastsPaused(tab, () =>
-          ServerBrowserPage.snapshot({ ...tab, renderScale: RENDER_SCALE }),
+        return withScreencastsPaused(tab, async () =>
+          ServerBrowserPage.snapshot({ ...tab, ...(await snapshotRendering(tab)) }),
         );
       }
       case "click": {

@@ -1310,6 +1310,197 @@ it.live("viewers see the agent's pointer move to its target and click there", ()
   ).pipe(Effect.provide(layer)),
 );
 
+/** Makes a fake desktop page report its ratio, CSS viewport, and zoom, as a real one would. */
+const reportPage = (
+  context: ReturnType<typeof makeContext>,
+  page: {
+    readonly ratio: number;
+    readonly width: number;
+    readonly height: number;
+    readonly zoom?: number;
+    /** How far the page is scrolled down, in CSS pixels. */
+    readonly scrollY?: number;
+  },
+) => {
+  const { zoom = 1, scrollY = 0, ...reported } = page;
+  const replies: Record<string, Record<string, unknown>> = {
+    "Page.getFrameTree": { frameTree: { frame: { id: "main" } } },
+    "Page.createIsolatedWorld": { executionContextId: 7 },
+    "Page.getLayoutMetrics": { cssVisualViewport: { pageX: 0, pageY: scrollY, zoom } },
+  };
+  for (const session of context.sessions) {
+    const send = session.send.getMockImplementation()!;
+    session.send.mockImplementation(async (method, input) =>
+      method === "Runtime.evaluate" && (input as { contextId?: number })?.contextId === 7
+        ? { result: { value: reported } }
+        : (replies[method] ?? send(method, input)),
+    );
+  }
+};
+
+/** The clip of each scaled capture a context's sessions were asked for. Viewer stills are full size. */
+const captureClips = (context: ReturnType<typeof makeContext>) =>
+  context.sessions.flatMap((session) =>
+    session.send.mock.calls.flatMap(([method, input]) => {
+      const clip = (
+        input as
+          | {
+              readonly clip?: {
+                readonly width: number;
+                readonly height: number;
+                readonly scale: number;
+              };
+            }
+          | undefined
+      )?.clip;
+      return method === "Page.captureScreenshot" && clip !== undefined
+        ? [{ width: clip.width, height: clip.height, scale: clip.scale }]
+        : [];
+    }),
+  );
+
+it.live("sizes a snapshot by the display's ratio for a tab the desktop renders", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      desktopRendersNext = true;
+      const { browser, broker, tabId } = yield* ready;
+      yield* browser.attachViewer(viewerInput(tabId, false));
+      const context = desktopConnections[0]!.context;
+      // A 150% display, with the page at the panel's default 1280x800.
+      reportPage(context, { ratio: 1.5, width: 1280, height: 800 });
+      const snapshot = yield* broker.invoke<PreviewAutomationSnapshot>({
+        scope,
+        tabId,
+        operation: "snapshot",
+        input: {},
+      });
+      expect(captureClips(context)).toEqual([{ width: 1280, height: 800, scale: 1280 / 1920 }]);
+      expect(snapshot.screenshot).toMatchObject({ width: 1280, height: 800 });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("captures the viewport a desktop-drawn page actually has", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      desktopRendersNext = true;
+      const { browser, broker, tabId } = yield* ready;
+      yield* browser.attachViewer(viewerInput(tabId, false));
+      const context = desktopConnections[0]!.context;
+      // The desktop window was zoomed out, so the page lays out smaller than 1280x800.
+      reportPage(context, { ratio: 1.5, width: 1067, height: 667 });
+      const snapshot = yield* broker.invoke<PreviewAutomationSnapshot>({
+        scope,
+        tabId,
+        operation: "snapshot",
+        input: {},
+      });
+      expect(captureClips(context)).toEqual([
+        { width: 1067, height: 667, scale: 1280 / (1067 * 1.5) },
+      ]);
+      expect(snapshot.screenshot).toMatchObject({ width: 1280, height: 800 });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("leaves page zoom out of a desktop-drawn tab's snapshot scale", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      desktopRendersNext = true;
+      const { browser, broker, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      yield* browser.attachViewer(viewerInput(tabId, false));
+      const context = desktopConnections[0]!.context;
+      yield* manager.adjust({ threadId: scope.thread.threadId, tabId, zoomFactor: 2 });
+      // A 150% display with the page at 200% zoom: it lays out at half size in CSS pixels.
+      reportPage(context, { ratio: 3, width: 640, height: 400, zoom: 2 });
+      const snapshot = yield* broker.invoke<PreviewAutomationSnapshot>({
+        scope,
+        tabId,
+        operation: "snapshot",
+        input: {},
+      });
+      expect(captureClips(context)).toEqual([{ width: 1280, height: 800, scale: 1280 / 1920 }]);
+      expect(snapshot.screenshot).toMatchObject({ width: 1280, height: 800 });
+      // The desktop zooms its own page; the server sends it no emulation.
+      expect(
+        context.sessions.flatMap((session) => session.send.mock.calls.map(([method]) => method)),
+      ).not.toContain("Emulation.setDeviceMetricsOverride");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("sizes a desktop-drawn snapshot by the zoom the page has, not one still on its way", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      desktopRendersNext = true;
+      const { browser, broker, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      yield* browser.attachViewer(viewerInput(tabId, false));
+      const context = desktopConnections[0]!.context;
+      yield* manager.adjust({ threadId: scope.thread.threadId, tabId, zoomFactor: 2 });
+      // The desktop has not applied the new zoom yet, so the page is still at 100%.
+      reportPage(context, { ratio: 1.5, width: 1280, height: 800, zoom: 1 });
+      const snapshot = yield* broker.invoke<PreviewAutomationSnapshot>({
+        scope,
+        tabId,
+        operation: "snapshot",
+        input: {},
+      });
+      expect(captureClips(context)).toEqual([{ width: 1280, height: 800, scale: 1280 / 1920 }]);
+      expect(snapshot.screenshot).toMatchObject({ width: 1280, height: 800 });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("starts a zoomed desktop-drawn page's clip where it is scrolled to", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      desktopRendersNext = true;
+      const { browser, broker, tabId } = yield* ready;
+      yield* browser.attachViewer(viewerInput(tabId, false));
+      const context = desktopConnections[0]!.context;
+      // Scrolled 100 CSS pixels at 200% zoom is 200 device-independent pixels down.
+      reportPage(context, { ratio: 3, width: 640, height: 400, zoom: 2, scrollY: 100 });
+      yield* broker.invoke<PreviewAutomationSnapshot>({
+        scope,
+        tabId,
+        operation: "snapshot",
+        input: {},
+      });
+      const origins = context.sessions.flatMap((session) =>
+        session.send.mock.calls.flatMap(([method, input]) => {
+          const clip = (input as { readonly clip?: { readonly x: number; readonly y: number } })
+            ?.clip;
+          return method === "Page.captureScreenshot" && clip ? [{ x: clip.x, y: clip.y }] : [];
+        }),
+      );
+      expect(origins).toEqual([{ x: 0, y: 200 }]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("keeps a headless tab's snapshot at its own render scale", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const snapshot = yield* broker.invoke<PreviewAutomationSnapshot>({
+        scope,
+        tabId,
+        operation: "snapshot",
+        input: {},
+      });
+      expect(captureClips(contexts[0]!)).toEqual([{ width: 1280, height: 800, scale: 0.5 }]);
+      expect(
+        contexts[0]!.sessions.flatMap((session) =>
+          session.send.mock.calls.map(([method]) => method),
+        ),
+      ).not.toContain("Page.createIsolatedWorld");
+      expect(snapshot.screenshot).toMatchObject({ width: 1280, height: 800 });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("drives the desktop's own page for a tab the desktop renders", () =>
   Effect.scoped(
     Effect.gen(function* () {
