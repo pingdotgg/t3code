@@ -119,6 +119,7 @@ vi.mock("../ui/wizard", () => ({
 vi.mock("../ui/scroll-area", () => ({ ScrollArea: "div" }));
 vi.mock("../ui/tooltip", () => ({ Tooltip: "div", TooltipTrigger: "span", TooltipPopup: "span" }));
 vi.mock("../../connection/onboarding", () => ({ connectPairing: "connectPairing" }));
+vi.mock("../../connection/catalog", () => ({ environmentCatalog: { setEnabled: "setEnabled" } }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (
     command: "createProject" | "importThreads" | "refreshProviders" | "connectPairing",

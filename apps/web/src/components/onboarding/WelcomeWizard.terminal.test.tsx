@@ -80,6 +80,7 @@ vi.mock("../../state/use-atom-command", () => ({
   ) => state[command],
 }));
 vi.mock("../../connection/onboarding", () => ({ connectPairing: "pair" }));
+vi.mock("../../connection/catalog", () => ({ environmentCatalog: { setEnabled: "setEnabled" } }));
 vi.mock("../../state/agentSessions", () => ({
   agentSessionImport: "importThreads",
   agentSessionScan: vi.fn(),
