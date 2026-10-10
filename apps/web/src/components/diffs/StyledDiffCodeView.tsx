@@ -156,6 +156,54 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   grid-column: 2 !important;
 }
 
+/* Pierre only widens the separator past the line-number gutter in unified mode. In split mode
+   the deletions-side label spans its column instead. */
+@supports (width: 1cqi) {
+  [data-overflow="scroll"]
+    [data-deletions]
+    [data-gutter]
+    :is([data-separator="line-info"], [data-separator="line-info-basic"])
+    [data-separator-wrapper] {
+    width: 100cqi !important;
+  }
+}
+
+/* With wrapping, both columns share one grid and no container matches a column, so the label
+   moves into the deletions code cell, where Pierre already draws the additions-side bar. */
+[data-overflow="wrap"]
+  [data-deletions]
+  [data-gutter]
+  :is([data-separator="line-info"], [data-separator="line-info-basic"])
+  [data-separator-wrapper] {
+  display: none !important;
+}
+
+[data-overflow="wrap"]
+  [data-deletions]
+  [data-content]
+  :is([data-separator="line-info"], [data-separator="line-info-basic"])
+  [data-separator-wrapper] {
+  display: flex !important;
+}
+
+[data-overflow="wrap"]
+  [data-deletions]
+  [data-content]
+  :is([data-separator="line-info"], [data-separator="line-info-basic"])[data-expand-index]
+  [data-separator-wrapper] {
+  display: grid !important;
+}
+
+/* The additions side of a split separator is an empty bar; continue the divider line across it. */
+[data-additions] [data-separator="line-info"] [data-separator-wrapper]::before {
+  position: absolute;
+  inset-inline: 8px 4px;
+  top: 50%;
+  height: 1px;
+  content: "";
+  background-color: color-mix(in srgb, var(--code-background) 92%, var(--code-foreground));
+}
+
 /* Visually hidden rather than display: none so the expand action stays keyboard-reachable. */
 :is([data-separator="line-info"], [data-separator="line-info-basic"])
   [data-expand-button] {
