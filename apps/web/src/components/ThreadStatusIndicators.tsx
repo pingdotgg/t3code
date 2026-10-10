@@ -16,7 +16,7 @@ import {
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { FolderGit2Icon, TerminalIcon } from "lucide-react";
-import { useCallback, useMemo } from "react";
+import { Fragment, useCallback, useMemo } from "react";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
@@ -31,7 +31,8 @@ import { useRender } from "@base-ui/react/use-render";
 import { type ReactNode, type AnimationEvent, type MouseEvent, type ReactElement } from "react";
 import { cn } from "../lib/utils";
 
-import { parseChangeRequestUrl } from "../lib/openPullRequestLink";
+import { findProjectForChangeRequest, parseChangeRequestUrl } from "../lib/openPullRequestLink";
+import { MiddleTruncate } from "./ui/middle-truncate";
 import { useEnvironmentQuery } from "../state/query";
 import { linkedPullRequestDetailAtom, useSharedPullRequestSummary } from "../state/pullRequests";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
@@ -47,6 +48,7 @@ import {
 } from "./Sidebar.logic";
 
 import type { SidebarThreadSummary } from "../types";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { formatWorktreePathForDisplay } from "../worktreeCleanup";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { pullRequestListLines } from "./pullRequest/pullRequestListLines";
@@ -225,6 +227,7 @@ export function ThreadPullRequestBadgeControl({
   render,
   badge,
   pullRequests,
+  project,
   number,
   url,
   status,
@@ -234,6 +237,7 @@ export function ThreadPullRequestBadgeControl({
   render: ReactElement<{ render?: useRender.RenderProp }>;
   badge: ThreadPullRequestBadge | null;
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
+  project: EnvironmentProject | null;
   number?: number | undefined;
   url?: string | undefined;
   status: PrStatusIndicator | null;
@@ -251,6 +255,7 @@ export function ThreadPullRequestBadgeControl({
       number={number}
       status={status}
       pullRequests={pullRequests}
+      project={project}
       onOpenList={onOpenList}
       onOpenPullRequest={onOpenPullRequest}
     />
@@ -265,6 +270,7 @@ function PullRequestBadge({
   number,
   status,
   pullRequests,
+  project,
   onOpenList,
   onOpenPullRequest,
 }: {
@@ -275,6 +281,7 @@ function PullRequestBadge({
   number: number | undefined;
   status: PrStatusIndicator | null;
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
+  project: EnvironmentProject | null;
   onOpenList: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLElement>, url?: string) => void;
 }) {
@@ -322,6 +329,7 @@ function PullRequestBadge({
         {visibleThreadPullRequests(pullRequests).length > 0 ? (
           <ThreadPullRequestsMiniList
             pullRequests={pullRequests}
+            project={project}
             onOpenPullRequest={onOpenPullRequest}
           />
         ) : number !== undefined && url !== undefined ? (
@@ -346,9 +354,11 @@ function PullRequestBadge({
  */
 export function ThreadPullRequestsMiniList({
   pullRequests,
+  project,
   onOpenPullRequest,
 }: {
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
+  project: EnvironmentProject | null;
   onOpenPullRequest?: (event: MouseEvent<HTMLAnchorElement>, url: string) => void;
 }) {
   const lines = useMemo(
@@ -357,30 +367,47 @@ export function ThreadPullRequestsMiniList({
     [pullRequests],
   );
   if (lines.length === 0) return null;
+  // A bare number reads as one of the project's own, so another repo's PR needs a heading.
+  const groupByRepository = lines.some(
+    (line) => project === null || findProjectForChangeRequest([project], line.link) === undefined,
+  );
   return (
     <ul className="flex flex-col gap-1">
-      {lines.map((line) => {
+      {lines.map((line, index) => {
         const snapshot = line.link.snapshot;
         const presentation =
           snapshot === null
             ? null
             : resolvePullRequestState({ state: snapshot.state, isDraft: snapshot.isDraft });
+        const heading =
+          groupByRepository && lines[index - 1]?.link.repository !== line.link.repository;
         return (
-          <ThreadPullRequestMiniListItem
-            key={`${line.link.host}/${line.link.repository}#${line.link.number}`}
-            number={line.link.number}
-            url={line.link.url}
-            title={snapshot?.title ?? line.link.repository}
-            presentation={presentation}
-            depth={line.depth}
-            onOpenPullRequest={onOpenPullRequest}
-          >
-            {line.stack ? (
-              <span className="ml-auto shrink-0 pl-1 text-3xs">
-                {line.stack.kind === "native" ? "stack" : "chain"} · {line.stack.size}
-              </span>
+          <Fragment key={`${line.link.host}/${line.link.repository}#${line.link.number}`}>
+            {heading ? (
+              <li
+                className={cn(
+                  "flex min-w-0 font-mono text-3xs text-muted-foreground/60",
+                  index > 0 && "pt-1",
+                )}
+              >
+                <MiddleTruncate value={line.link.repository} />
+              </li>
             ) : null}
-          </ThreadPullRequestMiniListItem>
+            <ThreadPullRequestMiniListItem
+              number={line.link.number}
+              url={line.link.url}
+              title={snapshot?.title ?? line.link.repository}
+              presentation={presentation}
+              depth={line.depth}
+              onOpenPullRequest={onOpenPullRequest}
+            >
+              {line.stack ? (
+                <span className="ml-auto shrink-0 pl-1 text-3xs">
+                  {line.stack.kind === "native" ? "stack" : "chain"} · {line.stack.size}
+                </span>
+              ) : null}
+            </ThreadPullRequestMiniListItem>
+          </Fragment>
         );
       })}
     </ul>

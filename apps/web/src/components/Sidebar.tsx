@@ -442,7 +442,7 @@ function SidebarThreadTooltip({
   terminalProcessCount,
 }: {
   thread: SidebarThreadSummary;
-  project: ProjectFaviconProject | null;
+  project: EnvironmentProject | null;
   projectDisplayName: string | null;
   environmentLabel: string | null;
   environmentMachine: EnvironmentMachineKind;
@@ -470,7 +470,7 @@ function SidebarThreadTooltip({
         footer={
           supportsMultiplePullRequests && thread.pullRequests.length > 0 ? (
             <div className="border-t border-border/60 pt-2 pl-0.5 text-xs text-muted-foreground">
-              <ThreadPullRequestsMiniList pullRequests={thread.pullRequests} />
+              <ThreadPullRequestsMiniList pullRequests={thread.pullRequests} project={project} />
             </div>
           ) : null
         }
@@ -1713,6 +1713,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         render={<InlineButton />}
         badge={prBadgeShape}
         pullRequests={thread.pullRequests}
+        project={props.project}
         number={pr?.number ?? currentLinkedPr?.number}
         url={pr?.url ?? currentLinkedPr?.url}
         status={prStatus}
