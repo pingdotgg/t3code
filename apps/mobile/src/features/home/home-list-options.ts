@@ -27,7 +27,8 @@ function defaultHomeListOptions(): HomeListOptions {
   return {
     selectedEnvironmentId: null,
     projectSortOrder:
-      DEFAULT_SIDEBAR_PROJECT_SORT_ORDER === "manual"
+      DEFAULT_SIDEBAR_PROJECT_SORT_ORDER === "manual" ||
+      DEFAULT_SIDEBAR_PROJECT_SORT_ORDER === "name"
         ? "updated_at"
         : DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
   };

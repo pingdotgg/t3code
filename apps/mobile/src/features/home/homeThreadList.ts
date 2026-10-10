@@ -19,7 +19,8 @@ import * as Order from "effect/Order";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
-export type HomeProjectSortOrder = Exclude<SidebarProjectSortOrder, "manual">;
+// Mobile has no project order picker yet, so it only follows activity orders.
+export type HomeProjectSortOrder = Exclude<SidebarProjectSortOrder, "manual" | "name">;
 
 export interface HomeProjectScope {
   readonly key: string;
