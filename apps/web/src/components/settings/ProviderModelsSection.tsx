@@ -481,14 +481,20 @@ export function ProviderModelsSection({
       >
         {starButton(model, isFavorite)}
         <span className="flex min-w-0 items-baseline gap-2">
-          <span className={cn(nameClassName, "truncate")}>{model.name}</span>
-          {model.name !== model.slug ? (
-            <code className="truncate font-mono text-2xs text-muted-foreground/70">
-              {model.slug}
-            </code>
-          ) : null}
+          {/*
+            The name never shrinks, so the slug truncates first. The wrapper is the
+            only part that shrinks, which keeps the "custom" label out of the next column.
+          */}
+          <span className="flex min-w-0 items-baseline gap-2 overflow-hidden">
+            <span className={cn(nameClassName, "max-w-full shrink-0 truncate")}>{model.name}</span>
+            {model.name !== model.slug ? (
+              <code className="truncate font-mono text-2xs text-muted-foreground/70">
+                {model.slug}
+              </code>
+            ) : null}
+          </span>
           {model.isCustom ? (
-            <span className="text-2xs text-muted-foreground/70">custom</span>
+            <span className="shrink-0 text-2xs text-muted-foreground/70">custom</span>
           ) : null}
         </span>
         {/*
