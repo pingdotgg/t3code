@@ -531,6 +531,8 @@ function projectFileFailureContext(
       return { failure: "path_not_file", resolvedPath: error.resolvedPath };
     case "WorkspaceBinaryFileError":
       return { failure: "binary_file", resolvedPath: error.resolvedPath };
+    case "WorkspaceFileLinesChangedError":
+      return { failure: error.alreadyReplaced ? "lines_already_replaced" : "lines_changed" };
     default:
       return unexpectedCompatibilityError(error);
   }
