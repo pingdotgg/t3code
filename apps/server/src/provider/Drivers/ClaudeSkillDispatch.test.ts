@@ -43,6 +43,24 @@ describe("planClaudeSkillDispatch", () => {
     });
   });
 
+  it("keeps a slash command the user opened with and names skills inline", () => {
+    expect(
+      planClaudeSkillDispatch("/goal ship the fix with $review and $implement", SKILLS),
+    ).toEqual({
+      leadingText: undefined,
+      commandText: "/goal ship the fix with /review and /implement",
+      skillName: "implement",
+    });
+  });
+
+  it("still dispatches when the prompt opens with a path, not a command", () => {
+    expect(planClaudeSkillDispatch("/tmp/build.log has errors, $review it", SKILLS)).toEqual({
+      leadingText: "/tmp/build.log has errors,",
+      commandText: "/review it",
+      skillName: "review",
+    });
+  });
+
   it("dispatches currency-prefixed mentions and preserves their source boundaries", () => {
     for (const symbol of ["€", "£", "¥", "₹", "₩", "₿", "𑿝"]) {
       expect(
