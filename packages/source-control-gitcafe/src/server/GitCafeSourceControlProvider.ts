@@ -416,9 +416,10 @@ export const make = Effect.gen(function* () {
               : yield* git.ensureRemote({
                   cwd: input.cwd,
                   preferredName: "gitcafe",
-                  url: input.context?.remoteUrl.startsWith("https://")
-                    ? `https://${pullHost}/${sourceRepository}.git`
-                    : `ssh@${pullHost}:${sourceRepository}.git`,
+                  // SSH only when the checkout already reaches GitCafe over SSH; HTTPS otherwise.
+                  url: input.context?.remoteUrl.includes("@")
+                    ? `ssh@${pullHost}:${sourceRepository}.git`
+                    : `https://${pullHost}/${sourceRepository}.git`,
                 });
           const localBranch = pull.isCrossRepository
             ? `pr-${pull.number}/${pull.headRefName}`

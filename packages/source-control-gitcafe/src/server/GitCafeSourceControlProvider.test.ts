@@ -118,4 +118,74 @@ describe("GitCafeSourceControlProvider", () => {
       ),
     );
   });
+
+  it.effect.each([
+    ["no context", undefined, "https://git.cafe/fork/project.git"],
+    ["an HTTPS remote", "https://git.cafe/team/project.git", "https://git.cafe/fork/project.git"],
+    ["an SSH remote", "ssh@git.cafe:team/project.git", "ssh@git.cafe:fork/project.git"],
+  ] as const)("checks a fork out over the transport of %s", ([, remoteUrl, expected]) => {
+    const remotes: Array<string> = [];
+    const client = HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(
+            encodeJson({
+              number: 7,
+              title: "Change",
+              state: "open",
+              draft: false,
+              sourceBranch: "feature",
+              targetBranch: "main",
+              headOid: null,
+              updatedAt: null,
+              sourceRepo: { owner: "fork", name: "project" },
+              closedAt: null,
+              mergedAt: null,
+            }),
+          ),
+        ),
+      ),
+    );
+    const context =
+      remoteUrl === undefined
+        ? undefined
+        : {
+            provider: { kind: "gitcafe" as const, name: "GitCafe", baseUrl: "https://git.cafe" },
+            remoteName: "origin",
+            remoteUrl,
+          };
+    return Effect.gen(function* () {
+      const provider = yield* GitCafeSourceControlProvider.make;
+      yield* provider.checkoutChangeRequest({
+        cwd: "/repo",
+        reference: "https://git.cafe/team/project/pulls/7",
+        ...(context === undefined ? {} : { context }),
+      });
+      assert.deepStrictEqual(remotes, [expected]);
+    }).pipe(
+      Effect.provide(
+        GitCafeApi.layer.pipe(
+          Layer.provide(GitCafeCredentials.layer),
+          Layer.provideMerge(
+            TestSourceControlHost.layer({
+              git: {
+                ensureRemote: (input) => {
+                  remotes.push(input.url);
+                  return Effect.succeed("gitcafe");
+                },
+                listLocalBranchNames: () => Effect.succeed([]),
+                fetchRemoteBranch: () => Effect.void,
+                setBranchUpstream: () => Effect.void,
+                switchRef: () => Effect.succeed({ refName: null }),
+              },
+            }),
+          ),
+          Layer.provide(Layer.succeed(HostProcess.Environment, { CAFE_TOKEN: "env-token" })),
+          Layer.provide(Layer.succeed(HostProcess.WorkingDirectory, "/server")),
+          Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+        ),
+      ),
+    );
+  });
 });

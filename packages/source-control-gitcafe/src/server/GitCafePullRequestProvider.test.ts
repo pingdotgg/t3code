@@ -35,6 +35,7 @@ interface SentRequest {
   readonly method: string;
   /** The path below `/api`, without its query. */
   readonly path: string;
+  readonly query: URLSearchParams;
   readonly host: string;
   readonly body: unknown;
 }
@@ -55,6 +56,7 @@ function fakeGitCafe(
     const entry: SentRequest = {
       method: request.method,
       path: url.pathname.slice("/api".length),
+      query: url.searchParams,
       host: url.host,
       body:
         request.body._tag === "Uint8Array"
@@ -490,6 +492,117 @@ describe("GitCafePullRequestProvider", () => {
         expectedRevision: 5,
         fromPullRequestNumber: 7,
       });
+    }).pipe(Effect.provide(server.layer));
+  });
+
+  it.effect.each([
+    ["authored", "authors"],
+    ["reviewing", "reviewers"],
+  ] as const)("filters %s pull requests by the viewer's actor on GitCafe", ([involvement, key]) => {
+    const server = fakeGitCafe({
+      "GET /repos/owner/repo/filter-options": {
+        actors: [{ actorId: "act_one", handle: "Alice" }],
+      },
+      "GET /repos/owner/repo/pulls": { items: [pull], next: null },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      const page = yield* provider.listChangeRequests({
+        ...target,
+        state: "open",
+        involvement,
+        viewer: "alice",
+        limit: 10,
+      });
+      assert.strictEqual(server.sent.at(-1)?.query.get(key), '["act_one"]');
+      assert.strictEqual(
+        page.items[0]?.reviewRequestLogins.includes("alice"),
+        involvement === "reviewing",
+      );
+    }).pipe(Effect.provide(server.layer));
+  });
+
+  it.effect("lists nothing for a viewer GitCafe has no actor for", () => {
+    const server = fakeGitCafe({
+      "GET /repos/owner/repo/filter-options": { actors: [] },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      const page = yield* provider.listChangeRequests({
+        ...target,
+        state: "open",
+        involvement: "authored",
+        viewer: "alice",
+        limit: 10,
+      });
+      assert.deepStrictEqual(page.items, []);
+      assert.deepStrictEqual(
+        server.sent.map((request) => request.path),
+        ["/repos/owner/repo/filter-options"],
+      );
+    }).pipe(Effect.provide(server.layer));
+  });
+
+  it.effect("counts lines from hunk reads and offers only strategies no blocker names", () => {
+    const snapshot = { version: 4, headOid, comparisonBaseOid: baseOid };
+    const files = (from: number, count: number) =>
+      Array.from({ length: count }, (_, index) => ({ path: `f${from + index}.ts` }));
+    let changePage = 0;
+    const server = fakeGitCafe({
+      "GET /repos/owner/repo/pulls/7": pull,
+      "GET /repos/owner/repo/pulls/7/status": {
+        merge: {
+          conflicts: "unknown",
+          fastForward: true,
+          strategies: ["merge", "squash", "rebase"],
+          blockers: [{ blockedStrategies: ["squash"] }, {}],
+        },
+        checks: { pending: 0, failing: 0, total: 0 },
+      },
+      [`GET /repos/owner/repo/commits/${headOid}/checks`]: { items: [], next: null },
+      // `/changes` counts no lines, and a pull past one page continues on a cursor.
+      "GET /repos/owner/repo/pulls/7/changes": () =>
+        changePage++ === 0
+          ? { ...snapshot, items: files(0, 2), next: "cursor-1" }
+          : { ...snapshot, items: files(2, 1), next: null },
+      "POST /repos/owner/repo/pulls/7/diff-files": (request: SentRequest) => ({
+        ...snapshot,
+        items: (request.body as { paths: ReadonlyArray<string> }).paths.map((path) => ({
+          path,
+          additions: 2,
+          deletions: 1,
+        })),
+      }),
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      const detail = yield* provider.getChangeRequest(target);
+      assert.deepInclude(detail, { additions: 6, deletions: 3, changedFiles: 3 });
+      assert.strictEqual(
+        server.sent.filter((request) => request.path.endsWith("/changes"))[1]?.query.get("after"),
+        "cursor-1",
+      );
+      assert.deepStrictEqual(detail.mergeCapabilities, {
+        merge: true,
+        squash: false,
+        rebase: true,
+      });
+    }).pipe(Effect.provide(server.layer));
+  });
+
+  it.effect("fences a native merge on the target branch's current commit", () => {
+    const branchOid = "fedcba9876543210fedcba9876543210fedcba98";
+    const server = fakeGitCafe({
+      "GET /repos/owner/repo/pulls/7": { ...pull, mergeRoute: "native", observedBaseOid: null },
+      "GET /repos/owner/repo/commit": { oid: branchOid },
+      "POST /repos/owner/repo/pulls/7/merge": { id: "merge-1", state: "completed" },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      yield* provider.runAction({ ...target, action: "merge" });
+      const branchRead = server.sent.find((request) => request.path === "/repos/owner/repo/commit");
+      assert.strictEqual(branchRead?.query.get("ref"), "refs/heads/main");
+      assert.deepInclude(server.sent.at(-1)?.body as object, { baseOid: branchOid, headOid });
     }).pipe(Effect.provide(server.layer));
   });
 });

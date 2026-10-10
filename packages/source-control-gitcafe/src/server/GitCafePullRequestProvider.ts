@@ -44,6 +44,34 @@ const PAGE_SIZE = 100;
 const MAX_PAGES = 10;
 /** GitCafe's cap on paths per `/diff-files` read, and so one diff page. */
 const DIFF_FILES_BATCH = 64;
+/**
+ * Line totals cost one hunk read per batch, so a pull request larger than this reports none
+ * rather than reading every file.
+ */
+const LINE_STATS_MAX_FILES = DIFF_FILES_BATCH * 4;
+/** Structural `/changes` pages, 500 files each, read to count a pull request's files. */
+const MAX_CHANGE_PAGES = 20;
+
+const chunk = <A>(items: ReadonlyArray<A>, size: number): Array<ReadonlyArray<A>> =>
+  Array.from({ length: Math.ceil(items.length / size) }, (_, index) =>
+    items.slice(index * size, (index + 1) * size),
+  );
+
+/** Files whose hunks GitCafe can return; binary and oversized ones are listed as they are. */
+const detailablePaths = (files: ReadonlyArray<Json.GitCafeDiffFile>) =>
+  files.filter((file) => !file.binary && !file.tooLarge).map((file) => file.path);
+
+/**
+ * A strategy GitCafe lists, the viewer may use, and no blocker names. A blocker without
+ * strategies (changes requested, a lock) still leaves Merge offered, so pressing it shows
+ * GitCafe's own reason.
+ */
+const mergeStrategyOpen = (status: typeof Status.Type, strategy: string) =>
+  status.merge.permitted !== false &&
+  status.merge.strategies.includes(strategy) &&
+  !(status.merge.blockers ?? []).some((blocker) =>
+    (blocker.blockedStrategies ?? []).includes(strategy),
+  );
 
 const Id = TrimmedNonEmptyString.check(Schema.isPattern(/^[A-Za-z0-9_-]+$/u));
 const isId = Schema.is(Id);
@@ -57,6 +85,11 @@ const Status = Schema.Struct({
     fastForward: Schema.NullOr(Schema.Boolean),
     strategies: Schema.Array(Schema.String),
     permitted: Schema.optional(Schema.Boolean),
+    blockers: Schema.optional(
+      Schema.Array(
+        Schema.Struct({ blockedStrategies: Schema.optional(Schema.Array(Schema.String)) }),
+      ),
+    ),
   }),
   checks: Schema.Struct({
     pending: NonNegativeInt,
@@ -64,6 +97,13 @@ const Status = Schema.Struct({
     total: NonNegativeInt,
   }),
 });
+const FilterOptions = Schema.Struct({
+  actors: Schema.Array(
+    Schema.Struct({ actorId: TrimmedNonEmptyString, handle: TrimmedNonEmptyString }),
+  ),
+});
+const encodeActorIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+const BranchCommit = Schema.Struct({ oid: TrimmedNonEmptyString });
 const Snapshot = {
   version: NonNegativeInt,
   headOid: TrimmedNonEmptyString,
@@ -309,6 +349,55 @@ export const make = Effect.gen(function* () {
       return yield* failure(operation, `GitCafe's stack operation ${outcome.state}.`);
   });
 
+  /**
+   * Added and deleted line totals and the file count. `/changes` lists files without counting
+   * lines, so the counts come from batched hunk reads, and a pull request past the cap reports
+   * none rather than paying for every file.
+   */
+  const readLineStats = Effect.fn("GitCafePullRequestProvider.readLineStats")(function* (
+    input: PullRef,
+    version: number,
+  ) {
+    const path = yield* pullPath("getChangeRequest", input);
+    const files: Array<Json.GitCafeDiffFile> = [];
+    let revision: { version: number; headOid: string; baseOid: string } | undefined;
+    let after: string | null = null;
+    for (let page = 0; page < MAX_CHANGE_PAGES; page++) {
+      const query = new URLSearchParams({ expectedVersion: String(version), limit: "500" });
+      if (after !== null) query.set("after", after);
+      const batch: typeof Changes.Type = yield* read(
+        "getChangeRequest",
+        input,
+        { path: `${path}/changes?${query}` },
+        Changes,
+      );
+      revision ??= {
+        version: batch.version,
+        headOid: batch.headOid,
+        baseOid: batch.comparisonBaseOid,
+      };
+      files.push(...batch.items);
+      const previous: string | null = after;
+      after = batch.next;
+      if (after === null || after === previous || batch.items.length === 0) break;
+    }
+    const counted =
+      files.some((file) => file.additions !== undefined) ||
+      files.length > LINE_STATS_MAX_FILES ||
+      revision === undefined
+        ? files
+        : (yield* Effect.forEach(
+            chunk(detailablePaths(files), DIFF_FILES_BATCH),
+            (paths) => readDiffFiles(input, revision, paths),
+            { concurrency: 4 },
+          )).flat();
+    return {
+      changedFiles: files.length,
+      additions: counted.reduce((total, file) => total + (file.additions ?? 0), 0),
+      deletions: counted.reduce((total, file) => total + (file.deletions ?? 0), 0),
+    };
+  });
+
   const merge = Effect.fn("GitCafePullRequestProvider.merge")(function* (
     input: Parameters<PullRequestProviderApi["runAction"]>[0],
   ) {
@@ -316,7 +405,21 @@ export const make = Effect.gen(function* () {
     if (pull.state === "merged") return;
     if (pull.mergeRoute === "unsupported")
       return yield* failure("merge", "This GitCafe pull request has no supported merge route.");
-    if (pull.headOid === null || pull.observedBaseOid == null)
+    const base = yield* repositoryPath("merge", input);
+    // GitCafe observes the base only for merges it routes to the provider; a native merge is
+    // fenced on the target branch's current commit.
+    const baseOid =
+      pull.mergeRoute === "provider"
+        ? pull.observedBaseOid
+        : (yield* read(
+            "merge",
+            input,
+            {
+              path: `${base}/commit?ref=${encodeURIComponent(`refs/heads/${pull.targetBranch}`)}`,
+            },
+            BranchCommit,
+          )).oid;
+    if (pull.headOid === null || baseOid == null)
       return yield* failure(
         "merge",
         "GitCafe has not reported the pull request's head and base yet. Refresh and try again.",
@@ -331,7 +434,7 @@ export const make = Effect.gen(function* () {
         body: {
           expectedVersion: pull.version,
           headOid: pull.headOid,
-          baseOid: pull.observedBaseOid,
+          baseOid,
           strategy: input.mergeMethod ?? "merge",
         },
       },
@@ -355,6 +458,21 @@ export const make = Effect.gen(function* () {
     listChangeRequests: Effect.fn("GitCafePullRequestProvider.listChangeRequests")(
       function* (input) {
         const base = yield* repositoryPath("listChangeRequests", input);
+        const involved = input.involvement === "authored" || input.involvement === "reviewing";
+        let actorId: string | undefined;
+        if (involved) {
+          const options = yield* read(
+            "listChangeRequests",
+            input,
+            { path: `${base}/filter-options` },
+            FilterOptions,
+          );
+          actorId = options.actors.find(
+            (actor) => actor.handle.toLowerCase() === input.viewer.toLowerCase(),
+          )?.actorId;
+          // A viewer GitCafe knows no actor for has authored and been asked to review nothing.
+          if (actorId === undefined) return { items: [], truncated: false, continues: false };
+        }
         const limit = Math.max(1, input.limit);
         const items: Array<Json.GitCafePull> = [];
         let next: string | null = null;
@@ -365,6 +483,11 @@ export const make = Effect.gen(function* () {
           });
           if (input.state !== "all") query.set("state", input.state);
           if (input.query?.trim()) query.set("q", input.query.trim());
+          if (actorId !== undefined)
+            query.set(
+              input.involvement === "reviewing" ? "reviewers" : "authors",
+              encodeActorIds([actorId]),
+            );
           if (next !== null) query.set("after", next);
           const page: typeof Json.GitCafePulls.Type = yield* read(
             "listChangeRequests",
@@ -376,7 +499,16 @@ export const make = Effect.gen(function* () {
           next = page.items.length === 0 ? null : page.next;
         } while (next !== null && items.length < limit);
         return {
-          items: items.slice(0, limit).map((pull) => Json.toChangeRequest(pull, input)),
+          items: items.slice(0, limit).map((pull) => {
+            const item = Json.toChangeRequest(pull, input);
+            // GitCafe filtered by reviewer, so the viewer is one even where the pull omits it.
+            return input.involvement === "reviewing"
+              ? {
+                  ...item,
+                  reviewRequestLogins: [...new Set([...item.reviewRequestLogins, input.viewer])],
+                }
+              : item;
+          }),
           truncated: next !== null,
           continues: false,
         };
@@ -407,17 +539,10 @@ export const make = Effect.gen(function* () {
               ),
           pull.headOid === null
             ? Effect.succeed(null)
-            : read(
-                "getChangeRequest",
-                input,
-                { path: `${path}/changes?expectedVersion=${pull.version}&limit=500` },
-                Changes,
-              ).pipe(Effect.orElseSucceed(() => null)),
+            : readLineStats(input, pull.version).pipe(Effect.orElseSucceed(() => null)),
         ],
         { concurrency: 3 },
       );
-      const strategyOpen = (strategy: string) =>
-        status.merge.permitted !== false && status.merge.strategies.includes(strategy);
       const permissions = Json.toViewerPermissions(pull);
       return {
         ...Json.toChangeRequest(pull, input),
@@ -426,9 +551,9 @@ export const make = Effect.gen(function* () {
         ...(pull.sourceRepo === null
           ? {}
           : { headRepositoryNameWithOwner: `${pull.sourceRepo.owner}/${pull.sourceRepo.name}` }),
-        additions: changes?.items.reduce((total, file) => total + (file.additions ?? 0), 0) ?? 0,
-        deletions: changes?.items.reduce((total, file) => total + (file.deletions ?? 0), 0) ?? 0,
-        changedFiles: changes?.items.length ?? 0,
+        additions: changes?.additions ?? 0,
+        deletions: changes?.deletions ?? 0,
+        changedFiles: changes?.changedFiles ?? 0,
         closedAt: pull.closedAt,
         mergedAt: pull.mergedAt,
         reviewers: [],
@@ -454,9 +579,9 @@ export const make = Effect.gen(function* () {
               ? ("up-to-date" as const)
               : ("behind" as const),
         mergeCapabilities: {
-          merge: strategyOpen("merge"),
-          squash: strategyOpen("squash"),
-          rebase: strategyOpen("rebase"),
+          merge: mergeStrategyOpen(status, "merge"),
+          squash: mergeStrategyOpen(status, "squash"),
+          rebase: mergeStrategyOpen(status, "rebase"),
         },
         viewerPermissions:
           status.merge.permitted === false
@@ -526,11 +651,7 @@ export const make = Effect.gen(function* () {
           "GitCafe answered from a different revision of the pull request. Refresh the diff.",
         );
       const revision = { version, headOid: page.headOid, baseOid: page.comparisonBaseOid };
-      const details = yield* readDiffFiles(
-        input,
-        revision,
-        page.items.filter((file) => !file.binary && !file.tooLarge).map((file) => file.path),
-      );
+      const details = yield* readDiffFiles(input, revision, detailablePaths(page.items));
       return {
         ...Json.toDiff({ items: withDetails(page.items, details) }),
         nextCursor: page.next === null ? null : encodeDiffCursor({ ...revision, after: page.next }),
