@@ -1730,6 +1730,14 @@ function TimelineMinimap({
     [items, resolvedActiveIndex],
   );
   const navigationInteractive = resolveTimelineMinimapNavigationInteractive(hitStripWidth);
+  const senderLabel =
+    activeItem?.attribution === "automation"
+      ? "Sent by automation"
+      : activeItem?.attribution === "agent"
+        ? "Sent by another agent"
+        : activeItem?.attribution === "t3code"
+          ? "Sent by T3 Code"
+          : "Your message";
   const activeTopPercent =
     resolvedActiveIndex === null
       ? 0
@@ -1816,7 +1824,7 @@ function TimelineMinimap({
             }}
           />
           <button
-            aria-label={`Jump to message: ${activeItem?.userText ?? "User message"}`}
+            aria-label={`Jump to message: ${senderLabel}${activeItem?.userText ? `: ${activeItem.userText}` : ""}`}
             className="absolute inset-y-0 left-0 w-full cursor-pointer bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
             onBlur={() => setActiveIndex(null)}
             onClick={(event) => {
@@ -1878,7 +1886,14 @@ function TimelineMinimap({
                   aria-hidden="true"
                   className={cn(
                     "group/strip pointer-events-none absolute left-0 h-0.5 w-6 origin-left -translate-y-1/2 rounded-full transition-transform duration-150",
-                    activeDistance === 0 ? "bg-muted-foreground/75" : "bg-muted-foreground/35",
+                    item.attribution === "automation"
+                      ? [
+                          "border-t-2 border-dashed",
+                          activeDistance === 0 ? "border-info/75" : "border-info/50",
+                        ]
+                      : activeDistance === 0
+                        ? "bg-muted-foreground/75"
+                        : "bg-muted-foreground/35",
                     activeDistance === 0
                       ? "scale-x-100"
                       : activeDistance === 1
@@ -1889,6 +1904,7 @@ function TimelineMinimap({
                   )}
                   data-in-view="false"
                   data-minimap-strip
+                  data-attribution={item.attribution ?? "user"}
                   key={item.id}
                   ref={(node) => {
                     if (node) {
@@ -1899,7 +1915,14 @@ function TimelineMinimap({
                   }}
                   style={{ top }}
                 >
-                  <span className="absolute inset-0 rounded-full bg-foreground/90 opacity-0 transition-opacity duration-150 group-data-[in-view=true]/strip:opacity-100" />
+                  <span
+                    className={cn(
+                      "absolute rounded-full opacity-0 transition-opacity duration-150 group-data-[in-view=true]/strip:opacity-100",
+                      item.attribution === "automation"
+                        ? "inset-x-0 -top-0.5 border-t-2 border-dashed border-info"
+                        : "inset-0 bg-foreground/90",
+                    )}
+                  />
                 </span>
               );
             })}
@@ -1914,8 +1937,9 @@ function TimelineMinimap({
                 }}
               >
                 <span className="dropdown-glass block rounded-xl p-3 text-left text-popover-foreground shadow-xl shadow-black/25">
+                  <span className="mb-1 block text-2xs text-muted-foreground">{senderLabel}</span>
                   <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium leading-5">
-                    {activeItem.userText ?? "User message"}
+                    {activeItem.userText ?? senderLabel}
                   </span>
                   {activeItem.assistantText ? (
                     <span

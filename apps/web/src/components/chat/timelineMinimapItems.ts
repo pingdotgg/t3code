@@ -1,3 +1,4 @@
+import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 
 export interface TimelineMinimapItem {
@@ -5,9 +6,9 @@ export interface TimelineMinimapItem {
   readonly rowIndex: number;
   readonly userText: string | null;
   readonly assistantText: string | null;
+  readonly attribution: ReturnType<typeof resolveUserMessagePresentation>["attribution"];
 }
 
-/** Keep full source text untouched until a minimap preview is opened. */
 export function deriveTimelineMinimapItems(
   rows: ReadonlyArray<MessagesTimelineRow>,
 ): TimelineMinimapItem[] {
@@ -18,11 +19,13 @@ export function deriveTimelineMinimapItems(
       continue;
     }
 
+    const presentation = resolveUserMessagePresentation(row.message);
     items.push({
       id: row.id,
       rowIndex: index,
-      userText: row.message.text,
+      userText: presentation.text,
       assistantText: resolveFinalAssistantTextForTurn(rows, index),
+      attribution: presentation.attribution,
     });
   }
   return items;
