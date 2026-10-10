@@ -2337,6 +2337,28 @@ describe("composerDraftStore per-model sticky options", () => {
     resetComposerDraftStore();
   });
 
+  it("remembers server-thread traits without creating local thread model state", () => {
+    const store = useComposerDraftStore.getState();
+    const opus = modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6", { effort: "high" });
+    const sonnet = modelSelection(CLAUDE_AGENT_DRIVER, "claude-sonnet-4-6", { effort: "low" });
+    store.setStickyModelSelection(opus);
+    store.setStickyModelSelection(sonnet);
+    const remembered = useComposerDraftStore.getState().stickyOptionsByModelByProvider;
+    expect(remembered[CLAUDE_AGENT_INSTANCE]?.[opus.model]).toEqual(opus.options);
+    expect(remembered[CLAUDE_AGENT_INSTANCE]?.[sonnet.model]).toEqual(sonnet.options);
+    expect(useComposerDraftStore.getState().draftsByThreadKey).toEqual({});
+
+    store.setStickyModelSelection({ ...opus, options: [] });
+    const cleared = useComposerDraftStore.getState();
+    expect(
+      cleared.stickyOptionsByModelByProvider[CLAUDE_AGENT_INSTANCE]?.[opus.model],
+    ).toBeUndefined();
+    expect(cleared.stickyOptionsByModelByProvider[CLAUDE_AGENT_INSTANCE]?.[sonnet.model]).toEqual(
+      sonnet.options,
+    );
+    expect(cleared.stickyModelSelectionByProvider[CLAUDE_AGENT_INSTANCE]?.options).toBeUndefined();
+  });
+
   it("remembers sticky options per model and restores them on model switch", () => {
     const store = useComposerDraftStore.getState();
 

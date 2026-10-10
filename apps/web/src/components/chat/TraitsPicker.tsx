@@ -4,7 +4,6 @@ import {
   type ProviderInstanceId,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
-  type ScopedThreadRef,
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import {
@@ -81,12 +80,11 @@ export function buildUnavailableModelOptionDescriptors(
 
 type TraitsPersistence =
   | {
-      threadRef?: ScopedThreadRef;
       draftId?: DraftId;
       onModelOptionsChange?: never;
     }
   | {
-      threadRef?: undefined;
+      draftId?: undefined;
       onModelOptionsChange: (nextOptions: ProviderOptions | undefined) => void;
     };
 
@@ -281,6 +279,7 @@ export interface TraitsMenuContentProps {
   planModeEnabled: boolean;
   triggerClassName?: string;
   isComposerOwned?: boolean;
+  readOnly?: boolean;
 }
 
 export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
@@ -294,6 +293,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   reportedModelSelection,
   allowPromptInjectedEffort = true,
   planModeEnabled,
+  readOnly = false,
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
   const modelSelection =
@@ -305,7 +305,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
         persistence.onModelOptionsChange(nextOptions);
         return;
       }
-      const threadTarget = persistence.threadRef ?? persistence.draftId;
+      const threadTarget = persistence.draftId;
       if (!threadTarget) {
         return;
       }
@@ -423,7 +423,10 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                     // Base UI keeps radio menus open by default. Close on pick so
                     // the traits menu behaves like the model picker.
                     closeOnClick
-                    disabled={ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id}
+                    disabled={
+                      readOnly ||
+                      (ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id)
+                    }
                   >
                     <span className="flex w-full min-w-0 flex-col">
                       <span className="flex w-full min-w-0 items-center justify-between gap-3">
@@ -469,7 +472,13 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                 }}
               >
                 {(["on", "off"] as const).map((value) => (
-                  <MenuRadioItem key={value} value={value} hideIndicator closeOnClick>
+                  <MenuRadioItem
+                    key={value}
+                    value={value}
+                    disabled={readOnly}
+                    hideIndicator
+                    closeOnClick
+                  >
                     <span className="flex w-full min-w-0 items-center justify-between gap-3">
                       <span>{value === "on" ? "On" : "Off"}</span>
                     </span>

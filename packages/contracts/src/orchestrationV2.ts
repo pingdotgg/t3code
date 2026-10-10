@@ -2852,6 +2852,8 @@ export const OrchestrationV2Command = Schema.Union([
     /** Seed the temporary title and generate a durable replacement for the first message. */
     titleSeed: Schema.optional(TrimmedNonEmptyString),
     modelSelection: Schema.optional(ModelSelection),
+    /** A durable client outbox captured this run's model before a later picker change. */
+    preserveThreadModelSelection: Schema.optional(Schema.Boolean),
     sourcePlanRef: Schema.optional(Schema.Struct({ threadId: ThreadId, planId: PlanId })),
     restartContinuationOfRunId: Schema.optional(RunId),
     usageLimitContinuationOfRunId: Schema.optional(RunId),

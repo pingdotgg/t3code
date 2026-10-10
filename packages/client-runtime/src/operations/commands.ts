@@ -32,7 +32,7 @@ import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 
-import { getInitialServerConfig, request } from "../rpc/client.ts";
+import { getInitialServerConfig, request, requestGuarded } from "../rpc/client.ts";
 
 interface CommandMetadata {
   readonly commandId?: CommandId;
@@ -133,6 +133,10 @@ export interface UpdateThreadMetadataInput extends ThreadCommandInput {
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
 }
 
+export interface SetThreadModelSelectionInput extends ThreadCommandInput {
+  readonly modelSelection: ModelSelection;
+}
+
 export interface SetThreadRuntimeModeInput extends ThreadCommandInput {
   readonly runtimeMode: RuntimeMode;
 }
@@ -173,6 +177,7 @@ export interface StartThreadTurnInput extends ThreadCommandInput {
     readonly context?: import("@t3tools/contracts").OrchestrationMessageContext;
   };
   readonly modelSelection?: ModelSelection;
+  readonly preserveThreadModelSelection?: boolean;
   readonly titleSeed?: string;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
@@ -267,7 +272,7 @@ const allocateCommandId = Effect.fn("EnvironmentCommands.allocateCommandId")(fun
 });
 
 const dispatch = (command: OrchestrationV2Command) =>
-  request(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command);
+  requestGuarded(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command);
 
 const getProjection = (threadId: ThreadId) =>
   request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, { threadId });
@@ -601,6 +606,17 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
   },
 );
 
+export const setThreadModelSelection = Effect.fn("EnvironmentCommands.setThreadModelSelection")(
+  function* (input: SetThreadModelSelectionInput) {
+    return yield* requestGuarded(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, {
+      type: "thread.model-selection.set",
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      modelSelection: input.modelSelection,
+    });
+  },
+);
+
 export const setThreadRuntimeMode = Effect.fn("EnvironmentCommands.setThreadRuntimeMode")(
   function* (input: SetThreadRuntimeModeInput) {
     return yield* dispatch({
@@ -702,6 +718,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       ...(context ? { context } : {}),
       attachments,
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+      ...(input.preserveThreadModelSelection ? { preserveThreadModelSelection: true } : {}),
       ...(input.sourceProposedPlan === undefined
         ? {}
         : { sourcePlanRef: input.sourceProposedPlan }),
@@ -764,6 +781,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
     attachments,
     ...(shouldSendTitleSeed ? { titleSeed: input.titleSeed } : {}),
     ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+    ...(input.preserveThreadModelSelection ? { preserveThreadModelSelection: true } : {}),
     ...(input.sourceProposedPlan === undefined ? {} : { sourcePlanRef: input.sourceProposedPlan }),
     ...(serverResolvesCommandContext && requestedMode !== "queue"
       ? { deliveryIntent: requestedMode }

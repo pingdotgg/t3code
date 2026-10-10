@@ -1,3 +1,4 @@
+import { RpcPermissionGuard } from "../rpc/client.ts";
 import {
   CheckpointId,
   CheckpointRef,
@@ -759,7 +760,10 @@ describe("V2 environment commands", () => {
         },
       ]);
       expect(projectionRequests).toEqual([]);
-    }).pipe(Effect.provide(layerTestCrypto)),
+    }).pipe(
+      Effect.provide(layerTestCrypto),
+      Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
+    ),
   );
 
   it.effect("retains provider-switch shaping for servers without command context support", () =>
@@ -791,7 +795,10 @@ describe("V2 environment commands", () => {
           modelSelection: { instanceId: "claude", model: "claude-sonnet-4-6" },
         },
       ]);
-    }).pipe(Effect.provide(layerTestCrypto)),
+    }).pipe(
+      Effect.provide(layerTestCrypto),
+      Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
+    ),
   );
 
   it.effect.each([true, false])(

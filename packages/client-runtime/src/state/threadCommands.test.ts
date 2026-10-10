@@ -1,6 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
+  AuthOrchestrationOperateScope,
+  type AuthSessionState,
   CommandId,
+  MessageId,
   RuntimeRequestId,
   EnvironmentId,
   ORCHESTRATION_V2_WS_METHODS,
@@ -18,12 +21,32 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { vi } from "vite-plus/test";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { createThreadEnvironmentAtoms } from "./threadCommands.ts";
+
+vi.mock("./session.ts", () => ({
+  createEnvironmentSessionAtoms: () => ({ sessionStateAtom: sessions }),
+}));
+const sessions = Atom.family((_id: EnvironmentId) =>
+  Atom.make<AsyncResult.AsyncResult<AuthSessionState, never>>(
+    AsyncResult.success({
+      authenticated: true,
+      auth: {
+        policy: "remote-reachable" as const,
+        bootstrapMethods: [],
+        sessionMethods: [],
+        sessionCookieName: "test",
+      },
+      scopes: [AuthOrchestrationOperateScope],
+      permissions: [AuthOrchestrationOperateScope],
+    }),
+  ),
+);
 
 const ENVIRONMENT_ID = EnvironmentId.make("remote");
 const THREAD_ID = ThreadId.make("thread");
@@ -372,6 +395,152 @@ describe("remote thread lifecycle commands", () => {
         );
         expect(h.registry.get(h.visibleAtom)?.threads[0]?.pendingRuntimeRequest).toBeNull();
         expect(h.registry.get(h.snapshotAtom(ENVIRONMENT_ID))).toBe(stale);
+      }),
+  );
+});
+
+describe("thread model selection", () => {
+  const selection = { instanceId: ProviderInstanceId.make("claude"), model: "opus" };
+  const nextSelection = {
+    ...selection,
+    model: "sonnet",
+    options: [{ id: "effort", value: "high" }],
+  };
+
+  it.effect("denies a model change without the target grant and blocks an immediate send", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const granted = h.registry.get(sessions(ENVIRONMENT_ID));
+      if (granted._tag !== "Success") return yield* Effect.die("Missing fixture grant");
+      h.registry.set(
+        sessions(ENVIRONMENT_ID),
+        AsyncResult.success({ ...granted.value, scopes: [], permissions: [] }),
+      );
+      expect(h.registry.get(h.commands.setModelSelection.permissionAtom(ENVIRONMENT_ID))).toBe(
+        false,
+      );
+      const save = h.commands.setModelSelection.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: THREAD_ID, modelSelection: selection },
+      });
+      const send = h.commands.startTurn.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: {
+          threadId: THREAD_ID,
+          message: {
+            messageId: MessageId.make("denied"),
+            role: "user",
+            text: "hello",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          dispatchMode: "start",
+        },
+      });
+      expect((yield* Effect.promise(() => save))._tag).toBe("Failure");
+      expect((yield* Effect.promise(() => send))._tag).toBe("Failure");
+      expect(yield* Queue.size(h.requests)).toBe(0);
+    }),
+  );
+
+  it.effect(
+    "shows a pick immediately, then follows other clients after its receipt reaches the shell",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        const save = h.commands.setModelSelection.run(h.registry, {
+          environmentId: ENVIRONMENT_ID,
+          input: { threadId: THREAD_ID, modelSelection: selection },
+        });
+        expect(h.registry.get(h.visibleAtom)?.threads[0]?.modelSelection).toEqual(selection);
+        const request = yield* Queue.take(h.requests);
+        expect(request.command).toMatchObject({
+          type: "thread.model-selection.set",
+          modelSelection: selection,
+        });
+        yield* Deferred.succeed(request.reply, { sequence: 3 });
+        yield* Effect.promise(() => save);
+        h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), { ...SNAPSHOT, snapshotSequence: 2 });
+        expect(h.registry.get(h.visibleAtom)?.threads[0]?.modelSelection).toEqual(selection);
+        h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), {
+          ...SNAPSHOT,
+          snapshotSequence: 4,
+          threads: [{ ...SNAPSHOT.threads[0]!, modelSelection: nextSelection }],
+        });
+        expect(h.registry.get(h.visibleAtom)?.threads[0]?.modelSelection).toEqual(nextSelection);
+      }),
+  );
+
+  it.effect("an earlier failed pick cannot remove a newer optimistic pick", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const first = h.commands.setModelSelection.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: THREAD_ID, modelSelection: selection },
+      });
+      const request = yield* Queue.take(h.requests);
+      const second = h.commands.setModelSelection.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: THREAD_ID, modelSelection: nextSelection },
+      });
+      yield* Deferred.fail(request.reply, new Error("Disconnected"));
+      yield* Effect.promise(() => first);
+      expect(h.registry.get(h.visibleAtom)?.threads[0]?.modelSelection).toEqual(nextSelection);
+      const nextRequest = yield* Queue.take(h.requests);
+      yield* Deferred.succeed(nextRequest.reply, { sequence: 3 });
+      expect((yield* Effect.promise(() => second))._tag).toBe("Success");
+    }),
+  );
+
+  it.effect.each([true, false])(
+    "orders an immediate send after the pick, save succeeds: %s",
+    (succeeds) =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        const save = h.commands.setModelSelection.run(h.registry, {
+          environmentId: ENVIRONMENT_ID,
+          input: { threadId: THREAD_ID, modelSelection: selection },
+        });
+        const request = yield* Queue.take(h.requests);
+        const readyToEnqueue = h.commands.waitForModelSelection.run(h.registry, {
+          environmentId: ENVIRONMENT_ID,
+          input: { threadId: THREAD_ID },
+        });
+        const send = h.commands.startTurn.run(h.registry, {
+          environmentId: ENVIRONMENT_ID,
+          input: {
+            threadId: THREAD_ID,
+            message: {
+              messageId: MessageId.make("message"),
+              role: "user",
+              text: "hello",
+              attachments: [],
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            dispatchMode: "start",
+          },
+        });
+        if (succeeds) {
+          yield* Deferred.succeed(request.reply, { sequence: 3 });
+          const sendRequest = yield* Queue.take(h.requests);
+          expect(sendRequest.command.type).toBe("message.dispatch");
+          expect(sendRequest.command).not.toHaveProperty("modelSelection");
+          yield* Deferred.succeed(sendRequest.reply, { sequence: 4 });
+          expect((yield* Effect.promise(() => send))._tag).toBe("Success");
+        } else {
+          yield* Deferred.fail(request.reply, new Error("Disconnected"));
+          expect((yield* Effect.promise(() => send))._tag).toBe("Failure");
+          expect(h.registry.get(h.visibleAtom)?.threads[0]?.modelSelection).toEqual(
+            SNAPSHOT.threads[0]!.modelSelection,
+          );
+          expect(yield* Queue.size(h.requests)).toBe(0);
+        }
+        yield* Effect.promise(() => save);
+        expect((yield* Effect.promise(() => readyToEnqueue))._tag).toBe(
+          succeeds ? "Success" : "Failure",
+        );
       }),
   );
 });

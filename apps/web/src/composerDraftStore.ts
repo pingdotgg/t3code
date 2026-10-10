@@ -785,6 +785,16 @@ function compactModelSelectionByProvider(
   return Object.fromEntries(entries) as DeepMutable<Record<ProviderInstanceId, ModelSelection>>;
 }
 
+function rememberStickyModelOptions(
+  remembered: ComposerDraftStoreState["stickyOptionsByModelByProvider"],
+  selection: ModelSelection,
+): ComposerDraftStoreState["stickyOptionsByModelByProvider"] {
+  const byModel = { ...remembered[selection.instanceId] };
+  if (selection.options?.length) byModel[selection.model] = selection.options;
+  else delete byModel[selection.model];
+  return { ...remembered, [selection.instanceId]: byModel };
+}
+
 function compactStickyOptionsByModel(
   optionsByModelByProvider: ComposerDraftStoreState["stickyOptionsByModelByProvider"],
 ): NonNullable<PersistedComposerDraftStoreState["stickyOptionsByModelByProvider"]> {
@@ -1265,6 +1275,7 @@ export function deriveEffectiveComposerModelState(input: {
   projectModelSelection: ModelSelection | null | undefined;
   settings: UnifiedSettings;
 }): EffectiveComposerModelState {
+  const draft = input.threadModelSelection ? undefined : input.draft;
   const baseModelCandidate =
     input.threadModelSelection?.model ?? input.projectModelSelection?.model ?? null;
   const preserveThreadModel =
@@ -1296,14 +1307,14 @@ export function deriveEffectiveComposerModelState(input: {
   // `ProviderDriverKind` literal is a valid `ProviderInstanceId` slug, so the
   // cast to the branded type is safe.
   const instanceSelection = input.selectedInstanceId
-    ? input.draft?.modelSelectionByProvider?.[input.selectedInstanceId]
+    ? draft?.modelSelectionByProvider?.[input.selectedInstanceId]
     : undefined;
   const legacySelection =
     input.selectedProvider === "antigravity" &&
     input.selectedInstanceId &&
     input.selectedInstanceId !== defaultInstanceIdForDriver(input.selectedProvider)
       ? undefined
-      : input.draft?.modelSelectionByProvider?.[ProviderInstanceId.make(input.selectedProvider)];
+      : draft?.modelSelectionByProvider?.[ProviderInstanceId.make(input.selectedProvider)];
   const activeSelection = instanceSelection ?? legacySelection;
   const activeSelectionInstanceId = instanceSelection
     ? (input.selectedInstanceId ?? ProviderInstanceId.make(input.selectedProvider))
@@ -1324,11 +1335,11 @@ export function deriveEffectiveComposerModelState(input: {
         activeSelection.model,
       ))
     : baseModel;
-  const modelOptions =
-    modelSelectionByProviderToOptions(input.draft?.modelSelectionByProvider) ??
-    providerSelectionsFromModelSelection(input.threadModelSelection) ??
-    providerSelectionsFromModelSelection(input.projectModelSelection) ??
-    null;
+  const modelOptions = input.threadModelSelection
+    ? providerSelectionsFromModelSelection(input.threadModelSelection)
+    : (modelSelectionByProviderToOptions(draft?.modelSelectionByProvider) ??
+      providerSelectionsFromModelSelection(input.projectModelSelection) ??
+      null);
 
   return {
     selectedModel,
@@ -3038,20 +3049,28 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             // setModelSelection). Keep the last sticky traits so Fast/Normal
             // survives Composer 2 → 2.5 and new chats.
             const nextSelection =
-              normalized.options !== undefined
+              modelSelection?.options !== undefined
                 ? normalized
                 : createModelSelection(normalized.instanceId, normalized.model, current?.options);
             const nextMap: Partial<Record<ProviderInstanceId, ModelSelection>> = {
               ...state.stickyModelSelectionByProvider,
               [normalized.instanceId]: nextSelection,
             };
-            if (Equal.equals(state.stickyModelSelectionByProvider, nextMap)) {
+            const nextOptionsByModel =
+              modelSelection?.options !== undefined
+                ? rememberStickyModelOptions(state.stickyOptionsByModelByProvider, normalized)
+                : state.stickyOptionsByModelByProvider;
+            if (
+              Equal.equals(state.stickyModelSelectionByProvider, nextMap) &&
+              Equal.equals(state.stickyOptionsByModelByProvider, nextOptionsByModel)
+            ) {
               return state.stickyActiveProvider === normalized.instanceId
                 ? state
                 : { stickyActiveProvider: normalized.instanceId };
             }
             return {
               stickyModelSelectionByProvider: nextMap,
+              stickyOptionsByModelByProvider: nextOptionsByModel,
               stickyActiveProvider: normalized.instanceId,
             };
           });
@@ -3301,27 +3320,14 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                   stickyBase.model,
                   providerOpts,
                 );
-                // Remember the pick for this model so switching models and
-                // coming back restores it instead of another model's effort.
-                nextOptionsByModel = {
-                  ...state.stickyOptionsByModelByProvider,
-                  [instanceKey]: {
-                    ...state.stickyOptionsByModelByProvider[instanceKey],
-                    [rememberedModel]: providerOpts,
-                  },
-                };
               } else if ((stickyBase.options?.length ?? 0) > 0) {
                 const { options: _, ...rest } = stickyBase;
                 nextStickyMap[instanceKey] = rest as ModelSelection;
-                const rememberedByModel = {
-                  ...state.stickyOptionsByModelByProvider[instanceKey],
-                };
-                delete rememberedByModel[rememberedModel];
-                nextOptionsByModel = {
-                  ...state.stickyOptionsByModelByProvider,
-                  [instanceKey]: rememberedByModel,
-                };
               }
+              nextOptionsByModel = rememberStickyModelOptions(
+                state.stickyOptionsByModelByProvider,
+                createModelSelection(instanceKey, rememberedModel, providerOpts),
+              );
               nextStickyActiveProvider = options.instanceId
                 ? instanceKey
                 : (base.activeProvider ?? instanceKey);
@@ -4526,7 +4532,7 @@ function useComposerDraftModelState(threadRef: ComposerThreadTarget): ComposerDr
 }
 
 export function useEffectiveComposerModelState(input: {
-  threadRef?: ComposerThreadTarget;
+  threadRef?: ScopedThreadRef;
   draftId?: DraftId;
   providers: ReadonlyArray<ServerProvider>;
   selectedProvider: ProviderDriverKind;

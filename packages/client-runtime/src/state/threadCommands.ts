@@ -1,10 +1,12 @@
 import type { ThreadId } from "@t3tools/contracts";
+import * as Data from "effect/Data";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import {
   WS_METHODS,
+  ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId,
   type OrchestrationV2ShellSnapshot,
 } from "@t3tools/contracts";
@@ -38,6 +40,7 @@ import {
   type RevertThreadCheckpointInput,
   type SetThreadInteractionModeInput,
   type SetThreadRuntimeModeInput,
+  type SetThreadModelSelectionInput,
   type PinThreadInput,
   type ReorderPinnedThreadInput,
   type ReorderActiveThreadInput,
@@ -74,6 +77,7 @@ import {
   revertThreadCheckpoint,
   setThreadInteractionMode,
   setThreadRuntimeMode,
+  setThreadModelSelection,
   pinThread,
   reorderPinnedThread,
   reorderActiveThread,
@@ -138,16 +142,31 @@ export type {
   WatchThreadPullRequestInput,
 } from "../operations/commands.ts";
 
+export type { ThreadModelSelectionSaveError };
+
+class ThreadModelSelectionSaveError extends Data.TaggedError("ThreadModelSelectionSaveError") {
+  override readonly message =
+    "The model selection could not be saved. Select a model again before sending.";
+}
+
 export function createThreadEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | Crypto.Crypto | R, E>,
   snapshotAtom: (environmentId: EnvironmentId) => Atom.Atom<OrchestrationV2ShellSnapshot | null>,
 ) {
+  const failedSelections = Atom.family((_environmentId: EnvironmentId) =>
+    Atom.make<ReadonlySet<ThreadId>>(new Set<ThreadId>()).pipe(Atom.keepAlive),
+  );
   const scheduler = createAtomCommandScheduler();
   const concurrency = {
     mode: "serial" as const,
     key: ({ environmentId, input }: { environmentId: string; input: { threadId: string } }) =>
       JSON.stringify([environmentId, input.threadId]),
   };
+  const selectionCommand = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:commands:thread:set-model-selection",
+    tag: ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+    execute: (input: SetThreadModelSelectionInput) => setThreadModelSelection(input),
+  });
   const commands = {
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:create",
@@ -239,7 +258,22 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
-    updateMetadata: createEnvironmentCommand(runtime, {
+    setModelSelection: {
+      ...selectionCommand,
+      run: ((registry, target) =>
+        scheduler.schedule(registry, concurrency, target, async () => {
+          const result = await selectionCommand.run(registry, target);
+          registry.update(failedSelections(target.environmentId), (failed) => {
+            const next = new Set(failed);
+            if (result._tag === "Success") next.delete(target.input.threadId);
+            else next.add(target.input.threadId);
+            return next;
+          });
+          return result;
+        })) satisfies typeof selectionCommand.run,
+    },
+    updateMetadata: createEnvironmentRpcCommand(runtime, {
+      tag: ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
       label: "environment-data:commands:thread:update-metadata",
       execute: (input: UpdateThreadMetadataInput) => updateThreadMetadata(input),
       scheduler,
@@ -275,9 +309,29 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    waitForModelSelection: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:wait-for-model-selection",
+      execute: (input: ThreadCommandInput, registry, environmentId) =>
+        Effect.gen(function* () {
+          if (registry.get(failedSelections(environmentId)).has(input.threadId)) {
+            return yield* new ThreadModelSelectionSaveError();
+          }
+        }),
+      scheduler,
+      concurrency,
+    }),
     startTurn: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:start-turn",
-      execute: (input: StartThreadTurnInput) => startThreadTurn(input),
+      execute: (input: StartThreadTurnInput, registry, environmentId) =>
+        Effect.gen(function* () {
+          if (
+            !input.preserveThreadModelSelection &&
+            registry.get(failedSelections(environmentId)).has(input.threadId)
+          ) {
+            return yield* new ThreadModelSelectionSaveError();
+          }
+          return yield* startThreadTurn(input);
+        }),
       scheduler,
       concurrency,
     }),
@@ -408,6 +462,14 @@ export function createThreadEnvironmentAtoms<R, E>(
   return {
     ...commands,
     snapshotAtom: optimistic.snapshotAtom,
+    setModelSelection: {
+      ...commands.setModelSelection,
+      ...optimistic.wrap(commands.setModelSelection, (thread, input) => ({
+        ...thread,
+        providerInstanceId: input.modelSelection.instanceId,
+        modelSelection: input.modelSelection,
+      })),
+    },
     settle: optimistic.wrap(commands.settle, (thread, _input, now, accepted) =>
       !accepted &&
       (thread.pendingRuntimeRequest !== null ||

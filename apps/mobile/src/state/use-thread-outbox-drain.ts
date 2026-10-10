@@ -925,7 +925,9 @@ export function useThreadOutboxDrain(): void {
             ),
             attachments: prepared.attachments,
           },
-          modelSelection: sendSettings.modelSelection,
+          ...(queuedMessage.modelSelection === undefined
+            ? {}
+            : { modelSelection: queuedMessage.modelSelection, preserveThreadModelSelection: true }),
           titleSeed: deriveThreadTitleSeed({
             text: queuedMessage.text,
             attachments: queuedMessage.attachments,

@@ -685,16 +685,12 @@ describe("orchestration v2 provider switching", () => {
             yield* wait(3);
           }
           if (replaceNative) {
-            const target = (yield* orchestrator.getThreadProjection(threadId)).providerThreads.find(
-              (thread) => thread.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
-            )!;
-            yield* orchestrator.dispatch({
-              type: "provider-session.detach",
-              commandId: CommandId.make("detach-for-native-replacement"),
-              threadId,
-              providerSessionId: target.providerSessionId!,
-            });
-            yield* worker.drain();
+            const current = yield* orchestrator.getThreadProjection(threadId);
+            assert.isFalse(
+              current.providerSessions.some(
+                (session) => session.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
+              ),
+            );
             yield* Ref.set(failResumeOnce, true);
           }
           if (scenario.includes("retry")) yield* Ref.set(failStartOnce, true);
@@ -2838,19 +2834,14 @@ describe("orchestration v2 provider switching", () => {
             CLAUDE_MODEL_SELECTION,
           );
           yield* waitForIdle(threadId);
-          // Stopping the shared Codex process drops its loaded native thread, so
-          // returning to Codex has to resume it (and fall back when that fails).
-          const codexSession = (yield* orchestrator.getThreadProjection(
-            threadId,
-          )).providerSessions.find(
-            (session) => session.providerInstanceId === CODEX_MODEL_SELECTION.instanceId,
-          )!;
-          yield* orchestrator.dispatch({
-            type: "provider-session.detach",
-            commandId: CommandId.make("command:provider-switch:stop-codex"),
-            threadId,
-            providerSessionId: codexSession.id,
-          });
+          // The handoff releases Codex, so returning must resume its native
+          // thread and fall back to portable context when that fails.
+          const switched = yield* orchestrator.getThreadProjection(threadId);
+          assert.isFalse(
+            switched.providerSessions.some(
+              (session) => session.providerInstanceId === CODEX_MODEL_SELECTION.instanceId,
+            ),
+          );
           yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
           yield* orchestrator.dispatch(commands[3]!);
           assert.deepEqual(

@@ -191,6 +191,12 @@ export function useThreadComposerState() {
   const [feedbackSubmissionsByThreadKey, setFeedbackSubmissionsByThreadKey] = useState<
     Record<string, ReadonlyArray<CodexFeedbackSubmission>>
   >({});
+  const waitForModelSelection = useAtomCommand(threadEnvironment.waitForModelSelection, {
+    reportFailure: false,
+  });
+  const saveThreadModelSelection = useAtomCommand(threadEnvironment.setModelSelection, {
+    reportFailure: false,
+  });
   const uploadThreadFeedback = useAtomCommand(threadEnvironment.uploadFeedback, {
     reportFailure: false,
   });
@@ -330,7 +336,7 @@ export function useThreadComposerState() {
   const draftAttachments = editedDraft?.attachments ?? [];
   const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
   const selectedThread = selectedThreadShell;
-  const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
+  const modelSelection = selectedThread?.modelSelection ?? null;
   const runtimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
   const selectedProvider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
     (provider) => provider.instanceId === modelSelection?.instanceId,
@@ -575,10 +581,26 @@ export function useThreadComposerState() {
         return null;
       }
 
+      const thread = selectedThreadShell;
+      const modelSelection =
+        appAtomRegistry
+          .get(threadEnvironment.snapshotAtom(thread.environmentId))
+          ?.threads.find((candidate) => candidate.id === thread.id)?.modelSelection ??
+        thread.modelSelection;
+      const selectionResult = await waitForModelSelection({
+        environmentId: thread.environmentId,
+        input: { threadId: thread.id },
+      });
+      if (selectionResult._tag === "Failure") {
+        Alert.alert(
+          "Model selection has not synced",
+          "Reconnect and select a model again before sending.",
+        );
+        return null;
+      }
       const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
       const draft = getComposerDraftSnapshot(threadKey);
       if (appAtomRegistry.get(composerContextImportsAtom)[threadKey]) return null;
-      const thread = selectedThreadShell;
       const text = draft.text.trim();
       const attachments = draft.attachments;
       if (
@@ -612,7 +634,6 @@ export function useThreadComposerState() {
         return null;
       }
 
-      const modelSelection = draft.modelSelection ?? thread.modelSelection;
       const serverConfig = selectedEnvironmentRuntime?.serverConfig;
       if (
         selectedEnvironmentRuntime?.connectionState === "connected" &&
@@ -697,7 +718,7 @@ export function useThreadComposerState() {
         text,
         attachments,
         context: draft.context,
-        modelSelection,
+        // The server resolves the shared selection when it accepts the message.
         runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
         interactionMode: resolveProviderInteractionMode(
           provider,
@@ -733,6 +754,7 @@ export function useThreadComposerState() {
       canSteerActiveTurn,
       followUpBehavior,
       saveQueuedRunEdit,
+      waitForModelSelection,
       selectedEnvironmentRuntime?.connectionState,
       selectedEnvironmentRuntime?.serverConfig,
       selectedThreadCreation,
@@ -1006,20 +1028,35 @@ export function useThreadComposerState() {
 
   const onUpdateModelSelection = useCallback(
     (value: ModelSelection) => {
-      if (!selectedThreadKey) {
+      if (!selectedThreadKey || !selectedThread) {
         return;
       }
+      void saveThreadModelSelection({
+        environmentId: selectedThread.environmentId,
+        input: { threadId: selectedThread.id, modelSelection: value },
+      }).then((result) => {
+        if (result._tag === "Failure") {
+          Alert.alert(
+            "Could not save model selection",
+            "Reconnect and select a model again before sending.",
+          );
+        }
+      });
       const provider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
         (candidate) => candidate.instanceId === value.instanceId,
       );
-      updateComposerDraftSettings(selectedThreadKey, {
-        modelSelection: value,
-        ...(provider?.showInteractionModeToggle === false
-          ? { interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE }
-          : {}),
-      });
+      if (provider?.showInteractionModeToggle === false) {
+        updateComposerDraftSettings(selectedThreadKey, {
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        });
+      }
     },
-    [selectedEnvironmentRuntime?.serverConfig, selectedThreadKey],
+    [
+      selectedEnvironmentRuntime?.serverConfig,
+      selectedThreadKey,
+      selectedThread,
+      saveThreadModelSelection,
+    ],
   );
 
   const onUpdateRuntimeMode = useCallback(
@@ -1037,9 +1074,7 @@ export function useThreadComposerState() {
       if (!selectedThreadKey) {
         return;
       }
-      const modelSelection =
-        getComposerDraftSnapshot(selectedThreadKey).modelSelection ??
-        selectedThread?.modelSelection;
+      const modelSelection = selectedThread?.modelSelection;
       const provider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
         (candidate) => candidate.instanceId === modelSelection?.instanceId,
       );
