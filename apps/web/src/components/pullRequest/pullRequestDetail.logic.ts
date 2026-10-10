@@ -1288,12 +1288,9 @@ export function resolvePullRequestReferenceHost(
   reference: PullRequestRef,
   identity: RepositoryIdentity | null | undefined,
 ): PullRequestRef {
-  // Other providers may resolve an SSH remote to a different web authority on the server.
-  if (reference.host !== undefined || identity?.provider !== "github") return reference;
-  return {
-    ...reference,
-    host: pullRequestHostOf(identity, SourceControlProviderKind.make("github")),
-  };
+  if (reference.host !== undefined || !identity?.provider) return reference;
+  const host = sourceControlClients.get(identity.provider).checkoutChangeRequestHost(identity);
+  return host === null ? reference : { ...reference, host };
 }
 
 export interface PullRequestDetailSnapshotRef {
@@ -1377,7 +1374,7 @@ export function resolveDisplayedPullRequestDetail(input: {
   if (input.reference.host === undefined) return input.cached;
   try {
     const url = new URL(input.cached.url);
-    const host = input.cached.provider === "forgejo" ? url.host : url.hostname;
+    const host = sourceControlClients.get(input.cached.provider).changeRequestUrlHost(url);
     return (url.protocol === "https:" || url.protocol === "http:") &&
       host.toLowerCase() === input.reference.host.toLowerCase()
       ? input.cached
