@@ -1,6 +1,6 @@
 import * as NodeSqlite from "node:sqlite";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -77,6 +77,91 @@ layer("NodeSqliteClient", (it) => {
     }),
   );
 });
+
+const largeText = "x".repeat(64 * 1024 + 1);
+
+it.effect("keeps large text and blob parameters off cached statements", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const statements: Array<NodeSqlite.StatementSync> = [];
+    const all = NodeSqlite.StatementSync.prototype.all;
+    yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        vi.spyOn(NodeSqlite.StatementSync.prototype, "all").mockImplementation(function (
+          this: NodeSqlite.StatementSync,
+          ...params
+        ) {
+          statements.push(this);
+          return all.apply(this, params);
+        }),
+      ),
+      (spy) => Effect.sync(() => spy.mockRestore()),
+    );
+
+    const small = "small";
+    const queries = [
+      (value: string | Uint8Array) => sql`SELECT length(${value}) AS size`,
+      (value: string | Uint8Array) =>
+        sql.unsafe("SELECT length($value) AS size", [{ $value: value }]),
+      (value: string | Uint8Array) =>
+        sql.unsafe("SELECT length($value) AS callable", [
+          Object.assign(() => {}, { $value: value }),
+        ]),
+    ];
+    const cached = new Set<NodeSqlite.StatementSync>();
+    const large = new Set<NodeSqlite.StatementSync>();
+    for (const value of [small, largeText, new Uint8Array(64 * 1024 + 1), small]) {
+      const expected = typeof value === "string" ? value.length : value.byteLength;
+      for (const query of queries) {
+        assert.deepEqual((yield* query(value)).map(Object.values), [[expected]]);
+        assert.deepEqual(yield* query(value).values, [[expected]]);
+        for (const statement of statements.splice(0)) {
+          (value === small ? cached : large).add(statement);
+        }
+      }
+    }
+
+    // Small parameters keep reusing the one cached statement for each query.
+    assert.equal(cached.size, queries.length);
+    // Each large execution gets a statement that nothing holds on to afterwards.
+    assert.equal(large.size, queries.length * 4);
+    assert.isTrue(cached.isDisjointFrom(large));
+  }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
+);
+
+it.effect("reads integers on the values path as the caller asked, cached or not", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    for (const value of ["small", largeText]) {
+      const values = sql`SELECT 1 AS id, length(${value}) AS size`.values;
+      assert.deepEqual(yield* values.pipe(Effect.provideService(SqlClient.SafeIntegers, true)), [
+        [1n, BigInt(value.length)],
+      ]);
+      assert.deepEqual(yield* values, [[1, value.length]]);
+    }
+  }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
+);
+
+it.effect("leaves a parameter it cannot measure for the statement to handle", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const detached = new DataView(new ArrayBuffer(8));
+    structuredClone(detached.buffer, { transfer: [detached.buffer] });
+    // What a detached view binds as varies by Node version; match the statement itself.
+    const native = new NodeSqlite.DatabaseSync(":memory:");
+    const expected = native.prepare("SELECT length(?) AS size").all(detached);
+    native.close();
+    assert.deepEqual(yield* sql`SELECT length(${detached}) AS size`, expected);
+
+    const throwing = {
+      get $value(): string {
+        throw new Error("unreadable");
+      },
+    };
+    const error = yield* sql.unsafe("SELECT length($value) AS size", [throwing]).pipe(Effect.flip);
+    assert.equal(error.reason.operation, "execute");
+  }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
+);
 
 const makeTempDatabase = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
