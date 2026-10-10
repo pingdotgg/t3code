@@ -386,6 +386,28 @@ describe("Forgejo watch boundary", () => {
     }
   });
 
+  it("requires validation within the selected required gate", () => {
+    const skipped = { ...check("required-test", "skipped"), required: true };
+    const advisory = check("advisory-publication", "success");
+    const skippedGate = evaluatePullRequestWatch(
+      seen,
+      detail({ headSha, checks: [skipped, advisory] }),
+      [],
+    );
+    assert.isFalse(skippedGate.next.passed);
+    assert.deepEqual(skippedGate.changes, []);
+    const validatedGate = evaluatePullRequestWatch(
+      seen,
+      detail({
+        headSha,
+        checks: [skipped, { ...check("required-build", "success"), required: true }, advisory],
+      }),
+      [],
+    );
+    assert.isTrue(validatedGate.next.passed);
+    assert.deepEqual(validatedGate.changes, [{ kind: "checks-passed", count: 2, required: true }]);
+  });
+
   it("does not carry a passed result over to a pushed head with queued checks", () => {
     const previous = evaluatePullRequestWatch(
       seen,

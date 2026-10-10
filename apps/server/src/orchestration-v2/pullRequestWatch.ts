@@ -64,7 +64,7 @@ export function evaluatePullRequestWatch(
     const required = detail.checks.filter((check) => check.required === true);
     const gate = required.length > 0 ? required : detail.checks;
     // A closed-event workflow may skip every validation job. That is terminal, not validation.
-    const validated = detail.checks.some(
+    const validated = gate.some(
       (check) => check.status === "success" || check.status === "neutral",
     );
     const passedNow =
