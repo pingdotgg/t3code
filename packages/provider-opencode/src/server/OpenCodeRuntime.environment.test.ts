@@ -234,3 +234,73 @@ server.listen(0, "127.0.0.1", () => {
     10_000,
   );
 });
+
+describe("OpenCode database lock startup", () => {
+  effectIt.live.each(["transient", "permanent", "configuration"] as const)(
+    "handles %s startup failures with bounded process ownership",
+    (mode) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-lock-" });
+        const platform = yield* HostProcess.Platform;
+        const executablePath = yield* HostProcess.ExecutablePath;
+        const environment = yield* HostProcess.Environment;
+        const scriptPath = `${root}/fake.mjs`;
+        const attemptsPath = `${root}/attempts`;
+        yield* fs.writeFileString(
+          scriptPath,
+          `
+import { readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+const path = process.env.T3_TEST_ATTEMPTS;
+let attempt = 0;
+try { attempt = Number(readFileSync(path, "utf8")); } catch {}
+writeFileSync(path, String(++attempt));
+if (${JSON.stringify(mode)} !== "transient" || attempt < 3) {
+  process.stderr.write(${JSON.stringify(mode === "configuration" ? "Invalid configuration" : "SQLiteError: database is locked (SQLITE_BUSY)")} + "\\n");
+  process.exit(1);
+}
+const server = createServer((req, res) => res.end("ok"));
+server.listen(0, "127.0.0.1", () => console.log("opencode server listening on http://127.0.0.1:" + server.address().port));
+`,
+        );
+        const binaryPath = `${root}/opencode${platform === "win32" ? ".cmd" : ""}`;
+        yield* fs.writeFileString(
+          binaryPath,
+          platform === "win32"
+            ? '@echo off\n"%T3_TEST_NODE_BINARY%" "%T3_TEST_OPENCODE_SCRIPT%" %*\n'
+            : '#!/bin/sh\nexec "$T3_TEST_NODE_BINARY" "$T3_TEST_OPENCODE_SCRIPT" "$@"\n',
+        );
+        if (platform !== "win32") yield* fs.chmod(binaryPath, 0o700);
+        const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
+        const result = yield* Effect.result(
+          runtime.startOpenCodeServerProcess({
+            binaryPath,
+            directory: root,
+            port: 0,
+            environment: {
+              ...environment,
+              T3_TEST_NODE_BINARY: executablePath,
+              T3_TEST_OPENCODE_SCRIPT: scriptPath,
+              T3_TEST_ATTEMPTS: attemptsPath,
+            },
+            verify: () => Effect.succeed("1.14.19"),
+          }),
+        );
+        expect(result._tag).toBe(mode === "transient" ? "Success" : "Failure");
+        expect(Number(yield* fs.readFileString(attemptsPath))).toBe(
+          mode === "transient" ? 3 : mode === "permanent" ? 4 : 1,
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide([
+          OpenCodeRuntime.layer.pipe(
+            Layer.provide(OpenCodeServerLedger.layerTest),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+          FetchHttpClient.layer,
+        ]),
+      ),
+    15_000,
+  );
+});

@@ -27,6 +27,7 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -671,9 +672,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       throwOnError: true,
     });
 
-  const startOpenCodeServerProcess: OpenCodeRuntime["Service"]["startOpenCodeServerProcess"] = (
-    input,
-  ) =>
+  const startServerAttempt: OpenCodeRuntime["Service"]["startOpenCodeServerProcess"] = (input) =>
     Effect.gen(function* () {
       // Bind this server's lifetime to the caller's scope. When the caller's
       // scope closes, the spawned child is killed and all associated fibers
@@ -809,6 +808,9 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       const exitFiber = yield* child.exitCode.pipe(
         Effect.flatMap((code) =>
           Effect.gen(function* () {
+            // Exit may arrive before the final stderr chunk containing SQLITE_BUSY.
+            yield* Fiber.join(stdoutFiber);
+            yield* Fiber.join(stderrFiber);
             const stdout = (yield* Ref.get(stdoutRef)) ?? "";
             const stderr = (yield* Ref.get(stderrRef)) ?? "";
             const exitCode = Number(code);
@@ -885,6 +887,33 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           Effect.orElseSucceed(() => 0),
         ),
       } satisfies OpenCodeServerProcess;
+    });
+
+  const startOpenCodeServerProcess: OpenCodeRuntime["Service"]["startOpenCodeServerProcess"] = (
+    input,
+  ) =>
+    Effect.gen(function* () {
+      const ownerScope = yield* Scope.Scope;
+      const attempt = Effect.gen(function* () {
+        const attemptScope = yield* Scope.fork(ownerScope);
+        return yield* startServerAttempt(input).pipe(
+          Effect.provideService(Scope.Scope, attemptScope),
+          Effect.onExit((exit) =>
+            Exit.isFailure(exit) ? Scope.close(attemptScope, exit) : Effect.void,
+          ),
+        );
+      });
+      // OpenCode instances share opencode.db. Migration/WAL locks are transient;
+      // configuration and executable errors are not helped by launching again.
+      return yield* attempt.pipe(
+        Effect.retry({
+          times: 3,
+          schedule: Schedule.spaced("250 millis"),
+          while: (error) =>
+            error.operation === "startOpenCodeServerProcess" &&
+            /SQLITE_BUSY|database is locked/i.test(error.detail),
+        }),
+      );
     });
 
   const connectToOpenCodeServer: OpenCodeRuntime["Service"]["connectToOpenCodeServer"] = (
