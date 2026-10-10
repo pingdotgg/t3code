@@ -284,6 +284,10 @@ jobs:
     concurrency:
       group: desktop-macos-preview-${{ needs.resolve.outputs.pr_number }}-build
       cancel-in-progress: true
+    # release-desktop.yml asks for actions: read (its Windows builds list artifacts).
+    permissions:
+      actions: read
+      contents: read
     uses: ./.github/workflows/release-desktop.yml
     secrets:
       CSC_LINK: ${{ secrets.CSC_LINK }}

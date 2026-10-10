@@ -5,7 +5,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import DynamicLoaderGetWorker from "./fixtures/dynamic-worker-loader/get-worker.ts";
 
 // `dev: true` runs local providers behind the RPC sidecar proxy by default,
@@ -90,5 +90,8 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "local"],
+    timeout: 180_000,
+  },
 );

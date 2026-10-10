@@ -1,4 +1,9 @@
 import { SshDeviceHostConfigs } from "./device.ts";
+import {
+  AuthSettingsWriteScope,
+  AuthProvidersManageScope,
+  type AuthEnvironmentScope,
+} from "./auth.ts";
 import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
@@ -8,6 +13,7 @@ import {
   ForwardCompatibleOptional,
   OmittedWhenNull,
   ProjectId,
+  ThreadId,
   TrimmedNonEmptyString,
   TrimmedString,
 } from "./baseSchemas.ts";
@@ -20,12 +26,9 @@ import {
   DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
   ProviderOptionSelections,
 } from "./model.ts";
-import {
-  DEFAULT_RUNTIME_MODE,
-  ModelSelection,
-  ProjectScript,
-  RuntimeMode,
-} from "./orchestration.ts";
+import { ModelSelection } from "./modelSelection.ts";
+import { ProjectScript } from "./project.ts";
+import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
 import {
   DEFAULT_PREVIEW_APPEARANCE,
@@ -38,7 +41,7 @@ import {
 import {
   ProviderInstanceConfig,
   ProviderInstanceId,
-  type ProviderDriverKind,
+  ProviderDriverKind,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 
@@ -58,7 +61,9 @@ export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "upda
 
 export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at"]);
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
-export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
+// Not exported: mobile was the last consumer of the value itself; the
+// wire field keeps its decoding default below.
+const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 
 export const SidebarProjectGroupingMode = Schema.Literals([
   "repository",
@@ -289,6 +294,10 @@ export const LoadBalancingWeights = Schema.Record(
 
 export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 
+/** Maximum width of the chat timeline and composer on wide screens. */
+export const ChatWidth = Schema.Literals(["comfortable", "wide", "full"]);
+export type ChatWidth = typeof ChatWidth.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -297,6 +306,7 @@ export const ClientSettingsSchema = Schema.Struct({
   diffColorScheme: DiffColorScheme.pipe(
     Schema.withDecodingDefault(Effect.succeed("red-green" as const)),
   ),
+  chatWidth: ChatWidth.pipe(Schema.withDecodingDefault(Effect.succeed("comfortable" as const))),
   loadBalancingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   appearanceContrast: AppearanceContrast.pipe(
@@ -399,6 +409,9 @@ export const ClientSettingsSchema = Schema.Struct({
   onboardingCompletedAt: Schema.NullOr(Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  persistComposerContextStrip: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   // Model favorites. Historically keyed by provider kind, now
   // widened to `ProviderInstanceId` so users can favorite a specific model
   // on a custom provider instance (e.g. "Codex Personal · gpt-5") without
@@ -453,6 +466,12 @@ export const ClientSettingsSchema = Schema.Struct({
   // old keys, so everyone, including prior beta opt-outs, resets to the new
   // default sidebar.
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // Beta: working and monitoring threads fold into a Working shelf and return
+  // to the top of the inbox once they need the user. The inbox then orders by
+  // time, so manual placement there is ignored (and kept) while it is on.
+  sidebarWorkingShelfEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
@@ -507,7 +526,8 @@ export const UsageModelPriceOverride = Schema.Struct({
 });
 export type UsageModelPriceOverride = typeof UsageModelPriceOverride.Type;
 
-const makeBinaryPathSetting = (fallback: string) =>
+/** A binary path setting that decodes empty input to the provider's default executable. */
+export const makeBinaryPathSetting = (fallback: string) =>
   TrimmedString.pipe(
     Schema.decodeTo(
       Schema.String,
@@ -553,7 +573,8 @@ export type ProviderSettingsOrder<Fields extends Schema.Struct.Fields> = readonl
   string
 >[];
 
-function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fields>(
+/** A provider settings struct whose fields the settings form renders in `order`. */
+export function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fields>(
   fields: Fields,
   options?: {
     readonly order?: ProviderSettingsOrder<Fields> | undefined;
@@ -569,6 +590,9 @@ function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fields>(
 
 export const CodexSettings = makeProviderSettingsSchema(
   {
+    setupMode: Schema.optionalKey(Schema.Literals(["managed", "existing"])).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(true)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
@@ -684,68 +708,6 @@ export const ClaudeSettings = makeProviderSettingsSchema(
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
 
-export const CursorSettings = makeProviderSettingsSchema(
-  {
-    // Off by default like Grok and OpenCode. Users opt in from Settings.
-    enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(false)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    binaryPath: makeBinaryPathSetting("cursor-agent").pipe(
-      Schema.annotateKey({
-        title: "Binary path",
-        description: "Path to the Cursor agent binary.",
-        providerSettingsForm: { placeholder: "cursor-agent", clearWhenEmpty: "omit" },
-      }),
-    ),
-    apiEndpoint: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "API endpoint",
-        description: "Override the Cursor API endpoint for this instance.",
-        providerSettingsForm: {
-          placeholder: "https://...",
-          clearWhenEmpty: "omit",
-        },
-      }),
-    ),
-    customModels: Schema.Array(CustomModelSetting).pipe(
-      Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-  },
-  {
-    order: ["binaryPath", "apiEndpoint"],
-  },
-);
-export type CursorSettings = typeof CursorSettings.Type;
-
-export const GrokSettings = makeProviderSettingsSchema(
-  {
-    // Off by default (like Cursor and OpenCode): the binding is not yet
-    // stable enough to probe on every install. Users opt in from Settings.
-    enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(false)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    binaryPath: makeBinaryPathSetting("grok").pipe(
-      Schema.annotateKey({
-        title: "Binary path",
-        description: "Path to the Grok CLI binary.",
-        providerSettingsForm: { placeholder: "grok", clearWhenEmpty: "omit" },
-      }),
-    ),
-    customModels: Schema.Array(CustomModelSetting).pipe(
-      Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-  },
-  {
-    order: ["binaryPath"],
-  },
-);
-export type GrokSettings = typeof GrokSettings.Type;
-
 /**
  * Antigravity ACP auth methods. Personal and Enterprise open a Google sign-in
  * in the browser. The API key and Agent Platform methods take credentials from
@@ -827,58 +789,6 @@ export const AntigravitySettings = makeProviderSettingsSchema(
 );
 export type AntigravitySettings = typeof AntigravitySettings.Type;
 
-export const OpenCodeSettings = makeProviderSettingsSchema(
-  {
-    // Off by default (like Cursor and Grok): the binding is not yet stable
-    // enough to probe on every install. Users opt in from Settings.
-    enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(false)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    binaryPath: makeBinaryPathSetting("opencode").pipe(
-      Schema.annotateKey({
-        title: "Binary path",
-        description: "Path to the OpenCode binary.",
-        providerSettingsForm: {
-          placeholder: "opencode",
-          clearWhenEmpty: "omit",
-        },
-      }),
-    ),
-    serverUrl: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "Server URL",
-        description: "Leave blank to let T3 Code spawn the server when needed.",
-        providerSettingsForm: {
-          placeholder: "http://127.0.0.1:4096",
-          clearWhenEmpty: "omit",
-        },
-      }),
-    ),
-    serverPassword: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "Server password",
-        description: "Stored in plain text on disk.",
-        providerSettingsForm: {
-          control: "password",
-          placeholder: "Optional",
-          clearWhenEmpty: "omit",
-        },
-      }),
-    ),
-    customModels: Schema.Array(CustomModelSetting).pipe(
-      Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-  },
-  {
-    order: ["binaryPath", "serverUrl", "serverPassword"],
-  },
-);
-export type OpenCodeSettings = typeof OpenCodeSettings.Type;
-
 /**
  * A read-only quota source outside this environment's provider CLIs. The
  * only kind today is a CLIProxyAPI hub, whose management API reports the
@@ -893,6 +803,50 @@ export const UsageLimitSourceConfig = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
 export type UsageLimitSourceConfig = typeof UsageLimitSourceConfig.Type;
+
+/**
+ * Bitbucket API credentials for this environment, used before the
+ * `T3CODE_BITBUCKET_*` environment variables. The tokens live in the server's
+ * secret store; settings and clients only see a redaction marker when one is
+ * set. The access token wins when both kinds are configured.
+ */
+export const BitbucketSettings = Schema.Struct({
+  email: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  accessToken: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  apiToken: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type BitbucketSettings = typeof BitbucketSettings.Type;
+
+/**
+ * Per-host choices for the GitHub CLI's logins. `account` pins one of the logins
+ * `gh` holds for the host instead of its active one; a disabled host gets no
+ * credential at all. A token saved here wins over `GH_TOKEN` and friends, which win over `gh`.
+ */
+/** A GitHub host name, lowercased on decode so `GitHub.com` and `github.com` are one entry. */
+export const GitHubHost = TrimmedNonEmptyString.pipe(
+  Schema.decodeTo(Schema.String, SchemaTransformation.toLowerCase()),
+);
+
+export const GitHubHostSettings = Schema.Struct({
+  account: Schema.optionalKey(TrimmedNonEmptyString),
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+});
+export type GitHubHostSettings = typeof GitHubHostSettings.Type;
+
+export const GitHubSettings = Schema.Struct({
+  /** Keyed by lowercased host, for example `github.com`. */
+  hosts: Schema.Record(GitHubHost, GitHubHostSettings).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  /**
+   * A token per host, used before `GH_TOKEN` and `gh`. The server keeps each one in its secret
+   * store; settings and clients only ever see a redaction marker for a saved token.
+   */
+  tokens: Schema.Record(GitHubHost, TrimmedString).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+});
+export type GitHubSettings = typeof GitHubSettings.Type;
 
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -918,6 +872,15 @@ export const SourceControlWritingStyleSettings = Schema.Struct({
   ),
 });
 export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyleSettings.Type;
+
+export const BranchNamingMode = Schema.Literals(["static", "semantic", "custom"]);
+export type BranchNamingMode = typeof BranchNamingMode.Type;
+
+export interface BranchNamingOptions {
+  mode: BranchNamingMode;
+  prefix: string;
+  instructions: string;
+}
 
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
@@ -962,25 +925,34 @@ export const BackgroundActivitySettings = Schema.Struct({
 export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 
 /**
+ * How assistant text reaches clients while a turn runs.
+ * - `turn`: hold the whole message until the turn finishes or pauses.
+ * - `paragraph`: deliver each finished paragraph or closed code block.
+ */
+export const ResponseStreamingMode = Schema.Literals(["turn", "paragraph"]);
+export type ResponseStreamingMode = typeof ResponseStreamingMode.Type;
+
+/**
  * Server settings a project may override. Every other server setting is
  * environment-wide: providers, keybindings, observability, device hosts,
  * background activity, theme. UI, search and the write planner derive
  * eligibility from this list, so adding a key here is the whole opt-in.
  */
-/**
- * How assistant text reaches clients while a turn runs.
- * - `turn`: hold the whole message until the turn finishes or pauses.
- * - `paragraph`: deliver each finished paragraph or closed code block.
- * - `token`: forward every provider delta. Legacy, kept for compatibility.
- */
-export const ResponseStreamingMode = Schema.Literals(["turn", "paragraph", "token"]);
-export type ResponseStreamingMode = typeof ResponseStreamingMode.Type;
-
 const StorageRetentionDays = Schema.NullOr(
   Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3650 })),
 );
 
+export const WorktreeKeepWhen = Schema.Literals([
+  "any-local-files",
+  "uncommitted-changes",
+  "tracked-changes",
+]);
+export type WorktreeKeepWhen = typeof WorktreeKeepWhen.Type;
+
 export const WorktreeCleanupRules = Schema.Struct({
+  worktreeKeepWhen: WorktreeKeepWhen.pipe(
+    Schema.withDecodingDefault(Effect.succeed("uncommitted-changes")),
+  ),
   worktreeAfterDays: StorageRetentionDays,
   worktreeOnMerge: Schema.Boolean,
   worktreeOnDelete: Schema.Boolean,
@@ -1010,6 +982,10 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "textGenerationModelSelection",
   "sourceControlWriterModelSelection",
   "sourceControlWritingStyle",
+  "removeAgentCreditsOnMerge",
+  "branchNamingMode",
+  "branchNamePrefix",
+  "branchNameInstructions",
   "pullRequestMergeMethod",
   "sidebarAutoSettleOnMerge",
   "sidebarAutoSettleAfterDays",
@@ -1037,6 +1013,10 @@ export const ProjectSettingsOverrides = Schema.Struct({
   textGenerationModelSelection: Schema.optionalKey(ModelSelection),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   sourceControlWritingStyle: Schema.optionalKey(SourceControlWritingStyleSettings),
+  removeAgentCreditsOnMerge: Schema.optionalKey(Schema.Boolean),
+  branchNamingMode: Schema.optionalKey(BranchNamingMode),
+  branchNamePrefix: Schema.optionalKey(TrimmedString),
+  branchNameInstructions: Schema.optionalKey(TrimmedString),
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
@@ -1065,7 +1045,32 @@ const NULLABLE_PROJECT_SETTINGS_OVERRIDES: ReadonlySet<ProjectScopedServerSettin
   "sidebarAutoSettleAfterDays",
 ]);
 
+export const StorageCleanupReportEntry = Schema.Struct({
+  kind: Schema.Literals(["worktree", "browser-artifacts", "logs"]),
+  outcome: Schema.Literals(["removed", "kept", "failed"]),
+  reason: Schema.String,
+  path: Schema.NullOr(Schema.String),
+  threadId: Schema.NullOr(ThreadId),
+  threadTitle: Schema.NullOr(Schema.String),
+  bytes: Schema.NullOr(Schema.Number).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  files: Schema.NullOr(Schema.Number).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+});
+export type StorageCleanupReportEntry = typeof StorageCleanupReportEntry.Type;
+export const StorageCleanupReport = Schema.Struct({
+  trigger: Schema.Literals(["automatic", "manual"]),
+  startedAt: Schema.String,
+  finishedAt: Schema.String,
+  entries: Schema.Array(StorageCleanupReportEntry),
+  counts: Schema.Struct({ removed: Schema.Number, kept: Schema.Number, failed: Schema.Number }),
+  omittedCount: Schema.Number,
+  bytesFreed: Schema.Number.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+});
+export type StorageCleanupReport = typeof StorageCleanupReport.Type;
+
 export const StorageCleanupSettings = Schema.Struct({
+  worktreeKeepWhen: WorktreeKeepWhen.pipe(
+    Schema.withDecodingDefault(Effect.succeed("uncommitted-changes")),
+  ),
   worktreeAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   worktreeOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeOnDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -1080,14 +1085,20 @@ export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 export const ServerSettings = Schema.Struct({
   worktreeCleanup: WorktreeCleanup.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   storageCleanup: StorageCleanupSettings.pipe(
-    Schema.withDecodingDefault(
-      Effect.succeed(Schema.decodeUnknownSync(StorageCleanupSettings)({})),
-    ),
+    Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(StorageCleanupSettings)({}))),
   ),
-  // How assistant text reaches clients during a turn. Deliberately a fresh
-  // key (was `enableLegacyTokenStreaming`, before that
-  // `enableAssistantStreaming`): decoding drops the old key, so everyone,
-  // including prior token-streaming opt-ins, resets to the paragraph default.
+  /**
+   * Absolute directory new worktrees are created under, e.g. `D:\worktrees`
+   * or `~/worktrees`. Empty uses `<T3 home>/worktrees`.
+   */
+  worktreesDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /**
+   * Custom locations used before the current one. Server-maintained so
+   * worktrees left there stay eligible for cleanup and review diffs.
+   */
+  previousWorktreesDirectories: Schema.Array(TrimmedString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   responseStreamingMode: ResponseStreamingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("paragraph" as const)),
   ),
@@ -1162,6 +1173,8 @@ export const ServerSettings = Schema.Struct({
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
+  snoozeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  autoResumeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   backgroundActivity: BackgroundActivitySettings,
   // Legacy flat fields retained for old settings files and old clients. New
@@ -1234,6 +1247,12 @@ export const ServerSettings = Schema.Struct({
       }),
     ),
   ),
+  branchNamingMode: BranchNamingMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("static" as const)),
+  ),
+  branchNamePrefix: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed("t3"))),
+  branchNameInstructions: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  removeAgentCreditsOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sourceControlWritingStyle: SourceControlWritingStyleSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1249,20 +1268,6 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
 
-  // Legacy single-instance-per-driver settings. Continues to be the source
-  // of truth until `providerInstances` (below) lands per-driver migration
-  // shims and the server starts hydrating instances from it. Driver-specific
-  // schemas live here for the duration of the migration; once each driver
-  // owns its config in its own package, this struct shrinks to nothing and
-  // is removed entirely.
-  providers: Schema.Struct({
-    codex: CodexSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-    claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-    cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-    grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-    opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-    antigravity: AntigravitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-  }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
   // is `Schema.Unknown` at this layer so envelopes with unknown drivers
@@ -1272,13 +1277,26 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  bitbucket: BitbucketSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  github: GitHubSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // Keyed by a user-chosen id so a source keeps its rows across edits. Entries
   // this build cannot decode round-trip untouched, as provider instances do.
   usageLimitSources: Schema.Record(UsageLimitSourceId, UsageLimitSourceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  /** Allows this server to read the Cursor CLI's macOS Keychain login for account usage. */
+  cursorKeychainUsageEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   /** Exact model IDs, applied to past and future usage on this environment. */
   usagePriceOverrides: Schema.Record(TrimmedNonEmptyString, UsageModelPriceOverride).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  /**
+   * Exact model ID to the model its usage counts as, such as a preview slug to
+   * its released name. The mapped model is priced and reported as its target.
+   */
+  usageModelAliases: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
 });
@@ -1289,8 +1307,8 @@ export const DEFAULT_SERVER_SETTINGS: ServerSettings = Schema.decodeSync(ServerS
 /**
  * Read the legacy `enabled` flag embedded in a provider instance config
  * blob. The envelope-level `ProviderInstanceConfig.enabled` is the single
- * flag going forward; this reader exists for legacy `providers.<kind>`
- * blobs and old settings files that still carry the flag in-config.
+ * flag going forward; this reader exists for old settings files that still
+ * carry the flag in-config.
  */
 export const providerInstanceConfigEnabledFlag = (config: unknown): boolean | undefined => {
   if (config === null || typeof config !== "object" || Array.isArray(config)) {
@@ -1301,18 +1319,34 @@ export const providerInstanceConfigEnabledFlag = (config: unknown): boolean | un
 };
 
 /**
- * Default enabled state for a built-in driver when neither the envelope nor
- * the config blob carries a flag. Derived from the driver's settings schema
- * through `DEFAULT_SERVER_SETTINGS`, so the schema's decoding default stays
- * the single source of truth. Unknown (fork) drivers default to enabled.
+ * Built-in drivers that stay off until the user turns them on. Matches the
+ * `enabled` decoding default of each driver's settings schema.
  */
-const defaultEnabledForDriver = (driver: ProviderDriverKind): boolean => {
-  const legacyDefaults = DEFAULT_SERVER_SETTINGS.providers as Record<
-    string,
-    { readonly enabled?: boolean } | undefined
-  >;
-  return legacyDefaults[driver]?.enabled ?? true;
-};
+const DEFAULT_DISABLED_PROVIDER_DRIVERS: ReadonlySet<ProviderDriverKind> = new Set(
+  ["cursor", "grok", "muse", "pi", "opencode", "antigravity"].map((driver) =>
+    ProviderDriverKind.make(driver),
+  ),
+);
+
+/** Built-in drivers whose default instance runs before the user configures it. */
+const DEFAULT_ENABLED_DEFAULT_INSTANCES: ReadonlySet<ProviderInstanceId> = new Set(
+  ["codex", "claudeAgent"].map((instanceId) => ProviderInstanceId.make(instanceId)),
+);
+
+/**
+ * Whether the built-in default instance at `instanceId` is enabled while
+ * settings have no `providerInstances` entry for it. Only Codex and Claude
+ * start on; any other id without an entry has no running instance.
+ */
+export const isUnconfiguredDefaultInstanceEnabled = (instanceId: ProviderInstanceId): boolean =>
+  DEFAULT_ENABLED_DEFAULT_INSTANCES.has(instanceId);
+
+/**
+ * Default enabled state for a driver when neither the envelope nor the config
+ * blob carries a flag. Unknown (fork) drivers default to enabled.
+ */
+const defaultEnabledForDriver = (driver: ProviderDriverKind): boolean =>
+  !DEFAULT_DISABLED_PROVIDER_DRIVERS.has(driver);
 
 /**
  * Resolve whether a configured provider instance is enabled. An explicit
@@ -1333,6 +1367,7 @@ export const resolveProviderInstanceEnabled = (
 export const ServerSettingsOperation = Schema.Literals([
   "normalize",
   "check-exists",
+  "create-provider-instance",
   "read-file",
   "read-provider-history",
   "read-project-settings",
@@ -1352,7 +1387,9 @@ export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>
     operation: ServerSettingsOperation,
     providerInstanceId: Schema.optional(Schema.String),
     environmentVariable: Schema.optional(Schema.String),
-    cause: Schema.Defect(),
+    // Validation failures (e.g. a create colliding with an existing
+    // instance) originate without an upstream defect.
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -1382,59 +1419,6 @@ const ModelSelectionPatch = Schema.Struct({
   options: Schema.optionalKey(ProviderOptionSelections),
 });
 
-const CodexSettingsPatch = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(TrimmedString),
-  homePath: Schema.optionalKey(TrimmedString),
-  shadowHomePath: Schema.optionalKey(TrimmedString),
-  launchArgs: Schema.optionalKey(TrimmedString),
-  customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
-});
-
-const ClaudeSettingsPatch = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(TrimmedString),
-  homePath: Schema.optionalKey(TrimmedString),
-  customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
-  launchArgs: Schema.optionalKey(TrimmedString),
-  // Validated at the patch boundary so a typo fails the one update with a
-  // schema error instead of a generic whole-settings failure.
-  autoCompactWindow: Schema.optionalKey(
-    TrimmedString.check(Schema.isPattern(CLAUDE_AUTO_COMPACT_WINDOW_PATTERN)),
-  ),
-});
-
-const CursorSettingsPatch = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(TrimmedString),
-  apiEndpoint: Schema.optionalKey(TrimmedString),
-  customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
-});
-
-const GrokSettingsPatch = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(TrimmedString),
-  customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
-});
-
-const AntigravitySettingsPatch = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  authMethod: Schema.optionalKey(AntigravityAuthMethod),
-  apiKey: Schema.optionalKey(TrimmedString),
-  gcpProject: Schema.optionalKey(TrimmedString),
-  gcpLocation: Schema.optionalKey(TrimmedString),
-  binaryPath: Schema.optionalKey(TrimmedString),
-  customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
-});
-
-const OpenCodeSettingsPatch = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(TrimmedString),
-  serverUrl: Schema.optionalKey(TrimmedString),
-  serverPassword: Schema.optionalKey(TrimmedString),
-  customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
-});
-
 export const ServerSettingsPatch = Schema.Struct({
   worktreeCleanup: Schema.optionalKey(
     Schema.NullOr(
@@ -1443,6 +1427,7 @@ export const ServerSettingsPatch = Schema.Struct({
         Schema.Struct({
           mode: Schema.Literal("custom"),
           rules: Schema.Struct({
+            worktreeKeepWhen: Schema.optionalKey(WorktreeKeepWhen),
             worktreeAfterDays: Schema.optionalKey(StorageRetentionDays),
             worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
             worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
@@ -1454,6 +1439,7 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   storageCleanup: Schema.optionalKey(
     Schema.Struct({
+      worktreeKeepWhen: Schema.optionalKey(WorktreeKeepWhen),
       worktreeAfterDays: Schema.optionalKey(StorageRetentionDays),
       worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
       worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
@@ -1462,6 +1448,7 @@ export const ServerSettingsPatch = Schema.Struct({
       logsAfterDays: Schema.optionalKey(StorageRetentionDays),
     }),
   ),
+  worktreesDirectory: Schema.optionalKey(TrimmedString),
   // Server settings
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
@@ -1496,6 +1483,8 @@ export const ServerSettingsPatch = Schema.Struct({
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
+  autoResumeLimitedThreads: Schema.optionalKey(Schema.Boolean),
+  snoozeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
       schemaVersion: Schema.optionalKey(Schema.Literal(1)),
@@ -1513,6 +1502,10 @@ export const ServerSettingsPatch = Schema.Struct({
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  branchNamingMode: Schema.optionalKey(BranchNamingMode),
+  branchNamePrefix: Schema.optionalKey(TrimmedString),
+  branchNameInstructions: Schema.optionalKey(TrimmedString),
+  removeAgentCreditsOnMerge: Schema.optionalKey(Schema.Boolean),
   sourceControlWritingStyle: Schema.optionalKey(
     Schema.Struct({
       mode: Schema.optionalKey(SourceControlWritingStyleMode),
@@ -1529,14 +1522,22 @@ export const ServerSettingsPatch = Schema.Struct({
       otlpLogsUrl: Schema.optionalKey(TrimmedString),
     }),
   ),
-  providers: Schema.optionalKey(
+  /** An empty token clears it; an omitted one keeps what the server has. */
+  bitbucket: Schema.optionalKey(
     Schema.Struct({
-      codex: Schema.optionalKey(CodexSettingsPatch),
-      claudeAgent: Schema.optionalKey(ClaudeSettingsPatch),
-      cursor: Schema.optionalKey(CursorSettingsPatch),
-      grok: Schema.optionalKey(GrokSettingsPatch),
-      opencode: Schema.optionalKey(OpenCodeSettingsPatch),
-      antigravity: Schema.optionalKey(AntigravitySettingsPatch),
+      email: Schema.optionalKey(TrimmedString),
+      accessToken: Schema.optionalKey(TrimmedString),
+      apiToken: Schema.optionalKey(TrimmedString),
+    }),
+  ),
+  /**
+   * `hosts` replaces the whole map, so an omitted host or account clears it. `tokens` merges per
+   * host: an empty token removes that host's token, the redaction marker keeps it.
+   */
+  github: Schema.optionalKey(
+    Schema.Struct({
+      hosts: Schema.optionalKey(Schema.Record(GitHubHost, GitHubHostSettings)),
+      tokens: Schema.optionalKey(Schema.Record(GitHubHost, TrimmedString)),
     }),
   ),
   // Whole-map replacement for the new instance config. Patching individual
@@ -1550,17 +1551,43 @@ export const ServerSettingsPatch = Schema.Struct({
   usageLimitSources: Schema.optionalKey(
     Schema.Record(UsageLimitSourceId, Schema.NullOr(UsageLimitSourceConfig)),
   ),
+  cursorKeychainUsageEnabled: Schema.optionalKey(Schema.Boolean),
   /** Each entry replaces one model's rates; `null` restores automatic pricing. */
   usagePriceOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, Schema.NullOr(UsageModelPriceOverride)),
   ),
+  /** Each entry replaces one model's mapping; `null` removes it. */
+  usageModelAliases: Schema.optionalKey(
+    Schema.Record(TrimmedNonEmptyString, Schema.NullOr(TrimmedNonEmptyString)),
+  ),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
+
+/** A mixed settings patch must be authorized for every configuration domain it changes. */
+export function requiredScopesForServerSettingsPatch(
+  patch: ServerSettingsPatch,
+): ReadonlyArray<AuthEnvironmentScope> {
+  let changesProviders = false;
+  let changesSettings = false;
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) continue;
+    if (key === "providers" || key === "providerInstances" || key === "usageLimitSources") {
+      changesProviders = true;
+    } else {
+      changesSettings = true;
+    }
+  }
+  return [
+    ...(changesSettings || !changesProviders ? [AuthSettingsWriteScope] : []),
+    ...(changesProviders ? [AuthProvidersManageScope] : []),
+  ];
+}
 
 export const ClientSettingsPatch = Schema.Struct({
   notificationMode: Schema.optionalKey(NotificationMode),
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
+  chatWidth: Schema.optionalKey(ChatWidth),
   loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),
   appearanceContrast: Schema.optionalKey(AppearanceContrast),
@@ -1594,6 +1621,7 @@ export const ClientSettingsPatch = Schema.Struct({
   fontFamilySans: Schema.optionalKey(FontFamilyPreference),
   fontFamilyTerminal: Schema.optionalKey(FontFamilyPreference),
   fontSmoothing: Schema.optionalKey(Schema.Boolean),
+  persistComposerContextStrip: Schema.optionalKey(Schema.Boolean),
   favorites: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
@@ -1627,6 +1655,7 @@ export const ClientSettingsPatch = Schema.Struct({
   proactivePanelsEnabled: Schema.optionalKey(Schema.Boolean),
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
+  sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),

@@ -3,7 +3,7 @@ import { Pressable, View } from "react-native";
 import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { useMediaActions } from "../lib/mediaActions";
+import { useMediaActions } from "../state/mediaActions";
 import { AppText } from "./AppText";
 import { SymbolView } from "./AppSymbol";
 import type { ResolvedFilePreviewSource } from "./FilePreviewModal.types";
@@ -52,7 +52,7 @@ export function MediaImagePreview(props: MediaImagePreviewProps) {
         visible
         presentationStyle="fullScreen"
         onRequestClose={props.onRequestClose}
-        swipeToCloseEnabled
+        swipeToCloseEnabled={false}
         doubleTapToZoomEnabled
         HeaderComponent={ImagePreviewHeader}
       />

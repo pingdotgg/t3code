@@ -83,7 +83,7 @@ export function SidebarThreadHeader({
         ref={searchFieldRef}
         className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
       >
-        <SearchIcon className="size-4 shrink-0 text-[var(--sidebar-icon-color)]" />
+        <SearchIcon className="size-4 shrink-0 text-(--sidebar-icon-color)" />
         <SidebarInput
           ref={searchInputRef}
           nativeInput
@@ -108,8 +108,8 @@ export function SidebarThreadHeader({
           <Button
             type="button"
             size="icon-micro"
-            variant="ghost"
-            className="shrink-0 text-sidebar-muted-foreground hover:bg-sidebar-control-surface hover:text-sidebar-foreground"
+            variant="ghost-muted"
+            className="shrink-0"
             aria-label="Clear thread search"
             onClick={() => {
               onClearSearch();
@@ -127,7 +127,7 @@ export function SidebarThreadHeader({
         {hasProjects ? (
           <>
             {projectScope}
-            <SidebarHeaderIconButton label="New project" onClick={onNewProject}>
+            <SidebarHeaderIconButton label="Add project" onClick={onNewProject}>
               <FolderPlusIcon />
             </SidebarHeaderIconButton>
           </>
@@ -187,10 +187,7 @@ export function SidebarHeaderIconButton({
             type="button"
             aria-label={label}
             {...rest}
-            className={cn(
-              "relative size-7 shrink-0 focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar",
-              className,
-            )}
+            className={cn("relative size-7 shrink-0", className)}
           />
         }
       >

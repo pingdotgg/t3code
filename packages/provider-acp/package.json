@@ -1,0 +1,65 @@
+{
+  "name": "@t3tools/provider-acp",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./server/AcpSessionRuntime": {
+      "types": "./src/server/AcpSessionRuntime.ts",
+      "import": "./src/server/AcpSessionRuntime.ts"
+    },
+    "./server/adapter": {
+      "types": "./src/server/adapter.ts",
+      "import": "./src/server/adapter.ts"
+    },
+    "./server/clientPolicy": {
+      "types": "./src/server/clientPolicy.ts",
+      "import": "./src/server/clientPolicy.ts"
+    },
+    "./server/clientTerminals": {
+      "types": "./src/server/clientTerminals.ts",
+      "import": "./src/server/clientTerminals.ts"
+    },
+    "./server/coreRuntimeEvents": {
+      "types": "./src/server/coreRuntimeEvents.ts",
+      "import": "./src/server/coreRuntimeEvents.ts"
+    },
+    "./server/mcpOverAcpBridge": {
+      "types": "./src/server/mcpOverAcpBridge.ts",
+      "import": "./src/server/mcpOverAcpBridge.ts"
+    },
+    "./server/nativeLogging": {
+      "types": "./src/server/nativeLogging.ts",
+      "import": "./src/server/nativeLogging.ts"
+    },
+    "./server/runtimeModel": {
+      "types": "./src/server/runtimeModel.ts",
+      "import": "./src/server/runtimeModel.ts"
+    },
+    "./server/sessionConfig": {
+      "types": "./src/server/sessionConfig.ts",
+      "import": "./src/server/sessionConfig.ts"
+    },
+    "./server/stderr": {
+      "types": "./src/server/stderr.ts",
+      "import": "./src/server/stderr.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/provider-core": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "diff": "8.0.3",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "effect-acp": "workspace:*",
+    "vite-plus": "catalog:"
+  }
+}

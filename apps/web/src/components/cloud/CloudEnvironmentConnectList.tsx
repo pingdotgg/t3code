@@ -5,6 +5,7 @@ import {
   RelayConnectionTarget,
   orchestrationProtocolCompatibilityError,
 } from "@t3tools/client-runtime/connection";
+import { relayOfflineReasonMessage } from "@t3tools/client-runtime/relay";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -48,6 +49,8 @@ function discoveredCompatibilityError(
 export interface SavedCloudEnvironmentConnection {
   readonly environmentId: EnvironmentId;
   readonly connection: EnvironmentConnectionPresentation;
+  /** False for a machine saved over another route (LAN, Tailscale, SSH) only. */
+  readonly relayManaged: boolean;
   /** Present once connected; carries the user's icon override. */
   readonly serverConfig?: ServerConfig | null;
 }
@@ -121,7 +124,15 @@ export function CloudEnvironmentConnectRows({
     ReadonlySet<EnvironmentId>
   >(new Set());
   const savedById = new Map(
-    savedEnvironments.map((environment) => [environment.environmentId, environment]),
+    savedEnvironments
+      .filter((environment) => environment.relayManaged)
+      .map((environment) => [environment.environmentId, environment]),
+  );
+  // Saved over another route only: T3 Connect would be an added fallback.
+  const savedWithoutRelay = new Set(
+    savedEnvironments
+      .filter((environment) => !environment.relayManaged)
+      .map((environment) => environment.environmentId),
   );
 
   useEffect(() => {
@@ -153,8 +164,12 @@ export function CloudEnvironmentConnectRows({
     if (result._tag === "Success") {
       toastManager.add({
         type: "success",
-        title: "Environment added",
-        description: `Connecting to ${environment.label} through T3 Connect.`,
+        title: savedWithoutRelay.has(environment.environmentId)
+          ? "T3 Connect route added"
+          : "Environment added",
+        description: savedWithoutRelay.has(environment.environmentId)
+          ? `${environment.label} falls back to T3 Connect when its other routes are unreachable.`
+          : `Connecting to ${environment.label} through T3 Connect.`,
       });
       return true;
     }
@@ -182,10 +197,14 @@ export function CloudEnvironmentConnectRows({
     return false;
   };
 
+  // During onboarding selection a machine saved over another route already
+  // has its own row elsewhere, and selecting it must not add a T3 Connect
+  // route as a side effect, so it is left out here.
   const visibleEnvironments = [...environmentsState.environments.values()].filter(
     ({ environment }) =>
       environment.environmentId !== primaryEnvironmentId &&
-      (showSavedEnvironments || !savedById.has(environment.environmentId)),
+      (showSavedEnvironments || !savedById.has(environment.environmentId)) &&
+      !(selection && savedWithoutRelay.has(environment.environmentId)),
   );
   const selectNewComputers = useEffectEvent(() => {
     const seen = selection?.autoSelectedComputers;
@@ -317,7 +336,14 @@ export function CloudEnvironmentConnectRows({
     // A connected machine's own config (with the user's icon pick) wins. Before
     // that, the relay's health probe already carries the server's descriptor, so
     // a machine can wear its detected glyph before this device ever connects.
-    const descriptor = status === undefined ? undefined : Option.getOrNull(status)?.descriptor;
+    const relayStatus = status === undefined ? null : Option.getOrNull(status);
+    const descriptor = relayStatus?.descriptor;
+    // Why the relay reports this environment offline, when it knows more than
+    // "no answer". Shown for saved and unsaved rows alike.
+    const offlineReason =
+      availability === "offline" && relayStatus !== null
+        ? relayOfflineReasonMessage(relayStatus)
+        : null;
     const machineKind = resolveEnvironmentMachineKind(
       savedEnvironment?.serverConfig ??
         (descriptor === undefined ? null : { environment: descriptor }),
@@ -337,19 +363,24 @@ export function CloudEnvironmentConnectRows({
           : availability === "checking"
             ? "bg-warning"
             : "bg-muted-foreground/35";
+    const notAdded = savedWithoutRelay.has(environment.environmentId)
+      ? "Saved without T3 Connect"
+      : "Not added";
     const statusText =
       unsupported && !savedEnvironment
-        ? "T3 Connect · Not added · Client not supported"
-        : savedConnection
-          ? savedConnection.statusText
-          : availability === "online"
-            ? "T3 Connect · Not added · Relay online"
-            : availability === "offline"
-              ? "T3 Connect · Not added · Relay offline"
-              : availability === "checking"
-                ? "T3 Connect · Not added · Checking relay status…"
-                : (Option.getOrNull(error)?.message ??
-                  "T3 Connect · Not added · Relay status unavailable");
+        ? `T3 Connect · ${notAdded} · Client not supported`
+        : offlineReason !== null
+          ? offlineReason
+          : savedConnection
+            ? savedConnection.statusText
+            : availability === "online"
+              ? `T3 Connect · ${notAdded} · Relay online`
+              : availability === "offline"
+                ? `T3 Connect · ${notAdded} · Relay offline`
+                : availability === "checking"
+                  ? `T3 Connect · ${notAdded} · Checking relay status…`
+                  : (Option.getOrNull(error)?.message ??
+                    `T3 Connect · ${notAdded} · Relay status unavailable`);
     if (selection) {
       return (
         <label
@@ -414,15 +445,17 @@ export function CloudEnvironmentConnectRows({
                 tooltipText={
                   unsupportedDetail !== null
                     ? unsupportedDetail
-                    : savedConnection
-                      ? savedConnection.statusText
-                      : availability === "online"
-                        ? "Relay online"
-                        : availability === "offline"
-                          ? "Relay offline"
-                          : availability === "checking"
-                            ? "Checking relay status"
-                            : (Option.getOrNull(error)?.message ?? "Relay status unavailable")
+                    : offlineReason !== null
+                      ? offlineReason
+                      : savedConnection
+                        ? savedConnection.statusText
+                        : availability === "online"
+                          ? "Relay online"
+                          : availability === "offline"
+                            ? "Relay offline"
+                            : availability === "checking"
+                              ? "Checking relay status"
+                              : (Option.getOrNull(error)?.message ?? "Relay status unavailable")
                 }
               />
               <EnvironmentMachineIcon
@@ -464,7 +497,11 @@ export function CloudEnvironmentConnectRows({
               disabled={connectingEnvironmentIds.size > 0}
               onClick={() => void connectEnvironment(environment)}
             >
-              {connectingEnvironmentIds.has(environment.environmentId) ? "Adding…" : "Add"}
+              {connectingEnvironmentIds.has(environment.environmentId)
+                ? "Adding…"
+                : savedWithoutRelay.has(environment.environmentId)
+                  ? "Add route"
+                  : "Add"}
             </Button>
           )}
         </div>

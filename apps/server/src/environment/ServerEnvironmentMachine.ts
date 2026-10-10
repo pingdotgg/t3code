@@ -1,5 +1,5 @@
 import type { EnvironmentMachineKind } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
@@ -107,7 +107,7 @@ const readOptionalFile = Effect.fn("readOptionalFile")(function* (path: string) 
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* fileSystem.readFileString(path).pipe(
     Effect.map(normalize),
-    Effect.catch(() => Effect.succeed(null)),
+    Effect.orElseSucceed(() => null),
   );
 });
 
@@ -125,7 +125,7 @@ const runProbe = Effect.fn("runMachineProbe")(function* (input: {
     })
     .pipe(
       Effect.map((result) => (result.code === 0 ? normalize(result.stdout) : null)),
-      Effect.catch(() => Effect.succeed(null)),
+      Effect.orElseSucceed(() => null),
     );
 });
 
@@ -161,7 +161,7 @@ const detectLinuxMachineKind = Effect.fn("detectLinuxMachineKind")(function* () 
 
 export const detectServerEnvironmentMachineKind = Effect.fn("detectServerEnvironmentMachineKind")(
   function* () {
-    const platform = yield* HostProcessPlatform;
+    const platform = yield* HostProcess.Platform;
     switch (platform) {
       case "darwin":
         return yield* detectDarwinMachineKind();

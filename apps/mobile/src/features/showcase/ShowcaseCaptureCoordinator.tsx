@@ -7,7 +7,7 @@ import {
   StackActions,
   useNavigation,
 } from "@react-navigation/native";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 
 import { useConnectionController } from "../connection/useConnectionController";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -29,6 +29,7 @@ import {
   buildShowcasePendingTasks,
   SHOWCASE_PENDING_TASK_DEFINITIONS,
 } from "./showcasePendingTasks";
+import { buildShowcaseAgentActivity } from "./showcaseAgentActivity";
 import { retryShowcaseOperation } from "./showcaseRetry";
 import {
   clearShowcaseRenderSignal,
@@ -36,6 +37,7 @@ import {
   isShowcaseNativeContentReady,
   subscribeToShowcaseRenderSignal,
 } from "./showcaseRenderSignal";
+import { stageShowcaseAgentActivity } from "./stageShowcaseAgentActivity";
 
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 const SHOWCASE_THREAD_ID = "remote-command-center";
@@ -54,7 +56,14 @@ function sceneFromPathname(pathname: string): ShowcaseScene | null {
   return null;
 }
 
+// Showcase capture only runs in showcase builds. Gate the mount so normal builds
+// never subscribe to workspace, project, or thread shell state.
 export function ShowcaseCaptureCoordinator(props: { readonly pathname: string }) {
+  if (!SHOWCASE_ENABLED) return null;
+  return <EnabledShowcaseCaptureCoordinator pathname={props.pathname} />;
+}
+
+function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string }) {
   const navigation = useNavigation();
   const { connectPairingUrl } = useConnectionController();
   const {
@@ -75,7 +84,14 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
   const [themeRequestSettled, setThemeRequestSettled] = useState(false);
   const [readyScene, setReadyScene] = useState<ShowcaseScene | null>(null);
   const [orientationSettled, setOrientationSettled] = useState(false);
+  const [agentActivityStaged, setAgentActivityStaged] = useState(false);
   const requestedSceneRef = useRef<ShowcaseScene | null>(null);
+  // Staging reads the latest entities without restarting on every shell
+  // update, which would re-enter a permission prompt that is still open.
+  const entitiesRef = useRef({ threads, projects });
+  useEffect(() => {
+    entitiesRef.current = { threads, projects };
+  }, [projects, threads]);
   const renderSignal = useSyncExternalStore(
     subscribeToShowcaseRenderSignal,
     getShowcaseRenderSignal,
@@ -83,7 +99,7 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
   );
 
   useEffect(() => {
-    if (!SHOWCASE_ENABLED || pairingUrls.length > 0) return;
+    if (pairingUrls.length > 0) return;
 
     const readLaunchRequest = () => {
       const values = getNativeShowcasePairingUrls();
@@ -101,7 +117,7 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
   }, [pairingUrls.length]);
 
   useEffect(() => {
-    if (!SHOWCASE_ENABLED || orientationSettled) return;
+    if (orientationSettled) return;
     const orientation = getNativeShowcaseOrientation();
     if (orientation === null) {
       setOrientationSettled(true);
@@ -109,6 +125,7 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
     }
 
     let cancelled = false;
+    let lastOutcome: string | null = null;
     void retryShowcaseOperation(async () => applyNativeShowcaseOrientation(orientation), {
       isCancelled: () => cancelled,
     }).then((applied) => {
@@ -120,8 +137,6 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
   }, [orientationSettled]);
 
   useEffect(() => {
-    if (!SHOWCASE_ENABLED) return;
-
     const readRequestedScene = () => {
       const value = getNativeShowcaseScene();
       if (!value || requestedSceneRef.current === value) return;
@@ -129,6 +144,7 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
       // A native draw belongs only to the scene request that produced it. In
       // particular, revisiting review must wait for its newly mounted surface.
       clearShowcaseRenderSignal();
+      setAgentActivityStaged(false);
       setRequestedScene(value);
     };
     readRequestedScene();
@@ -145,7 +161,6 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
 
   useEffect(() => {
     if (
-      !SHOWCASE_ENABLED ||
       requestedTheme === null ||
       themeApplied ||
       // Writing before stored preferences load would be overwritten by them.
@@ -157,7 +172,7 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
   }, [appearancePreferencesReady, requestedTheme, setThemeIdForBothAppearances, themeApplied]);
 
   useEffect(() => {
-    if (!SHOWCASE_ENABLED || pairingUrls.length === 0) return;
+    if (pairingUrls.length === 0) return;
     let cancelled = false;
     void (async () => {
       await Promise.all(
@@ -176,7 +191,11 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
     };
   }, [connectPairingUrl, pairingUrls]);
 
-  const scene = sceneFromPathname(props.pathname);
+  const routeScene = sceneFromPathname(props.pathname);
+  // Agent activity is captured over the thread list: the runner locks the
+  // simulator or opens the notification shade on top of it.
+  const scene =
+    requestedScene === "agent-activity" && routeScene === "threads" ? "agent-activity" : routeScene;
   const hasServerFixture =
     workspace.state.hasReadyEnvironment &&
     workspace.environments.length >= 3 &&
@@ -186,7 +205,7 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
   const showcaseThread = threads.find((thread) => String(thread.id) === SHOWCASE_THREAD_ID);
 
   useEffect(() => {
-    if (!SHOWCASE_ENABLED || !hasServerFixture || pendingTasksReady) return;
+    if (!hasServerFixture || pendingTasksReady) return;
 
     const pendingTasks = buildShowcasePendingTasks(projects, Date.now());
     if (pendingTasks.length !== SHOWCASE_PENDING_TASK_DEFINITIONS.length) return;
@@ -217,7 +236,7 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
   }, [hasServerFixture, pendingTasksReady, projects]);
 
   useEffect(() => {
-    if (!SHOWCASE_ENABLED || requestedScene === null || !hasFixture || !showcaseThread) return;
+    if (requestedScene === null || !hasFixture || !showcaseThread) return;
     if (scene === requestedScene) return;
 
     const params = {
@@ -226,6 +245,11 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
     };
     if (requestedScene === "threads") {
       navigation.dispatch(StackActions.popToTop());
+      return;
+    }
+    // Follows the environments scene, whose settings sheet popToTop leaves open.
+    if (requestedScene === "agent-activity") {
+      navigation.dispatch(CommonActions.reset({ index: 0, routes: [{ name: "Home" }] }));
       return;
     }
     const routes: ShowcaseResetRoute[] = [{ name: "Home" }];
@@ -265,8 +289,40 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
   }, [hasFixture, navigation, requestedScene, scene, showcaseThread]);
 
   useEffect(() => {
+    if (scene !== "agent-activity" || !hasFixture || agentActivityStaged) {
+      return;
+    }
+    let cancelled = false;
+    let lastOutcome: string | null = null;
+    void retryShowcaseOperation(
+      async () => {
+        const now = Date.now();
+        const { threads: latestThreads, projects: latestProjects } = entitiesRef.current;
+        const activity = buildShowcaseAgentActivity(latestThreads, latestProjects, now);
+        const outcome =
+          activity === null
+            ? "fixture threads not loaded"
+            : await stageShowcaseAgentActivity(activity, now);
+        if (outcome === true) return true;
+        // Surfaces in the runner's Metro output when the scene never turns ready.
+        if (outcome !== lastOutcome)
+          console.warn(`[showcase] agent activity not staged: ${outcome}`);
+        lastOutcome = outcome;
+        return false;
+      },
+      // The first attempt waits on the notification permission prompt until
+      // the runner answers it.
+      { isCancelled: () => cancelled, attemptTimeoutMs: 60_000 },
+    ).then((staged) => {
+      if (!cancelled && staged) setAgentActivityStaged(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [agentActivityStaged, hasFixture, scene]);
+
+  useEffect(() => {
     if (
-      !SHOWCASE_ENABLED ||
       scene === null ||
       requestedScene === null ||
       scene !== requestedScene ||
@@ -276,6 +332,7 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
       !orientationSettled ||
       // Likewise for the palette: an early screenshot shows the default theme.
       !themeApplied ||
+      (scene === "agent-activity" && !agentActivityStaged) ||
       !isShowcaseNativeContentReady({ scene, themeId, renderSignal })
     ) {
       setReadyScene(null);
@@ -298,9 +355,18 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
       if (renderFrame !== null) cancelAnimationFrame(renderFrame);
       if (readyFrame !== null) cancelAnimationFrame(readyFrame);
     };
-  }, [hasFixture, orientationSettled, renderSignal, requestedScene, scene, themeApplied, themeId]);
+  }, [
+    agentActivityStaged,
+    hasFixture,
+    orientationSettled,
+    renderSignal,
+    requestedScene,
+    scene,
+    themeApplied,
+    themeId,
+  ]);
 
-  if (!SHOWCASE_ENABLED || readyScene === null) return null;
+  if (readyScene === null) return null;
 
   return (
     <View

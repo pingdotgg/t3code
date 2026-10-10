@@ -3,14 +3,14 @@ import * as Utils from "@effect/openapi-generator/Utils"
 import { assert, describe, expect, it } from "@effect/vitest"
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
+import * as Sse from "effect/encoding/Sse"
+import type { OpenAPISpec } from "effect/http-api/OpenApi"
+import * as HttpClient from "effect/http/HttpClient"
+import * as HttpClientError from "effect/http/HttpClientError"
+import * as HttpClientRequest from "effect/http/HttpClientRequest"
+import * as HttpClientResponse from "effect/http/HttpClientResponse"
 import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
-import * as Sse from "effect/unstable/encoding/Sse"
-import * as HttpClient from "effect/unstable/http/HttpClient"
-import * as HttpClientError from "effect/unstable/http/HttpClientError"
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse"
-import type { OpenAPISpec } from "effect/unstable/httpapi/OpenApi"
 import { rolldown } from "rolldown"
 
 const modules = {
@@ -18,11 +18,11 @@ const modules = {
   "effect/Effect": Effect,
   "effect/Schema": Schema,
   "effect/Stream": Stream,
-  "effect/unstable/encoding/Sse": Sse,
-  "effect/unstable/http/HttpClient": HttpClient,
-  "effect/unstable/http/HttpClientError": HttpClientError,
-  "effect/unstable/http/HttpClientRequest": HttpClientRequest,
-  "effect/unstable/http/HttpClientResponse": HttpClientResponse
+  "effect/encoding/Sse": Sse,
+  "effect/http/HttpClient": HttpClient,
+  "effect/http/HttpClientError": HttpClientError,
+  "effect/http/HttpClientRequest": HttpClientRequest,
+  "effect/http/HttpClientResponse": HttpClientResponse
 }
 
 async function loadClient(source: string, httpClient: HttpClient.HttpClient) {

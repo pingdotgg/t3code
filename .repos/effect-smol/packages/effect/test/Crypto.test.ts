@@ -108,6 +108,24 @@ describe("Crypto", () => {
       assert.strictEqual(uuid, "01234567-89ab-7607-8809-0a0b0c0d0e0f")
     }).pipe(Effect.provideService(Crypto.Crypto, testCrypto)))
 
+  it.effect("randomULID encodes the Clock timestamp and random bytes", () =>
+    Effect.gen(function*() {
+      yield* TestClock.setTime(0x0123456789ab)
+      const crypto = yield* Crypto.Crypto
+      const ulid = yield* crypto.randomULID
+
+      assert.strictEqual(ulid, "014D2PF2DB000G40R40M30E209")
+    }).pipe(Effect.provideService(Crypto.Crypto, testCrypto)))
+
+  it.effect("randomULID clamps an overflowing Clock timestamp", () =>
+    Effect.gen(function*() {
+      yield* TestClock.setTime(2 ** 48)
+      const crypto = yield* Crypto.Crypto
+      const ulid = yield* crypto.randomULID
+
+      assert.strictEqual(ulid, "7ZZZZZZZZZ000G40R40M30E209")
+    }).pipe(Effect.provideService(Crypto.Crypto, testCrypto)))
+
   it.effect("digest delegates to the service", () =>
     Effect.gen(function*() {
       const crypto = yield* Crypto.Crypto

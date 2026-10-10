@@ -50,7 +50,16 @@ export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 export const ServerProviderUsageLimits = Schema.Struct({
   checkedAt: IsoDateTime,
   windows: ForwardCompatibleArray(ServerProviderUsageWindow),
+  /** Opaque credential identity when the provider does not report an account. */
+  credentialFingerprint: Schema.optional(TrimmedNonEmptyString),
   resetCredits: Schema.optional(ServerProviderResetCredits),
+  /** Provider-owned usage settings when quota windows are not available to the client. */
+  externalUsage: Schema.optional(
+    Schema.Struct({
+      label: TrimmedNonEmptyString,
+      url: TrimmedNonEmptyString,
+    }),
+  ),
   unavailable: Schema.optional(
     Schema.Struct({
       reason: Schema.Literals(["unsupported", "probeFailed"]),
@@ -83,6 +92,8 @@ export const UsageLimitSourceAccount = Schema.Struct({
   email: Schema.optional(TrimmedNonEmptyString),
   /** Plan as the matching provider would label it (`ChatGPT Pro 20x Subscription`). */
   plan: Schema.optional(TrimmedNonEmptyString),
+  /** The workspace the quota belongs to, when the source names one; see `ServerProviderAuth`. */
+  workspaceId: Schema.optional(TrimmedNonEmptyString),
   usageLimits: ServerProviderUsageLimits,
 });
 export type UsageLimitSourceAccount = typeof UsageLimitSourceAccount.Type;

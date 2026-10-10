@@ -14,7 +14,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 import * as NodeReadlinePromises from "node:readline/promises";
 
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
@@ -24,9 +24,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 
 import packageJson from "../../package.json" with { type: "json" };
+import * as BootService from "../cloud/bootService.ts";
 import * as ServerConfig from "../config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
@@ -192,7 +193,7 @@ export const triageCommand = Command.make("triage", {
           releaseTag: /^[^-+]+-(?:nightly|preview)\./.test(version)
             ? `v${version} (prerelease build; if this tag does not exist, clone main)`
             : `v${version}`,
-          os: `${yield* HostProcessPlatform} ${yield* HostProcessArchitecture} (${NodeOS.release()})`,
+          os: `${yield* HostProcess.Platform} ${yield* HostProcess.Architecture} (${NodeOS.release()})`,
           nodeVersion: process.version,
           launchedAs: yield* resolveCliCommand("triage"),
           server: yield* describeServerProcess(paths.serverRuntimeStatePath),
@@ -201,7 +202,11 @@ export const triageCommand = Command.make("triage", {
             dbPath: paths.dbPath,
             settingsPath: paths.settingsPath,
             logsDir: paths.logsDir,
-            serverLogPath: paths.serverLogPath,
+            // The server writes no log file of its own. Service installs and the
+            // desktop app capture its output. The glob covers every desktop backend
+            // (such as WSL) and rotated copies; names come from DesktopObservability.ts.
+            serviceLogPath: path.join(paths.logsDir, BootService.BOOT_SERVICE_LOG_FILE),
+            desktopBackendLogGlob: path.join(paths.logsDir, "server-child*.log*"),
             serverTracePath: paths.serverTracePath,
             providerEventLogPath: paths.providerEventLogPath,
             terminalLogsDir: paths.terminalLogsDir,

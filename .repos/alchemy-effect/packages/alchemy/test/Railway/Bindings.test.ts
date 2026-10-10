@@ -4,7 +4,8 @@ import { fromCredentials } from "@distilled.cloud/aws/Credentials";
 import * as AwsEndpoint from "@distilled.cloud/aws/Endpoint";
 import type { RegionName } from "@distilled.cloud/aws/Region";
 import * as S3 from "@distilled.cloud/aws/s3";
-import * as railway from "@distilled.cloud/railway";
+import { Query } from "@distilled.cloud/core/query";
+import { GraphQLLive, Railway as RailwayApi } from "@distilled.cloud/railway";
 import * as Alchemy from "@/index.ts";
 import * as Railway from "@/Railway";
 import * as Test from "@/Test/Alchemy";
@@ -15,8 +16,8 @@ import * as Layer from "effect/Layer";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpClient from "effect/http/HttpClient";
+import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import BucketApi, {
   Data as BucketData,
   OBJECT_BODY,
@@ -36,7 +37,12 @@ const logLevel = Effect.provideService(
 
 const distilled = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
-    Effect.provide(fromAuthProvider().pipe(Layer.provide(RailwayAuth))),
+    Effect.provide(
+      Layer.merge(
+        GraphQLLive,
+        fromAuthProvider().pipe(Layer.provide(RailwayAuth)),
+      ),
+    ),
   );
 
 class NotReady extends Data.TaggedError("NotReady")<{
@@ -63,57 +69,58 @@ const asVariableMap = (value: unknown): Record<string, string> => {
   return out;
 };
 
+const readBucketCredentials = Query.fn(
+  (bucketId: string, environmentId: string, projectId: string) =>
+    RailwayApi.bucketS3Credentials({ bucketId, environmentId, projectId }).pipe(
+      Query.map((creds) => ({
+        bucketName: creds.bucketName,
+        endpoint: creds.endpoint,
+        accessKeyId: creds.accessKeyId,
+        secretAccessKey: creds.secretAccessKey,
+        region: creds.region,
+      })),
+    ),
+);
+
+const readVariables = Query.fn(
+  (projectId: string, environmentId: string, serviceId: string) =>
+    RailwayApi.variables({
+      projectId,
+      environmentId,
+      serviceId,
+      unrendered: true,
+    }),
+);
+
 const readServiceVariables = (
   projectId: string,
   environmentId: string,
   serviceId: string,
 ) =>
-  railway
-    .variables({
-      projectId,
-      environmentId,
-      serviceId,
-      unrendered: true,
-    })
-    .pipe(
-      Effect.map(asVariableMap),
-      railway.catchTags(["RailwayNotFound"], () =>
-        Effect.succeed({} as Record<string, string>),
-      ),
-    );
+  readVariables(projectId, environmentId, serviceId).pipe(
+    Effect.map(asVariableMap),
+    Effect.catchTag("RailwayNotFound", () =>
+      Effect.succeed({} as Record<string, string>),
+    ),
+  );
 
 const firstCredentials = (
   bucketId: string,
   environmentId: string,
   projectId: string,
 ) =>
-  railway
-    .bucketS3Credentials(
-      {
-        bucketId,
-        environmentId,
-        projectId,
-      },
-      {
-        bucketName: true,
-        endpoint: true,
-        accessKeyId: true,
-        secretAccessKey: true,
-        region: true,
-      },
-    )
-    .pipe(
-      Effect.flatMap((items) => {
-        const first = items[0];
-        return first !== undefined
-          ? Effect.succeed(first)
-          : Effect.fail(new Error("missing bucket credentials"));
-      }),
-      Effect.retry({
-        schedule: Schedule.spaced("2 seconds"),
-        times: 8,
-      }),
-    );
+  readBucketCredentials(bucketId, environmentId, projectId).pipe(
+    Effect.flatMap((items) => {
+      const first = items[0];
+      return first !== undefined
+        ? Effect.succeed(first)
+        : Effect.fail(new Error("missing bucket credentials"));
+    }),
+    Effect.retry({
+      schedule: Schedule.spaced("2 seconds"),
+      times: 8,
+    }),
+  );
 
 const withBucketS3 = <A, E, R>(
   creds: {
@@ -174,7 +181,8 @@ const Stack = Alchemy.Stack(
   }),
 );
 
-const stack = beforeAll(deploy(Stack), { timeout: 120_000 });
+// Setup provisions Redis and deploys two runtime builds before tests can run.
+const stack = beforeAll(deploy(Stack), { timeout: 180_000 });
 afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack), {
   timeout: 120_000,
 });
@@ -243,149 +251,170 @@ const getText = (url: string) =>
     );
   });
 
-describe("Railway Bindings", () => {
-  test(
-    "fixture is reachable over up.railway.app",
-    Effect.gen(function* () {
-      const out = yield* stack;
-      expect(out.redisUrl).toEqual(expect.any(String));
-      expect(out.redisUrl).toContain("up.railway.app");
-      expect(out.bucketUrl).toEqual(expect.any(String));
-      expect(out.bucketUrl).toContain("up.railway.app");
-
-      if (out.mode === "effect") {
-        const redisHealth = (yield* getJson(out.redisUrl!, "/health")) as {
-          pong?: boolean;
-        };
-        expect(redisHealth.pong).toEqual(true);
-        const bucketHealth = (yield* getJson(out.bucketUrl!, "/health")) as {
-          ok?: boolean;
-        };
-        expect(bucketHealth.ok).toEqual(true);
-      } else {
-        const redisBody = yield* getText(out.redisUrl!);
-        expect(redisBody.length).toBeGreaterThan(0);
-        const bucketBody = yield* getText(out.bucketUrl!);
-        expect(bucketBody.length).toBeGreaterThan(0);
-      }
-    }).pipe(logLevel),
-    { timeout: 120_000 },
-  );
-
-  describe("ReadWriteRedis", () => {
+describe(
+  "Railway Bindings",
+  {
+    tags: [
+      "provider:railway",
+      "provider:railway:bucket",
+      "provider:railway:project",
+      "provider:railway:projectenvironment",
+      "provider:railway:redis",
+      "provider:railway:service",
+      "provider:railway:tcpproxy",
+      "live",
+    ],
+  },
+  () => {
     test(
-      "sets and gets a key",
+      "fixture is reachable over up.railway.app",
       Effect.gen(function* () {
         const out = yield* stack;
+        expect(out.redisUrl).toEqual(expect.any(String));
+        expect(out.redisUrl).toContain("up.railway.app");
+        expect(out.bucketUrl).toEqual(expect.any(String));
+        expect(out.bucketUrl).toContain("up.railway.app");
+
         if (out.mode === "effect") {
-          const written = (yield* getJson(out.redisUrl!, "/set")) as {
+          const redisHealth = (yield* getJson(out.redisUrl!, "/health")) as {
+            pong?: boolean;
+          };
+          expect(redisHealth.pong).toEqual(true);
+          const bucketHealth = (yield* getJson(out.bucketUrl!, "/health")) as {
             ok?: boolean;
           };
-          expect(written.ok).toEqual(true);
-          const read = (yield* getJson(out.redisUrl!, "/get")) as {
-            ok?: boolean;
-            value?: string;
-          };
-          expect(read.ok).toEqual(true);
-          expect(read.value).toEqual(REDIS_VALUE);
-          return;
+          expect(bucketHealth.ok).toEqual(true);
+        } else {
+          const redisBody = yield* getText(out.redisUrl!);
+          expect(redisBody.length).toBeGreaterThan(0);
+          const bucketBody = yield* getText(out.bucketUrl!);
+          expect(bucketBody.length).toBeGreaterThan(0);
         }
-
-        // Public image fallback: docker push is impossible without a
-        // registry. ReadWriteRedis still packed REDIS_URL onto the
-        // Service; set/get runs over the public TCP proxy.
-        const cacheVars = yield* distilled(
-          readServiceVariables(
-            out.redisProjectId,
-            out.redisEnvironmentId,
-            out.cacheServiceId,
-          ),
-        );
-        const password = cacheVars[Railway.REDIS_PASSWORD_ENV];
-        expect(password !== undefined && password.length > 0).toEqual(true);
-
-        const url = Railway.redisConnectionUrl({
-          host: out.proxyDomain,
-          port: out.proxyPort,
-          password: password!,
-        });
-        const pong = yield* Railway.runRedisCommand(url, "PING").pipe(
-          Effect.retry({
-            schedule: Schedule.spaced("4 seconds"),
-            times: 10,
-          }),
-        );
-        expect(String(pong).toUpperCase()).toContain("PONG");
-        yield* Railway.runRedisCommand(url, "SET", ["marker", REDIS_VALUE]);
-        const got = yield* Railway.runRedisCommand(url, "GET", ["marker"]);
-        expect(got).toEqual(REDIS_VALUE);
       }).pipe(logLevel),
       { timeout: 120_000 },
     );
-  });
 
-  describe("PutObject / GetObject", () => {
-    test(
-      "puts and gets an object",
-      Effect.gen(function* () {
-        const out = yield* stack;
-        if (out.mode === "effect") {
-          const put = (yield* getJson(out.bucketUrl!, "/put")) as {
-            ok?: boolean;
-          };
-          expect(put.ok).toEqual(true);
-          const got = (yield* getJson(out.bucketUrl!, "/get")) as {
-            ok?: boolean;
-            text?: string;
-          };
-          expect(got.ok).toEqual(true);
-          expect(got.text).toEqual(OBJECT_BODY);
-          return;
-        }
+    describe("ReadWriteRedis", { tags: ["provider:railway:variable"] }, () => {
+      test(
+        "sets and gets a key",
+        Effect.gen(function* () {
+          const out = yield* stack;
+          if (out.mode === "effect") {
+            const written = (yield* getJson(out.redisUrl!, "/set")) as {
+              ok?: boolean;
+            };
+            expect(written.ok).toEqual(true);
+            const read = (yield* getJson(out.redisUrl!, "/get")) as {
+              ok?: boolean;
+              value?: string;
+            };
+            expect(read.ok).toEqual(true);
+            expect(read.value).toEqual(REDIS_VALUE);
+            return;
+          }
 
-        // Public image fallback: docker push is impossible without a
-        // registry. PutObject/GetObject still packed AWS_* onto the
-        // Service; put/get runs over the S3 API from the test process.
-        const vars = yield* distilled(
-          readServiceVariables(
-            out.bucketProjectId,
-            out.bucketEnvironmentId,
-            out.bucketServiceId,
-          ),
-        );
-        expect((vars.AWS_ACCESS_KEY_ID ?? "").length).toBeGreaterThan(0);
-        expect((vars.BUCKET_NAME ?? "").length).toBeGreaterThan(0);
+          // Public image fallback: docker push is impossible without a
+          // registry. ReadWriteRedis still packed REDIS_URL onto the
+          // Service; set/get runs over the public TCP proxy.
+          const cacheVars = yield* distilled(
+            readServiceVariables(
+              out.redisProjectId,
+              out.redisEnvironmentId,
+              out.cacheServiceId,
+            ),
+          );
+          const password = cacheVars[Railway.REDIS_PASSWORD_ENV];
+          expect(password !== undefined && password.length > 0).toEqual(true);
 
-        const creds = yield* distilled(
-          firstCredentials(
-            out.bucketId,
-            out.bucketEnvironmentId,
-            out.bucketProjectId,
-          ),
+          const url = Railway.redisConnectionUrl({
+            host: out.proxyDomain,
+            port: out.proxyPort,
+            password: password!,
+          });
+          const pong = yield* Railway.runRedisCommand(url, "PING").pipe(
+            Effect.retry({
+              schedule: Schedule.spaced("4 seconds"),
+              times: 10,
+            }),
+          );
+          expect(String(pong).toUpperCase()).toContain("PONG");
+          yield* Railway.runRedisCommand(url, "SET", ["marker", REDIS_VALUE]);
+          const got = yield* Railway.runRedisCommand(url, "GET", ["marker"]);
+          expect(got).toEqual(REDIS_VALUE);
+        }).pipe(logLevel),
+        { timeout: 120_000 },
+      );
+    });
+
+    describe(
+      "PutObject / GetObject",
+      {
+        tags: ["provider:aws", "provider:aws:s3", "provider:railway:variable"],
+      },
+      () => {
+        test(
+          "puts and gets an object",
+          Effect.gen(function* () {
+            const out = yield* stack;
+            if (out.mode === "effect") {
+              const put = (yield* getJson(out.bucketUrl!, "/put")) as {
+                ok?: boolean;
+              };
+              expect(put.ok).toEqual(true);
+              const got = (yield* getJson(out.bucketUrl!, "/get")) as {
+                ok?: boolean;
+                text?: string;
+              };
+              expect(got.ok).toEqual(true);
+              expect(got.text).toEqual(OBJECT_BODY);
+              return;
+            }
+
+            // Public image fallback: docker push is impossible without a
+            // registry. PutObject/GetObject still packed AWS_* onto the
+            // Service; put/get runs over the S3 API from the test process.
+            const vars = yield* distilled(
+              readServiceVariables(
+                out.bucketProjectId,
+                out.bucketEnvironmentId,
+                out.bucketServiceId,
+              ),
+            );
+            expect((vars.AWS_ACCESS_KEY_ID ?? "").length).toBeGreaterThan(0);
+            expect((vars.BUCKET_NAME ?? "").length).toBeGreaterThan(0);
+
+            const creds = yield* distilled(
+              firstCredentials(
+                out.bucketId,
+                out.bucketEnvironmentId,
+                out.bucketProjectId,
+              ),
+            );
+            yield* withBucketS3(
+              creds,
+              S3.putObject({
+                Bucket: creds.bucketName,
+                Key: OBJECT_KEY,
+                Body: OBJECT_BODY,
+                ContentType: "text/plain",
+              }),
+            );
+            const got = yield* withBucketS3(
+              creds,
+              S3.getObject({
+                Bucket: creds.bucketName,
+                Key: OBJECT_KEY,
+              }),
+            );
+            const text =
+              got.Body === undefined
+                ? ""
+                : yield* Stream.mkString(Stream.decodeText(got.Body));
+            expect(text).toEqual(OBJECT_BODY);
+          }).pipe(logLevel),
+          { timeout: 120_000 },
         );
-        yield* withBucketS3(
-          creds,
-          S3.putObject({
-            Bucket: creds.bucketName,
-            Key: OBJECT_KEY,
-            Body: OBJECT_BODY,
-            ContentType: "text/plain",
-          }),
-        );
-        const got = yield* withBucketS3(
-          creds,
-          S3.getObject({
-            Bucket: creds.bucketName,
-            Key: OBJECT_KEY,
-          }),
-        );
-        const text =
-          got.Body === undefined
-            ? ""
-            : yield* Stream.mkString(Stream.decodeText(got.Body));
-        expect(text).toEqual(OBJECT_BODY);
-      }).pipe(logLevel),
-      { timeout: 120_000 },
+      },
     );
-  });
-});
+  },
+);

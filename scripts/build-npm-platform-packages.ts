@@ -28,15 +28,15 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { Command, Flag } from "effect/unstable/cli";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Command, Flag } from "effect/cli";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
   CLI_ARCHIVE_PLATFORM_KEYS,
   cliArchiveFileName,
   type CliArchivePlatformKey,
 } from "@t3tools/shared/cliRelease";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { isCommandAvailable } from "@t3tools/shared/shell";
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
@@ -253,7 +253,7 @@ const runCommand = Effect.fn("runCommand")(function* (
 const extractArchive = Effect.fn("extractArchive")(function* (archive: string, into: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   if (!archive.endsWith(".zip")) {
     yield* runCommand(ChildProcess.make("tar", ["-xf", archive, "-C", into]), "tar -xf");
   } else if (platform === "win32") {
@@ -282,7 +282,7 @@ const extractArchive = Effect.fn("extractArchive")(function* (archive: string, i
 });
 
 /** Tar to build npm tarballs with; see build-cli-archive.ts for why Windows names bsdtar by path. */
-const hostTar = Effect.map(HostProcessPlatform, (platform) =>
+const hostTar = Effect.map(HostProcess.Platform, (platform) =>
   platform === "win32" ? windowsSystemTar() : "tar",
 );
 
@@ -429,24 +429,22 @@ export const buildNpmPlatformPackages = Effect.fn("buildNpmPlatformPackages")(fu
   yield* fs.makeDirectory(path.join(input.outputDir, NPM_PLATFORM_PACKAGE_SCOPE), {
     recursive: true,
   });
-  const outputs: Array<NpmPackageOutput> = [];
-  for (const { key, archive } of archives) {
-    outputs.push(
-      yield* stagePlatformPackage({
-        key,
-        archive,
-        outputDir: input.outputDir,
-        version: input.version,
-      }),
-    );
-  }
-  outputs.push(
+  // Each archive stages in its own scratch dir, so all of them unpack and
+  // compress at once. Sequentially this took about 45s for five archives.
+  const platformOutputs = yield* Effect.forEach(
+    archives,
+    ({ key, archive }) =>
+      stagePlatformPackage({ key, archive, outputDir: input.outputDir, version: input.version }),
+    { concurrency: "unbounded" },
+  );
+  const outputs = [
+    ...platformOutputs,
     yield* stageLauncherPackage({
       outputDir: input.outputDir,
       version: input.version,
       platformKeys: archives.map((entry) => entry.key),
     }),
-  );
+  ];
 
   for (const output of outputs) {
     yield* Effect.log(`[npm-packages] Wrote ${output.packageDir} and ${output.tarball}`);

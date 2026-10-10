@@ -162,7 +162,15 @@ test.provider.skipIf(!runSpeedScheduleTests)(
       const gone = yield* findSchedule(zoneId, URL_CREATE);
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:speed",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!runSpeedScheduleTests)(
@@ -227,7 +235,15 @@ test.provider.skipIf(!runSpeedScheduleTests)(
       const gone = yield* findSchedule(zoneId, URL_FREQ);
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:speed",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!runSpeedScheduleTests)(
@@ -293,7 +309,15 @@ test.provider.skipIf(!runSpeedScheduleTests)(
       const gone = yield* findSchedule(zoneId, URL_REGION, "us-east1");
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:speed",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -374,7 +398,15 @@ test.provider(
       const gone = yield* findSchedule(zoneId, URL_TAKEOVER);
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:speed",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!runSpeedScheduleTests)(
@@ -430,7 +462,15 @@ test.provider.skipIf(!runSpeedScheduleTests)(
       const gone = yield* findSchedule(zoneId, URL_LIST);
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:speed",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 /**

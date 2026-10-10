@@ -1,6 +1,6 @@
 import { Effect, Schema, Stream } from "effect"
-import { HttpClient, HttpClientResponse } from "effect/unstable/http"
-import { HttpApi, HttpApiClient, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/unstable/httpapi"
+import { HttpClient, HttpClientResponse } from "effect/http"
+import { HttpApi, HttpApiClient, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api"
 import { Bench } from "tinybench"
 
 const Event = Schema.Struct({

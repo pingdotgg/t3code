@@ -25,7 +25,7 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64 from "effect/encoding/Base64";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -88,6 +88,7 @@ import {
   snapShotShortcutRegistrationFailureMessage,
   snapShotShortcutSystemConflict,
 } from "./snapShot.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const MAX_CAPTURE_WIDTH = 2_560;
 const MAX_CAPTURE_HEIGHT = 1_600;
@@ -727,6 +728,7 @@ export const make = Effect.gen(function* () {
   const runPromise = Effect.runPromiseWith(context);
   const captureDirectory = path.join(environment.stateDir, "snap-shots");
   const linuxAppId = environment.linuxDesktopEntryName.replace(/\.desktop$/, "");
+  const home = yield* HostProcess.HomeDirectory;
   let shortcutVerified = false;
   const gnomeSetupPaths = {
     bundle: environment.isPackaged
@@ -757,7 +759,7 @@ export const make = Effect.gen(function* () {
     dataHome: path.dirname(environment.linuxApplicationsDir),
   };
   const shiftShortcutWorkerPath = path.join(__dirname, "snapShot", "GlobalShiftShortcutWorker.cjs");
-  const shortcutConfig = new CaptureShortcutConfig();
+  const shortcutConfig = new CaptureShortcutConfig(home);
   const accessibilityWorkerPath = path.join(
     __dirname,
     "snapShot",
@@ -820,7 +822,7 @@ export const make = Effect.gen(function* () {
   };
 
   const emit = (event: DesktopSnapShotEvent) =>
-    desktopWindow.dispatchSnapShotEvent(event).pipe(Effect.catchCause(() => Effect.void));
+    desktopWindow.dispatchSnapShotEvent(event).pipe(Effect.ignoreCause);
   const setFailure = (message: string, captureId?: string) =>
     Ref.update(stateRef, (state) => ({ ...state, message })).pipe(
       Effect.andThen(
@@ -846,10 +848,9 @@ export const make = Effect.gen(function* () {
   const discardCapture = Effect.fn("desktop.snapShot.discardCapture")(function* (id: string) {
     closeLinuxFeedback(id);
     transition.dismiss(id);
-    yield* Effect.all(
-      [`${id}.png`, `${id}.tmp.png`, `${id}.json`, `${id}.json.tmp`].map((name) =>
-        fileSystem.remove(path.join(captureDirectory, name), { force: true }),
-      ),
+    yield* Effect.forEach(
+      [`${id}.png`, `${id}.tmp.png`, `${id}.json`, `${id}.json.tmp`],
+      (name) => fileSystem.remove(path.join(captureDirectory, name), { force: true }),
       { concurrency: "unbounded", discard: true },
     ).pipe(Effect.ignore);
   });
@@ -904,7 +905,7 @@ export const make = Effect.gen(function* () {
       if (snapshot.animationStarted) {
         yield* emit({ type: "started", id: id as DesktopSnapShotId });
       } else {
-        yield* desktopWindow.activate.pipe(Effect.catchCause(() => Effect.void));
+        yield* desktopWindow.activate.pipe(Effect.ignoreCause);
       }
       return { id, capturedAt, ...snapshot };
     }).pipe(Effect.mapError((cause) => captureFailure(cause, id)));
@@ -1185,7 +1186,7 @@ export const make = Effect.gen(function* () {
         shortcut,
         shortcutRegistered: false,
         shortcutBinding: niriCaptureBinding(linuxAppId),
-        shortcutConfigPath: niriCaptureConfigPath(),
+        shortcutConfigPath: niriCaptureConfigPath(home),
         shortcutActionRegistered: registered,
         shortcutMessage: registered
           ? "Set up the shortcut to add it to your Niri config."
@@ -1475,8 +1476,8 @@ export const make = Effect.gen(function* () {
         const configPath =
           selectedPath ??
           (desktop === "niri"
-            ? niriCaptureConfigPath()
-            : (await hyprlandCaptureShortcut(linuxAppId)).shortcutConfigPath);
+            ? niriCaptureConfigPath(home)
+            : (await hyprlandCaptureShortcut(linuxAppId, home)).shortcutConfigPath);
         return shortcutConfig.preview({ desktop, path: configPath, appId: linuxAppId }, request);
       },
       catch: (cause) =>
@@ -1511,7 +1512,7 @@ export const make = Effect.gen(function* () {
             null,
           ),
         ),
-        Effect.catch(() => Effect.void),
+        Effect.ignore,
       ),
     ),
     configure,
@@ -1594,7 +1595,7 @@ export const make = Effect.gen(function* () {
               : undefined;
           const hyprlandShortcut =
             state.linuxBackend === "hyprland"
-              ? yield* Effect.promise(() => hyprlandCaptureShortcut(linuxAppId))
+              ? yield* Effect.promise(() => hyprlandCaptureShortcut(linuxAppId, home))
               : undefined;
           return {
             ...state,
@@ -1610,7 +1611,7 @@ export const make = Effect.gen(function* () {
               : {}),
             ...hyprlandShortcut,
             ...(state.linuxBackend === "niri"
-              ? { shortcutConfigPath: niriCaptureConfigPath() }
+              ? { shortcutConfigPath: niriCaptureConfigPath(home) }
               : {}),
             ...(kdeHelper
               ? {
@@ -1658,7 +1659,7 @@ export const make = Effect.gen(function* () {
         const png = yield* fileSystem.readFile(path.join(captureDirectory, `${id}.png`));
         return {
           ...metadata,
-          dataUrl: `data:image/png;base64,${Encoding.encodeBase64(png)}`,
+          dataUrl: `data:image/png;base64,${Base64.encode(png)}`,
         };
       }).pipe(
         Effect.mapError(

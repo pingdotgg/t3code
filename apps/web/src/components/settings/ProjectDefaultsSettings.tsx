@@ -79,6 +79,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const mixedSubmodules = useScopedSettingsMixed(["worktreeSubmodules"]);
   const mixedBrowser = useScopedSettingsMixed(["enableAgentBrowserAccess"]);
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
+  const mixedAgentCredits = useScopedSettingsMixed(["removeAgentCreditsOnMerge"]);
   const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
@@ -162,7 +163,6 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               lockedProvider={null}
               instanceEntries={entries}
               modelOptionsByInstance={modelOptions}
-              triggerVariant="outline"
               triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
               {...(mixedModel ? { triggerLabel: "Mixed" } : {})}
               getModelDisabledReason={modelDisabledReason}
@@ -187,7 +187,6 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                 modelOptions={selection.options ?? []}
                 allowPromptInjectedEffort={false}
                 planModeEnabled={settings.planModeEnabled}
-                triggerVariant="outline"
                 triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                 onModelOptionsChange={(options) =>
                   setModel(createModelSelection(selection.instanceId, selection.model, options))
@@ -411,6 +410,32 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                 mixed={mixedAutoPull}
                 checked={mixedAutoPull ? false : settings.defaultAutoPull}
                 onCheckedChange={(enabled) => updateSettings({ defaultAutoPull: enabled })}
+              />
+            }
+          />
+          <SettingsRow
+            serverScoped
+            settingKeys={["removeAgentCreditsOnMerge"]}
+            mixed={mixedAgentCredits}
+            {...searchableSetting("remove-agent-credits-on-merge")}
+            description="Remove recognized agent credit lines from GitHub merge and squash messages, keeping human co-authors. Includes auto-merge. Excludes merge queues, stack merges, and existing commits."
+            resetAction={
+              settings.removeAgentCreditsOnMerge ? (
+                <SettingResetButton
+                  label="agent credit removal"
+                  tooltip="Keep agent credits"
+                  onClick={() => updateSettings({ removeAgentCreditsOnMerge: false })}
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                aria-label="Remove agent credits when merging"
+                mixed={mixedAgentCredits}
+                checked={mixedAgentCredits ? false : settings.removeAgentCreditsOnMerge}
+                onCheckedChange={(enabled) =>
+                  updateSettings({ removeAgentCreditsOnMerge: enabled })
+                }
               />
             }
           />

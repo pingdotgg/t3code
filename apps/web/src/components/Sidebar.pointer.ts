@@ -12,6 +12,10 @@ type Options = {
   distance: number;
   onAttach: (sensor: SidebarPointerSensor) => void;
   onFinish: (started: boolean) => void;
+  /** Return true to claim the move: the sort gesture then ignores this pointer position. */
+  onMove?: (point: { x: number; y: number }) => boolean;
+  /** Return true when the release was consumed elsewhere, so the sort is cancelled. */
+  onDrop?: (point: { x: number; y: number }) => boolean;
 };
 
 /** A sidebar gesture ends on release, cancellation, or loss of its window.
@@ -30,7 +34,9 @@ export class SidebarPointerSensor {
   private readonly document: Document;
   private readonly window: Window;
 
-  constructor(private readonly props: SensorProps<Options>) {
+  // The settle sweep constructs this sensor directly, outside dnd-kit, so it
+  // takes only the props the gesture reads.
+  constructor(private readonly props: Omit<SensorProps<Options>, "activeNode" | "context">) {
     this.pointer = props.event as PointerEvent;
     this.document = getOwnerDocument(this.pointer.target);
     this.window = getWindow(this.pointer.target);
@@ -62,10 +68,13 @@ export class SidebarPointerSensor {
 
   private move = (event: PointerEvent) => {
     if (this.phase === "finished" || event.pointerId !== this.pointer.pointerId) return;
-    // A release outside the window can be missed. Never activate or continue
-    // a drag when the initiating button is no longer held.
-    if ((event.buttons & 1) === 0) return this.cancel();
     const coordinates = { x: event.clientX, y: event.clientY };
+    // Desktop can report buttons=0 on the final move before pointerup. Let an
+    // active context drag drop there before cancelling the sidebar sort.
+    if ((event.buttons & 1) === 0) {
+      if (this.phase === "dragging") this.props.options.onDrop?.(coordinates);
+      return this.cancel();
+    }
     if (this.phase === "pending") {
       const offset = {
         x: event.clientX - this.pointer.clientX,
@@ -85,16 +94,22 @@ export class SidebarPointerSensor {
       this.document.addEventListener("selectionchange", this.clearSelection);
       this.clearSelection();
       this.props.onStart(this.coordinates());
-      return;
     }
+    // The move that starts a drag also moves it, so a release before the
+    // next pointermove still lands where the pointer is.
     if (this.phase === "dragging") {
       if (event.cancelable) event.preventDefault();
+      if (this.props.options.onMove?.(coordinates) === true) return;
       this.props.onMove(coordinates);
     }
   };
 
   private end = (event: PointerEvent) => {
-    if (event.pointerId === this.pointer.pointerId) this.finish(false);
+    if (event.pointerId !== this.pointer.pointerId) return;
+    const dropped =
+      this.phase === "dragging" &&
+      this.props.options.onDrop?.({ x: event.clientX, y: event.clientY }) === true;
+    this.finish(dropped);
   };
   private pointerCancel = (event: PointerEvent) => {
     if (event.pointerId === this.pointer.pointerId) this.cancel();
@@ -125,7 +140,8 @@ export class SidebarPointerSensor {
     // Cancellation can precede release by an arbitrary amount of time. Consume
     // that release click, or let a fresh pointerdown end suppression if release
     // happened outside the document. Ordinary clicks never install this guard.
-    if (!aborted) {
+    if (!aborted || cancelled) {
+      this.document.addEventListener("click", this.suppressClick, { capture: true });
       this.document.addEventListener("pointerdown", this.clearClickSuppression, { capture: true });
     }
     try {

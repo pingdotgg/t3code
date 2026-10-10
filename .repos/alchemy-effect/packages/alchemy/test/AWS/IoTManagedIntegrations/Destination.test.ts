@@ -34,6 +34,7 @@ test.provider(
       );
       expect(error._tag).toBe("ResourceNotFoundException");
     }),
+  { tags: ["provider:aws", "provider:aws:iotmanagedintegrations", "live"] },
 );
 
 class DestinationStillExists extends Data.TaggedError(
@@ -122,5 +123,14 @@ test.provider.skipIf(!process.env.AWS_TEST_IOT_MI)(
       yield* stack.destroy();
       yield* assertDestinationGone(destination.destinationName);
     }),
-  { timeout: 240_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:iam",
+      "provider:aws:iotmanagedintegrations",
+      "provider:aws:kinesis",
+      "live",
+    ],
+    timeout: 240_000,
+  },
 );

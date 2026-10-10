@@ -15,8 +15,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import SmokeApiFunctionLive, {
   SmokeApiFunction,
 } from "./fixtures/api-handler.ts";
@@ -211,375 +211,399 @@ const deployProgram = Effect.gen(function* () {
   Effect.provide(Layer.mergeAll(SmokeApiFunctionLive, SmokeWorkerFunctionLive)),
 );
 
-describe.sequential("Serverless smoke", () => {
-  beforeAll(
-    Effect.gen(function* () {
-      yield* Effect.logInfo("Serverless smoke: destroying previous stack");
-      yield* sharedStack.destroy();
-
-      yield* Effect.logInfo("Serverless smoke: deploying stack");
-      outputs = (yield* sharedStack.deploy(deployProgram)) as StackOutputs;
-      baseUrl = outputs.url.replace(/\/+$/, "");
-
-      yield* Effect.logInfo(`Serverless smoke: probing ${baseUrl}/config`);
-      const config = (yield* HttpClient.get(`${baseUrl}/config`).pipe(
-        Effect.flatMap((response) =>
-          response.status === 200
-            ? response.json
-            : Effect.fail(new Error(`API not ready: ${response.status}`)),
-        ),
-        Effect.tapError((error) =>
-          Effect.logWarning(
-            `Serverless smoke: API not ready yet (${String(error)})`,
-          ),
-        ),
-        Effect.retry({ schedule: readinessPolicy }),
-      )) as {
-        userPoolId: string;
-        clientId: string;
-        tableName: string;
-        bucketName: string;
-        jobsQueueUrl: string;
-        resultsQueueUrl: string;
-        machineArn: string;
-      };
-
-      // The fixture Lambdas and the stack program declare the shared
-      // resources through ONE layer — the identifiers the deployed Lambda
-      // observes must be the same physical resources the stack returned.
-      expect(config.userPoolId).toBe(outputs.userPoolId);
-      expect(config.clientId).toBe(outputs.clientId);
-      expect(config.tableName).toBe(outputs.tableName);
-      expect(config.bucketName).toBe(outputs.bucketName);
-      expect(config.jobsQueueUrl).toBe(outputs.jobsQueueUrl);
-      expect(config.resultsQueueUrl).toBe(outputs.resultsQueueUrl);
-      expect(config.machineArn).toBe(outputs.machineArn);
-    }),
-    { timeout: 300_000 },
-  );
-
-  afterAll(sharedStack.destroy(), { timeout: 120_000 });
-
-  test.provider(
-    "unauthenticated $default route serves; JWT routes are gated",
-    (_stack) =>
+describe.sequential(
+  "Serverless smoke",
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:apigatewayv2",
+      "provider:aws:cognito",
+      "provider:aws:dynamodb",
+      "provider:aws:lambda",
+      "provider:aws:s3",
+      "provider:aws:sqs",
+      "provider:aws:stepfunctions",
+      "live",
+    ],
+  },
+  () => {
+    beforeAll(
       Effect.gen(function* () {
-        const free = yield* send(
-          HttpClientRequest.get(`${baseUrl}/signup-free`),
-        );
-        expect(free.status).toBe(200);
-        expect((yield* free.json) as object).toEqual({ ok: true });
+        yield* Effect.logInfo("Serverless smoke: destroying previous stack");
+        yield* sharedStack.destroy();
 
-        // No token → the JWT authorizer must answer 401 before the Lambda
-        // is ever invoked. Polls through route/authorizer propagation.
-        const unauthorized = yield* awaitStatus(
-          HttpClientRequest.post(`${baseUrl}/todo`).pipe(
-            HttpClientRequest.bodyJsonUnsafe({ id: "nope", text: "nope" }),
+        yield* Effect.logInfo("Serverless smoke: deploying stack");
+        outputs = (yield* sharedStack.deploy(deployProgram)) as StackOutputs;
+        baseUrl = outputs.url.replace(/\/+$/, "");
+
+        yield* Effect.logInfo(`Serverless smoke: probing ${baseUrl}/config`);
+        const config = (yield* HttpClient.get(`${baseUrl}/config`).pipe(
+          Effect.flatMap((response) =>
+            response.status === 200
+              ? response.json
+              : Effect.fail(new Error(`API not ready: ${response.status}`)),
           ),
-          401,
-        );
-        expect(unauthorized.status).toBe(401);
-
-        // Garbage token → still 401.
-        const garbage = yield* HttpClient.execute(
-          HttpClientRequest.post(`${baseUrl}/todo`).pipe(
-            HttpClientRequest.setHeader("Authorization", "Bearer not-a-jwt"),
-            HttpClientRequest.bodyJsonUnsafe({ id: "nope", text: "nope" }),
+          Effect.tapError((error) =>
+            Effect.logWarning(
+              `Serverless smoke: API not ready yet (${String(error)})`,
+            ),
           ),
-        );
-        expect(garbage.status).toBe(401);
-
-        // The gated write never reached DynamoDB.
-        const item = yield* ddb.getItem({
-          TableName: outputs.tableName,
-          Key: { pk: { S: "todo" }, sk: { S: "nope" } },
-          ConsistentRead: true,
-        });
-        expect(item.Item).toBeUndefined();
-      }),
-    { timeout: 120_000 },
-  );
-
-  test.provider(
-    "Cognito JWT (minted via UserPoolAdmin/UserPoolAuth bindings) unlocks the todo API",
-    (_stack) =>
-      Effect.gen(function* () {
-        const tokens = (yield* send(
-          HttpClientRequest.post(
-            `${baseUrl}/auth?username=serverless-smoke-user`,
-          ),
-        ).pipe(Effect.flatMap((r) => r.json))) as {
-          idToken: string | undefined;
-          accessToken: string | undefined;
-          tokenType: string | undefined;
+          Effect.retry({ schedule: readinessPolicy }),
+        )) as {
+          userPoolId: string;
+          clientId: string;
+          tableName: string;
+          bucketName: string;
+          jobsQueueUrl: string;
+          resultsQueueUrl: string;
+          machineArn: string;
         };
-        expect(tokens.tokenType).toBe("Bearer");
-        expect(tokens.idToken).toBeTruthy();
 
-        const authorize = HttpClientRequest.setHeader(
-          "Authorization",
-          `Bearer ${tokens.idToken}`,
-        );
-
-        const text = "ship the serverless smoke";
-        const wrote = yield* awaitStatus(
-          HttpClientRequest.post(`${baseUrl}/todo`).pipe(
-            authorize,
-            HttpClientRequest.bodyJsonUnsafe({ id: "todo-1", text }),
-          ),
-          200,
-          10,
-        );
-        expect((yield* wrote.json) as object).toEqual({
-          ok: true,
-          id: "todo-1",
-        });
-
-        const read = yield* send(
-          HttpClientRequest.get(`${baseUrl}/todo?id=todo-1`).pipe(authorize),
-        );
-        expect(read.status).toBe(200);
-        expect((yield* read.json) as object).toEqual({
-          item: { id: "todo-1", text },
-        });
-
-        // Out-of-band: the item really landed in the table.
-        const raw = yield* ddb.getItem({
-          TableName: outputs.tableName,
-          Key: { pk: { S: "todo" }, sk: { S: "todo-1" } },
-          ConsistentRead: true,
-        });
-        expect(raw.Item?.text?.S).toBe(text);
+        // The fixture Lambdas and the stack program declare the shared
+        // resources through ONE layer — the identifiers the deployed Lambda
+        // observes must be the same physical resources the stack returned.
+        expect(config.userPoolId).toBe(outputs.userPoolId);
+        expect(config.clientId).toBe(outputs.clientId);
+        expect(config.tableName).toBe(outputs.tableName);
+        expect(config.bucketName).toBe(outputs.bucketName);
+        expect(config.jobsQueueUrl).toBe(outputs.jobsQueueUrl);
+        expect(config.resultsQueueUrl).toBe(outputs.resultsQueueUrl);
+        expect(config.machineArn).toBe(outputs.machineArn);
       }),
-    { timeout: 120_000 },
-  );
+      { timeout: 300_000 },
+    );
 
-  test.provider(
-    "presigned PUT URL uploads into the bucket",
-    (_stack) =>
-      Effect.gen(function* () {
-        const key = "smoke/upload.txt";
-        const body = "uploaded through the serverless smoke story";
+    afterAll(sharedStack.destroy(), { timeout: 120_000 });
 
-        const presigned = (yield* send(
-          HttpClientRequest.get(
-            `${baseUrl}/upload-url?key=${encodeURIComponent(key)}&contentType=text/plain`,
-          ),
-        ).pipe(Effect.flatMap((r) => r.json))) as { url: string };
-        expect(presigned.url).toContain(outputs.bucketName);
+    test.provider(
+      "unauthenticated $default route serves; JWT routes are gated",
+      (_stack) =>
+        Effect.gen(function* () {
+          const free = yield* send(
+            HttpClientRequest.get(`${baseUrl}/signup-free`),
+          );
+          expect(free.status).toBe(200);
+          expect((yield* free.json) as object).toEqual({ ok: true });
 
-        const put = yield* send(
-          HttpClientRequest.put(presigned.url).pipe(
-            HttpClientRequest.bodyText(body, "text/plain"),
-          ),
-        );
-        expect(put.status).toBe(200);
+          // No token → the JWT authorizer must answer 401 before the Lambda
+          // is ever invoked. Polls through route/authorizer propagation.
+          const unauthorized = yield* awaitStatus(
+            HttpClientRequest.post(`${baseUrl}/todo`).pipe(
+              HttpClientRequest.bodyJsonUnsafe({ id: "nope", text: "nope" }),
+            ),
+            401,
+          );
+          expect(unauthorized.status).toBe(401);
 
-        // Out-of-band: fetch the object back via distilled.
-        const got = yield* S3.getObject({
-          Bucket: outputs.bucketName,
-          Key: key,
-        });
-        expect(got.ContentType).toBe("text/plain");
-        const text = yield* Stream.mkString(Stream.decodeText(got.Body!));
-        expect(text).toBe(body);
-      }),
-    { timeout: 120_000 },
-  );
+          // Garbage token → still 401.
+          const garbage = yield* HttpClient.execute(
+            HttpClientRequest.post(`${baseUrl}/todo`).pipe(
+              HttpClientRequest.setHeader("Authorization", "Bearer not-a-jwt"),
+              HttpClientRequest.bodyJsonUnsafe({ id: "nope", text: "nope" }),
+            ),
+          );
+          expect(garbage.status).toBe(401);
 
-  test.provider(
-    "enqueued message is observed by the worker Lambda via the SQS event source",
-    (_stack) =>
-      Effect.gen(function* () {
-        // The event-source mapping activates asynchronously after deploy.
-        yield* lambda
-          .listEventSourceMappings({
-            FunctionName: outputs.workerFunctionName,
-            EventSourceArn: outputs.jobsQueueArn,
-          })
-          .pipe(
-            Effect.flatMap((result) => {
-              const mapping = result.EventSourceMappings?.[0];
-              return mapping?.State === "Enabled"
-                ? Effect.succeed(mapping)
-                : Effect.fail(new EventSourceMappingNotReady());
-            }),
+          // The gated write never reached DynamoDB.
+          const item = yield* ddb.getItem({
+            TableName: outputs.tableName,
+            Key: { pk: { S: "todo" }, sk: { S: "nope" } },
+            ConsistentRead: true,
+          });
+          expect(item.Item).toBeUndefined();
+        }),
+      { timeout: 120_000 },
+    );
+
+    test.provider(
+      "Cognito JWT (minted via UserPoolAdmin/UserPoolAuth bindings) unlocks the todo API",
+      (_stack) =>
+        Effect.gen(function* () {
+          const tokens = (yield* send(
+            HttpClientRequest.post(
+              `${baseUrl}/auth?username=serverless-smoke-user`,
+            ),
+          ).pipe(Effect.flatMap((r) => r.json))) as {
+            idToken: string | undefined;
+            accessToken: string | undefined;
+            tokenType: string | undefined;
+          };
+          expect(tokens.tokenType).toBe("Bearer");
+          expect(tokens.idToken).toBeTruthy();
+
+          const authorize = HttpClientRequest.setHeader(
+            "Authorization",
+            `Bearer ${tokens.idToken}`,
+          );
+
+          const text = "ship the serverless smoke";
+          const wrote = yield* awaitStatus(
+            HttpClientRequest.post(`${baseUrl}/todo`).pipe(
+              authorize,
+              HttpClientRequest.bodyJsonUnsafe({ id: "todo-1", text }),
+            ),
+            200,
+            10,
+          );
+          expect((yield* wrote.json) as object).toEqual({
+            ok: true,
+            id: "todo-1",
+          });
+
+          const read = yield* send(
+            HttpClientRequest.get(`${baseUrl}/todo?id=todo-1`).pipe(authorize),
+          );
+          expect(read.status).toBe(200);
+          expect((yield* read.json) as object).toEqual({
+            item: { id: "todo-1", text },
+          });
+
+          // Out-of-band: the item really landed in the table.
+          const raw = yield* ddb.getItem({
+            TableName: outputs.tableName,
+            Key: { pk: { S: "todo" }, sk: { S: "todo-1" } },
+            ConsistentRead: true,
+          });
+          expect(raw.Item?.text?.S).toBe(text);
+        }),
+      { timeout: 120_000 },
+    );
+
+    test.provider(
+      "presigned PUT URL uploads into the bucket",
+      (_stack) =>
+        Effect.gen(function* () {
+          const key = "smoke/upload.txt";
+          const body = "uploaded through the serverless smoke story";
+
+          const presigned = (yield* send(
+            HttpClientRequest.get(
+              `${baseUrl}/upload-url?key=${encodeURIComponent(key)}&contentType=text/plain`,
+            ),
+          ).pipe(Effect.flatMap((r) => r.json))) as { url: string };
+          expect(presigned.url).toContain(outputs.bucketName);
+
+          const put = yield* send(
+            HttpClientRequest.put(presigned.url).pipe(
+              HttpClientRequest.bodyText(body, "text/plain"),
+            ),
+          );
+          expect(put.status).toBe(200);
+
+          // Out-of-band: fetch the object back via distilled.
+          const got = yield* S3.getObject({
+            Bucket: outputs.bucketName,
+            Key: key,
+          });
+          expect(got.ContentType).toBe("text/plain");
+          const text = yield* Stream.mkString(Stream.decodeText(got.Body!));
+          expect(text).toBe(body);
+        }),
+      { timeout: 120_000 },
+    );
+
+    test.provider(
+      "enqueued message is observed by the worker Lambda via the SQS event source",
+      (_stack) =>
+        Effect.gen(function* () {
+          // The event-source mapping activates asynchronously after deploy.
+          yield* lambda
+            .listEventSourceMappings({
+              FunctionName: outputs.workerFunctionName,
+              EventSourceArn: outputs.jobsQueueArn,
+            })
+            .pipe(
+              Effect.flatMap((result) => {
+                const mapping = result.EventSourceMappings?.[0];
+                return mapping?.State === "Enabled"
+                  ? Effect.succeed(mapping)
+                  : Effect.fail(new EventSourceMappingNotReady());
+              }),
+              Effect.retry({
+                while: (e) => e._tag === "EventSourceMappingNotReady",
+                schedule: Schedule.max([
+                  Schedule.fixed("2 seconds"),
+                  Schedule.recurs(30),
+                ]),
+              }),
+            );
+
+          const message = yield* Effect.sync(
+            () => `smoke-job-${crypto.randomUUID()}`,
+          );
+          const enqueued = (yield* send(
+            HttpClientRequest.post(`${baseUrl}/enqueue`).pipe(
+              HttpClientRequest.bodyJsonUnsafe({ message }),
+            ),
+          ).pipe(Effect.flatMap((r) => r.json))) as { messageId: string };
+          expect(enqueued.messageId).toBeTruthy();
+
+          // The worker forwards `processed:{body}` into the results queue —
+          // poll it out-of-band (bounded: ~30 polls × 2s long-poll).
+          const received = yield* Effect.gen(function* () {
+            const result = yield* sqs.receiveMessage({
+              QueueUrl: outputs.resultsQueueUrl,
+              MaxNumberOfMessages: 10,
+              WaitTimeSeconds: 2,
+            });
+            const match = (result.Messages ?? []).find(
+              (m) => m.Body === `processed:${message}`,
+            );
+            if (!match?.ReceiptHandle) {
+              return yield* Effect.fail(new MessageNotDelivered());
+            }
+            yield* sqs.deleteMessage({
+              QueueUrl: outputs.resultsQueueUrl,
+              ReceiptHandle: match.ReceiptHandle,
+            });
+            return match.Body!;
+          }).pipe(
             Effect.retry({
-              while: (e) => e._tag === "EventSourceMappingNotReady",
+              while: (e) => e._tag === "MessageNotDelivered",
               schedule: Schedule.max([
                 Schedule.fixed("2 seconds"),
                 Schedule.recurs(30),
               ]),
             }),
           );
+          expect(received).toBe(`processed:${message}`);
+        }),
+      { timeout: 120_000 },
+    );
 
-        const message = yield* Effect.sync(
-          () => `smoke-job-${crypto.randomUUID()}`,
-        );
-        const enqueued = (yield* send(
-          HttpClientRequest.post(`${baseUrl}/enqueue`).pipe(
-            HttpClientRequest.bodyJsonUnsafe({ message }),
-          ),
-        ).pipe(Effect.flatMap((r) => r.json))) as { messageId: string };
-        expect(enqueued.messageId).toBeTruthy();
-
-        // The worker forwards `processed:{body}` into the results queue —
-        // poll it out-of-band (bounded: ~30 polls × 2s long-poll).
-        const received = yield* Effect.gen(function* () {
-          const result = yield* sqs.receiveMessage({
-            QueueUrl: outputs.resultsQueueUrl,
-            MaxNumberOfMessages: 10,
-            WaitTimeSeconds: 2,
-          });
-          const match = (result.Messages ?? []).find(
-            (m) => m.Body === `processed:${message}`,
-          );
-          if (!match?.ReceiptHandle) {
-            return yield* Effect.fail(new MessageNotDelivered());
-          }
-          yield* sqs.deleteMessage({
-            QueueUrl: outputs.resultsQueueUrl,
-            ReceiptHandle: match.ReceiptHandle,
-          });
-          return match.Body!;
-        }).pipe(
-          Effect.retry({
-            while: (e) => e._tag === "MessageNotDelivered",
-            schedule: Schedule.max([
-              Schedule.fixed("2 seconds"),
-              Schedule.recurs(30),
-            ]),
-          }),
-        );
-        expect(received).toBe(`processed:${message}`);
-      }),
-    { timeout: 120_000 },
-  );
-
-  test.provider(
-    "EXPRESS Step Function round-trips synchronously from the API Lambda",
-    (_stack) =>
-      Effect.gen(function* () {
-        const result = (yield* send(
-          HttpClientRequest.post(`${baseUrl}/compute`).pipe(
-            HttpClientRequest.bodyJsonUnsafe({ value: 21 }),
-          ),
-        ).pipe(Effect.flatMap((r) => r.json))) as {
-          status: string;
-          output: string | undefined;
-          error: string | undefined;
-        };
-
-        expect(result.error).toBeUndefined();
-        expect(result.status).toBe("SUCCEEDED");
-        const output = JSON.parse(result.output!) as {
-          computed: boolean;
-          echo: { value: number };
-        };
-        expect(output.computed).toBe(true);
-        expect(output.echo).toEqual({ value: 21 });
-      }),
-    { timeout: 120_000 },
-  );
-
-  test.provider(
-    "destroy removes the pool, api, table, bucket, queues, and state machine",
-    (_stack) =>
-      Effect.gen(function* () {
-        yield* sharedStack.destroy();
-
-        yield* waitUntilGone(
-          "user pool",
-          cip.describeUserPool({ UserPoolId: outputs.userPoolId }).pipe(
-            Effect.map(() => false),
-            Effect.catchTag("ResourceNotFoundException", () =>
-              Effect.succeed(true),
+    test.provider(
+      "EXPRESS Step Function round-trips synchronously from the API Lambda",
+      (_stack) =>
+        Effect.gen(function* () {
+          const result = (yield* send(
+            HttpClientRequest.post(`${baseUrl}/compute`).pipe(
+              HttpClientRequest.bodyJsonUnsafe({ value: 21 }),
             ),
-          ),
-        );
+          ).pipe(Effect.flatMap((r) => r.json))) as {
+            status: string;
+            output: string | undefined;
+            error: string | undefined;
+          };
 
-        yield* waitUntilGone(
-          "http api",
-          agw2.getApi({ ApiId: outputs.apiId }).pipe(
-            Effect.map(() => false),
-            Effect.catchTag("NotFoundException", () => Effect.succeed(true)),
-          ),
-        );
+          expect(result.error).toBeUndefined();
+          expect(result.status).toBe("SUCCEEDED");
+          const output = JSON.parse(result.output!) as {
+            computed: boolean;
+            echo: { value: number };
+          };
+          expect(output.computed).toBe(true);
+          expect(output.echo).toEqual({ value: 21 });
+        }),
+      { timeout: 120_000 },
+    );
 
-        yield* waitUntilGone(
-          "table",
-          ddb.describeTable({ TableName: outputs.tableName }).pipe(
-            Effect.map(() => false),
-            Effect.catchTag("ResourceNotFoundException", () =>
-              Effect.succeed(true),
-            ),
-          ),
-        );
+    test.provider(
+      "destroy removes the pool, api, table, bucket, queues, and state machine",
+      (_stack) =>
+        Effect.gen(function* () {
+          yield* sharedStack.destroy();
 
-        yield* waitUntilGone(
-          "bucket",
-          S3.headBucket({ Bucket: outputs.bucketName }).pipe(
-            Effect.map(() => false),
-            Effect.catchTag("NotFound", () => Effect.succeed(true)),
-          ),
-        );
-
-        yield* waitUntilGone(
-          "jobs queue",
-          sqs
-            .getQueueUrl({ QueueName: queueNameFromUrl(outputs.jobsQueueUrl) })
-            .pipe(
+          yield* waitUntilGone(
+            "user pool",
+            cip.describeUserPool({ UserPoolId: outputs.userPoolId }).pipe(
               Effect.map(() => false),
-              Effect.catchTag("QueueDoesNotExist", () => Effect.succeed(true)),
-            ),
-        );
-
-        yield* waitUntilGone(
-          "results queue",
-          sqs
-            .getQueueUrl({
-              QueueName: queueNameFromUrl(outputs.resultsQueueUrl),
-            })
-            .pipe(
-              Effect.map(() => false),
-              Effect.catchTag("QueueDoesNotExist", () => Effect.succeed(true)),
-            ),
-        );
-
-        yield* waitUntilGone(
-          "api lambda",
-          lambda.getFunction({ FunctionName: outputs.apiFunctionName }).pipe(
-            Effect.map(() => false),
-            Effect.catchTag("ResourceNotFoundException", () =>
-              Effect.succeed(true),
-            ),
-          ),
-        );
-
-        yield* waitUntilGone(
-          "worker lambda",
-          lambda.getFunction({ FunctionName: outputs.workerFunctionName }).pipe(
-            Effect.map(() => false),
-            Effect.catchTag("ResourceNotFoundException", () =>
-              Effect.succeed(true),
-            ),
-          ),
-        );
-
-        yield* waitUntilGone(
-          "state machine",
-          sfn
-            .describeStateMachine({ stateMachineArn: outputs.machineArn })
-            .pipe(
-              Effect.map((machine) => machine.status === "DELETING"),
-              Effect.catchTag("StateMachineDoesNotExist", () =>
+              Effect.catchTag("ResourceNotFoundException", () =>
                 Effect.succeed(true),
               ),
             ),
-        );
-      }),
-    { timeout: 120_000 },
-  );
-});
+          );
+
+          yield* waitUntilGone(
+            "http api",
+            agw2.getApi({ ApiId: outputs.apiId }).pipe(
+              Effect.map(() => false),
+              Effect.catchTag("NotFoundException", () => Effect.succeed(true)),
+            ),
+          );
+
+          yield* waitUntilGone(
+            "table",
+            ddb.describeTable({ TableName: outputs.tableName }).pipe(
+              Effect.map(() => false),
+              Effect.catchTag("ResourceNotFoundException", () =>
+                Effect.succeed(true),
+              ),
+            ),
+          );
+
+          yield* waitUntilGone(
+            "bucket",
+            S3.headBucket({ Bucket: outputs.bucketName }).pipe(
+              Effect.map(() => false),
+              Effect.catchTag("NotFound", () => Effect.succeed(true)),
+            ),
+          );
+
+          yield* waitUntilGone(
+            "jobs queue",
+            sqs
+              .getQueueUrl({
+                QueueName: queueNameFromUrl(outputs.jobsQueueUrl),
+              })
+              .pipe(
+                Effect.map(() => false),
+                Effect.catchTag("QueueDoesNotExist", () =>
+                  Effect.succeed(true),
+                ),
+              ),
+          );
+
+          yield* waitUntilGone(
+            "results queue",
+            sqs
+              .getQueueUrl({
+                QueueName: queueNameFromUrl(outputs.resultsQueueUrl),
+              })
+              .pipe(
+                Effect.map(() => false),
+                Effect.catchTag("QueueDoesNotExist", () =>
+                  Effect.succeed(true),
+                ),
+              ),
+          );
+
+          yield* waitUntilGone(
+            "api lambda",
+            lambda.getFunction({ FunctionName: outputs.apiFunctionName }).pipe(
+              Effect.map(() => false),
+              Effect.catchTag("ResourceNotFoundException", () =>
+                Effect.succeed(true),
+              ),
+            ),
+          );
+
+          yield* waitUntilGone(
+            "worker lambda",
+            lambda
+              .getFunction({ FunctionName: outputs.workerFunctionName })
+              .pipe(
+                Effect.map(() => false),
+                Effect.catchTag("ResourceNotFoundException", () =>
+                  Effect.succeed(true),
+                ),
+              ),
+          );
+
+          yield* waitUntilGone(
+            "state machine",
+            sfn
+              .describeStateMachine({ stateMachineArn: outputs.machineArn })
+              .pipe(
+                Effect.map((machine) => machine.status === "DELETING"),
+                Effect.catchTag("StateMachineDoesNotExist", () =>
+                  Effect.succeed(true),
+                ),
+              ),
+          );
+        }),
+      { timeout: 120_000 },
+    );
+  },
+);
 
 const queueNameFromUrl = (queueUrl: string) => queueUrl.split("/").at(-1)!;

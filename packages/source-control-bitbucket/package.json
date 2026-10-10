@@ -1,0 +1,51 @@
+{
+  "name": "@t3tools/source-control-bitbucket",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./server/BitbucketApi": {
+      "types": "./src/server/BitbucketApi.ts",
+      "import": "./src/server/BitbucketApi.ts"
+    },
+    "./server/BitbucketPullRequestApi": {
+      "types": "./src/server/BitbucketPullRequestApi.ts",
+      "import": "./src/server/BitbucketPullRequestApi.ts"
+    },
+    "./server/bitbucketPullRequestJson": {
+      "types": "./src/server/bitbucketPullRequestJson.ts",
+      "import": "./src/server/bitbucketPullRequestJson.ts"
+    },
+    "./server/BitbucketPullRequestProvider": {
+      "types": "./src/server/BitbucketPullRequestProvider.ts",
+      "import": "./src/server/BitbucketPullRequestProvider.ts"
+    },
+    "./server/bitbucketPullRequests": {
+      "types": "./src/server/bitbucketPullRequests.ts",
+      "import": "./src/server/bitbucketPullRequests.ts"
+    },
+    "./server/BitbucketSourceControlProvider": {
+      "types": "./src/server/BitbucketSourceControlProvider.ts",
+      "import": "./src/server/BitbucketSourceControlProvider.ts"
+    },
+    "./server/driver": {
+      "types": "./src/server/driver.ts",
+      "import": "./src/server/driver.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/provider-core": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "@t3tools/source-control-core": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

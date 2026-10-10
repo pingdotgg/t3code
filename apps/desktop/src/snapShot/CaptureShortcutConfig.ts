@@ -2,7 +2,6 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
-import * as NodeOS from "node:os";
 import * as NodeCrypto from "node:crypto";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
@@ -39,7 +38,7 @@ const decodeHyprlandBindings = Schema.decodeUnknownSync(
   ),
 );
 
-export function niriCaptureConfigPath(env = process.env, home = NodeOS.homedir()) {
+export function niriCaptureConfigPath(home: string, env = process.env) {
   return (
     env.NIRI_CONFIG ||
     NodePath.join(env.XDG_CONFIG_HOME || NodePath.join(home, ".config"), "niri", "config.kdl")
@@ -99,8 +98,10 @@ export class CaptureShortcutConfig {
     | { preview: DesktopCaptureConfigPreview; target: Target; files: Snapshot[]; missing: string[] }
     | undefined;
   private applying = false;
+  private readonly home: string;
   private readonly tools: typeof defaultTools;
-  constructor(tools = defaultTools) {
+  constructor(home: string, tools = defaultTools) {
+    this.home = home;
     this.tools = tools;
   }
 
@@ -166,7 +167,7 @@ export class CaptureShortcutConfig {
           if (include.path.includes("$") || /[*?[\]]/.test(include.path))
             throw new Error("This config uses a dynamic include. Use manual setup in Advanced.");
           const path = include.path.startsWith("~/")
-            ? NodePath.join(NodeOS.homedir(), include.path.slice(2))
+            ? NodePath.join(this.home, include.path.slice(2))
             : NodePath.resolve(NodePath.dirname(file.path), include.path);
           let child: Snapshot;
           try {

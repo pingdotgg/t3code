@@ -101,5 +101,8 @@ test.provider(
       yield* stack.destroy();
       yield* assertLoggingDeleted(deployed.acl.webAclArn);
     }),
-  { timeout: 300_000 },
+  {
+    tags: ["provider:aws", "provider:aws:logs", "provider:aws:wafv2", "live"],
+    timeout: 300_000,
+  },
 );

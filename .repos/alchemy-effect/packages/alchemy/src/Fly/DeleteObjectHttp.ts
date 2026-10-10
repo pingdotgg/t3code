@@ -8,6 +8,7 @@ import { DeleteObject } from "./DeleteObject.ts";
  * `deleteObject` against the Tigris endpoint with the bucket's credentials.
  *
  * @layer
+ * @product Bucket
  * @provides Fly.DeleteObject
  */
 export const DeleteObjectHttp = Layer.effect(

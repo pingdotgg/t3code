@@ -29,6 +29,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
@@ -126,8 +127,8 @@ function ReviewHeader(
                     id: "sections",
                     inline: true,
                     items: [
-                      sectionAction(props.sectionMenu.workingTree, "Working tree"),
-                      sectionAction(props.sectionMenu.branchChanges, "Branch changes"),
+                      sectionAction(props.sectionMenu.branchChanges, "Changes"),
+                      sectionAction(props.sectionMenu.workingTree, "Uncommitted"),
                       sectionAction(props.sectionMenu.latestTurn, "Latest turn"),
                     ],
                   },
@@ -156,7 +157,6 @@ function ReviewHeader(
   );
 }
 
-const REVIEW_HEADER_SPACING = 0;
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 
 const ReviewNotice = memo(function ReviewNotice(props: { readonly notice: string }) {
@@ -461,10 +461,11 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const { draftMessage } = useThreadDraftForThread({ environmentId, threadId });
   const reviewCache = useReviewCacheForThread({ environmentId, threadId });
   const { selectedThreadCwd } = useSelectedThreadWorktree();
-  // With a solid (non-overlay) header the content lays out below the header
-  // natively, so no manual top inset is needed. (Android renders its own
-  // in-flow AndroidScreenHeader, so it needs no inset either.)
-  const topContentInset = 0;
+  const columnMetrics = useNativeColumnLayoutMetrics();
+  const safeArea = columnMetrics?.safeArea ?? insets;
+  const topContentInset = Platform.OS === "ios" ? safeArea.top : 0;
+  const bottomContentInset =
+    Platform.OS === "ios" ? safeArea.bottom + 8 : Math.max(insets.bottom, 18) + 18;
 
   useEffect(() => {
     showAuxiliaryPane("inspector");
@@ -735,7 +736,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
       />
 
       <MaterialScreenContent>
-        <View className={Platform.OS === "android" ? "flex-1 bg-sheet-solid" : "flex-1 bg-sheet"}>
+        <View className="flex-1 bg-sheet android:bg-sheet-solid">
           {showConnectionNotice ? (
             <View className="flex-1" style={{ paddingTop: topContentInset }}>
               <EnvironmentConnectionNotice
@@ -760,7 +761,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
             >
               <View
                 className="min-w-0 flex-1"
-                style={{ paddingTop: topContentInset + REVIEW_HEADER_SPACING }}
+                style={listHeader ? { paddingTop: topContentInset } : undefined}
               >
                 {listHeader}
                 <View className="min-w-0 flex-1" collapsable={false}>
@@ -777,6 +778,8 @@ export function ReviewSheet(props: ReviewSheetProps) {
                     collapsedCommentIdsJson={nativeBridge.collapsedCommentIdsJson}
                     contentResetKey={`${reviewCache.threadKey}:${selectedSection.id}`}
                     contentWidth={NATIVE_REVIEW_DIFF_CONTENT_WIDTH}
+                    contentInsetTop={listHeader ? 0 : topContentInset}
+                    contentInsetBottom={bottomContentInset}
                     nativeViewRef={nativeReviewDiffViewRef}
                     rowHeight={nativeReviewDiffStyle.rowHeight}
                     rowsJson={nativeBridge.rowsJson}
@@ -804,12 +807,10 @@ export function ReviewSheet(props: ReviewSheetProps) {
                   : undefined
               }
               contentInsetAdjustmentBehavior="never"
-              contentInset={{ top: topContentInset, bottom: Math.max(insets.bottom, 18) + 18 }}
+              contentInset={{ top: topContentInset, bottom: bottomContentInset }}
               contentOffset={{ x: 0, y: -topContentInset }}
-              scrollIndicatorInsets={{
-                top: topContentInset,
-                bottom: Math.max(insets.bottom, 18) + 18,
-              }}
+              automaticallyAdjustsScrollIndicatorInsets={false}
+              scrollIndicatorInsets={{ top: topContentInset, bottom: bottomContentInset }}
               showsVerticalScrollIndicator={false}
               className="flex-1"
               refreshControl={
@@ -825,23 +826,25 @@ export function ReviewSheet(props: ReviewSheetProps) {
             >
               {listHeader}
               {!selectedSection ? (
-                <View
-                  className={
-                    Platform.OS === "android"
-                      ? "items-center px-6 py-5"
-                      : "border-b border-border bg-card px-4 py-5"
-                  }
-                >
-                  <Text className="text-sm font-t3-bold text-foreground">No review diffs</Text>
-                  <Text
-                    className={cn(
-                      "text-xs leading-normal text-foreground-muted",
-                      Platform.OS === "android" && "mt-2 text-center",
-                    )}
+                error ? null : (
+                  <View
+                    className={
+                      Platform.OS === "android"
+                        ? "items-center px-6 py-5"
+                        : "border-b border-border bg-card px-4 py-5"
+                    }
                   >
-                    This thread has no ready turn diffs and the worktree diff is empty.
-                  </Text>
-                </View>
+                    <Text className="text-sm font-t3-bold text-foreground">No review diffs</Text>
+                    <Text
+                      className={cn(
+                        "text-xs leading-normal text-foreground-muted",
+                        Platform.OS === "android" && "mt-2 text-center",
+                      )}
+                    >
+                      This thread has no ready turn diffs and the worktree diff is empty.
+                    </Text>
+                  </View>
+                )
               ) : selectedSection.isLoading && selectedSection.diff === null ? (
                 <View
                   className={cn(

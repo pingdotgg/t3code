@@ -1,4 +1,5 @@
 import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import type * as Exit from "effect/Exit";
 import * as ExitRuntime from "effect/Exit";
@@ -7,13 +8,13 @@ import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Tracer from "effect/Tracer";
-import { OtlpResource, OtlpTracer, OtlpSerialization } from "effect/unstable/observability";
+import { OtlpResource, OtlpTracer, OtlpSerialization } from "effect/observability";
 
 import { RotatingFileSink } from "./logging.ts";
 
 export const OtlpProtocol = Schema.Literals(["http/json", "http/protobuf"]);
 export type OtlpProtocol = typeof OtlpProtocol.Type;
-export const otlpSerializationLayer = (protocol: OtlpProtocol) =>
+export const layerOtlpSerialization = (protocol: OtlpProtocol) =>
   protocol === "http/protobuf" ? OtlpSerialization.layerProtobuf : OtlpSerialization.layerJson;
 
 /**
@@ -371,6 +372,12 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
   });
 
   let buffer: Array<string> = [];
+  // A failure episode starts at the first dropped record and ends when a flush
+  // sees that the latest write succeeded. Flush checks once per window, so a
+  // disk that flaps inside one window stays one episode.
+  let writeFailing = false;
+  let droppedCount = 0;
+  let failureReported = false;
   let pendingFlushStats: TraceSinkFlushStats = {
     logicalWriteBytes: 0,
     count: 0,
@@ -407,9 +414,14 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
       try {
         sink.write(chunk);
       } catch {
-        buffer.unshift(...records.slice(persistedCount));
+        // A failing disk (ENOSPC, EACCES, EIO) drops the rest of the batch.
+        // Retrying it would grow the backlog, and every later push would
+        // retry all of it.
+        writeFailing = true;
+        droppedCount += records.length - persistedCount;
         return;
       }
+      writeFailing = false;
       pendingFlushStats = {
         logicalWriteBytes: pendingFlushStats.logicalWriteBytes + chunkBytes,
         count: pendingFlushStats.count + nextIndex - persistedCount,
@@ -419,7 +431,9 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     }
   };
 
-  const flush = Effect.sync(() => {
+  // Logs once when writes start failing and once when they recover, so a disk
+  // that stays broken costs one line, not one per flush.
+  const flush = Effect.gen(function* () {
     flushUnsafe();
     const stats = pendingFlushStats;
     pendingFlushStats = {
@@ -427,12 +441,28 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
       count: 0,
       durationMs: 0,
     };
-    return stats;
+    if (stats.count > 0 && options.onFlush) {
+      yield* options.onFlush(stats).pipe(Effect.ignore);
+    }
+    if (droppedCount > 0 && !failureReported) {
+      failureReported = true;
+      yield* Effect.logWarning("Trace writes are failing, dropping records until they recover", {
+        filePath: options.filePath,
+      });
+    }
+    if (failureReported && !writeFailing) {
+      yield* Effect.logInfo("Trace writes recovered", {
+        filePath: options.filePath,
+        droppedCount,
+      });
+      failureReported = false;
+      droppedCount = 0;
+    }
   }).pipe(
-    Effect.flatMap((stats) =>
-      stats.count > 0 && options.onFlush ? options.onFlush(stats).pipe(Effect.ignore) : Effect.void,
-    ),
     Effect.withTracerEnabled(false),
+    // The timed fiber inherits the makeTraceSink span. That span has ended but
+    // lives as long as the sink, so the tracer logger must not add logs to it.
+    Effect.updateContext(Context.omit(Tracer.ParentSpan)<never>),
   );
 
   yield* Effect.addFinalizer(() => flush.pipe(Effect.ignore));
@@ -498,13 +528,15 @@ class LocalFileSpan implements Tracer.Span {
   }
 
   end(endTime: bigint, exit: Exit.Exit<unknown, unknown>): void {
+    // Cached lookup fibers retain parent spans. Traces need success status, not result payloads.
+    const traceExit = ExitRuntime.isSuccess(exit) ? ExitRuntime.void : exit;
     this.status = {
       _tag: "Ended",
       startTime: this.status.startTime,
       endTime,
-      exit,
+      exit: traceExit,
     };
-    this.delegate.end(endTime, exit);
+    this.delegate.end(endTime, traceExit);
 
     if (this.sampled) {
       this.push(spanToTraceRecord(this));
@@ -668,7 +700,7 @@ function decodeAttributes(
     entries[attribute.key] = decodeValue(attribute.value);
   }
 
-  return compactTraceAttributes(entries);
+  return truncateTraceAttributes(compactTraceAttributes(entries));
 }
 
 function decodeValue(input: OtlpResource.AnyValue | null | undefined): unknown {
