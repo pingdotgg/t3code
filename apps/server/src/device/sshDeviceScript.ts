@@ -6,7 +6,8 @@ export const quoteRemoteArg = (value: string) => `'${value.replaceAll("'", "'\"'
 /** Resolve common non-interactive SDK and Node locations without sourcing user shell scripts. */
 export const remoteDeviceEnvironment = `export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 if [ -z "$ANDROID_HOME" ]; then
-  if [ -d "$HOME/Library/Android/sdk" ]; then export ANDROID_HOME="$HOME/Library/Android/sdk";
+  if [ -n "$ANDROID_SDK_ROOT" ]; then export ANDROID_HOME="$ANDROID_SDK_ROOT";
+  elif [ -d "$HOME/Library/Android/sdk" ]; then export ANDROID_HOME="$HOME/Library/Android/sdk";
   elif [ -d "$HOME/Android/Sdk" ]; then export ANDROID_HOME="$HOME/Android/Sdk"; fi
 fi
 if [ -n "$ANDROID_HOME" ]; then export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"; fi
@@ -134,10 +135,25 @@ async function install(name, version, entry) {
 }
 (async () => {
   const ios = process.platform === 'darwin' && run('xcrun', ['simctl', 'help']).status === 0;
-  const android = run('adb', ['version']).status === 0;
+  const sdk = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || path.join(os.homedir(), process.platform === 'darwin' ? 'Library/Android/sdk' : 'Android/Sdk');
+  const tool = (relative) => {
+    try {
+      const file = path.join(sdk, relative);
+      if (!fs.statSync(file).isFile()) return false;
+      if (process.platform !== 'win32') fs.accessSync(file, fs.constants.X_OK);
+      return true;
+    } catch { return false; }
+  };
+  const suffix = process.platform === 'win32' ? '.exe' : '';
+  const androidReason = !tool('platform-tools/adb' + suffix) ? 'Android SDK Platform-Tools are missing from ' + sdk + '. Install the Android SDK or set ANDROID_HOME to it.'
+    : !tool('emulator/emulator' + suffix) ? 'Android Emulator is missing from ' + sdk + '. Install it in Android Studio SDK Manager.'
+    : !tool('cmdline-tools/latest/bin/avdmanager' + (process.platform === 'win32' ? '.bat' : '')) ? 'Android SDK Command-line Tools (latest) are missing from ' + sdk + '. Install them in Android Studio SDK Manager.'
+    : null;
+  const android = androidReason === null;
+  if (android) process.env.ANDROID_HOME = sdk;
   const platforms = [
     { platform: 'ios', available: ios, ...(!ios ? { reason: 'iOS needs macOS with Xcode and working xcrun simctl.' } : {}) },
-    { platform: 'android', available: android, ...(!android ? { reason: 'Android SDK missing. Set ANDROID_HOME or put adb on the SSH PATH.' } : {}) },
+    { platform: 'android', available: android, ...(!android ? { reason: androidReason } : {}) },
   ];
   if (mode === 'probe') {
     if (Number(process.versions.node.split('.')[0]) < 22) throw Error('Node 22 or newer is required on the device host.');

@@ -12,6 +12,159 @@ import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
 
+/** Runs the probe as `platform`, macOS by default, after `setup` stubs its SDK environment and filesystem. */
+const probePlatforms = (setup: string, platform = "darwin") => {
+  const result = NodeChildProcess.spawnSync(
+    process.execPath,
+    [
+      "-e",
+      `
+Object.defineProperty(process,'platform',{value:${JSON.stringify(platform)}});
+require('node:child_process').spawnSync=()=>({status:0,stdout:'ok',stderr:''});
+require('node:fs').accessSync=()=>{};
+${setup}
+` + remoteDeviceScript("fixture", "probe"),
+    ],
+    { encoding: "utf8", timeout: 10000 },
+  );
+  expect(result.status).toBe(0);
+  return JSON.parse(result.stdout).platforms;
+};
+
+it.each([
+  { label: "Platform-Tools", missing: "platform-tools/adb", reason: "Platform-Tools" },
+  { label: "Android Emulator", missing: "emulator/emulator", reason: "Android Emulator" },
+  {
+    label: "Command-line Tools",
+    missing: "cmdline-tools/latest/bin/avdmanager",
+    reason: "Command-line Tools",
+  },
+  { label: "nothing", missing: null, reason: null },
+])("reports Android on SSH hosts missing $label while retaining iOS", ({ missing, reason }) => {
+  const platforms = probePlatforms(`
+process.env.ANDROID_HOME='/fixture/sdk';
+require('node:fs').statSync=(file)=>({isFile:()=>!${JSON.stringify(missing)} || !file.replaceAll('\\\\','/').endsWith(${JSON.stringify(missing)})});
+`);
+  expect(platforms).toContainEqual({ platform: "ios", available: true });
+  expect(platforms).toContainEqual(
+    reason
+      ? { platform: "android", available: false, reason: expect.stringContaining(reason) }
+      : { platform: "android", available: true },
+  );
+});
+
+it("resolves the Android SDK from ANDROID_SDK_ROOT when ANDROID_HOME is unset", () => {
+  const platforms = probePlatforms(`
+delete process.env.ANDROID_HOME;
+process.env.ANDROID_SDK_ROOT='/custom/sdk';
+require('node:fs').statSync=(file)=>({isFile:()=>file.replaceAll('\\\\','/').startsWith('/custom/sdk/')});
+`);
+  expect(platforms).toContainEqual({ platform: "android", available: true });
+});
+
+it.each(
+  [
+    { tool: "platform-tools/adb", reason: "Platform-Tools" },
+    { tool: "emulator/emulator", reason: "Android Emulator" },
+    { tool: "cmdline-tools/latest/bin/avdmanager", reason: "Command-line Tools" },
+  ].flatMap((component) => ["directory", "non-executable"].map((kind) => ({ ...component, kind }))),
+)("rejects a $kind $tool while retaining iOS", ({ tool, reason, kind }) => {
+  const platforms = probePlatforms(`
+process.env.ANDROID_HOME='/fixture/sdk';
+const invalid=(file)=>file.replaceAll('\\\\','/').endsWith(${JSON.stringify(tool)});
+require('node:fs').statSync=(file)=>({isFile:()=>${JSON.stringify(kind)}!=='directory' || !invalid(file)});
+require('node:fs').accessSync=(file)=>{if (${JSON.stringify(kind)}==='non-executable' && invalid(file)) throw Error('not executable');};
+`);
+  expect(platforms).toContainEqual({ platform: "ios", available: true });
+  expect(platforms).toContainEqual({
+    platform: "android",
+    available: false,
+    reason: expect.stringContaining(reason),
+  });
+});
+
+it("retains iOS when an SDK tool cannot be inspected", () => {
+  const platforms = probePlatforms(`
+process.env.ANDROID_HOME='/fixture/sdk';
+require('node:fs').statSync=()=>{throw Error('permission denied');};
+`);
+  expect(platforms).toContainEqual({ platform: "ios", available: true });
+  expect(platforms).toContainEqual({
+    platform: "android",
+    available: false,
+    reason: expect.stringContaining("Platform-Tools"),
+  });
+});
+
+it("does not select a Windows SDK default absent from the SSH shell setup", () => {
+  const platforms = probePlatforms(
+    `
+delete process.env.ANDROID_HOME;
+delete process.env.ANDROID_SDK_ROOT;
+process.env.LOCALAPPDATA='/fixture/local-appdata';
+require('node:os').homedir=()=>'/fixture/home';
+require('node:fs').statSync=(file)=>({isFile:()=>file.replaceAll('\\\\','/').startsWith('/fixture/local-appdata/Android/Sdk/')});
+`,
+    "win32",
+  );
+  expect(platforms).toContainEqual({
+    platform: "android",
+    available: false,
+    reason: expect.stringContaining(NodePath.join("/fixture/home", "Android/Sdk")),
+  });
+});
+
+it.effect("prefers ANDROID_SDK_ROOT over an incomplete default SDK in SSH commands", () =>
+  Effect.gen(function* () {
+    if ((yield* HostProcess.Platform) === "win32") return;
+    yield* Effect.promise(async () => {
+      const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ssh-sdk-root-"));
+      try {
+        await NodeFSP.mkdir(NodePath.join(home, "Library/Android/sdk"), { recursive: true });
+        await NodeFSP.mkdir(NodePath.join(home, "Android/Sdk"), { recursive: true });
+        const sdk = NodePath.join(home, "custom-sdk");
+        for (const relative of [
+          "platform-tools/adb",
+          "emulator/emulator",
+          "cmdline-tools/latest/bin/avdmanager",
+        ]) {
+          const file = NodePath.join(sdk, relative);
+          await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
+          await NodeFSP.writeFile(file, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+        }
+        const bin = NodePath.join(home, "bin");
+        await NodeFSP.mkdir(bin);
+        await NodeFSP.writeFile(NodePath.join(bin, "npm"), "#!/bin/sh\necho 10.0.0\n", {
+          mode: 0o755,
+        });
+        const probe = NodePath.join(home, "probe.cjs");
+        await NodeFSP.writeFile(probe, remoteDeviceScript("fixture", "probe"));
+        const result = await exec(
+          "/bin/sh",
+          ["-c", `${remoteDeviceEnvironment}\n"$NODE" "$PROBE" && command -v emulator`],
+          {
+            env: {
+              HOME: home,
+              PATH: `${bin}:${process.env.PATH}`,
+              ANDROID_SDK_ROOT: sdk,
+              NODE: process.execPath,
+              PROBE: probe,
+            },
+          },
+        );
+        const [inventory = "", emulator] = result.stdout.trim().split("\n");
+        expect(JSON.parse(inventory).platforms).toContainEqual({
+          platform: "android",
+          available: true,
+        });
+        expect(emulator).toBe(NodePath.join(sdk, "emulator/emulator"));
+      } finally {
+        await NodeFSP.rm(home, { recursive: true, force: true });
+      }
+    });
+  }),
+);
+
 it.effect("finds Android Studio Java for a non-interactive SSH session", () =>
   Effect.gen(function* () {
     if ((yield* HostProcess.Platform) === "win32") return;
@@ -55,7 +208,16 @@ describe("remote helper lifecycle", () => {
         const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-remote-script-"));
         const bin = NodePath.join(home, "bin");
         await NodeFSP.mkdir(bin);
-        await NodeFSP.writeFile(NodePath.join(bin, "adb"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+        const sdk = NodePath.join(home, "sdk");
+        for (const relative of [
+          "platform-tools/adb",
+          "emulator/emulator",
+          "cmdline-tools/latest/bin/avdmanager",
+        ]) {
+          const file = NodePath.join(sdk, relative);
+          await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
+          await NodeFSP.writeFile(file, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+        }
         const root = NodePath.join(home, ".t3/device");
         const hubDir = NodePath.join(root, `tools/expo-device-hub@${DEVICE_HUB_VERSION}`);
         const agentDir = NodePath.join(root, `tools/agent-device@${AGENT_DEVICE_VERSION}`);
@@ -104,7 +266,12 @@ else { const child=spawn(process.execPath,[path.join(path.dirname(process.argv[1
                 .replace(AGENT_DEVICE_VERSION, upgraded ? nextAgentVersion : AGENT_DEVICE_VERSION),
           );
           const result = await exec(process.execPath, [file], {
-            env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` },
+            env: {
+              ...process.env,
+              HOME: home,
+              ANDROID_HOME: sdk,
+              PATH: `${bin}:${process.env.PATH}`,
+            },
           });
           return result.stdout ? JSON.parse(result.stdout) : null;
         };
