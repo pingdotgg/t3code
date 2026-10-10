@@ -383,6 +383,50 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
+  it.effect("proves Windows npm ownership of a binary path inside the global package", () =>
+    Effect.gen(function* () {
+      const writePackageExe = (root: string) => {
+        const exe = NodePath.join(
+          root,
+          "node_modules",
+          "@example",
+          "package-tool",
+          "bin",
+          "package-tool.exe",
+        );
+        NodeFS.mkdirSync(NodePath.dirname(exe), { recursive: true });
+        NodeFS.writeFileSync(exe, "");
+        return exe;
+      };
+      const resolve = (binaryPath: string) =>
+        resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+          binaryPath,
+          env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+        );
+
+      const prefix = yield* makeTempDir("t3-npm-windows-package-exe");
+      const globalExe = writePackageExe(prefix);
+      NodeFS.writeFileSync(NodePath.join(prefix, "package-tool.cmd"), "@echo off\r\n");
+      expect((yield* resolve(globalExe)).update).toMatchObject({
+        executable: "npm",
+        args: ["install", "-g", "--prefix", prefix, expect.any(String), expect.any(String)],
+      });
+
+      // A project dependency keeps its shim in `node_modules\.bin`, so it stays manual.
+      const project = yield* makeTempDir("t3-npm-windows-project-exe");
+      const projectExe = writePackageExe(project);
+      NodeFS.mkdirSync(NodePath.join(project, "node_modules", ".bin"), { recursive: true });
+      NodeFS.writeFileSync(
+        NodePath.join(project, "node_modules", ".bin", "package-tool.cmd"),
+        "@echo off\r\n",
+      );
+      expect((yield* resolve(projectExe)).update).toBeNull();
+    }),
+  );
+
   it.effect.skipIf(!symlinksSupported)(
     "switches to pnpm updates when the real path lives in pnpm's global store",
     () =>

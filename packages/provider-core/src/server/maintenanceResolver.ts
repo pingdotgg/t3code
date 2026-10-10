@@ -605,7 +605,25 @@ const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (
   const hasManifest = yield* fileSystem
     .exists(manifestPath)
     .pipe(Effect.orElseSucceed(() => false));
-  return hasManifest ? shimDir : null;
+  if (hasManifest) {
+    return shimDir;
+  }
+  // A binary path can also name the package's own executable,
+  // `<prefix>\node_modules\<pkg>\bin\<cmd>.exe`, skipping the shim. The shim
+  // still proves the prefix: a project checkout keeps its shims in
+  // `node_modules\.bin`, never beside `node_modules`.
+  const packageSegment = `/node_modules/${packageName.toLowerCase()}/`;
+  const normalized = normalizeCommandPath(context.realCommandPath);
+  const packageIndex = normalized.lastIndexOf(packageSegment);
+  if (packageIndex <= 0 || normalized.slice(0, packageIndex).includes("/node_modules/")) {
+    return null;
+  }
+  const prefix = context.realCommandPath.slice(0, packageIndex);
+  const command = path.basename(context.realCommandPath, path.extname(context.realCommandPath));
+  const hasShim = yield* fileSystem
+    .exists(path.join(prefix, `${command}.cmd`))
+    .pipe(Effect.orElseSucceed(() => false));
+  return hasShim ? prefix : null;
 });
 
 export function makePackageManagedProviderMaintenanceResolver(
