@@ -323,6 +323,32 @@ it.layer(NodeServices.layer)("PluginViews", (it) => {
         }),
       ),
     );
+
+    it.effect("serves an asset whose name only starts with two dots", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { catalog, views } = yield* startViews(yield* Scope.Scope);
+          const plugin = yield* preparePlugin({
+            views: [{ id: "panel", title: "Panel", placement: "side-panel", script: "..board.js" }],
+          });
+          yield* fs.writeFileString(path.join(plugin.directory, "..board.js"), VIEW_SCRIPT);
+          const installation = yield* install(catalog, plugin.directory);
+          const shown = yield* awaitViews(
+            views,
+            (snapshot) => snapshot.views.length > 0 || snapshot.problems.length > 0,
+          );
+          expect(shown.problems).toEqual([]);
+          const bundle = yield* views.readBundle({
+            installationId: installation.installationId,
+            generation: installation.generation,
+            viewId: "panel",
+          });
+          expect(bundle.script.text).toBe(VIEW_SCRIPT);
+        }),
+      ),
+    );
   });
 
   describe("calls", () => {

@@ -132,7 +132,13 @@ export const make = Effect.fn("PluginViews.make")(function* () {
       .realPath(path.resolve(directory, relative))
       .pipe(Effect.mapError(() => fail("does not exist.")));
     const inside = path.relative(directory, real);
-    if (inside === "" || inside.startsWith("..") || path.isAbsolute(inside))
+    // `..board.js` stays inside; only a whole `..` segment leaves.
+    if (
+      inside === "" ||
+      inside === ".." ||
+      inside.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(inside)
+    )
       return yield* fail("resolves outside the plugin directory.");
     const info = yield* fs.stat(real).pipe(Effect.mapError(() => fail("is not readable.")));
     if (info.type !== "File") return yield* fail("is not a file.");
