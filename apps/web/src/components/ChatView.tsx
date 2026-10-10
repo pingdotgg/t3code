@@ -1,4 +1,5 @@
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
+import * as Option from "effect/Option";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import {
@@ -110,6 +111,7 @@ import { threadSupportsProviderHandoff } from "@t3tools/client-runtime/state/thr
 import {
   codexFeedbackMessage,
   parseCodexFeedbackCommand,
+  queuedRunEditOwnership,
   shouldShowLoadEarlierControl,
   submitCodexFeedback,
   type CodexFeedbackSubmission,
@@ -424,7 +426,7 @@ import {
   useEnvironmentSupportsServerBrowser,
   useProject,
   useProjects,
-  useThreadProjection,
+  useThreadState,
   useThreadStatus,
   useThreadHistory,
   useThreadShell,
@@ -1678,6 +1680,7 @@ export default function ChatView(props: ChatViewProps) {
   // keeps (removal is client state until save).
   const [editingQueuedRun, setEditingQueuedRun] = useState<{
     readonly editId: CommandId;
+    readonly sequence: number;
     readonly threadId: ThreadId;
     readonly runId: RunId;
     readonly messageId: MessageId;
@@ -1707,8 +1710,8 @@ export default function ChatView(props: ChatViewProps) {
     shellExists: serverThread !== null,
     waitForShell: draftThread !== null,
   });
-  const serverThreadProjection = useThreadProjection(routeThreadDetailRef);
-  const serverProjection = serverThreadProjection?.projection ?? null;
+  const serverThreadState = useThreadState(routeThreadDetailRef);
+  const serverProjection = Option.getOrNull(serverThreadState.data);
   const reportedModelSelection = serverProjection
     ? deriveReportedModelSelection(serverProjection)
     : null;
@@ -4701,7 +4704,7 @@ export default function ChatView(props: ChatViewProps) {
           setComposerDraftPrompt(target, request.text);
         }
         setEditingQueuedRun({
-          editId: result.value,
+          ...result.value,
           threadId: activeThread.id,
           runId: request.runId,
           messageId: request.messageId,
@@ -4730,9 +4733,8 @@ export default function ChatView(props: ChatViewProps) {
     queuedEditSaveInFlightRef.current = true;
     setIsSavingQueuedEdit(true);
     try {
-      const currentRun = serverProjection?.runs.find((run) => run.id === editingQueuedRun.runId);
       const result =
-        currentRun !== undefined && currentRun.queueEditId !== editingQueuedRun.editId
+        queuedRunEditOwnership(serverThreadState, editingQueuedRun) === "lost"
           ? null
           : await cancelQueuedRunEditCommand({
               environmentId,
@@ -4753,7 +4755,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [
     cancelQueuedRunEditCommand,
     environmentId,
-    serverProjection,
+    serverThreadState,
     clearComposerDraftContent,
     editingQueuedRun,
     queuedEditDraftTargetFor,
@@ -4782,8 +4784,7 @@ export default function ChatView(props: ChatViewProps) {
     }
     if (serverProjection === null || isSavingQueuedEdit || queuedEditSaveInFlightRef.current)
       return;
-    const run = serverProjection.runs.find((candidate) => candidate.id === editingQueuedRun.runId);
-    if (run?.status === "queued" && run.queueEditId === editingQueuedRun.editId) return;
+    if (queuedRunEditOwnership(serverThreadState, editingQueuedRun) !== "lost") return;
     const recovery = recoverQueuedMessageEdit({
       editTarget: queuedEditDraftTargetFor(editingQueuedRun.runId),
       threadTarget: baseComposerDraftTarget,
@@ -4814,6 +4815,7 @@ export default function ChatView(props: ChatViewProps) {
     isSavingQueuedEdit,
     queuedEditDraftTargetFor,
     serverProjection,
+    serverThreadState,
   ]);
   const addTerminalContextToDraft = useCallback(
     (selection: TerminalContextSelection) => {

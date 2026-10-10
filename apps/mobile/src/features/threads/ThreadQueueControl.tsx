@@ -147,7 +147,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
         if (result._tag !== "Success") return;
         void Haptics.selectionAsync();
         beginQueuedRunEdit(threadKey, {
-          editId: result.value,
+          ...result.value,
           runId,
           messageId: entry.messageId,
           originalText: entry.text,

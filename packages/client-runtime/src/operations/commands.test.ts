@@ -732,7 +732,7 @@ describe("V2 environment commands", () => {
         supervisor,
       );
       const runId = RunId.make("editing-run");
-      const editId = yield* beginQueuedRunEdit({
+      const { editId, sequence } = yield* beginQueuedRunEdit({
         commandId: CommandId.make("begin-edit"),
         threadId: v2ThreadId,
         runId,
@@ -752,6 +752,7 @@ describe("V2 environment commands", () => {
         editId,
       }).pipe(provide);
       expect(editId).toBe("begin-edit");
+      expect(sequence).toBe(1);
       expect(commands).toMatchObject([
         { type: "queued-run.edit.begin", commandId: editId, previousEditId: null },
         { type: "queued-run.edit", editId, text: "Revised" },

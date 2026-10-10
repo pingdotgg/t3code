@@ -1,4 +1,6 @@
 import {
+  CommandId,
+  RunId,
   EnvironmentId,
   EventId,
   MessageId,
@@ -41,6 +43,7 @@ import * as ThreadHistoryController from "./threadHistoryController.ts";
 import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
   makeEnvironmentThreadState,
+  queuedRunEditOwnership,
   type EnvironmentThreadState,
   type ThreadSnapshotLoadResult,
 } from "./threads.ts";
@@ -320,6 +323,88 @@ const deleted = (sequence = 3): OrchestrationV2ThreadStreamItem => {
 };
 
 describe("EnvironmentThreads", () => {
+  it.effect.each([null, CommandId.make("previous-editor")])(
+    "keeps an acquired editor open while the projection still has edit ID %s",
+    (previousEditId) =>
+      Effect.gen(function* () {
+        const run = {
+          id: RunId.make("queued-edit-run"),
+          threadId: THREAD_ID,
+          ordinal: 1,
+          providerInstanceId: BASE_PROJECTION.thread.providerInstanceId,
+          modelSelection: BASE_PROJECTION.thread.modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make("queued-edit-message"),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "queued" as const,
+          queueEditId: previousEditId,
+          requestedAt: BASE_PROJECTION.updatedAt,
+          startedAt: null,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        };
+        const h = yield* makeHarness({ cached: { ...BASE_PROJECTION, runs: [run] } });
+        const before = yield* awaitThreadState(h.observed, (value) => value.status === "live");
+        const edit = { runId: run.id, editId: CommandId.make("accepted-editor"), sequence: 10 };
+        expect(queuedRunEditOwnership(before, edit)).toBe("pending");
+
+        yield* Queue.offer(h.inputs, titleUpdated("An earlier buffered update", 9));
+        const buffered = yield* awaitThreadState(h.observed, (value) => value.sequence === 9);
+        expect(queuedRunEditOwnership(buffered, edit)).toBe("pending");
+
+        yield* Queue.offer(h.inputs, {
+          kind: "event",
+          sequence: edit.sequence,
+          event: {
+            id: EventId.make("edit-acquired"),
+            type: "run.updated",
+            threadId: THREAD_ID,
+            occurredAt: BASE_PROJECTION.updatedAt,
+            payload: { ...run, queueEditId: edit.editId },
+          },
+        });
+        const acquired = yield* awaitThreadState(h.observed, (value) => value.sequence === 10);
+        expect(queuedRunEditOwnership(acquired, edit)).toBe("owned");
+
+        for (const [index, queueEditId] of [null, CommandId.make("another-editor")].entries()) {
+          yield* Queue.offer(h.inputs, {
+            kind: "event",
+            sequence: 11 + index,
+            event: {
+              id: EventId.make(`edit-lost-${index}`),
+              type: "run.updated",
+              threadId: THREAD_ID,
+              occurredAt: BASE_PROJECTION.updatedAt,
+              payload: { ...run, queueEditId },
+            },
+          });
+          const lost = yield* awaitThreadState(
+            h.observed,
+            (value) => value.sequence === 11 + index,
+          );
+          expect(queuedRunEditOwnership(lost, edit)).toBe("lost");
+        }
+      }),
+  );
+
+  it.effect("detects a superseded edit even when a snapshot skips the acquired token", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({ cached: BASE_PROJECTION });
+      const before = yield* awaitThreadState(h.observed, (value) => value.status === "live");
+      const edit = {
+        runId: RunId.make("removed-run"),
+        editId: CommandId.make("edit"),
+        sequence: 10,
+      };
+      expect(queuedRunEditOwnership(before, edit)).toBe("pending");
+      yield* Queue.offer(h.inputs, snapshot(BASE_PROJECTION, 12));
+      const after = yield* awaitThreadState(h.observed, (value) => value.sequence === 12);
+      expect(queuedRunEditOwnership(after, edit)).toBe("lost");
+    }),
+  );
+
   it.effect("loads the server thread when its local cache read fails", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness({

@@ -1075,14 +1075,14 @@ export const beginQueuedRunEdit = Effect.fn("EnvironmentCommands.beginQueuedRunE
   input: BeginQueuedRunEditInput,
 ) {
   const commandId = yield* allocateCommandId(input);
-  yield* dispatch({
+  const { sequence } = yield* dispatch({
     type: "queued-run.edit.begin",
     commandId,
     threadId: input.threadId,
     runId: input.runId,
     previousEditId: input.previousEditId,
   });
-  return commandId;
+  return { editId: commandId, sequence };
 });
 
 export const cancelQueuedRunEdit = Effect.fn("EnvironmentCommands.cancelQueuedRunEdit")(function* (

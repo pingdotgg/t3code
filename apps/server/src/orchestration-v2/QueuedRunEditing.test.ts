@@ -11,12 +11,12 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import type { ProviderAdapterV2 } from "@t3tools/provider-core/server/ProviderAdapter";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
-import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 
 const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "test" };
@@ -26,7 +26,7 @@ const adapter = {
   getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
   planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
   openSession: () => Effect.die("provider execution is disabled in queue editing tests"),
-} as ProviderAdapterV2Shape;
+} satisfies ProviderAdapterV2["Service"];
 const layer = ProviderReplayHarness.layerWithRegistry(
   { name: "queued-run-editing" },
   ProviderAdapterRegistry.layerFromAdapters([adapter]),

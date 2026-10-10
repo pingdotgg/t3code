@@ -34,6 +34,7 @@ import {
 } from "./use-composer-drafts";
 
 export interface QueuedRunEdit {
+  readonly sequence: number;
   readonly editId: CommandId;
   readonly runId: RunId;
   readonly messageId: MessageId;

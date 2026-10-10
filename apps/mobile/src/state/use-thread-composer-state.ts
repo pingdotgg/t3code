@@ -29,7 +29,9 @@ import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { nextPastedTextFileName, pastedTextDisposition } from "@t3tools/client-runtime/text-paste";
 import {
+  EMPTY_ENVIRONMENT_THREAD_STATE,
   parseCodexFeedbackCommand,
+  queuedRunEditOwnership,
   submitCodexFeedback,
   type CodexFeedbackSubmission,
 } from "@t3tools/client-runtime/state/threads";
@@ -112,6 +114,7 @@ import { useAtomCommand } from "./use-atom-command";
 const EMPTY_QUEUE_WORKFLOW_ATOM = Atom.make<null>(null).pipe(
   Atom.withLabel("mobile-thread-queue-workflow:empty"),
 );
+const EMPTY_THREAD_STATE_ATOM = Atom.make(EMPTY_ENVIRONMENT_THREAD_STATE);
 
 export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
@@ -183,6 +186,14 @@ export function useThreadComposerState() {
     selectedEnvironmentRuntime,
   } = useThreadSelection();
   const selectedThreadProjection = useSelectedThreadProjection();
+  const selectedThreadState = useAtomValue(
+    selectedThreadShell === null
+      ? EMPTY_THREAD_STATE_ATOM
+      : environmentThreadDetails.stateAtom({
+          environmentId: selectedThreadShell.environmentId,
+          threadId: selectedThreadShell.id,
+        }),
+  );
   const selectedThreadVisibleTurnItems = useSelectedThreadVisibleTurnItems();
   const composerDrafts = useAtomValue(composerDraftsAtom);
   const acknowledgedMessages = useAtomValue(acknowledgedThreadMessagesAtom);
@@ -430,19 +441,14 @@ export function useThreadComposerState() {
   // Another client can start or cancel the run, or end or take over its edit,
   // while its message is open. Leave edit mode rather than saving into a run the
   // server will refuse, and keep whatever was typed if there is room for it.
-  const selectedThreadRuns = selectedThreadProjection?.projection.runs;
   const editedRunId = queuedRunEdit?.runId ?? null;
-  const editedRunEditId = queuedRunEdit?.editId ?? null;
+  const editOwnership =
+    queuedRunEdit === null ? null : queuedRunEditOwnership(selectedThreadState, queuedRunEdit);
   useEffect(() => {
-    if (selectedThreadKey === null || editedRunId === null || selectedThreadRuns === undefined) {
+    if (selectedThreadKey === null || editedRunId === null || editOwnership !== "lost") {
       return;
     }
     if (isSavingQueuedEdit || savingQueuedEditRef.current) return;
-    const stillOwned = selectedThreadRuns.some(
-      (run) =>
-        run.id === editedRunId && run.status === "queued" && run.queueEditId === editedRunEditId,
-    );
-    if (stillOwned) return;
     const editDraftKey = queuedEditDraftKey(selectedThreadKey, editedRunId);
     const editDraft = getComposerDraftSnapshot(editDraftKey);
     const threadDraft = getComposerDraftSnapshot(selectedThreadKey);
@@ -464,7 +470,7 @@ export function useThreadComposerState() {
         ? "That queued message edit ended. Your edit is back in the composer."
         : "That queued message edit ended, so the edit was discarded.",
     );
-  }, [editedRunId, editedRunEditId, isSavingQueuedEdit, selectedThreadKey, selectedThreadRuns]);
+  }, [editedRunId, editOwnership, isSavingQueuedEdit, selectedThreadKey]);
 
   const activeThreadBusy = threadRuntimeIsActive(selectedThreadRuntime);
   const interruptibleRunId = threadRuntimeHasInterruptibleRun(selectedThreadRuntime)
@@ -478,9 +484,8 @@ export function useThreadComposerState() {
     savingQueuedEditRef.current = true;
     setIsSavingQueuedEdit(true);
     try {
-      const currentRun = selectedThreadRuns?.find((run) => run.id === edit.runId);
       const result =
-        currentRun !== undefined && currentRun.queueEditId !== edit.editId
+        queuedRunEditOwnership(selectedThreadState, edit) === "lost"
           ? null
           : await cancelQueuedEdit({
               environmentId: selectedThreadShell.environmentId,
@@ -491,7 +496,7 @@ export function useThreadComposerState() {
       savingQueuedEditRef.current = false;
       setIsSavingQueuedEdit(false);
     }
-  }, [cancelQueuedEdit, selectedThreadKey, selectedThreadRuns, selectedThreadShell]);
+  }, [cancelQueuedEdit, selectedThreadKey, selectedThreadState, selectedThreadShell]);
 
   const onRemoveQueuedEditAttachment = useCallback(
     (attachmentId: string) => {
