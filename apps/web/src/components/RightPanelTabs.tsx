@@ -1097,7 +1097,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     },
     [props],
   );
-  const handleTabMouseDown = useCallback((event: ReactMouseEvent) => {
+  const preventTabMiddleClickDefault = useCallback((event: ReactMouseEvent) => {
     if (event.button !== 1) return;
     event.preventDefault();
   }, []);
@@ -1212,7 +1212,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     surfaceId={surface.id}
                     disabled={!props.onMoveSurface || renamingDevice === surface.id}
                     data-active-tab={active}
-                    onMouseDown={handleTabMouseDown}
+                    onMouseDown={preventTabMiddleClickDefault}
+                    // Linux primary-selection paste happens on mouseup, before auxclick.
+                    onMouseUp={preventTabMiddleClickDefault}
                     onAuxClick={(event) => handleTabAuxClick(event, surface)}
                     onContextMenu={(event) => void handleTabContextMenu(event, surface)}
                     className={cn(
