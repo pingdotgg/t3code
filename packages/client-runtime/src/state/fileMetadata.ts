@@ -59,6 +59,7 @@ export function createFileMetadataAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   const cache = new WeakMap<RpcSession, Map<string, CachedMetadata>>();
+  const inFlight = new WeakMap<RpcSession, Map<string, Set<{ valid: boolean }>>>();
   const retainedThreads = new Map<
     string,
     { readers: number; sessions: WeakMap<RpcSession, RetainedMetadata> }
@@ -84,10 +85,6 @@ export function createFileMetadataAtoms<R, E>(
     revisions(JSON.stringify([environmentId, normalizeProjectPathForComparison(path)]));
   const knownEntry = (session: RpcSession, path: string, now: number) => {
     const key = normalizeProjectPathForComparison(path);
-    for (const thread of retainedThreads.values()) {
-      const retained = thread.sessions.get(session)?.get(key);
-      if (retained) return retained;
-    }
     const cached = cache.get(session)?.get(key);
     return cached && cached.expires > now ? cached : undefined;
   };
@@ -96,6 +93,7 @@ export function createFileMetadataAtoms<R, E>(
     path: string,
     value: FilesystemEntryMetadata | null,
     now: number,
+    partial = false,
   ) => {
     let entries = cache.get(session);
     if (!entries) {
@@ -108,7 +106,15 @@ export function createFileMetadataAtoms<R, E>(
     entries.set(key, entry);
     for (const thread of retainedThreads.values()) {
       const retained = thread.sessions.get(session);
-      if (retained?.has(key)) retained.set(key, entry);
+      const previous = retained?.get(key);
+      if (retained && previous)
+        retained.set(key, {
+          ...entry,
+          value:
+            partial && value && previous.value?.kind === value.kind
+              ? { ...previous.value, ...value }
+              : value,
+        });
     }
     if (entries.size > METADATA_CACHE_LIMIT) {
       const oldest = entries.keys().next().value;
@@ -120,23 +126,59 @@ export function createFileMetadataAtoms<R, E>(
     delay: Effect.yieldNow,
     collectWhile: (entries) => entries.size < FILESYSTEM_METADATA_BATCH_LIMIT,
     runAll: Effect.fnUntraced(function* (entries) {
-      const paths = [...new Set(entries.map((entry) => entry.request.path))];
-      const result = yield* request(WS_METHODS.filesystemGetMetadata, { paths }).pipe(
-        Effect.provideService(
-          EnvironmentSupervisor.EnvironmentSupervisor,
-          entries[0].request.supervisor,
-        ),
-      );
-      const now = yield* Clock.currentTimeMillis;
-      const byPath = new Map(paths.map((path, index) => [path, result.entries[index] ?? null]));
-      for (const entry of entries) {
-        const value = byPath.get(entry.request.path) ?? null;
-        remember(entry.request.session, entry.request.path, value, now);
-        entry.request.retained?.set(entry.request.path, {
-          value,
-          expires: now + METADATA_STALE_TIME_MS,
-        });
-        entry.completeUnsafe(Exit.succeed(value));
+      const session = entries[0].request.session;
+      let pending = [...entries];
+      while (pending.length > 0) {
+        const paths = [...new Set(pending.map((entry) => entry.request.path))];
+        let requests = inFlight.get(session);
+        if (!requests) {
+          requests = new Map();
+          inFlight.set(session, requests);
+        }
+        const tokens = new Map(paths.map((path) => [path, { valid: true }]));
+        for (const [path, token] of tokens) {
+          let active = requests.get(path);
+          if (!active) requests.set(path, (active = new Set()));
+          active.add(token);
+        }
+        const activeRequests = requests;
+        pending = yield* Effect.gen(function* () {
+          const result = yield* request(WS_METHODS.filesystemGetMetadata, { paths }).pipe(
+            Effect.provideService(
+              EnvironmentSupervisor.EnvironmentSupervisor,
+              entries[0].request.supervisor,
+            ),
+          );
+          const now = yield* Clock.currentTimeMillis;
+          const byPath = new Map(paths.map((path, index) => [path, result.entries[index] ?? null]));
+          const retry: typeof pending = [];
+          for (const entry of pending) {
+            // Retry only paths invalidated during this request. Never retain the
+            // old response or complete a waiting chip with pre-write metadata.
+            if (!tokens.get(entry.request.path)!.valid) {
+              retry.push(entry);
+              continue;
+            }
+            const value = byPath.get(entry.request.path) ?? null;
+            remember(session, entry.request.path, value, now);
+            entry.request.retained?.set(entry.request.path, {
+              value,
+              expires: now + METADATA_STALE_TIME_MS,
+            });
+            entry.completeUnsafe(Exit.succeed(value));
+          }
+          return retry;
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              for (const [path, token] of tokens) {
+                const active = activeRequests.get(path);
+                active?.delete(token);
+                if (active?.size === 0) activeRequests.delete(path);
+              }
+            }),
+          ),
+        );
       }
     }),
   });
@@ -206,7 +248,8 @@ export function createFileMetadataAtoms<R, E>(
       const path = splitFilePathPosition(resolvePathLinkTarget(entry.path, cwd)).path;
       const previous = knownEntry(session.value, path, now);
       if (previous?.value?.kind === entry.kind) continue;
-      remember(session.value, path, { kind: entry.kind }, now);
+      // Listing kinds avoid another request; size and MIME hints are optional.
+      remember(session.value, path, { kind: entry.kind }, now, true);
     }
   });
 
@@ -214,7 +257,9 @@ export function createFileMetadataAtoms<R, E>(
     const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
     const session = yield* SubscriptionRef.get(supervisor.session);
     if (session._tag === "Some") {
-      cache.get(session.value)?.delete(normalizeProjectPathForComparison(path));
+      const key = normalizeProjectPathForComparison(path);
+      for (const token of inFlight.get(session.value)?.get(key) ?? []) token.valid = false;
+      cache.get(session.value)?.delete(key);
       for (const thread of retainedThreads.values())
         thread.sessions.get(session.value)?.delete(normalizeProjectPathForComparison(path));
     }
@@ -239,6 +284,7 @@ export function createFileMetadataAtoms<R, E>(
         byteLength: file.byteLength,
       },
       now,
+      true,
     );
   });
 

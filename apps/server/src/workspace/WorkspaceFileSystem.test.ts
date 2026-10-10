@@ -58,6 +58,19 @@ const writeTextFile = Effect.fn("writeTextFile")(function* (
 
 it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (it) => {
   describe("getMetadata", () => {
+    it.effect("expands home-relative paths on the server", () =>
+      Effect.gen(function* () {
+        const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const home = yield* makeTempDir;
+        yield* writeTextFile(home, "file", "hello");
+        expect(
+          (yield* service
+            .getMetadata({ paths: ["~/file"] })
+            .pipe(Effect.provideService(HostProcess.HomeDirectory, home))).entries,
+        ).toEqual([{ kind: "file", byteLength: 5 }]);
+      }),
+    );
+
     it.effect(
       "reports actual kinds for extensionless files, dotfiles, and dotted directories",
       () =>

@@ -10,6 +10,8 @@ import {
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
@@ -31,6 +33,7 @@ const makeHarness = Effect.fnUntraced(function* () {
   const batches: string[][] = [];
   const values = new Map<string, FilesystemEntryMetadata | null>();
   const failure = { denied: false };
+  const response = { wait: Effect.void as Effect.Effect<void> };
   const makeSession = () =>
     ({
       client: {
@@ -42,7 +45,9 @@ const makeHarness = Effect.fnUntraced(function* () {
                 requiredScope: AuthFilesystemReadScope,
                 message: "File access is not granted.",
               });
-            return { entries: input.paths.map((path) => values.get(path) ?? null) };
+            const entries = input.paths.map((path) => values.get(path) ?? null);
+            yield* response.wait;
+            return { entries };
           }),
       },
     }) as unknown as RpcSession;
@@ -109,10 +114,71 @@ const makeHarness = Effect.fnUntraced(function* () {
     atoms,
     supervisor,
     failure,
+    response,
   };
 });
 
 describe("file metadata", () => {
+  it.effect("retries only paths invalidated while their response is in flight", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const threadId = ThreadId.make("in-flight-thread");
+      h.registry.mount(h.atoms.retainThread({ environmentId: ENVIRONMENT_ID, threadId }));
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      h.response.wait = Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(Deferred.await(release)),
+      );
+      h.values.set("/workspace/file", { kind: "file", byteLength: 5 });
+      h.values.set("/workspace/unchanged", { kind: "directory" });
+      const read = yield* Effect.all(
+        [h.read("/workspace/file", ENVIRONMENT_ID, threadId), h.read("/workspace/unchanged")],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* h.atoms
+        .invalidate("/workspace/file")
+        .pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, h.supervisor));
+      h.values.set("/workspace/file", { kind: "file", byteLength: 10 });
+      h.response.wait = Effect.void;
+      yield* Deferred.succeed(release, undefined);
+      expect(yield* Fiber.join(read)).toEqual([
+        { kind: "file", byteLength: 10 },
+        { kind: "directory" },
+      ]);
+      expect(h.batches).toEqual([["/workspace/file", "/workspace/unchanged"], ["/workspace/file"]]);
+      h.registry.refresh(h.atom("/workspace/file", ENVIRONMENT_ID, threadId));
+      expect(yield* h.read("/workspace/file", ENVIRONMENT_ID, threadId)).toEqual({
+        kind: "file",
+        byteLength: 10,
+      });
+      expect(h.batches).toHaveLength(2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not reuse expired metadata retained by an unrelated thread", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const threadId = ThreadId.make("unrelated-thread");
+      h.registry.mount(h.atoms.retainThread({ environmentId: ENVIRONMENT_ID, threadId }));
+      h.values.set("/workspace/file", { kind: "file", byteLength: 5 });
+      yield* h.read("/workspace/file", ENVIRONMENT_ID, threadId);
+      yield* TestClock.adjust("1 hour");
+      h.values.set("/workspace/file", { kind: "directory" });
+      expect(yield* h.read("/workspace/file")).toEqual({ kind: "directory" });
+      expect(h.batches).toHaveLength(2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("uses a file listing kind without requesting optional metadata", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.seed("run", "file");
+      expect(yield* h.read("/workspace/run")).toEqual({ kind: "file" });
+      expect(h.batches).toHaveLength(0);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("tree refreshes preserve MIME hints retained by an open thread", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
