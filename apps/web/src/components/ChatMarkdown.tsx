@@ -771,7 +771,7 @@ export function MarkdownCodeBlockFrame({
 }) {
   return (
     <Wrapper
-      className="chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-lg border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
+      className="chat-markdown-codeblock my-[0.65rem] overflow-clip rounded-lg border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
       data-language={language}
       data-wrap={wrapped ? "true" : "false"}
     >
@@ -783,7 +783,7 @@ export function MarkdownCodeBlockFrame({
         )}
       >
         {title ?? (
-          <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-2xs">
+          <span className="chat-markdown-codeblock-title inline-flex min-w-0 items-center gap-1.5 font-mono text-2xs">
             <MarkdownCodeBlockTitleContent
               fenceTitle={fenceTitle}
               language={language}
@@ -958,7 +958,11 @@ function MarkdownCodeBlock({
       // Find does not count the header, so it must not highlight it either.
       headerProps={THREAD_FIND_IGNORE_PROPS}
       actions={
-        <span className="flex items-center gap-0.5" role="toolbar" aria-label="Code block actions">
+        <span
+          className="chat-markdown-codeblock-actions flex items-center gap-0.5"
+          role="toolbar"
+          aria-label="Code block actions"
+        >
           {leadingActions}
           {canWrap ? (
             <Tooltip>
