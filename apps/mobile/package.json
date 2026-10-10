@@ -120,7 +120,7 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-native": "0.88.0-rc.3",
-    "react-native-enriched-markdown": "file:deps/react-native-enriched-markdown-1.2.0-t3.7.tgz",
+    "react-native-enriched-markdown": "file:deps/react-native-enriched-markdown-1.2.0-t3.8.tgz",
     "react-native-gesture-handler": "~3.2.1",
     "react-native-image-viewing": "^0.2.2",
     "react-native-keyboard-controller": "1.22.6",
