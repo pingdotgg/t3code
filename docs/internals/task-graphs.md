@@ -29,6 +29,15 @@ Agents (MCP `task_graph_*` tools), the web editor and mobile all send the same
 `@t3tools/shared/taskGraph`. Clients run it first for instant errors; the
 server's run is the one that counts.
 
+## Pull request bases
+
+Worktree creation records each new branch's `gh-merge-base` as the branch it
+came from, which would point a branch-end PR at an inner node's branch that has
+no PR of its own. Delivery passes `baseBranch` to `runStackedAction` instead,
+from `taskGraphPullRequestBase`: the nearest ancestor along first dependencies
+that opens its own PR, skipping nodes that share the branch, else the graph
+base. The same value goes to peers, so stacks work across machines.
+
 ## Peers
 
 A peer is another environment this server holds a session on.

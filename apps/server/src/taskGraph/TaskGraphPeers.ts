@@ -11,6 +11,7 @@ import {
   type ModelSelection,
   type OrchestrationProjectShell,
   type OrchestrationV2ShellStreamItem,
+  type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadShell,
   type ProjectId,
   type RuntimeMode,
@@ -47,15 +48,22 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import type { NodeOutcome } from "./TaskGraphService.ts";
 
-/** How a finished peer node's branch leaves the peer: always pushed, plus a PR at a branch end. */
-export type PeerDelivery = "commit_push" | "commit_push_pr";
+/**
+ * How a finished peer node's work leaves the peer: pushed so other machines can
+ * build on it, with a PR against `baseBranch` when the node opens one, or not
+ * at all for work in the project folder.
+ */
+export interface PeerDelivery {
+  readonly action: "commit_push" | "commit_push_pr" | "none";
+  readonly baseBranch: string | null;
+}
 
 export interface PeerNodeStart {
   readonly environmentId: EnvironmentId;
   readonly graph: TaskGraph;
   readonly node: TaskGraphNode;
   readonly threadId: ThreadId;
-  readonly baseRef: string;
+  readonly workspaceStrategy: OrchestrationV2ThreadLaunchInput["workspaceStrategy"];
   readonly prompt: string;
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
@@ -99,6 +107,7 @@ export class TaskGraphPeers extends Context.Service<
       readonly threadId: ThreadId;
       readonly outcome: NodeOutcome;
     }>;
+    readonly list: Effect.Effect<TaskGraphPeerListResult, TaskGraphError>;
     readonly subscribe: Stream.Stream<TaskGraphPeerListResult, TaskGraphError>;
     readonly add: (input: {
       readonly pairingUrl: string;
@@ -124,6 +133,7 @@ export const layerNone = Layer.succeed(
     track: () => Effect.void,
     interruptNode: () => Effect.void,
     completions: Stream.never,
+    list: Effect.succeed({ peers: [] }),
     subscribe: Stream.make({ peers: [] }),
     add: () => Effect.fail(new TaskGraphError({ message: "Peers are unavailable." })),
     remove: () => Effect.succeed({ peers: [] }),
@@ -305,13 +315,16 @@ const make = Effect.gen(function* () {
       const summary =
         thread.latestVisibleMessage?.role === "assistant" ? thread.latestVisibleMessage.text : null;
       const delivered =
-        thread.worktreePath === null
+        thread.worktreePath === null || entry.delivery.action === "none"
           ? Option.none<{ readonly url: string | null }>()
           : Option.some(
               yield* state.client[WS_METHODS.gitRunStackedAction]({
                 actionId: `task-graph:${thread.id}`,
                 cwd: thread.worktreePath,
-                action: entry.delivery,
+                action: entry.delivery.action,
+                ...(entry.delivery.baseBranch === null
+                  ? {}
+                  : { baseBranch: entry.delivery.baseBranch }),
                 threadId: thread.id,
                 projectId: thread.projectId,
               }).pipe(
@@ -335,7 +348,8 @@ const make = Effect.gen(function* () {
           type: "succeeded",
           summary,
           branch: thread.branch,
-          ...(entry.delivery === "commit_push_pr" && Option.isSome(delivered)
+          worktreePath: thread.worktreePath,
+          ...(entry.delivery.action === "commit_push_pr" && Option.isSome(delivered)
             ? { pullRequestUrl: delivered.value.url }
             : {}),
         },
@@ -555,8 +569,7 @@ const make = Effect.gen(function* () {
         modelSelection: input.modelSelection,
         runtimeMode: input.runtimeMode,
         interactionMode: "default",
-        // Dependency branches were pushed by whichever machine ran them.
-        workspaceStrategy: { type: "worktree", baseRef: input.baseRef, startFromOrigin: true },
+        workspaceStrategy: input.workspaceStrategy,
         initialMessage: { text: input.prompt, attachments: [] },
       }).pipe(
         Effect.tapError(() => Effect.sync(() => tracked.delete(input.threadId))),
@@ -716,6 +729,7 @@ const make = Effect.gen(function* () {
     track,
     interruptNode,
     completions: Stream.fromQueue(completions),
+    list,
     subscribe,
     add,
     remove,

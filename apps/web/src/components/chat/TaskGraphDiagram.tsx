@@ -1,6 +1,7 @@
 import type { EnvironmentId, TaskGraphNode } from "@t3tools/contracts";
 import { taskGraphLayers } from "@t3tools/shared/taskGraph";
 import { Link } from "@tanstack/react-router";
+import { CornerDownRightIcon, FolderIcon, GitBranchIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
@@ -11,7 +12,9 @@ import {
   TASK_GRAPH_NODE_STATUS_DOT_CLASS,
   TASK_GRAPH_NODE_STATUS_LABEL,
   taskGraphDiagramLayout,
+  taskGraphWorkspaceLabel,
 } from "./taskGraphView";
+import type { TaskGraphLabels } from "./useTaskGraphLabels";
 
 /**
  * The graph as boxes and curves, left to right, for the card above the
@@ -20,6 +23,7 @@ import {
 export function TaskGraphDiagram(props: {
   readonly environmentId: EnvironmentId;
   readonly nodes: ReadonlyArray<TaskGraphNode>;
+  readonly labels: TaskGraphLabels;
   readonly onOpenPullRequest: (url: string) => void;
   /** Opens the editor on a task; bound to double-click and Enter on its box. */
   readonly onEditNode: (key: string) => void;
@@ -51,6 +55,7 @@ export function TaskGraphDiagram(props: {
           key={node.key}
           environmentId={props.environmentId}
           node={node}
+          labels={props.labels}
           x={x + 8}
           y={y + 8}
           onOpenPullRequest={props.onOpenPullRequest}
@@ -65,6 +70,7 @@ export function TaskGraphDiagram(props: {
 function TaskGraphDiagramNode(props: {
   readonly environmentId: EnvironmentId;
   readonly node: TaskGraphNode;
+  readonly labels: TaskGraphLabels;
   readonly x: number;
   readonly y: number;
   readonly onOpenPullRequest: (url: string) => void;
@@ -73,6 +79,7 @@ function TaskGraphDiagramNode(props: {
 }) {
   const { node } = props;
   const pullRequestUrl = node.pullRequestResult?.url ?? null;
+  const machine = props.labels.nodeMachineLabel(node);
   const title = <span className="min-w-0 truncate text-foreground/85">{node.title}</span>;
   const box = (
     <div
@@ -105,20 +112,25 @@ function TaskGraphDiagramNode(props: {
         />
         {title}
       </div>
-      <div className="flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground">
-        <span className="shrink-0">{TASK_GRAPH_NODE_STATUS_LABEL[node.status]}</span>
+      <div className="flex min-w-0 items-center gap-1 text-2xs text-muted-foreground">
+        <span className="min-w-0 truncate">
+          {TASK_GRAPH_NODE_STATUS_LABEL[node.status]} ·{" "}
+          {machine === "Auto" ? machine : `on ${machine}`}
+        </span>
         {pullRequestUrl !== null ? (
           <button
             type="button"
-            className="shrink-0 hover:text-foreground hover:underline"
+            className="ms-auto shrink-0 hover:text-foreground hover:underline"
             aria-label={`Open pull request for ${node.title}`}
             onClick={() => props.onOpenPullRequest(pullRequestUrl)}
           >
             {pullRequestLabel(pullRequestUrl)}
           </button>
-        ) : node.branch !== null ? (
-          <span className="min-w-0 truncate font-mono">{node.branch}</span>
         ) : null}
+      </div>
+      <div className="flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground">
+        <span className="min-w-0 truncate">{props.labels.nodeModelLabel(node)}</span>
+        <TaskGraphWorkspaceBadge node={node} titleOf={props.titleOf} />
       </div>
     </div>
   );
@@ -129,6 +141,7 @@ function TaskGraphDiagramNode(props: {
         <TaskGraphNodeDetails
           environmentId={props.environmentId}
           node={node}
+          labels={props.labels}
           titleOf={props.titleOf}
         />
       </PreviewCardPopup>
@@ -140,6 +153,7 @@ function TaskGraphDiagramNode(props: {
 function TaskGraphNodeDetails(props: {
   readonly environmentId: EnvironmentId;
   readonly node: TaskGraphNode;
+  readonly labels: TaskGraphLabels;
   readonly titleOf: (key: string) => string;
 }) {
   const { node } = props;
@@ -168,6 +182,13 @@ function TaskGraphNodeDetails(props: {
           {node.dependsOn.map(props.titleOf).join(", ")}
         </TaskGraphNodeDetail>
       ) : null}
+      <TaskGraphNodeDetail label="Model">{props.labels.nodeModelLabel(node)}</TaskGraphNodeDetail>
+      <TaskGraphNodeDetail label="Machine">
+        {props.labels.nodeMachineLabel(node)}
+      </TaskGraphNodeDetail>
+      <TaskGraphNodeDetail label="Workspace">
+        {taskGraphWorkspaceLabel(node, props.titleOf)}
+      </TaskGraphNodeDetail>
       {node.branch !== null ? (
         <TaskGraphNodeDetail label="Branch">
           <span className="font-mono">{node.branch}</span>
@@ -205,9 +226,34 @@ function TaskGraphNodeDetails(props: {
   );
 }
 
+/** The box's workspace hint: an icon, plus the dependency's name when it continues one. */
+function TaskGraphWorkspaceBadge(props: {
+  readonly node: TaskGraphNode;
+  readonly titleOf: (key: string) => string;
+}) {
+  const { node } = props;
+  const dependency = node.dependsOn[0];
+  if (node.workspace === "dependency" && dependency !== undefined) {
+    return (
+      <span className="ms-auto flex min-w-0 max-w-[55%] items-center gap-0.5">
+        <CornerDownRightIcon aria-hidden className="size-3 shrink-0" />
+        <span className="sr-only">Continues </span>
+        <span className="min-w-0 truncate">{props.titleOf(dependency)}</span>
+      </span>
+    );
+  }
+  const Icon = node.workspace === "root" ? FolderIcon : GitBranchIcon;
+  return (
+    <Icon
+      aria-label={taskGraphWorkspaceLabel(node, props.titleOf)}
+      className="ms-auto size-3 shrink-0"
+    />
+  );
+}
+
 function TaskGraphNodeDetail(props: { readonly label: string; readonly children: ReactNode }) {
   return (
-    <div className="grid grid-cols-[3.5rem_minmax(0,1fr)] gap-2">
+    <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2">
       <span className="text-muted-foreground">{props.label}</span>
       <span className="min-w-0 text-foreground/85">{props.children}</span>
     </div>

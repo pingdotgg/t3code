@@ -24,6 +24,7 @@ import {
   skipUnreachableTaskGraphNodes,
   taskGraphNodeOpensPullRequest,
   taskGraphNodeSummary,
+  taskGraphPullRequestBase,
   validateTaskGraphNodes,
 } from "@t3tools/shared/taskGraph";
 import { chooseLoadBalancedEnvironment } from "@t3tools/shared/loadBalancing";
@@ -96,6 +97,7 @@ export type NodeOutcome =
       readonly type: "succeeded";
       readonly summary: string | null;
       readonly branch: string | null;
+      readonly worktreePath: string | null;
       readonly pullRequestUrl?: string | null;
     }
   | { readonly type: "failed" | "cancelled"; readonly error: string };
@@ -118,7 +120,42 @@ export function hostHasCapacity(snapshot: HostResourcesSnapshot): boolean {
 const LOCAL_WEIGHT = 50;
 
 const peerDelivery = (graph: TaskGraph, node: TaskGraphNode): TaskGraphPeers.PeerDelivery =>
-  taskGraphNodeOpensPullRequest(graph.nodes, node) ? "commit_push_pr" : "commit_push";
+  node.workspace === "root"
+    ? { action: "none", baseBranch: null }
+    : taskGraphNodeOpensPullRequest(graph.nodes, node)
+      ? { action: "commit_push_pr", baseBranch: taskGraphPullRequestBase(graph, node) }
+      : { action: "commit_push", baseBranch: null };
+
+/**
+ * How a node's thread gets its workspace: a new worktree from its first
+ * dependency's branch (or the graph base), that dependency's worktree itself,
+ * or the project folder. Null when a continued worktree was never recorded.
+ */
+const nodeWorkspaceStrategy = (
+  graph: TaskGraph,
+  node: TaskGraphNode,
+  options: { readonly baseFromOrigin: boolean },
+): ThreadLaunch.ThreadLaunchWorkspaceStrategy | null => {
+  const first = graph.nodes.find((candidate) => candidate.key === node.dependsOn[0]);
+  switch (node.workspace) {
+    case "root":
+      return { type: "root" };
+    case "dependency":
+      return first?.worktreePath == null
+        ? null
+        : {
+            type: "existing_worktree",
+            worktreePath: first.worktreePath,
+            ...(first.branch === null ? {} : { branch: first.branch }),
+          };
+    case "worktree":
+      return {
+        type: "worktree",
+        baseRef: first?.branch ?? graph.baseRef,
+        ...(options.baseFromOrigin ? { startFromOrigin: true } : {}),
+      };
+  }
+};
 
 const decodeGraphJson = Schema.decodeUnknownEffect(Schema.fromJsonString(TaskGraph));
 const encodeGraphJson = Schema.encodeSync(Schema.fromJsonString(TaskGraph));
@@ -340,6 +377,7 @@ const make = Effect.gen(function* () {
         actionId: `task-graph:${graph.id}:${node.key}:${node.threadId}`,
         cwd: worktreePath,
         action: opensPullRequest ? "commit_push_pr" : push ? "commit_push" : "commit",
+        ...(opensPullRequest ? { baseBranch: taskGraphPullRequestBase(graph, node) } : {}),
         ...(node.threadId === null ? {} : { threadId: node.threadId }),
         projectId: graph.projectId,
       });
@@ -391,6 +429,7 @@ const make = Effect.gen(function* () {
               ...node,
               status: "delivering",
               branch: projection.thread.branch,
+              worktreePath: projection.thread.worktreePath,
               summary: lastReply === undefined ? null : taskGraphNodeSummary(lastReply.text),
             }
           : node,
@@ -398,8 +437,9 @@ const make = Effect.gen(function* () {
       const node = stored.nodes.find((candidate) => candidate.key === key);
       if (node === undefined || node.status !== "delivering") return;
       const worktreePath = projection.thread.worktreePath;
+      // Work in the project folder is never committed.
       const delivered =
-        worktreePath === null
+        worktreePath === null || node.workspace === "root"
           ? Exit.succeed(null)
           : yield* Effect.exit(deliver(stored, node, worktreePath));
       const completedAt = yield* nowIso;
@@ -457,6 +497,7 @@ const make = Effect.gen(function* () {
           status: "succeeded",
           summary: outcome.summary === null ? null : taskGraphNodeSummary(outcome.summary),
           branch: outcome.branch,
+          worktreePath: outcome.worktreePath,
           pullRequestResult:
             outcome.pullRequestUrl === undefined
               ? null
@@ -488,17 +529,22 @@ const make = Effect.gen(function* () {
     maxNodes: number,
   ): Effect.Effect<EnvironmentId | null> =>
     Effect.gen(function* () {
-      if (node.environmentId === localEnvironmentId) {
+      // Continuing a worktree means running on the machine that has it.
+      const continued =
+        node.workspace === "dependency"
+          ? (graph.nodes.find((candidate) => candidate.key === node.dependsOn[0])
+              ?.assignedEnvironmentId ?? null)
+          : null;
+      const pinned = continued ?? node.environmentId;
+      if (pinned === localEnvironmentId) {
         return local.hasRoom ? localEnvironmentId : null;
       }
       const remote = yield* peers.candidates({
         projectId: graph.projectId,
         maxNodesPerPeer: maxNodes,
       });
-      if (node.environmentId !== null) {
-        return remote.some((candidate) => candidate.environmentId === node.environmentId)
-          ? node.environmentId
-          : null;
+      if (pinned !== null) {
+        return remote.some((candidate) => candidate.environmentId === pinned) ? pinned : null;
       }
       if (remote.length === 0) return local.hasRoom ? localEnvironmentId : null;
       const now = yield* Clock.currentTimeMillis;
@@ -528,16 +574,30 @@ const make = Effect.gen(function* () {
       const threadId = node.threadId!;
       const parent = yield* threads.getThreadProjection(graph.threadId);
       const firstDependency = graph.nodes.find((candidate) => candidate.key === node.dependsOn[0]);
-      const baseRef = firstDependency?.branch ?? graph.baseRef;
       const prompt = buildTaskGraphNodePrompt(graph, node);
-      const modelSelection = node.modelSelection ?? parent.thread.modelSelection;
-      if (node.assignedEnvironmentId !== localEnvironmentId) {
+      const modelSelection =
+        node.modelSelection ?? graph.modelSelection ?? parent.thread.modelSelection;
+      const remote = node.assignedEnvironmentId !== localEnvironmentId;
+      // A dependency that ran on another machine pushed its branch; it is only on origin here.
+      const workspaceStrategy = nodeWorkspaceStrategy(graph, node, {
+        baseFromOrigin:
+          remote ||
+          (firstDependency !== undefined &&
+            firstDependency.assignedEnvironmentId !== localEnvironmentId),
+      });
+      if (workspaceStrategy === null) {
+        return yield* graphError(
+          `'${node.dependsOn[0]}' left no worktree to continue in.`,
+          graph.id,
+        );
+      }
+      if (remote) {
         yield* peers.startNode({
           environmentId: node.assignedEnvironmentId!,
           graph,
           node,
           threadId,
-          baseRef,
+          workspaceStrategy,
           prompt,
           modelSelection,
           runtimeMode: parent.thread.runtimeMode,
@@ -545,10 +605,6 @@ const make = Effect.gen(function* () {
         });
         return;
       }
-      // A dependency that ran on a peer pushed its branch; it exists here only on origin.
-      const fromPeer =
-        firstDependency !== undefined &&
-        firstDependency.assignedEnvironmentId !== localEnvironmentId;
       yield* launcher.launch({
         commandId: CommandId.make(`task-graph-launch:${threadId}`),
         threadId,
@@ -557,11 +613,7 @@ const make = Effect.gen(function* () {
         modelSelection,
         runtimeMode: parent.thread.runtimeMode,
         interactionMode: "default",
-        workspaceStrategy: {
-          type: "worktree",
-          baseRef,
-          ...(fromPeer ? { startFromOrigin: true } : {}),
-        },
+        workspaceStrategy,
         initialMessage: {
           messageId: MessageId.make(`task-graph-message:${threadId}`),
           senderThreadId: graph.threadId,
@@ -713,6 +765,7 @@ const make = Effect.gen(function* () {
           threadId: parent.thread.id,
           title: input.title,
           baseRef: input.baseRef ?? parent.thread.branch ?? "HEAD",
+          modelSelection: parent.thread.modelSelection,
           status: (input.run ?? taskGraphAutoRun) ? "running" : "draft",
           nodes,
           createdAt: now,

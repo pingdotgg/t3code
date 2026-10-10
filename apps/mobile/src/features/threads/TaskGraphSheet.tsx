@@ -6,11 +6,13 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
+  ModelSelection,
   TaskGraph,
   TaskGraphEdit,
   TaskGraphNode,
   ThreadId,
 } from "@t3tools/contracts";
+import { formatModelSlugName } from "@t3tools/shared/model";
 import { taskGraphLayers } from "@t3tools/shared/taskGraph";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import * as Haptics from "expo-haptics";
@@ -25,6 +27,7 @@ import { showConfirmDialog } from "../../components/ConfirmDialogHost";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
+import { useEnvironmentPresentation } from "../../state/presentation";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -104,6 +107,39 @@ export function TaskGraphSheet({ route }: StaticScreenProps<TaskGraphTarget>) {
     label: "task graph cancel",
     reportFailure: false,
   });
+  const providers = useAtomValue(serverEnvironment.providersValueAtom(target.environmentId));
+  const environmentLabel =
+    useEnvironmentPresentation(target.environmentId).presentation?.entry.target.label ??
+    "This machine";
+  // Servers without peer support reject this; the graph's own machine still has a name.
+  const peers =
+    useEnvironmentQuery(
+      serverEnvironment.taskGraphPeersLive({ environmentId: target.environmentId, input: {} }),
+    ).data?.peers ?? [];
+  const modelLabel = (selection: ModelSelection) =>
+    providers
+      ?.find((provider) => provider.instanceId === selection.instanceId)
+      ?.models.find((model) => model.slug === selection.model)?.name ??
+    formatModelSlugName(selection.model);
+  /** "Claude Opus 5.5 · on build-box": the node's model and where it ran or is pinned. */
+  const placementLabel = (graph: TaskGraph, node: TaskGraphNode) => {
+    const model = node.modelSelection ?? graph.modelSelection;
+    // A node continuing its dependency's worktree goes where that one ran, known once it starts.
+    const machine =
+      node.assignedEnvironmentId ?? (node.workspace === "dependency" ? null : node.environmentId);
+    const machineLabel =
+      machine === null
+        ? null
+        : machine === target.environmentId
+          ? environmentLabel
+          : (peers.find((peer) => peer.environmentId === machine)?.label ?? "another machine");
+    return [
+      model === null ? null : modelLabel(model),
+      machineLabel === null ? null : `on ${machineLabel}`,
+    ]
+      .filter((part) => part !== null)
+      .join(" · ");
+  };
   // Keys of actions in flight, so a second tap cannot send the same edit twice.
   const [pending, setPending] = useState<ReadonlySet<string>>(() => new Set());
 
@@ -248,6 +284,7 @@ export function TaskGraphSheet({ route }: StaticScreenProps<TaskGraphTarget>) {
                       <NodeRow
                         key={node.key}
                         node={node}
+                        placement={placementLabel(graph, node)}
                         busy={busy || pending.has(`${graph.id}:${node.key}`)}
                         canCancelBranch={nodeActions.cancelBranch && canEdit}
                         canRetry={nodeActions.retry && canEdit}
@@ -309,6 +346,8 @@ export function TaskGraphSheet({ route }: StaticScreenProps<TaskGraphTarget>) {
 
 function NodeRow(props: {
   readonly node: TaskGraphNode;
+  /** Model and machine, empty when neither is known. */
+  readonly placement: string;
   readonly busy: boolean;
   readonly canCancelBranch: boolean;
   readonly canRetry: boolean;
@@ -336,6 +375,11 @@ function NodeRow(props: {
           {taskGraphNodeStatusLabel(node.status)}
         </Text>
       </View>
+      {props.placement !== "" ? (
+        <Text numberOfLines={1} className="ps-4 text-xs text-foreground-muted">
+          {props.placement}
+        </Text>
+      ) : null}
       {node.branch !== null ? (
         <Text numberOfLines={1} className="ps-4 text-xs text-foreground-muted">
           {node.branch}

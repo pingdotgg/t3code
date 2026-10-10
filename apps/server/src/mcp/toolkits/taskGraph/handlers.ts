@@ -3,6 +3,8 @@ import * as Effect from "effect/Effect";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
+import * as TaskGraphPeers from "../../../taskGraph/TaskGraphPeers.ts";
 import * as TaskGraphService from "../../../taskGraph/TaskGraphService.ts";
 import { TaskGraphToolkit } from "./tools.ts";
 
@@ -53,7 +55,27 @@ const handlers = {
       const graphs = yield* service
         .listForThread(threadId)
         .pipe(Effect.mapError(orchestrationError));
-      return { graphs };
+      const local = yield* (yield* ServerEnvironment.ServerEnvironment).getDescriptor;
+      const { peers } = yield* (yield* TaskGraphPeers.TaskGraphPeers).list.pipe(
+        Effect.mapError(orchestrationError),
+      );
+      return {
+        graphs,
+        machines: [
+          {
+            environmentId: local.environmentId,
+            label: local.label,
+            thisMachine: true,
+            connected: true,
+          },
+          ...peers.map((peer) => ({
+            environmentId: peer.environmentId,
+            label: peer.label,
+            thisMachine: false,
+            connected: peer.status === "connected",
+          })),
+        ],
+      };
     }),
   ),
   task_graph_edit: McpToolAccess.actsAsCaller(({ graphId, edits }) =>

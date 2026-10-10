@@ -23,8 +23,13 @@ of CPU or memory.
 
 ## Changing a graph
 
+Hover a task to see its prompt, model, machine and workspace. Double-click it
+to open the editor with that task selected.
+
 In the editor you can add tasks, edit or delete tasks that have not started,
-and drag between tasks to add a dependency. While the graph runs:
+and drag between tasks to add a dependency. For each task that has not
+started you can also choose its model, the machine it runs on, and its
+workspace. While the graph runs:
 
 - **Cancel branch** stops a task and everything that depends on it.
 - **Retry** reruns a task that failed or was cancelled, along with the tasks
@@ -35,17 +40,35 @@ You can also ask the agent to change the graph in chat, such as "drop the
 billing branch" or "add a docs task after the merge". Mobile shows the graph
 and offers Run, Cancel, Cancel branch and Retry.
 
+If you continue a failed task in its own thread, the graph follows that run
+and picks up again from there when it finishes.
+
 ## Branches and pull requests
 
-A task with no dependencies branches from the thread's branch. A task with one
-dependency branches from that task's branch. A task with several dependencies
-starts from the first one's branch and merges the others; its agent resolves
-any merge conflicts.
+Each task has a workspace:
+
+- **New worktree**, the default. A task with no dependencies branches from
+  the thread's branch; otherwise it branches from its first dependency's
+  branch.
+- **Continue a dependency's worktree**. The task works on in its first
+  dependency's worktree and branch, on the same machine, so several tasks can
+  build one branch in turn.
+- **Project folder**. No worktree, branch, commit or pull request. Use it for
+  read-only work such as reviews.
+
+A task with several dependencies starts from the first one's branch and merges
+the others; its agent resolves any merge conflicts. Agents only add such a
+combining task when you ask for the work to be reconciled or the pieces cannot
+work apart. Otherwise each branch stays separate and ends in its own pull
+request.
 
 When a task succeeds, its work is committed. Tasks that nothing depends on
-also push and open a pull request, so each end of the tree becomes one pull
-request. When the whole graph finishes, the thread that planned it gets a
-summary with each task's result and pull request.
+also push and open a pull request against the graph's base branch. Ask for
+stacked pull requests, or turn on pull requests for tasks in the middle of the
+graph, and each pull request targets the nearest earlier task with its own
+pull request instead, so the graph produces a stack. When the whole graph
+finishes, the thread that planned it gets a summary with each task's result
+and pull request.
 
 ## Running tasks on other machines
 
@@ -59,7 +82,8 @@ branches there. It cannot read files, open terminals or change settings. To
 unpair, remove the machine here, then revoke the session from the other
 machine's connected clients.
 
-Tasks go to whichever machine has the most free CPU and memory, adjusted by
+Tasks go to the machine you pick for them in the editor. Tasks left on
+**Auto** go to whichever machine has the most free CPU and memory, adjusted by
 each machine's preference (**Prefer**, **Normal**, **Less often** or **Manual
 only**). With a machine paired, task branches are pushed to your remote so the
 other machines can build on them. Tasks on another machine run in the same

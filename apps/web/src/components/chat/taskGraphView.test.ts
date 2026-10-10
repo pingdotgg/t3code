@@ -1,5 +1,5 @@
 import type { TaskGraphNode } from "@t3tools/contracts";
-import { TaskGraphNodeKey } from "@t3tools/contracts";
+import { EnvironmentId, ProviderInstanceId, TaskGraphNodeKey } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { taskGraphLayers } from "@t3tools/shared/taskGraph";
 import { describe, expect, it } from "vite-plus/test";
@@ -9,8 +9,10 @@ import {
   TASK_GRAPH_DIAGRAM,
   taskGraphDiagramLayout,
   taskGraphNodeKeyFromTitle,
+  taskGraphNodeMachine,
   taskGraphProgressLabel,
   taskGraphPullRequestLinks,
+  taskGraphResourcesLabel,
 } from "./taskGraphView";
 
 const isNodeKey = Schema.is(TaskGraphNodeKey);
@@ -23,10 +25,12 @@ const node = (key: string, overrides: Partial<TaskGraphNode> = {}): TaskGraphNod
   pullRequest: null,
   modelSelection: null,
   environmentId: null,
+  workspace: "worktree",
   status: "pending",
   assignedEnvironmentId: null,
   threadId: null,
   branch: null,
+  worktreePath: null,
   summary: null,
   error: null,
   pullRequestResult: null,
@@ -104,6 +108,67 @@ describe("task graph summaries", () => {
     expect(links).toEqual([
       { key: "a", title: "a", url: "https://github.com/o/r/pull/9", label: "#9" },
     ]);
+  });
+});
+
+describe("task graph models and machines", () => {
+  const local = EnvironmentId.make("local");
+  const buildBox = EnvironmentId.make("build-box");
+  const opus = { instanceId: ProviderInstanceId.make("claude"), model: "opus" };
+  const gpt = { instanceId: ProviderInstanceId.make("codex"), model: "gpt" };
+  const mini = { instanceId: ProviderInstanceId.make("codex"), model: "mini" };
+  const label = (selection: { readonly model: string }) => selection.model;
+
+  it("places a node where it started, else after the worktree it continues, else where pinned", () => {
+    const nodes = [
+      node("a", { assignedEnvironmentId: buildBox, environmentId: local }),
+      node("b", { workspace: "dependency", dependsOn: ["a"], environmentId: local }),
+      node("c", { workspace: "dependency", dependsOn: ["b"] }),
+      node("d", { environmentId: local }),
+      node("e"),
+    ];
+    const machineOf = (key: string) =>
+      taskGraphNodeMachine(
+        nodes,
+        nodes.find((entry) => entry.key === key)!,
+      );
+    expect(["a", "b", "c", "d", "e"].map(machineOf)).toEqual([
+      buildBox,
+      buildBox,
+      buildBox,
+      local,
+      null,
+    ]);
+  });
+
+  it("names distinct models, the graph's default included, and counts machines", () => {
+    const graph = {
+      modelSelection: opus,
+      nodes: [
+        node("a", { environmentId: local }),
+        node("b", { modelSelection: gpt, assignedEnvironmentId: buildBox }),
+        node("c", { modelSelection: opus }),
+      ],
+    };
+    expect(taskGraphResourcesLabel(graph, label)).toBe("opus · gpt · 2 machines");
+    expect(
+      taskGraphResourcesLabel(
+        { ...graph, nodes: [...graph.nodes, node("d", { modelSelection: mini })] },
+        label,
+      ),
+    ).toBe("opus · gpt +1 · 2 machines");
+  });
+
+  it("calls a graph with nothing pinned or started auto-balanced", () => {
+    expect(taskGraphResourcesLabel({ modelSelection: null, nodes: [node("a")] }, label)).toBe(
+      "auto-balanced",
+    );
+    expect(
+      taskGraphResourcesLabel(
+        { modelSelection: gpt, nodes: [node("a", { environmentId: local })] },
+        label,
+      ),
+    ).toBe("gpt · 1 machine");
   });
 });
 

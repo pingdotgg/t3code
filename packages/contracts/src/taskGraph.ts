@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -56,6 +57,17 @@ const nodeFields = {
   }),
 };
 
+/**
+ * Where a node works:
+ * - `worktree`: its own new worktree and branch.
+ * - `dependency`: continues in its first dependency's worktree and branch, so
+ *   several nodes can build one branch in turn. Runs on that node's machine.
+ * - `root`: the project folder itself, with no branch, commit or pull request.
+ *   For read-only work such as reviews.
+ */
+export const TaskGraphNodeWorkspace = Schema.Literals(["worktree", "dependency", "root"]);
+export type TaskGraphNodeWorkspace = typeof TaskGraphNodeWorkspace.Type;
+
 export const TaskGraphNodeInput = Schema.Struct({
   key: TaskGraphNodeKey,
   ...nodeFields,
@@ -68,7 +80,11 @@ export const TaskGraphNodeInput = Schema.Struct({
   }),
   environmentId: Schema.optional(Schema.NullOr(EnvironmentId)).annotate({
     description:
-      "Machine to run on. Null or omitted balances across this machine and its paired peers.",
+      "Machine to run on, from task_graph_list's machines. Null or omitted balances across this machine and its paired peers.",
+  }),
+  workspace: Schema.optional(TaskGraphNodeWorkspace).annotate({
+    description:
+      "'worktree' (default): its own new worktree and branch. 'dependency': continue in the first dependency's worktree and branch, so one branch is built by several nodes in turn. 'root': the project folder, no branch, commit or PR; for read-only work such as reviews.",
   }),
 });
 export type TaskGraphNodeInput = typeof TaskGraphNodeInput.Type;
@@ -87,11 +103,16 @@ export const TaskGraphNode = Schema.Struct({
   pullRequest: Schema.NullOr(Schema.Boolean),
   modelSelection: Schema.NullOr(ModelSelection),
   environmentId: Schema.NullOr(EnvironmentId),
+  workspace: TaskGraphNodeWorkspace.pipe(
+    Schema.withDecodingDefault(Effect.succeed("worktree" as const)),
+  ),
   status: TaskGraphNodeStatus,
   /** Where the node ran or runs; null until it starts. */
   assignedEnvironmentId: Schema.NullOr(EnvironmentId),
   threadId: Schema.NullOr(ThreadId),
   branch: Schema.NullOr(Schema.String),
+  /** Where the node worked on its machine; a `dependency` node continues there. */
+  worktreePath: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** The end of the node's last reply, handed to the nodes that depend on it. */
   summary: Schema.NullOr(Schema.String),
   error: Schema.NullOr(Schema.String),
@@ -109,6 +130,10 @@ export const TaskGraph = Schema.Struct({
   title: TrimmedNonEmptyString,
   /** Ref that nodes without dependencies branch from. */
   baseRef: TrimmedNonEmptyString,
+  /** The proposing thread's model when the graph was made; nodes without their own use it. */
+  modelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   status: TaskGraphStatus,
   nodes: Schema.Array(TaskGraphNode),
   createdAt: IsoDateTime,
@@ -133,6 +158,7 @@ export const TaskGraphEdit = Schema.Union([
     pullRequest: Schema.optional(Schema.NullOr(Schema.Boolean)),
     modelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
     environmentId: Schema.optional(Schema.NullOr(EnvironmentId)),
+    workspace: Schema.optional(TaskGraphNodeWorkspace),
   }),
   Schema.Struct({ type: Schema.Literal("remove_node"), key: TaskGraphNodeKey }),
   Schema.Struct({ type: Schema.Literal("cancel_branch"), key: TaskGraphNodeKey }),

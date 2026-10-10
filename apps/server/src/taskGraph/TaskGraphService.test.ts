@@ -226,6 +226,11 @@ it.effect("fans out, merges, opens a PR at the end, and reports to the proposing
       const report = yield* Deferred.await(harness.report);
       assert.include(report, 'Task graph "Security audit" finished: succeeded.');
       assert.include(report, "PR: https://pr//worktrees/t3/d");
+      // Only the branch end opens a PR, so it targets the graph base and carries all the work.
+      assert.equal(
+        harness.gitActions.find((action) => action.action === "commit_push_pr")?.baseBranch,
+        "main",
+      );
       // Inner nodes commit so dependents can branch from them; only the end opens a PR.
       assert.deepEqual(
         harness.gitActions.map((action) => [action.cwd, action.action]),
@@ -321,6 +326,7 @@ it.effect("places a node on a peer with more free capacity and pushes local bran
         track: () => Effect.void,
         interruptNode: () => Effect.void,
         completions: Stream.never,
+        list: Effect.succeed({ peers: [] }),
         subscribe: Stream.never,
         add: () => Effect.die("unused"),
         remove: () => Effect.die("unused"),
@@ -338,9 +344,13 @@ it.effect("places a node on a peer with more free capacity and pushes local bran
           });
           const start = yield* Queue.take(started);
           assert.equal(start.environmentId, "env-peer");
-          assert.equal(start.baseRef, "main");
+          assert.deepEqual(start.workspaceStrategy, {
+            type: "worktree",
+            baseRef: "main",
+            startFromOrigin: true,
+          });
           // A branch end opens its PR from the peer.
-          assert.equal(start.delivery, "commit_push_pr");
+          assert.deepEqual(start.delivery, { action: "commit_push_pr", baseBranch: "main" });
         }),
       peers,
     );
@@ -372,6 +382,54 @@ it.effect("follows a failed node that someone continues in its own thread", () =
       assert.deepEqual(
         resumed.nodes.map((graphNode) => graphNode.status),
         ["succeeded", "running"],
+      );
+    }),
+  ),
+);
+
+it.effect("stacks PRs, continues a worktree in place, and never commits project-folder work", () =>
+  withService((service, harness) =>
+    Effect.gen(function* () {
+      yield* service.create({
+        threadId: PARENT,
+        title: "Stack",
+        nodes: [
+          { ...node("review"), workspace: "root" },
+          { ...node("a", ["review"]), pullRequest: true },
+          { ...node("a-tests", ["a"]), workspace: "dependency" },
+          { ...node("b", ["a-tests"]), pullRequest: true },
+        ],
+        run: true,
+      });
+
+      const review = yield* Queue.take(harness.launches);
+      assert.deepEqual(review.workspaceStrategy, { type: "root" });
+      yield* harness.finish(review, { reply: "read it all", branch: "main" });
+
+      const a = yield* Queue.take(harness.launches);
+      assert.deepEqual(a.workspaceStrategy, { type: "worktree", baseRef: "main" });
+      yield* harness.finish(a, { reply: "layer one", branch: "t3/a" });
+
+      const aTests = yield* Queue.take(harness.launches);
+      assert.deepEqual(aTests.workspaceStrategy, {
+        type: "existing_worktree",
+        worktreePath: "/worktrees/t3/a",
+        branch: "t3/a",
+      });
+      yield* harness.finish(aTests, { reply: "tests added", branch: "t3/a" });
+
+      const b = yield* Queue.take(harness.launches);
+      yield* harness.finish(b, { reply: "layer two", branch: "t3/b" });
+      yield* Deferred.await(harness.report);
+
+      // The review committed nothing; each layer's PR targets the layer below it.
+      assert.deepEqual(
+        harness.gitActions.map((action) => [action.cwd, action.action, action.baseBranch]),
+        [
+          ["/worktrees/t3/a", "commit_push_pr", "main"],
+          ["/worktrees/t3/a", "commit", undefined],
+          ["/worktrees/t3/b", "commit_push_pr", "t3/a"],
+        ],
       );
     }),
   ),

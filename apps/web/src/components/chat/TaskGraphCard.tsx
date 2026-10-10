@@ -19,8 +19,10 @@ import {
   TASK_GRAPH_STATUS_LABEL,
   taskGraphProgressLabel,
   taskGraphPullRequestLinks,
+  taskGraphResourcesLabel,
 } from "./taskGraphView";
 import { useTaskGraphCommands } from "./useTaskGraphCommands";
+import { useTaskGraphLabels } from "./useTaskGraphLabels";
 
 // The canvas, dagre and xyflow load only when someone opens the editor.
 const loadTaskGraphEditor = () => import("./TaskGraphEditor");
@@ -87,6 +89,7 @@ function TaskGraphCard(props: {
     setEditorOpen(true);
   };
   const commands = useTaskGraphCommands(props.environmentId, graph);
+  const labels = useTaskGraphLabels(props.environmentId, graph);
   const listId = useId();
   const pullRequests = taskGraphPullRequestLinks(graph.nodes);
 
@@ -107,6 +110,10 @@ function TaskGraphCard(props: {
             <ComposerBanner.Separator />
             <span className="shrink-0 text-muted-foreground">
               {TASK_GRAPH_STATUS_LABEL[graph.status]} · {taskGraphProgressLabel(graph)}
+            </span>
+            <ComposerBanner.Separator />
+            <span className="min-w-0 truncate text-muted-foreground">
+              {taskGraphResourcesLabel(graph, labels.modelLabel)}
             </span>
             {!expanded
               ? pullRequests.map((pullRequest) => (
@@ -199,6 +206,7 @@ function TaskGraphCard(props: {
             <TaskGraphDiagram
               environmentId={props.environmentId}
               nodes={graph.nodes}
+              labels={labels}
               onOpenPullRequest={openExternal}
               onEditNode={(key) => {
                 void loadTaskGraphEditor();
@@ -222,6 +230,7 @@ function TaskGraphCard(props: {
                 environmentId={props.environmentId}
                 graph={graph}
                 commands={commands}
+                labels={labels}
                 initialNodeKey={editorNodeKey}
               />
             </Suspense>

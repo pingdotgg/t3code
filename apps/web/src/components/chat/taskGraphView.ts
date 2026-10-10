@@ -1,4 +1,6 @@
 import type {
+  EnvironmentId,
+  ModelSelection,
   TaskGraph,
   TaskGraphNode,
   TaskGraphNodeStatus,
@@ -71,6 +73,74 @@ export function taskGraphProgressLabel(graph: Pick<TaskGraph, "status" | "nodes"
   return parts.join(" · ");
 }
 
+/** The model a node runs with: its own, else the graph's. Null when neither is known. */
+export const taskGraphNodeModel = (
+  graph: Pick<TaskGraph, "modelSelection">,
+  node: Pick<TaskGraphNode, "modelSelection">,
+): ModelSelection | null => node.modelSelection ?? graph.modelSelection;
+
+/**
+ * The machine a node runs or will run on, the way the server places it: where
+ * it started, else its first dependency's machine when it continues that
+ * worktree, else where it is pinned. Null means it will be balanced automatically.
+ */
+export function taskGraphNodeMachine(
+  nodes: ReadonlyArray<TaskGraphNode>,
+  node: TaskGraphNode,
+): EnvironmentId | null {
+  let current = node;
+  // Bounded by the node count, so a malformed cycle cannot loop forever.
+  for (let hops = 0; hops <= nodes.length; hops += 1) {
+    if (current.assignedEnvironmentId !== null) return current.assignedEnvironmentId;
+    if (current.workspace !== "dependency") return current.environmentId;
+    const dependency = nodes.find((candidate) => candidate.key === current.dependsOn[0]);
+    if (dependency === undefined) return current.environmentId;
+    current = dependency;
+  }
+  return null;
+}
+
+/**
+ * The models and machines a graph spreads over, for the card header, such as
+ * "Claude Opus 5.5 · GPT-5 +1 · 2 machines". Machines count only where nodes
+ * started or are pinned; with none of either the graph is "auto-balanced".
+ */
+export function taskGraphResourcesLabel(
+  graph: Pick<TaskGraph, "modelSelection" | "nodes">,
+  modelLabel: (selection: ModelSelection) => string,
+): string {
+  const models = new Set<string>();
+  const machines = new Set<EnvironmentId>();
+  for (const node of graph.nodes) {
+    const model = taskGraphNodeModel(graph, node);
+    if (model !== null) models.add(modelLabel(model));
+    const machine = taskGraphNodeMachine(graph.nodes, node);
+    if (machine !== null) machines.add(machine);
+  }
+  const labels = [...models];
+  const parts = labels.slice(0, 2);
+  if (labels.length > 2) parts[1] = `${parts[1]} +${labels.length - 2}`;
+  parts.push(
+    machines.size === 0
+      ? "auto-balanced"
+      : `${machines.size} machine${machines.size === 1 ? "" : "s"}`,
+  );
+  return parts.join(" · ");
+}
+
+/** Where a node works, in words, such as "Continues Audit auth's worktree". */
+export function taskGraphWorkspaceLabel(
+  node: TaskGraphNode,
+  titleOf: (key: string) => string,
+): string {
+  if (node.workspace === "root") return "Project folder, no branch";
+  const dependency = node.dependsOn[0];
+  if (node.workspace === "dependency" && dependency !== undefined) {
+    return `Continues ${titleOf(dependency)}'s worktree`;
+  }
+  return "New worktree";
+}
+
 /** "#123" for a GitHub, GitLab or Bitbucket pull request URL, otherwise "PR". */
 export function pullRequestLabel(url: string): string {
   const number = /\/(?:pull|merge_requests|pull-requests)\/(\d+)/.exec(url)?.[1];
@@ -120,8 +190,8 @@ export function taskGraphNodeKeyFromTitle(title: string, taken: Iterable<string>
 
 /** Box size and spacing of the inline diagram, in CSS pixels. */
 export const TASK_GRAPH_DIAGRAM = {
-  nodeWidth: 168,
-  nodeHeight: 40,
+  nodeWidth: 188,
+  nodeHeight: 58,
   columnGap: 40,
   rowGap: 10,
 } as const;

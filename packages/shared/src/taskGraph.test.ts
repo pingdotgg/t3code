@@ -11,6 +11,7 @@ import {
   skipUnreachableTaskGraphNodes,
   taskGraphLayers,
   taskGraphNodeOpensPullRequest,
+  taskGraphPullRequestBase,
   validateTaskGraphNodes,
 } from "./taskGraph.ts";
 
@@ -174,5 +175,58 @@ describe("resumeTaskGraphNode", () => {
 
   it("leaves nodes that did not fail alone", () => {
     expect(resumeTaskGraphNode(withStatus(diamond(), { a: "succeeded" }), "a")).toBeNull();
+  });
+});
+
+describe("workspaces and pull request bases", () => {
+  // a -> b -> c, each on its own branch once it has run.
+  const chain = (overrides: Record<string, Partial<TaskGraphNode>> = {}) =>
+    graph(input("a"), input("b", ["a"]), input("c", ["b"])).map((node) => ({
+      ...node,
+      branch: `t3/${node.key}`,
+      ...overrides[node.key],
+    }));
+
+  it("points a lone branch-end PR at the graph base so it carries all the work", () => {
+    const nodes = chain();
+    expect(taskGraphPullRequestBase({ nodes, baseRef: "main" }, nodes[2]!)).toBe("main");
+  });
+
+  it("stacks PRs when inner nodes open their own", () => {
+    const nodes = chain({ a: { pullRequest: true }, b: { pullRequest: true } });
+    const base = (key: string) =>
+      taskGraphPullRequestBase(
+        { nodes, baseRef: "main" },
+        nodes.find((node) => node.key === key)!,
+      );
+    expect([base("a"), base("b"), base("c")]).toEqual(["main", "t3/a", "t3/b"]);
+  });
+
+  it("skips the nodes sharing a branch when finding the layer below", () => {
+    const nodes = chain({
+      a: { pullRequest: true },
+      c: { workspace: "dependency", branch: "t3/b" },
+    });
+    expect(taskGraphPullRequestBase({ nodes, baseRef: "main" }, nodes[2]!)).toBe("t3/a");
+  });
+
+  it("never opens a PR from the project folder", () => {
+    const nodes = graph({ ...input("review"), workspace: "root", pullRequest: true });
+    expect(taskGraphNodeOpensPullRequest(nodes, nodes[0]!)).toBe(false);
+  });
+
+  it("checks that a continued worktree exists and is continued only once", () => {
+    expect(validateTaskGraphNodes(graph({ ...input("a"), workspace: "dependency" }))).toMatch(
+      /depends on nothing/,
+    );
+    expect(
+      validateTaskGraphNodes(
+        graph(
+          input("a"),
+          { ...input("b", ["a"]), workspace: "dependency" },
+          { ...input("c", ["a"]), workspace: "dependency" },
+        ),
+      ),
+    ).toMatch(/Only one node/);
   });
 });

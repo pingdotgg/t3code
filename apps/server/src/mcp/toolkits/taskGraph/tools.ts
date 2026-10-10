@@ -1,4 +1,5 @@
 import {
+  EnvironmentId,
   MAX_TASK_GRAPH_NODES,
   OrchestratorMcpFailure,
   TaskGraph,
@@ -12,12 +13,16 @@ import * as Schema from "effect/Schema";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
+import * as TaskGraphPeers from "../../../taskGraph/TaskGraphPeers.ts";
 import * as TaskGraphService from "../../../taskGraph/TaskGraphService.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
   ThreadManagementService.ThreadManagementService,
   TaskGraphService.TaskGraphService,
+  TaskGraphPeers.TaskGraphPeers,
+  ServerEnvironment.ServerEnvironment,
 ];
 
 const GraphResult = Schema.Struct({ graph: TaskGraph });
@@ -25,7 +30,13 @@ const GraphTarget = Schema.Struct({ graphId: TaskGraphId });
 
 export const TaskGraphCreateTool = Tool.make("task_graph_create", {
   description:
-    "Needs an agent running inside a T3 thread. Plan work as a graph of agent tasks and run it. Each node runs as its own T3 thread in its own git worktree, in parallel where dependencies allow. A node with no dependencies branches from baseRef (default: this thread's branch); a node with one dependency branches from that dependency's branch; a node with several starts from the first one's branch and merges the others before its task, and receives every dependency's final summary. When a node succeeds its work is committed; nodes nothing depends on also push and open a pull request (override per node with pullRequest), so each branch end of the tree becomes one PR. When the whole graph ends, this thread gets a report message. Use it when a request splits into independent pieces (audits of separate areas, features with sub-parts, a merge step that combines them). Write each prompt so an agent with no access to this conversation can do it. RUNNING: if the user asked to see, review or edit the plan first, pass run=false so it waits as a draft they can edit in the chat; if they asked to just do it, pass run=true; otherwise omit run to follow their setting. Change a graph later with task_graph_edit.",
+    "Needs an agent running inside a T3 thread. Plan work as a graph of agent tasks and run it. Each node runs as its own T3 thread, in parallel where dependencies allow, and receives every dependency's final summary. Write each prompt so an agent with no access to this conversation can do it. " +
+    "WORKSPACES: by default a node gets its own git worktree, branching from its first dependency's branch (or baseRef, default this thread's branch). workspace 'dependency' continues in the first dependency's worktree and branch instead, so several nodes build one branch in turn. workspace 'root' works in the project folder with no branch, commit or PR; use it for read-only work such as reviews and audits. " +
+    "PULL REQUESTS: a succeeding node's work is committed. Nodes nothing depends on also push and open a PR; set pullRequest per node to change that. A PR targets the nearest earlier node (following first dependencies) that has its own PR, else the graph base, so PRs only on branch ends give one PR each against the base, and PRs on inner nodes too give a stack. " +
+    "STACKED PRS: when the user asks for stacked PRs, do not do the work yourself one layer after another. Make each layer a node (or a short 'dependency' chain) with pullRequest true, each depending on the layer below, and put independent work for a layer in its own subtree that merges back before the next layer. One graph then produces the whole stack. " +
+    "MERGING: a node with several dependencies starts from the first one's branch and merges the others, resolving conflicts. Only add such a combining node when the user asks for the pieces to be reconciled or they cannot work apart; otherwise leave the branches independent, each ending in its own PR. " +
+    "MACHINES: set environmentId on a node to pin it to a machine listed by task_graph_list (only when the user asks); otherwise omit it and nodes are balanced across machines by load. A 'dependency' node always runs where its dependency ran. Set modelSelection on a node only when the user asks for a different model. " +
+    "RUNNING: if the user asked to see, review or edit the plan first, pass run=false so it waits as a draft they can edit in the chat; if they asked to just do it, pass run=true; otherwise omit run to follow their setting. Change a graph later with task_graph_edit.",
   parameters: Schema.Struct({
     title: TrimmedNonEmptyString.check(Schema.isMaxLength(120)),
     nodes: Schema.Array(TaskGraphNodeInput).check(
@@ -46,8 +57,18 @@ export const TaskGraphCreateTool = Tool.make("task_graph_create", {
 
 const TaskGraphListTool = Tool.make("task_graph_list", {
   description:
-    "Needs an agent running inside a T3 thread. List the task graphs this thread created, with every node's status, thread, branch, summary and pull request.",
-  success: Schema.Struct({ graphs: Schema.Array(TaskGraph) }),
+    "Needs an agent running inside a T3 thread. List the task graphs this thread created, with every node's status, thread, machine, branch, summary and pull request, and the machines nodes can run on (pass one's environmentId to pin a node there).",
+  success: Schema.Struct({
+    graphs: Schema.Array(TaskGraph),
+    machines: Schema.Array(
+      Schema.Struct({
+        environmentId: EnvironmentId,
+        label: Schema.String,
+        thisMachine: Schema.Boolean,
+        connected: Schema.Boolean,
+      }),
+    ),
+  }),
   failure: OrchestratorMcpFailure,
   failureMode: "return",
   dependencies,

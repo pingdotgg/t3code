@@ -41,10 +41,12 @@ export function newTaskGraphNode(input: TaskGraphNodeInput): TaskGraphNode {
     pullRequest: input.pullRequest ?? null,
     modelSelection: input.modelSelection ?? null,
     environmentId: input.environmentId ?? null,
+    workspace: input.workspace ?? "worktree",
     status: "pending",
     assignedEnvironmentId: null,
     threadId: null,
     branch: null,
+    worktreePath: null,
     summary: null,
     error: null,
     pullRequestResult: null,
@@ -71,6 +73,21 @@ export function validateTaskGraphNodes(nodes: Nodes): string | null {
         return `Node '${node.key}' depends on '${dependency}', which is not in the graph.`;
       }
     }
+  }
+  const continued = new Set<string>();
+  for (const node of nodes) {
+    if (node.workspace !== "dependency") continue;
+    const [first] = node.dependsOn;
+    if (first === undefined) {
+      return `Node '${node.key}' continues its dependency's worktree but depends on nothing.`;
+    }
+    if (nodes.find((other) => other.key === first)?.workspace === "root") {
+      return `Node '${node.key}' cannot continue '${first}', which has no worktree.`;
+    }
+    if (continued.has(first)) {
+      return `Only one node can continue in '${first}'s worktree; give the others their own.`;
+    }
+    continued.add(first);
   }
   const cycle = findCycle(nodes);
   return cycle === null ? null : `Dependencies form a cycle: ${cycle.join(" -> ")}.`;
@@ -119,7 +136,39 @@ export function taskGraphDescendants(nodes: Nodes, key: string): ReadonlySet<str
 
 /** Whether the node opens a pull request when it succeeds. */
 export function taskGraphNodeOpensPullRequest(nodes: Nodes, node: TaskGraphNode): boolean {
+  if (node.workspace === "root") return false;
   return node.pullRequest ?? !nodes.some((other) => other.dependsOn.includes(node.key));
+}
+
+/**
+ * The branch a node's pull request targets. Walking up first dependencies past
+ * the nodes sharing its branch, the first ancestor with a pull request of its
+ * own is the layer below it in a stack; with none, the PR carries everything
+ * since the graph's base. So branch ends alone give one PR each against the
+ * base, and PRs on inner nodes too give a stack.
+ */
+export function taskGraphPullRequestBase(
+  graph: Pick<TaskGraph, "nodes" | "baseRef">,
+  node: TaskGraphNode,
+): string {
+  const byKey = new Map(graph.nodes.map((candidate) => [candidate.key, candidate]));
+  let sharesBranch = node.workspace === "dependency";
+  let current = byKey.get(node.dependsOn[0] ?? "");
+  const seen = new Set<string>([node.key]);
+  while (current !== undefined && !seen.has(current.key)) {
+    seen.add(current.key);
+    if (
+      !sharesBranch &&
+      current.branch !== null &&
+      taskGraphNodeOpensPullRequest(graph.nodes, current)
+    ) {
+      return current.branch;
+    }
+    if (current.workspace === "root") sharesBranch = false;
+    else if (sharesBranch) sharesBranch = current.workspace === "dependency";
+    current = byKey.get(current.dependsOn[0] ?? "");
+  }
+  return graph.baseRef;
 }
 
 const reopened = (node: TaskGraphNode): TaskGraphNode => ({
@@ -128,6 +177,7 @@ const reopened = (node: TaskGraphNode): TaskGraphNode => ({
   assignedEnvironmentId: null,
   threadId: null,
   branch: null,
+  worktreePath: null,
   summary: null,
   error: null,
   pullRequestResult: null,
@@ -353,6 +403,16 @@ export function buildTaskGraphNodePrompt(
     if (dependency.summary === null) continue;
     sections.push(
       `Result of '${dependency.key}' (${dependency.title}):\n<dependency_result>\n${dependency.summary}\n</dependency_result>`,
+    );
+  }
+  if (node.workspace === "dependency" && dependencies[0] !== undefined) {
+    sections.push(
+      `You continue in '${dependencies[0].key}'s worktree, on its branch; its work is already there. Build on it rather than starting over.`,
+    );
+  }
+  if (node.workspace === "root") {
+    sections.push(
+      "You work in the project folder itself, shared with other work, not in a worktree of your own. Treat it as read-only: nothing you change is committed, and other agents may be reading it.",
     );
   }
   sections.push(`Your task:\n${node.prompt}`);

@@ -1,7 +1,13 @@
 import "@xyflow/react/dist/base.css";
 import "./TaskGraphEditor.css";
 
-import type { EnvironmentId, TaskGraph, TaskGraphNode } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ModelSelection,
+  TaskGraph,
+  TaskGraphNode,
+  TaskGraphNodeWorkspace,
+} from "@t3tools/contracts";
 import {
   isActiveTaskGraphNodeStatus,
   isTerminalTaskGraphNodeStatus,
@@ -27,18 +33,22 @@ import {
   Trash2Icon,
   UnlinkIcon,
 } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
+import { getCustomModelOptionsByInstance } from "../../modelSelection";
+import { NO_PROVIDER_MODEL_SELECTION } from "../../providerInstances";
 import { Button } from "../ui/button";
 import { DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { ScrollArea } from "../ui/scroll-area";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
+import { ProviderModelPicker } from "./ProviderModelPicker";
 import {
   layoutTaskGraph,
   taskGraphCanvasEdgeId,
@@ -57,6 +67,7 @@ import {
   taskGraphProgressLabel,
 } from "./taskGraphView";
 import type { TaskGraphCommands } from "./useTaskGraphCommands";
+import { TASK_GRAPH_PEER_STATUS_HINT, type TaskGraphLabels } from "./useTaskGraphLabels";
 
 type Selection =
   | { readonly kind: "none" }
@@ -147,6 +158,7 @@ export default function TaskGraphEditor(props: {
   readonly environmentId: EnvironmentId;
   readonly graph: TaskGraph;
   readonly commands: TaskGraphCommands;
+  readonly labels: TaskGraphLabels;
   /** Task to select on open, such as the box double-clicked in the chat diagram. */
   readonly initialNodeKey?: string | null;
 }) {
@@ -267,6 +279,7 @@ export default function TaskGraphEditor(props: {
                 environmentId={props.environmentId}
                 graph={graph}
                 commands={commands}
+                labels={props.labels}
                 selection={selection}
                 onSelect={setSelection}
               />
@@ -294,6 +307,7 @@ function SelectionPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly graph: TaskGraph;
   readonly commands: TaskGraphCommands;
+  readonly labels: TaskGraphLabels;
   readonly selection: Selection;
   readonly onSelect: (selection: Selection) => void;
 }) {
@@ -305,7 +319,15 @@ function SelectionPanel(props: {
       <TaskNodeForm
         key="new"
         heading="New task"
-        initial={{ title: "", prompt: "", pullRequest: null }}
+        initial={{
+          title: "",
+          prompt: "",
+          pullRequest: null,
+          modelSelection: null,
+          environmentId: null,
+          workspace: "worktree",
+        }}
+        placement={{ graph, labels: props.labels, dependency: null }}
         opensByDefault
         disabled={!canEdit}
         submitLabel="Add task"
@@ -330,6 +352,11 @@ function SelectionPanel(props: {
                 prompt: values.prompt,
                 dependsOn: [],
                 ...(values.pullRequest === null ? {} : { pullRequest: values.pullRequest }),
+                ...(values.modelSelection === null
+                  ? {}
+                  : { modelSelection: values.modelSelection }),
+                ...(values.environmentId === null ? {} : { environmentId: values.environmentId }),
+                ...(values.workspace === "worktree" ? {} : { workspace: values.workspace }),
               },
             },
           ]);
@@ -387,6 +414,7 @@ function SelectionPanel(props: {
         graph={graph}
         node={node}
         commands={commands}
+        labels={props.labels}
       />
     );
   }
@@ -395,8 +423,8 @@ function SelectionPanel(props: {
     <div className="space-y-2 text-sm text-muted-foreground">
       <h3 className="font-medium text-foreground">Graph</h3>
       <p>
-        Each task runs as its own thread in its own worktree. Drag from the right edge of a task to
-        the left edge of another to make the second wait for the first.
+        Each task runs as its own thread, in its own worktree unless set otherwise. Drag from the
+        right edge of a task to the left edge of another to make the second wait for the first.
       </p>
       <p>Tasks that nothing depends on open a pull request unless you turn it off.</p>
       <p>Select a task or dependency to change it.</p>
@@ -409,8 +437,14 @@ function NodePanel(props: {
   readonly graph: TaskGraph;
   readonly node: TaskGraphNode;
   readonly commands: TaskGraphCommands;
+  readonly labels: TaskGraphLabels;
 }) {
   const { graph, node, commands } = props;
+  const placement: TaskNodePlacementContext = {
+    graph,
+    labels: props.labels,
+    dependency: graph.nodes.find((candidate) => candidate.key === node.dependsOn[0]) ?? null,
+  };
   const canEdit = commands.canEdit && !commands.busy;
   const opensByDefault = taskGraphNodeOpensPullRequest(graph.nodes, {
     ...node,
@@ -453,7 +487,15 @@ function NodePanel(props: {
       <div className="space-y-4">
         <TaskNodeForm
           heading={`Task ${node.key}`}
-          initial={{ title: node.title, prompt: node.prompt, pullRequest: node.pullRequest }}
+          initial={{
+            title: node.title,
+            prompt: node.prompt,
+            pullRequest: node.pullRequest,
+            modelSelection: node.modelSelection,
+            environmentId: node.environmentId,
+            workspace: node.workspace,
+          }}
+          placement={placement}
           opensByDefault={opensByDefault}
           disabled={!canEdit}
           submitLabel="Save"
@@ -467,6 +509,13 @@ function NodePanel(props: {
                 ...(values.pullRequest === node.pullRequest
                   ? {}
                   : { pullRequest: values.pullRequest }),
+                ...(sameModel(values.modelSelection, node.modelSelection)
+                  ? {}
+                  : { modelSelection: values.modelSelection }),
+                ...(values.environmentId === node.environmentId
+                  ? {}
+                  : { environmentId: values.environmentId }),
+                ...(values.workspace === node.workspace ? {} : { workspace: values.workspace }),
               },
             ]);
           }}
@@ -539,6 +588,7 @@ function NodePanel(props: {
         <p className="text-xs text-destructive">Pull request failed: {pullRequest.error}</p>
       ) : null}
       {actions}
+      <TaskNodePlacementFields context={placement} values={node} disabled />
       <div className="space-y-1">
         <h4 className="text-xs font-medium text-muted-foreground">Prompt</h4>
         <p className="whitespace-pre-wrap wrap-anywhere text-xs">{node.prompt}</p>
@@ -558,7 +608,28 @@ interface TaskNodeValues {
   readonly prompt: string;
   /** Null follows the default: a pull request only when nothing depends on the task. */
   readonly pullRequest: boolean | null;
+  /** Null runs with the graph's model. */
+  readonly modelSelection: ModelSelection | null;
+  /** Null balances across machines when the task starts. */
+  readonly environmentId: EnvironmentId | null;
+  readonly workspace: TaskGraphNodeWorkspace;
 }
+
+type TaskNodePlacement = Pick<TaskNodeValues, "modelSelection" | "environmentId" | "workspace">;
+
+/** What the placement fields resolve names against; `dependency` is the task's first dependency. */
+interface TaskNodePlacementContext {
+  readonly graph: TaskGraph;
+  readonly labels: TaskGraphLabels;
+  readonly dependency: TaskGraphNode | null;
+}
+
+const sameModel = (left: ModelSelection | null, right: ModelSelection | null) =>
+  left === right ||
+  (left !== null &&
+    right !== null &&
+    left.instanceId === right.instanceId &&
+    left.model === right.model);
 
 const PULL_REQUEST_CHOICES = ["auto", "on", "off"] as const;
 type PullRequestChoice = (typeof PULL_REQUEST_CHOICES)[number];
@@ -572,6 +643,7 @@ const fromChoice = (choice: PullRequestChoice): boolean | null =>
 function TaskNodeForm(props: {
   readonly heading: string;
   readonly initial: TaskNodeValues;
+  readonly placement: TaskNodePlacementContext;
   readonly opensByDefault: boolean;
   readonly disabled: boolean;
   readonly submitLabel: string;
@@ -583,11 +655,22 @@ function TaskNodeForm(props: {
   const [title, setTitle] = useState(props.initial.title);
   const [prompt, setPrompt] = useState(props.initial.prompt);
   const [pullRequest, setPullRequest] = useState(props.initial.pullRequest);
-  const values = { title: title.trim(), prompt: prompt.trim(), pullRequest };
+  const [placement, setPlacement] = useState<TaskNodePlacement>(props.initial);
+  const values: TaskNodeValues = {
+    title: title.trim(),
+    prompt: prompt.trim(),
+    pullRequest,
+    modelSelection: placement.modelSelection,
+    environmentId: placement.environmentId,
+    workspace: placement.workspace,
+  };
   const dirty =
     values.title !== props.initial.title ||
     values.prompt !== props.initial.prompt ||
-    values.pullRequest !== props.initial.pullRequest;
+    values.pullRequest !== props.initial.pullRequest ||
+    !sameModel(values.modelSelection, props.initial.modelSelection) ||
+    values.environmentId !== props.initial.environmentId ||
+    values.workspace !== props.initial.workspace;
   const valid = values.title.length > 0 && values.title.length <= 120 && values.prompt.length > 0;
 
   return (
@@ -625,6 +708,12 @@ function TaskNodeForm(props: {
           onChange={(event) => setPrompt(event.target.value)}
         />
       </div>
+      <TaskNodePlacementFields
+        context={props.placement}
+        values={placement}
+        disabled={props.disabled}
+        onChange={(next) => setPlacement((current) => ({ ...current, ...next }))}
+      />
       <div className="space-y-1.5">
         <Label id={`${id}-pr`}>Pull request</Label>
         <ToggleGroup
@@ -660,5 +749,189 @@ function TaskNodeForm(props: {
         </Button>
       </div>
     </form>
+  );
+}
+
+const AUTO_MACHINE = "auto";
+
+const WORKSPACE_CHOICES: ReadonlyArray<TaskGraphNodeWorkspace> = ["worktree", "dependency", "root"];
+
+/**
+ * Model, machine and workspace for one task. Editable while the task is
+ * pending; afterwards the same fields show, disabled, what it was set to.
+ */
+function TaskNodePlacementFields(props: {
+  readonly context: TaskNodePlacementContext;
+  readonly values: TaskNodePlacement;
+  readonly disabled: boolean;
+  readonly onChange?: (next: Partial<TaskNodePlacement>) => void;
+}) {
+  const id = useId();
+  const { graph, labels, dependency } = props.context;
+  const { modelSelection, environmentId, workspace } = props.values;
+  const change = (next: Partial<TaskNodePlacement>) => {
+    if (!props.disabled) props.onChange?.(next);
+  };
+
+  // Null on old graphs, made before graphs recorded their thread's model.
+  const graphModel = graph.modelSelection;
+  const defaultLabel =
+    graphModel === null ? "Thread default" : `Graph default (${labels.modelLabel(graphModel)})`;
+  const shownModel = modelSelection ?? graphModel;
+  const activeInstanceId =
+    shownModel?.instanceId ??
+    labels.instanceEntries[0]?.instanceId ??
+    NO_PROVIDER_MODEL_SELECTION.instanceId;
+  const activeModel = shownModel?.model ?? "";
+  const modelOptionsByInstance = useMemo(
+    () =>
+      getCustomModelOptionsByInstance(
+        labels.settings,
+        labels.providers,
+        activeInstanceId,
+        activeModel,
+      ),
+    [labels.settings, labels.providers, activeInstanceId, activeModel],
+  );
+
+  const follows = workspace === "dependency" && dependency !== null;
+  const machineLabel = follows
+    ? `Follows ${dependency.title} (${labels.nodeMachineLabel(dependency)})`
+    : environmentId === null
+      ? "Auto (balance load)"
+      : environmentId === labels.environmentId
+        ? `${labels.environmentLabel} (this machine)`
+        : labels.machineLabel(environmentId);
+  // A pin to a machine that is no longer paired still shows, so it can be cleared.
+  const stalePin =
+    environmentId !== null &&
+    environmentId !== labels.environmentId &&
+    !labels.peers.some((peer) => peer.environmentId === environmentId)
+      ? environmentId
+      : null;
+  const continueLabel =
+    dependency === null
+      ? "Continue a dependency's worktree"
+      : `Continue ${dependency.title}'s worktree`;
+
+  return (
+    <>
+      <div className="space-y-1.5">
+        <Label>Model</Label>
+        <ProviderModelPicker
+          activeInstanceId={activeInstanceId}
+          model={activeModel}
+          lockedProvider={null}
+          instanceEntries={labels.instanceEntries}
+          modelOptionsByInstance={modelOptionsByInstance}
+          isComposerOwned={false}
+          disabled={props.disabled}
+          triggerClassName="w-full max-w-none"
+          triggerAriaLabel="Model"
+          {...(modelSelection === null ? { triggerLabel: defaultLabel } : {})}
+          onInstanceModelChange={(instanceId, model) =>
+            change({
+              // Picking the same model again keeps its stored provider options.
+              modelSelection:
+                modelSelection !== null &&
+                modelSelection.instanceId === instanceId &&
+                modelSelection.model === model
+                  ? modelSelection
+                  : { instanceId, model },
+            })
+          }
+        />
+        {modelSelection !== null && !props.disabled ? (
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost-muted"
+            onClick={() => change({ modelSelection: null })}
+          >
+            Use {defaultLabel.charAt(0).toLowerCase() + defaultLabel.slice(1)}
+          </Button>
+        ) : null}
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor={`${id}-machine`}>Machine</Label>
+        <Select
+          value={follows ? AUTO_MACHINE : (environmentId ?? AUTO_MACHINE)}
+          disabled={props.disabled || follows}
+          onValueChange={(value) => {
+            if (value === AUTO_MACHINE) change({ environmentId: null });
+            else if (value === labels.environmentId)
+              change({ environmentId: labels.environmentId });
+            else {
+              const peer = labels.peers.find((candidate) => candidate.environmentId === value);
+              if (peer !== undefined) change({ environmentId: peer.environmentId });
+            }
+          }}
+        >
+          <SelectTrigger id={`${id}-machine`} size="sm">
+            <SelectValue>{machineLabel}</SelectValue>
+          </SelectTrigger>
+          <SelectPopup>
+            <SelectItem value={AUTO_MACHINE}>Auto (balance load)</SelectItem>
+            <SelectItem value={labels.environmentId}>
+              {labels.environmentLabel} (this machine)
+            </SelectItem>
+            {labels.peers.map((peer) => {
+              const hint = TASK_GRAPH_PEER_STATUS_HINT[peer.status];
+              return (
+                <SelectItem key={peer.environmentId} value={peer.environmentId}>
+                  {hint === null ? peer.label : `${peer.label} (${hint})`}
+                </SelectItem>
+              );
+            })}
+            {stalePin !== null ? (
+              <SelectItem value={stalePin}>{labels.machineLabel(stalePin)}</SelectItem>
+            ) : null}
+          </SelectPopup>
+        </Select>
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor={`${id}-workspace`}>Workspace</Label>
+        <Select
+          value={workspace}
+          disabled={props.disabled}
+          onValueChange={(value) => {
+            const next = WORKSPACE_CHOICES.find((choice) => choice === value);
+            if (next === undefined) return;
+            // A continuing task runs where its dependency's worktree is, so a pin no longer applies.
+            change(
+              next === "dependency"
+                ? { workspace: next, environmentId: null }
+                : { workspace: next },
+            );
+          }}
+        >
+          <SelectTrigger id={`${id}-workspace`} size="sm">
+            <SelectValue>
+              {workspace === "worktree"
+                ? "New worktree"
+                : workspace === "root"
+                  ? "Project folder (no worktree)"
+                  : continueLabel}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup>
+            <SelectItem value="worktree">New worktree</SelectItem>
+            <SelectItem value="dependency" disabled={dependency === null}>
+              {continueLabel}
+            </SelectItem>
+            <SelectItem value="root">Project folder (no worktree)</SelectItem>
+          </SelectPopup>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          {workspace === "root"
+            ? "Read-only work: no branch, commit or pull request."
+            : workspace === "worktree"
+              ? "Its own new worktree and branch."
+              : dependency === null
+                ? "Needs a dependency whose worktree it continues."
+                : `Builds on ${dependency.title}'s branch, on the machine it ran on.`}
+        </p>
+      </div>
+    </>
   );
 }
