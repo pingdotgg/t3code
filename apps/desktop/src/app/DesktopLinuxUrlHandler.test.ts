@@ -181,6 +181,28 @@ describe("DesktopLinuxUrlHandler", () => {
     assert.include(entry, "Icon=/home/al ice/icons/T3\\\\x.png");
   });
 
+  it("quotes the Exec argument only when it contains a reserved character", () => {
+    // xdg-open's generic fallback runs `command -v` on the first Exec word
+    // without unquoting it, so a plain path must be written bare.
+    assert.equal(
+      DesktopLinuxUrlHandler.escapeDesktopEntryExecArgument("/home/alice/bin/t3code.AppImage"),
+      "/home/alice/bin/t3code.AppImage",
+    );
+    assert.equal(
+      DesktopLinuxUrlHandler.escapeDesktopEntryExecArgument("/opt/T3(beta)/t3code.AppImage"),
+      '"/opt/T3(beta)/t3code.AppImage"',
+    );
+    assert.equal(
+      DesktopLinuxUrlHandler.escapeDesktopEntryExecArgument("/opt/t3~old/t3code.AppImage"),
+      '"/opt/t3~old/t3code.AppImage"',
+    );
+    // A percent sign is not reserved, but must still be doubled (field codes).
+    assert.equal(
+      DesktopLinuxUrlHandler.escapeDesktopEntryExecArgument("/opt/t3%20code/t3code.AppImage"),
+      "/opt/t3%%20code/t3code.AppImage",
+    );
+  });
+
   it("carries structured context on registration errors", () => {
     const writeError = new DesktopLinuxUrlHandler.DesktopLinuxUrlHandlerRegistrationError({
       step: "write-desktop-entry",
@@ -224,7 +246,7 @@ describe("DesktopLinuxUrlHandler", () => {
         );
         assert.include(
           recorded.files[0]?.content,
-          'Exec="/home/alice/Applications/T3-Code.AppImage" %U',
+          "Exec=/home/alice/Applications/T3-Code.AppImage %U",
         );
         assert.include(recorded.files[0]?.content, "MimeType=x-scheme-handler/t3code;");
         assert.deepEqual(recorded.commands, [

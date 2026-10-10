@@ -65,19 +65,22 @@ const escapeDesktopEntryString = (value: string): string =>
     .replaceAll("\r", "\\r")
     .replaceAll("\t", "\\t");
 
+// Characters the Desktop Entry spec reserves in Exec arguments ("The Exec key").
+const EXEC_RESERVED_CHARACTER = /[ \t\n"'\\><~|&;$*?#()`]/;
+
 // Exec values are unescaped twice by implementations: first the general
 // string-value rules, then the Exec quoting rules — so writing composes the
-// layers in reverse. The argument is double-quoted with reserved characters
-// backslash-escaped and literal percent signs doubled (field codes), and the
-// general string escaping is applied on top: a literal backslash ends up as
-// four backslashes in the file, a quote as \\", a dollar sign as \\$.
+// layers in reverse. Literal percent signs are always doubled (field codes).
+// The argument is double-quoted only when it contains a reserved character:
+// xdg-open's generic fallback does not unquote Exec, so a quoted plain path
+// never resolves there. Inside quotes, `"`, backtick, `$` and `\` get a
+// backslash, and the general string escaping is applied on top: a literal
+// backslash ends up as four backslashes in the file, a quote as \\", a dollar
+// sign as \\$.
 export function escapeDesktopEntryExecArgument(value: string): string {
-  const quoted = value
-    .replaceAll("\\", () => "\\\\")
-    .replaceAll("`", () => "\\`")
-    .replaceAll("$", () => "\\$")
-    .replaceAll('"', () => '\\"')
-    .replaceAll("%", () => "%%");
+  const literal = value.replaceAll("%", () => "%%");
+  if (!EXEC_RESERVED_CHARACTER.test(literal)) return escapeDesktopEntryString(literal);
+  const quoted = literal.replace(/["`$\\]/g, (character) => `\\${character}`);
   return escapeDesktopEntryString(`"${quoted}"`);
 }
 
