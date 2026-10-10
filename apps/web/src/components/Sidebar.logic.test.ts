@@ -40,6 +40,7 @@ import {
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
+  resolveWaitingStartedAt,
   searchSidebarThreads,
   shouldClearThreadSelectionOnMouseDown,
   shouldShowSidebarV2Duration,
@@ -988,8 +989,8 @@ describe("resolveSidebarThreadStatus", () => {
     );
   });
 
-  it("keeps Waiting static while Working shows elapsed duration", () => {
-    expect(shouldShowSidebarV2Duration("waiting")).toBe(false);
+  it("shows elapsed duration for Working and Waiting", () => {
+    expect(shouldShowSidebarV2Duration("waiting")).toBe(true);
     expect(shouldShowSidebarV2Duration("working")).toBe(true);
   });
 });
@@ -1186,6 +1187,92 @@ describe("resolveWorkingStartedAt", () => {
 
   it("returns null with neither a running run nor a runtime", () => {
     expect(resolveWorkingStartedAt({ latestRun: null, runtime: null })).toBeNull();
+  });
+});
+
+describe("resolveWaitingStartedAt", () => {
+  it("counts from the provider turn ending, surviving progress updates and resetting after a wake", () => {
+    const thread = makeThreadFixture({
+      pendingBackgroundTasks: [{ taskId: "review", kind: "subagent" }],
+    });
+    const turnEnded = "2026-03-09T10:45:00.000Z";
+    for (const updatedAt of ["2026-03-09T10:45:30.000Z", "2026-03-09T10:48:00.000Z"]) {
+      const waiting = {
+        ...thread,
+        source: {
+          ...thread.source,
+          latestRunStartedAt: DateTime.makeUnsafe("2026-03-09T10:00:00.000Z"),
+          latestRunTurnCompletedAt: DateTime.makeUnsafe(turnEnded),
+          latestRunCompletedAt: null,
+          updatedAt: DateTime.makeUnsafe(updatedAt),
+        },
+      };
+      expect(resolveWaitingStartedAt(waiting)).toBe(turnEnded);
+      expect(
+        formatWorkingDurationLabel(
+          Date.parse("2026-03-09T10:45:30.000Z") - Date.parse(resolveWaitingStartedAt(waiting)!),
+        ),
+      ).toBe("30s");
+      expect(
+        resolveWaitingStartedAt({
+          ...waiting,
+          source: { ...waiting.source, latestRunTurnCompletedAt: DateTime.makeUnsafe(updatedAt) },
+        }),
+      ).toBe(updatedAt);
+    }
+    // Older servers and turns whose stop time is unknown must not borrow updatedAt.
+    expect(resolveWaitingStartedAt(thread)).toBeNull();
+  });
+
+  it("starts a PR-only wait no earlier than its first active watch", () => {
+    const thread = makeThreadFixture();
+    const startedAt = "2026-03-09T11:00:00.000Z";
+    const waiting = {
+      ...thread,
+      pendingBackgroundTasks: [{ taskId: "pull-request-watch:example", kind: "monitor" as const }],
+      pullRequests: [
+        {
+          host: "github.com",
+          repository: "example/repo",
+          number: 1,
+          url: "https://github.com/example/repo/pull/1",
+          source: "manual" as const,
+          linkedAt: startedAt,
+          snapshot: null,
+          stack: null,
+          watch: {
+            startedAt,
+            headSha: null,
+            failedChecks: [],
+            passed: false,
+            passedChecks: [],
+            remarksThrough: startedAt,
+            remarkIds: [],
+            conflicting: false,
+            wakes: 0,
+          },
+        },
+      ],
+    };
+    expect(resolveWaitingStartedAt(waiting)).toBe(startedAt);
+    expect(
+      resolveWaitingStartedAt({
+        ...waiting,
+        source: {
+          ...waiting.source,
+          latestRunTurnCompletedAt: DateTime.makeUnsafe("2026-03-09T10:45:00.000Z"),
+        },
+      }),
+    ).toBe(startedAt);
+    expect(
+      resolveWaitingStartedAt({
+        ...waiting,
+        source: {
+          ...waiting.source,
+          latestRunTurnCompletedAt: DateTime.makeUnsafe("2026-03-09T11:30:00.000Z"),
+        },
+      }),
+    ).toBe("2026-03-09T11:30:00.000Z");
   });
 });
 
