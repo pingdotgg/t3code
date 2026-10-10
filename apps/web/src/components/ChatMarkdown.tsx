@@ -2636,24 +2636,25 @@ function useChatMarkdownState({
         fileLinkMeta.filePath.replaceAll("\\", "/"),
       );
       // Thread find indexes canonical labels on the server; its DOM ranges must match.
-      const label = showFileLinkPaths && !finding
-        ? formatFileChipLabel({
-            showFileLinkPaths,
-            targetPath: fileLinkMeta.targetPath,
-            workspaceRoot: cwd,
-            basename: fileLinkMeta.basename,
-            parentSuffix,
-            line: fileLinkMeta.line,
-            column: fileLinkMeta.column,
-          })
-        : fileLinkLabel(
-            {
-              path: fileLinkMeta.filePath,
-              ...(fileLinkMeta.line !== undefined ? { line: fileLinkMeta.line } : {}),
-              ...(fileLinkMeta.column !== undefined ? { column: fileLinkMeta.column } : {}),
-            },
-            fileLinkParentSuffixByPath,
-          );
+      const label =
+        showFileLinkPaths && !finding
+          ? formatFileChipLabel({
+              showFileLinkPaths,
+              targetPath: fileLinkMeta.targetPath,
+              workspaceRoot: cwd,
+              basename: fileLinkMeta.basename,
+              parentSuffix,
+              line: fileLinkMeta.line,
+              column: fileLinkMeta.column,
+            })
+          : fileLinkLabel(
+              {
+                path: fileLinkMeta.filePath,
+                ...(fileLinkMeta.line !== undefined ? { line: fileLinkMeta.line } : {}),
+                ...(fileLinkMeta.column !== undefined ? { column: fileLinkMeta.column } : {}),
+              },
+              fileLinkParentSuffixByPath,
+            );
       const mediaPath = mediaSource ?? fileLinkMeta.filePath;
       const canPreviewMedia =
         mediaMimeTypeFromExtension(

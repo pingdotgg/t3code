@@ -1158,7 +1158,10 @@ it.each([true, false])(
       expectFindParity();
       for (const preference of [!initialPreference, initialPreference, true]) {
         await act(() =>
-          __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, showFileLinkPaths: preference }),
+          __setClientSettingsForTests({
+            ...DEFAULT_CLIENT_SETTINGS,
+            showFileLinkPaths: preference,
+          }),
         );
         expectFindParity();
       }
