@@ -48,6 +48,7 @@ import {
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS,
 } from "@t3tools/contracts";
+import { rotationEligibleInstanceIds } from "@t3tools/client-runtime/account-rotation";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import {
   isPasteAsTextShortcut,
@@ -94,6 +95,7 @@ import {
   readFileAsDataUrl,
   resolveComposerInteractionMode,
   resolveComposerProviderSelection,
+  resolveRotatedDraftProviderInstance,
   threadShellHasStarted,
 } from "../ChatView.logic";
 import {
@@ -1607,6 +1609,8 @@ export interface ChatComposerProps {
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
   activeThreadModelSelection: ModelSelection | null | undefined;
   reportedModelSelection?: ModelSelection | null;
+  /** This unsent draft starts on the selected provider's least used account. */
+  rotateDraftAccount: boolean;
 
   // Context window
   activeContextWindow: ContextWindowSnapshot | null;
@@ -1756,6 +1760,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeProjectDefaultModelSelection,
     activeThreadModelSelection,
     reportedModelSelection,
+    rotateDraftAccount,
     activeContextWindow,
     compactThreadUnavailable,
     compactDisabled,
@@ -2040,6 +2045,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     (store) => store.syncPersistedAttachments,
   );
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
+  const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
 
   useEffect(() => {
     if (!attachmentUploadsCapabilityKnown) {
@@ -2596,8 +2602,52 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const settledPullRequestTextQuery =
     pullRequestTextQuery === debouncedPullRequestTextQuery ? pullRequestTextQuery : null;
   const isPathTrigger = composerTriggerKind === "path";
-  // Thread shells only feed `@` thread matches, so skip shell updates otherwise.
-  const environmentThreadShells = useThreadShells(isPathTrigger);
+  // Thread shells feed `@` thread matches and the turn order of account
+  // rotation, which stops once the draft has content, so skip shell updates otherwise.
+  const environmentThreadShells = useThreadShells(
+    isPathTrigger || (rotateDraftAccount && !composerSendState.hasSendableContent),
+  );
+  const draftModelSelectionExplicit = composerDraft.modelSelectionExplicit === true;
+  const rotationEligibleIds = useMemo(
+    () => rotationEligibleInstanceIds(settings.providerInstances),
+    [settings.providerInstances],
+  );
+  // Rotation seeds the draft like any other default, so the picker shows the
+  // account the thread starts on and an explicit pick still replaces it.
+  useEffect(() => {
+    const rotatedInstanceId = resolveRotatedDraftProviderInstance({
+      // A send in flight has already named its account.
+      rotateDraft: rotateDraftAccount && !isSendBusy && multipleModelSelections === null,
+      selectionExplicit: draftModelSelectionExplicit,
+      draftHasContent: composerSendState.hasSendableContent,
+      selection: { instanceId: selectedInstanceId, model: selectedModel },
+      environmentId,
+      providers: providerStatuses,
+      eligibleInstanceIds: rotationEligibleIds,
+      threads: environmentThreadShells,
+    });
+    if (rotatedInstanceId === null) return;
+    setComposerDraftModelSelection(
+      composerDraftTarget,
+      createModelSelection(rotatedInstanceId, selectedModel, selectedModelOptionsForDispatch),
+      { replaceOptions: true },
+    );
+  }, [
+    composerDraftTarget,
+    composerSendState.hasSendableContent,
+    draftModelSelectionExplicit,
+    environmentId,
+    environmentThreadShells,
+    isSendBusy,
+    multipleModelSelections,
+    providerStatuses,
+    rotateDraftAccount,
+    rotationEligibleIds,
+    selectedInstanceId,
+    selectedModel,
+    selectedModelOptionsForDispatch,
+    setComposerDraftModelSelection,
+  ]);
   const workspaceEntries = useComposerPathSearch({
     environmentId,
     cwd: isPathTrigger ? gitCwd : null,

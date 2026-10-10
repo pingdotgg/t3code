@@ -65,6 +65,7 @@ describe("restoring V2 settings", () => {
     ["persistComposerContextStrip", "Composer context"],
     ["autoResumeLimitedThreads", "Auto-resume limited threads"],
     ["snoozeLimitedThreads", "Snooze limited threads"],
+    ["rotateProviderAccounts", "Rotate accounts for new threads"],
   ] as const)("restores %s when it is the only changed setting", async (key, label) => {
     state.settings = { ...DEFAULT_UNIFIED_SETTINGS, [key]: true };
     hooks.beginRender();

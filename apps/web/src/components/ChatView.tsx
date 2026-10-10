@@ -24,6 +24,7 @@ import {
 } from "./ChatView.logic";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { useScratchProject } from "../hooks/useScratchProject";
+import { rotatesAccountsForProject } from "@t3tools/client-runtime/account-rotation";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
@@ -2599,6 +2600,11 @@ export default function ChatView(props: ChatViewProps) {
     runProjectCloneAction,
   ]);
   const activeProjectDefaultModelSelection = activeProjectSettings.settings.defaultModelSelection;
+  // A sent draft stays local until its thread arrives, and by then it has an account.
+  const rotateDraftAccount =
+    isLocalDraftThread &&
+    !draftThread?.promotedTo &&
+    rotatesAccountsForProject(activeProjectSettings);
   const handleNewThreadInActiveProject = useCallback(() => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   }, [activeProjectRef, handleNewThread]);
@@ -11730,6 +11736,7 @@ export default function ChatView(props: ChatViewProps) {
                               activeProjectDefaultModelSelection={
                                 activeProjectDefaultModelSelection
                               }
+                              rotateDraftAccount={rotateDraftAccount}
                               activeThreadModelSelection={activeThread?.modelSelection}
                               activeContextWindow={activeContextWindow}
                               activeTasksProgress={activeComposerTasksProgress}

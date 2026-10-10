@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./account-rotation": {
+      "types": "./src/account-rotation.ts",
+      "default": "./src/account-rotation.ts"
+    },
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"

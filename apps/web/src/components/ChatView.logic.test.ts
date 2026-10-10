@@ -42,6 +42,7 @@ import {
   resolveComposerInteractionMode,
   restorePlanFollowUpComposer,
   resolveComposerProviderSelection,
+  resolveRotatedDraftProviderInstance,
   resolveProactiveTurnDiffAction,
   resolveDraftHeroState,
   resolveWorktreeSetupProgress,
@@ -2178,5 +2179,70 @@ describe("waitForRevertedMessage", () => {
     await vi.advanceTimersByTimeAsync(50);
     await settled;
     vi.useRealTimers();
+  });
+});
+
+describe("rotating an unsent draft across accounts", () => {
+  const work = ProviderInstanceId.make("claudeAgent");
+  const personal = ProviderInstanceId.make("claudeAgent_personal");
+  const account = (instanceId: ProviderInstanceId, usedPercent: number): ServerProvider => ({
+    driver: ProviderDriverKind.make("claudeAgent"),
+    instanceId,
+    enabled: true,
+    installed: true,
+    status: "ready",
+    auth: { status: "authenticated" },
+    version: null,
+    checkedAt: "2026-09-03T11:00:00.000Z",
+    models: [{ slug: "claude-opus-5-5", name: "Opus", isCustom: false, capabilities: null }],
+    slashCommands: [],
+    skills: [],
+    usageLimits: {
+      checkedAt: "2026-09-03T11:00:00.000Z",
+      windows: [
+        {
+          id: "five_hour",
+          kind: "session",
+          label: "Session",
+          usedPercent,
+          resetsAt: "2026-09-03T14:00:00.000Z",
+        },
+      ],
+    },
+  });
+  const draft = {
+    rotateDraft: true,
+    selectionExplicit: false,
+    draftHasContent: false,
+    selection: { instanceId: work, model: "claude-opus-5-5" },
+    environmentId: EnvironmentId.make("mac"),
+    providers: [account(work, 90), account(personal, 10)],
+    eligibleInstanceIds: new Set([work, personal]),
+    threads: [],
+  };
+
+  it("moves the draft to the account with the most usage left", () => {
+    expect(resolveRotatedDraftProviderInstance(draft)).toBe(personal);
+  });
+
+  it("leaves the draft alone once it already sits on that account", () => {
+    expect(
+      resolveRotatedDraftProviderInstance({
+        ...draft,
+        selection: { ...draft.selection, instanceId: personal },
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps an account the user picked for this draft", () => {
+    expect(resolveRotatedDraftProviderInstance({ ...draft, selectionExplicit: true })).toBeNull();
+  });
+
+  it("keeps the account shown while the user is writing the draft", () => {
+    expect(resolveRotatedDraftProviderInstance({ ...draft, draftHasContent: true })).toBeNull();
+  });
+
+  it("never moves a sent draft or one whose project does not rotate", () => {
+    expect(resolveRotatedDraftProviderInstance({ ...draft, rotateDraft: false })).toBeNull();
   });
 });

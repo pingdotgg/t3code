@@ -156,9 +156,15 @@ interface RegistryState {
  * payloads are opaque `unknown` at the envelope layer; `Equal.equals`
  * falls back to structural equality for plain records, which matches how
  * the schema decode output is constructed.
+ *
+ * `rotate` is left out: only clients read it, to pick a new thread's account,
+ * so marking an account must not restart it.
  */
-const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
-  Equal.equals(a, b);
+const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean => {
+  const { rotate: _a, ...builtFromA } = a;
+  const { rotate: _b, ...builtFromB } = b;
+  return Equal.equals(builtFromA, builtFromB);
+};
 
 /**
  * Resolve an entry's enabled state. An explicit false on either the

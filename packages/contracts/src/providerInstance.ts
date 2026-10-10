@@ -127,6 +127,12 @@ export const ProviderInstanceConfig = Schema.Struct({
   accentColor: Schema.optional(TrimmedNonEmptyString),
   environment: Schema.optionalKey(ProviderInstanceEnvironment),
   enabled: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Marks the account for `rotateProviderAccounts`. Rotation only picks among
+   * marked instances and leaves an unmarked selection alone, so the key is
+   * written only when true.
+   */
+  rotate: Schema.optionalKey(Schema.Boolean),
   config: Schema.optionalKey(Schema.Unknown),
 });
 export type ProviderInstanceConfig = typeof ProviderInstanceConfig.Type;

@@ -96,6 +96,7 @@ function AutoSettleSettingsRows() {
     patch: Partial<AutoSettleSettings> & {
       autoResumeLimitedThreads?: boolean;
       snoozeLimitedThreads?: boolean;
+      rotateProviderAccounts?: boolean;
     },
   ) => {
     if (
@@ -204,6 +205,13 @@ function AutoSettleSettingsRows() {
             value={uniformMobileSetting(displayTargets, "snoozeLimitedThreads")}
             disabled={disabled}
             onValueChange={(value) => writeToAll({ snoozeLimitedThreads: value })}
+          />
+          <SettingsSwitchRow
+            icon="person.crop.circle"
+            label="Rotate accounts for new threads"
+            value={uniformMobileSetting(displayTargets, "rotateProviderAccounts")}
+            disabled={disabled}
+            onValueChange={(value) => writeToAll({ rotateProviderAccounts: value })}
           />
         </SettingsSection>
       ) : null}

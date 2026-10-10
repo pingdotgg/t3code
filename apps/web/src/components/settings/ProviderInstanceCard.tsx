@@ -668,6 +668,11 @@ export function ProviderInstanceCard({
     onUpdate({ ...instance, enabled: value });
   };
 
+  const updateRotate = (value: boolean) => {
+    const { rotate: _omit, ...rest } = instance;
+    onUpdate(value ? { ...rest, rotate: true } : rest);
+  };
+
   const updateAccentColor = (value: string) => {
     const normalized = normalizeProviderAccentColor(value);
     const { accentColor: _omit, ...rest } = instance;
@@ -1092,6 +1097,18 @@ export function ProviderInstanceCard({
                 spellCheck={false}
               />
             </div>
+          }
+        />
+        <SettingsRow
+          title="Account rotation"
+          description="Let Rotate accounts for new threads start threads on this account."
+          control={
+            <Switch
+              checked={instance.rotate === true}
+              disabled={readOnly}
+              onCheckedChange={(checked) => updateRotate(Boolean(checked))}
+              aria-label={`Include ${displayName} in account rotation`}
+            />
           }
         />
       </SettingsSection>

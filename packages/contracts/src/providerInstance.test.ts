@@ -6,6 +6,7 @@ import {
   ProviderInstanceConfig,
   ProviderInstanceConfigMap,
   ProviderInstanceId,
+  ProviderInstanceMutation,
   ProviderInstanceRef,
 } from "./providerInstance.ts";
 
@@ -14,6 +15,7 @@ const decodeProviderInstanceId = Schema.decodeUnknownSync(ProviderInstanceId);
 const decodeProviderInstanceRef = Schema.decodeUnknownSync(ProviderInstanceRef);
 const decodeProviderInstanceConfig = Schema.decodeUnknownSync(ProviderInstanceConfig);
 const decodeProviderInstanceConfigMap = Schema.decodeUnknownSync(ProviderInstanceConfigMap);
+const decodeProviderInstanceMutation = Schema.decodeUnknownSync(ProviderInstanceMutation);
 
 describe("provider slug validation (shared by driver + instance ids)", () => {
   const cases = [
@@ -159,6 +161,16 @@ describe("ProviderInstanceConfig", () => {
     });
     expect(decoded.driver).toBe("ollama");
     expect(decoded.config).toEqual(opaqueConfig);
+  });
+
+  it("keeps an account's rotation mark through an upsert and adds none by itself", () => {
+    const upsert = decodeProviderInstanceMutation({
+      operation: "upsert",
+      instanceId: "claudeAgent_work",
+      instance: { driver: "claudeAgent", rotate: true },
+    });
+    expect(upsert.operation === "upsert" && upsert.instance.rotate).toBe(true);
+    expect("rotate" in decodeProviderInstanceConfig({ driver: "claudeAgent" })).toBe(false);
   });
 
   it("rejects a blank displayName (must be trimmed non-empty)", () => {

@@ -1112,6 +1112,13 @@ export const ServerSettings = Schema.Struct({
   defaultModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /**
+   * Whether clients pick the account for a new thread among the accounts of
+   * the selected provider that offer the selected model. Read by clients while
+   * the thread is still a draft, so the account they send is the one the
+   * thread keeps; an account the user picks for that thread always wins.
+   */
+  rotateProviderAccounts: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   defaultRuntimeMode: RuntimeMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE)),
   ),
@@ -1445,6 +1452,7 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  rotateProviderAccounts: Schema.optionalKey(Schema.Boolean),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   /**
    * Per-project entry replacement: each entry replaces that project's whole

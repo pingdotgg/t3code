@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ProviderInstanceId, type ModelSelection, type ServerConfig } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ModelSelection,
+  type ServerConfig,
+  type ServerProvider,
+} from "@t3tools/contracts";
 
 import {
   buildModelOptions,
@@ -502,5 +509,134 @@ describe("mobile model options", () => {
         modelOptions: [unavailable],
       }),
     ).toBeNull();
+  });
+});
+
+describe("rotating a new task across accounts", () => {
+  const work = ProviderInstanceId.make("claudeAgent");
+  const personal = ProviderInstanceId.make("claudeAgent_personal");
+  const account = (instanceId: ProviderInstanceId, usedPercent: number): ServerProvider => ({
+    driver: ProviderDriverKind.make("claudeAgent"),
+    instanceId,
+    enabled: true,
+    installed: true,
+    status: "ready",
+    auth: { status: "authenticated" },
+    version: null,
+    checkedAt: "2026-09-03T11:00:00.000Z",
+    models: [{ slug: "claude-opus-5-5", name: "Opus", isCustom: false, capabilities: null }],
+    slashCommands: [],
+    skills: [],
+    usageLimits: {
+      checkedAt: "2026-09-03T11:00:00.000Z",
+      windows: [
+        {
+          id: "five_hour",
+          kind: "session",
+          label: "Session",
+          usedPercent,
+          resetsAt: "2026-09-03T14:00:00.000Z",
+        },
+      ],
+    },
+  });
+  const rotation = {
+    environmentId: EnvironmentId.make("mac"),
+    providers: [account(work, 90), account(personal, 10)],
+    eligibleInstanceIds: new Set([work, personal]),
+    threads: [],
+  };
+  const onWork: ModelSelection = {
+    instanceId: work,
+    model: "claude-opus-5-5",
+    options: [{ id: "effort", value: "high" }],
+  };
+  const resolve = (input: {
+    draftSelection?: ModelSelection;
+    projectDefaultSelection?: ModelSelection;
+    stickySelection?: ModelSelection;
+    heldInstanceId?: ProviderInstanceId;
+  }) =>
+    resolveNewTaskModelSelection({
+      draftSelection: input.draftSelection ?? null,
+      projectDefaultSelection: input.projectDefaultSelection ?? null,
+      stickySelection: input.stickySelection ?? null,
+      modelOptions: [],
+      rotation: { ...rotation, heldInstanceId: input.heldInstanceId ?? null },
+    });
+
+  it("starts an implicit selection on the account with the most usage left", () => {
+    expect(resolve({ stickySelection: onWork })).toEqual({ ...onWork, instanceId: personal });
+    expect(resolve({ projectDefaultSelection: onWork })).toEqual({
+      ...onWork,
+      instanceId: personal,
+    });
+  });
+
+  it("keeps the account picked for this task", () => {
+    expect(resolve({ draftSelection: onWork, stickySelection: onWork })).toBe(onWork);
+  });
+
+  it("keeps the account shown while the user is writing the task", () => {
+    expect(resolve({ stickySelection: onWork, heldInstanceId: work })).toBe(onWork);
+    // Usage moved on since the task opened on Personal; Work now has more left.
+    expect(
+      resolveNewTaskModelSelection({
+        draftSelection: null,
+        projectDefaultSelection: null,
+        stickySelection: onWork,
+        modelOptions: [],
+        rotation: {
+          ...rotation,
+          providers: [account(work, 10), account(personal, 90)],
+          heldInstanceId: personal,
+        },
+      }),
+    ).toEqual({ ...onWork, instanceId: personal });
+  });
+
+  describe("a held account that no longer fits this environment", () => {
+    const spare = ProviderInstanceId.make("claudeAgent_spare");
+    const onPersonal: ModelSelection = { ...onWork, instanceId: personal };
+    const resolveWith = (
+      selection: ModelSelection,
+      held: ProviderInstanceId,
+      overrides: Partial<typeof rotation> = {},
+    ) =>
+      resolveNewTaskModelSelection({
+        draftSelection: null,
+        projectDefaultSelection: null,
+        stickySelection: selection,
+        modelOptions: [],
+        rotation: { ...rotation, ...overrides, heldInstanceId: held },
+      });
+
+    it("ignores a held account of another provider or one this environment does not have", () => {
+      const codex = ProviderInstanceId.make("codex");
+      expect(resolveWith(onWork, codex)).toEqual({ ...onWork, instanceId: personal });
+      expect(resolveWith(onWork, ProviderInstanceId.make("claudeAgent_gone"))).toEqual({
+        ...onWork,
+        instanceId: personal,
+      });
+    });
+
+    it("does not rotate onto a held account this environment has not marked", () => {
+      expect(
+        resolveWith(onPersonal, work, { eligibleInstanceIds: new Set([personal, spare]) }),
+      ).toBe(onPersonal);
+    });
+
+    it("does not rotate away from a selection that is not marked", () => {
+      expect(resolveWith(onWork, personal, { eligibleInstanceIds: new Set([personal]) })).toBe(
+        onWork,
+      );
+    });
+
+    it("lets a held account that cannot start the task give way", () => {
+      const signedOut = { ...account(personal, 10), auth: { status: "unauthenticated" as const } };
+      expect(resolveWith(onWork, personal, { providers: [account(work, 90), signedOut] })).toBe(
+        onWork,
+      );
+    });
   });
 });

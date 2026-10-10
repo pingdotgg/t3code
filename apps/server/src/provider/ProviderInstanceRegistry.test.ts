@@ -317,6 +317,32 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live("keeps an account running when only its rotation mark changes", () =>
+    Effect.gen(function* () {
+      const workId = ProviderInstanceId.make("codex_work");
+      const entry = {
+        driver: ProviderDriverKind.make("codex"),
+        displayName: "Codex (work)",
+        enabled: false,
+        config: makeCodexConfig({ binaryPath: "/opt/codex-work/bin/codex" }),
+      };
+      const { registry, mutator } = yield* makeProviderInstanceRegistry<CodexDriverEnv>({
+        drivers: [CodexDriver],
+        configMap: { [workId]: entry },
+      });
+      const started = yield* registry.getInstance(workId);
+
+      yield* mutator.reconcile({ [workId]: { ...entry, rotate: true } });
+      expect(yield* registry.getInstance(workId)).toBe(started);
+      yield* mutator.reconcile({ [workId]: entry });
+      expect(yield* registry.getInstance(workId)).toBe(started);
+
+      // A change the instance is built from still replaces it.
+      yield* mutator.reconcile({ [workId]: { ...entry, displayName: "Codex (office)" } });
+      expect(yield* registry.getInstance(workId)).not.toBe(started);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.live("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
     Effect.gen(function* () {
       // Old settings files can carry both flags with conflicting values.

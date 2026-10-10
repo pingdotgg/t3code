@@ -168,7 +168,8 @@ a few hours.
 Add another provider instance for a separate account or configuration. Each
 instance can have its own environment variables, such as API keys or a custom
 base URL. Mark secret values as sensitive; after saving, T3 Code does not display
-their original values.
+their original values. To spread new threads across several accounts, see
+[Rotate accounts for new threads](./composer.md#rotate-accounts-for-new-threads).
 
 For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [OpenCode](./providers-opencode.md),

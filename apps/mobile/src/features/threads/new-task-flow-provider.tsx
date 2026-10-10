@@ -8,6 +8,7 @@ import type {
   EnvironmentId,
   ModelSelection,
   ProjectReadFileResult,
+  ProviderInstanceId,
   ProviderInteractionMode,
   ProviderOptionSelection,
   RuntimeMode,
@@ -95,6 +96,10 @@ import {
   useRemoteConnectionStatus,
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
+import {
+  rotatesAccountsForProject,
+  rotationEligibleInstanceIds,
+} from "@t3tools/client-runtime/account-rotation";
 import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
 import {
   isAtomCommandInterrupted,
@@ -594,12 +599,65 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
 
   // An unsent draft keeps its explicit pick. Fresh drafts resolve the project
   // default before the last manual app-wide selection and provider default.
-  const selectedModel = resolveNewTaskModelSelection({
-    draftSelection: draftModelSelection,
-    projectDefaultSelection: projectDefaultModelSelection,
-    stickySelection: stickyModelSelection,
-    modelOptions,
-  });
+  const rotateAccounts = rotatesAccountsForProject(projectSettings);
+  const rotationEnvironmentId = selectedProject?.environmentId;
+  const rotationProviders = selectedEnvironmentServerConfig?.providers;
+  const rotationInstances = selectedEnvironmentServerConfig?.settings.providerInstances;
+  // Once the user is writing the task, the account they were shown stays put:
+  // usage reports and thread starts elsewhere keep arriving while they type.
+  const [shownAccount, setShownAccount] = useState<{
+    readonly draftKey: string;
+    readonly instanceId: ProviderInstanceId;
+  } | null>(null);
+  const draftHasContent =
+    selectedProjectDraft.text.trim().length > 0 || selectedProjectDraft.attachments.length > 0;
+  const heldInstanceId =
+    draftHasContent && shownAccount?.draftKey === selectedProjectDraftKey
+      ? shownAccount.instanceId
+      : null;
+  // Rotation reads every thread shell, so it must not rerun on unrelated renders.
+  const selectedModel = useMemo(
+    () =>
+      resolveNewTaskModelSelection({
+        draftSelection: draftModelSelection,
+        projectDefaultSelection: projectDefaultModelSelection,
+        stickySelection: stickyModelSelection,
+        modelOptions,
+        ...(rotateAccounts && rotationEnvironmentId && rotationProviders && rotationInstances
+          ? {
+              rotation: {
+                environmentId: rotationEnvironmentId,
+                providers: rotationProviders,
+                eligibleInstanceIds: rotationEligibleInstanceIds(rotationInstances),
+                threads,
+                heldInstanceId,
+              },
+            }
+          : {}),
+      }),
+    [
+      draftModelSelection,
+      projectDefaultModelSelection,
+      stickyModelSelection,
+      modelOptions,
+      rotateAccounts,
+      rotationEnvironmentId,
+      rotationProviders,
+      rotationInstances,
+      threads,
+      heldInstanceId,
+    ],
+  );
+  const shownInstanceId = rotateAccounts ? (selectedModel?.instanceId ?? null) : null;
+  useEffect(() => {
+    setShownAccount((previous) =>
+      shownInstanceId === null || selectedProjectDraftKey === null
+        ? null
+        : previous?.draftKey === selectedProjectDraftKey && previous.instanceId === shownInstanceId
+          ? previous
+          : { draftKey: selectedProjectDraftKey, instanceId: shownInstanceId },
+    );
+  }, [selectedProjectDraftKey, shownInstanceId]);
   const selectedModelKey = selectedModel
     ? `${selectedModel.instanceId}:${selectedModel.model}`
     : null;

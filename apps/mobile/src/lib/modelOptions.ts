@@ -6,6 +6,10 @@ import type {
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
 import {
+  chooseRotatedProviderInstance,
+  type AccountRotationInput,
+} from "@t3tools/client-runtime/account-rotation";
+import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
@@ -152,15 +156,19 @@ export function resolveNewTaskModelSelection(input: {
   readonly projectDefaultSelection: ModelSelection | null;
   readonly stickySelection: ModelSelection | null;
   readonly modelOptions: ReadonlyArray<ModelOption>;
+  /** Set while the environment rotates accounts; a pick made for this task still stands. */
+  readonly rotation?: Omit<AccountRotationInput, "selection">;
 }): ModelSelection | null {
-  return (
-    input.draftSelection ??
+  if (input.draftSelection) return input.draftSelection;
+  const selection =
     input.projectDefaultSelection ??
     input.stickySelection ??
     input.modelOptions.find((option) => option.isDefault && !option.isUnavailable)?.selection ??
     input.modelOptions.find((option) => !option.isUnavailable)?.selection ??
-    null
-  );
+    null;
+  if (selection === null || input.rotation === undefined) return selection;
+  const instanceId = chooseRotatedProviderInstance({ ...input.rotation, selection });
+  return instanceId === selection.instanceId ? selection : { ...selection, instanceId };
 }
 
 export function buildModelOptions(

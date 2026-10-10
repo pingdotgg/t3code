@@ -25,6 +25,10 @@ import {
   type RunId,
   type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
+import {
+  chooseRotatedProviderInstance,
+  type AccountRotationInput,
+} from "@t3tools/client-runtime/account-rotation";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import * as DateTime from "effect/DateTime";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -620,6 +624,26 @@ export function resolveComposerProviderSelection(input: {
     lockedContinuationGroupKey,
     unavailableProviderInstanceId,
   };
+}
+
+/**
+ * Where account rotation moves an unsent draft, or null to leave it. Writing
+ * the account into the draft, rather than swapping it when the thread starts,
+ * keeps the picker, the first turn, and every later turn on the same account.
+ */
+export function resolveRotatedDraftProviderInstance(
+  input: AccountRotationInput & {
+    /** Rotation is on for the draft's project, and the draft has not been sent. */
+    rotateDraft: boolean;
+    /** The user picked this draft's account; a seeded default does not count. */
+    selectionExplicit: boolean;
+    /** The user is writing it, so the account they see must not move under them. */
+    draftHasContent: boolean;
+  },
+): ProviderInstanceId | null {
+  if (!input.rotateDraft || input.selectionExplicit || input.draftHasContent) return null;
+  const rotated = chooseRotatedProviderInstance(input);
+  return rotated === input.selection.instanceId ? null : rotated;
 }
 
 /** Keep restored drafts and every plan control on the selected instance's supported mode. */
