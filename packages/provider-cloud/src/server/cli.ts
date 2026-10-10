@@ -74,7 +74,11 @@ export const makeCloudCli = (
         Effect.scoped,
         Effect.mapError(
           (cause) =>
-            new CloudCliError({ detail: `Could not run ${binaryPath}: ${cause.message}`, cause }),
+            // The raw failure stays in `cause`; the thread shows only this.
+            new CloudCliError({
+              detail: `Could not run ${binaryPath}. Check its path on this T3 server host.`,
+              cause,
+            }),
         ),
       );
   });

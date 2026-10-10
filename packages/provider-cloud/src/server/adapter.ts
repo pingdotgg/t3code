@@ -353,7 +353,8 @@ export const makeCloudAdapterV2 = Effect.fn("makeCloudAdapterV2")(function* (
           yield* finish(run, { status: "completed" });
         }).pipe(
           Effect.catchCause((cause) => {
-            if (Cause.hasInterruptsOnly(cause)) return Effect.void;
+            // Re-raise interruption so `onInterrupt` below settles the turn.
+            if (Cause.hasInterruptsOnly(cause)) return Effect.interrupt;
             const error = Cause.squash(cause);
             return finish(run, {
               status: "failed",

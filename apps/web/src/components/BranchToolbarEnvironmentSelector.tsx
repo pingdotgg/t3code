@@ -159,7 +159,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
             </SelectItem>
           ))}
           {cloudRun ? (
-            <SelectItem value={CLOUD_RUN_VALUE}>
+            <SelectItem value={CLOUD_RUN_VALUE} disabled={!cloudRun.onChange}>
               <span className="inline-flex items-center gap-1.5">
                 <CloudIcon className="size-3" aria-hidden="true" />
                 {cloudRun.label}
