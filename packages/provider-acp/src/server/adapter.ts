@@ -2097,6 +2097,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           Queue.offer(events, event).pipe(Effect.asVoid);
         let scheduleDeferredFinalize: (context: ActiveAcpTurn) => Effect.Effect<void> = () =>
           Effect.void;
+        // Assigned with handleSessionUpdate's subagent routing; emitSubagent
+        // replays a child's buffered frames through it once the child is named.
+        let replaySubagentSessionUpdate: (
+          context: ActiveAcpTurn,
+          notification: EffectAcpSchema.SessionNotification,
+          rootSessionId: string | null,
+        ) => Effect.Effect<void> = () => Effect.void;
 
         const nativeLogging = options.nativeLogging?.(input.threadId);
         const handleRuntimeTerminationAtGeneration = (runtimeGeneration: number) =>
@@ -2876,9 +2883,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             });
             const buffered = context.pendingSubagentNotifications.get(childSessionId) ?? [];
             context.pendingSubagentNotifications.delete(childSessionId);
+            const rootSessionId = yield* Ref.get(activeSessionId);
             yield* Effect.forEach(
               buffered,
-              (notification) => projectSubagentNotification(subagent, notification),
+              (notification) => replaySubagentSessionUpdate(context, notification, rootSessionId),
               { concurrency: 1, discard: true },
             );
           }
@@ -4119,6 +4127,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
          * its child thread through the turn that spawned or adopted it: the
          * active turn, or a completed root's carryover while no turn runs.
          */
+        const bufferUnassociatedSubagentNotification = (
+          context: ActiveAcpTurn,
+          notification: EffectAcpSchema.SessionNotification,
+        ) => {
+          const buffered = context.pendingSubagentNotifications.get(notification.sessionId) ?? [];
+          buffered.push(notification);
+          context.pendingSubagentNotifications.set(notification.sessionId, buffered);
+        };
+
         const handleSubagentSessionUpdate = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           notification: EffectAcpSchema.SessionNotification,
@@ -4128,7 +4145,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (flavor.extractSubagentUpdate === undefined) return;
           const subagent = context.subagentsBySessionId.get(notification.sessionId);
           if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
-            if (subagent === undefined) return;
+            if (subagent === undefined) {
+              // Grok's Task path names the child session only in its result, after
+              // the child already ran; replayed in order once the session is known.
+              bufferUnassociatedSubagentNotification(context, notification);
+              return;
+            }
             const nativeTaskId = subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
             for (const event of parseSessionUpdateEvent(notification).events) {
               if (event._tag !== "ToolCallUpdated") continue;
@@ -4217,11 +4239,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* projectSubagentNotification(subagent, notification);
             return;
           }
-          const buffered = context.pendingSubagentNotifications.get(notification.sessionId) ?? [];
-          buffered.push(notification);
-          context.pendingSubagentNotifications.set(notification.sessionId, buffered);
-          return;
+          bufferUnassociatedSubagentNotification(context, notification);
         });
+        replaySubagentSessionUpdate = handleSubagentSessionUpdate;
 
         const handleSessionUpdate = Effect.fnUntraced(function* (
           notification: EffectAcpSchema.SessionNotification,
