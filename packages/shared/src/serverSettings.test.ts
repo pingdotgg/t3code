@@ -24,6 +24,24 @@ import {
 const FOLDED_SERVER_SETTINGS = { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true };
 
 describe("serverSettings helpers", () => {
+  it("defaults stream recovery off and invalidates old opportunities when toggled", () => {
+    expect(DEFAULT_SERVER_SETTINGS.recoverCodexStreamFailures).toBe(false);
+    const enabled = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      recoverCodexStreamFailures: true,
+    });
+    expect(enabled.codexStreamRecoveryGeneration).toBe(1);
+    expect(
+      applyServerSettingsPatch(enabled, { recoverCodexStreamFailures: true })
+        .codexStreamRecoveryGeneration,
+    ).toBe(1);
+    const disabled = applyServerSettingsPatch(enabled, { recoverCodexStreamFailures: false });
+    expect(disabled.recoverCodexStreamFailures).toBe(false);
+    expect(
+      applyServerSettingsPatch(disabled, { recoverCodexStreamFailures: true })
+        .codexStreamRecoveryGeneration,
+    ).toBe(3);
+  });
+
   it("changes a cleanup rule without replacing the machine's other rules", () => {
     const enabled = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       storageCleanup: { worktreeAfterDays: 8, worktreeOnMerge: true, logsAfterDays: 30 },

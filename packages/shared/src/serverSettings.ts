@@ -314,7 +314,14 @@ export function applyServerSettingsPatch(
             },
           }
         : undefined;
-  const next = deepMerge(current, patchForMerge);
+  const next = {
+    ...deepMerge(current, patchForMerge),
+    codexStreamRecoveryGeneration:
+      patch.recoverCodexStreamFailures !== undefined &&
+      patch.recoverCodexStreamFailures !== current.recoverCodexStreamFailures
+        ? current.codexStreamRecoveryGeneration + 1
+        : current.codexStreamRecoveryGeneration,
+  };
   const nextWithReplacementsBase = {
     ...next,
     ...(worktreeCleanupPatch === undefined

@@ -105,3 +105,13 @@ In an existing Codex thread, send `/feedback` with an optional description, for
 example `/feedback The agent stopped before finishing the tests`. This uploads
 the conversation and Codex logs to OpenAI. The returned thread ID can be shared
 with OpenAI support.
+
+## Recover exhausted stream retries
+
+When you use the Codex provider, you can enable recovery after Codex confirms it exhausted its own retries after a stream disconnect. This also works with custom endpoints when Codex confirms the same failure. T3 Code continues the same conversation after 30 seconds, then allows one more continuation after 60 seconds if it fails the same way. Saved work stays available, and the two-continuation limit survives server restarts.
+
+Recovery defaults to off and applies to every project in the selected environment. Ask an agent with full access in that environment to call `t3_environment_preferences_update` with `{ "recoverCodexStreamFailures": true }`, then confirm the preference with `t3_environment_read`. There is no Settings toggle. To turn recovery off, use `{ "recoverCodexStreamFailures": false }` with the same update. Turning it off cancels scheduled attempts; enabling it again does not restore them.
+
+Use `t3_thread_read` to check whether recovery is pending and when it will run. Stop, a new message, changes to the model, provider or execution mode, completion, settling, snoozing, archiving or deleting the thread cancel a pending attempt. A pending approval or question also prevents recovery. Recovery never answers an approval or question, unsnoozes the thread, switches accounts or models, or replays the original prompt. The agent must check completed actions before repeating any work.
+
+Recovery also covers delegated tasks started through T3 Code, which wait to report their result while recovery is pending. It does not separately recover subagents that Codex starts itself. Other providers, unknown failures, policy errors, safety-buffering notices, authentication or usage limits, context errors, overload, and client disconnects do not trigger recovery. Unsupported failures remain visible for review.

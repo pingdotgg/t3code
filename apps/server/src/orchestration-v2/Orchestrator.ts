@@ -1,3 +1,5 @@
+import * as ServerSettings from "../serverSettings.ts";
+import { streamRecoverySource } from "./StreamRecoveryPolicy.ts";
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -478,6 +480,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "checkpoint.rollback.fail":
     case "thread.background-work.settle":
     case "thread.stop":
+    case "stream-recovery.cancel":
     case "provider.switch":
       return command.threadId;
     case "delegated_task.request":
@@ -801,6 +804,7 @@ function lastDeliveredRunForProviderThread(
 }
 
 const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(function* () {
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const checkpointService = yield* CheckpointServiceV2;
   const commandPolicy = yield* CommandPolicyV2;
   const contextHandoffService = yield* ContextHandoffServiceV2;
@@ -4483,6 +4487,77 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) =>
     Effect.gen(function* () {
       let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      if (command.streamContinuationOfRunId !== undefined) {
+        const source = projection.runs.find((run) => run.id === command.streamContinuationOfRunId);
+        const settings = yield* serverSettings.getSettings.pipe(mapDispatchError(command));
+        const now = yield* DateTime.now;
+        let taskOwned = true;
+        if (
+          projection.thread.lineage.relationshipToParent === "subagent" &&
+          projection.thread.lineage.parentThreadId !== null &&
+          projection.thread.forkedFrom?.type === "node"
+        ) {
+          const parent = yield* projectionStore
+            .getThreadRecords(projection.thread.lineage.parentThreadId, ["runs", "subagents"])
+            .pipe(mapDispatchError(command));
+          const taskId = source?.delegatedTaskId ?? projection.thread.forkedFrom.nodeId;
+          const task = parent.subagents.find((candidate) => candidate.id === taskId);
+          const parentRun = parent.runs.find((run) => run.id === task?.runId);
+          taskOwned =
+            task?.origin === "app_owned" &&
+            task.childThreadId === command.threadId &&
+            task.result === null &&
+            ["pending", "running", "waiting"].includes(task.status) &&
+            task.completionDelivery?.state !== "disposed" &&
+            (parentRun?.delegatedCompletion === undefined ||
+              parentRun.delegatedCompletion.disposition === "open");
+        }
+        const eligible =
+          command.creationSource === "server" &&
+          command.createdBy === "agent" &&
+          command.dispatchMode.type === "start_immediately" &&
+          settings.recoverCodexStreamFailures &&
+          taskOwned &&
+          settings.codexStreamRecoveryGeneration === command.streamRecoveryGeneration &&
+          streamRecoverySource(projection, source) &&
+          Date.parse(source.streamRecovery!.dueAt) <= DateTime.toEpochMillis(now) &&
+          !(yield* stopReachedRun(command, command.threadId, source.id));
+        if (source?.streamRecovery?.state === "pending") {
+          yield* emit(
+            events,
+            command,
+          )({
+            type: "run.updated",
+            threadId: command.threadId,
+            runId: source.id,
+            providerInstanceId: source.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              ...source,
+              streamRecovery: {
+                ...source.streamRecovery,
+                state: eligible ? "dispatched" : "cancelled",
+              },
+            },
+          });
+        }
+        if (!eligible) {
+          // A stale timer is an accepted no-op, never an unsolicited user turn.
+          if (source?.streamRecovery?.state !== "pending")
+            yield* emit(
+              events,
+              command,
+            )({
+              type: "thread.metadata-updated",
+              threadId: command.threadId,
+              occurredAt: now,
+              payload: projection.thread,
+            });
+          return;
+        }
+        command = { ...command, modelSelection: source!.modelSelection };
+        projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      }
       if (command.manualContinuationOfRunId !== undefined) {
         const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
         const limited = latestRootProviderFailure(source ?? null, projection.turnItems);
@@ -4577,9 +4652,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
 
-      const continuedTaskId = projection.runs.find(
-        (run) => run.id === command.restartContinuationOfRunId,
-      )?.delegatedTaskId;
+      const continuedSource = projection.runs.find(
+        (run) =>
+          run.id === (command.streamContinuationOfRunId ?? command.restartContinuationOfRunId),
+      );
+      const continuedTaskId = continuedSource?.delegatedTaskId;
+      const streamRecoveryRunFields =
+        command.streamContinuationOfRunId !== undefined
+          ? {
+              streamContinuationOfRunId: command.streamContinuationOfRunId,
+              streamRecoveryAttempt: (continuedSource?.streamRecoveryAttempt ?? 0) + 1,
+            }
+          : continuedSource?.streamRecoveryAttempt === undefined
+            ? {}
+            : { streamRecoveryAttempt: continuedSource.streamRecoveryAttempt };
 
       if (projection.thread.settledOverride !== null) {
         const now = yield* DateTime.now;
@@ -4695,7 +4781,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           (command.creationSource !== "server" && command.creationSource !== "provider") ||
           (dispatchMode.type !== "queue_after_active" &&
             !(
-              command.restartContinuationOfRunId !== undefined &&
+              (command.restartContinuationOfRunId !== undefined ||
+                command.streamContinuationOfRunId !== undefined) &&
               dispatchMode.type === "start_immediately"
             )))
       ) {
@@ -5003,6 +5090,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           checkpointId: null,
           contextHandoffId: null,
           ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
+          ...streamRecoveryRunFields,
           ...(command.restartContinuationOfRunId === undefined
             ? {}
             : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
@@ -5343,6 +5431,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           checkpointId: null,
           contextHandoffId: legacyImportHandoff?.id ?? null,
           ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
+          ...streamRecoveryRunFields,
           ...(command.restartContinuationOfRunId === undefined
             ? {}
             : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
@@ -6040,6 +6129,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           legacyImportRecoveryHandoff?.id ??
           null,
         ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
+        ...streamRecoveryRunFields,
         ...(command.restartContinuationOfRunId === undefined
           ? {}
           : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
@@ -6778,6 +6868,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.scheduledTaskId !== undefined ||
       command.notification !== undefined ||
       command.restartContinuationOfRunId !== undefined ||
+      command.streamContinuationOfRunId !== undefined ||
       (command.createdBy !== "user" && command.creationSource !== "mcp")
     )
       return;
@@ -8740,7 +8831,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         // A resumed queue can have a lower ordinal than a pending continuation source.
         // Stop must reach those sources even when interrupting the resumed run succeeds.
         if (
-          run.status === "cancelled" &&
+          (run.status === "cancelled" || run.status === "failed") &&
           (yield* awaitsRestartContinuation(run).pipe(mapDispatchError(input.command)))
         ) {
           yield* markStoppedRun({ ...input, thread, run });
@@ -9681,13 +9772,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
    * RestartContinuation recovers the thread when it declines to continue.
    */
   const awaitsRestartContinuation = (run: OrchestrationV2Run) =>
-    effectOutbox
-      .get(`effect:restart-continuation:${run.id}`)
-      .pipe(
-        Effect.map(
-          Option.exists((effect) => effect.status === "pending" || effect.status === "running"),
-        ),
-      );
+    Effect.forEach(
+      [`effect:restart-continuation:${run.id}`, `effect:stream-recovery:${run.id}`],
+      (id) =>
+        effectOutbox
+          .get(id)
+          .pipe(
+            Effect.map(
+              Option.exists((effect) => effect.status === "pending" || effect.status === "running"),
+            ),
+          ),
+    ).pipe(Effect.map((pending) => pending.includes(true)));
 
   /**
    * A delegated child's result is held while its result run, or a run after it
@@ -10533,6 +10628,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       | undefined;
     switch (command.type) {
+      case "stream-recovery.cancel": {
+        const projection = yield* projectionStore.getThreadRecords(command.threadId, ["runs"]).pipe(
+          Effect.catchTags({
+            ProjectionStoreThreadNotFoundError: (error) =>
+              error.threadId === command.threadId ? Effect.succeed(null) : error,
+          }),
+          mapDispatchError(command),
+        );
+        // An absent thread leaves no source projection to cancel. Keep
+        // transient reads retryable rather than treating all projection failures alike.
+        if (projection === null) break;
+        const run = projection.runs.find((candidate) => candidate.id === command.runId);
+        if (run?.streamRecovery?.state === "pending")
+          yield* emit(
+            events,
+            command,
+          )({
+            type: "run.updated",
+            threadId: command.threadId,
+            runId: run.id,
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: yield* DateTime.now,
+            payload: { ...run, streamRecovery: { ...run.streamRecovery, state: "cancelled" } },
+          });
+        break;
+      }
       case "thread.create":
         yield* dispatchThreadCreate(command, events);
         break;
@@ -10800,6 +10921,84 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       default:
         return yield* dispatchUnsupported(command);
     }
+    // Consume user intent durably, even if an archive/settle/snooze is reversed
+    // within the same clock tick. A timestamp freshness check alone cannot do that.
+    const cancelsStreamRecovery =
+      [
+        "thread.archive",
+        "thread.delete",
+        "thread.auto-settle",
+        "thread.settle",
+        "thread.snooze",
+        "thread.stop",
+        "thread.model-selection.set",
+        "thread.runtime-mode.set",
+        "thread.interaction-mode.set",
+        "provider.switch",
+      ].includes(command.type) ||
+      (command.type === "message.dispatch" &&
+        command.streamContinuationOfRunId === undefined &&
+        command.restartContinuationOfRunId === undefined);
+    if (cancelsStreamRecovery) {
+      const settings = yield* serverSettings.getSettings.pipe(Effect.orElseSucceed(() => null));
+      if (
+        settings === null ||
+        settings.recoverCodexStreamFailures ||
+        settings.codexStreamRecoveryGeneration > 0
+      ) {
+        // Only the latest execution can own an eligible timer. Use the shell's
+        // indexed selection and read that single run, rather than its history.
+        const shell = yield* projectionStore
+          .getThreadShell(commandThreadId(command))
+          .pipe(mapDispatchError(command));
+        const projection = yield* projectionStore
+          .getThreadRecords(commandThreadId(command), ["runs"], {
+            runIds:
+              shell?.latestRunId === undefined || shell.latestRunId === null
+                ? []
+                : [shell.latestRunId],
+          })
+          .pipe(mapDispatchError(command));
+        // Earlier work in this command may already have disposed a completion
+        // cohort. Cancel against that planned run, not the older persisted row.
+        const plannedEvents = yield* Ref.get(events);
+        const pending = projection.runs
+          .map(
+            (run) =>
+              plannedEvents.findLast(
+                (
+                  event,
+                ): event is Extract<OrchestrationV2DomainEvent, { readonly type: "run.updated" }> =>
+                  event.type === "run.updated" &&
+                  event.threadId === run.threadId &&
+                  event.payload.id === run.id,
+              )?.payload ?? run,
+          )
+          .filter((run) => run.streamRecovery?.state === "pending");
+        if (pending.length > 0) {
+          for (const run of pending)
+            yield* emit(
+              events,
+              command,
+            )({
+              type: "run.updated",
+              threadId: run.threadId,
+              runId: run.id,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: yield* DateTime.now,
+              payload: { ...run, streamRecovery: { ...run.streamRecovery!, state: "cancelled" } },
+            });
+          cancelUnsettledEffects = {
+            effectTypes: [
+              ...(cancelUnsettledEffects?.effectTypes ?? []),
+              "provider-runtime.recover-stream",
+            ],
+            reason:
+              "New work or a thread configuration or lifecycle action cancelled pending stream recovery.",
+          };
+        }
+      }
+    }
     return {
       events: yield* Ref.get(events),
       effects: yield* Ref.get(effects),
@@ -10888,6 +11087,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         // stop that finds nothing running, has nothing to record. That is
         // its expected outcome, not a failure.
         planned.events.length > 0 ||
+        command.type === "stream-recovery.cancel" ||
         command.type === "thread.background-work.settle" ||
         command.type === "thread.stop" ||
         command.type === "subagent.stop"
@@ -11018,11 +11218,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.gen(function* () {
       const dispatch = threadDispatch.withLock(
         commandThreadId(command),
-        dispatchWithReceiptEffect(command),
+        command.type === "message.dispatch" && command.streamContinuationOfRunId !== undefined
+          ? serverSettings
+              .withSettingsSnapshot(() => dispatchWithReceiptEffect(command))
+              .pipe(
+                Effect.catchTags({
+                  ServerSettingsError: (cause) =>
+                    new OrchestratorDispatchError({
+                      commandId: command.commandId,
+                      commandType: command.type,
+                      cause,
+                    }),
+                }),
+              )
+          : dispatchWithReceiptEffect(command),
       );
       if (
         command.type !== "message.dispatch" ||
-        (command.createdBy !== "user" && command.creationSource !== "mcp")
+        (command.createdBy !== "user" &&
+          command.creationSource !== "mcp" &&
+          command.streamContinuationOfRunId === undefined)
       )
         return yield* dispatch;
       const parentThreadId = yield* appOwnedSubagentParentThreadId(command.threadId).pipe(
@@ -11362,6 +11577,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 export const layer: Layer.Layer<
   OrchestratorV2,
   never,
+  | ServerSettings.ServerSettingsService
   | CheckpointServiceV2
   | FileSystem.FileSystem
   | Path.Path

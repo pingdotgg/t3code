@@ -751,6 +751,10 @@ function threadRun(run: OrchestrationV2Run): OrchestratorMcpThreadRun {
     status: run.status,
     providerInstanceId: run.modelSelection.instanceId,
     model: run.modelSelection.model,
+    ...(run.streamRecovery === undefined ? {} : { streamRecovery: run.streamRecovery }),
+    ...(run.streamRecoveryAttempt === undefined
+      ? {}
+      : { streamRecoveryAttempt: run.streamRecoveryAttempt }),
     requestedAt: DateTime.formatIso(run.requestedAt),
     startedAt: run.startedAt === null ? null : DateTime.formatIso(run.startedAt),
     completedAt: run.completedAt === null ? null : DateTime.formatIso(run.completedAt),
