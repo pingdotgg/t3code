@@ -83,6 +83,9 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
 
   const clampedWidth = clamp(widthState.width);
   const latestOptions = useRef({ clamp, storageKey, width: clampedWidth });
+  useLayoutEffect(() => {
+    latestOptions.current = { clamp, storageKey, width: clampedWidth };
+  }, [clamp, clampedWidth, storageKey]);
 
   const { refresh, ...handlers } = useResizeDrag<HTMLElement>((event) => {
     const host = event.currentTarget.parentElement;
@@ -116,12 +119,9 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     };
   }, storageKey);
 
-  useLayoutEffect(() => {
-    latestOptions.current = { clamp, storageKey, width: clampedWidth };
-    // Bounds can change mid-drag (sidebar opens, window narrows) and the render
-    // rewrites the committed width, so re-apply the live pointer position.
-    refresh();
-  }, [clamp, clampedWidth, storageKey]);
+  // Bounds can change mid-drag (sidebar opens, window narrows) and the render
+  // rewrites the committed width, so re-apply the live pointer position.
+  useLayoutEffect(refresh, [clamp, clampedWidth, refresh]);
 
   return { width: clampedWidth, handlers };
 }
