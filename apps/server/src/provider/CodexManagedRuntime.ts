@@ -5,12 +5,15 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import {
+  resolveSelfInvocation,
+  selfInvocationArgs,
+  type SelfInvocation,
+} from "@t3tools/shared/nodeRuntime";
 import * as ServerConfig from "../config.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
-import {
-  makeCodexManagedTokenSource,
-  managedCodexTokenCommand,
-} from "./CodexManagedTokenSource.ts";
+import { makeCodexManagedTokenSource } from "./CodexManagedTokenSource.ts";
+import { codexManagedTokenCommandName } from "./codexManagedTokenCommand.ts";
 import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";
 import { materializeCodexShadowHome } from "./Drivers/CodexHomeLayout.ts";
 
@@ -21,22 +24,25 @@ export interface CodexEffectiveRuntime {
 }
 const decodeSettings = Schema.decodeSync(CodexSettings);
 // Managed sign-in stores tokens in T3's credential store and never writes native auth.json.
-const managedCodexLaunchArgs = [
-  'model_provider="openai_token_sharing"',
-  'model_providers.openai_token_sharing.name="OpenAI Token Sharing"',
-  'model_providers.openai_token_sharing.base_url="https://api.openai.com/v1"',
-  'model_providers.openai_token_sharing.model_catalog_url="https://api.openai.com/v1/models"',
-  "features.api_key_model_discovery=true",
-  `model_providers.openai_token_sharing.auth.command=${JSON.stringify(process.execPath)}`,
-  `model_providers.openai_token_sharing.auth.args=${JSON.stringify(["-e", managedCodexTokenCommand])}`,
-  "model_providers.openai_token_sharing.auth.timeout_ms=25000",
-  "model_providers.openai_token_sharing.auth.refresh_interval_ms=30000",
-  'model_providers.openai_token_sharing.wire_api="responses"',
-  "model_providers.openai_token_sharing.requires_openai_auth=false",
-  "model_providers.openai_token_sharing.supports_websockets=false",
-]
-  .map((value) => `-c '${value.replaceAll("'", "'\"'\"'")}'`)
-  .join(" ");
+// The credential command is this T3 install's own hidden subcommand: the packaged
+// executable has no Node CLI, so `node -e` is not available to every host.
+const managedCodexLaunchArgs = (invocation: SelfInvocation) =>
+  [
+    'model_provider="openai_token_sharing"',
+    'model_providers.openai_token_sharing.name="OpenAI Token Sharing"',
+    'model_providers.openai_token_sharing.base_url="https://api.openai.com/v1"',
+    'model_providers.openai_token_sharing.model_catalog_url="https://api.openai.com/v1/models"',
+    "features.api_key_model_discovery=true",
+    `model_providers.openai_token_sharing.auth.command=${JSON.stringify(invocation.command)}`,
+    `model_providers.openai_token_sharing.auth.args=${JSON.stringify(selfInvocationArgs(invocation, [codexManagedTokenCommandName]))}`,
+    "model_providers.openai_token_sharing.auth.timeout_ms=25000",
+    "model_providers.openai_token_sharing.auth.refresh_interval_ms=30000",
+    'model_providers.openai_token_sharing.wire_api="responses"',
+    "model_providers.openai_token_sharing.requires_openai_auth=false",
+    "model_providers.openai_token_sharing.supports_websockets=false",
+  ]
+    .map((value) => `-c '${value.replaceAll("'", "'\"'\"'")}'`)
+    .join(" ");
 
 export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(function* (options: {
   readonly instanceId: ProviderInstanceId;
@@ -55,6 +61,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
       config.devUrl ?? `http://localhost:${config.port}`,
     ).toString(),
   });
+  const launchArgs = managedCodexLaunchArgs(yield* resolveSelfInvocation());
   const scope = yield* Scope.Scope;
   const tokenSource = yield* makeCodexManagedTokenSource(options.instanceId, auth.access).pipe(
     Effect.provideService(Scope.Scope, scope),
@@ -120,7 +127,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
         setupMode: "managed",
         binaryPath: executable.executablePath,
         homePath,
-        launchArgs: managedCodexLaunchArgs,
+        launchArgs,
       }),
       environment,
       revision: credentials.accessToken,

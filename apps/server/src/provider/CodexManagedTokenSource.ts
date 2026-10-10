@@ -4,21 +4,6 @@ import * as NodeHttp from "node:http";
 import { ProviderSetupError, type ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-// Codex invokes this command again when its cached bearer expires or receives a 401.
-// The child receives a bridge credential, never a fixed copy of the provider token.
-export const managedCodexTokenCommand = `
-fetch(process.env.T3CODE_MANAGED_CODEX_AUTH_URL, {
-  headers: { Authorization: "Bearer " + process.env.T3CODE_MANAGED_CODEX_AUTH_SECRET,
-    "X-T3-Codex-Account": process.env.T3CODE_MANAGED_CODEX_AUTH_ACCOUNT },
-}).then(async response => {
-  if (!response.ok) throw new Error();
-  process.stdout.write(await response.text());
-}).catch(() => {
-  process.stderr.write("Could not renew managed Codex credentials.\\n");
-  process.exitCode = 1;
-});
-`;
-
 export const makeCodexManagedTokenSource = Effect.fn("makeCodexManagedTokenSource")(function* (
   instanceId: ProviderInstanceId,
   access: Effect.Effect<
@@ -29,6 +14,8 @@ export const makeCodexManagedTokenSource = Effect.fn("makeCodexManagedTokenSourc
   const context = yield* Effect.context<never>();
   const runPromise = Effect.runPromiseWith(context);
   const secret = NodeCrypto.randomBytes(32).toString("base64url");
+  const digest = (value: string) => NodeCrypto.createHash("sha256").update(value).digest();
+  const expectedAuthorization = digest(`Bearer ${secret}`);
   const server = yield* Effect.acquireRelease(
     Effect.tryPromise({
       try: () =>
@@ -38,7 +25,13 @@ export const makeCodexManagedTokenSource = Effect.fn("makeCodexManagedTokenSourc
               response.writeHead(404).end();
               return;
             }
-            if (request.headers.authorization !== `Bearer ${secret}`) {
+            // Fixed-length digests keep the comparison constant-time for any header length.
+            if (
+              !NodeCrypto.timingSafeEqual(
+                digest(request.headers.authorization ?? ""),
+                expectedAuthorization,
+              )
+            ) {
               response.writeHead(401).end();
               return;
             }

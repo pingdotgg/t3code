@@ -2,6 +2,7 @@
 import * as NodeOS from "node:os";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
+import * as NodeURL from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { CodexSettings, EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
@@ -13,6 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "../config.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -25,6 +27,7 @@ import { resolveManagedCodexHomeLayout } from "./CodexManagedHome.ts";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeSettings = Schema.decodeSync(CodexSettings);
+const serverEntrypoint = NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url));
 it.effect("closes the managed credential bridge with its provider scope", () =>
   Effect.gen(function* () {
     const source = yield* makeCodexManagedTokenSource(
@@ -169,14 +172,22 @@ it.effect.each(
           }
           // Emulate the same app-server making later requests, without resolving
           // or restarting its runtime. Run its configured credential command.
+          const authSetting = (name: string) => {
+            const prefix = `model_providers.openai_token_sharing.auth.${name}=`;
+            const value = codexAppServerArgs(effective.config.launchArgs).find((arg) =>
+              arg.startsWith(prefix),
+            );
+            assert.isDefined(value);
+            return JSON.parse(value!.slice(prefix.length));
+          };
+          // The command is T3's own hidden subcommand, not a Node `-e` script the
+          // packaged executable cannot evaluate.
+          assert.equal(authSetting("command"), process.execPath);
+          assert.deepEqual(authSetting("args"), [serverEntrypoint, "codex-managed-token"]);
           const requestToken = Effect.promise(async () => {
-            const argv = codexAppServerArgs(effective.config.launchArgs);
-            const prefix = "model_providers.openai_token_sharing.auth.args=";
-            const commandArgs = argv.find((value) => value.startsWith(prefix));
-            if (commandArgs === undefined) return effective.environment.ACCESS_TOKEN;
             const { stdout } = await NodeUtil.promisify(NodeChildProcess.execFile)(
-              process.execPath,
-              JSON.parse(commandArgs.slice(prefix.length)),
+              authSetting("command"),
+              authSetting("args"),
               { env: effective.environment, timeout: 25_000 },
             );
             return stdout;
@@ -286,6 +297,7 @@ it.effect.each(
       );
     }).pipe(
       Effect.scoped,
+      Effect.provideService(HostProcess.Arguments, [process.execPath, serverEntrypoint]),
       Effect.provide(
         ServerConfig.layerTest(process.cwd(), {
           prefix: "t3-managed-runtime-",
