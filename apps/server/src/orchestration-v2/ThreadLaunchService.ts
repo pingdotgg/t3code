@@ -36,12 +36,14 @@ import {
 } from "@t3tools/shared/git";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as WorkspaceWorktrees from "../git/WorkspaceWorktrees.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as WorkspaceRepositories from "../workspace/WorkspaceRepositories.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as Orchestrator from "./Orchestrator.ts";
@@ -200,6 +202,8 @@ const make = Effect.gen(function* () {
   const cloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
   const terminals = yield* TerminalManager.TerminalManager;
   const git = yield* GitWorkflow.GitWorkflowService;
+  const workspaceWorktrees = yield* WorkspaceWorktrees.WorkspaceWorktrees;
+  const workspaceRepositories = yield* WorkspaceRepositories.WorkspaceRepositories;
   const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -378,18 +382,52 @@ const make = Effect.gen(function* () {
         input.workspaceStrategy.type === "existing_worktree"
           ? input.workspaceStrategy.worktreePath
           : null;
-      if (input.workspaceStrategy.type === "worktree") {
-        if (runId !== null) {
-          yield* threads
-            .dispatch({
-              type: "prepared-run.progress",
-              commandId: CommandId.make(`${input.commandId}:progress:worktree`),
-              threadId,
-              runId,
-              phase: "worktree",
-            })
-            .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
-        }
+      const reportWorktreePhase =
+        runId === null
+          ? Effect.void
+          : threads
+              .dispatch({
+                type: "prepared-run.progress",
+                commandId: CommandId.make(`${input.commandId}:progress:worktree`),
+                threadId,
+                runId,
+                phase: "worktree",
+              })
+              .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
+      const repositories =
+        input.workspaceStrategy.type === "worktree"
+          ? yield* workspaceRepositories.list(project.workspaceRoot)
+          : [];
+      if (input.workspaceStrategy.type === "worktree" && repositories.length > 0) {
+        yield* reportWorktreePhase;
+        // Each repository starts from its own default branch; the strategy's base ref names a
+        // branch of one repository and does not apply.
+        const startFromOrigin = input.workspaceStrategy.startFromOrigin === true;
+        yield* setupTracker.stageStatus(threadId, "fetch", startFromOrigin ? "running" : "skipped");
+        yield* setupTracker.stageStatus(threadId, "checkout", "running");
+        const created = yield* workspaceWorktrees
+          .create(
+            {
+              workspaceRoot: project.workspaceRoot,
+              repositories,
+              branch: branch!,
+              startFromOrigin,
+            },
+            {
+              onContainerClaimed: (path) =>
+                Effect.sync(() => {
+                  createdWorktreePath = path;
+                }),
+            },
+          )
+          .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+        if (startFromOrigin) yield* setupTracker.stageStatus(threadId, "fetch", "done");
+        worktreePath = created.path;
+        branch = created.branch;
+        yield* setupTracker.update(threadId, (snapshot) => ({ ...snapshot, worktreePath, branch }));
+        yield* setupTracker.stageStatus(threadId, "checkout", "done");
+      } else if (input.workspaceStrategy.type === "worktree") {
+        yield* reportWorktreePhase;
         let startRef = input.workspaceStrategy.baseRef;
         // "Start from origin" is a stored default; repos without the requested
         // remote branch fall back to the local base branch.
@@ -499,12 +537,19 @@ const make = Effect.gen(function* () {
         const worktreeCwd = worktreePath;
         yield* generateBranchNameFor(worktreeCwd, initialMessage).pipe(
           Effect.flatMap(({ branch: newBranch, exactName }) =>
-            git.renameBranch({
-              cwd: worktreeCwd,
-              oldBranch,
-              newBranch,
-              ...(exactName ? { exactName: true } : {}),
-            }),
+            repositories.length > 0
+              ? workspaceWorktrees.renameBranch({
+                  path: worktreeCwd,
+                  oldBranch,
+                  newBranch,
+                  ...(exactName ? { exactName: true } : {}),
+                })
+              : git.renameBranch({
+                  cwd: worktreeCwd,
+                  oldBranch,
+                  newBranch,
+                  ...(exactName ? { exactName: true } : {}),
+                }),
           ),
           Effect.flatMap((renamed) =>
             threads.dispatch({

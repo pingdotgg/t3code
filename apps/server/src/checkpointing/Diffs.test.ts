@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { parseTurnDiffFilesFromNumstat } from "./Diffs.ts";
+import { parseTurnDiffFilesFromNumstat, prefixNumstatPaths, prefixPatchPaths } from "./Diffs.ts";
 
 describe("parseTurnDiffFilesFromNumstat", () => {
   it("returns an empty list when no files changed", () => {
@@ -52,5 +52,68 @@ describe("parseTurnDiffFilesFromNumstat", () => {
     expect(parseTurnDiffFilesFromNumstat(`1\t0\t${path}\0`)).toEqual([
       { path, additions: 1, deletions: 0 },
     ]);
+  });
+});
+
+describe("prefixNumstatPaths", () => {
+  it("moves plain, renamed and copied paths under the prefix", () => {
+    const numstat = ["1\t0\tsrc/a.ts", "0\t0\t", "old.ts", "new.ts", "-\t-\timage.png", ""].join(
+      "\0",
+    );
+
+    expect(parseTurnDiffFilesFromNumstat(prefixNumstatPaths(numstat, "api"))).toEqual([
+      { path: "api/image.png", additions: 0, deletions: 0 },
+      { path: "api/new.ts", previousPath: "api/old.ts", additions: 0, deletions: 0 },
+      { path: "api/src/a.ts", additions: 1, deletions: 0 },
+    ]);
+    expect(prefixNumstatPaths("", "api")).toBe("");
+  });
+});
+
+describe("prefixPatchPaths", () => {
+  it("rewrites file headers and leaves hunk content alone", () => {
+    const patch = [
+      "diff --git a/src/a b/c.ts b/src/a b/c.ts",
+      "index 1111111..2222222 100644",
+      "--- a/src/a b/c.ts",
+      "+++ b/src/a b/c.ts",
+      "@@ -1,2 +1,2 @@",
+      "--- a/looks-like-a-header",
+      "+++ b/also-content",
+      "diff --git a/old.ts b/new.ts",
+      "similarity index 90%",
+      "rename from old.ts",
+      "rename to new.ts",
+      "diff --git a/added.ts b/added.ts",
+      "new file mode 100644",
+      "--- /dev/null",
+      '+++ "b/caf\\303\\251.ts"',
+      "diff --git a/logo.png b/logo.png",
+      "Binary files a/logo.png and b/logo.png differ",
+      "",
+    ].join("\n");
+
+    expect(prefixPatchPaths(patch, "web")).toBe(
+      [
+        "diff --git a/web/src/a b/c.ts b/web/src/a b/c.ts",
+        "index 1111111..2222222 100644",
+        "--- a/web/src/a b/c.ts",
+        "+++ b/web/src/a b/c.ts",
+        "@@ -1,2 +1,2 @@",
+        "--- a/looks-like-a-header",
+        "+++ b/also-content",
+        "diff --git a/web/old.ts b/web/new.ts",
+        "similarity index 90%",
+        "rename from web/old.ts",
+        "rename to web/new.ts",
+        "diff --git a/web/added.ts b/web/added.ts",
+        "new file mode 100644",
+        "--- /dev/null",
+        '+++ "b/web/caf\\303\\251.ts"',
+        "diff --git a/web/logo.png b/web/logo.png",
+        "Binary files a/web/logo.png and b/web/logo.png differ",
+        "",
+      ].join("\n"),
+    );
   });
 });

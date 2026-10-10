@@ -67,6 +67,7 @@ import {
   type ProviderUserInputAnswers,
   type ProviderThreadId,
   type ThreadId,
+  type VcsRepository,
 } from "@t3tools/contracts";
 
 import * as Cause from "effect/Cause";
@@ -849,6 +850,7 @@ export function makeClaudeQueryOptions(input: {
   readonly resume: boolean;
   readonly resumeSessionAt?: string;
   readonly cwd: string | null;
+  readonly repositories?: ReadonlyArray<VcsRepository> | undefined;
   /**
    * The attachments dir grant lets the agent Read/copy pasted images at the
    * paths appended to the turn text, without an approval prompt. It is a leaf
@@ -951,7 +953,7 @@ export function makeClaudeQueryOptions(input: {
       type: "preset" as const,
       preset: "claude_code" as const,
       append:
-        buildRuntimeInstructions({ harness: "Claude Code" }) +
+        buildRuntimeInstructions({ harness: "Claude Code", repositories: input.repositories }) +
         (input.mcpServers === undefined ? "" : T3_CODE_ORCHESTRATION_INSTRUCTIONS),
     },
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
@@ -7486,6 +7488,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             resume: shouldResume,
             ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
             cwd: turnInput.runtimePolicy.cwd,
+            repositories: turnInput.runtimePolicy.repositories,
             attachmentsDir,
             settings: adapterOptions.settings,
             environment: { ...adapterOptions.environment, ...mcpOverrides.mcpEnvironment },

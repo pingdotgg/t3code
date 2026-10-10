@@ -91,6 +91,7 @@ import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolve
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
+import * as WorkspaceRepositories from "./workspace/WorkspaceRepositories.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
@@ -99,6 +100,7 @@ import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
+import * as WorkspaceWorktrees from "./git/WorkspaceWorktrees.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as PullRequestReadCache from "./pullRequest/PullRequestReadCache.ts";
@@ -360,6 +362,7 @@ const layerGit = Layer.empty.pipe(
 );
 
 const layerGitWorkflow = GitWorkflowService.layer.pipe(
+  Layer.provideMerge(WorkspaceWorktrees.layer),
   Layer.provideMerge(layerVcsDriverRegistry),
   Layer.provideMerge(layerGit),
 );
@@ -432,6 +435,7 @@ const layerWorkspace = Layer.mergeAll(
   WorkspacePaths.layer,
   layerWorkspaceEntries,
   layerWorkspaceFileSystem,
+  WorkspaceRepositories.layer,
 );
 
 const layerProjectFaviconResolver = ProjectFaviconResolver.layer.pipe(
@@ -489,6 +493,7 @@ const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
   Layer.provide(ResourceCleanupService.layer),
   Layer.provide(
     RunFinalizationService.layerObserver.pipe(
+      Layer.provide(WorkspaceRepositories.layer),
       Layer.provide(ProjectionStoreV2.layer),
       Layer.provide(layerPullRequestService),
       Layer.provide(RuntimeLayer.layerProjectService),

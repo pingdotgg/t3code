@@ -193,6 +193,7 @@ import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration-v2/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
+import * as WorkspaceRepositories from "./workspace/WorkspaceRepositories.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
@@ -1284,6 +1285,7 @@ const layerWsRpc = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const workspaceRepositories = yield* WorkspaceRepositories.WorkspaceRepositories;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -2846,6 +2848,10 @@ const layerWsRpc = (
             .preparePullRequestThread(input)
             .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsListRefs]: (input) => gitWorkflow.listRefs(input),
+        [WS_METHODS.vcsListRepositories]: (input) =>
+          workspaceRepositories
+            .list(input.cwd)
+            .pipe(Effect.map((repositories) => ({ repositories }))),
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>

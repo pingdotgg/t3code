@@ -151,6 +151,24 @@ export const VcsListRefsInput = Schema.Struct({
 });
 export type VcsListRefsInput = typeof VcsListRefsInput.Type;
 
+export const VcsListRepositoriesInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+});
+export type VcsListRepositoriesInput = typeof VcsListRepositoriesInput.Type;
+
+export const VcsRepository = Schema.Struct({
+  /** Path from the queried cwd, using `/` separators. */
+  relativePath: TrimmedNonEmptyStringSchema,
+  name: TrimmedNonEmptyStringSchema,
+});
+export type VcsRepository = typeof VcsRepository.Type;
+
+export const VcsListRepositoriesResult = Schema.Struct({
+  /** Empty when the cwd is itself inside a repository or holds none. */
+  repositories: Schema.Array(VcsRepository),
+});
+export type VcsListRepositoriesResult = typeof VcsListRepositoriesResult.Type;
+
 export const VcsCreateWorktreeInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   refName: TrimmedNonEmptyStringSchema,

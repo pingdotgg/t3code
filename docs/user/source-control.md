@@ -132,6 +132,21 @@ For a local Git repository without a remote, **Publish Repository** creates a ho
 adds it as `origin`, and pushes your commits. If there are no commits yet, it creates the remote;
 make your first commit before pushing.
 
+## Projects with several repositories
+
+To work across several repositories in one thread, add the folder that holds them as the project.
+T3 Code treats every folder directly inside it that is a Git repository as part of the project. If
+the folder contains one VS Code `.code-workspace` file, the repositories it lists count instead,
+named the way the file names them. Repositories outside the project folder are not included.
+
+Each repository gets its own Git actions in the thread panel, and turn diffs and rewinds cover all
+of them. In the diff panel, **Uncommitted** and **Changes** show one repository at a time; pick it
+next to the scope. **New worktree** gives the thread its own copy of every repository on one branch,
+each starting from that repository's default branch. The project's other top-level files and
+folders are linked into that copy rather than duplicated, so edits to them change the originals.
+With a `.code-workspace` file, only the folders it lists are linked, along with top-level files and
+dot-folders.
+
 ## Create a pull request
 
 Use a thread's Git actions to commit, push, and create a pull request. T3 Code can generate commit

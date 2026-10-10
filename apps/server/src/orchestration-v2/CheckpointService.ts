@@ -260,7 +260,7 @@ export const layer: Layer.Layer<
       workspaceLocks.withLock(cwd, effect);
 
     const isGitCheckpointable = (cwd: string) =>
-      checkpointStore.isGitRepository(cwd).pipe(Effect.orElseSucceed(() => false));
+      checkpointStore.isCheckpointable(cwd).pipe(Effect.orElseSucceed(() => false));
 
     const ensureScope: CheckpointServiceV2Shape["ensureScope"] = (scope) => Effect.succeed(scope);
 
@@ -276,17 +276,10 @@ export const layer: Layer.Layer<
             scopeId: input.scope.id,
             ordinalWithinScope: input.ordinalWithinScope,
           });
-          const exists = yield* checkpointStore.hasCheckpointRef({
-            cwd: input.scope.cwd,
-            checkpointRef,
-          });
-          if (exists) {
-            return;
-          }
-
           yield* checkpointStore.captureCheckpoint({
             cwd: input.scope.cwd,
             checkpointRef,
+            missingOnly: true,
           });
         }),
       ).pipe(

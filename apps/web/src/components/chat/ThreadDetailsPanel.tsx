@@ -4,7 +4,9 @@ import type {
   ProjectScript,
   ResolvedKeybindingsConfig,
   ThreadId,
+  VcsRepository,
 } from "@t3tools/contracts";
+import { joinWorkspaceRepositoryPath } from "@t3tools/shared/path";
 
 import type { DraftId } from "../../composerDraftStore";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
@@ -38,6 +40,8 @@ export interface ThreadDetailsPanelProps extends Pick<
   showOpenInPicker: boolean;
   gitCwd: string | null;
   isGitRepo: boolean;
+  /** Repositories of a multi-repo workspace; each gets its own source control. */
+  workspaceRepositories: ReadonlyArray<VcsRepository>;
   envLocked: boolean;
   availableEnvironments: readonly EnvironmentOption[];
   autoEnvironmentLabel?: string | undefined;
@@ -52,7 +56,8 @@ export interface ThreadDetailsPanelProps extends Pick<
   onStartFromOriginChange: (startFromOrigin: boolean) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest: () => void;
-  onOpenChanges?: () => void;
+  /** Opens the diff panel, on the given repository in a multi-repo workspace. */
+  onOpenChanges?: (repositoryPath?: string) => void;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateProjectScript: (
@@ -144,7 +149,33 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
             </div>
           </ThreadDetailsSection>
 
-          {props.gitCwd ? (
+          {props.gitCwd && props.activeProjectName && props.workspaceRepositories.length > 0
+            ? props.workspaceRepositories.map((repository) => (
+                <ThreadDetailsSection
+                  key={repository.relativePath}
+                  headingId={`thread-details-repository-${repository.relativePath.replaceAll("/", "-")}`}
+                  title={repository.name}
+                  separated={density === "full"}
+                >
+                  <GitActionsControl
+                    displayMode="panel"
+                    compact={density !== "full"}
+                    gitCwd={joinWorkspaceRepositoryPath(props.gitCwd!, repository.relativePath)}
+                    activeThreadRef={{
+                      environmentId: props.environmentId,
+                      threadId: props.threadId,
+                    }}
+                    syncThreadBranch={false}
+                    {...(props.draftId ? { draftId: props.draftId } : {})}
+                    {...(props.onOpenChanges
+                      ? { onOpenChanges: () => props.onOpenChanges!(repository.relativePath) }
+                      : {})}
+                  />
+                </ThreadDetailsSection>
+              ))
+            : null}
+
+          {props.gitCwd && props.workspaceRepositories.length === 0 ? (
             <ThreadDetailsSection
               headingId="thread-details-version-control-heading"
               title="Version Control"
@@ -165,7 +196,9 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                       threadId: props.threadId,
                     }}
                     {...(props.draftId ? { draftId: props.draftId } : {})}
-                    {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
+                    {...(props.onOpenChanges
+                      ? { onOpenChanges: () => props.onOpenChanges!() }
+                      : {})}
                   />
                 ) : null}
               </div>
