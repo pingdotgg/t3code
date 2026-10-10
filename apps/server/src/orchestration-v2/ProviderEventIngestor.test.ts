@@ -1681,6 +1681,37 @@ layer("ProviderEventIngestorV2", (it) => {
         instanceId: modelSelection.instanceId,
         model: "gpt-6.1-sol",
       });
+
+      // A selection the provider reports, effort included, replaces the thread's.
+      const reportedSelection = {
+        instanceId: modelSelection.instanceId,
+        model: "gpt-6.1-sol",
+        options: [{ id: "reasoningEffort", value: "low" }],
+      };
+      const reported = yield* ingest({
+        ...subagentUpdated,
+        subagent: { ...subagentUpdated.subagent, modelSelection: reportedSelection },
+      });
+      assert.deepEqual(
+        reported.map((stored) => stored.event.type),
+        ["subagent.updated", "thread.model-selection-updated"],
+      );
+      assert.deepEqual(
+        (yield* projectionStore.getThread(childThreadId)).modelSelection,
+        reportedSelection,
+      );
+
+      // A subagent recovered after a restart reports its model but no
+      // selection; the same model keeps the effort the thread holds.
+      const recovered = yield* ingest(subagentUpdated);
+      assert.deepEqual(
+        recovered.map((stored) => stored.event.type),
+        ["subagent.updated"],
+      );
+      assert.deepEqual(
+        (yield* projectionStore.getThread(childThreadId)).modelSelection,
+        reportedSelection,
+      );
     }),
   );
 });

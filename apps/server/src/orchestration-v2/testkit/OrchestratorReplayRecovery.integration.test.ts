@@ -384,6 +384,13 @@ describe("orchestrator replay recovery", () => {
         assert.lengthOf(childThreads, 1);
         const child = childThreads[0];
         assert.equal(child?.thread.id, subagent?.childThreadId);
+        // The recovered subagent's replies name the model its thread already
+        // holds, so the effort recorded at launch survives the restart.
+        assert.deepEqual(child?.thread.modelSelection, {
+          instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+          model: "claude-sonnet-5",
+          options: [{ id: "effort", value: "high" }],
+        });
 
         const conversation = (child?.turnItems ?? [])
           .toSorted((left, right) => left.ordinal - right.ordinal)

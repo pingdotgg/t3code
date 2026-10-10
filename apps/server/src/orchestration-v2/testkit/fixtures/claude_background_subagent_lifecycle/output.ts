@@ -22,7 +22,8 @@ import {
 
 const AGENT_A_TASK_ID = "a1a715b7d0bdfefea";
 const AGENT_B_TASK_ID = "af44d5c14aa3ce867";
-const AGENT_A_OBSERVED_MODEL = "claude-haiku-4-5-20251001";
+// Its snapshots report claude-haiku-4-5-20251001, recorded as the catalog slug.
+const AGENT_A_OBSERVED_MODEL = "claude-haiku-4-5";
 
 function assistantTexts(
   projection: OrchestrationV2ThreadProjection,
