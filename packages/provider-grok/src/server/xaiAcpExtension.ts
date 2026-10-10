@@ -102,6 +102,20 @@ export function isXAiTaskCompletedWakeNotification(
   return typeof promptId === "string" && promptId.startsWith(XAI_TASK_COMPLETED_PROMPT_ID_PREFIX);
 }
 
+/**
+ * The background task a `task-completed-<task id>` wake turn answers, or
+ * undefined for frames of any other turn.
+ */
+export function xAiTaskCompletedWakeTaskId(
+  notification: EffectAcpSchema.SessionNotification,
+): string | undefined {
+  const promptId = notification._meta?.promptId;
+  if (typeof promptId !== "string" || !promptId.startsWith(XAI_TASK_COMPLETED_PROMPT_ID_PREFIX)) {
+    return undefined;
+  }
+  return nonEmptyString(promptId.slice(XAI_TASK_COMPLETED_PROMPT_ID_PREFIX.length));
+}
+
 interface PendingXAiPromptCompletion {
   readonly sessionId: string;
   readonly promptId: string;

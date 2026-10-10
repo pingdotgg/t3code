@@ -3,6 +3,7 @@ import {
   XAiPromptFailureText,
   isXAiTaskCompletedWakeNotification,
   xAiRateLimitedErrorCode,
+  xAiTaskCompletedWakeTaskId,
 } from "./xaiAcpExtension.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
@@ -324,6 +325,7 @@ export function makeGrokAcpAdapterFlavor(
     ],
     isPersistentBackgroundTool: isXAiPersistentMonitor,
     isProviderWakeNotification: isXAiTaskCompletedWakeNotification,
+    providerWakeTaskId: xAiTaskCompletedWakeTaskId,
     deferFinalizeForBackgroundWork: true,
     enablePostSettleContinuation: true,
     ...(options.assertComplete === undefined ? {} : { assertComplete: options.assertComplete }),
