@@ -470,8 +470,11 @@ function RightPanelEmptyState(props: {
   };
 
   // Stable identity so React only runs this callback ref on mount/unmount;
-  // an inline arrow would re-attach and re-focus on every render.
+  // an inline arrow would re-attach and re-focus on every render. The launcher
+  // also appears without user action (an agent closes the last browser tab),
+  // so it never takes focus from someone typing in the composer or a terminal.
   const focusOnMount = useCallback((node: HTMLDivElement | null) => {
+    if (surfaceShortcutTargetsTypingContext(document.activeElement)) return;
     node?.focus();
   }, []);
 
