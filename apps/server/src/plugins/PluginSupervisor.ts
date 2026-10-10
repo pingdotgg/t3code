@@ -278,6 +278,8 @@ interface Child {
   hostCalls: number;
   /** Owns the fibers serving this child's host calls; closed on revocation and exit. */
   readonly hostWork: Scope.Closeable;
+  /** Set once `hostWork` starts closing; done once it has closed. */
+  hostWorkEnded: Deferred.Deferred<void> | undefined;
   /** One host-call answer at a time waits for the child to read earlier messages. */
   readonly replies: Semaphore.Semaphore;
   /** Set while answers wait for the child to read; logged once per episode. */
@@ -639,6 +641,17 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
     }
   });
 
+  /** Closes a child's host work; a caller that comes while it is closing waits for the end. */
+  const endHostWork = (child: Child) =>
+    Effect.suspend(() => {
+      if (child.hostWorkEnded) return Deferred.await(child.hostWorkEnded);
+      const ended = Deferred.makeUnsafe<void>();
+      child.hostWorkEnded = ended;
+      return Scope.close(child.hostWork, Exit.void).pipe(
+        Effect.ensuring(Deferred.succeed(ended, undefined)),
+      );
+    });
+
   const handleExit = Effect.fnUntraced(function* (
     entry: Entry,
     child: Child,
@@ -646,7 +659,7 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
     signal: string | null,
   ) {
     // Host work of a dead process ends before anything else can run for this plugin.
-    yield* Scope.close(child.hostWork, Exit.void);
+    yield* endHostWork(child);
     // Anything still unread from the dead process is discarded, including a stderr
     // that a process it started still holds open after the drain timeout.
     child.channel.destroy();
@@ -703,6 +716,7 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
       outOfMemory: false,
       hostCalls: 0,
       hostWork: Scope.forkUnsafe(fibers, "parallel"),
+      hostWorkEnded: undefined,
       replies: Semaphore.makeUnsafe(1),
       backedUp: false,
     };
@@ -952,10 +966,12 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
     // Only reachable between claiming a start and spawning; the start then fails fast.
     if (!entry.child && entry.starting) yield* Deferred.await(entry.starting).pipe(Effect.ignore);
     const child = entry.child;
-    if (!child || Deferred.isDoneUnsafe(child.exited)) return;
+    if (!child) return;
+    // A process that already exited may still be ending its host work.
+    if (Deferred.isDoneUnsafe(child.exited)) return yield* endHostWork(child);
     revokeChild(entry, child);
     // The revoked generation's host work ends before its plugin is asked to deactivate.
-    yield* Scope.close(child.hostWork, Exit.void);
+    yield* endHostWork(child);
     write(child, { _tag: "Deactivate" });
     const exited = yield* Deferred.await(child.exited).pipe(Effect.timeoutOption(stopGrace));
     if (Option.isNone(exited)) {

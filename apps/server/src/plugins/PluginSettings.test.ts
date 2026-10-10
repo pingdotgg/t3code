@@ -726,6 +726,52 @@ it.layer(NodeServices.layer)("PluginSettings", (it) => {
       }),
     );
 
+    it.effect("waits for host work still ending when disabling a process that exited", () =>
+      Effect.gen(function* () {
+        const supervisor = yield* makeSupervisor(yield* Scope.Scope, BIN_PATH);
+        const started = yield* Deferred.make<void>();
+        const ending = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const order: Array<string> = [];
+        yield* supervisor.serveHostMethod("settings.get", () => Effect.succeed({ value: null }));
+        yield* supervisor.serveHostMethod("storage.get", () =>
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Effect.never),
+            // Stands for cleanup that outlasts the process, such as releasing a lock.
+            Effect.onInterrupt(() =>
+              Deferred.succeed(ending, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.andThen(Effect.sync(() => order.push("host work ended"))),
+              ),
+            ),
+          ),
+        );
+        const registration = yield* loadPluginDirectory(yield* preparePlugin());
+        const pluginId = registration.manifest.id;
+        yield* supervisor.enable(registration);
+        yield* supervisor
+          .invoke(pluginId, "load", { key: "a" })
+          .pipe(Effect.ignore, Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(started);
+        yield* supervisor
+          .invoke(pluginId, "exit", null)
+          .pipe(Effect.ignore, Effect.forkChild({ startImmediately: true }));
+        // The process has exited and its host work is ending.
+        yield* Deferred.await(ending);
+
+        const disabling = yield* supervisor
+          .disable(pluginId)
+          .pipe(
+            Effect.andThen(Effect.sync(() => order.push("disabled"))),
+            Effect.forkChild({ startImmediately: true }),
+          );
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(disabling);
+        expect(order).toEqual(["host work ended", "disabled"]);
+      }),
+    );
+
     it.effect("drops a write that waited for the settings lock past its generation", () =>
       withDatabase(
         Effect.gen(function* () {
