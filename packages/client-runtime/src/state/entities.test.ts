@@ -111,6 +111,40 @@ describe("V2 client presentation", () => {
     });
   });
 
+  it("lets only blocking questions mark a running thread as awaiting input", () => {
+    const runId = RunId.make("run-async-question");
+    const running = {
+      ...v2ThreadShell,
+      latestRunId: runId,
+      activeRunId: runId,
+      status: "running" as const,
+    };
+    const question = {
+      id: RuntimeRequestId.make("request-async-question"),
+      kind: "user_input" as const,
+      createdAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+    };
+
+    const presentInput = (shell: typeof v2ThreadShell) =>
+      presentThreadShell(environmentId, shell).hasPendingUserInput;
+
+    expect(
+      presentInput({ ...running, pendingRuntimeRequest: { ...question, blocking: false } }),
+    ).toBe(false);
+    expect(
+      presentInput({ ...running, pendingRuntimeRequest: { ...question, blocking: true } }),
+    ).toBe(true);
+    expect(presentInput({ ...running, pendingRuntimeRequest: question })).toBe(true);
+    expect(
+      presentInput({
+        ...running,
+        activeRunId: null,
+        status: "completed",
+        pendingRuntimeRequest: { ...question, blocking: false },
+      }),
+    ).toBe(true);
+  });
+
   it("preserves shell run timestamps for sidebar activity clocks", () => {
     const runId = RunId.make("run-working-clock");
     const requestedAt = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");

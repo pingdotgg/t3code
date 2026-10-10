@@ -122,6 +122,24 @@ describe("projectThreadAwarenessV2", () => {
     ).toMatchObject({ phase: "waiting_for_input", headline: "Waiting for input" });
   });
 
+  it("keeps a running thread with an async question running", () => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({
+          status: "running",
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("request-async"),
+            kind: "user_input",
+            createdAt: updatedAt,
+            blocking: false,
+          },
+        }),
+      }),
+    ).toMatchObject({ phase: "running" });
+  });
+
   it("does not present authentication refreshes as user approvals", () => {
     expect(
       projectThreadAwarenessV2({
