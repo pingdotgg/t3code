@@ -118,11 +118,12 @@ it("refuses to replace symlinks or downgrade a newer extension", async () => {
 
 it.each([
   [{}, "not-installed"],
-  [{ state: 2, version: 2 }, "disabled"],
-  [{ state: 1, version: 2 }, "enabled"],
+  [{ state: 2, version: 3 }, "disabled"],
+  [{ state: 1, version: 3 }, "enabled"],
   [{ state: 1, version: 1 }, "update-required"],
-  [{ state: 2, version: 2, enabled: false }, "extensions-disabled"],
-  [{ state: 3, version: 2, error: "Load failed" }, "error"],
+  [{ state: 1, version: 2 }, "update-required"],
+  [{ state: 2, version: 3, enabled: false }, "extensions-disabled"],
+  [{ state: 3, version: 3, error: "Load failed" }, "error"],
   [{ shell: "51.0" }, "unsupported"],
 ] as const)("reports GNOME setup state %j", async (options, status) => {
   const { setup, call } = fixture(options);
@@ -141,7 +142,7 @@ it("requires login for local installs and updates until the new version is loade
     expect((await setup.state()).status).toBe("restart-required");
     setup.close();
   }
-  const { setup } = fixture({ state: 2, version: 2 });
+  const { setup } = fixture({ state: 2, version: 3 });
   expect((await setup.state()).status).toBe("disabled");
   setup.close();
 });
@@ -157,7 +158,7 @@ it("installs only on explicit action without invoking remote installation", asyn
 });
 
 it("enables and disables only the capture UUID", async () => {
-  const { setup, call } = fixture({ state: 2, version: 2 });
+  const { setup, call } = fixture({ state: 2, version: 3 });
   await setup.perform("enable-extension");
   await setup.perform("disable-extension");
   for (const member of ["EnableExtension", "DisableExtension"]) {
@@ -172,14 +173,14 @@ it("enables and disables only the capture UUID", async () => {
 });
 
 it("never changes the global user-extensions preference", async () => {
-  const { setup, call } = fixture({ state: 2, version: 2, enabled: false });
+  const { setup, call } = fixture({ state: 2, version: 3, enabled: false });
   await expect(setup.perform("enable-extension")).rejects.toThrow("GNOME has disabled");
   expect(call.mock.calls.every(([message]) => message.member.startsWith("Get"))).toBe(true);
   setup.close();
 });
 
 it("surfaces desktop rejection and disconnect as actionable failures", async () => {
-  const { setup, bus } = fixture({ state: 2, version: 2, accepted: false });
+  const { setup, bus } = fixture({ state: 2, version: 3, accepted: false });
   await expect(setup.perform("enable-extension")).rejects.toThrow("Sign out");
   bus.emit("error", new Error("Session bus disconnected"));
   expect(await setup.state()).toEqual({ status: "error", message: "Session bus disconnected" });

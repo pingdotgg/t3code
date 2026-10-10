@@ -1236,6 +1236,7 @@ export const make = Effect.gen(function* () {
           },
           undefined,
           hyprland,
+          hasGnomeSetup(),
         );
       }).pipe(
         Effect.tap((registration) =>
