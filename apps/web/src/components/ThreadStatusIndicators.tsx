@@ -6,6 +6,7 @@ import {
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 
 import { pullRequestDetailToVcsStatus } from "@t3tools/client-runtime/state/pull-requests";
+import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
 import {
   resolveEnvironmentMachineKind,
   type EnvironmentId,
@@ -129,15 +130,19 @@ export function linkedPullRequestSnapshotStatus(
 ): LinkedThreadPullRequestStatus | null {
   const snapshot = link.snapshot;
   if (snapshot === null) return null;
-  const kind = link.url.includes("/-/merge_requests/")
-    ? "gitlab"
-    : link.url.includes("/pullrequest/")
-      ? "azure-devops"
-      : link.url.includes("/pull-requests/")
-        ? "bitbucket"
-        : link.url.includes("/pulls/")
-          ? "forgejo"
-          : "github";
+  // GitCafe's `/pulls/` routes look like Forgejo's, so its two hosts are told apart first.
+  const kind =
+    detectSourceControlProviderFromRemoteUrl(link.url)?.kind === "gitcafe"
+      ? "gitcafe"
+      : link.url.includes("/-/merge_requests/")
+        ? "gitlab"
+        : link.url.includes("/pullrequest/")
+          ? "azure-devops"
+          : link.url.includes("/pull-requests/")
+            ? "bitbucket"
+            : link.url.includes("/pulls/")
+              ? "forgejo"
+              : "github";
   return {
     pr: {
       number: link.number,
