@@ -14,6 +14,7 @@ const {
   mkdirSyncMock,
   writeFileSyncMock,
   copyFileSyncMock,
+  readFileSyncMock,
 } = vi.hoisted(() => ({
   appendSwitchMock: vi.fn(),
   getSwitchValueMock: vi.fn(),
@@ -23,6 +24,7 @@ const {
   mkdirSyncMock: vi.fn(),
   writeFileSyncMock: vi.fn(),
   copyFileSyncMock: vi.fn(),
+  readFileSyncMock: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
@@ -43,7 +45,7 @@ vi.mock("electron", () => ({
 }));
 
 vi.mock("node:fs", () => ({
-  readFileSync: () => "{}",
+  readFileSync: readFileSyncMock,
   mkdirSync: mkdirSyncMock,
   writeFileSync: writeFileSyncMock,
   copyFileSync: copyFileSyncMock,
@@ -61,6 +63,19 @@ describe("DesktopPreReadyPlatform", () => {
     mkdirSyncMock.mockReset();
     writeFileSyncMock.mockReset();
     copyFileSyncMock.mockReset();
+    readFileSyncMock.mockReset().mockReturnValue("{}");
+  });
+
+  it.effect("restores saved scaling before asynchronous startup can observe it", () => {
+    readFileSyncMock.mockImplementation((path: string) =>
+      path.endsWith("linux-device-scale-factor") ? "1.75" : "{}",
+    );
+    return Effect.gen(function* () {
+      const startup = Promise.resolve().then(() => appendSwitchMock.mock.calls.slice());
+      yield* DesktopPreReadyPlatform.make;
+      const switches = yield* Effect.promise(() => startup);
+      assert.deepInclude(switches, ["force-device-scale-factor", "1.75"]);
+    }).pipe(Effect.provideService(HostProcessPlatform, "linux"));
   });
 
   it.effect("preserves an explicit Linux password-store switch", () => {
