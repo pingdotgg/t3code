@@ -122,7 +122,14 @@ const result = (uuid: string, aborted: boolean) =>
     modelUsage: {},
   });
 
-it.effect.each(["child completion", "scheduled message", "user steering"] as const)(
+const deliveries = [
+  "child completion",
+  "scheduled message",
+  "user steering",
+  "promoted queued message",
+] as const;
+
+it.effect.each(deliveries)(
   "delivers %s with Claude's native pending-tool cancellation behavior",
   (delivery) =>
     Effect.scoped(
@@ -330,7 +337,7 @@ it.effect.each(["child completion", "scheduled message", "user steering"] as con
                 ),
               ),
             );
-          } else {
+          } else if (delivery === "user steering") {
             yield* orchestrator.dispatch({
               type: "message.dispatch",
               commandId: CommandId.make("steer"),
@@ -342,9 +349,56 @@ it.effect.each(["child completion", "scheduled message", "user steering"] as con
               createdBy: "user",
               creationSource: "web",
             });
+          } else {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("queue"),
+              threadId,
+              messageId,
+              text: "Change direction now.",
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+            const queuedRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+              (run) => run.userMessageId === messageId,
+            );
+            if (queuedRun === undefined) return yield* Effect.die("queued run missing");
+            yield* orchestrator.dispatch({
+              type: "queued-message.promote-to-steer",
+              commandId: CommandId.make("promote"),
+              threadId,
+              queuedRunId: queuedRun.id,
+              targetRunId: parent.id,
+            });
+            // The queued run, its attempt and its root node are cancelled.
+            const promoted = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(promoted.runs.find((run) => run.id === queuedRun.id)?.status, "cancelled");
+            assert.equal(
+              promoted.attempts.find((attempt) => attempt.runId === queuedRun.id)?.status,
+              "cancelled",
+            );
+            assert.equal(
+              promoted.nodes.find((node) => node.id === queuedRun.rootNodeId)?.status,
+              "cancelled",
+            );
+            // The message moves to the running run and shows as a promoted steer.
+            assert.equal(
+              promoted.messages.find((message) => message.id === messageId)?.runId,
+              parent.id,
+            );
+            const promotedItem = promoted.turnItems.find(
+              (item) => item.type === "user_message" && item.messageId === messageId,
+            );
+            assert.equal(
+              promotedItem?.type === "user_message" ? promotedItem.inputIntent : undefined,
+              "promoted_queued_to_steer",
+            );
           }
           yield* worker.drain();
-          const explicitSteer = delivery === "user steering";
+          const explicitSteer =
+            delivery === "user steering" || delivery === "promoted queued message";
           assert.equal(batchAbort.signal.aborted, explicitSteer);
           assert.equal(offers.length, explicitSteer ? 2 : 1);
           const finished = yield* watch(
