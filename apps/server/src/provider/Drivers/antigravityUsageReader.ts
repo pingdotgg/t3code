@@ -307,9 +307,188 @@ interface CachedDatabase {
 export const makeAntigravityUsageCache = () => new Map<string, CachedDatabase>();
 
 /**
+ * The cache is persisted so unchanged databases survive a restart; a cold read
+ * of a large history decodes gigabytes. It stores candidates as read, before
+ * aliases merge and the date window applies, so a restored entry behaves
+ * exactly like one read in this process. Each version writes its own file, so
+ * servers of different versions sharing a state directory keep their own.
+ */
+export const ANTIGRAVITY_USAGE_CACHE_FILE_NAME = "usage-antigravity-cache-v1.json";
+const ANTIGRAVITY_USAGE_CACHE_VERSION = 1;
+
+/**
+ * Every candidate of a database shares its session id, stored once per
+ * database. The dedupe key is usually the first alias, so it is stored only
+ * when it differs.
+ */
+type SerializedCandidate = readonly [
+  timestampMs: number,
+  modelIndex: number,
+  uncachedInputTokens: number,
+  cachedInputTokens: number,
+  cacheCreationTokens: number,
+  outputTokens: number,
+  reasoningTokens: number,
+  dedupeKey: string | null,
+  keys: readonly string[],
+  timestampQuality: number,
+];
+
+interface SerializedDatabase {
+  readonly f: string;
+  readonly s: string;
+  readonly c: readonly SerializedCandidate[];
+}
+
+/**
+ * Returns a function that serialises the cache to JSON text. A database's JSON
+ * is memoised by entry identity, since an entry is replaced rather than mutated
+ * when its file changes, so a write re-encodes only the databases read since the
+ * last one. The model table only grows, which keeps memoised indexes valid.
+ */
+export function makeAntigravityUsageCacheWriter(): (
+  cache: ReadonlyMap<string, CachedDatabase>,
+) => string {
+  const models: string[] = [];
+  const modelIndex = new Map<string, number>();
+  const fragments = new WeakMap<CachedDatabase, string>();
+  const intern = (model: string) => {
+    let index = modelIndex.get(model);
+    if (index === undefined) {
+      index = models.length;
+      models.push(model);
+      modelIndex.set(model, index);
+    }
+    return index;
+  };
+  return (cache) => {
+    const files: string[] = [];
+    for (const [path, entry] of cache) {
+      let fragment = fragments.get(entry);
+      if (fragment === undefined) {
+        const database: SerializedDatabase = {
+          f: entry.fingerprint,
+          s: entry.candidates[0]?.record.sessionId ?? "",
+          c: entry.candidates.map(({ record, keys, timestampQuality }) => [
+            record.timestampMs,
+            intern(record.model),
+            record.totals.uncachedInputTokens,
+            record.totals.cachedInputTokens,
+            record.totals.cacheCreationTokens,
+            record.totals.outputTokens,
+            record.totals.reasoningTokens,
+            record.dedupeKey === keys[0] ? null : record.dedupeKey,
+            keys,
+            timestampQuality,
+          ]),
+        };
+        fragment = JSON.stringify(database);
+        fragments.set(entry, fragment);
+      }
+      files.push(`${JSON.stringify(path)}:${fragment}`);
+    }
+    // Encoded after the files, which may have added to the model table.
+    const head = JSON.stringify({ version: ANTIGRAVITY_USAGE_CACHE_VERSION, models });
+    return `${head.slice(0, -1)},"files":{${files.join(",")}}}`;
+  };
+}
+
+const isCount = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0;
+
+/**
+ * Rebuilds the cache from a parsed document. A malformed document yields an
+ * empty cache, and a malformed database entry is dropped whole, so a corrupt
+ * cache costs a fresh read rather than serving partial usage as a warm hit.
+ */
+export function decodeAntigravityUsageCache(document: unknown): Map<string, CachedDatabase> {
+  const cache = makeAntigravityUsageCache();
+  if (typeof document !== "object" || document === null) return cache;
+  const root = document as { version?: unknown; models?: unknown; files?: unknown };
+  if (root.version !== ANTIGRAVITY_USAGE_CACHE_VERSION) return cache;
+  if (!Array.isArray(root.models) || !root.models.every((model) => typeof model === "string")) {
+    return cache;
+  }
+  const models = root.models as readonly string[];
+  if (typeof root.files !== "object" || root.files === null) return cache;
+  for (const [path, raw] of Object.entries(root.files)) {
+    const entry = raw as Partial<SerializedDatabase> | null;
+    if (
+      typeof entry !== "object" ||
+      entry === null ||
+      typeof entry.f !== "string" ||
+      typeof entry.s !== "string" ||
+      !Array.isArray(entry.c)
+    ) {
+      continue;
+    }
+    const sessionId = entry.s;
+    const candidates: UsageCandidate[] = [];
+    for (const row of entry.c as readonly unknown[]) {
+      if (!Array.isArray(row) || row.length !== 10) break;
+      const [
+        timestampMs,
+        index,
+        uncached,
+        cached,
+        creation,
+        output,
+        reasoning,
+        stored,
+        keys,
+        quality,
+      ] = row as unknown[];
+      const key = stored === null && Array.isArray(keys) ? keys[0] : stored;
+      const model = typeof index === "number" ? models[index] : undefined;
+      if (
+        typeof timestampMs !== "number" ||
+        !Number.isFinite(timestampMs) ||
+        model === undefined ||
+        !isCount(uncached) ||
+        !isCount(cached) ||
+        !isCount(creation) ||
+        !isCount(output) ||
+        !isCount(reasoning) ||
+        typeof key !== "string" ||
+        key === "" ||
+        !Array.isArray(keys) ||
+        !keys.every((alias) => typeof alias === "string") ||
+        (quality !== 0 && quality !== 1 && quality !== 2)
+      ) {
+        break;
+      }
+      candidates.push({
+        record: {
+          provider: "antigravity",
+          sessionId,
+          timestampMs,
+          model,
+          totals: {
+            uncachedInputTokens: uncached,
+            cachedInputTokens: cached,
+            cacheCreationTokens: creation,
+            outputTokens: output,
+            reasoningTokens: reasoning,
+          },
+          reportedCostUsd: null,
+          speed: "standard",
+          dedupeKey: key,
+        },
+        keys: keys as string[],
+        timestampQuality: quality,
+      });
+    }
+    if (candidates.length === entry.c.length) {
+      cache.set(path, { fingerprint: entry.f, candidates });
+    }
+  }
+  return cache;
+}
+
+/**
  * Reads and merges aliases across every configured Antigravity store before date
  * filtering. With a cache, databases unchanged since the previous read are not
- * decoded again.
+ * decoded again, and `cacheChanged` reports whether the cache needs saving.
  */
 export const readAntigravityUsage = Effect.fn("readAntigravityUsage")(function* (
   conversationsDirectories: string | readonly string[],
@@ -388,6 +567,7 @@ export const readAntigravityUsage = Effect.fn("readAntigravityUsage")(function* 
     }
   };
   const visited = new Set<string>();
+  let cacheChanged = false;
   const readFile = Effect.fn("readAntigravityUsage.readFile")(function* (path: string) {
     const canonical = yield* fileSystem.realPath(path);
     if (visited.has(canonical)) return null;
@@ -406,7 +586,10 @@ export const readAntigravityUsage = Effect.fn("readAntigravityUsage")(function* 
       pathService.basename(path, ".db"),
       stat.mtimeMs,
     ).pipe(Effect.provide(NodeSqliteClient.layer({ filename: path, readonly: true })));
-    cache?.set(canonical, { fingerprint, candidates });
+    if (cache !== undefined) {
+      cache.set(canonical, { fingerprint, candidates });
+      cacheChanged = true;
+    }
     return candidates;
   });
   const walk = (directory: string, root: string): Effect.Effect<void> =>
@@ -452,12 +635,17 @@ export const readAntigravityUsage = Effect.fn("readAntigravityUsage")(function* 
     });
   for (const root of roots) yield* walk(root, root);
   if (cache !== undefined) {
-    for (const key of cache.keys()) if (!visited.has(key)) cache.delete(key);
+    for (const key of cache.keys()) {
+      if (!visited.has(key)) {
+        cache.delete(key);
+        cacheChanged = true;
+      }
+    }
   }
   for (const [index, group] of groups.entries()) {
     if (group.parent === index && group.record.timestampMs >= sinceMs) {
       files[group.fileIndex]!.records.push(group.record);
     }
   }
-  return { files, errors };
+  return { files, errors, cacheChanged };
 });

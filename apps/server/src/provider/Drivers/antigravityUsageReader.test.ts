@@ -11,7 +11,12 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUsageReader.ts";
+import {
+  decodeAntigravityUsageCache,
+  makeAntigravityUsageCache,
+  makeAntigravityUsageCacheWriter,
+  readAntigravityUsage,
+} from "./antigravityUsageReader.ts";
 
 /** A writable connection that stays open until the enclosing scope closes. */
 const openDatabase = Effect.fn("openDatabase")(function* (filename: string) {
@@ -332,6 +337,63 @@ describe("readAntigravityUsage", () => {
         ["antigravity:11:r-1"],
       );
       yield* db.exec("ROLLBACK");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("serves a saved Antigravity cache after a restart without reading the database", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const dir = yield* tempDir;
+      const db = yield* openDatabase(path.join(dir, "session-1.db"));
+      yield* db.exec("CREATE TABLE gen_metadata (idx INTEGER, data BLOB)");
+      yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [0, antigravityGeneration("r-1")]);
+      // No response id, so its dedupe key is not an alias and is saved as is.
+      yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [1, antigravityGeneration("")]);
+      const cache = makeAntigravityUsageCache();
+      const first = yield* readAntigravityUsage(dir, 0, cache);
+      assert.isTrue(first.cacheChanged);
+      const saved: unknown = JSON.parse(makeAntigravityUsageCacheWriter()(cache));
+
+      yield* db.exec("BEGIN EXCLUSIVE");
+      const second = yield* readAntigravityUsage(dir, 0, decodeAntigravityUsageCache(saved));
+      assert.deepStrictEqual(second.errors, []);
+      assert.isFalse(second.cacheChanged);
+      assert.deepStrictEqual(
+        records(second).map((record) => record.dedupeKey),
+        ["antigravity:11:r-1", "antigravity:session-1:generation:1:0"],
+      );
+      assert.deepStrictEqual(records(second), records(first));
+      yield* db.exec("ROLLBACK");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("drops a corrupt saved Antigravity database instead of serving part of it", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const dir = yield* tempDir;
+      yield* seedDatabase(path.join(dir, "session-1.db"), (db) =>
+        Effect.gen(function* () {
+          yield* db.exec("CREATE TABLE gen_metadata (idx INTEGER, data BLOB)");
+          yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
+            0,
+            antigravityGeneration("r-1"),
+          ]);
+          yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
+            1,
+            antigravityGeneration("r-2"),
+          ]);
+        }),
+      );
+      const cache = makeAntigravityUsageCache();
+      yield* readAntigravityUsage(dir, 0, cache);
+      const saved = JSON.parse(makeAntigravityUsageCacheWriter()(cache)) as {
+        files: Record<string, { c: unknown[][] }>;
+      };
+      const [entry] = Object.values(saved.files);
+      entry!.c[1]![5] = -1;
+
+      assert.strictEqual(decodeAntigravityUsageCache(saved).size, 0);
+      assert.strictEqual(decodeAntigravityUsageCache({ ...saved, version: 2 }).size, 0);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
