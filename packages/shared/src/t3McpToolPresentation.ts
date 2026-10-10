@@ -297,6 +297,14 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Update", "Updating", "Updated", "environment preferences"],
     "environment-update",
   ),
+  t3_environment_list: tool(
+    ["List", "Listing", "Listed", "connected environments"],
+    "environment-read",
+  ),
+  t3_environment_catalog: tool(
+    ["Read", "Reading", "Read", "another environment's projects and providers"],
+    "environment-read",
+  ),
   t3_thread_launch: tool(["Launch", "Launching", "Launched", "a project thread"], "thread-create"),
   t3_project_list: tool(["List", "Listing", "Listed", "projects"], "project-list"),
   t3_project_read: tool(["Read", "Reading", "Read", "a project"], "project-read"),

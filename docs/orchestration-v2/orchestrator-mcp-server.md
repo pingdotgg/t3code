@@ -338,6 +338,12 @@ its own under the environment's Scratch project. For stacked PRs, use the parent
 interaction modes than the caller. Launch has no retry key, so inspect existing threads after a failed or lost response before
 launching again. `create_threads` remains the batch option for a shared checkout.
 
+With `environmentId`, the thread is created on another connected environment
+instead. Nothing inherits across environments: `projectId` and `modelSelection`
+are required and are checked against the target's own catalog before anything
+is created there, and `scratch` and attachments are rejected. See
+[other environments](#other-environments).
+
 ### `t3_thread_list`
 
 Lists durable thread shells in one project, newest first: `projectId` when
@@ -413,6 +419,22 @@ Interrupts a selected active run through the normal V2 `run.interrupt` command.
 Without `runId`, it selects the newest interruptible run. A terminal run is
 returned unchanged, and a thread with no active provider turn returns
 `no_active_run`.
+
+### Other environments
+
+`t3_environment_list` returns this environment and the others a connected client
+can reach, each with a status. `t3_environment_catalog` returns one other
+environment's projects and provider instances. `t3_thread_launch`,
+`t3_thread_read`, and `t3_thread_wait` accept an optional `environmentId`; every
+other tool acts on the calling environment only, and ids never carry across.
+
+These calls are carried by a client, not by a server-to-server link; see
+[remote architecture](../internals/remote.md#agents-reach-other-environments-through-a-client).
+They fail with `environment_not_connected` when no client connected to both is
+running, and with `environment_offline`, `environment_unauthorized`, or
+`environment_incompatible` when the client's own connection to the target is in
+that state. A remote read covers the recent window the target serves to
+clients, and a remote wait re-reads that state until the run settles.
 
 ## Delegated Task Lifecycle
 

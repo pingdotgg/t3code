@@ -94,8 +94,8 @@ import {
 import * as Metrics from "../observability/Metrics.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 
-const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
-const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
+export const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
+export const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
 // Events that can make a delegated task terminal: the parent's task record,
 // and the child's runs, nested tasks, and pending provider background work.
 const TASK_WAKE_EVENTS = [
@@ -107,9 +107,9 @@ const TASK_WAKE_EVENTS = [
 /** A person answers the card, so a slower poll is plenty. */
 const SECRET_REQUEST_POLL_INTERVAL_MS = 500;
 const DEFAULT_THREAD_LIST_LIMIT = 50;
-const DEFAULT_THREAD_READ_LIMIT = 50;
-const DEFAULT_THREAD_RUN_LIMIT = 10;
-const DEFAULT_THREAD_ITEM_MAX_CHARS = 20_000;
+export const DEFAULT_THREAD_READ_LIMIT = 50;
+export const DEFAULT_THREAD_RUN_LIMIT = 10;
+export const DEFAULT_THREAD_ITEM_MAX_CHARS = 20_000;
 
 interface ResolvedTarget {
   readonly modelSelection: ModelSelection;
@@ -278,6 +278,29 @@ function providerConstraints(
     constraints.push("Provider is not authenticated.");
   }
   return constraints;
+}
+
+/** One provider instance as agents see it when choosing a launch or delegation target. */
+export function providerCapability(
+  provider: ServerProvider,
+  supportsOrchestrationV2: boolean,
+): OrchestratorMcpCapabilitiesResult["providers"][number] {
+  const constraints = providerConstraints(provider, supportsOrchestrationV2);
+  return {
+    providerInstanceId: provider.instanceId,
+    driverKind: provider.driver,
+    displayName: provider.displayName ?? null,
+    models: provider.models.map((model) => ({
+      id: model.slug,
+      label: model.name ?? null,
+      ...(model.capabilities?.optionDescriptors === undefined
+        ? {}
+        : { options: model.capabilities.optionDescriptors }),
+    })),
+    canRunChildTask: constraints.length === 0,
+    canRunCrossProviderChildTask: constraints.length === 0,
+    constraints: [...constraints],
+  };
 }
 
 /**
@@ -696,7 +719,7 @@ function listItemFromShell(
   };
 }
 
-function threadDetail(
+export function threadDetail(
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "runtimeRequests">,
   itemCount: number,
   shell: OrchestrationV2ThreadShell,
@@ -744,7 +767,7 @@ function threadDetail(
   };
 }
 
-function threadRun(run: OrchestrationV2Run): OrchestratorMcpThreadRun {
+export function threadRun(run: OrchestrationV2Run): OrchestratorMcpThreadRun {
   return {
     runId: run.id,
     ordinal: run.ordinal,
@@ -826,7 +849,7 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
   }
 }
 
-function timelineItem(input: {
+export function timelineItem(input: {
   readonly row: OrchestrationV2ThreadProjection["visibleTurnItems"][number];
   readonly maxChars: number;
   readonly textOffset?: number;
@@ -1827,28 +1850,9 @@ const make = Effect.gen(function* () {
           inheritedModel: parent?.thread.modelSelection.model ?? null,
           runtimeMode: limits.runtimeMode,
           interactionMode: limits.interactionMode,
-          providers: providers.map((provider) => {
-            const constraints = providerConstraints(
-              provider,
-              orchestrationCapableInstanceIds.has(provider.instanceId),
-            );
-            return {
-              providerInstanceId: provider.instanceId,
-              driverKind: provider.driver,
-              displayName: provider?.displayName ?? null,
-              models:
-                provider?.models.map((model) => ({
-                  id: model.slug,
-                  label: model.name ?? null,
-                  ...(model.capabilities?.optionDescriptors === undefined
-                    ? {}
-                    : { options: model.capabilities.optionDescriptors }),
-                })) ?? [],
-              canRunChildTask: constraints.length === 0,
-              canRunCrossProviderChildTask: constraints.length === 0,
-              constraints: [...constraints],
-            };
-          }),
+          providers: providers.map((provider) =>
+            providerCapability(provider, orchestrationCapableInstanceIds.has(provider.instanceId)),
+          ),
           features: {
             appOwnedSubagents: true,
             asyncPolling: true,

@@ -213,6 +213,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       "server"`) and streams them over `/api/preview-stream`. Clients
       without a local browser runtime open server tabs here. */
   serverBrowser: Schema.optionalKey(Schema.Boolean),
+  /** Server accepts `peerEnvironments.connect`, so a client connected to
+      several environments can carry this one's agent requests to the others.
+      Absent on older servers, where clients must not open that stream. */
+  peerEnvironments: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

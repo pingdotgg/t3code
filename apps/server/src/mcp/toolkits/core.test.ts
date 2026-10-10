@@ -112,6 +112,8 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
     }
   }
   expect(names.has("t3_thread_launch")).toBe(true);
+  expect(names.has("t3_environment_list")).toBe(true);
+  expect(names.has("t3_environment_catalog")).toBe(true);
   expect(names.has("t3_thread_start")).toBe(false);
 });
 

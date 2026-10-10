@@ -4,6 +4,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import {
   ContextTransferId,
+  EnvironmentId,
   IsoDateTime,
   MessageId,
   NodeId,
@@ -339,6 +340,10 @@ export type OrchestratorMcpThreadListResult = typeof OrchestratorMcpThreadListRe
 
 export const OrchestratorMcpThreadReadInput = Schema.Struct({
   threadId: ThreadId,
+  environmentId: Schema.optional(EnvironmentId).annotateKey({
+    description:
+      "Read from another connected environment (see t3_environment_list). Omit for this environment. Thread ids are per-environment.",
+  }),
   itemId: Schema.optional(TurnItemId),
   textOffset: Schema.optional(NonNegativeInt),
   view: Schema.optional(Schema.Literals(["messages", "activity"])),
@@ -443,6 +448,10 @@ export type OrchestratorMcpThreadSendResult = typeof OrchestratorMcpThreadSendRe
 
 export const OrchestratorMcpThreadWaitInput = Schema.Struct({
   threadId: ThreadId,
+  environmentId: Schema.optional(EnvironmentId).annotateKey({
+    description:
+      "Wait on a thread in another connected environment (see t3_environment_list). Omit for this environment. Thread ids are per-environment.",
+  }),
   runId: Schema.optional(RunId),
   timeoutMs: Schema.optional(Schema.Number),
 });
@@ -664,6 +673,10 @@ export class OrchestratorMcpFailure extends Schema.TaggedError<OrchestratorMcpFa
       "orchestration_error",
       "thread_credential_required",
       "target_required",
+      "environment_not_connected",
+      "environment_offline",
+      "environment_unauthorized",
+      "environment_incompatible",
     ]),
     message: Schema.String,
   },

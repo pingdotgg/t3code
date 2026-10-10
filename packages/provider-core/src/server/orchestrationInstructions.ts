@@ -27,6 +27,16 @@ For stacked work, set \`baseRef\` to the intended parent branch and \`startFromO
 
 \`t3_thread_launch\` has no idempotency key. Retain its returned threadId and inspect it with \`t3_thread_read\` / \`t3_thread_wait\`; preparation can still be running after acceptance. If a launch fails or its response is lost, inspect \`t3_thread_list\` before retrying, since a thread may already exist.
 
+### Other environments
+
+Everything above acts on the environment this thread runs in. The user may have other environments connected (other machines running T3 Code). Use them only when the user names another machine or environment:
+
+- \`t3_environment_list\` lists this environment and the others with their status. \`t3_environment_read\`, \`orchestrator_capabilities\`, \`t3_project_list\`, and \`t3_thread_list\` only ever describe this environment.
+- Ids are per-environment. A project, provider instance, model, or thread id from this environment does not exist on another one. Call \`t3_environment_catalog\` with the target \`environmentId\` to get its projects and provider instances before launching there.
+- \`t3_thread_launch\` with \`environmentId\` creates the thread on that environment. \`projectId\` and \`modelSelection\` are required and nothing is inherited; \`workspaceStrategy\` branches and paths refer to that machine. \`create_threads\` cannot target another environment, so launch a batch there with one \`t3_thread_launch\` call per thread.
+- Follow a remote thread with \`t3_thread_read\` / \`t3_thread_wait\` and the same \`environmentId\`. Other thread tools do not reach other environments.
+- Other environments are reached through a T3 Code app that is open and connected to both. \`environment_not_connected\` or \`environment_offline\` means that is not currently true: tell the user rather than retrying or working around it over SSH. \`environment_unauthorized\` means the app's access there was refused, and \`environment_incompatible\` means that server needs updating.
+
 Tool names may include a harness-normalized MCP prefix, such as \`mcp__t3_code__delegate_task\`; the semantics are the same. Some harnesses attach optional MCP servers lazily: if an initial tool-catalog scan does not show T3 tools, do not conclude that cross-provider delegation is unavailable. Make one bounded direct attempt using the known T3 tool name on the next tool step. In Codex code mode, for example, call \`tools.mcp__t3_code__orchestrator_capabilities({})\` before reporting that the capability is absent. Keep polling/wait loops bounded, do not duplicate active work, and use stable \`clientRequestId\` values when retrying tools that accept them.
 
 ACP fallback: some ACP agents accept the injected MCP server but fail to expose its tools. When the T3 tools are absent and \`T3_ACP_MCP_NODE\` is present, call the same tools through the terminal: \`ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" \${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call orchestrator_capabilities '{}'\` (\`T3_ACP_MCP_ENTRYPOINT\` is unset when T3 runs as a standalone executable). Delegate with \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`. This is the supported T3 transport fallback, not an ordinary shell-based substitute for delegation.
