@@ -1,4 +1,5 @@
 import * as Cache from "effect/Cache";
+import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -37,6 +38,7 @@ import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { resolveProjectFileBackedSetting } from "@t3tools/shared/projectSettings";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+import { removeEmptyDirectory } from "./removeEmptyDirectory.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
 import {
   parseRemoteNames,
@@ -3792,16 +3794,41 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       input.branch,
     ]);
 
+  /**
+   * Unlinks links under `target` without following them and removes the
+   * directories that leaves empty. Returns false when anything else remains.
+   */
+  const removeLeftoverLinks = (
+    target: string,
+  ): Effect.Effect<boolean, PlatformError.PlatformError | Cause.UnknownError> =>
+    Effect.gen(function* () {
+      if (Option.isSome(yield* fileSystem.readLink(target).pipe(Effect.option))) {
+        yield* fileSystem.remove(target);
+        return true;
+      }
+      if ((yield* fileSystem.stat(target)).type !== "Directory") return false;
+      let empty = true;
+      for (const name of yield* fileSystem.readDirectory(target)) {
+        if (!(yield* removeLeftoverLinks(path.join(target, name)))) empty = false;
+      }
+      // Only an empty directory goes, so files written since the listing stay.
+      return empty && (yield* removeEmptyDirectory(target));
+    });
+
   const removeWorktree: GitVcsDriver.GitVcsDriver["Service"]["removeWorktree"] = Effect.fn(
     "removeWorktree",
   )(function* (input) {
+    // Git also accepts a worktree's short name, which can match a different
+    // folder than the path resolved against `input.cwd`. Resolve it once so Git
+    // and the leftover cleanup below act on the same directory.
+    const target = path.resolve(input.cwd, input.path);
     // Git refuses to remove a worktree with untracked files unless forced, but
     // its check honors `status.showUntrackedFiles=no` and would delete them.
     const args = ["-c", "status.showUntrackedFiles=normal", "worktree", "remove"];
     if (input.force) {
       args.push("--force");
     }
-    args.push(input.path);
+    args.push(target);
     const result = yield* executeGitWithStableDiagnostics(
       "GitVcsDriver.removeWorktree",
       input.cwd,
@@ -3815,6 +3842,28 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       },
     );
     if (result.exitCode === 0) {
+      // Git for Windows never descends into NTFS junctions, such as pnpm's
+      // node_modules links. It reports success but leaves them and their parent
+      // directories behind, so a resumed thread would find a stub instead of
+      // recreating its checkout. Git has already unregistered the worktree, so
+      // anything left here is logged rather than returned: a retry could never
+      // succeed.
+      if (yield* fileSystem.exists(target).pipe(Effect.orElseSucceed(() => false))) {
+        const removed = yield* removeLeftoverLinks(target).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("GitVcsDriver.removeWorktree: failed to delete leftover links", {
+              path: target,
+              error,
+            }).pipe(Effect.as(true)),
+          ),
+        );
+        if (!removed) {
+          yield* Effect.logWarning(
+            "GitVcsDriver.removeWorktree: kept files written after git removed the worktree",
+            { path: target },
+          );
+        }
+      }
       return;
     }
     // Threads can share a worktree path, and worktrees get removed or pruned
