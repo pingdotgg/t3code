@@ -1,9 +1,12 @@
 import type {
+  OrchestrationV2ContextTransfer,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadShell,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+
+import { resolveActiveThreadRun } from "./threadWorkflows.ts";
 
 export type ThreadRelationshipKind = "parent" | "fork" | "subagent" | "transfer";
 
@@ -39,6 +42,86 @@ export function resolveMergeBackTargetThreadId(
   return projection.thread.forkedFrom?.type === "run"
     ? projection.thread.forkedFrom.threadId
     : projection.thread.lineage.parentThreadId;
+}
+
+/**
+ * The merge-back the next send on this thread will carry, or null. Mirrors the
+ * server, which consumes only the newest pending merge-back targeting the thread.
+ */
+export function resolvePendingMergeBackTransfer(
+  projection: Pick<OrchestrationV2ThreadProjection, "contextTransfers" | "thread"> | null,
+): OrchestrationV2ContextTransfer | null {
+  if (projection === null) return null;
+  let latest: OrchestrationV2ContextTransfer | null = null;
+  for (const transfer of projection.contextTransfers) {
+    if (
+      transfer.type !== "merge_back" ||
+      transfer.status !== "pending" ||
+      transfer.targetThreadId !== projection.thread.id
+    ) {
+      continue;
+    }
+    if (
+      latest === null ||
+      DateTime.toEpochMillis(transfer.updatedAt) >= DateTime.toEpochMillis(latest.updatedAt)
+    ) {
+      latest = transfer;
+    }
+  }
+  return latest;
+}
+
+export interface PendingMergeBack {
+  readonly transfer: OrchestrationV2ContextTransfer;
+  /** Distinct forks with a pending merge-back here. The server rejects sends while this exceeds 1. */
+  readonly forkCount: number;
+  /** A run is active. The server only consumes the transfer on a send made once the thread is idle. */
+  readonly waitsForIdle: boolean;
+}
+
+/** The pending merge-back on this thread, with what keeps the next send from carrying it. */
+export function resolvePendingMergeBack(
+  projection: Pick<OrchestrationV2ThreadProjection, "contextTransfers" | "runs" | "thread"> | null,
+): PendingMergeBack | null {
+  const transfer = resolvePendingMergeBackTransfer(projection);
+  if (projection === null || transfer === null) return null;
+  const forks = new Set<ThreadId>();
+  for (const candidate of projection.contextTransfers) {
+    if (
+      candidate.type === "merge_back" &&
+      candidate.status === "pending" &&
+      candidate.targetThreadId === projection.thread.id
+    ) {
+      forks.add(candidate.sourceThreadId);
+    }
+  }
+  return {
+    transfer,
+    forkCount: forks.size,
+    waitsForIdle: resolveActiveThreadRun(projection) !== null,
+  };
+}
+
+/** Copy for the composer notice shown while a merge-back waits for a send. */
+export function pendingMergeBackNotice(input: {
+  readonly sourceThreadTitle: string | null;
+  readonly forkCount: number;
+  readonly waitsForIdle: boolean;
+}) {
+  if (input.forkCount > 1) {
+    return {
+      blocked: true,
+      title: `Merged back from ${input.forkCount} forks`,
+      description: "Sending will fail while more than one merged fork is pending",
+    };
+  }
+  return {
+    blocked: false,
+    title: `Merged back from ${input.sourceThreadTitle ?? "a fork"}`,
+    description: input.waitsForIdle
+      ? "Its context will be included in the next message you send once this thread is idle"
+      : "Its context will be included in your next message",
+  };
 }
 
 function edgeKey(edge: ThreadRelationshipEdge): string {
