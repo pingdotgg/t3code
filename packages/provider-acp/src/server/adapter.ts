@@ -31,6 +31,7 @@ import {
   type ThreadTokenUsageSnapshot,
   type ThreadId,
 } from "@t3tools/contracts";
+import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
@@ -1486,6 +1487,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const agentScope = yield* AgentScope;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -6020,6 +6022,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               Effect.provideService(Scope.Scope, runtimeScope),
               Effect.provideService(Crypto.Crypto, crypto),
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+              Effect.provideService(AgentScope, agentScope),
+              Effect.provideService(AgentScopeThreadId, threadId ?? undefined),
             );
         });
 
@@ -6099,6 +6103,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 Effect.provideService(Scope.Scope, replacementScope),
                 Effect.provideService(Crypto.Crypto, crypto),
                 Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+                Effect.provideService(AgentScope, agentScope),
+                Effect.provideService(AgentScopeThreadId, threadId ?? undefined),
               );
             // Session setup may publish commands before it returns. Buffer those
             // notifications, but do not expose request or extension handlers

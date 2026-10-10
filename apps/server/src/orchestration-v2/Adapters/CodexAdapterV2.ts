@@ -30,6 +30,7 @@ import {
   type ProviderSetupError,
 } from "@t3tools/contracts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { dynamicToolTitle } from "@t3tools/shared/toolActivity";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
@@ -1357,8 +1358,16 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
   readonly cwd?: string | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly extendEnv?: boolean | undefined;
+  readonly threadId?: string | undefined;
 }) {
-  const spawnCommand = yield* resolveSpawnCommand(input.command, input.args, {
+  const launch = yield* (yield* AgentScope).wrap({
+    command: input.command,
+    args: input.args,
+    name: "codex",
+    threadId: input.threadId,
+    env: input.env,
+  });
+  const spawnCommand = yield* resolveSpawnCommand(launch.command, launch.args, {
     ...(input.env === undefined ? {} : { env: input.env }),
     ...(input.extendEnv === undefined ? {} : { extendEnv: input.extendEnv }),
   });
@@ -1495,6 +1504,7 @@ export const layerAppServerClientFactory: Layer.Layer<
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
+    const agentScope = yield* AgentScope;
 
     return CodexAppServerClientFactory.of({
       open: (input) =>
@@ -1510,7 +1520,8 @@ export const layerAppServerClientFactory: Layer.Layer<
               resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
             ),
             env: environment,
-          });
+            threadId: input.threadId,
+          }).pipe(Effect.provideService(AgentScope, agentScope));
           const handle = yield* spawner.spawn(command).pipe(
             Effect.provideService(Scope.Scope, scope),
             Effect.mapError(

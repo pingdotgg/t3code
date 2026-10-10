@@ -29,6 +29,8 @@ export interface MuseSdkHost {
 
 export interface MuseSdkHostOptions {
   readonly binaryPath: string;
+  /** Arguments before the serve arguments, for a launcher in front of the binary. */
+  readonly launchArgs?: ReadonlyArray<string>;
   readonly cwd?: string;
   readonly environment?: NodeJS.ProcessEnv;
   readonly runtimeMode?: RuntimeMode;
@@ -89,7 +91,7 @@ export async function createMuseSdkHost(
   options.signal?.throwIfAborted();
   const handshake = spawn({
     command: options.binaryPath,
-    args: museServeArgs(options),
+    args: [...(options.launchArgs ?? []), ...museServeArgs(options)],
     ...(options.cwd ? { cwd: options.cwd } : {}),
     // Callers pass an environment already built with makeMuseEnvironment.
     env: options.environment ?? makeMuseEnvironment(),

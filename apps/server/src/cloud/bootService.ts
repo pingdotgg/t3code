@@ -106,13 +106,22 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     // Let the launcher mark an explicit stop before it signals the server.
     // systemd still SIGKILLs the whole cgroup if graceful shutdown times out.
     "KillMode=mixed",
-    // Agent tool calls run as children of the server, so they share this cgroup.
-    // With the systemd default of OOMPolicy=stop, the kernel killing one greedy
-    // child stops the whole unit: the server, every live agent, and the user's
-    // connection. Keep running and let Restart=always cover the main process.
+    // Agents and terminals run in their own scopes in app-t3code-agents.slice
+    // (see process/agentScope.ts). Short helper commands still share this
+    // cgroup, and with the systemd default of OOMPolicy=stop, the kernel
+    // killing one of them stops the whole unit. Keep running and let
+    // Restart=always cover the main process.
     "OOMPolicy=continue",
     "Restart=always",
     "RestartSec=5",
+    // The agents slice is a sibling in app.slice, so these weights keep the
+    // server responsive while agents saturate CPU or disk.
+    "CPUWeight=1000",
+    "IOWeight=1000",
+    // systemd-oomd only honors this when the cgroup it watches is owned by the
+    // same user. Distros watch user-1000.slice, which root owns, so there it is
+    // ignored. The agent scopes are what keep oomd off the server.
+    "ManagedOOMPreference=avoid",
     `StandardOutput=append:${escapeSystemdSpecifiers(plan.logPath)}`,
     `StandardError=append:${escapeSystemdSpecifiers(plan.logPath)}`,
     "",

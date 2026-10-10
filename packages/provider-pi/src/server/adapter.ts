@@ -24,6 +24,7 @@
  * updates has no matching T3 surface and is ignored.
  */
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import {
   defaultInstanceIdForDriver,
@@ -387,6 +388,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
   options: PiAdapterV2Options,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const agentScope = yield* AgentScope;
   const fileSystem = yield* FileSystem.FileSystem;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
@@ -440,9 +442,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         extensionPath,
         runtimeMode: input.runtimePolicy.runtimeMode,
       });
-      const connection: PiRpcConnection = yield* makePiRpcConnection({
+      const scopedLaunch = yield* agentScope.wrap({
         command: options.settings.binaryPath || "pi",
         args: launch.args,
+        name: "pi",
+        threadId: input.threadId,
+        env: launch.env,
+      });
+      const connection: PiRpcConnection = yield* makePiRpcConnection({
+        command: scopedLaunch.command,
+        args: scopedLaunch.args,
         cwd,
         env: launch.env,
       }).pipe(
