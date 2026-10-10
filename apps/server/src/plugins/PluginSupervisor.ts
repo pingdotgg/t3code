@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off -- Each plugin child gets an extra fd 3 pipe, which needs Node's child_process.
 /**
  * Runs each enabled plugin in its own child process.
  *

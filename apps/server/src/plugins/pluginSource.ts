@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off -- Digesting opens every file with O_NOFOLLOW, which Effect's FileSystem cannot ask for.
 /**
  * Digest of a plugin directory's exact bytes, which consent binds to.
  *

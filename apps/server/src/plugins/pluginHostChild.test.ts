@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off -- Spawns the real plugin host child to talk to it over fd 3.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeReadline from "node:readline";
 import type * as NodeStream from "node:stream";
