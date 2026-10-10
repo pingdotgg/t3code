@@ -427,6 +427,18 @@ function isGoalCommand(message: {
   return message.attachments.length === 0 && /^\/goal(?:\s|$)/u.test(message.text.trim());
 }
 
+/**
+ * A bare skill or slash command with at most one argument, such as
+ * "$wayfinder 769". The title model only sees this first message and cannot
+ * tell what it refers to, so the title is regenerated after the first run.
+ */
+function isBareCommandMessage(message: {
+  readonly text: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+}): boolean {
+  return message.attachments.length === 0 && /^[$/][\w:-]+(?:\s+\S+)?$/u.test(message.text.trim());
+}
+
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
 
 function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
@@ -2795,6 +2807,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             archivedAt: now,
             titleRegeneration: null,
             pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
+            titleRefreshMessageId: null,
             updatedAt: now,
           };
         case "thread.unarchive":
@@ -2989,6 +3002,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : command.regenerateTitle === false || command.title !== undefined
                 ? { titleRegeneration: null }
                 : {}),
+            // A rename or an explicit regeneration supersedes the post-run refresh.
+            ...(command.regenerateTitle === true || command.title !== undefined
+              ? { titleRefreshMessageId: null }
+              : {}),
             updatedAt: now,
           };
         }
@@ -4641,6 +4658,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...projection.thread,
           title: command.titleSeed ?? projection.thread.title,
           titleRegeneration: { requestId: command.commandId, startedAt: now },
+          ...(isBareCommandMessage(command) ? { titleRefreshMessageId: command.messageId } : {}),
           updatedAt: now,
         };
         yield* emit(
@@ -11036,6 +11054,44 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : threadDispatch.withLock(parentThreadId, dispatch);
     });
 
+  // The run for a thread's bare-command first message has ended. A completed
+  // run regenerates the title from the conversation so the agent's reply
+  // supplies the subject; any other ending just forgets the pending refresh.
+  const refreshTitleAfterFirstRun = (run: OrchestrationV2Run) =>
+    Effect.gen(function* () {
+      const thread = yield* projectionStore.getThread(run.threadId);
+      const messageId = thread.titleRefreshMessageId;
+      if (messageId == null) return;
+      // A steering restart replaces run.userMessageId, so match the marked
+      // message's own run instead.
+      const { messages } = yield* projectionStore.getThreadRecords(run.threadId, ["messages"], {
+        messageIds: [messageId],
+      });
+      if (messages[0]?.runId !== run.id) return;
+      const now = yield* DateTime.now;
+      const commandId = CommandId.make(`command:system:title-refresh:${run.id}`);
+      // Archive and delete clear the marker, so only a live thread gets here.
+      const refresh = run.status === "completed";
+      yield* writeSystemEvents(
+        [
+          {
+            type: "thread.metadata-updated",
+            threadId: thread.id,
+            providerInstanceId: thread.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              ...thread,
+              titleRefreshMessageId: null,
+              ...(refresh ? { titleRegeneration: { requestId: commandId, startedAt: now } } : {}),
+            },
+          },
+        ],
+        refresh
+          ? [pendingThreadTitleGenerationEffect(commandId, thread.id, { type: "regenerate" })]
+          : [],
+      );
+    });
+
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
       const threadId = stored.event.threadId;
@@ -11050,6 +11106,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId,
           finalizeDelegatedCompletionDelivery(threadId, stored.event.payload.id),
         );
+        yield* threadDispatch.withLock(threadId, refreshTitleAfterFirstRun(stored.event.payload));
       }
       yield* threadDispatch
         .withLock(
