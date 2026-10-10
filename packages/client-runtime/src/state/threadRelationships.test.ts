@@ -188,11 +188,17 @@ describe("thread relationships", () => {
   });
 
   it.each([
-    ["running", "running"],
-    [null, "completed"],
+    ["running", "running", "running"],
+    ["waiting", "completed", "waiting"],
+    [null, "queued", "queued"],
+    [null, "failed", "failed"],
+    [null, "interrupted", "interrupted"],
+    [null, "cancelled", "cancelled"],
+    [null, "completed", "completed"],
+    [null, "rolled_back", "interrupted"],
   ])(
-    "shows a subagent whose child activity is %s as %s after its delegated task settled",
-    (childActivity, expected) => {
+    "shows child activity %s and latest status %s as %s after its delegated task settled",
+    (childActivity, childStatus, expected) => {
       const parent = ThreadId.make("thread-parent");
       const child = ThreadId.make("thread-child");
       const graph = deriveThreadRelationshipGraph({
@@ -200,8 +206,9 @@ describe("thread relationships", () => {
           { id: parent, status: "completed", forkedFrom: null, lineage: { parentThreadId: null } },
           {
             id: child,
-            status: childActivity ?? "completed",
+            status: childStatus,
             activityRunStatus: childActivity,
+            latestRunId: "run-child-followup",
             forkedFrom: null,
             lineage: { parentThreadId: parent, relationshipToParent: "subagent" },
           },
