@@ -351,7 +351,6 @@ const decodeRow = (row: ScheduledTaskRow, origin: WebhookOrigin | null = null) =
     }),
   );
 
-/** Select poll candidates before decoding their schedules or other JSON payloads. */
 /** Decodes rows for background readers, skipping corrupt ones so one bad row cannot stall them. */
 const decodeTaskRowsLeniently = Effect.fn("ScheduledTaskService.decodeTaskRowsLeniently")(
   function* (rows: ReadonlyArray<ScheduledTaskRow>) {
@@ -381,6 +380,7 @@ const decodeTaskRowsLeniently = Effect.fn("ScheduledTaskService.decodeTaskRowsLe
   },
 );
 
+/** Select poll candidates before decoding their schedules or other JSON payloads. */
 export const listDueTasks = Effect.fn("ScheduledTaskService.listDueTasks")(function* (
   now: DateTime.DateTime,
 ) {
