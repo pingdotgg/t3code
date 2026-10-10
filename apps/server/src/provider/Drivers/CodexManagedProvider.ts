@@ -124,8 +124,9 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
             effective.environment,
             managedAuth,
           );
+          // The launch environment carries only the bridge credential, never the token.
           const models = yield* chatGptModels(
-            effective.environment.ACCESS_TOKEN!,
+            (yield* runtime.auth.access).accessToken,
             draft.models,
           ).pipe(Effect.provideService(HttpClient.HttpClient, http));
           return { ...draft, models };
