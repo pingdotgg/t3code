@@ -1395,7 +1395,13 @@ export default function ThreadTerminalDrawer({
     onHeightChangeRef.current = onHeightChange;
   }, [onHeightChange]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    // A render mid-drag (the window cap moved) must not replace the live height.
+    const resizeState = resizeStateRef.current;
+    if (resizeState) {
+      resizeState.drawer?.style.setProperty("height", `${drawerHeightRef.current}px`);
+      return;
+    }
     drawerHeightRef.current = drawerHeight;
   }, [drawerHeight]);
 

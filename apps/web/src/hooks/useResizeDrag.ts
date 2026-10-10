@@ -82,6 +82,8 @@ export function useResizeDrag<T extends HTMLElement>(
   };
 
   return {
+    /** Re-applies the pointer position to an active drag, e.g. after its bounds change. */
+    refresh: flush,
     onPointerDown(event: PointerEvent<T>) {
       if (event.button !== 0 || drag.current) return;
       const session = start(event);
