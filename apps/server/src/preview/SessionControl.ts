@@ -11,12 +11,19 @@ export class BrowserControlInterrupted extends Error {
   }
 }
 
+const settle = (work: Promise<unknown>) =>
+  work.then(
+    () => undefined,
+    () => undefined,
+  );
+
 /** Reserves control immediately, but drains running work before the new owner can act. */
 export class SessionControl {
   readonly agentId: string | null;
   private readonly onGenerationChange: () => void;
   private tail: Promise<unknown> = Promise.resolve();
   private pending: Promise<void> = Promise.resolve();
+  private handoff: Promise<void> = Promise.resolve();
   private owner: string | null = null;
   private epoch = 0;
   private closed = false;
@@ -45,11 +52,15 @@ export class SessionControl {
 
   /** An action can respond before its navigation commits, while later actions still wait. */
   track(work: Promise<unknown>) {
-    const settled = work.then(
-      () => undefined,
-      () => undefined,
-    );
-    this.pending = Promise.all([this.pending, settled]).then(() => undefined);
+    this.pending = Promise.all([this.pending, settle(work)]).then(() => undefined);
+  }
+
+  /**
+   * A human's navigation runs without holding the queue, so their next input, such as a
+   * corrected URL, can replace a slow one. Control only changes hands once it settles.
+   */
+  trackUntilHandoff(work: Promise<unknown>) {
+    this.handoff = Promise.all([this.handoff, settle(work)]).then(() => undefined);
   }
 
   private assertOpen() {
@@ -141,7 +152,10 @@ export class SessionControl {
       );
     }
     this.changeOwner(null);
-    await this.enqueue(afterDrain);
+    await this.enqueue(async () => {
+      await this.handoff;
+      await afterDrain();
+    });
   }
 
   async disconnect(viewerId: string, afterDrain?: () => Promise<void>) {

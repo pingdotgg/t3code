@@ -376,6 +376,36 @@ it.live.each([
   ).pipe(Effect.provide(layer)),
 );
 
+it.live.each([
+  { method: "goto" as const, message: { type: "navigate", url: "http://10.255.255.1/" } },
+  { method: "goBack" as const, message: { type: "history", delta: -1 } },
+  { method: "goForward" as const, message: { type: "history", delta: 1 } },
+  { method: "reload" as const, message: { type: "reload" } },
+])(
+  "a viewer $method that never commits does not hold back the viewer's next input",
+  ({ method, message }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { browser, tabId } = yield* ready;
+        const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+        yield* viewer.input({ type: "takeControl" });
+        const hung = Promise.withResolvers<void>();
+        contexts[0]!.page[method].mockImplementationOnce(() => hung.promise);
+        yield* Effect.addFinalizer(() => Effect.sync(() => hung.resolve()));
+        yield* viewer.input(message);
+        yield* viewer.input({ type: "navigate", url: "http://localhost:5173/fixed" });
+        yield* viewer.input({ type: "text", text: "hello" });
+        expect(contexts[0]!.page.goto).toHaveBeenLastCalledWith(
+          "http://localhost:5173/fixed",
+          expect.objectContaining({ waitUntil: "commit" }),
+        );
+        expect(contexts[0]!.sessions.at(-1)!.send).toHaveBeenCalledWith("Input.insertText", {
+          text: "hello",
+        });
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
 it.live("enforces provider ownership and explicit targets when a session has multiple tabs", () =>
   Effect.scoped(
     Effect.gen(function* () {
