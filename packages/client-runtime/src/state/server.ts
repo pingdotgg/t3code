@@ -21,7 +21,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import {
   createAtomCommandScheduler,
@@ -1076,6 +1076,14 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:process-resource-history",
       tag: WS_METHODS.serverGetProcessResourceHistory,
     }),
+    scheduledTaskWebhookDeliveries: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:scheduled-task:webhook-deliveries",
+      tag: WS_METHODS.scheduledTasksListWebhookDeliveries,
+    }),
+    scheduledTaskWebhookDelivery: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:scheduled-task:webhook-delivery",
+      tag: WS_METHODS.scheduledTasksGetWebhookDelivery,
+    }),
     /** Live scheduled-task list: snapshot on subscribe, fresh list after every server-side change. */
     scheduledTasksLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:scheduled-tasks:live",
@@ -1083,11 +1091,33 @@ export function createServerEnvironmentAtoms<R, E>(
     }),
     // A cold transcript scan is measured in seconds, so keep the result around
     // long enough that switching windows or re-rendering does not rescan.
+    // Slow sources answer from cache first: that summary stays on screen, with
+    // the query waiting, until one `awaitRefresh` request replaces it.
     usageSummary: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:usage-summary",
       tag: WS_METHODS.serverGetUsageSummary,
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => usageScanSettingsAtom(environmentId),
+      execute: (input, emit) =>
+        request(WS_METHODS.serverGetUsageSummary, input).pipe(
+          Effect.flatMap((summary) =>
+            summary.sources.some((source) => source.refreshing === true)
+              ? emit(summary).pipe(
+                  Effect.andThen(
+                    request(WS_METHODS.serverGetUsageSummary, { ...input, awaitRefresh: true }),
+                  ),
+                  // The cached summary is still the best data, and a failure
+                  // would read as the environment not reporting usage at all.
+                  Effect.catch((error) =>
+                    Effect.logWarning("Could not refresh slow usage sources.").pipe(
+                      Effect.annotateLogs({ ...safeErrorLogAttributes(error) }),
+                      Effect.as(summary),
+                    ),
+                  ),
+                )
+              : Effect.succeed(summary),
+          ),
+        ),
     }),
     resourceTelemetry: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:resource-telemetry",
@@ -1284,6 +1314,23 @@ export function createServerEnvironmentAtoms<R, E>(
     runScheduledTaskNow: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:scheduled-task:run-now",
       tag: WS_METHODS.scheduledTasksRunNow,
+    }),
+    rotateScheduledTaskWebhookToken: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-task:rotate-webhook-token",
+      tag: WS_METHODS.scheduledTasksRotateWebhookToken,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    // Off the config lane: answering a card must not queue behind settings
+    // edits. One answer per card at a time.
+    answerSecretRequest: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:secrets:answer-request",
+      tag: WS_METHODS.secretsAnswerRequest,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.threadId, input.turnItemId]),
+      },
     }),
     refreshUsageRates: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:refresh-usage-rates",

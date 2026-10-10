@@ -98,7 +98,7 @@ function harness() {
     linked: true,
     deliveryFailure: null as FcmClient.FcmClientError | null,
   };
-  const services = Layer.mergeAll(
+  const layerServices = Layer.mergeAll(
     NodeCryptoLayer.layer,
     Layer.succeed(RelayConfiguration.RelayConfiguration, config),
     Layer.succeed(FcmDeliveryQueueSender.FcmDeliveryQueueSender, {
@@ -171,6 +171,8 @@ function harness() {
             : [],
         ),
       listForUser: () => Effect.succeed([]),
+      findActiveManagedForEnvironment: () => Effect.succeed([]),
+      setHoldWebhooksWhileOffline: () => Effect.void,
       revokeForUser: () => Effect.succeed(false),
       getForUser: (input) =>
         Effect.sync(() =>
@@ -196,7 +198,7 @@ function harness() {
     queued,
     marked,
     current,
-    layer: FcmDeliveries.layer.pipe(Layer.provide(services)),
+    layer: FcmDeliveries.layer.pipe(Layer.provide(layerServices)),
     job: {
       userId: "user",
       deviceId: "phone",

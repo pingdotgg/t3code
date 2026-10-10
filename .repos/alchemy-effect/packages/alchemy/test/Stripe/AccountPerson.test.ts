@@ -71,7 +71,15 @@ test.provider(
       );
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 60_000 },
+  {
+    tags: [
+      "provider:stripe",
+      "provider:stripe:account",
+      "provider:stripe:accountperson",
+      "live",
+    ],
+    timeout: 60_000,
+  },
 );
 
 test.provider.skipIf(!CONNECT_ENABLED)(
@@ -190,7 +198,15 @@ test.provider.skipIf(!CONNECT_ENABLED)(
       const gone = yield* waitUntilGone(created.account.id, created.person.id);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:stripe",
+      "provider:stripe:account",
+      "provider:stripe:accountperson",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!CONNECT_ENABLED)(
@@ -246,5 +262,13 @@ test.provider.skipIf(!CONNECT_ENABLED)(
         after.find((person) => person.id === deployed.person.id),
       ).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:stripe",
+      "provider:stripe:account",
+      "provider:stripe:accountperson",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

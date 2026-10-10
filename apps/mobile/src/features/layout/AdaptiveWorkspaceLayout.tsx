@@ -29,7 +29,7 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 
 import {
   deriveFileInspectorPaneLayout,
@@ -61,6 +61,12 @@ import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderE
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspaceInspectorPane } from "./workspace-inspector-pane";
 import { WorkspaceContentWidthContext } from "./workspace-content-width";
+import {
+  NativeWorkspaceModeContext,
+  NativeWorkspaceInspectorContext,
+} from "../../native/v5-workspace-context";
+
+import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 
 interface AdaptiveWorkspaceContextValue {
   readonly layout: Layout;
@@ -234,7 +240,10 @@ function AdaptiveWorkspaceLayoutContent(
   },
 ) {
   const projectGroupingMode = props.projectGroupingMode;
-  const { width, height } = useWindowDimensions();
+  const nativeWorkspace = use(NativeWorkspaceModeContext);
+  const windowDimensions = useWindowDimensions();
+  const nativeMetrics = useNativeLayoutMetrics();
+  const { width, height } = nativeMetrics ?? windowDimensions;
   const pathname = props.pathname;
   const navigation = useNavigation();
   const activeRoleOwner = useRef<symbol | null>(null);
@@ -251,7 +260,10 @@ function AdaptiveWorkspaceLayoutContent(
   const [primarySidebarSearchQuery, setPrimarySidebarSearchQuery] = useState("");
   const [focusedAuxiliaryPaneRole, setFocusedAuxiliaryPaneRole] =
     useState<WorkspaceAuxiliaryPaneRole | null>(null);
-  const baseLayout = useMemo(() => deriveLayout({ width, height }), [height, width]);
+  const baseLayout = useMemo(
+    () => deriveLayout({ width, height, nativeMetrics }),
+    [height, width, nativeMetrics],
+  );
   const layout = baseLayout;
   // In split layouts the sidebar IS the thread list — it renders on every
   // route, including Home (which shows an empty-detail pane instead of the
@@ -264,7 +276,9 @@ function AdaptiveWorkspaceLayoutContent(
         viewportWidth: width,
         preferredWidth: fileInspectorPreferredWidth ?? undefined,
         reservedLeadingWidth:
-          shouldRenderPrimarySidebar && showPrimarySidebar ? (layout.listPaneWidth ?? 0) : 0,
+          shouldRenderPrimarySidebar && showPrimarySidebar
+            ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
+            : 0,
       }),
     [fileInspectorPreferredWidth, layout, showPrimarySidebar, shouldRenderPrimarySidebar, width],
   );
@@ -465,12 +479,21 @@ function AdaptiveWorkspaceLayoutContent(
   );
 
   const renderedSidebarWidth = useSharedValue(
-    panes.primarySidebarVisible ? (layout.listPaneWidth ?? 0) : 0,
+    panes.primarySidebarVisible ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0) : 0,
   );
   useEffect(() => {
-    const targetWidth = panes.primarySidebarVisible ? (layout.listPaneWidth ?? 0) : 0;
+    if (nativeWorkspace) return;
+    const targetWidth = panes.primarySidebarVisible
+      ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
+      : 0;
     renderedSidebarWidth.value = withTiming(targetWidth, WORKSPACE_PANE_TIMING);
-  }, [layout.listPaneWidth, panes.primarySidebarVisible, renderedSidebarWidth]);
+  }, [
+    nativeWorkspace,
+    layout.listPaneWidth,
+    layout.listPaneGap,
+    panes.primarySidebarVisible,
+    renderedSidebarWidth,
+  ]);
   const sidebarAnimatedStyle = useAnimatedStyle(() => ({
     opacity: Math.min(1, renderedSidebarWidth.value / 80),
     width: renderedSidebarWidth.value,
@@ -565,6 +588,19 @@ function AdaptiveWorkspaceLayoutContent(
     ],
   );
 
+  if (nativeWorkspace) {
+    return (
+      <HomeListOptionsProvider projectGroupingMode={projectGroupingMode}>
+        <AdaptiveWorkspaceContext value={contextValue}>
+          <NativeWorkspaceInspectorContext
+            value={{ render: workspaceInspector?.render, visible: inspectorColumnTargetWidth > 0 }}
+          >
+            {props.children}
+          </NativeWorkspaceInspectorContext>
+        </AdaptiveWorkspaceContext>
+      </HomeListOptionsProvider>
+    );
+  }
   return (
     <HomeListOptionsProvider projectGroupingMode={projectGroupingMode}>
       <AdaptiveWorkspaceContext.Provider value={contextValue}>

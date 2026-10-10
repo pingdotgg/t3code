@@ -64,7 +64,11 @@ test.provider(
       yield* stack.destroy();
       expect(yield* getSuppressedReasons).toEqual(["BOUNCE"]);
     }),
-  { timeout: 120_000, exclusive: true },
+  {
+    tags: ["provider:aws", "provider:aws:ses", "live"],
+    timeout: 120_000,
+    exclusive: true,
+  },
 );
 
 const getSendingEnabled = sesv2
@@ -108,5 +112,9 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { timeout: 120_000, exclusive: true },
+  {
+    tags: ["provider:aws", "provider:aws:ses", "live"],
+    timeout: 120_000,
+    exclusive: true,
+  },
 );

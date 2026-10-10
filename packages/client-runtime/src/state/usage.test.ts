@@ -8,7 +8,7 @@ import {
   type UsageSummary,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { EnvironmentPresentation } from "../connection/presentation.ts";
@@ -75,6 +75,8 @@ function harness(ids = ["a"]) {
         get(environmentId).query,
       refreshUsageRates: {
         label: "test:rates",
+        requiredScopes: () => [],
+        permissionAtom: () => Atom.make(true),
         run: (
           _registry: AtomRegistry.AtomRegistry,
           { environmentId }: { environmentId: EnvironmentId },

@@ -1,13 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import {
-  HostProcessArchitecture,
-  HostProcessEnvironment,
-  HostProcessIsExecutable,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -19,13 +16,15 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-import * as NodeCrypto from "node:crypto";
+import { HttpClient, HttpClientResponse } from "effect/http";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import { ANTIGRAVITY_AUTH_BROWSER_MARKER } from "./antigravityAuthSupport.ts";
-import type { AntigravityReleaseAsset } from "./antigravityRelease.ts";
+import {
+  resolveAntigravityReleaseAsset,
+  type AntigravityReleaseAsset,
+} from "./antigravityRelease.ts";
 
 import antigravityInitialize from "../../../../packages/effect-acp/test/fixtures/antigravity-initialize.json" with { type: "json" };
 
@@ -58,7 +57,7 @@ const zipFixtures = {
 // the host and let the fixture names follow; the suite is about install
 // mechanics, which are the same on every platform.
 const hostPlatform: NodeJS.Platform =
-  HostProcessPlatform.defaultValue() === "win32" ? "win32" : "linux";
+  HostProcess.Platform.defaultValue() === "win32" ? "win32" : "linux";
 const completeArchive = Buffer.from(
   hostPlatform === "win32" ? zipFixtures.windows : zipFixtures.complete,
   "base64",
@@ -67,14 +66,15 @@ const executableName = hostPlatform === "win32" ? "agy_acp_server.exe" : "agy_ac
 const harnessName =
   hostPlatform === "win32" ? "localharness_external.exe" : "localharness_external";
 
-function releaseAsset(
+const releaseAsset = Effect.fn("test.antigravityReleaseAsset")(function* (
   archive: Uint8Array = completeArchive,
   platform: NodeJS.Platform = hostPlatform,
 ) {
+  const crypto = yield* Crypto.Crypto;
   return {
     version: "fixture-new",
     url: "https://dl.google.com/antigravity-test.zip",
-    sha256: NodeCrypto.createHash("sha256").update(archive).digest("hex"),
+    sha256: Hex.encode(yield* crypto.digest("SHA-256", archive).pipe(Effect.orDie)),
     archiveBytes: archive.byteLength,
     executable: {
       name: platform === "win32" ? "agy_acp_server.exe" : "agy_acp_server.par",
@@ -85,7 +85,7 @@ function releaseAsset(
       bytes: Buffer.byteLength(harnessContents),
     },
   } satisfies AntigravityReleaseAsset;
-}
+});
 
 const writeRelease = Effect.fn("test.writeAntigravityRelease")(function* (
   managedDirectory: string,
@@ -143,11 +143,12 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
     options.baseDir ?? (yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-test-" }));
   const platform = options.platform ?? hostPlatform;
   const archive = options.archive ?? completeArchive;
-  const asset = options.asset === undefined ? releaseAsset(archive, platform) : options.asset;
+  const asset =
+    options.asset === undefined ? yield* releaseAsset(archive, platform) : options.asset;
   const managedDirectory = path.join(baseDir, "tools", "antigravity-acp", `${platform}-x64`);
   if (options.previous) {
     yield* writeRelease(managedDirectory, {
-      ...releaseAsset(archive, platform),
+      ...(yield* releaseAsset(archive, platform)),
       sha256: previousReleaseId,
       version: previousVersion,
     });
@@ -183,9 +184,9 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
         }),
   }).pipe(
     Effect.provideService(FileSystem.FileSystem, trackedFs),
-    Effect.provideService(HostProcessPlatform, platform),
-    Effect.provideService(HostProcessArchitecture, "x64"),
-    Effect.provideService(HostProcessEnvironment, { PATH: options.path ?? "" }),
+    Effect.provideService(HostProcess.Platform, platform),
+    Effect.provideService(HostProcess.Architecture, "x64"),
+    Effect.provideService(HostProcess.Environment, { PATH: options.path ?? "" }),
     Effect.provideService(
       HttpClient.HttpClient,
       HttpClient.make((request) =>
@@ -253,7 +254,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       });
       expect(requests).toEqual([]);
       expect(validations).toEqual([]);
-    }).pipe(Effect.provideService(HostProcessIsExecutable, true)),
+    }).pipe(Effect.provideService(HostProcess.IsExecutable, true)),
   );
 
   it.effect("verifies both files before activating a streamed download", () =>
@@ -298,9 +299,9 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       expect(yield* fs.readFileString(selected.executablePath)).toBe(serverContents);
       expect(yield* fs.readFileString(selected.harnessPath)).toBe(harnessContents);
       expect(yield* fs.readDirectory(path.join(installation.managedDirectory, "versions"))).toEqual(
-        expect.arrayContaining([previousReleaseId, releaseAsset().sha256]),
+        expect.arrayContaining([previousReleaseId, (yield* releaseAsset()).sha256]),
       );
-      expect(requests).toEqual([releaseAsset().url]);
+      expect(requests).toEqual([(yield* releaseAsset()).url]);
     }),
   );
 
@@ -466,12 +467,12 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
   );
 
   it.effect.each([
-    { name: "checksum mismatch", asset: { ...releaseAsset(), sha256: "2".repeat(64) } },
-    { name: "short download", archive: completeArchive.subarray(0, -1), asset: releaseAsset() },
+    { name: "checksum mismatch", completeAsset: { sha256: "2".repeat(64) } },
+    { name: "short download", archive: completeArchive.subarray(0, -1), completeAsset: {} },
     {
       name: "oversized download",
       archive: Buffer.concat([completeArchive, Buffer.from("extra")]),
-      asset: releaseAsset(),
+      completeAsset: {},
     },
     { name: "wrong Content-Length", contentLength: completeArchive.byteLength + 1 },
     { name: "missing harness", archive: Buffer.from(zipFixtures.missingHarness, "base64") },
@@ -479,10 +480,14 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
     { name: "path traversal", archive: Buffer.from(zipFixtures.traversal, "base64") },
     { name: "symbolic link", archive: Buffer.from(zipFixtures.symlink, "base64") },
     { name: "oversized member", archive: Buffer.from(zipFixtures.oversizedMember, "base64") },
-  ])("rejects $name before runtime validation", (options) =>
+  ])("rejects $name before runtime validation", ({ completeAsset, ...options }) =>
     Effect.gen(function* () {
+      // Pin the asset to the complete archive so the download itself is what disagrees.
+      const asset =
+        completeAsset === undefined ? undefined : { ...(yield* releaseAsset()), ...completeAsset };
       const { installation, validations, stagingReleased, fs, path } = yield* makeHarness({
         ...options,
+        ...(asset === undefined ? {} : { asset }),
         previous: true,
       });
       yield* installation.start;
@@ -724,7 +729,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
 
   // Real posix executables in a real temp dir, resolved by a linux-mocked
   // PATH walk; a Windows temp path cannot be split on `:`.
-  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "honors explicit paths and reports invalid overrides without falling back",
     () =>
       Effect.gen(function* () {
@@ -890,7 +895,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const archive = Buffer.from(zipFixtures.windows, "base64");
-        const asset = releaseAsset(archive, "win32");
+        const asset = yield* releaseAsset(archive, "win32");
         let denyPointerRename = true;
         const renameTargets: string[] = [];
         const { installation, requests, validations } = yield* makeHarness({
@@ -945,4 +950,28 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       expect(requests).toEqual([]);
     }),
   );
+
+  it("resolves all supported platform release assets including Intel Mac", () => {
+    const supportedPlatforms: Array<{ readonly platform: NodeJS.Platform; readonly arch: string }> =
+      [
+        { platform: "darwin", arch: "arm64" },
+        { platform: "darwin", arch: "x64" },
+        { platform: "linux", arch: "x64" },
+        { platform: "linux", arch: "arm64" },
+        { platform: "win32", arch: "x64" },
+        { platform: "win32", arch: "arm64" },
+      ];
+
+    for (const { platform, arch } of supportedPlatforms) {
+      const asset = resolveAntigravityReleaseAsset(platform, arch);
+      expect(asset).not.toBeNull();
+      expect(asset?.version).toBe("1.3.0");
+      expect(asset?.url).toContain("1.3.0");
+      expect(asset?.archiveBytes).toBeGreaterThan(0);
+      expect(asset?.executable.bytes).toBeGreaterThan(0);
+      expect(asset?.harness.bytes).toBeGreaterThan(0);
+    }
+
+    expect(resolveAntigravityReleaseAsset("freebsd", "x64")).toBeNull();
+  });
 });

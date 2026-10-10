@@ -1,0 +1,262 @@
+---
+title: How bindings grant IAM
+description: What a yield* of a GCP binding actually does — the per-host service account, the role it grants, and how removing a binding revokes it.
+---
+
+On GCP, giving a container permission to call an API normally means
+three separate things: create a service account, attach it to the Cloud
+Run service, and add role bindings to the project IAM policy. Alchemy
+collapses all three into the line that gets you the client.
+
+```typescript
+const events = yield* GCP.PubSub.WriteTopic(topic);
+```
+
+That expression:
+
+1. Creates (or adopts) a runtime service account for this host.
+2. Adds `roles/pubsub.publisher` to it on that one topic's IAM policy.
+3. Injects whatever the call needs into the revision.
+4. Returns a typed client (`events.publish(...)`) you call from a
+   request handler.
+
+It is the GCP counterpart of AWS `policyStatements` on a Lambda and of
+the scoped `AccountApiToken` a Cloudflare binding mints.
+
+## The per-host service account
+
+Every effectful GCP host — `GCP.Run.Service` (and its alias
+`GCP.Function`), `GCP.Run.Job`, `GCP.Run.WorkerPool`, and
+`GCP.CloudFunctions.Function` — gets its own account. The id is the
+host's name plus a hash of its type and full resource name, so no two
+hosts share an account — not across stages, and not the old and new
+generation of a replacement:
+
+```
+alch-api-3f9c0a1b2d@my-project.iam.gserviceaccount.com
+```
+
+Accounts Alchemy mints carry the display name `alchemy-host`, which is
+how `pnpm nuke:gcp` finds them. Alchemy also grants
+`roles/iam.serviceAccountUser` to the Cloud Run and Cloud Functions
+service agents so they can `actAs` the account, and retries the deploy
+while that grant propagates.
+
+Pass your own `serviceAccount` on the host and Alchemy uses it instead.
+The difference is what happens on removal, below.
+
+## Access-level clients
+
+For the data services you use most, a binding is an access level on a
+resource rather than an API operation — the same Read / Write /
+ReadWrite split as Cloudflare's R2 and KV bindings. Ask for the least
+you need; `ReadWrite` is the union of the other two.
+
+| Resource | Read | Write | ReadWrite |
+| --- | --- | --- | --- |
+| `Storage.Bucket` | `ReadBucket`: `head`, `get`, `list` | `WriteBucket`: `put`, `delete` | `ReadWriteBucket` |
+| `PubSub.Topic` | — | `WriteTopic`: `publish`, `publishBatch` | — |
+| `PubSub.Subscription` | `ReadSubscription`: `pull`, `acknowledge`, `modifyAckDeadline` | — | — |
+| `Firestore.Database` | `ReadDatabase`: `get`, `list`, `query` | `WriteDatabase`: `set`, `update`, `create`, `delete` | `ReadWriteDatabase` |
+| `BigQuery.Table` | `ReadTable`: `list`, `query` | `WriteTable`: `insert` | `ReadWriteTable` |
+| `SecretManager.Secret` | `ReadSecret`: `access`, `accessBytes` | `WriteSecret`: `addVersion`, `disableVersion`, `destroyVersion` | `ReadWriteSecret` |
+
+A topic is only ever written to and a subscription only ever read, so
+Pub/Sub has one client each. The clients speak plain JavaScript:
+Firestore fields and BigQuery rows are encoded and decoded for you,
+Pub/Sub and Secret Manager payloads come back as strings or bytes, and
+a missing document or secret version reads as `undefined` rather than
+an error.
+
+```typescript
+const db = yield* GCP.Firestore.ReadWriteDatabase(database);
+const doc = yield* db.get("counters/visits");
+const count = typeof doc?.fields.count === "number" ? doc.fields.count : 0;
+yield* db.set("counters/visits", { count: count + 1 });
+```
+
+Everything without an access-level client — KMS `Encrypt` / `Decrypt`,
+`Run.RunJob`, Cloud Tasks, Memorystore, and the long tail of generated
+services — is a per-operation binding that returns one callable.
+
+## Which role a binding grants
+
+Each binding grants the narrowest predefined role that covers it:
+
+| Binding | Role | Granted on |
+| --- | --- | --- |
+| `Storage.ReadBucket` | `roles/storage.objectViewer` | the bucket |
+| `Storage.WriteBucket`, `ReadWriteBucket` | `roles/storage.objectUser` | the bucket |
+| `PubSub.WriteTopic` | `roles/pubsub.publisher` | the topic |
+| `PubSub.ReadSubscription` | `roles/pubsub.subscriber` | the subscription |
+| `Firestore.ReadDatabase` | `roles/datastore.viewer` | the project, conditioned on the database |
+| `Firestore.WriteDatabase`, `ReadWriteDatabase` | `roles/datastore.user` | the project, conditioned on the database |
+| `BigQuery.ReadTable` | `roles/bigquery.dataViewer` + `roles/bigquery.jobUser` | the table + the project |
+| `BigQuery.WriteTable` | `roles/bigquery.dataEditor` | the table |
+| `BigQuery.ReadWriteTable` | `roles/bigquery.dataEditor` + `roles/bigquery.jobUser` | the table + the project |
+| `BigQuery.Query` | `roles/bigquery.dataViewer` + `roles/bigquery.jobUser` | the dataset's access list + the project |
+| `SecretManager.ReadSecret` | `roles/secretmanager.secretAccessor` | the secret |
+| `SecretManager.WriteSecret` | `roles/secretmanager.secretVersionManager` | the secret |
+| `SecretManager.ReadWriteSecret` | both of the above | the secret |
+| `KMS.Encrypt` / `Decrypt` | `roles/cloudkms.cryptoKeyEncrypter` / `Decrypter` | the key |
+| `CloudTasks.CreateTask` | `roles/cloudtasks.enqueuer` | the queue |
+| `Run.RunJob` | `roles/run.jobsExecutorWithOverrides` | the job |
+| `SQL.*` | `roles/cloudsql.*` | the project, conditioned on the instance |
+
+## How grants are scoped
+
+A grant lands in the narrowest place GCP lets it, in this order:
+
+1. **The resource's own IAM policy** — the GCP counterpart of an AWS
+   statement's `Resource: [arn]`. Buckets, topics, subscriptions,
+   secrets, KMS keys, Cloud Tasks queues, Run jobs and services, and
+   BigQuery tables all have one.
+2. **The dataset access list** for BigQuery datasets, which have no
+   `setIamPolicy`: the access list *is* the dataset's policy, so
+   Alchemy adds the account as an access entry.
+3. **The project policy under an IAM Condition** for services that
+   have no per-resource policy but support conditions — Firestore,
+   Cloud SQL, and Managed Kafka. The binding carries a condition like
+   `resource.name == "projects/p/databases/links" ||
+   resource.name.startsWith("projects/p/databases/links/")`, so the
+   role applies to that one resource and its children and nothing else
+   in the project.
+4. **The project policy, unconditioned**, only where GCP offers
+   neither resource IAM nor condition support: Memorystore, AlloyDB,
+   Filestore, and Vertex AI publisher models (Gemini). BigQuery's
+   `roles/bigquery.jobUser` is also project-only, because running a
+   query job is a project permission.
+
+The Memorystore RESP bindings (`ReadRedis`, `WriteRedis`,
+`ReadWriteRedis`) grant nothing at all: RESP authenticates with the
+instance's AUTH string, which travels to the runtime with the
+connection URL.
+
+IAM is eventually consistent, and conditional project grants are the
+slowest to land: expect a freshly deployed host to see `Forbidden`
+from Firestore for a few minutes.
+
+## Adding and removing
+
+The set of bindings you yield *is* the desired IAM state. The host
+records every grant it made; on the next deploy, a grant no binding
+asks for any more is revoked from that resource — delete a `yield*` and
+the permission goes away. For an Alchemy-minted account, the project
+policy is also synced against what GCP reports, so project roles added
+out of band are removed too. Accounts you supply yourself only ever
+lose grants Alchemy recorded, because Alchemy cannot tell which of the
+account's other roles matter.
+
+Policies are updated read-modify-write under their etag, so parallel
+hosts deploying against one project or topic converge instead of
+overwriting each other. Conditional bindings are matched on their exact
+condition: Alchemy only ever edits the conditional bindings it wrote,
+and never one someone else added.
+
+Destroying the host revokes every role Alchemy granted and deletes the
+minted account.
+
+## Provide the implementation
+
+Yielding a binding gives you the interface. The layer that implements
+it is provided once, at the end of the host's Effect:
+
+```typescript
+export default class Api extends GCP.Function<Api>()(
+  "Api",
+  { main: import.meta.url, location: "us-central1" },
+  Effect.gen(function* () {
+    const events = yield* GCP.PubSub.WriteTopic(topic);
+    // ...
+  }).pipe(
+    Effect.provide([GCP.PubSub.WriteTopicHttp]),
+  ),
+) {}
+```
+
+The convention is the binding name plus `Http`: `WriteTopic` →
+`WriteTopicHttp`, `ReadWriteDatabase` → `ReadWriteDatabaseHttp`,
+`RunJob` → `RunJobHttp`. Forget one and the type error names the
+missing layer.
+
+## Errors are typed
+
+Bindings return the operation's real error union, so the failure modes
+are in the type rather than in a status-code comparison:
+
+```typescript
+yield* db.create(`links/${code}`, { url }).pipe(
+  Effect.catchTag("GCP.Firestore.DocumentAlreadyExists", () =>
+    Effect.succeed(undefined),
+  ),
+);
+```
+
+`Forbidden`, `BadRequest`, and client-specific tags such as
+`DocumentAlreadyExists` or BigQuery's `InsertRowsFailed` are the ones
+you will handle most; per-operation bindings also surface `NotFound`
+and `Conflict`. Anything you do not catch stays in the channel until
+you `Effect.orDie` it.
+
+## Which host to use
+
+- **`GCP.Function`** — alias of `GCP.Run.Service`. An HTTP server with
+  a `fetch` entry. Scales to zero. Public only when you pass
+  `invokerIamDisabled: true`.
+- **`GCP.Run.Job`** — a `run` entry that executes and exits. Nothing is
+  billed between executions. Start it with a `GCP.Run.RunJob` binding
+  or Cloud Scheduler.
+- **`GCP.Run.WorkerPool`** — a long-running pool with no request path,
+  for pulling from a queue continuously.
+- **`GCP.CloudFunctions.Function`** — a gen2 function. With `main`,
+  Alchemy bundles the program for Node.js, uploads the archive, and
+  serves `fetch` through the Functions Framework, so the Effect runs
+  exactly as on a Service. Without `main` it deploys your own archive.
+
+The Run hosts build a container image locally, which means Docker has
+to be running to deploy them. Cloud Functions build in the cloud.
+
+## Event sources
+
+Bindings are calls your code makes. Event sources are the reverse:
+Google calls your code. Each one is a contract in the source service
+plus an implementation layer for the kind of host, the same split AWS
+uses for `SQS.consumeQueueMessages` with Lambda or a server host:
+
+| Consume with | Contract | Push hosts (Service, Function) | Pull hosts (Job, WorkerPool) |
+| --- | --- | --- | --- |
+| `GCP.PubSub.consumeTopicMessages` | `PubSub.TopicEventSource` | `GCP.Run.TopicEventSource` | `GCP.Run.TopicPullEventSource` |
+| `GCP.Storage.consumeBucketEvents` | `Storage.BucketEventSource` | `Storage.BucketEventSourceLive` + a topic layer | same |
+| `GCP.CloudScheduler.consumeSchedule` | `CloudScheduler.ScheduleEventSource` | `GCP.Run.ScheduleEventSource` | — |
+| `GCP.Eventarc.consumeEvents` | `Eventarc.EventSource` | `GCP.Run.EventarcEventSource` | — |
+
+```typescript
+yield* GCP.PubSub.consumeTopicMessages(orders, (messages) =>
+  messages.pipe(Stream.runForEach(({ message }) => handle(message))),
+);
+// …provided with Effect.provide(GCP.Run.TopicEventSource)
+```
+
+`GCP.Eventarc.consumeEvents` covers everything else Google emits as a
+CloudEvent: Cloud Storage and Firestore changes, Audit Log entries for
+any Google API call, and partner channels. You pass Eventarc's
+attribute filters and get each decoded CloudEvent.
+
+A push source provisions the delivery (a push subscription, a Storage
+notification, a scheduler job, an Eventarc trigger) at the host's URL on a path under
+`/__alchemy/`, signed with an OIDC token for the host's runtime service
+account, and grants that account `roles/run.invoker` on the host. At
+runtime the host claims those paths before your `fetch` and verifies
+every token's signature, audience, and email, so the service can stay
+private. A 2xx acks; a failed handler answers 500 and Pub/Sub
+redelivers. Every deploy blocks until GCP reports the delivery in place:
+IAM grants are read back, the subscription and scheduler job exist and
+are enabled, and an Eventarc trigger reports healthy. A pull source creates a subscription the host owns and runs
+a pull loop that acks each batch after the handler succeeds.
+
+## Next
+
+- [Serve an API on Cloud Run](/gcp/guides/cloud-run-api) — bindings in
+  a request path.
+- [Ingest events into BigQuery](/gcp/guides/event-pipeline) — a Service
+  triggering a Job.

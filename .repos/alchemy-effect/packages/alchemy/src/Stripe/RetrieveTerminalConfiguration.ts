@@ -24,6 +24,7 @@ export interface RetrieveTerminalConfigurationRequest extends Omit<
  * ```
  *
  * @binding
+ * @product Terminal
  */
 export interface RetrieveTerminalConfiguration extends Binding.Service<
   RetrieveTerminalConfiguration,

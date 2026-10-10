@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as RpcClientError from "effect/unstable/rpc/RpcClientError";
+import * as RpcClientError from "effect/rpc/RpcClientError";
 
 import * as AcpSchema from "./_generated/schema.gen.ts";
 import { callRpc, runHandler } from "./_internal/shared.ts";

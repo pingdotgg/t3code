@@ -80,7 +80,7 @@ export type ThreadMetadataMcpPullRequest = typeof ThreadMetadataMcpPullRequest.T
 
 export const ThreadMetadataMcpUpdateInput = Schema.Struct({
   threadId: Schema.optional(ThreadId).annotate({
-    description: "Thread in the calling project. Omit to update the calling thread.",
+    description: "Thread to update. Omit to update the calling thread.",
   }),
   action: ThreadMetadataMcpAction,
   title: Schema.optional(ThreadMetadataTitle),

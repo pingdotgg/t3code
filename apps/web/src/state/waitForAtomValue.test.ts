@@ -1,4 +1,4 @@
-import { Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { waitForAtomValue } from "./waitForAtomValue";

@@ -13,6 +13,8 @@ const [Effect, Layer, FileSystem] = await Promise.all([
   load("FileSystem"),
 ]);
 const app = (file) => import(NodeURL.pathToFileURL(root + "/apps/server/src/" + file + ".ts"));
+const providerCore = (file) =>
+  import(NodeURL.pathToFileURL(root + "/packages/provider-core/src/server/" + file + ".ts"));
 const [Start, Projection, Run, Sessions, Policy, Id, Sink, Handoff, Git, Project, Auth] =
   await Promise.all([
     app("orchestration-v2/ProviderTurnStartService"),
@@ -20,12 +22,12 @@ const [Start, Projection, Run, Sessions, Policy, Id, Sink, Handoff, Git, Project
     app("orchestration-v2/RunExecutionService"),
     app("orchestration-v2/ProviderSessionManager"),
     app("orchestration-v2/RuntimePolicy"),
-    app("orchestration-v2/IdAllocator"),
+    providerCore("IdAllocator"),
     app("orchestration-v2/EventSink"),
     app("orchestration-v2/ContextHandoffService"),
     app("git/GitWorkflowService"),
     app("project/ProjectService"),
-    app("provider/Services/ProviderAuthService"),
+    app("provider/ProviderAuthService"),
   ]);
 let current;
 let fullReads = 0;

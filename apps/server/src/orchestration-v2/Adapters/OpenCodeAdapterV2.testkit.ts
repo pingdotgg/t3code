@@ -6,22 +6,19 @@ import * as Duration from "effect/Duration";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import * as ServerConfig from "../../config.ts";
-import * as OpenCodeRuntime from "../../provider/opencodeRuntime.ts";
-import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
-import * as IdAllocator from "../IdAllocator.ts";
-import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
+import { OpenCodeAdapterV2Driver } from "@t3tools/provider-opencode/server";
+import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
-import {
-  makeReplayServerConfig,
-  type OrchestratorV2ProviderReplayHarness,
-} from "../testkit/ProviderReplayHarness.ts";
+import { type OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
 import {
   OPENCODE_DEFAULT_INSTANCE_ID,
   OPENCODE_PROVIDER,
   OPENCODE_SDK_PROTOCOL,
-  OpenCodeAdapterV2Driver,
-} from "./OpenCodeAdapterV2.ts";
+} from "@t3tools/provider-opencode/testing";
 
 const OPENCODE_SDK_REPLAY_PROTOCOL = OPENCODE_SDK_PROTOCOL;
 
@@ -389,7 +386,7 @@ function makeReplayClient(controller: OpenCodeReplayController): OpencodeClient 
   } as unknown as OpencodeClient;
 }
 
-function makeOpenCodeReplayRuntimeLayer(transcript: OpenCodeSdkReplayTranscript) {
+function layerOpenCodeReplayRuntime(transcript: OpenCodeSdkReplayTranscript) {
   return Layer.effect(
     OpenCodeRuntime.OpenCodeRuntime,
     Effect.gen(function* () {
@@ -451,17 +448,13 @@ function makeOpenCodeReplayRuntimeLayer(transcript: OpenCodeSdkReplayTranscript)
               detail: "OpenCode replay does not load skills.",
             }),
           ),
-      } satisfies OpenCodeRuntime.OpenCodeRuntimeShape);
+      } satisfies OpenCodeRuntime.OpenCodeRuntime["Service"]);
     }),
   );
 }
 
-function makeOpenCodeProviderAdapterRegistryReplayLayer(transcript: OpenCodeSdkReplayTranscript) {
-  const serverConfigLayer = Layer.effect(
-    ServerConfig.ServerConfig,
-    makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
-  ).pipe(Layer.provide(NodeServices.layer));
-  return ProviderAdapterRegistry.makeDriverLayer({
+function layerOpenCodeProviderAdapterRegistryReplay(transcript: OpenCodeSdkReplayTranscript) {
+  return ProviderAdapterRegistry.layerFromDrivers({
     drivers: [OpenCodeAdapterV2Driver],
     configMap: {
       [OPENCODE_DEFAULT_INSTANCE_ID]: {
@@ -472,8 +465,8 @@ function makeOpenCodeProviderAdapterRegistryReplayLayer(transcript: OpenCodeSdkR
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
-        makeOpenCodeReplayRuntimeLayer(transcript),
-        serverConfigLayer,
+        layerOpenCodeReplayRuntime(transcript),
+        TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
         NodeServices.layer,
         IdAllocator.layer,
         Layer.succeed(
@@ -508,5 +501,5 @@ export const OpenCodeOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarn
           }),
       ),
     ),
-  makeProviderAdapterRegistryLayer: makeOpenCodeProviderAdapterRegistryReplayLayer,
+  makeProviderAdapterRegistryLayer: layerOpenCodeProviderAdapterRegistryReplay,
 };

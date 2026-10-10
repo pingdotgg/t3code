@@ -73,19 +73,19 @@ export const watchDiscoveredCompatibility = Effect.fn("connection.watchDiscovere
 );
 
 export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
-  const driverLayer = ConnectionDriver.layer.pipe(
+  const layerDriver = ConnectionDriver.layer.pipe(
     Layer.provide(Layer.mergeAll(ConnectionResolver.layer, RpcSession.layer(options))),
   );
-  const registryLayer = EnvironmentRegistry.layer.pipe(Layer.provide(driverLayer));
-  const onboardingLayer = ConnectionOnboarding.layer.pipe(Layer.provide(registryLayer));
-  const connectionServicesLayer = Layer.mergeAll(
-    registryLayer,
+  const layerRegistry = EnvironmentRegistry.layer.pipe(Layer.provide(layerDriver));
+  const layerOnboarding = ConnectionOnboarding.layer.pipe(Layer.provide(layerRegistry));
+  const layerConnectionServices = Layer.mergeAll(
+    layerRegistry,
     RelayEnvironmentDiscovery.layer,
-    onboardingLayer,
+    layerOnboarding,
     // Exposed for updating hosts too old to connect through the driver.
     ConnectionResolver.layer,
   );
-  const connectionStartupLayer = Layer.effectDiscard(
+  const layerConnectionStartup = Layer.effectDiscard(
     Effect.gen(function* () {
       const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
       const platformSource = yield* PlatformConnectionSource.PlatformConnectionSource;
@@ -97,8 +97,8 @@ export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
       );
     }).pipe(Effect.withSpan("clientRuntime.connection.application.start")),
   );
-  return connectionStartupLayer.pipe(
-    Layer.provideMerge(connectionServicesLayer),
+  return layerConnectionStartup.pipe(
+    Layer.provideMerge(layerConnectionServices),
     Layer.provideMerge(RemoteEnvironmentAuthorization.layer),
   );
 }

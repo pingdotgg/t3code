@@ -1,7 +1,7 @@
-import * as NodeCrypto from "node:crypto";
 import type { ToolActivityNativeAppReference } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -13,8 +13,9 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Semaphore from "effect/Semaphore";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Hex from "effect/encoding/Hex";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ServerConfig from "../config.ts";
 
@@ -175,9 +176,13 @@ const resolveNativeAppIconUncached = Effect.fn("NativeAppIconResolver.resolveUnc
   const appVersion =
     (yield* plistValue(infoPlistPath, "CFBundleVersion")) ||
     (yield* plistValue(infoPlistPath, "CFBundleShortVersionString"));
-  const cacheKey = NodeCrypto.createHash("sha256")
-    .update(`${canonicalAppPath}\0${appVersion}\0${sourceIconPath}`)
-    .digest("hex");
+  const crypto = yield* Crypto.Crypto;
+  const cacheKey = yield* crypto
+    .digest(
+      "SHA-256",
+      new TextEncoder().encode(`${canonicalAppPath}\0${appVersion}\0${sourceIconPath}`),
+    )
+    .pipe(Effect.map(Hex.encode), Effect.orDie);
   const cacheDirectory = path.join(config.providerStatusCacheDir, "native-app-icons");
   const cachePath = path.join(cacheDirectory, `${cacheKey}.png`);
   if (yield* existingFile(cachePath)) return cachePath;
@@ -185,7 +190,7 @@ const resolveNativeAppIconUncached = Effect.fn("NativeAppIconResolver.resolveUnc
   yield* fileSystem.makeDirectory(cacheDirectory, { recursive: true });
   const temporaryPath = path.join(
     cacheDirectory,
-    `.${cacheKey}-${process.pid}-${(yield* Clock.currentTimeMillis).toString(36)}-${NodeCrypto.randomUUID()}.png`,
+    `.${cacheKey}-${process.pid}-${(yield* Clock.currentTimeMillis).toString(36)}-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}.png`,
   );
   yield* commandOutput("/usr/bin/sips", [
     "-z",
@@ -209,7 +214,7 @@ const resolveNativeAppIconUncached = Effect.fn("NativeAppIconResolver.resolveUnc
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
-  const hostPlatform = yield* HostProcessPlatform;
+  const hostPlatform = yield* HostProcess.Platform;
   const resolutionSemaphore = yield* Semaphore.make(2);
   const resolutionCache: Cache.Cache<
     string,

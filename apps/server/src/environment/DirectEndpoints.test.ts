@@ -5,9 +5,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
@@ -54,6 +54,7 @@ const INTERFACES: ReturnType<typeof NodeOS.networkInterfaces> = {
       cidr: "203.0.113.20/24",
     },
   ],
+  // Tailscale on macOS: an anonymous utun that also carries a Tailscale IPv6 address.
   utun4: [
     {
       address: "100.101.102.103",
@@ -63,8 +64,29 @@ const INTERFACES: ReturnType<typeof NodeOS.networkInterfaces> = {
       internal: false,
       cidr: "100.101.102.103/32",
     },
+    {
+      address: "fd7a:115c:a1e0::1",
+      netmask: "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+      family: "IPv6",
+      mac: "00:00:00:00:00:00",
+      internal: false,
+      cidr: "fd7a:115c:a1e0::1/128",
+      scopeid: 0,
+    },
   ],
 };
+
+/** A VPN interface with an address from the same 100.64.0.0/10 range. */
+const vpnInterface = (address: string) => [
+  {
+    address,
+    netmask: "255.255.255.255",
+    family: "IPv4" as const,
+    mac: "00:00:00:00:00:00",
+    internal: false,
+    cidr: `${address}/32`,
+  },
+];
 
 const virtualInterface = (address: string) => [
   {
@@ -111,6 +133,21 @@ describe("resolveBoundEndpoints", () => {
     ]);
   });
 
+  it("tags only addresses on Tailscale's interface as tailnet, not other VPNs in its range", () => {
+    const interfaces = {
+      en0: INTERFACES.en0,
+      tailscale0: vpnInterface("100.70.1.2"),
+      CloudflareWARP: vpnInterface("100.96.0.1"),
+      utun7: vpnInterface("100.85.0.1"),
+    };
+    expect(resolveBoundEndpoints({ host: "0.0.0.0", port: 3773, interfaces })).toEqual([
+      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+      { kind: "tailnet", httpBaseUrl: "http://100.70.1.2:3773/" },
+      { kind: "lan", httpBaseUrl: "http://100.96.0.1:3773/" },
+      { kind: "lan", httpBaseUrl: "http://100.85.0.1:3773/" },
+    ]);
+  });
+
   it("lists only the bound address for a specific bind", () => {
     expect(
       resolveBoundEndpoints({ host: "100.101.102.103", port: 3773, interfaces: INTERFACES }),
@@ -135,7 +172,7 @@ const TAILSCALE_STATUS_JSON = JSON.stringify({
 });
 
 /** `tailscale status --json` reporting a MagicDNS name. */
-const tailscaleUpLayer = Layer.succeed(
+const layerTailscaleUp = Layer.succeed(
   ChildProcessSpawner.ChildProcessSpawner,
   ChildProcessSpawner.make(() =>
     Effect.succeed(
@@ -157,7 +194,7 @@ const tailscaleUpLayer = Layer.succeed(
 );
 
 /** Answers the Serve probe with `status`. */
-const serveProbeLayer = (status: number) =>
+const layerServeProbe = (status: number) =>
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
@@ -166,7 +203,7 @@ const serveProbeLayer = (status: number) =>
   );
 
 /** A loopback-only server with Tailscale Serve on, so only the Serve name can be listed. */
-const serveConfigLayer = Layer.effect(
+const layerServeConfig = Layer.effect(
   ServerConfig.ServerConfig,
   Effect.map(ServerConfig.ServerConfig, (config) => ({
     ...config,
@@ -184,7 +221,7 @@ const resolveWithServe = (probeStatus: number) =>
     Effect.provide(
       DirectEndpoints.layer.pipe(
         Layer.provide(
-          Layer.mergeAll(serveConfigLayer, tailscaleUpLayer, serveProbeLayer(probeStatus)),
+          Layer.mergeAll(layerServeConfig, layerTailscaleUp, layerServeProbe(probeStatus)),
         ),
       ),
     ),

@@ -51,6 +51,7 @@ import {
   tryConnectionOf,
   workloadImageHash,
 } from "./internal/workload.ts";
+import { makeConnectionRegistry } from "./internal/registry.ts";
 import type { Providers } from "./Providers.ts";
 
 export const isDeployment = (value: any): value is Deployment => {
@@ -69,11 +70,11 @@ export const isDeployment = (value: any): value is Deployment => {
  */
 export interface DeploymentPropsBase extends PlatformProps {
   /**
-   * Target cluster the workload is deployed onto. Pass a managed cluster
-   * resource (e.g. `AWS.EKS.Cluster`), a `Kubernetes.KubeConfig(...)`, or
-   * a raw `Kubernetes.Connection`. The cluster's platform adapter supplies
-   * authentication — and, on managed clouds, workload identity and the
-   * container-image registry.
+   * Target cluster the workload is deployed onto: a cluster resource
+   * (`Kubernetes.LocalCluster`, `AWS.EKS.Cluster`), a
+   * `Kubernetes.KubeConfig(...)`, or a raw `Kubernetes.Connection`. The
+   * connection supplies authentication and the registry `main` / `context`
+   * images are pushed to.
    */
   cluster: ClusterLike;
   /**
@@ -130,7 +131,7 @@ export interface DeploymentPropsBase extends PlatformProps {
   env?: Record<string, any>;
   /**
    * Container image build architecture.
-   * @default "amd64"
+   * @default the connection's `architecture`, else "amd64"
    */
   architecture?: "amd64" | "arm64";
   /**
@@ -143,7 +144,9 @@ export interface DeploymentPropsBase extends PlatformProps {
   /**
    * Cloud-specific workload-identity options, consumed by the cluster
    * platform's identity adapter (on EKS: `{ managedPolicyArns: [...] }`
-   * attaches extra managed policies to the generated pod-identity role).
+   * attaches extra managed policies to the generated pod-identity role; on
+   * GKE: `{ gcpServiceAccount }` runs the pods as an existing Google
+   * service account instead of the ServiceAccount's own principal).
    */
   identity?: WorkloadIdentityOptions;
   /**
@@ -195,9 +198,8 @@ export interface DockerfileDeploymentProps extends DeploymentPropsBase {
 /** Run a pre-built registry image. */
 export interface ImageDeploymentProps extends DeploymentPropsBase {
   /**
-   * A pre-built image reference, e.g. `nginx:1.27`. On clusters with a
-   * managed registry (EKS) the image is mirrored into it; elsewhere the
-   * reference is used verbatim.
+   * A pre-built image reference, e.g. `nginx:1.27`, pulled by the nodes as
+   * written. EKS clusters mirror it into ECR first.
    */
   image: string;
 }
@@ -227,7 +229,8 @@ export interface Deployment extends Resource<
     imageUri: string;
     /**
      * Workload-identity state provisioned by the cluster platform's
-     * adapter (on EKS: the pod-identity role + association).
+     * adapter (on EKS: the pod-identity role + association; on GKE: the
+     * Workload Identity principal and the IAM grants applied to it).
      */
     identity: IdentityState | undefined;
     /**
@@ -263,48 +266,53 @@ export interface DeploymentRuntimeContext extends HostRuntimeContext {
 }
 
 /**
- * A replicated Kubernetes server on any cluster — the Kubernetes analog of
- * `AWS.ECS.Service`.
+ * A replicated Kubernetes server on any cluster, running a container image
+ * or an HTTP server written in Effect.
  *
  * `Deployment` provisions a Kubernetes `Deployment` + `Service` (+
- * `ServiceAccount`) via server-side apply, plus — through the target
- * cluster's platform adapter — workload identity and a container image
- * from exactly one of three sources flat on props: `main` (bundle an
- * inline Effect program), `context` (build your own Dockerfile), or
- * `image` (a pre-built registry reference). On `AWS.EKS.Cluster` targets
- * it accepts the same `{ env, policyStatements }` host binding contract as
- * `AWS.Lambda.Function` and `AWS.ECS.Task`: every AWS `Binding.Service`
- * (S3, DynamoDB, SQS, …) attaches env vars to the pod spec and IAM policy
- * statements to a generated pod-identity role. On registry-less clusters
- * (`Kubernetes.KubeConfig(...)`) run pre-built `image` references and bind
- * through environment variables.
+ * `ServiceAccount`) via server-side apply, with the container image from
+ * exactly one of three sources flat on props: `main` (bundle an inline
+ * Effect program), `context` (build your own Dockerfile), or `image` (a
+ * pre-built registry reference). `main` and `context` images are built on
+ * the deploying machine and pushed to the connection's registry
+ * (`Kubernetes.LocalCluster` includes one; EKS uses ECR; GKE uses
+ * Artifact Registry). Bindings attach environment variables on any
+ * cluster; cloud credential grants need a platform with workload identity.
+ * On `AWS.EKS.Cluster` targets it accepts the `{ env, policyStatements }`
+ * contract of `AWS.Lambda.Function`: IAM policy statements go to a
+ * generated pod-identity role. On `GCP.Container.Cluster` targets it
+ * accepts the `{ env, iam }` contract of `GCP.Run.Service`: IAM roles are
+ * granted to the Kubernetes ServiceAccount's Workload Identity Federation
+ * principal.
  * ### Creating a Deployment
- * **Example:** Remote image on EKS (external — no Effect runtime in the container)
+ * **Example:** Run an image on a local cluster
  * ```typescript
- * const cluster = yield* AWS.EKS.Cluster("Cluster", { compute: "auto" });
- *
- * const nginx = yield* Kubernetes.Deployment("Nginx", {
- *   cluster,
- *   image: "nginx:1.27",
- *   namespace: "default",
- *   replicas: 3,
- *   port: 80,
- *   serviceType: "LoadBalancer",
+ * const cluster = yield* Kubernetes.LocalCluster("Cluster", {
+ *   name: "alchemy",
  * });
- * nginx.url;            // LB URL, e.g. "http://k8s-….elb.amazonaws.com"
- * nginx.deploymentName; // K8s-native attrs
+ *
+ * const web = yield* Kubernetes.Deployment("Web", {
+ *   cluster,
+ *   image: "ghcr.io/stefanprodan/podinfo:6.15.0",
+ *   replicas: 2,
+ *   port: 9898,
+ *   serviceType: "ClusterIP",
+ * });
+ * web.serviceName; // K8s-native attrs
  * ```
  *
  * **Example:** Any cluster via kubeconfig
  * ```typescript
- * const local = Kubernetes.KubeConfig({ context: "kind-dev" });
+ * const cluster = Kubernetes.KubeConfig({ context: "prod-east" });
  *
- * const api = yield* Kubernetes.Deployment("Api", {
- *   cluster: local,
- *   image: "ghcr.io/acme/api:v3",
- *   port: 8080,
- *   serviceType: "ClusterIP",
+ * const nginx = yield* Kubernetes.Deployment("Nginx", {
+ *   cluster,
+ *   image: "nginx:1.27",
+ *   replicas: 3,
+ *   port: 80,
+ *   serviceType: "LoadBalancer",
  * });
+ * nginx.url; // the load balancer's address
  * ```
  *
  * **Example:** Build your own Dockerfile
@@ -318,11 +326,44 @@ export interface DeploymentRuntimeContext extends HostRuntimeContext {
  * ```
  *
  * ### Effect Servers
- * **Example:** Inline Effect server with a DynamoDB binding (EKS)
+ * **Example:** Inline Effect server
  * ```typescript
  * const api = yield* Kubernetes.Deployment(
  *   "Api",
  *   { cluster, main: import.meta.url, port: 3000, replicas: 2 },
+ *   Effect.gen(function* () {
+ *     return {
+ *       fetch: Effect.succeed(HttpServerResponse.text("ok")),
+ *     };
+ *   }),
+ * );
+ * ```
+ *
+ * **Example:** Push to your own registry
+ * ```typescript
+ * const cluster = Kubernetes.KubeConfig({
+ *   context: "prod-east",
+ *   registry: { server: "ghcr.io/acme" },
+ * });
+ *
+ * const api = yield* Kubernetes.Deployment(
+ *   "Api",
+ *   { cluster, main: import.meta.url, port: 3000 },
+ *   Effect.gen(function* () {
+ *     return {
+ *       fetch: Effect.succeed(HttpServerResponse.text("ok")),
+ *     };
+ *   }),
+ * );
+ * ```
+ *
+ * **Example:** DynamoDB binding on EKS
+ * ```typescript
+ * const cluster = yield* AWS.EKS.Cluster("Cluster", { compute: "auto" });
+ *
+ * const api = yield* Kubernetes.Deployment(
+ *   "Api",
+ *   { cluster, main: import.meta.url, port: 3000 },
  *   Effect.gen(function* () {
  *     const putItem = yield* AWS.DynamoDB.PutItem(table);
  *     return {
@@ -396,6 +437,7 @@ export interface DeploymentRuntimeContext extends HostRuntimeContext {
  * ```
  *
  * @resource
+ * @product Workloads
  */
 export const Deployment: Platform<
   Deployment,
@@ -437,11 +479,35 @@ const retryUntilServiceReady = <A, E, R>(
 const isNotFound = (error: unknown): error is KubernetesApiError =>
   error instanceof KubernetesApiError && error.statusCode === 404;
 
+class ServiceStillExists extends Data.TaggedError(
+  "Kubernetes.ServiceStillExists",
+)<{}> {}
+
+/**
+ * Bounded (~3 min) wait for a deleted Service to disappear, i.e. for the
+ * cloud controller to tear down its load balancer and drop the finalizer.
+ */
+const waitForServiceGone = (
+  transport: ClusterTransport,
+  service: KubernetesObjectRef,
+): Effect.Effect<void, unknown> =>
+  Effect.retry(
+    readObject({ transport, object: service }).pipe(
+      Effect.flatMap(() => Effect.fail(new ServiceStillExists())),
+      Effect.catchIf(isNotFound, () => Effect.void),
+    ),
+    {
+      while: (error) => error instanceof ServiceStillExists,
+      schedule: loadBalancerRetrySchedule,
+    },
+  );
+
 export const DeploymentProvider = () =>
   Provider.effect(
     Deployment,
     Effect.gen(function* () {
       const stack = yield* Stack;
+      const connectionRegistry = yield* makeConnectionRegistry;
 
       const alchemyEnv = {
         ALCHEMY_STACK_NAME: stack.name,
@@ -449,10 +515,12 @@ export const DeploymentProvider = () =>
         ALCHEMY_PHASE: "runtime",
       };
 
+      // The base name doubles as the `app.kubernetes.io/name` label value
+      // (and the Service name), both capped at 63 characters.
       const toBaseName = (id: string, props: { name?: string } = {}) =>
         props.name
           ? Effect.succeed(props.name)
-          : createPhysicalName({ id, maxLength: 200, lowercase: true }).pipe(
+          : createPhysicalName({ id, maxLength: 63, lowercase: true }).pipe(
               Effect.map((name) => name.replaceAll(/[^a-z0-9-]/g, "-")),
             );
 
@@ -503,10 +571,16 @@ export const DeploymentProvider = () =>
         list: () => Effect.succeed([] as Deployment["Attributes"][]),
         diff: Effect.fn(function* ({
           olds = {} as DeploymentProps,
-          news,
+          news: input,
           output,
         }) {
-          if (!isResolved(news)) return;
+          // `exports` carries the program's runtime Effects (never plain
+          // data); everything else must be resolved to diff.
+          const { exports: _exports, ...declared } = input as typeof input & {
+            exports?: unknown;
+          };
+          if (!isResolved(declared)) return;
+          const news = input as unknown as DeploymentProps;
           const oldCluster = connectionIdentity(tryConnectionOf(olds.cluster));
           const newCluster = connectionIdentity(tryConnectionOf(news.cluster));
           // Workload identity keys on (cluster, namespace, serviceAccount);
@@ -535,8 +609,10 @@ export const DeploymentProvider = () =>
             const source = news as WorkloadImageSource;
             const hash = yield* workloadImageHash({
               adapter,
+              connection,
+              connectionRegistry,
               source,
-              platform: imagePlatformOf(news.architecture),
+              platform: imagePlatformOf(news.architecture, connection),
               port: news.port ?? 3000,
               isExternal: news.isExternal,
               bootstrap: (adapter.bootstrap?.server ?? makeServerBootstrap)(
@@ -636,9 +712,11 @@ export const DeploymentProvider = () =>
           const source = news as WorkloadImageSource;
           const resolved = yield* resolveWorkloadImage({
             adapter,
+            connection,
+            connectionRegistry,
             id,
             source,
-            platform: imagePlatformOf(news.architecture),
+            platform: imagePlatformOf(news.architecture, connection),
             port,
             isExternal: news.isExternal,
             bootstrap: (adapter.bootstrap?.server ?? makeServerBootstrap)(
@@ -816,6 +894,20 @@ export const DeploymentProvider = () =>
               transport,
               objects: output.kubernetesObjects ?? [],
             }).pipe(Effect.catch(() => Effect.void));
+            // A LoadBalancer Service carries the cloud controller's cleanup
+            // finalizer; wait for it so the cloud load balancer is gone
+            // before the cluster (and its controller) can be deleted —
+            // deleting the cluster first leaks the load balancer.
+            yield* Effect.forEach(
+              (output.kubernetesObjects ?? []).filter(
+                (object) => object.kind === "Service",
+              ),
+              (service) =>
+                waitForServiceGone(transport, service).pipe(
+                  Effect.catch(() => Effect.void),
+                ),
+              { discard: true },
+            );
           }
 
           if (adapter.identity) {

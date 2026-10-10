@@ -4,7 +4,6 @@ import * as Apps from "@distilled.cloud/github/apps";
 import * as Checks from "@distilled.cloud/github/checks";
 import * as Issues from "@distilled.cloud/github/issues";
 import * as Pulls from "@distilled.cloud/github/pulls";
-import * as Repos from "@distilled.cloud/github/repos";
 import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -12,13 +11,13 @@ import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import { Base64Url } from "effect/encoding";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import * as crypto from "node:crypto";
 import { COMMENT_MARKER, RegistryConfig } from "./Bindings.ts";
 import * as KVCache from "./KVCache.ts";
@@ -50,13 +49,13 @@ export const signJwt = (
 ) =>
   Effect.try({
     try: () => {
-      const header = Encoding.encodeBase64Url(
+      const header = Base64Url.encode(
         JSON.stringify({ alg: "RS256", typ: "JWT" }),
       );
-      const payload = Encoding.encodeBase64Url(JSON.stringify(claims));
+      const payload = Base64Url.encode(JSON.stringify(claims));
       const input = `${header}.${payload}`;
       const signature = crypto.sign("sha256", Buffer.from(input), key);
-      return `${input}.${Encoding.encodeBase64Url(new Uint8Array(signature))}`;
+      return `${input}.${Base64Url.encode(new Uint8Array(signature))}`;
     },
     catch: (cause) => new CryptoError({ message: `signing failed: ${cause}` }),
   });
@@ -243,15 +242,22 @@ const make = Effect.gen(function* () {
       ).pipe(Effect.map((page) => page.artifacts)),
 
     /**
-     * Pull requests against `repo` whose head is `sha` in `headRepo`, the
-     * repository the commit was pushed to.
+     * Open pull requests against `repo` whose head is `sha` in `headRepo`, the
+     * repository the commit was pushed to. Commit-associated PR lookups can
+     * return no results for forks, so discover candidates by owner and branch.
      */
-    pullRequestsForCommit: (repo: string, headRepo: string, sha: string) =>
+    pullRequestsForCommit: (
+      repo: string,
+      headRepo: string,
+      headBranch: string,
+      sha: string,
+    ) =>
       asInstallation(
         repo,
-        Repos.listPullRequestsAssociatedWithCommit({
+        Pulls.list({
           ...split(repo),
-          commit_sha: sha,
+          head: `${split(headRepo).owner}:${headBranch}`,
+          state: "open",
           per_page: 100,
         }),
       ).pipe(
@@ -259,6 +265,7 @@ const make = Effect.gen(function* () {
           pulls.filter(
             (pr) =>
               pr.head.sha === sha &&
+              pr.head.ref === headBranch &&
               pr.head.repo?.full_name === headRepo &&
               pr.base.repo.full_name === repo,
           ),

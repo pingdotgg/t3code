@@ -29,6 +29,16 @@ export const publicationApplications = (contexts: {
     return { first, second, other, changed };
   });
 
+export const sharedApplication = (context: string, repository?: string) =>
+  Effect.gen(function* () {
+    const app = yield* Cloudflare.Container("SharedPublication", {
+      context,
+      publish: repository === undefined ? undefined : { repository },
+      maxInstances: 2,
+    }).Application;
+    return { app };
+  });
+
 export const historyApplications = (converge = false) =>
   Effect.gen(function* () {
     const target = converge

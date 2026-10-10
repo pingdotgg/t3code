@@ -24,6 +24,7 @@ export interface RetrievePaymentMethodDomainRequest extends Omit<
  * ```
  *
  * @binding
+ * @product Payment Methods
  */
 export interface RetrievePaymentMethodDomain extends Binding.Service<
   RetrievePaymentMethodDomain,

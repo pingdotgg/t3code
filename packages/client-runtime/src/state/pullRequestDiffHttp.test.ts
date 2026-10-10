@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { PrimaryConnectionTarget, type PreparedConnection } from "../connection/model.ts";
-import { remoteHttpClientLayer } from "../rpc/http.ts";
+import * as RpcHttp from "../rpc/http.ts";
 import {
   fetchEnvironmentPullRequestDiff,
   PullRequestDiffCredentialRejectedError,
@@ -50,7 +50,7 @@ describe("fetchEnvironmentPullRequestDiff", () => {
           number: 42,
           cursor: "next-page",
         },
-      }).pipe(Effect.provide(remoteHttpClientLayer(fetchFn)));
+      }).pipe(Effect.provide(RpcHttp.layerRemoteHttpClient(fetchFn)));
 
       expect(result).toEqual({
         patch: "diff --git a/file.ts b/file.ts",
@@ -71,7 +71,6 @@ describe("fetchEnvironmentPullRequestDiff", () => {
             : "";
       // The assertion deliberately inspects the serialized wire body rather than decoding a
       // domain value for use in application code.
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.parse(body)).toEqual({
         projectId: "project-1",
         repository: "owner/repository",
@@ -104,7 +103,7 @@ describe("fetchEnvironmentPullRequestDiff", () => {
           repository: "owner/repository",
           number: 42,
         },
-      }).pipe(Effect.provide(remoteHttpClientLayer(fetchFn)), Effect.flip);
+      }).pipe(Effect.provide(RpcHttp.layerRemoteHttpClient(fetchFn)), Effect.flip);
 
       expect(error).toBeInstanceOf(PullRequestDiffCredentialRejectedError);
       expect(error).toMatchObject({

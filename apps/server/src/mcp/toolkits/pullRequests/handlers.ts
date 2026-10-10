@@ -26,6 +26,7 @@ import * as Option from "effect/Option";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
   type ListThreadPullRequestsResult,
   PullRequestLinkFailedError,
@@ -37,7 +38,9 @@ import {
   PullRequestNotOpenError,
   type PullRequestTargetInput,
   PullRequestWatchFailedError,
+  PullRequestWatchFromSubagentError,
   PullRequestThreadNotFoundError,
+  PullRequestThreadRequiredError,
   PullRequestsToolkit,
   type ThreadPullRequestEntry,
 } from "./tools.ts";
@@ -168,14 +171,19 @@ const make = Effect.gen(function* () {
       | typeof PullRequestUnlinkFailedError
       | typeof PullRequestListFailedError
       | typeof PullRequestWatchFailedError,
+    requested: ThreadId | undefined,
   ) {
     const scope = yield* McpInvocationContext.requireMcpCapability("pull-requests");
+    const threadId = requested ?? scope.thread?.threadId;
+    if (threadId === undefined) {
+      return yield* new PullRequestThreadRequiredError();
+    }
     const thread = yield* engine
-      .getThreadShell(scope.threadId)
+      .getThreadShell(threadId)
       .pipe(Effect.map(Option.fromNullishOr))
       .pipe(Effect.mapError((cause) => new Failure({ cause })));
-    if (Option.isNone(thread)) {
-      return yield* new PullRequestThreadNotFoundError({ threadId: scope.threadId });
+    if (Option.isNone(thread) || thread.value.deletedAt !== null) {
+      return yield* new PullRequestThreadNotFoundError({ threadId });
     }
     return thread.value;
   });
@@ -217,17 +225,21 @@ const make = Effect.gen(function* () {
     input: PullRequestTargetInput,
     watching: boolean,
   ) {
-    const thread = yield* requireThread(PullRequestWatchFailedError);
+    const thread = yield* requireThread(PullRequestWatchFailedError, input.threadId);
     const project = yield* projectOf(thread, PullRequestWatchFailedError);
     const target = yield* resolveTarget(input, project);
     const watchedLink = (shell: OrchestrationV2ThreadShell) =>
       threadPullRequestsOf(shell).find(
         (link) => link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, target),
       );
+    if (watching && thread.lineage.relationshipToParent === "subagent") {
+      return yield* new PullRequestWatchFromSubagentError();
+    }
     const before = watchedLink(thread);
-    const state = before?.snapshot?.state;
-    if (watching && state !== undefined && state !== "open") {
-      return yield* new PullRequestNotOpenError({ state });
+    // A merged pull request cannot reopen. A closed one can, and its saved state may be stale,
+    // so the watch starts and its first read ends it if the host still says closed.
+    if (watching && before?.snapshot?.state === "merged") {
+      return yield* new PullRequestNotOpenError({ state: "merged" });
     }
     yield* engine
       .dispatch({
@@ -241,7 +253,7 @@ const make = Effect.gen(function* () {
         ...(watching ? { link: { url: target.url, source: "agent" as const } } : {}),
       })
       .pipe(Effect.catchCause(dispatchFailure(PullRequestWatchFailedError)));
-    const after = yield* requireThread(PullRequestWatchFailedError);
+    const after = yield* requireThread(PullRequestWatchFailedError, thread.id);
     return {
       host: target.host,
       repository: target.repository,
@@ -252,10 +264,15 @@ const make = Effect.gen(function* () {
     };
   });
 
-  return PullRequestsToolkit.of({
-    link_pull_request: (input) =>
+  /** A tool that changes `threadId`, or the caller's own thread when it is omitted. */
+  const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A, E, R>(
+    handle: (params: P) => Effect.Effect<A, E, R>,
+  ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
+
+  return {
+    link_pull_request: writesThread((input) =>
       Effect.gen(function* () {
-        const thread = yield* requireThread(PullRequestLinkFailedError);
+        const thread = yield* requireThread(PullRequestLinkFailedError, input.threadId);
         const project = yield* projectOf(thread, PullRequestLinkFailedError);
         const target = yield* resolveTarget(input, project);
         const existing = threadPullRequestsOf(thread).find((link) =>
@@ -283,9 +300,10 @@ const make = Effect.gen(function* () {
           );
         return { ...target, alreadyLinked };
       }),
-    unlink_pull_request: (input) =>
+    ),
+    unlink_pull_request: writesThread((input) =>
       Effect.gen(function* () {
-        const thread = yield* requireThread(PullRequestUnlinkFailedError);
+        const thread = yield* requireThread(PullRequestUnlinkFailedError, input.threadId);
         const project = yield* projectOf(thread, PullRequestUnlinkFailedError);
         const target = yield* resolveTarget(input, project);
         if (!threadPullRequestsOf(thread).some((link) => threadPullRequestKeysEqual(link, target)))
@@ -316,11 +334,15 @@ const make = Effect.gen(function* () {
           wasLinked,
         };
       }),
-    list_thread_pull_requests: () =>
-      requireThread(PullRequestListFailedError).pipe(Effect.map(listThreadPullRequests)),
-    watch_pull_request: (input) => setWatching(input, true),
-    unwatch_pull_request: (input) => setWatching(input, false),
-  });
+    ),
+    list_thread_pull_requests: McpToolAccess.reads((input) =>
+      requireThread(PullRequestListFailedError, input.threadId).pipe(
+        Effect.map(listThreadPullRequests),
+      ),
+    ),
+    watch_pull_request: writesThread((input) => setWatching(input, true)),
+    unwatch_pull_request: writesThread((input) => setWatching(input, false)),
+  } satisfies McpToolAccess.Handlers<typeof PullRequestsToolkit.tools>;
 });
 
-export const PullRequestsToolkitHandlersLive = PullRequestsToolkit.toLayer(make);
+export const layer = McpToolAccess.toLayer(PullRequestsToolkit, make);

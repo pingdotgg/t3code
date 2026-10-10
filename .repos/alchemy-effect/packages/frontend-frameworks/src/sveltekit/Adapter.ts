@@ -115,7 +115,7 @@ const generateFallbackInProcess = async (
   builder: Builder,
   dest: string,
 ): Promise<void> => {
-  const kit = builder.config.kit;
+  const kit = builder.config;
   const serverRoot = NodePath.join(kit.outDir, "output", "server");
   const load = async (file: string): Promise<Record<string, any>> =>
     await import(
@@ -185,7 +185,7 @@ export const makeCloudflareAdapter = (
       builder.mkdirp(tmp);
 
       // client assets and prerendered pages
-      const assetsDest = dest + builder.config.kit.paths.base;
+      const assetsDest = dest + builder.config.paths.base;
       builder.mkdirp(assetsDest);
       if (options.notFoundHandling === "404-page") {
         // generate plaintext 404.html first, which can then be overridden by
@@ -206,16 +206,23 @@ export const makeCloudflareAdapter = (
         );
       }
 
-      // manifest module
+      // pre-built server instance: kit 3.0 no longer exposes the internal
+      // SSR manifest (`generateManifest` throws), so `generateServerInstance`
+      // writes `export const server = new Server(manifest)` straight to
+      // disk itself instead of returning a manifest string to embed.
+      builder.generateServerInstance(NodePath.join(tmp, "server.js"));
+
+      // route manifest module — built from kit's public Builder surface
+      // (`builder.manifest`, `builder.routes`, `builder.getAppPath()`) since
+      // the internal SSR manifest is no longer reachable outside the
+      // generated server module above.
       NodeFs.writeFileSync(
         NodePath.join(tmp, "manifest.js"),
-        `export const manifest = ${builder.generateManifest({
-          relativePath: posixify(
-            NodePath.relative(tmp, builder.getServerDirectory()),
-          ),
-        })};\n\n` +
+        `export const assets = new Set(${JSON.stringify(builder.manifest.assets.map((asset) => asset.path))});\n\n` +
+          `export const app_path = ${JSON.stringify(builder.getAppPath())};\n\n` +
           `export const prerendered = new Set(${JSON.stringify(builder.prerendered.paths)});\n\n` +
-          `export const base_path = ${JSON.stringify(builder.config.kit.paths.base)};\n`,
+          `export const base_path = ${JSON.stringify(builder.config.paths.base)};\n\n` +
+          `export const routes = [${builder.routes.map((route) => `{ pattern: ${route.pattern} }`).join(", ")}];\n`,
       );
 
       // worker entry (unbundled shim; relative imports into `output/server`)
@@ -223,7 +230,7 @@ export const makeCloudflareAdapter = (
       NodeFs.writeFileSync(
         workerEntry,
         generateWorkerShim({
-          serverImport: `./${posixify(NodePath.relative(dest, builder.getServerDirectory()))}/index.js`,
+          serverImport: `./${posixify(NodePath.relative(dest, tmp))}/server.js`,
           manifestImport: `./${posixify(NodePath.relative(dest, tmp))}/manifest.js`,
           assetsBinding,
           notFoundHandling: options.notFoundHandling,
@@ -233,12 +240,22 @@ export const makeCloudflareAdapter = (
         typeof builder.hasServerInstrumentationFile === "function" &&
         builder.hasServerInstrumentationFile()
       ) {
+        // kit 3.0 requires an explicit initializer module that populates
+        // `$env/dynamic/private` before instrumentation runs. Source it from
+        // `cloudflare:workers` (the same binding source the worker shim
+        // uses) rather than the `process.env` default, which workerd doesn't
+        // populate with real bindings.
+        const initializer = builder.createInstrumentationInitializer({
+          outputDirectory: tmp,
+          environment: "export { env as default } from 'cloudflare:workers';",
+        });
         builder.instrument({
           entrypoint: workerEntry,
           instrumentation: NodePath.join(
             builder.getServerDirectory(),
             "instrumentation.server.js",
           ),
+          initializer,
         });
       }
 

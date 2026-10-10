@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import type * as HttpClient from "effect/unstable/http/HttpClient";
+import type * as HttpClient from "effect/http/HttpClient";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Credentials } from "../Credentials.ts";
 import { dispatchByMode } from "../LocalGateway.ts";
@@ -36,10 +36,12 @@ export const makeLocalKVNamespaceBinding = <Client extends object>(options: {
   ) => Client;
 }) =>
   Effect.gen(function* () {
-    // Account + credentials are ambient during stack-eval (the stack's
+    // Capture the account resolver without authenticating. Only the HTTP
+    // branch evaluates it; native local clients need no cloud credentials.
+    // Credentials are ambient during stack-eval (the stack's
     // providers layer). Capture the full context so KV HTTP ops can run with
     // the current credentials — no `host.bind`, no minted token.
-    const { accountId } = yield* yield* CloudflareEnvironment;
+    const environment = yield* CloudflareEnvironment;
     const context = yield* Effect.context<
       Credentials | HttpClient.HttpClient
     >();
@@ -55,7 +57,7 @@ export const makeLocalKVNamespaceBinding = <Client extends object>(options: {
       const namespaceId = yield* namespace.namespaceId;
       const auth: KVAuth = {
         authorize: (eff) => eff.pipe(Effect.provideContext(context)),
-        accountId: Effect.succeed(accountId),
+        accountId: Effect.map(environment, (env) => env.accountId),
       };
       const httpClient = options.makeHttpClient(auth, namespaceId);
       return dispatchByMode(namespaceId, httpClient, (id) =>

@@ -21,15 +21,15 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const forkCases = (["codex", "claudeAgent"] as const).flatMap((driverName) => {
   const driver = ProviderDriverKind.make(driverName);
   const instanceId = ProviderInstanceId.make(driver);
   const modelSelection = { instanceId, model: "test-model" };
-  const adapter: ProviderAdapterV2Shape = {
+  const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
     instanceId,
     driver,
     getCapabilities: () =>
@@ -39,9 +39,9 @@ const forkCases = (["codex", "claudeAgent"] as const).flatMap((driverName) => {
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: () => Effect.die("Execution is paused after dispatch for handoff inspection"),
   };
-  const layer = makeOrchestratorV2ReplayLayerWithRegistry(
+  const layer = ProviderReplayHarness.layerWithRegistry(
     { name: `fork-boundary-${driver}` },
-    ProviderAdapterRegistry.makeLayer([adapter]),
+    ProviderAdapterRegistry.layerFromAdapters([adapter]),
     { runEffectWorker: false },
   );
 

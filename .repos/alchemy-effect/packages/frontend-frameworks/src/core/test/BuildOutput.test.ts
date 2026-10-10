@@ -86,6 +86,38 @@ describe("build output persistence", () => {
     expect(parsed.externalWorkspaces).toEqual(new Set(["/workspaces/lib"]));
   });
 
+  it("stores binary modules compactly and preserves byte views", () => {
+    const bytes = new Uint8Array(1024 * 1024 + 2).fill(255);
+    const content = bytes.subarray(1, -1);
+    const json = stringifyBuildOutput({
+      clientDirectory: undefined,
+      serverModules: [{ name: "module.wasm", content, hash: "binary-hash" }],
+      externalWorkspaces: new Set(),
+    });
+    expect(json.length).toBeLessThan(content.byteLength * 1.4);
+    expect(JSON.parse(json).serverModules[0].content.encoding).toBe("base64");
+    const restored = parseBuildOutput(json).serverModules![0]!;
+    expect(restored.content).toEqual(Buffer.from(content));
+    expect(restored.hash).toBe("binary-hash");
+  });
+
+  it("reads legacy binary byte arrays without a recursive JSON reviver", () => {
+    const parsed = parseBuildOutput(
+      JSON.stringify({
+        serverModules: [
+          {
+            name: "module.wasm",
+            content: { type: "Buffer", data: [0, 1, 255] },
+            hash: "legacy-hash",
+          },
+        ],
+        externalWorkspaces: [],
+      }),
+    );
+    expect(parsed.serverModules![0]!.content).toEqual(Buffer.from([0, 1, 255]));
+    expect(parsed.serverModules![0]!.hash).toBe("legacy-hash");
+  });
+
   it("serializes Sets as sorted arrays", () => {
     const json = stringifyBuildOutput({
       clientDirectory: undefined,

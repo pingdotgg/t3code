@@ -257,8 +257,8 @@ describe("Option", () => {
   it("partitionMap", () => {
     const f = (n: number) => (gt2(n) ? Result.succeed(n + 1) : Result.fail(n - 1))
     deepStrictEqual(pipe(Option.none(), Option.partitionMap(f)), [Option.none(), Option.none()])
-    deepStrictEqual(pipe(Option.some(1), Option.partitionMap(f)), [Option.some(0), Option.none()])
-    deepStrictEqual(pipe(Option.some(3), Option.partitionMap(f)), [Option.none(), Option.some(4)])
+    deepStrictEqual(pipe(Option.some(1), Option.partitionMap(f)), [Option.none(), Option.some(0)])
+    deepStrictEqual(pipe(Option.some(3), Option.partitionMap(f)), [Option.some(4), Option.none()])
   })
 
   it("filterMap", () => {

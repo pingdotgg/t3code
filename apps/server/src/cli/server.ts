@@ -1,10 +1,10 @@
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { Command, GlobalFlag } from "effect/unstable/cli";
-import * as CliError from "effect/unstable/cli/CliError";
+import { Command, GlobalFlag } from "effect/cli";
+import * as CliError from "effect/cli/CliError";
 
 import * as ServerConfig from "../config.ts";
 import { runServer } from "../server.ts";
@@ -32,7 +32,7 @@ export const runDefaultServerCommand = (flags: CliServerFlags) =>
     if (Option.isSome(flags.cwd)) {
       const cwd = flags.cwd.value.trim();
       const fs = yield* FileSystem.FileSystem;
-      const platform = yield* HostProcessPlatform;
+      const platform = yield* HostProcess.Platform;
       const explicitPath =
         cwd === "." ||
         cwd === ".." ||

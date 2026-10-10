@@ -12,6 +12,7 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import {
+  effectiveShortcutsForCommand,
   formatShortcutLabel,
   isDiffToggleShortcut,
   isRichTextBoldShortcut,
@@ -24,6 +25,7 @@ import {
   isTerminalSplitShortcut,
   isTerminalSplitVerticalShortcut,
   isTerminalToggleShortcut,
+  resolveChatShortcutCommand,
   resolveShortcutCommand,
   shouldShowThreadJumpHintsForModifiers,
   shortcutLabelForCommand,
@@ -141,6 +143,14 @@ const DEFAULT_BINDINGS = compile([
     command: "themeEditor.toggle",
   },
   {
+    shortcut: modShortcut("f"),
+    command: "chat.find",
+    whenAst: whenAnd(
+      whenNot(whenIdentifier("terminalFocus")),
+      whenNot(whenIdentifier("previewFocus")),
+    ),
+  },
+  {
     shortcut: modShortcut("m", { shiftKey: true }),
     command: "modelPicker.toggle",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
@@ -179,6 +189,40 @@ const DEFAULT_BINDINGS = compile([
     whenAst: whenIdentifier("modelPickerOpen"),
   },
 ]);
+
+describe("effectiveShortcutsForCommand", () => {
+  it("passes only effective preview shortcuts to the desktop bridge", () => {
+    const reopen = modShortcut("t", { shiftKey: true });
+    const second = modShortcut("y", { shiftKey: true });
+    const keybindings = compile([
+      { shortcut: reopen, command: "view.reopenClosed" },
+      {
+        shortcut: second,
+        command: "view.reopenClosed",
+        whenAst: whenIdentifier("previewFocus"),
+      },
+      {
+        shortcut: reopen,
+        command: "preview.toggle",
+        whenAst: whenIdentifier("previewFocus"),
+      },
+    ]);
+    assert.deepEqual(
+      effectiveShortcutsForCommand(keybindings, "view.reopenClosed", {
+        platform: "MacIntel",
+        context: { previewFocus: true, previewOpen: true },
+      }),
+      [second],
+    );
+    assert.deepEqual(
+      effectiveShortcutsForCommand(keybindings, "view.reopenClosed", {
+        platform: "MacIntel",
+        context: { previewFocus: false },
+      }),
+      [reopen],
+    );
+  });
+});
 
 describe("isTerminalToggleShortcut", () => {
   it("matches Cmd+J on macOS", () => {
@@ -704,16 +748,52 @@ describe("chat/editor shortcuts", () => {
     );
   });
 
-  it("resolves a user-configured thread panel shortcut without assigning a default", () => {
-    const bindings = compile([
-      { shortcut: modShortcut("b", { shiftKey: true }), command: "threadPanel.toggle" },
-    ]);
+  it("toggles the thread panel by default without taking terminal keystrokes", () => {
+    for (const platform of ["MacIntel", "Win32", "Linux"]) {
+      const input = event({
+        key: "b",
+        metaKey: platform === "MacIntel",
+        ctrlKey: platform !== "MacIntel",
+        shiftKey: true,
+      });
+      assert.strictEqual(
+        resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { terminalFocus: false, editableFocus: true },
+        }),
+        "threadPanel.toggle",
+      );
+      assert.isNull(
+        resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { terminalFocus: true },
+        }),
+      );
+    }
+  });
+
+  it("preserves a user-configured thread panel shortcut instead of its default", () => {
+    const bindings = mergeWithDefaultKeybindings(
+      compile([
+        {
+          shortcut: modShortcut("b", { altKey: true, shiftKey: true }),
+          command: "threadPanel.toggle",
+        },
+      ]),
+    );
 
     assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "b", metaKey: true, altKey: true, shiftKey: true }),
+        bindings,
+        { platform: "MacIntel" },
+      ),
+      "threadPanel.toggle",
+    );
+    assert.isNull(
       resolveShortcutCommand(event({ key: "b", metaKey: true, shiftKey: true }), bindings, {
         platform: "MacIntel",
       }),
-      "threadPanel.toggle",
     );
   });
 
@@ -849,6 +929,102 @@ describe("cross-command precedence", () => {
       "chat.new",
     );
   });
+});
+
+describe("resolveChatShortcutCommand", () => {
+  it("runs the active environment's script shortcut instead of the primary environment's", () => {
+    const primary = compile([{ shortcut: modShortcut("r"), command: "script.setup.run" }]);
+    const active = compile([{ shortcut: modShortcut("t"), command: "script.setup.run" }]);
+
+    assert.strictEqual(
+      resolveChatShortcutCommand(event({ key: "t", ctrlKey: true }), primary, active, {
+        platform: "Linux",
+      }),
+      "script.setup.run",
+    );
+    assert.isNull(
+      resolveChatShortcutCommand(event({ key: "r", ctrlKey: true }), primary, active, {
+        platform: "Linux",
+      }),
+    );
+  });
+
+  it("resolves shared chords to the active environment's script ID", () => {
+    const primary = compile([{ shortcut: modShortcut("r"), command: "script.setup.run" }]);
+    const active = compile([{ shortcut: modShortcut("r"), command: "script.deploy.run" }]);
+
+    assert.strictEqual(
+      resolveChatShortcutCommand(event({ key: "r", metaKey: true }), primary, active, {
+        platform: "MacIntel",
+      }),
+      "script.deploy.run",
+    );
+  });
+
+  it("does not run primary scripts before the active environment's bindings arrive", () => {
+    const primary = compile([{ shortcut: modShortcut("r"), command: "script.setup.run" }]);
+
+    assert.isNull(
+      resolveChatShortcutCommand(event({ key: "r", ctrlKey: true }), primary, [], {
+        platform: "Linux",
+      }),
+    );
+  });
+
+  it("keeps primary app commands ahead of conflicting active script shortcuts", () => {
+    const primary = compile([{ shortcut: modShortcut("k"), command: "commandPalette.toggle" }]);
+    const active = compile([{ shortcut: modShortcut("k"), command: "script.setup.run" }]);
+
+    assert.strictEqual(
+      resolveChatShortcutCommand(event({ key: "k", ctrlKey: true }), primary, active, {
+        platform: "Linux",
+      }),
+      "commandPalette.toggle",
+    );
+  });
+
+  it("keeps app shortcuts on the primary environment when the active environment remaps them", () => {
+    const primary = compile([{ shortcut: modShortcut("j"), command: "terminal.toggle" }]);
+    const active = compile([{ shortcut: modShortcut("t"), command: "terminal.toggle" }]);
+
+    assert.strictEqual(
+      resolveChatShortcutCommand(event({ key: "j", ctrlKey: true }), primary, active, {
+        platform: "Linux",
+      }),
+      "terminal.toggle",
+    );
+    assert.isNull(
+      resolveChatShortcutCommand(event({ key: "t", ctrlKey: true }), primary, active, {
+        platform: "Linux",
+      }),
+    );
+  });
+
+  it.each([false, true])(
+    "preserves active binding precedence with terminalFocus=%s",
+    (terminalFocus) => {
+      const primary = compile([{ shortcut: modShortcut("r"), command: "script.setup.run" }]);
+      const active = compile([
+        { shortcut: modShortcut("r"), command: "script.deploy.run" },
+        {
+          shortcut: modShortcut("r"),
+          command: "terminal.new",
+          whenAst: whenIdentifier("terminalFocus"),
+        },
+      ]);
+      const options = { platform: "Linux", context: { terminalFocus } };
+      const shortcut = event({ key: "r", ctrlKey: true });
+
+      assert.strictEqual(
+        resolveChatShortcutCommand(shortcut, primary, active, options),
+        terminalFocus ? null : "script.deploy.run",
+      );
+      assert.strictEqual(
+        resolveChatShortcutCommand(shortcut, active, active, options),
+        resolveShortcutCommand(shortcut, active, options),
+      );
+    },
+  );
 });
 
 describe("resolveShortcutCommand", () => {

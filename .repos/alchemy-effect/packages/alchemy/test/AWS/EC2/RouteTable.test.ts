@@ -50,5 +50,5 @@ test.provider(
   // the end-to-end run headroom. (Observed blowing 180s during a full-suite
   // run where concurrent EC2 suites saturated the account's request budget
   // and VPC quota; a timeout mid-destroy also leaks the VPC.)
-  { timeout: 300_000 },
+  { tags: ["provider:aws", "provider:aws:ec2", "live"], timeout: 300_000 },
 );

@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Deferred, Effect, Exit, Fiber, Option } from "effect"
+import { Reactivity } from "effect/reactivity"
 import { TestClock } from "effect/testing"
-import { Reactivity } from "effect/unstable/reactivity"
 import { vi } from "vitest"
 
 const state = vi.hoisted(() => ({ vfsCloseCalls: 0 }))

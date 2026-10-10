@@ -547,4 +547,54 @@ describe("RcMap", () => {
       yield* TestClock.adjust(250)
       assert.deepStrictEqual(released, ["short:a"])
     }))
+
+  it.effect("closing the map while an idle entry is being released runs every finalizer", () =>
+    Effect.gen(function*() {
+      const gate = yield* Deferred.make<void>()
+      let released = 0
+      const scope = yield* Scope.make()
+      const map = yield* RcMap.make({
+        lookup: (_: string) =>
+          Effect.gen(function*() {
+            yield* Effect.addFinalizer(() => Effect.sync(() => released++))
+            yield* Effect.addFinalizer(() => Effect.andThen(Deferred.await(gate), Effect.sync(() => released++)))
+          }),
+        idleTimeToLive: "1 second"
+      }).pipe(Scope.provide(scope))
+      yield* Effect.scoped(RcMap.get(map, "a"))
+      yield* TestClock.adjust("1 second")
+      assert.isFalse(yield* RcMap.has(map, "a"))
+      const close = yield* Effect.forkChild(Scope.close(scope, Exit.void), { startImmediately: true })
+      yield* Deferred.succeed(gate, void 0)
+      yield* Fiber.join(close)
+      assert.strictEqual(released, 2)
+    }))
+
+  it.effect("drops an interrupted lookup and closes its scope", () =>
+    Effect.gen(function*() {
+      let lookups = 0
+      const started = yield* Deferred.make<void>()
+      const interrupt = yield* Deferred.make<void>()
+      const finalized = yield* Deferred.make<void>()
+      const map = yield* RcMap.make({
+        lookup: (_key: string) =>
+          Effect.gen(function*() {
+            if (++lookups > 1) return lookups
+            yield* Effect.addFinalizer(() => Deferred.succeed(finalized, void 0))
+            yield* Deferred.succeed(started, void 0)
+            yield* Deferred.await(interrupt)
+            return yield* Effect.interrupt
+          }),
+        idleTimeToLive: "1 minute"
+      })
+
+      // The only borrower leaves, so nothing else releases the entry.
+      const borrower = yield* Effect.forkChild(Effect.scoped(RcMap.get(map, "key")), { startImmediately: true })
+      yield* Deferred.await(started)
+      yield* Fiber.interrupt(borrower)
+      yield* Deferred.succeed(interrupt, void 0)
+
+      assert.strictEqual(yield* Effect.scoped(RcMap.get(map, "key")), 2)
+      yield* Deferred.await(finalized)
+    }))
 })
