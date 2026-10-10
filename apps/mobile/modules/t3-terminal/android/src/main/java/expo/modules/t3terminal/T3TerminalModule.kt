@@ -11,6 +11,7 @@ class T3TerminalModule : Module() {
     // logs so a stale native binary is distinguishable from a broken key pipeline.
     Constants(
       "hardwareKeyRevision" to 2,
+      "bufferStreamRevision" to 1,
     )
 
     View(T3TerminalView::class) {
@@ -20,6 +21,10 @@ class T3TerminalModule : Module() {
 
       Prop("initialBuffer") { view: T3TerminalView, initialBuffer: String ->
         view.initialBuffer = initialBuffer
+      }
+
+      Prop("bufferWrite") { view: T3TerminalView, write: TerminalBufferWriteRecord ->
+        view.applyBufferWrite(write)
       }
 
       Prop("fontSize") { view: T3TerminalView, fontSize: Double ->
@@ -61,7 +66,7 @@ class T3TerminalModule : Module() {
       Prop("captureRequest") { view: T3TerminalView, request: Double ->
         view.captureRequest = request
       }
-      Events("onInput", "onResize", "onCapture")
+      Events("onInput", "onResize", "onCapture", "onBufferApplied")
 
       OnViewDestroys { view: T3TerminalView ->
         view.cleanup()

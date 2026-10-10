@@ -1,3 +1,8 @@
+import {
+  EMPTY_TERMINAL_BUFFER_STATE,
+  terminalOutputText,
+  type TerminalOutputState,
+} from "@t3tools/client-runtime/state/terminal";
 import { memo, useCallback, useEffect, useRef } from "react";
 import {
   Pressable,
@@ -16,6 +21,7 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import {
   getNativeTerminalHardwareKeyRevision,
   resolveNativeTerminalSurfaceView,
+  supportsNativeTerminalBufferStream,
 } from "./nativeTerminalModule";
 import {
   buildGhosttyThemeConfig,
@@ -23,6 +29,7 @@ import {
   type TerminalTheme,
 } from "./terminalTheme";
 import { terminalDebugLog } from "./terminalDebugLog";
+import { useNativeTerminalBuffer } from "./useNativeTerminalBuffer";
 import { useTerminalSurfaceBuffer } from "./useTerminalSurfaceBuffer";
 
 interface TerminalInputEvent {
@@ -36,7 +43,7 @@ interface TerminalResizeEvent {
 
 interface TerminalSurfaceProps extends ViewProps {
   readonly terminalKey: string;
-  readonly buffer: string | null;
+  readonly buffer: TerminalOutputState | null;
   readonly fontSize?: number;
   readonly isRunning: boolean;
   readonly readOnly?: boolean;
@@ -50,7 +57,7 @@ interface TerminalSurfaceProps extends ViewProps {
 }
 
 type ReadyTerminalSurfaceProps = Omit<TerminalSurfaceProps, "buffer"> & {
-  readonly buffer: string;
+  readonly buffer: TerminalOutputState;
 };
 
 function estimateGridSize(input: {
@@ -130,7 +137,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(
               lineHeight: Math.round(fontSize * 1.35),
             }}
           >
-            {props.buffer || "$ "}
+            {terminalOutputText(props.buffer) || "$ "}
           </Text>
         </ScrollView>
       </View>
@@ -196,6 +203,16 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerm
   const { onInput, onResize } = props;
   const NativeTerminalSurfaceView = resolveNativeTerminalSurfaceView();
   const hasNativeSurface = Boolean(NativeTerminalSurfaceView);
+  const incrementalBuffer = supportsNativeTerminalBufferStream();
+  const { bufferWrite, acknowledge } = useNativeTerminalBuffer(
+    props.terminalKey,
+    incrementalBuffer ? props.buffer : EMPTY_TERMINAL_BUFFER_STATE.output,
+  );
+  const handleBufferApplied = useCallback(
+    (event: NativeSyntheticEvent<{ readonly generation: number; readonly offset: number }>) =>
+      acknowledge(event.nativeEvent),
+    [acknowledge],
+  );
 
   useEffect(() => {
     terminalDebugLog("native:surface", {
@@ -203,10 +220,10 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerm
       native: hasNativeSurface,
       // null = installed binary predates native hardware-key handling (rebuild needed).
       hardwareKeyRevision: getNativeTerminalHardwareKeyRevision(),
-      bufferLen: props.buffer.length,
+      bufferLen: props.buffer.retainedBytes,
       isRunning: props.isRunning,
     });
-  }, [hasNativeSurface, props.buffer.length, props.isRunning, props.terminalKey]);
+  }, [hasNativeSurface, props.buffer.retainedBytes, props.isRunning, props.terminalKey]);
   const handleNativeInput = useCallback(
     (event: NativeSyntheticEvent<TerminalInputEvent>) => {
       if (!props.isRunning || props.readOnly) {
@@ -233,6 +250,7 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerm
     return (
       <View style={props.style}>
         <NativeTerminalSurfaceView
+          key={props.terminalKey}
           appearanceScheme={themeAppearance}
           autoFocus={!props.readOnly && (props.autoFocus ?? true)}
           readOnly={props.readOnly ?? false}
@@ -241,7 +259,9 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerm
           foregroundColor={theme.foreground}
           mutedForegroundColor={theme.mutedForeground}
           terminalKey={props.terminalKey}
-          initialBuffer={props.buffer}
+          {...(incrementalBuffer
+            ? { bufferWrite, onBufferApplied: handleBufferApplied }
+            : { initialBuffer: terminalOutputText(props.buffer) })}
           fontSize={fontSize}
           style={{ flex: 1 }}
           themeConfig={buildGhosttyThemeConfig(theme)}

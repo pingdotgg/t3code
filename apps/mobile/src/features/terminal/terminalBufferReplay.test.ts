@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import {
+  EMPTY_TERMINAL_BUFFER_STATE,
+  type TerminalOutputState,
+} from "@t3tools/client-runtime/state/terminal";
+const history: TerminalOutputState = {
+  ...EMPTY_TERMINAL_BUFFER_STATE.output,
+  chunks: [{ startOffset: 0, data: "fastfetch output", byteLength: 15 }],
+  nextOffset: 15,
+  retainedBytes: 15,
+};
 import { getTerminalBufferReplayKey, getTerminalSurfaceReplayBuffer } from "./terminalBufferReplay";
 
 describe("terminalBufferReplay", () => {
@@ -20,24 +30,24 @@ describe("terminalBufferReplay", () => {
 
     expect(
       getTerminalSurfaceReplayBuffer({
-        buffer: "fastfetch output",
+        buffer: history,
         replayKey,
         readyReplayKey: null,
       }),
-    ).toBe("fastfetch output");
+    ).toBe(history);
     expect(
       getTerminalSurfaceReplayBuffer({
-        buffer: "fastfetch output",
+        buffer: history,
         replayKey,
         readyReplayKey: "env-1:thread-1:default:11",
       }),
-    ).toBe("");
+    ).toBe(EMPTY_TERMINAL_BUFFER_STATE.output);
     expect(
       getTerminalSurfaceReplayBuffer({
-        buffer: "fastfetch output",
+        buffer: history,
         replayKey,
         readyReplayKey: replayKey,
       }),
-    ).toBe("fastfetch output");
+    ).toBe(history);
   });
 });

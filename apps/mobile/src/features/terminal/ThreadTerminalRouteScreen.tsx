@@ -484,7 +484,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     lastBufferReplayKeyRef.current = bufferReplayKey;
   }
   const terminalSurfaceBuffer = getTerminalSurfaceReplayBuffer({
-    buffer: terminal.buffer,
+    buffer: terminal.output,
     replayKey: bufferReplayKey,
     readyReplayKey: readyBufferReplayKey,
   });
@@ -495,8 +495,8 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   useEffect(() => {
     terminalDebugLog("surface:props", {
       terminalKey,
-      atomBufferLen: terminal.buffer.length,
-      surfaceBufferLen: terminalSurfaceBuffer.length,
+      atomBufferLen: terminal.output.retainedBytes,
+      surfaceBufferLen: terminalSurfaceBuffer.retainedBytes,
       replayKey: bufferReplayKey,
       readyReplayKey: readyBufferReplayKey,
       status: terminal.status,
@@ -505,11 +505,11 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   }, [
     bufferReplayKey,
     readyBufferReplayKey,
-    terminal.buffer.length,
+    terminal.output.retainedBytes,
     terminal.status,
     terminal.version,
     terminalKey,
-    terminalSurfaceBuffer.length,
+    terminalSurfaceBuffer.retainedBytes,
   ]);
 
   useEffect(() => {
@@ -518,11 +518,11 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       status: terminal.status,
       error: terminal.error,
       summary: terminal.summary?.cwd ?? null,
-      bufferLen: terminal.buffer.length,
+      bufferLen: terminal.output.retainedBytes,
       version: terminal.version,
     });
   }, [
-    terminal.buffer.length,
+    terminal.output.retainedBytes,
     terminal.error,
     terminal.status,
     terminal.summary?.cwd,
@@ -531,16 +531,16 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   ]);
 
   useEffect(() => {
-    if (terminal.buffer.length === 0 || firstNonEmptyBufferLoggedRef.current) {
+    if (terminal.output.retainedBytes === 0 || firstNonEmptyBufferLoggedRef.current) {
       return;
     }
     firstNonEmptyBufferLoggedRef.current = true;
     terminalDebugLog("session:first-nonempty-buffer", {
       terminalKey,
-      length: terminal.buffer.length,
-      preview: terminal.buffer.slice(0, 160),
+      length: terminal.output.retainedBytes,
+      preview: terminal.output.chunks[0]?.data.slice(0, 160),
     });
-  }, [terminal.buffer, terminal.buffer.length, terminalKey]);
+  }, [terminal.output, terminal.output.retainedBytes, terminalKey]);
   const cwd = terminal.summary?.cwd ?? selectedThreadProject?.workspaceRoot ?? null;
   const serverConfigs = useServerConfigs();
   const hostOs =

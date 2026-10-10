@@ -49,6 +49,9 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     }
   private var terminalHandle = 0L
   private var fedBuffer = ""
+  private var bufferStream: TerminalBufferStream? = null
+  private var streamReplayed = false
+  private val onBufferApplied by EventDispatcher()
   private var cols = 0
   private var rows = 0
   private var clearingInput = false
@@ -356,6 +359,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
       paletteColors,
     )
     fedBuffer = ""
+    streamReplayed = false
   }
 
   private fun recreateTerminal() {
@@ -375,6 +379,19 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   }
 
   private fun feedPendingBuffer() {
+    val stream = bufferStream
+    if (stream != null) {
+      if (terminalHandle != 0L && !streamReplayed) {
+        // Replaying history must not send stored device queries back to the PTY.
+        GhosttyBridge.nativeFeed(terminalHandle, stream.buffer.toByteArray(Charsets.UTF_8))
+        streamReplayed = true
+      }
+    } else {
+      feedLegacyBuffer()
+    }
+  }
+
+  private fun feedLegacyBuffer() {
     if (terminalHandle == 0L || initialBuffer == fedBuffer) return
     if (!initialBuffer.startsWith(fedBuffer)) {
       recreateTerminal()
@@ -392,6 +409,26 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     }
     fedBuffer = initialBuffer
     renderSnapshot()
+  }
+
+  fun applyBufferWrite(write: TerminalBufferWriteRecord) {
+    val stream = bufferStream ?: TerminalBufferStream().also { bufferStream = it }
+    val update = stream.apply(write) ?: return
+    if (update.reset) {
+      destroyTerminal()
+      createTerminal()
+      feedPendingBuffer()
+    } else if (terminalHandle != 0L && update.data.isNotEmpty()) {
+      emitResponse(
+        GhosttyBridge.nativeFeed(terminalHandle, update.data.toByteArray(Charsets.UTF_8))
+      )
+      if (terminalCanvas.hasActiveSelection()) {
+        GhosttyBridge.nativeClearSelection(terminalHandle)
+        terminalCanvas.resetSelectionState()
+      }
+    }
+    renderSnapshot()
+    onBufferApplied(mapOf("generation" to stream.generation, "offset" to stream.offset))
   }
 
   private fun renderSnapshot() {

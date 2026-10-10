@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 const expoMocks = vi.hoisted(() => ({
   requireNativeView: vi.fn(),
+  requireOptionalNativeModule: vi.fn(),
 }));
 const nativeView = () => null;
 const originalExpo = globalThis.expo;
@@ -14,6 +15,7 @@ function setExpoViewConfigAvailable() {
 
 vi.mock("expo", () => ({
   requireNativeView: expoMocks.requireNativeView,
+  requireOptionalNativeModule: expoMocks.requireOptionalNativeModule,
 }));
 
 describe("resolveNativeTerminalSurfaceView", () => {
@@ -61,5 +63,21 @@ describe("resolveNativeTerminalSurfaceView", () => {
       }),
     );
     expect(consoleError).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("supportsNativeTerminalBufferStream", () => {
+  it.each([undefined, {}, { bufferStreamRevision: 0 }])(
+    "keeps full-buffer delivery for old installed binaries (%j)",
+    async (module) => {
+      expoMocks.requireOptionalNativeModule.mockReturnValue(module);
+      const { supportsNativeTerminalBufferStream } = await import("./nativeTerminalModule");
+      expect(supportsNativeTerminalBufferStream()).toBe(false);
+    },
+  );
+  it("enables incremental delivery for a compatible native binary", async () => {
+    expoMocks.requireOptionalNativeModule.mockReturnValue({ bufferStreamRevision: 1 });
+    const { supportsNativeTerminalBufferStream } = await import("./nativeTerminalModule");
+    expect(supportsNativeTerminalBufferStream()).toBe(true);
   });
 });

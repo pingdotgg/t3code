@@ -2,6 +2,11 @@ import * as NodeModule from "node:module";
 import { act, createElement, useEffect, type ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
+import {
+  EMPTY_TERMINAL_BUFFER_STATE,
+  terminalOutputText,
+  type TerminalOutputState,
+} from "@t3tools/client-runtime/state/terminal";
 import { useTerminalSurfaceBuffer } from "./useTerminalSurfaceBuffer";
 
 const { createRoot } = NodeModule.createRequire(import.meta.url)("react-dom/client") as {
@@ -18,19 +23,27 @@ const displayed = vi.fn<(value: { buffer: string; readOnly: boolean }) => void>(
 function BufferProbe(input: Input) {
   const buffer = useTerminalSurfaceBuffer(input);
   useEffect(() => {
-    displayed({ buffer, readOnly: input.readOnly });
+    displayed({ buffer: terminalOutputText(buffer), readOnly: input.readOnly });
   }, [buffer, input.readOnly]);
   return null;
 }
 
-function render(changes: Partial<Input> = {}) {
+function output(text: string): TerminalOutputState {
+  return {
+    ...EMPTY_TERMINAL_BUFFER_STATE.output,
+    nextOffset: text.length,
+    retainedBytes: text.length,
+    chunks: text ? [{ startOffset: 0, data: text, byteLength: text.length }] : [],
+  };
+}
+function render(changes: Omit<Partial<Input>, "buffer"> & { buffer?: string | null } = {}) {
   return act(() =>
     root.render(
       createElement(BufferProbe, {
         terminalKey: "environment:thread:term-1",
-        buffer: "host output",
         readOnly: false,
         ...changes,
+        buffer: changes.buffer === null ? null : output(changes.buffer ?? "host output"),
       }),
     ),
   );

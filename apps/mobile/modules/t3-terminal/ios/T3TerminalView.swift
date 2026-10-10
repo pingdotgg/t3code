@@ -193,6 +193,16 @@ private extension UIColor {
   }
 }
 
+private final class TerminalWriteCallbackContext {
+  weak var view: T3TerminalView?
+  let generation: Int
+
+  init(view: T3TerminalView, generation: Int) {
+    self.view = view
+    self.generation = generation
+  }
+}
+
 public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   private static let minimumVerticalScrollStepPoints: CGFloat = 18
   private static let verticalScrollStepMultiplier: CGFloat = 1.15
@@ -205,6 +215,9 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   private var lastContentScale: CGFloat = 0
   private var lastReportedGrid: (cols: Int, rows: Int)?
   private var lastAppliedBuffer = ""
+  private var bufferStream: TerminalBufferStream?
+  private var surfaceGeneration = 0
+  private var writeCallbackContext: TerminalWriteCallbackContext?
   private var pendingVerticalScrollPoints: CGFloat = 0
   private var app: ghostty_app_t?
   private var surface: ghostty_surface_t?
@@ -216,6 +229,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   let onInput = EventDispatcher()
   let onResize = EventDispatcher()
   let onCapture = EventDispatcher()
+  let onBufferApplied = EventDispatcher()
   var captureRequest: Double = 0 {
     didSet {
       guard captureRequest > 0, captureRequest != oldValue else { return }
@@ -533,9 +547,11 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     surface = createdSurface
     ghostty_app_set_color_scheme(createdApp, appearance.ghosttyColorScheme)
     ghostty_surface_set_color_scheme(createdSurface, appearance.ghosttyColorScheme)
-    setupWriteCallback()
     resizeSurface()
-    feedBuffer(initialBuffer)
+    feedBuffer(bufferStream?.buffer ?? initialBuffer)
+    // Both operations queue on Ghostty's I/O thread. Install the callback after replay
+    // so stored terminal queries cannot emit duplicate PTY replies.
+    setupWriteCallback()
   }
 
   private func resetSurface() {
@@ -554,6 +570,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   }
 
   private func destroySurface() {
+    surfaceGeneration += 1
     if let surface {
       ghostty_surface_set_write_callback(surface, nil, nil)
       ghostty_surface_free(surface)
@@ -563,9 +580,26 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     }
     surface = nil
     app = nil
+    writeCallbackContext = nil
+  }
+
+  func applyBufferWrite(_ write: TerminalBufferWriteRecord) {
+    let stream = bufferStream ?? TerminalBufferStream()
+    bufferStream = stream
+    guard let update = stream.apply(write) else { return }
+    if update.reset {
+      resetSurface()
+      createSurfaceIfPossible()
+    } else if surface != nil {
+      feedData(Data(update.data.utf8))
+    } else {
+      createSurfaceIfPossible()
+    }
+    onBufferApplied(["generation": stream.generation, "offset": stream.offset])
   }
 
   private func applyRemoteBuffer(_ buffer: String) {
+    guard bufferStream == nil else { return }
     guard surface != nil else {
       createSurfaceIfPossible()
       return
@@ -610,14 +644,18 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   private func setupWriteCallback() {
     guard let surface else { return }
 
-    let userdata = Unmanaged.passUnretained(self).toOpaque()
+    let context = TerminalWriteCallbackContext(view: self, generation: surfaceGeneration)
+    writeCallbackContext = context
+    let userdata = Unmanaged.passUnretained(context).toOpaque()
     ghostty_surface_set_write_callback(surface, { userdata, data, len in
       guard let userdata, let data, len > 0 else { return }
-      let view = Unmanaged<T3TerminalView>.fromOpaque(userdata).takeUnretainedValue()
+      let context = Unmanaged<TerminalWriteCallbackContext>.fromOpaque(userdata).takeUnretainedValue()
+      let generation = context.generation
       let bytes = Data(bytes: data, count: len)
       guard let input = String(data: bytes, encoding: .utf8), !input.isEmpty else { return }
 
-      DispatchQueue.main.async {
+      DispatchQueue.main.async { [weak view = context.view] in
+        guard let view, view.surfaceGeneration == generation else { return }
         view.emitInput(input)
       }
     }, userdata)

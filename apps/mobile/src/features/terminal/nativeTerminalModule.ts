@@ -2,6 +2,8 @@ import type { ComponentType } from "react";
 import type { NativeSyntheticEvent, ViewProps } from "react-native";
 import { requireNativeView, requireOptionalNativeModule } from "expo";
 
+import type { TerminalBufferWrite } from "./useNativeTerminalBuffer";
+
 import { NativeViewResolutionError } from "../../native/nativeViewResolutionError";
 
 const NATIVE_TERMINAL_MODULE_NAME = "T3TerminalSurface";
@@ -33,7 +35,11 @@ export interface NativeTerminalSurfaceProps extends ViewProps {
   readonly foregroundColor?: string;
   readonly mutedForegroundColor?: string;
   readonly terminalKey: string;
-  readonly initialBuffer: string;
+  readonly initialBuffer?: string;
+  readonly bufferWrite?: TerminalBufferWrite;
+  readonly onBufferApplied?: (
+    event: NativeSyntheticEvent<{ readonly generation: number; readonly offset: number }>,
+  ) => void;
   readonly fontSize: number;
   readonly onInput?: (event: NativeSyntheticEvent<TerminalInputEvent>) => void;
   readonly onResize?: (event: NativeSyntheticEvent<TerminalResizeEvent>) => void;
@@ -100,4 +106,17 @@ export function getNativeTerminalHardwareKeyRevision(): number | null {
 
 export function hasNativeTerminalSurface() {
   return resolveNativeTerminalSurfaceView() !== null;
+}
+
+/** Older installed binaries must continue receiving the full-buffer prop. */
+export function supportsNativeTerminalBufferStream(): boolean {
+  try {
+    return (
+      (requireOptionalNativeModule<{ readonly bufferStreamRevision?: number }>(
+        NATIVE_TERMINAL_MODULE_NAME,
+      )?.bufferStreamRevision ?? 0) >= 1
+    );
+  } catch {
+    return false;
+  }
 }
