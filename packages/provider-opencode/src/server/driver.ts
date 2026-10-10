@@ -34,7 +34,9 @@ import * as OpenCode2AdapterV2 from "./v2/adapter.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
+import { openCodeUsageReader, type OpenCodeUsageReaderEnv } from "./usage.ts";
 import { readOpenCodeGoUsageLimits } from "./usageLimits.ts";
+import { loadOpenCode2Catalog } from "./openCode2Catalog.ts";
 import {
   checkOpenCodeProviderStatus,
   loadOpenCode2Workspace,
@@ -182,7 +184,11 @@ export type OpenCodeDriverEnv =
   | OpenCodeRuntime.OpenCodeRuntime
   | Path.Path;
 
-export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv> = {
+export const OpenCodeDriver: ProviderDriver<
+  OpenCodeSettings,
+  OpenCodeDriverEnv,
+  OpenCodeUsageReaderEnv
+> = {
   driverKind: DRIVER_KIND,
   metadata: {
     displayName: "OpenCode",
@@ -190,6 +196,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
   },
   configSchema: OpenCodeSettings,
   defaultConfig: (): OpenCodeSettings => decodeOpenCodeSettings({}),
+  usage: openCodeUsageReader,
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -200,7 +207,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
       const crypto = yield* Crypto.Crypto;
       const host = yield* ProviderHost.ProviderHost;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
+      const processEnv = yield* mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
@@ -299,18 +306,8 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         ),
       });
       const loadOpenCode2Models = yield* makeOpenCode2ModelLoader(
-        openCode2Server.withConnection((connection) =>
-          connection.client.model.list({ location: { directory: host.paths.cwd } }).pipe(
-            Effect.map((models) => models.data),
-            Effect.mapError(
-              (cause) =>
-                new OpenCodeRuntime.OpenCodeRuntimeError({
-                  operation: "model.list",
-                  detail: "The OpenCode server could not list its models.",
-                  cause,
-                }),
-            ),
-          ),
+        openCode2Server.withConnection(({ client }) =>
+          loadOpenCode2Catalog(client, host.paths.cwd),
         ),
       );
       // A 2.x server lists skills and commands per directory, so one server

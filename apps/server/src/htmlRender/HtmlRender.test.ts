@@ -2,7 +2,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   HTML_RENDER_MEASURE_FONTS,
   HTML_RENDER_MEASURE_WIDTHS,
@@ -238,16 +238,18 @@ describe("HtmlRender", () => {
     "screenshots the page in headless Chrome with the requested theme and every console level",
     (ctx) =>
       Effect.gen(function* () {
-        const executable = (yield* HostProcessEnvironment)[TEST_BROWSER_ENV];
+        const executable = (yield* HostProcess.Environment)[TEST_BROWSER_ENV];
         if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
         yield* Effect.gen(function* () {
           const htmlRender = yield* HtmlRender.HtmlRender;
           const preview = yield* htmlRender.preview({
             html: [
-              '<!doctype html><html><head></head><body><div style="height:300px;background:var(--accent)"></div>',
+              '<!doctype html><html><head></head><body><div id="page" tabindex="0" style="height:300px;background:var(--accent)"></div>',
               '<img src="/nonexistent/t3-missing.png" hidden>',
               "<script>",
               "const root = getComputedStyle(document.documentElement);",
+              'const page = document.getElementById("page"); page.focus();',
+              'const focus = getComputedStyle(page); console.log("focus", focus.outlineWidth, focus.outlineOffset, page.getBoundingClientRect().width, document.documentElement.scrollWidth);',
               'console.log("ready", 3); console.info(root.getPropertyValue("--font-sans"));',
               'console.warn(root.getPropertyValue("--background")); console.error("boom");',
               "</script>",
@@ -271,6 +273,7 @@ describe("HtmlRender", () => {
           expect(preview.consoleMessages).toEqual(
             expect.arrayContaining([
               { level: "log", text: "ready 3" },
+              { level: "log", text: "focus 2px -2px 400 400" },
               { level: "info", text: HTML_RENDER_MEASURE_FONTS.sans },
               {
                 level: "warning",
@@ -292,7 +295,7 @@ describe("HtmlRender", () => {
     "keeps every local file but the page itself out of the browser",
     (ctx) =>
       Effect.gen(function* () {
-        const executable = (yield* HostProcessEnvironment)[TEST_BROWSER_ENV];
+        const executable = (yield* HostProcess.Environment)[TEST_BROWSER_ENV];
         if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
         yield* Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
@@ -323,7 +326,7 @@ describe("HtmlRender", () => {
     "keeps the page off this machine's local network",
     (ctx) =>
       Effect.gen(function* () {
-        const executable = (yield* HostProcessEnvironment)[TEST_BROWSER_ENV];
+        const executable = (yield* HostProcess.Environment)[TEST_BROWSER_ENV];
         if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
         // The page's connections go through a proxy that only reaches public
         // addresses, and WebRTC is gone. Each line below is a way out that
@@ -381,7 +384,7 @@ describe("HtmlRender", () => {
     "measures a published page at every client width with a fresh load each",
     (ctx) =>
       Effect.gen(function* () {
-        const executable = (yield* HostProcessEnvironment)[TEST_BROWSER_ENV];
+        const executable = (yield* HostProcess.Environment)[TEST_BROWSER_ENV];
         if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
         yield* Effect.gen(function* () {
           const htmlRender = yield* HtmlRender.HtmlRender;

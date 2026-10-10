@@ -10,6 +10,7 @@ import {
   type ChatAttachment,
   type MessageId,
   type ModelSelection,
+  type NodeId,
   type OrchestrationV2Command,
   type OrchestrationV2CreationSource,
   type PlanId,
@@ -183,6 +184,7 @@ export interface StartThreadTurnInput extends ThreadCommandInput {
 
 export interface InterruptThreadTurnInput extends ThreadCommandInput {
   readonly runId?: RunId;
+  readonly subagentId?: NodeId;
   /** Temporary caller compatibility while UI naming moves from turns to runs. */
   readonly turnId?: string;
 }
@@ -780,6 +782,18 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
 export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThreadTurn")(function* (
   input: InterruptThreadTurnInput,
 ) {
+  if (input.subagentId !== undefined) {
+    const projection = yield* getProjection(input.threadId);
+    const subagent = projection.subagents.find((agent) => agent.id === input.subagentId);
+    if (subagent?.runId == null) return { sequence: 0 };
+    return yield* dispatch({
+      type: "subagent.stop",
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      runId: subagent.runId,
+      subagentId: subagent.id,
+    });
+  }
   let runId = input.runId ?? (input.turnId as RunId | undefined);
   if (runId === undefined) {
     const projection = yield* getProjection(input.threadId);

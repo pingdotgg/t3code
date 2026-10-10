@@ -1,5 +1,3 @@
-import * as NodeOS from "node:os";
-
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -18,6 +16,7 @@ import {
   makeUnavailableUsageLimits,
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const AuthFile = Schema.Struct({ "opencode-go": Schema.optionalKey(Schema.Unknown) });
 const ApiAuth = Schema.Struct({ type: Schema.Literal("api"), key: Schema.String });
@@ -47,7 +46,11 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
     const env = input.environment;
     const dataHome =
       env.XDG_DATA_HOME ||
-      path.join(env.HOME || env.USERPROFILE || NodeOS.homedir(), ".local", "share");
+      path.join(
+        env.HOME || env.USERPROFILE || (yield* HostProcess.HomeDirectory),
+        ".local",
+        "share",
+      );
     const authPath = path.join(dataHome, "opencode", "auth.json");
     const contents =
       env.OPENCODE_AUTH_CONTENT ||

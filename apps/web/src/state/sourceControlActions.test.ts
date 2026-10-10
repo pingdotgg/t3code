@@ -3,6 +3,7 @@ import {
   AuthSourceControlWriteScope,
   EnvironmentId,
   ThreadId,
+  SourceControlProviderKind,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -98,7 +99,7 @@ const cases = [
         isAllowed: action.isAllowed,
         run: () =>
           action.run({
-            provider: "github",
+            provider: SourceControlProviderKind.make("github"),
             repository: "owner/repo",
             visibility: "private",
             remoteName: "origin",
