@@ -114,6 +114,7 @@ const PI_UNSOLICITED_ACTIVITY_ERROR =
   "Pi started agent work outside an active T3 turn. The session was stopped to prevent invisible tool execution.";
 const SETTLE_PROBE_MAX_ATTEMPTS = 3;
 const SETTLE_PROBE_RETRY_DELAY = Duration.millis(100);
+const STEER_PROMPT_ACK_TIMEOUT = Duration.seconds(3);
 
 const PiProviderCapabilitiesV2 = {
   runtimePolicy: { enforcement: "client-boundary" },
@@ -319,7 +320,7 @@ interface ActivePiTurn {
   sawAgentActivity: boolean;
   /** A user prompt joined provider-native work whose settlement may already be queued. */
   adoptedWake: boolean;
-  /** Only slash-command prompts can complete without starting an agent run. */
+  /** Legacy Pi has no disposition; slash prompts are its command-only fallback. */
   readonly promptMayBeCommandOnly: boolean;
   /** Pi reports context as unknown immediately after compaction; keep its estimate for the meter. */
   latestCompactionAfterTokens: number | null;
@@ -357,6 +358,15 @@ interface PendingPiPrompt {
   runtimeRequest: OrchestrationV2RuntimeRequest;
   readonly node: OrchestrationV2ExecutionNode;
   readonly turnItem: OrchestrationV2TurnItem;
+}
+
+interface PendingPiPromptResponse {
+  readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
+  readonly kind: "turn_start" | "steer";
+  readonly acknowledgement?: Deferred.Deferred<
+    PiRpcRecord,
+    ProviderAdapter.ProviderAdapterProtocolError
+  >;
 }
 
 /**
@@ -504,11 +514,64 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         void,
         ProviderAdapter.ProviderAdapterProtocolError
       > | null = null;
+      // Pi may finish prompt preflight out of send order. IDs own modern
+      // acknowledgements; insertion order remains a fallback for older Pi.
+      const pendingPromptResponses = new Map<string, PendingPiPromptResponse>();
+      let nextPromptRequestId = 0;
+      const registerPromptResponse = (pending: PendingPiPromptResponse) => {
+        const id = `t3-prompt-${nextPromptRequestId++}`;
+        pendingPromptResponses.set(id, pending);
+        return id;
+      };
+      const removePromptResponse = (id: string) => pendingPromptResponses.delete(id);
+      const hasPendingSettleAcknowledgement = (turn: ActivePiTurn) =>
+        [...pendingPromptResponses.values()].some(
+          (pending) =>
+            pending.providerTurnId === turn.providerTurn.id &&
+            (pending.kind === "steer" || (turn.adoptedWake && pending.kind === "turn_start")),
+        );
+      const takePromptResponse = (event: PiRpcRecord) => {
+        const id = recordString(event, "id");
+        if (id !== undefined) {
+          const pending = pendingPromptResponses.get(id);
+          if (pending !== undefined) removePromptResponse(id);
+          return pending;
+        }
+        const oldest = pendingPromptResponses.entries().next().value;
+        if (oldest === undefined) return undefined;
+        const [oldestId, pending] = oldest;
+        removePromptResponse(oldestId);
+        return pending;
+      };
+      const failPendingPromptAcknowledgements = (detail: string) =>
+        Effect.gen(function* () {
+          const error = protocolError(detail);
+          for (const [id, pending] of pendingPromptResponses) {
+            removePromptResponse(id);
+            if (pending.acknowledgement !== undefined)
+              yield* Deferred.fail(pending.acknowledgement, error);
+          }
+        });
+      const failPendingSteerAcknowledgements = (
+        providerTurnId: OrchestrationV2ProviderTurn["id"],
+      ) =>
+        Effect.gen(function* () {
+          const error = protocolError("Pi turn ended before a steering prompt was acknowledged");
+          for (const [id, pending] of pendingPromptResponses) {
+            if (pending.providerTurnId !== providerTurnId || pending.kind !== "steer") continue;
+            removePromptResponse(id);
+            if (pending.acknowledgement !== undefined)
+              yield* Deferred.fail(pending.acknowledgement, error);
+          }
+        });
       let closed = false;
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {
           closed = true;
           pendingWake = null;
+          yield* failPendingPromptAcknowledgements(
+            "Pi session closed before a prompt acknowledgement",
+          );
           if (rollbackBarrier !== null)
             yield* Deferred.fail(
               rollbackBarrier,
@@ -544,12 +607,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       let contextWindow: number | null = null;
       const modelContextWindows = new Map<string, number>();
       let modelsDiscovered = false;
-      // Prompt responses carry no id. Keep their session-wide send order and
-      // owner so a late ack from a settled turn cannot affect the next turn.
-      const pendingPromptResponses: Array<{
-        readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
-        readonly kind: "turn_start" | "steer";
-      }> = [];
       const pendingCompactResponses: Array<{
         readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
         readonly kind: "turn_start" | "steer";
@@ -1473,6 +1530,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const turn = state.activeTurn;
         if (turn === null) return;
         state.activeTurn = null;
+        yield* failPendingSteerAcknowledgements(turn.providerTurn.id);
         const completedAt = yield* DateTime.now;
         yield* completeOpenStreamItems(turn);
         if (turn.activeCompaction !== null) {
@@ -1919,24 +1977,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (turn !== null) {
               turn.settleWhenIdle = true;
               turn.settleProbeGeneration += 1;
-              // A wake can settle while the newly joined user prompt is still
-              // expanding. Its acknowledgement opens the idle-probe barrier.
-              if (
-                turn.adoptedWake &&
-                pendingPromptResponses.some(
-                  (pending) =>
-                    pending.providerTurnId === turn.providerTurn.id &&
-                    pending.kind === "turn_start",
-                )
-              )
-                return;
+              // A wake or steering input can settle while prompt preflight is
+              // still running. Its acknowledgement opens the idle-probe barrier.
+              if (hasPendingSettleAcknowledgement(turn)) return;
               yield* scheduleSettleProbe(turn, true);
             }
             return;
           }
           case "response": {
-            // Correlated responses never reach the pump; an id-less response
-            // is the deferred ack of a fire-and-forget prompt/steer/compact.
+            // Correlated RPC requests are consumed by PiRpc. Prompt IDs are
+            // deliberately fire-and-forget, so their responses reach this pump.
             const command = recordString(event, "command");
             if (command === "compact") {
               const pendingCompact = pendingCompactResponses.shift();
@@ -1976,23 +2026,38 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               }
               return;
             }
-            const pendingPrompt = command === "prompt" ? pendingPromptResponses.shift() : undefined;
+            const pendingPrompt = command === "prompt" ? takePromptResponse(event) : undefined;
+            if (pendingPrompt?.acknowledgement !== undefined)
+              yield* Deferred.succeed(pendingPrompt.acknowledgement, event);
             const responseTurn =
               pendingPrompt?.providerTurnId === turn?.providerTurn.id ? turn : null;
             if (event["success"] === true) {
-              // Deferred success ack. Command-only prompts (pure extension
-              // slash commands) never start an agent run and never emit
-              // `agent_settled`, so probe for idleness. The probe result is
-              // re-queued behind any events Pi emitted before answering
-              // get_state, which keeps the check stream-ordered.
+              const disposition = recordString(recordField(event, "data"), "disposition");
+              // Pi 0.99+ says when an input extension consumed a prompt. Older
+              // versions need the slash-command heuristic as a fallback.
+              if (responseTurn !== null && pendingPrompt?.kind === "turn_start") {
+                const legacyCommandHandled =
+                  disposition === undefined &&
+                  responseTurn.promptMayBeCommandOnly &&
+                  (!responseTurn.sawAgentActivity || responseTurn.adoptedWake);
+                if (disposition === "handled") {
+                  responseTurn.settleWhenIdle = true;
+                } else if (legacyCommandHandled) {
+                  // A legacy ack cannot distinguish an extension command
+                  // from a slash prompt that will start a normal agent turn.
+                  // Probe for command-only completion without changing Stop's
+                  // native abort behavior if agent_start arrives first.
+                  yield* scheduleSettleProbe(responseTurn);
+                }
+              }
               if (
-                pendingPrompt?.kind === "turn_start" &&
                 responseTurn !== null &&
-                ((responseTurn.promptMayBeCommandOnly && !responseTurn.sawAgentActivity) ||
-                  (responseTurn.adoptedWake &&
-                    (responseTurn.settleWhenIdle || responseTurn.promptMayBeCommandOnly)))
+                responseTurn.settleWhenIdle &&
+                !hasPendingSettleAcknowledgement(responseTurn)
               ) {
-                yield* scheduleSettleProbe(responseTurn, responseTurn.adoptedWake);
+                // A settle probe may have been blocked by another prompt's
+                // preflight; the final acknowledgement must take a fresh snapshot.
+                yield* scheduleSettleProbe(responseTurn, true);
               }
               return;
             }
@@ -2004,6 +2069,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               yield* Effect.logWarning("Pi rejected a steer message.", {
                 errorLength: recordString(event, "error")?.length,
               });
+              if (
+                responseTurn?.settleWhenIdle === true &&
+                !hasPendingSettleAcknowledgement(responseTurn)
+              )
+                yield* scheduleSettleProbe(responseTurn, true);
               return;
             }
             const failedTurn =
@@ -2020,7 +2090,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               if (failedTurn.adoptedWake && command === "prompt") {
                 failedTurn.rejectedPromptFailure = failure;
                 failedTurn.settleWhenIdle = true;
-                yield* scheduleSettleProbe(failedTurn, true);
+                if (!hasPendingSettleAcknowledgement(failedTurn))
+                  yield* scheduleSettleProbe(failedTurn, true);
               } else {
                 failedTurn.failure = failure;
                 if (state !== null) yield* finalizeTurn(state);
@@ -2059,6 +2130,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               return;
             }
             if (probeFailed) {
+              if (hasPendingSettleAcknowledgement(turn)) {
+                turn.settleWhenIdle = true;
+                return;
+              }
               if (!settleAfterAgentActivity) {
                 if (state !== null) yield* finalizeTurn(state);
                 return;
@@ -2079,6 +2154,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               recordField(data, "isCompacting") !== true &&
               (recordNumber(data, "pendingMessageCount") ?? 0) === 0
             ) {
+              if (hasPendingSettleAcknowledgement(turn)) {
+                turn.settleWhenIdle = true;
+                return;
+              }
               turn.settleWhenIdle = false;
               if (state !== null) yield* finalizeTurn(state);
             }
@@ -2098,6 +2177,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         Effect.catchCause((cause) =>
           sessionEventPermit.withPermits(1)(
             Effect.gen(function* () {
+              yield* failPendingPromptAcknowledgements(
+                "Pi connection closed before a prompt acknowledgement",
+              );
               // Transport death finalizes any live turn. Stop-with-restart
               // closes the provider stream cleanly; only an unexpected death
               // is surfaced as an event-stream failure.
@@ -2555,16 +2637,21 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   kind: "turn_start",
                 });
               } else if (payload !== null) {
-                yield* connection.send({
-                  type: "prompt",
-                  message: payload.message,
-                  ...(wake === null ? {} : { streamingBehavior: "steer" }),
-                  ...(payload.images.length === 0 ? {} : { images: payload.images }),
-                });
-                pendingPromptResponses.push({
+                const promptRequestId = registerPromptResponse({
                   providerTurnId: providerTurn.id,
                   kind: "turn_start",
                 });
+                yield* connection
+                  .send({
+                    type: "prompt",
+                    id: promptRequestId,
+                    message: payload.message,
+                    ...(wake === null ? {} : { streamingBehavior: "steer" }),
+                    ...(payload.images.length === 0 ? {} : { images: payload.images }),
+                  })
+                  .pipe(
+                    Effect.tapError(() => Effect.sync(() => removePromptResponse(promptRequestId))),
+                  );
               }
               yield* emit({
                 type: "provider_turn.updated",
@@ -2601,10 +2688,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 }),
               ),
             );
-            // Pi acks `prompt` only after slash-command expansion completes,
-            // and extension commands may block on user dialogs indefinitely.
-            // Rejections therefore return later as id-less response records
-            // handled by the event pump.
+            // Prompt preflight can await an extension dialog. Let the event
+            // pump correlate its eventual acknowledgement or rejection.
           }).pipe(
             Effect.mapError(
               (cause) =>
@@ -2631,12 +2716,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     steerInput.message.attachments,
                   )
                 : null;
+            const acknowledgement =
+              payload === null
+                ? undefined
+                : yield* Deferred.make<PiRpcRecord, ProviderAdapter.ProviderAdapterProtocolError>();
             // Prompt with streamingBehavior steer is atomic on Pi's side: it
             // queues during an active run and starts a new run if settlement
             // won the race. A direct `steer` sent after Pi became idle would
-            // remain queued forever. Send fire-and-forget under the session
-            // permit so a slash-command dialog cannot block the turn, and so
-            // settlement cannot overtake the active-turn check.
+            // remain queued forever. Send under the session permit to serialize
+            // the ownership check with settlement, then wait for Pi's preflight
+            // result after releasing it so a dialog leaves the event pump free.
             // /compact is not a prompt: Pi's compact RPC aborts the agent first.
             yield* sessionEventPermit.withPermits(1)(
               Effect.gen(function* () {
@@ -2651,20 +2740,42 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     kind: "steer",
                   });
                 } else if (payload !== null) {
-                  yield* connection.send({
-                    type: "prompt",
-                    message: payload.message,
-                    streamingBehavior: "steer",
-                    ...(payload.images.length === 0 ? {} : { images: payload.images }),
-                  });
-                  pendingPromptResponses.push({
+                  const promptRequestId = registerPromptResponse({
                     providerTurnId: turn.providerTurn.id,
                     kind: "steer",
+                    ...(acknowledgement === undefined ? {} : { acknowledgement }),
                   });
+                  yield* connection
+                    .send({
+                      type: "prompt",
+                      id: promptRequestId,
+                      message: payload.message,
+                      streamingBehavior: "steer",
+                      ...(payload.images.length === 0 ? {} : { images: payload.images }),
+                    })
+                    .pipe(
+                      Effect.tapError(() =>
+                        Effect.sync(() => removePromptResponse(promptRequestId)),
+                      ),
+                    );
                 }
                 turn.settleProbeGeneration += 1;
               }),
             );
+            if (acknowledgement !== undefined) {
+              // Pi input handlers may wait on a user dialog before acknowledging
+              // the prompt. Bound this call so answer, Stop, or detach effects
+              // can run; the registered response still gates settlement and
+              // handles any late rejection.
+              const response = yield* Deferred.await(acknowledgement).pipe(
+                Effect.timeoutOption(STEER_PROMPT_ACK_TIMEOUT),
+              );
+              if (Option.isNone(response)) return;
+              if (response.value["success"] !== true)
+                return yield* protocolError(
+                  recordString(response.value, "error") ?? "Pi rejected the steering prompt",
+                );
+            }
           }).pipe(
             Effect.mapError(
               (cause) =>
@@ -2699,7 +2810,16 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               // Pi's generic abort does not cancel manual compaction. Terminate
               // so Stop covers user /compact as well as detached recovery compact.
               stopRequested = true;
-              if (interruptInput.requestRuntimeRestart === true && !turn.settleWhenIdle) {
+              const compactionInFlight =
+                turn.activeCompaction !== null || turn.manualCompactInFlight;
+              if (
+                (interruptInput.requestRuntimeRestart === true && !turn.settleWhenIdle) ||
+                (turn.settleWhenIdle && !compactionInFlight)
+              ) {
+                // A handled acknowledgement is a settlement hint, not proof
+                // that an extension or adopted wake left no native work.
+                // Try Pi's graceful abort before teardown when that intent
+                // forces it, unless compaction is the reason for termination.
                 yield* request({ type: "abort" }, 2_000).pipe(Effect.ignore);
               }
               // Terminating fails every later request, so read the stopped
