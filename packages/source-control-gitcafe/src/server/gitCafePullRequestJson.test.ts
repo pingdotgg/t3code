@@ -356,7 +356,12 @@ describe("toActivity", () => {
         },
       },
     );
-    const thumbsUp = { content: "thumbs-up", count: 3, actors: ["alice"], viewerHasReacted: true };
+    const thumbsUp = {
+      content: "thumbs-up",
+      count: 3,
+      actors: ["alice"],
+      viewerHasReacted: true,
+    } as const;
     assert.deepStrictEqual(result.reactions, [
       { content: "rocket", count: 1, actors: ["alice"], viewerHasReacted: false },
     ]);

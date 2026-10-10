@@ -107,8 +107,8 @@ describe("GitCafeSourceControlProvider", () => {
     }).pipe(
       Effect.provide(
         GitCafeApi.layer.pipe(
-          Layer.provideMerge(TestSourceControlHost.layer()),
           Layer.provide(GitCafeCredentials.layer),
+          Layer.provideMerge(TestSourceControlHost.layer()),
           Layer.provide(
             Layer.succeed(HostProcess.Environment, { CAFE_TOKEN: "env-token", CAFE_HOST: host }),
           ),
