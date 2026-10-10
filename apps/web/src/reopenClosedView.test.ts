@@ -68,6 +68,30 @@ describe("reopenClosedView", () => {
     expect(openPreview).not.toHaveBeenCalled();
   });
 
+  it("restores a plugin view tab under its installation and view", async () => {
+    const reopened = await reopenClosedView(
+      {
+        kind: "panel-tab",
+        threadRef,
+        surface: {
+          kind: "plugin-view",
+          id: "plugin-view:installation-1:board",
+          installationId: "installation-1",
+          viewId: "board",
+          title: "Board",
+        },
+      },
+      { openPreview: vi.fn(), workspaceAvailable: false },
+    );
+    expect(reopened).toBe(true);
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef);
+    expect(state.isOpen).toBe(true);
+    expect(state.activeSurfaceId).toBe("plugin-view:installation-1:board");
+    expect(state.surfaces).toMatchObject([
+      { kind: "plugin-view", viewId: "board", title: "Board" },
+    ]);
+  });
+
   it("does not reopen workspace tabs without an available project", async () => {
     const options = {
       openPreview: vi.fn(),
