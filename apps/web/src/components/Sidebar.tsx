@@ -1303,11 +1303,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         }
       : status === "waiting"
         ? {
-            // Waiting is calm background presence (post-settle background
-            // roster), not active progress, so the label keeps full strength.
+            // Waiting is background work still in flight (post-settle
+            // background roster): working's hue without an icon, so it reads
+            // as in motion but not the foreground turn. Dimmed only in dark
+            // mode; a lighter blue on the light sidebar drops below 4.5:1.
             label: "Waiting",
             icon: null,
-            className: "text-muted-foreground",
+            className: "text-sky-700 dark:text-info/70",
           }
         : status === "approval"
           ? {

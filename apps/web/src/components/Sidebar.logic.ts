@@ -946,8 +946,8 @@ export function resolveThreadRowClassName(input: {
 // unlabeled resting state — the agent stopped and is waiting on the user,
 // whether it finished, asked a question, or proposed a plan. Waiting
 // (runtime status "idle") is the agent stopped with background work that will
-// wake it (subagents, monitors): not the user's turn yet, so it renders grey
-// like working, not as a false Done. Commands it left running, such as a dev
+// wake it (subagents, monitors): not the user's turn yet, so it renders as a
+// dimmed working, not as a false Done. Commands it left running, such as a dev
 // server, do not hold the thread; it reads as ready.
 // Unread completion is tracked separately: it describes whether a ready
 // thread needs attention, not what the thread is currently doing.
@@ -1209,8 +1209,8 @@ export function resolveThreadStatusPill(input: {
   if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) {
     return {
       label: "Waiting",
-      colorClass: "text-sidebar-muted-foreground",
-      dotClass: "bg-sidebar-muted-foreground",
+      colorClass: "text-sky-700 dark:text-sky-300/60",
+      dotClass: "bg-sky-500/60 dark:bg-sky-300/50",
       pulse: false,
     };
   }
