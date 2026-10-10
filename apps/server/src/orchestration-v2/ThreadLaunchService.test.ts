@@ -263,6 +263,7 @@ function makeHarness(options: HarnessOptions = {}) {
       layerThreadManagement,
       layerTitleRegeneration,
       layerOutbox,
+      layerReceipts,
       layerDatabase,
       layerExternalServices,
     ),
@@ -721,7 +722,64 @@ it.effect("does not leave a runnable root-checkout fork after worktree creation 
   }).pipe(Effect.provide(harness.layer));
 });
 
-it.effect("returns a fork's ready checkout while its async setup continues", () =>
+it.effect("waits for a fork's setup when the script requires completion", () =>
+  Effect.gen(function* () {
+    const setupEntered = yield* Deferred.make<void>();
+    const completion = yield* Deferred.make<{ exitCode: number | null; durationMs: number }>();
+    const launchReturned = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      runSetup: () =>
+        Effect.succeed({
+          status: "started" as const,
+          async: false,
+          scriptId: "setup",
+          scriptName: "Setup",
+          scriptCommand: "vp install",
+          terminalId: "setup",
+          cwd: "/repo-worktrees/feature",
+          completion: Deferred.succeed(setupEntered, undefined).pipe(
+            Effect.andThen(Deferred.await(completion)),
+          ),
+        }),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const forkSource = yield* seedForkSource();
+      const input = {
+        ...launchInput({
+          command: "fork:sync-setup",
+          thread: "thread:fork-sync-setup",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+        forkSource,
+      };
+      const launch = yield* launches.launch(input).pipe(
+        Effect.tap(() => Deferred.succeed(launchReturned, undefined)),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(setupEntered);
+      assert.isFalse(yield* Deferred.isDone(launchReturned));
+      const readyCommandId = CommandId.make(`${input.commandId}:fork-ready`);
+      assert.isTrue(Option.isNone(yield* receipts.getByCommandId(readyCommandId)));
+      assert.equal(
+        (yield* threads.getThreadProjection(input.threadId)).thread.worktreePath,
+        "/repo-worktrees/feature",
+      );
+      yield* Deferred.succeed(completion, { exitCode: 0, durationMs: 1 });
+      const result = yield* Fiber.join(launch);
+      assert.equal(result.projection.thread.worktreePath, "/repo-worktrees/feature");
+      assert.isEmpty(result.projection.runs);
+      assert.equal(
+        Option.getOrThrow(yield* receipts.getByCommandId(readyCommandId)).status,
+        "accepted",
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("honors nonblocking setup for a fork while its async script continues", () =>
   Effect.gen(function* () {
     const completion = yield* Deferred.make<{ exitCode: number | null; durationMs: number }>();
     const harness = makeHarness({
@@ -740,18 +798,31 @@ it.effect("returns a fork's ready checkout while its async setup continues", () 
     yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
       const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
       const forkSource = yield* seedForkSource();
-      const result = yield* launches.launch({
+      const input = {
         ...launchInput({
           command: "fork:async",
           thread: "thread:fork-async",
           workspace: { type: "worktree", baseRef: "main" },
         }),
         forkSource,
-      });
+      };
+      const result = yield* launches.launch(input);
       assert.equal(result.projection.thread.worktreePath, "/repo-worktrees/feature");
       assert.isEmpty(result.projection.runs);
       assert.equal((yield* tracker.get(result.threadId))?.phase, "running");
+      assert.equal(
+        Option.getOrThrow(
+          yield* receipts.getByCommandId(CommandId.make(`${input.commandId}:fork-ready`)),
+        ).status,
+        "accepted",
+      );
+      const replay = yield* launches.launch(input);
+      assert.isTrue(replay.resumed);
+      assert.equal(replay.projection.thread.worktreePath, "/repo-worktrees/feature");
+      assert.equal(harness.createWorktree.mock.calls.length, 1);
+      assert.equal(harness.runSetup.mock.calls.length, 1);
       yield* Deferred.succeed(completion, { exitCode: 0, durationMs: 1 });
       yield* tracker.stream(result.threadId).pipe(
         Stream.filter((snapshot) => snapshot?.phase === "done"),
