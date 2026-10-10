@@ -2240,6 +2240,204 @@ describe("orchestration v2 provider switching", () => {
     ),
   );
 
+  it.live("delivers an older queued PR wake to the provider that took over", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("queued-pr-handoff");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const started = yield* Deferred.make<void>();
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            holdFirstTurn: started,
+          }),
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: { 2: "PR update handled", 3: "Takeover complete" },
+            capturedTurns,
+          }),
+        ]);
+        const threadId = ThreadId.make("thread:queued-pr-handoff");
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const eventSink = yield* EventSink.EventSinkV2;
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`${threadId}:create`),
+            threadId,
+            projectId: ProjectId.make(`${threadId}:project`),
+            title: "Queued PR handoff",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+            createdBy: "user",
+            creationSource: "web",
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`${threadId}:active`),
+            threadId,
+            messageId: MessageId.make(`${threadId}:active`),
+            text: "Original work",
+            attachments: [],
+            modelSelection: CODEX_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          yield* Deferred.await(started);
+          const key = { host: "github.com", repository: "pingdotgg/t3code", number: 7 };
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make(`${threadId}:watch`),
+            threadId,
+            ...key,
+            watching: true,
+            link: { url: "https://github.com/pingdotgg/t3code/pull/7", source: "agent" },
+          });
+          const watch = (yield* orchestrator.getThreadShell(threadId))!.pullRequests![0]!.watch!;
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request-watch.sync",
+            commandId: CommandId.make(`${threadId}:wake`),
+            threadId,
+            ...key,
+            startedAt: watch.startedAt,
+            watch: { ...watch, wakes: 1 },
+            wake: {
+              messageId: MessageId.make(`${threadId}:wake`),
+              text: "Review the new PR comments",
+              notification: {
+                source: { kind: "monitor" },
+                outcome: "updated",
+                summary: "#7: new comments",
+              },
+            },
+          });
+          const before = yield* orchestrator.getThreadProjection(threadId);
+          const active = before.runs[0]!;
+          const queued = before.runs[1]!;
+          assert.equal(queued.status, "queued");
+          const now = yield* DateTime.now;
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}:limit`),
+                type: "turn-item.updated",
+                threadId,
+                runId: active.id,
+                nodeId: active.rootNodeId!,
+                providerInstanceId: active.providerInstanceId,
+                occurredAt: now,
+                payload: {
+                  id: TurnItemId.make(`${threadId}:limit`),
+                  threadId,
+                  runId: active.id,
+                  nodeId: active.rootNodeId!,
+                  providerThreadId: active.providerThreadId,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: 101,
+                  status: "failed",
+                  title: "Usage limit reached",
+                  startedAt: now,
+                  completedAt: now,
+                  updatedAt: now,
+                  type: "error",
+                  failure: makeProviderFailure({
+                    message: "Usage limit reached",
+                    code: "usage_limit",
+                    class: "usage_limit",
+                  }),
+                },
+              },
+              {
+                id: EventId.make(`${threadId}:failed`),
+                type: "run.updated",
+                threadId,
+                runId: active.id,
+                providerInstanceId: active.providerInstanceId,
+                occurredAt: now,
+                payload: { ...active, status: "failed", completedAt: now },
+              },
+            ],
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`${threadId}:takeover`),
+            threadId,
+            messageId: MessageId.make(`${threadId}:takeover`),
+            text: "Take over and finish the work",
+            attachments: [],
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          yield* orchestrator.streamStoredEvents.pipe(
+            Stream.filter(
+              ({ event }) =>
+                event.type === "run.updated" &&
+                event.runId === queued.id &&
+                event.payload.status === "completed",
+            ),
+            Stream.runHead,
+          );
+          yield* worker.drain();
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(
+            (yield* Ref.get(capturedTurns)).map((turn) => turn.driver),
+            [CODEX_DRIVER, CLAUDE_DRIVER, CLAUDE_DRIVER],
+          );
+          assert.include((yield* Ref.get(capturedTurns))[2]!.text, "Review the new PR comments");
+          assert.equal(after.runs[1]?.providerThreadId, after.runs[2]?.providerThreadId);
+          assert.equal(
+            after.nodes.find((node) => node.id === queued.rootNodeId)?.providerThreadId,
+            after.runs[1]?.providerThreadId,
+          );
+          assert.equal(
+            after.attempts.find((attempt) => attempt.id === queued.activeAttemptId)
+              ?.providerInstanceId,
+            CLAUDE_MODEL_SELECTION.instanceId,
+          );
+          assert.equal(after.thread.providerInstanceId, CLAUDE_MODEL_SELECTION.instanceId);
+          assert.equal(after.runs[1]?.contextHandoffId, null);
+          assert.lengthOf(after.contextHandoffs, 1);
+          assert.isDefined(after.thread.pullRequests?.[0]?.watch);
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "queued-pr-handoff",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              layerRegistry,
+            ),
+          ),
+        );
+      }),
+    ),
+  );
+
   it.live("fails an unsupported queued handoff and advances to the next queued provider", () =>
     Effect.scoped(
       Effect.gen(function* () {
