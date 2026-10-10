@@ -103,7 +103,15 @@ test.provider(
       );
       expect(remaining.some((label) => label.name === "bug")).toBe(false);
     }),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:github",
+      "provider:github:label",
+      "provider:github:repository",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -159,7 +167,15 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:github",
+      "provider:github:label",
+      "provider:github:repository",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -224,7 +240,15 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:github",
+      "provider:github:label",
+      "provider:github:repository",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -263,7 +287,11 @@ test.provider(
       const credentials = yield* yield* GitHubCredentials;
       const client = credentials.octokit();
       client.hook.before("request", (options) => {
-        if (options.url === "/user/repos") options.url = `/orgs/${owner}/repos`;
+        const url = new URL(options.url, "https://api.github.com");
+        if (url.pathname === "/user/repos") {
+          url.pathname = `/orgs/${owner}/repos`;
+          options.url = url.toString();
+        }
       });
       const provider = yield* Provider.findProvider(GitHub.Label);
       const allLabels = yield* provider
@@ -281,7 +309,15 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:github",
+      "provider:github:label",
+      "provider:github:repository",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -320,5 +356,13 @@ test.provider(
 
       yield* stack.destroy();
     }),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:github",
+      "provider:github:label",
+      "provider:github:repository",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

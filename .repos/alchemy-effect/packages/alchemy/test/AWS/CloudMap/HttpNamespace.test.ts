@@ -94,7 +94,7 @@ test.provider(
       yield* stack.destroy();
       yield* assertNamespaceDeleted(namespace.namespaceId);
     }),
-  { timeout: 240_000 },
+  { tags: ["provider:aws", "provider:aws:cloudmap", "live"], timeout: 240_000 },
 );
 
 test.provider(
@@ -128,5 +128,5 @@ test.provider(
       yield* stack.destroy();
       yield* assertNamespaceDeleted(second.namespaceId);
     }),
-  { timeout: 240_000 },
+  { tags: ["provider:aws", "provider:aws:cloudmap", "live"], timeout: 240_000 },
 );

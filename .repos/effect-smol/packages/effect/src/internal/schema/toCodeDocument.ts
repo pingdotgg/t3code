@@ -297,31 +297,6 @@ export function toCodeDocument(
     return representation?.schemas?.map((schema, index) => recur(schema, [...path, "schemas", index])) ?? []
   }
 
-  function checkBrands(
-    check: SchemaRepresentation.Check
-  ): ReadonlyArray<string> {
-    const own = InternalAnnotations.collectBrands(check.annotations)
-    if (
-      check._tag === "FilterGroup" &&
-      check.annotations?.toCode === undefined
-    ) {
-      return [...own, ...check.checks.flatMap(checkBrands)]
-    }
-    return own
-  }
-
-  function runtimeBrands(brands: ReadonlyArray<string>): string {
-    return brands.length === 0
-      ? ""
-      : `.pipe(${brands.map((brand) => `Schema.brand(${format(brand)})`).join(", ")})`
-  }
-
-  function typeBrands(brands: ReadonlyArray<string>): string {
-    if (brands.length === 0) return ""
-    addImport(`import type * as Brand from "effect/Brand"`)
-    return brands.map((brand) => ` & Brand.Brand<${format(brand)}>`).join("")
-  }
-
   function runtimeAnnotate(
     annotations: Schema.Annotations.Annotations | undefined,
     method: "annotate" | "annotateKey" = "annotate"
@@ -361,25 +336,19 @@ export function toCodeDocument(
   function applyNode(
     base: SchemaRepresentation.Code,
     representation: Exclude<SchemaRepresentation.Representation, SchemaRepresentation.Reference>,
-    path: Path,
-    includeTypeBrands: boolean = true
+    path: Path
   ): SchemaRepresentation.Code {
-    const nodeBrands = InternalAnnotations.collectBrands(representation.annotations)
-    let runtime = base.runtime + runtimeAnnotate(representation.annotations) + runtimeBrands(nodeBrands)
-    let Type = base.Type + (includeTypeBrands ? typeBrands(nodeBrands) : "")
+    let runtime = base.runtime + runtimeAnnotate(representation.annotations)
     for (let index = 0; index < representation.checks.length; index++) {
       const check = representation.checks[index]
-      const brands = checkBrands(check)
-      runtime += `.check(${compileCheck(check, [...path, "checks", index])})${runtimeBrands(brands)}`
-      if (includeTypeBrands) Type += typeBrands(brands)
+      runtime += `.check(${compileCheck(check, [...path, "checks", index])})`
     }
-    return makeCode(runtime, Type)
+    return makeCode(runtime, base.Type)
   }
 
   function recur(
     representation: SchemaRepresentation.Representation,
-    path: Path,
-    includeTypeBrands: boolean = true
+    path: Path
   ): SchemaRepresentation.Code {
     if (representation._tag === "Reference") {
       if (!Object.hasOwn(document.references, representation.$ref)) {
@@ -392,18 +361,14 @@ export function toCodeDocument(
       ) {
         return makeCode(`Schema.suspend((): Schema.Codec<${identifier}> => ${identifier})`, identifier)
       }
-      const Type = includeTypeBrands
-        ? identifier
-        : recur(document.references[representation.$ref], ["references", representation.$ref], false).Type
-      return makeCode(identifier, Type)
+      return makeCode(identifier, identifier)
     }
-    return applyNode(on(representation, path, includeTypeBrands), representation, path, includeTypeBrands)
+    return applyNode(on(representation, path), representation, path)
   }
 
   function on(
     representation: Exclude<SchemaRepresentation.Representation, SchemaRepresentation.Reference>,
-    path: Path,
-    includeTypeBrands: boolean
+    path: Path
   ): SchemaRepresentation.Code {
     switch (representation._tag) {
       case "Declaration": {
@@ -473,7 +438,7 @@ export function toCodeDocument(
         return makeCode(`Schema.Enum(${identifier})`, identifier)
       }
       case "TemplateLiteral": {
-        const parts = representation.parts.map((part, index) => recur(part, [...path, "parts", index], false))
+        const parts = representation.parts.map((part, index) => recur(part, [...path, "parts", index]))
         const Type = `\`${parts.map((part) => `\${${part.Type}}`).join("")}\``
         return makeCode(`Schema.TemplateLiteral([${parts.map((part) => part.runtime).join(", ")}])`, Type)
       }
@@ -576,9 +541,7 @@ export function toCodeDocument(
             ? makeCode(`Schema.Literal(${literals[0]})`, literals[0])
             : makeCode(`Schema.Literals([${literals.join(", ")}])`, literals.join(" | "))
         }
-        const types = representation.types.map((type, index) =>
-          recur(type, [...path, "types", index], includeTypeBrands)
-        )
+        const types = representation.types.map((type, index) => recur(type, [...path, "types", index]))
         const options = representation.options === undefined
           ? ""
           : `, ${unionOptionsRuntime(representation.options)}`

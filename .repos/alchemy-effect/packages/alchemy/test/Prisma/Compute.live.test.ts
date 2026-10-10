@@ -8,9 +8,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 const { test } = Test.make({ providers: Prisma.providers() });
 
@@ -40,6 +40,7 @@ if (wantsLive && !hasLiveCredentials) {
         ].join(" "),
       ),
     ),
+    { tags: ["provider:prisma", "provider:prisma:compute", "live"] },
   );
 }
 
@@ -54,6 +55,7 @@ if (wantsCleanup && !hasLiveCredentials) {
         ].join(" "),
       ),
     ),
+    { tags: ["provider:prisma", "provider:prisma:compute", "live"] },
   );
 }
 
@@ -80,7 +82,10 @@ test.provider.skipIf(!runCleanup)(
         yield* expectGone("Prisma App", Prisma.getApp(appId));
       }
     }).pipe(logLevel),
-  { timeout: 600_000 },
+  {
+    tags: ["provider:prisma", "provider:prisma:compute", "live"],
+    timeout: 600_000,
+  },
 );
 
 test.provider.skipIf(!runLive)(
@@ -205,7 +210,15 @@ test.provider.skipIf(!runLive)(
         ),
       );
     }).pipe(logLevel),
-  { timeout: 600_000 },
+  {
+    tags: [
+      "provider:prisma",
+      "provider:prisma:compute",
+      "provider:prisma:project",
+      "live",
+    ],
+    timeout: 600_000,
+  },
 );
 
 test.provider.skipIf(!runLive)(
@@ -393,7 +406,15 @@ test.provider.skipIf(!runLive)(
         expect(appGone).toBe(true);
       }).pipe(Effect.ensuring(stack.destroy().pipe(Effect.ignore)));
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:prisma",
+      "provider:prisma:compute",
+      "provider:prisma:project",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!runLive)(
@@ -496,7 +517,15 @@ test.provider.skipIf(!runLive)(
         ),
       );
     }).pipe(logLevel),
-  { timeout: 600_000 },
+  {
+    tags: [
+      "provider:prisma",
+      "provider:prisma:compute",
+      "provider:prisma:project",
+      "live",
+    ],
+    timeout: 600_000,
+  },
 );
 
 const fetchText = (url: string) =>

@@ -13,9 +13,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ContextHandoffService from "./ContextHandoffService.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
-const TestLayer = ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer));
+const layerTest = ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer));
 
 function importedItem(
   input:
@@ -67,7 +67,7 @@ function importedItem(
       };
 }
 
-it.layer(TestLayer)("ContextHandoffService legacy import", (it) => {
+it.layer(layerTest)("ContextHandoffService legacy import", (it) => {
   it.effect("prepares imported history for the first native v2 turn", () =>
     Effect.gen(function* () {
       const service = yield* ContextHandoffService.ContextHandoffServiceV2;

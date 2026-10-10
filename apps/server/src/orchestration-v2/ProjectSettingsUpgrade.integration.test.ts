@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { assert, it } from "@effect/vitest";
 import { ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -7,7 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -15,18 +16,18 @@ import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
-import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { runMigrations } from "../persistence/Migrations.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
-import { OrchestrationV2LayerLive, ProjectServiceLayerLive } from "./runtimeLayer.ts";
+import * as RuntimeLayer from "./runtimeLayer.ts";
 
 const projectId = ProjectId.make("project:upgrade");
 const icon = { kind: "emoji", emoji: "🦊" } as const;
@@ -116,28 +117,28 @@ const unusedEnrichment = {
 };
 
 /** The production V2 runtime and project service against one file-backed database. */
-const makeRuntimeLayer = (dbPath: string) => {
-  const platform = Layer.merge(
+const layerRuntime = (dbPath: string) => {
+  const layerPlatform = Layer.merge(
     NodeServices.layer,
     Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
       resolveLink: () => Effect.die("unused"),
     }),
   );
-  const serverConfig = ServerConfig.layerTest(process.cwd(), {
+  const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-project-upgrade-",
   });
-  const checkpointStore = CheckpointStore.layer.pipe(
+  const layerCheckpointStore = CheckpointStore.layer.pipe(
     Layer.provide(
       VcsDriverRegistry.layer.pipe(
         Layer.provide(VcsProcess.layer),
-        Layer.provide(serverConfig),
-        Layer.provide(platform),
+        Layer.provide(layerServerConfig),
+        Layer.provide(layerPlatform),
       ),
     ),
   );
   return Layer.mergeAll(
-    OrchestrationV2LayerLive.pipe(Layer.provide(ProjectServiceLayerLive)),
-    ProjectServiceLayerLive,
+    RuntimeLayer.layer.pipe(Layer.provide(RuntimeLayer.layerProjectService)),
+    RuntimeLayer.layerProjectService,
   ).pipe(
     Layer.provide(
       Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({
@@ -152,9 +153,10 @@ const makeRuntimeLayer = (dbPath: string) => {
       }),
     ),
     Layer.provide(McpSessionRegistryTestkit.layer),
-    Layer.provideMerge(makeSqlitePersistenceLive(dbPath)),
-    Layer.provide(checkpointStore),
-    Layer.provide(serverConfig),
+    Layer.provide(McpProviderSessions.layer),
+    Layer.provideMerge(SqlitePersistence.layerFromPath(dbPath)),
+    Layer.provide(layerCheckpointStore),
+    Layer.provide(layerServerConfig),
     Layer.provide(ServerSettings.layerTest()),
     Layer.provide(
       Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
@@ -170,7 +172,7 @@ const makeRuntimeLayer = (dbPath: string) => {
         pruneWorktrees: () => Effect.void,
       }),
     ),
-    Layer.provide(platform),
+    Layer.provide(layerPlatform),
   );
 };
 
@@ -189,7 +191,7 @@ it.live("keeps project settings through the V2 migrations and the first V2 boot"
         assert.deepEqual(yield* readSettings, expectedSettings);
         const project = yield* (yield* ProjectService.ProjectService).getById(projectId);
         assert.equal(project._tag, "Some");
-      }).pipe(Effect.provide(makeRuntimeLayer(dbPath)));
+      }).pipe(Effect.provide(layerRuntime(dbPath)));
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );

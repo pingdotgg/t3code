@@ -14,7 +14,8 @@ export type HardwareKeyboardCommand =
   | "terminal"
   | "review"
   | "copyThreadReference"
-  | "toggleSidebar";
+  | "toggleSidebar"
+  | "cycleHost";
 
 type CommandHandler = (command: HardwareKeyboardCommand) => boolean | void;
 
@@ -90,4 +91,17 @@ export function parseActiveThreadPath(pathname: string): {
   } catch {
     return null;
   }
+}
+
+/**
+ * The machine after `currentId` in display order, wrapping around. Starts at
+ * the first machine when `currentId` is not listed.
+ */
+export function nextEnvironmentId<T extends { readonly environmentId: string }>(
+  environments: ReadonlyArray<T>,
+  currentId: string | null,
+): T["environmentId"] | null {
+  if (environments.length < 2) return null;
+  const index = environments.findIndex((environment) => environment.environmentId === currentId);
+  return environments[(index + 1) % environments.length]?.environmentId ?? null;
 }

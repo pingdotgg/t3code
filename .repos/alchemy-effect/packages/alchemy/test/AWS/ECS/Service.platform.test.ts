@@ -232,7 +232,17 @@ test.provider(
         false,
       );
     }),
-  { timeout: 420_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:ec2",
+      "provider:aws:ecr",
+      "provider:aws:ecs",
+      "provider:aws:iam",
+      "live",
+    ],
+    timeout: 420_000,
+  },
 );
 
 // Migration reap: state rows written by the pre-composition provider carry
@@ -463,5 +473,8 @@ test.provider(
         );
       expect(activeRevisions).toEqual([]);
     }),
-  { timeout: 420_000 },
+  {
+    tags: ["provider:aws", "provider:aws:ec2", "provider:aws:ecs", "live"],
+    timeout: 420_000,
+  },
 );

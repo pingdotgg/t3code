@@ -1,27 +1,44 @@
 import { Spinner } from "~/components/ui/spinner";
-import type {
-  ChatFileAttachment,
-  EditorId,
-  EnvironmentId,
-  ResolvedKeybindingsConfig,
-  ScopedThreadRef,
+import {
+  AuthPreviewOperateScope,
+  type EditorId,
+  type EnvironmentId,
+  type ResolvedKeybindingsConfig,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { filePreviewDelimiter } from "@t3tools/shared/delimitedPreview";
+import { AuthFilesystemWriteScope } from "@t3tools/contracts";
 import {
   isWorkspaceAudioPreviewPath,
   isWorkspaceImagePreviewPath,
   isWorkspaceVideoPreviewPath,
 } from "@t3tools/shared/filePreview";
-import { VirtualizedFile, type SelectedLineRange } from "@pierre/diffs";
-import { Editor } from "@pierre/diffs/editor";
-import { EditProvider, File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
+import {
+  DEFAULT_TOKENIZE_MAX_LENGTH,
+  VirtualizedFile,
+  getFiletypeFromFileName,
+  type File as FileInstance,
+  type FileContents,
+  type PostRenderPhase,
+  type SelectedLineRange,
+} from "@pierre/diffs";
+import {
+  Editor,
+  type EditorChangeEvent,
+  type EditorFactory,
+  type EditorOptions,
+} from "@pierre/diffs/edit";
+import type { WorkerPoolManager } from "@pierre/diffs/worker";
+import { EditProvider, File, Virtualizer, useWorkerPool } from "@pierre/diffs/react";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
+import { useFilesystemReadAccess } from "~/state/filesystem";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
-import { Code2, Eye, FolderTree, Globe2, Table2, WrapTextIcon } from "lucide-react";
+import { FolderTree, Globe2, WrapTextIcon } from "lucide-react";
+import { Code2, Eye, Table2 } from "lucide";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -30,6 +47,7 @@ import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
+import { MorphIcon } from "~/components/MorphIcon";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
@@ -38,15 +56,18 @@ import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
-import { isPreviewSupportedInRuntime } from "~/previewStateStore";
-import { isAbsolutePath, resolvePathLinkTarget } from "~/terminal-links";
+import type { ChatFileAttachment } from "~/types";
+import { isAbsolutePath } from "@t3tools/shared/path";
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileReviewComment } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
+import { usePreviewAvailable } from "~/browser/previewRuntime";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
+import { useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
@@ -78,16 +99,19 @@ import {
 import SourceFilePreview from "./ReadOnlySourcePreview";
 import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
-import { projectFileCacheKey, projectFileEditorCacheKey } from "./fileContentRevision";
+import { projectFileCacheKey } from "./fileContentRevision";
 import {
+  filePreviewReadErrorMessage,
   isMarkdownPreviewFile,
   resolveFilePreviewPath,
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
+  workspaceAssetResource,
 } from "./filePreviewMode";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 import {
   getOptimisticProjectFileQueryData,
+  getProjectFileContents,
   setProjectFileQueryData,
   useProjectFileQuery,
 } from "./projectFilesQueryState";
@@ -114,23 +138,33 @@ const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
 const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
 const RENDER_BROWSER_FILE_STORAGE_KEY = "t3code.renderBrowserFile";
 const RENDER_TABLE_STORAGE_KEY = "t3code.renderTable";
-type FilePostRender = NonNullable<FileOptions<unknown>["onPostRender"]>;
+// Shared by the read-only and annotated surfaces, so it is generic over annotation metadata.
+type FilePostRender = <LAnnotation>(
+  fileContainer: HTMLElement,
+  instance: FileInstance<LAnnotation, undefined>,
+  phase: PostRenderPhase,
+) => void;
 
 function WorkspaceImagePreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
+  /** The thread is a draft the server does not know yet. */
+  readonly draft: boolean;
   readonly absolutePath: string;
   readonly workspaceRoot: string;
   readonly alt: string;
   readonly workspaceMutationId: string | null;
 }) {
   const resource = useMemo(
-    () => ({
-      _tag: "workspace-file" as const,
-      threadId: props.threadRef.threadId,
-      path: props.absolutePath,
-    }),
-    [props.threadRef.threadId, props.absolutePath],
+    () =>
+      workspaceAssetResource({
+        kind: "workspace-file",
+        threadRef: props.threadRef,
+        draft: props.draft,
+        workspaceRoot: props.workspaceRoot,
+        absolutePath: props.absolutePath,
+      }),
+    [props.threadRef, props.draft, props.workspaceRoot, props.absolutePath],
   );
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
@@ -158,6 +192,7 @@ function WorkspaceImagePreview(props: {
   }
 
   return assetUrl._tag === "Success" && imageUrl !== null ? (
+    // oxlint-disable-next-line t3code/require-centered-scroll-gutter -- The image is capped at max-h-full max-w-full, so this never scrolls.
     <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
       <MediaActions source={actionsSource}>
         <img
@@ -184,6 +219,8 @@ function WorkspaceImagePreview(props: {
 function WorkspaceBrowserPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
+  /** The thread is a draft the server does not know yet. */
+  readonly draft: boolean;
   readonly absolutePath: string;
   readonly workspaceRoot: string;
   readonly title: string;
@@ -192,12 +229,15 @@ function WorkspaceBrowserPreview(props: {
   const insideWorkspace =
     mediaFileReference(props.absolutePath, props.workspaceRoot).relativePath !== undefined;
   const resource = useMemo(
-    () => ({
-      _tag: insideWorkspace ? ("workspace-file" as const) : ("media-file" as const),
-      threadId: props.threadRef.threadId,
-      path: props.absolutePath,
-    }),
-    [insideWorkspace, props.threadRef.threadId, props.absolutePath],
+    () =>
+      workspaceAssetResource({
+        kind: insideWorkspace ? "workspace-file" : "media-file",
+        threadRef: props.threadRef,
+        draft: props.draft,
+        workspaceRoot: props.workspaceRoot,
+        absolutePath: props.absolutePath,
+      }),
+    [insideWorkspace, props.threadRef, props.draft, props.workspaceRoot, props.absolutePath],
   );
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const revisionSuffix =
@@ -231,18 +271,23 @@ function WorkspaceBrowserPreview(props: {
 function WorkspaceVideoPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
+  /** The thread is a draft the server does not know yet. */
+  readonly draft: boolean;
   readonly absolutePath: string;
   readonly workspaceRoot: string;
   readonly name: string;
   readonly workspaceMutationId: string | null;
 }) {
   const resource = useMemo(
-    () => ({
-      _tag: "media-file" as const,
-      threadId: props.threadRef.threadId,
-      path: props.absolutePath,
-    }),
-    [props.threadRef.threadId, props.absolutePath],
+    () =>
+      workspaceAssetResource({
+        kind: "media-file",
+        threadRef: props.threadRef,
+        draft: props.draft,
+        workspaceRoot: props.workspaceRoot,
+        absolutePath: props.absolutePath,
+      }),
+    [props.threadRef, props.draft, props.workspaceRoot, props.absolutePath],
   );
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
@@ -285,17 +330,23 @@ function WorkspaceVideoPreview(props: {
 function WorkspaceAudioPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
+  /** The thread is a draft the server does not know yet. */
+  readonly draft: boolean;
   readonly absolutePath: string;
+  readonly workspaceRoot: string;
   readonly name: string;
   readonly workspaceMutationId: string | null;
 }) {
   const resource = useMemo(
-    () => ({
-      _tag: "media-file" as const,
-      threadId: props.threadRef.threadId,
-      path: props.absolutePath,
-    }),
-    [props.threadRef.threadId, props.absolutePath],
+    () =>
+      workspaceAssetResource({
+        kind: "media-file",
+        threadRef: props.threadRef,
+        draft: props.draft,
+        workspaceRoot: props.workspaceRoot,
+        absolutePath: props.absolutePath,
+      }),
+    [props.threadRef, props.draft, props.workspaceRoot, props.absolutePath],
   );
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
@@ -544,6 +595,67 @@ function useFileLineReveal(
   );
 }
 
+const createFileEditor: EditorFactory<FileCommentAnnotationGroup, undefined> = (
+  editorType,
+  options,
+  editStateKey,
+) => new Editor(editorType, options, editStateKey);
+
+function editableFileContents(
+  environmentId: EnvironmentId,
+  cwd: string,
+  relativePath: string,
+  contents: string,
+): FileContents {
+  return {
+    name: relativePath,
+    contents,
+    cacheKey: `editor:${environmentId}:${projectFileCacheKey(cwd, relativePath, contents)}`,
+  };
+}
+
+function needsWorkerHighlight(workerPool: WorkerPoolManager | undefined, file: FileContents) {
+  if (workerPool?.isWorkingPool() !== true) return false;
+  if ((file.lang ?? getFiletypeFromFileName(file.name)) === "text") return false;
+  let lines = 1;
+  for (
+    let index = file.contents.indexOf("\n");
+    index !== -1;
+    index = file.contents.indexOf("\n", index + 1)
+  ) {
+    lines += 1;
+  }
+  return lines <= DEFAULT_TOKENIZE_MAX_LENGTH;
+}
+
+/**
+ * Pierre highlights an active edit session on the main thread, so each version
+ * of the file becomes editable only once it has rendered the worker's
+ * highlight. A failed worker highlight falls back to main-thread highlighting.
+ */
+function useEditableAfterHighlight(file: FileContents) {
+  const workerPool = useWorkerPool();
+  const [highlightedFile, setHighlightedFile] = useState<FileContents | null>(null);
+  const needsHighlight = useMemo(() => needsWorkerHighlight(workerPool, file), [file, workerPool]);
+  const ready = !needsHighlight || highlightedFile === file;
+
+  useEffect(() => {
+    if (ready || workerPool === undefined) return;
+    workerPool.primeFileHighlightCache(file).catch(() => setHighlightedFile(file));
+  }, [file, ready, workerPool]);
+
+  const onPostRender = useCallback(
+    (renderedFile: FileContents | undefined, phase: PostRenderPhase) => {
+      if (ready || phase === "unmount" || renderedFile?.cacheKey !== file.cacheKey) return;
+      // The pool caches a result just before the instance renders it, so a
+      // render that sees the cache has painted highlighted rows.
+      if (workerPool?.getFileResultCache(file) !== undefined) setHighlightedFile(file);
+    },
+    [file, ready, workerPool],
+  );
+  return { ready, onPostRender };
+}
+
 interface EditableFileSurfaceProps {
   environmentId: EnvironmentId;
   cwd: string;
@@ -594,46 +706,65 @@ function EditableFileSurface({
     relativePath,
     onPendingChange,
   });
-  const editor = useMemo(
-    () =>
-      new Editor<FileCommentAnnotationGroup>({
-        persistState: true,
-        persistStateStorage: "inMemory",
-        onChange: (file, nextLineAnnotations) => {
-          setProjectFileQueryData(environmentId, cwd, relativePath, file.contents);
-          saveCoordinator.change(file.contents);
-          if (nextLineAnnotations) {
-            const remapped = remapFileCommentAnnotations(
-              nextLineAnnotations as FileCommentLineAnnotation[],
-            );
-            setLineAnnotations(remapped);
-            for (const annotation of remapped) {
-              for (const entry of annotation.metadata.entries) {
-                if (entry.kind !== "comment") continue;
-                addReviewComment(
-                  composerDraftTarget,
-                  buildFileReviewComment({
-                    id: entry.id,
-                    filePath: relativePath,
-                    startLine: entry.startLine,
-                    endLine: entry.endLine,
-                    text: entry.text,
-                    contents: file.contents,
-                  }),
-                );
-              }
-            }
-          }
-        },
-      }),
-    [addReviewComment, composerDraftTarget, cwd, environmentId, relativePath, saveCoordinator],
+  // The editor owns the draft, so its own edits echoing back through the file
+  // query keep the file identity. Only a change from elsewhere replaces it.
+  const [externalFile, setExternalFile] = useState(() =>
+    editableFileContents(environmentId, cwd, relativePath, contents),
+  );
+  const [editedContents, setEditedContents] = useState<string | null>(null);
+  if (contents !== (editedContents ?? externalFile.contents)) {
+    setExternalFile(editableFileContents(environmentId, cwd, relativePath, contents));
+    setEditedContents(null);
+  }
+  const { ready: editable, onPostRender: onEditablePostRender } =
+    useEditableAfterHighlight(externalFile);
+  const editorRef = useRef<Editor<"file", FileCommentAnnotationGroup, undefined> | null>(null);
+  const editorOptions = useMemo<EditorOptions<"file", FileCommentAnnotationGroup, undefined>>(
+    () => ({
+      onAttach: (editor) => {
+        editorRef.current = editor;
+      },
+      onComplete: () => {
+        editorRef.current = null;
+      },
+    }),
+    [],
   );
 
-  useEffect(
-    () => () => {
-      editor.cleanUp();
+  // Mirrors the draft out to the save queue, the optimistic file query and the
+  // composer's review comments.
+  const handleEditChange = useCallback(
+    ({
+      file,
+      lineAnnotations: nextLineAnnotations,
+    }: EditorChangeEvent<"file", FileCommentAnnotationGroup, undefined>) => {
+      // Adopting an external change reports it as an edit; it is already on disk.
+      if (file.contents === getProjectFileContents(environmentId, cwd, relativePath)) return;
+      setEditedContents(file.contents);
+      setProjectFileQueryData(environmentId, cwd, relativePath, file.contents);
+      saveCoordinator.change(file.contents);
+      if (!nextLineAnnotations) return;
+      const remapped = remapFileCommentAnnotations(nextLineAnnotations);
+      // The editor hands back the array it was given until an edit moves an annotation.
+      setLineAnnotations((current) => (current === nextLineAnnotations ? current : remapped));
+      for (const annotation of remapped) {
+        for (const entry of annotation.metadata.entries) {
+          if (entry.kind !== "comment") continue;
+          addReviewComment(
+            composerDraftTarget,
+            buildFileReviewComment({
+              id: entry.id,
+              filePath: relativePath,
+              startLine: entry.startLine,
+              endLine: entry.endLine,
+              text: entry.text,
+              contents: file.contents,
+            }),
+          );
+        }
+      }
     },
-    [editor],
+    [addReviewComment, composerDraftTarget, cwd, environmentId, relativePath, saveCoordinator],
   );
 
   const removeAnnotationEntry = useCallback(
@@ -692,47 +823,44 @@ function EditableFileSurface({
     ],
   );
 
-  const beginComment = useCallback(
-    (range: SelectedLineRange) => {
-      editor.setSelections([]);
-      editor.blur();
-      const { startLine, endLine } = normalizeFileCommentRange(range);
-      const draftEntry: FileCommentAnnotationEntry = {
-        id: nextFileCommentId(),
-        kind: "draft",
-        startLine,
-        endLine,
-        text: "",
-      };
-      setLineAnnotations((current) => {
-        const withoutDraft = current.flatMap((annotation) => {
-          const entries = annotation.metadata.entries.filter((entry) => entry.kind !== "draft");
-          return entries.length > 0 ? [{ ...annotation, metadata: { entries } }] : [];
-        });
-        const existingIndex = withoutDraft.findIndex(
-          (annotation) => annotation.lineNumber === endLine,
-        );
-        if (existingIndex < 0) {
-          return [
-            ...withoutDraft,
-            {
-              lineNumber: endLine,
-              metadata: { entries: [draftEntry] },
-            },
-          ];
-        }
-        return withoutDraft.map((annotation, index) =>
-          index === existingIndex
-            ? {
-                ...annotation,
-                metadata: { entries: [...annotation.metadata.entries, draftEntry] },
-              }
-            : annotation,
-        );
+  const beginComment = useCallback((range: SelectedLineRange) => {
+    editorRef.current?.setSelections([]);
+    editorRef.current?.blur();
+    const { startLine, endLine } = normalizeFileCommentRange(range);
+    const draftEntry: FileCommentAnnotationEntry = {
+      id: nextFileCommentId(),
+      kind: "draft",
+      startLine,
+      endLine,
+      text: "",
+    };
+    setLineAnnotations((current) => {
+      const withoutDraft = current.flatMap((annotation) => {
+        const entries = annotation.metadata.entries.filter((entry) => entry.kind !== "draft");
+        return entries.length > 0 ? [{ ...annotation, metadata: { entries } }] : [];
       });
-    },
-    [editor],
-  );
+      const existingIndex = withoutDraft.findIndex(
+        (annotation) => annotation.lineNumber === endLine,
+      );
+      if (existingIndex < 0) {
+        return [
+          ...withoutDraft,
+          {
+            lineNumber: endLine,
+            metadata: { entries: [draftEntry] },
+          },
+        ];
+      }
+      return withoutDraft.map((annotation, index) =>
+        index === existingIndex
+          ? {
+              ...annotation,
+              metadata: { entries: [...annotation.metadata.entries, draftEntry] },
+            }
+          : annotation,
+      );
+    });
+  }, []);
   const hasOpenCommentForm = lineAnnotations.some((annotation) =>
     annotation.metadata.entries.some((entry) => entry.kind === "draft"),
   );
@@ -741,11 +869,11 @@ function EditableFileSurface({
     if (!root) return;
     return installFileEditorDismissal({
       root,
-      editor,
+      editor: { setSelections: (selections) => editorRef.current?.setSelections(selections) },
       isBlocked: () => hasOpenCommentForm,
       onDismiss: () => setSelectedRange(null),
     });
-  }, [editor, hasOpenCommentForm, setSelectedRange]);
+  }, [hasOpenCommentForm, setSelectedRange]);
   const handleLineSelectionEnd = useCallback(
     (range: SelectedLineRange | null) => {
       setSelectedRange(range);
@@ -759,6 +887,7 @@ function EditableFileSurface({
   const handlePostRender = useCallback<FilePostRender>(
     (fileContainer, instance, phase) => {
       onPostRender(fileContainer, instance, phase);
+      onEditablePostRender(instance.file, phase);
 
       if (selectionFrameRef.current !== null) {
         cancelAnimationFrame(selectionFrameRef.current);
@@ -772,11 +901,11 @@ function EditableFileSurface({
         instance.setSelectedLines(selectedRange, { notify: false });
       });
     },
-    [onPostRender, selectedRange],
+    [onEditablePostRender, onPostRender, selectedRange],
   );
 
   return (
-    <EditProvider editor={editor}>
+    <EditProvider createEditor={createFileEditor}>
       <div ref={surfaceRef} className="flex min-h-0 flex-1">
         <Virtualizer
           className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
@@ -786,17 +915,10 @@ function EditableFileSurface({
           }}
         >
           <File<FileCommentAnnotationGroup>
-            file={{
-              name: relativePath,
-              contents,
-              cacheKey: projectFileEditorCacheKey(
-                environmentId,
-                cwd,
-                relativePath,
-                contents,
-                editor.getFile(),
-              ),
-            }}
+            file={externalFile}
+            edit={editable}
+            editorOptions={editorOptions}
+            onEditChange={handleEditChange}
             options={{
               disableFileHeader: true,
               enableGutterUtility: !hasOpenCommentForm,
@@ -829,7 +951,6 @@ function EditableFileSurface({
               </div>
             )}
             className="min-h-full"
-            contentEditable
           />
         </Virtualizer>
       </div>
@@ -923,11 +1044,15 @@ export default function FilePreviewPanel({
 }: FilePreviewPanelProps) {
   const relativePath =
     attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
+  // A draft's composer target is its draft id; a thread the server knows is a ref.
+  const draft = typeof composerDraftTarget === "string";
   const { resolvedTheme } = useTheme();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
+  const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const remoteOpenState = useRemoteOpenState(environmentId);
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
+  const previewAvailable = usePreviewAvailable(environmentId);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
   });
@@ -944,6 +1069,9 @@ export default function FilePreviewPanel({
   // A file outside the workspace (an absolute path) is shown, never edited.
   const isHostFile =
     attachment !== undefined || (relativePath !== null && isAbsolutePath(relativePath));
+  const fileAccess = useFilesystemReadAccess(environmentId);
+  const { canReadFiles } = fileAccess;
+  const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   // Media and PDFs render from their absolute path, so their contents are never
   // shown. The read still runs: a folder named `assets.png` is only knowable as a
   // folder from the read failure, and the server stats before reading, so a folder
@@ -954,6 +1082,7 @@ export default function FilePreviewPanel({
     relativePath,
     attachment === undefined && relativePath !== null,
   );
+  const attemptedPath = file.readError?.resolvedPath ?? file.readError?.operationPath;
   // A chat link cannot tell a folder from a file, so a folder arrives here as
   // a file surface and the read fails. Keep the breadcrumbs, drop the preview
   // pane, and let the tree fill the surface with the folder revealed. Mutation
@@ -1027,10 +1156,11 @@ export default function FilePreviewPanel({
       ? setRenderTablePreferred
       : setRenderBrowserFilePreferred;
   const canOpenInBrowser =
+    canOperatePreview &&
     previewPath !== null &&
     attachment === undefined &&
     !isVideo &&
-    isPreviewSupportedInRuntime() &&
+    previewAvailable &&
     isBrowserPreviewFile(previewPath);
   const absolutePath =
     relativePath && attachment === undefined ? resolvePathLinkTarget(relativePath, cwd) : null;
@@ -1069,7 +1199,7 @@ export default function FilePreviewPanel({
   };
 
   const handleOpenInBrowser = useCallback(() => {
-    if (!absolutePath || !environmentHttpBaseUrl) return;
+    if (!canReadFiles || !canOperatePreview || !absolutePath || !environmentHttpBaseUrl) return;
     void (async () => {
       const result = await openFileInPreview({
         threadRef,
@@ -1091,7 +1221,32 @@ export default function FilePreviewPanel({
         }),
       );
     })();
-  }, [absolutePath, createAssetUrl, cwd, environmentHttpBaseUrl, openPreview, threadRef]);
+  }, [
+    absolutePath,
+    canReadFiles,
+    canOperatePreview,
+    createAssetUrl,
+    cwd,
+    environmentHttpBaseUrl,
+    openPreview,
+    threadRef,
+  ]);
+
+  if (attachment === undefined && !canReadFiles) {
+    if (fileAccess.isPending) {
+      return (
+        <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
+          <Spinner className="size-4" />
+          Checking file access...
+        </div>
+      );
+    }
+    return (
+      <div className="p-4 text-sm text-muted-foreground">
+        {fileAccess.error ?? "This connection cannot read host files."}
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
@@ -1140,13 +1295,10 @@ export default function FilePreviewPanel({
                 );
               }}
             >
-              {rendered ? (
-                <Code2 className="size-3.5" />
-              ) : renderedMode === "table" ? (
-                <Table2 className="size-3.5" />
-              ) : (
-                <Eye className="size-3.5" />
-              )}
+              <MorphIcon
+                className="size-3.5"
+                icon={rendered ? Code2 : renderedMode === "table" ? Table2 : Eye}
+              />
             </FileSurfaceAction>
           ) : null}
           {showsRawText ? (
@@ -1174,6 +1326,11 @@ export default function FilePreviewPanel({
           ) : null}
         </div>
       ) : null}
+      {relativePath && !attachment && !isHostFile && !canWriteFiles && !fileAccess.isPending ? (
+        <div className="shrink-0 border-b px-3 py-1.5 text-2xs text-muted-foreground">
+          Read-only connection. Unsaved edits are kept until write access returns.
+        </div>
+      ) : null}
       {previewPath &&
       attachment === undefined &&
       !isMedia &&
@@ -1194,12 +1351,14 @@ export default function FilePreviewPanel({
               mimeType={attachment.mimeType}
               sizeBytes={attachment.sizeBytes}
               asset={{ environmentId, attachmentId: attachment.id }}
+              htmlRender={attachment.htmlRender === true}
             />
           ) : relativePath && isVideo && absolutePath ? (
             <WorkspaceVideoPreview
               key={`${environmentId}:${threadRef.threadId}:${absolutePath}`}
               environmentId={environmentId}
               threadRef={threadRef}
+              draft={draft}
               absolutePath={absolutePath}
               workspaceRoot={cwd}
               name={relativePath}
@@ -1210,7 +1369,9 @@ export default function FilePreviewPanel({
               key={`${environmentId}:${threadRef.threadId}:${absolutePath}`}
               environmentId={environmentId}
               threadRef={threadRef}
+              draft={draft}
               absolutePath={absolutePath}
+              workspaceRoot={cwd}
               name={relativePath}
               workspaceMutationId={workspaceMutationId}
             />
@@ -1219,6 +1380,7 @@ export default function FilePreviewPanel({
               key={absolutePath}
               environmentId={environmentId}
               threadRef={threadRef}
+              draft={draft}
               absolutePath={absolutePath}
               workspaceRoot={cwd}
               alt={relativePath}
@@ -1229,14 +1391,39 @@ export default function FilePreviewPanel({
               key={absolutePath}
               environmentId={environmentId}
               threadRef={threadRef}
+              draft={draft}
               absolutePath={absolutePath}
               workspaceRoot={cwd}
               title={relativePath}
               workspaceMutationId={workspaceMutationId}
             />
           ) : relativePath && file.error && file.data === null ? (
-            <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
-              {file.error}
+            <div
+              role="alert"
+              className="scrollbar-gutter-both flex min-h-0 flex-1 flex-col overflow-auto"
+            >
+              <div className="my-auto flex shrink-0 flex-col gap-3 px-6 py-6 text-center text-xs leading-relaxed">
+                <p className="text-destructive">
+                  {file.readError ? filePreviewReadErrorMessage(file.readError) : file.error}
+                </p>
+                {attemptedPath ? (
+                  <p className="text-muted-foreground">
+                    Attempted path
+                    <code className="block break-all font-mono text-foreground select-all">
+                      {attemptedPath}
+                    </code>
+                  </p>
+                ) : null}
+                {!isHostFile ? (
+                  <p className="text-muted-foreground">
+                    Workspace folder:{" "}
+                    <code className="break-all font-mono select-all">
+                      {file.readError?.cwd ?? cwd}
+                    </code>
+                    . Check the link's path or locate the file in Files.
+                  </p>
+                ) : null}
+              </div>
             </div>
           ) : relativePath && file.data === null ? (
             <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
@@ -1254,7 +1441,7 @@ export default function FilePreviewPanel({
                 relativePath={relativePath}
                 threadRef={threadRef}
                 contents={file.data.contents}
-                readOnly={isHostFile}
+                readOnly={isHostFile || !canWriteFiles}
                 onPendingChange={onPendingChange}
               />
             ) : tableDelimiter && renderTable ? (
@@ -1264,7 +1451,7 @@ export default function FilePreviewPanel({
                 text={file.data.contents}
                 delimiter={tableDelimiter}
               />
-            ) : file.data.truncated || isHostFile ? (
+            ) : file.data.truncated || isHostFile || !canWriteFiles ? (
               <SourceFilePreview
                 name={relativePath}
                 text={file.data.contents}

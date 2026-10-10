@@ -49,6 +49,14 @@ public class T3ReviewDiffModule: Module {
         view.setContentWidth(CGFloat(contentWidth))
       }
 
+      Prop("contentInsetTop") { (view: T3ReviewDiffView, inset: Double) in
+        view.setContentInsetTop(CGFloat(inset))
+      }
+
+      Prop("contentInsetBottom") { (view: T3ReviewDiffView, inset: Double) in
+        view.setContentInsetBottom(CGFloat(inset))
+      }
+
       Prop("initialRowIndex") { (view: T3ReviewDiffView, initialRowIndex: Double) in
         view.setInitialRowIndex(initialRowIndex)
       }

@@ -12,14 +12,18 @@ import * as ThreadMetadataMcp from "./ThreadMetadataMcpService.ts";
 const threadId = ThreadId.make("thread:metadata-caller");
 const scope: McpInvocationContext.McpInvocationScope = {
   environmentId: EnvironmentId.make("environment:metadata-test"),
-  threadId,
-  providerSessionId: "provider-session:metadata-test",
-  providerInstanceId: ProviderInstanceId.make("codex"),
+  requestNamespace: "provider-session:metadata-test",
+  thread: {
+    threadId,
+    providerSessionId: "provider-session:metadata-test",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+  },
+  client: undefined,
   capabilities: new Set(["orchestration"]),
   issuedAt: 1,
 };
 
-function serviceLayer(
+function layerService(
   getThreadShell: ThreadManagement.ThreadManagementService["Service"]["getThreadShell"],
 ) {
   return ThreadMetadataMcp.layer.pipe(
@@ -47,7 +51,7 @@ const updateCallingThread = Effect.gen(function* () {
 it.effect("reports an absent calling thread as thread_not_found", () =>
   Effect.gen(function* () {
     const error = yield* updateCallingThread.pipe(
-      Effect.provide(serviceLayer(() => Effect.succeed(null))),
+      Effect.provide(layerService(() => Effect.succeed(null))),
       Effect.flip,
     );
 
@@ -59,7 +63,7 @@ it.effect("keeps calling-thread storage failures as orchestration errors", () =>
   Effect.gen(function* () {
     const error = yield* updateCallingThread.pipe(
       Effect.provide(
-        serviceLayer(() =>
+        layerService(() =>
           Effect.fail(
             new OrchestratorProjectionError({
               threadId,

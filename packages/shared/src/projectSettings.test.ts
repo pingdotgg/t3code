@@ -2,6 +2,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -78,7 +79,12 @@ describe("resolveProjectSettings", () => {
   it("keeps the environment text generation model when the override's provider is disabled", () => {
     const disabledSelection = createModelSelection(ProviderInstanceId.make("claudeAgent"), "opus");
     const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-      providers: { claudeAgent: { enabled: false } },
+      providerInstances: {
+        [ProviderInstanceId.make("claudeAgent")]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          enabled: false,
+        },
+      },
       projectSettingsOverrides: {
         [projectId]: { textGenerationModelSelection: disabledSelection },
       },
@@ -128,7 +134,12 @@ describe("resolveProjectSettings", () => {
   it("keeps the environment default model when the override's provider is disabled", () => {
     const disabledSelection = createModelSelection(ProviderInstanceId.make("claudeAgent"), "opus");
     const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-      providers: { claudeAgent: { enabled: false } },
+      providerInstances: {
+        [ProviderInstanceId.make("claudeAgent")]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          enabled: false,
+        },
+      },
       projectSettingsOverrides: { [projectId]: { defaultModelSelection: disabledSelection } },
     });
     const resolved = resolveProjectSettings(settings, projectId);
@@ -326,6 +337,7 @@ describe("resolveWorktreeCleanup", () => {
       worktreeOnDelete: false,
       worktreeOnMerge: false,
       worktreeUnchanged: false,
+      worktreeKeepWhen: "uncommitted-changes",
     });
     expect(resolveWorktreeCleanup(off, otherProjectId)).toEqual(inherited);
     const custom = applyServerSettingsPatch(off, {
@@ -359,6 +371,7 @@ describe("resolveWorktreeCleanup", () => {
       worktreeOnDelete: true,
       worktreeOnMerge: true,
       worktreeUnchanged: false,
+      worktreeKeepWhen: "uncommitted-changes",
     });
     expect(
       resolveWorktreeCleanup(applyServerSettingsPatch(edited, { worktreeCleanup: null }), null)

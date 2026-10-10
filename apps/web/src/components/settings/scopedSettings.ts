@@ -19,6 +19,7 @@ import {
   type ProjectSettingSource,
 } from "@t3tools/shared/projectSettings";
 import * as Equal from "effect/Equal";
+import * as Cause from "effect/Cause";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
 
@@ -394,7 +395,7 @@ export async function persistScopedSettingsPatch(
   persistServer: (input: {
     environmentId: EnvironmentId;
     input: { patch: ServerSettingsPatch };
-  }) => Promise<{ readonly _tag: "Success" | "Failure" }>,
+  }) => Promise<{ readonly _tag: "Success" | "Failure"; readonly cause?: Cause.Cause<unknown> }>,
   persistClient: (patch: ClientSettingsPatch) => void,
 ) {
   if (plan.hasClientWrite) persistClient(plan.clientPatch);
@@ -403,12 +404,32 @@ export async function persistScopedSettingsPatch(
       persistServer({ environmentId, input: { patch } }),
     ),
   );
-  const failedEnvironments = plan.serverWrites.filter((_, index) => {
+  const failedEnvironments = plan.serverWrites.flatMap((environment, index) => {
     const result = results[index];
-    return result?.status !== "fulfilled" || result.value._tag === "Failure";
+    if (result?.status === "fulfilled" && result.value._tag === "Success") return [];
+    const error: unknown =
+      result?.status === "rejected"
+        ? result.reason
+        : result?.status === "fulfilled" && result.value.cause
+          ? Cause.squash(result.value.cause)
+          : undefined;
+    return [
+      {
+        ...environment,
+        message:
+          error instanceof Error
+            ? error.message
+            : "The save failed. Try reconnecting and saving again.",
+      },
+    ];
+  });
+  const savedEnvironments = plan.serverWrites.filter((_, index) => {
+    const result = results[index];
+    return result?.status === "fulfilled" && result.value._tag === "Success";
   });
   return {
     failedEnvironments,
-    savedEnvironmentCount: plan.serverWrites.length - failedEnvironments.length,
+    savedEnvironments,
+    savedEnvironmentCount: savedEnvironments.length,
   };
 }

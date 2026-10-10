@@ -17,20 +17,15 @@
  */
 import type { BrowserImportSourceId, BrowserImportSourceProfile } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
-import {
-  HostProcessEnvironment,
-  HostProcessAddresses,
-  HostProcessHostname,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export type BrowserImportEngine = "chromium" | "firefox" | "safari";
 
@@ -335,8 +330,8 @@ export function parseFirefoxProfiles(
  */
 export const sourcePathContext = Effect.gen(function* () {
   const path = yield* Path.Path;
-  const platform = yield* HostProcessPlatform;
-  const environment = yield* HostProcessEnvironment;
+  const platform = yield* HostProcess.Platform;
+  const environment = yield* HostProcess.Environment;
   return {
     path,
     platform,
@@ -782,7 +777,7 @@ export const posixLockIsHeld = Effect.fnUntraced(function* (
   interpreters: ReadonlyArray<string> = FCNTL_PROBE_INTERPRETERS,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const environment = yield* HostProcessEnvironment;
+  const environment = yield* HostProcess.Environment;
   for (const interpreter of interpreters) {
     const verdict = yield* Effect.scoped(
       Effect.gen(function* () {
@@ -872,7 +867,7 @@ export const isSourceRunning = Effect.fn("BrowserImportSources.isSourceRunning")
     if (context.platform === "win32") {
       return yield* windowsChromiumCookiesAreHeld(definition, context);
     }
-    const currentHost = yield* HostProcessHostname;
+    const currentHost = yield* HostProcess.Hostname;
     const lock = context.path.join(root, "SingletonLock");
     return yield* fileSystem.readLink(lock).pipe(
       Effect.flatMap((target) => chromiumSingletonLockIsHeld(target, currentHost, processIsAlive)),
@@ -883,7 +878,7 @@ export const isSourceRunning = Effect.fn("BrowserImportSources.isSourceRunning")
   const profiles = yield* listSourceProfiles(definition, context);
   // Only the Linux `lock` symlink names an address, so Windows skips the lookup.
   const localAddresses: ReadonlySet<string> =
-    context.platform === "win32" ? new Set() : yield* yield* HostProcessAddresses;
+    context.platform === "win32" ? new Set() : yield* yield* HostProcess.Addresses;
   const found = yield* Effect.forEach(profiles, (profile) => {
     const directory = context.path.isAbsolute(profile.directory)
       ? profile.directory

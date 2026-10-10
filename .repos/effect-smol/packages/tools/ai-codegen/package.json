@@ -50,9 +50,9 @@
     "@effect/platform-node": "workspace:^",
     "effect": "workspace:^",
     "glob": "^13.0.6",
-    "yaml": "^2.9.0"
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
-    "@types/node": "^26.4.1"
+    "@types/node": "^26.6.3"
   }
 }

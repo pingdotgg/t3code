@@ -11,10 +11,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import type * as SqlClient from "effect/unstable/sql/SqlClient";
-
-import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
-import * as OrchestrationEventStore from "../persistence/Services/OrchestrationEventStore.ts";
+import type * as SqlClient from "effect/sql/SqlClient";
+import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 
 export class EventStoreAppendEventsError extends Schema.TaggedError<EventStoreAppendEventsError>()(
   "EventStoreAppendEventsError",
@@ -79,7 +77,7 @@ export class EventStoreV2 extends Context.Service<EventStoreV2, EventStoreV2Shap
   "t3/orchestration-v2/EventStore/EventStoreV2",
 ) {}
 
-const baseLayer: Layer.Layer<EventStoreV2, never, OrchestrationEventStore.OrchestrationEventStore> =
+const layerBase: Layer.Layer<EventStoreV2, never, OrchestrationEventStore.OrchestrationEventStore> =
   Layer.effect(
     EventStoreV2,
     Effect.gen(function* () {
@@ -149,8 +147,8 @@ const baseLayer: Layer.Layer<EventStoreV2, never, OrchestrationEventStore.Orches
     }),
   );
 
-export const layer: Layer.Layer<EventStoreV2, never, SqlClient.SqlClient> = baseLayer.pipe(
-  Layer.provide(OrchestrationEventStoreLive),
+export const layer: Layer.Layer<EventStoreV2, never, SqlClient.SqlClient> = layerBase.pipe(
+  Layer.provide(OrchestrationEventStore.layer),
 );
 
-export const layerFromOrchestrationEventStore = baseLayer;
+export const layerFromOrchestrationEventStore = layerBase;

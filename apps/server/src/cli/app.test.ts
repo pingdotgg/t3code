@@ -8,26 +8,19 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import type { DesktopAppActivationRequest } from "@t3tools/contracts";
 import { resolveDesktopAppControlAddress } from "@t3tools/shared/desktopAppControl";
-import {
-  HostProcessPlatform,
-  HostProcessUserId,
-  HostProcessWorkingDirectory,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { Command } from "effect/unstable/cli";
-import { afterEach, describe, expect, vi } from "vite-plus/test";
+import * as Schema from "effect/Schema";
+import { Command } from "effect/cli";
+import { describe, expect } from "vite-plus/test";
 
 import { makeCli } from "../binCli.ts";
+import { PersistedServerRuntimeState } from "../serverRuntimeState.ts";
 
-vi.mock("node:os", async (importOriginal) => {
-  const os = await importOriginal<typeof import("node:os")>();
-  return { ...os, homedir: vi.fn(os.homedir) };
-});
-
-afterEach(() => vi.mocked(NodeOS.homedir).mockReset());
+const encodeRuntimeState = Schema.encodeEffect(Schema.fromJsonString(PersistedServerRuntimeState));
 
 const runCli = (args: ReadonlyArray<string>, env: Record<string, string> = {}) =>
   Command.runWith(makeCli(), { version: "0.0.0" })(args).pipe(
@@ -112,8 +105,8 @@ async function startFakeDesktop(input: {
 const fakeDesktop = Effect.fn(function* (
   input: Omit<Parameters<typeof startFakeDesktop>[0], "platform" | "userId">,
 ) {
-  const platform = yield* HostProcessPlatform;
-  const userId = yield* HostProcessUserId;
+  const platform = yield* HostProcess.Platform;
+  const userId = yield* HostProcess.UserId;
   return yield* Effect.acquireRelease(
     Effect.promise(() => startFakeDesktop({ ...input, platform, userId })),
     (server) => Effect.promise(() => server.close()),
@@ -129,6 +122,88 @@ const withTempDirectory = <A, E, R>(
     use,
     (root) => Effect.promise(() => NodeFSP.rm(root, { recursive: true, force: true })),
   );
+
+describe("t3 server command safety", () => {
+  it.effect("rejects unknown command words without creating a home or project", () =>
+    withTempDirectory("t3-cli-unknown-", (root) =>
+      Effect.gen(function* () {
+        const baseDir = NodePath.join(root, "home");
+        for (const word of [
+          "account",
+          "login",
+          "clients",
+          "conenct",
+          "package.json",
+          "C:new-project",
+        ]) {
+          const error = yield* runCli([word, "--base-dir", baseDir]).pipe(
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.flip,
+          );
+          expect(String(error)).toContain(`Unknown command "${word}"`);
+          expect(yield* pathExists(word)).toBe(word === "package.json");
+          expect(yield* pathExists(baseDir)).toBe(false);
+        }
+      }),
+    ),
+  );
+
+  it.effect("shows help without creating state", () =>
+    withTempDirectory("t3-cli-help-", (root) =>
+      Effect.gen(function* () {
+        const baseDir = NodePath.join(root, "home");
+        const help = yield* runCli(["help"], { T3CODE_HOME: baseDir }).pipe(Effect.flip);
+        expect(help).toMatchObject({ _tag: "ShowHelp", commandPath: ["t3"], errors: [] });
+        expect(yield* pathExists(baseDir)).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect("refuses manual startup over a live server before creating directories", () =>
+    withTempDirectory("t3-cli-running-", (root) =>
+      Effect.gen(function* () {
+        const baseDir = NodePath.join(root, "home");
+        const stateDir = NodePath.join(baseDir, "userdata");
+        const statePath = NodePath.join(stateDir, "server-runtime.json");
+        const record = yield* encodeRuntimeState({
+          version: 1,
+          pid: process.pid,
+          port: 3773,
+          origin: "http://127.0.0.1:3773",
+          startedAt: "2026-10-01T00:00:00.000Z",
+          serviceManaged: true,
+        });
+        yield* Effect.promise(() => NodeFSP.mkdir(stateDir, { recursive: true }));
+        yield* Effect.promise(() => NodeFSP.writeFile(statePath, record));
+        const newDirectory = NodePath.join(root, "new-project");
+        const platform = yield* HostProcess.Platform;
+        for (const args of [
+          [],
+          ["start"],
+          ["."],
+          ["node_modules"],
+          ["C:new-project"],
+          [newDirectory],
+          ["start", newDirectory],
+        ]) {
+          const error = yield* runCli(args, { T3CODE_HOME: baseDir }).pipe(
+            Effect.provideService(
+              HostProcess.Platform,
+              args[0] === "C:new-project" ? "win32" : platform,
+            ),
+            Effect.flip,
+          );
+          expect(String(error)).toContain("A T3 Code server is already running");
+          expect(yield* Effect.promise(() => NodeFSP.readFile(statePath, "utf8"))).toBe(record);
+          expect(yield* pathExists(newDirectory)).toBe(false);
+          expect(yield* Effect.promise(() => NodeFSP.readdir(stateDir))).toEqual([
+            "server-runtime.json",
+          ]);
+        }
+      }),
+    ),
+  );
+});
 
 describe("t3 app", () => {
   it.effect("rejects SSH before it tries to reach a desktop app", () =>
@@ -154,7 +229,7 @@ describe("t3 app", () => {
       Effect.gen(function* () {
         const baseDir = NodePath.join(root, "missing-t3-home");
         const error = yield* runCli(["app", "--base-dir", baseDir]).pipe(
-          Effect.provideService(HostProcessPlatform, "freebsd"),
+          Effect.provideService(HostProcess.Platform, "freebsd"),
           Effect.flip,
         );
 
@@ -177,7 +252,7 @@ describe("t3 app", () => {
         expect(error).toMatchObject({
           _tag: "DesktopAppUnreachableError",
           candidateAddresses: [expect.any(String)],
-          workspaceRoot: yield* HostProcessWorkingDirectory,
+          workspaceRoot: yield* HostProcess.WorkingDirectory,
           message: expect.stringContaining("Could not reach the T3 Code desktop app."),
           cause: { code: "ENOENT" },
         });
@@ -191,8 +266,8 @@ describe("t3 app", () => {
       Effect.gen(function* () {
         const baseDir = NodePath.join(root, "t3-home");
         const explicitPath = NodePath.join(root, "project");
-        const platform = yield* HostProcessPlatform;
-        const workingDirectory = yield* HostProcessWorkingDirectory;
+        const platform = yield* HostProcess.Platform;
+        const workingDirectory = yield* HostProcess.WorkingDirectory;
         const desktop = yield* fakeDesktop({ baseDir });
 
         yield* runCli(["app"], { T3CODE_HOME: baseDir });
@@ -210,7 +285,6 @@ describe("t3 app", () => {
   it.effect("prefers the installed desktop app when a dev desktop is also running", () =>
     withTempDirectory("t3-app-preferred-test-", (root) =>
       Effect.gen(function* () {
-        vi.mocked(NodeOS.homedir).mockReturnValue(root);
         const baseDir = NodePath.join(root, ".t3");
         const desktop = yield* fakeDesktop({ baseDir });
         const development = yield* fakeDesktop({ baseDir, stateSubdirectory: "dev" });
@@ -219,14 +293,13 @@ describe("t3 app", () => {
 
         expect(desktop.received).toHaveLength(1);
         expect(development.received).toHaveLength(0);
-      }).pipe(Effect.scoped),
+      }).pipe(Effect.provideService(HostProcess.HomeDirectory, root), Effect.scoped),
     ),
   );
 
   it.effect("finds the dev desktop when the default desktop socket is absent", () =>
     withTempDirectory("t3-app-dev-test-", (root) =>
       Effect.gen(function* () {
-        vi.mocked(NodeOS.homedir).mockReturnValue(root);
         const baseDir = NodePath.join(root, ".t3");
         const development = yield* fakeDesktop({ baseDir, stateSubdirectory: "dev" });
 
@@ -235,14 +308,13 @@ describe("t3 app", () => {
 
         expect(development.received).toHaveLength(2);
         expect(yield* pathExists(baseDir)).toBe(false);
-      }).pipe(Effect.scoped),
+      }).pipe(Effect.provideService(HostProcess.HomeDirectory, root), Effect.scoped),
     ),
   );
 
   it.effect("never searches a dev state directory for an explicit T3 home", () =>
     withTempDirectory("t3-app-explicit-test-", (root) =>
       Effect.gen(function* () {
-        vi.mocked(NodeOS.homedir).mockReturnValue(root);
         const baseDir = NodePath.join(root, ".t3");
         const development = yield* fakeDesktop({ baseDir, stateSubdirectory: "dev" });
 
@@ -252,7 +324,7 @@ describe("t3 app", () => {
         expect(flagError).toMatchObject({ _tag: "DesktopAppUnreachableError" });
         expect(envError).toMatchObject({ _tag: "DesktopAppUnreachableError" });
         expect(development.received).toHaveLength(0);
-      }).pipe(Effect.scoped),
+      }).pipe(Effect.provideService(HostProcess.HomeDirectory, root), Effect.scoped),
     ),
   );
 
@@ -261,7 +333,6 @@ describe("t3 app", () => {
     (responseKind) =>
       withTempDirectory("t3-app-response-test-", (root) =>
         Effect.gen(function* () {
-          vi.mocked(NodeOS.homedir).mockReturnValue(root);
           const baseDir = NodePath.join(root, ".t3");
           const desktop = yield* fakeDesktop({
             baseDir,
@@ -287,7 +358,7 @@ describe("t3 app", () => {
               _tag: "DesktopAppRequestFailedError",
               code: "project-create-failed",
               requestId: desktop.received[0]?.requestId,
-              workspaceRoot: yield* HostProcessWorkingDirectory,
+              workspaceRoot: yield* HostProcess.WorkingDirectory,
               message: expect.stringContaining("project-create-failed"),
               cause: {
                 ok: false,
@@ -301,7 +372,7 @@ describe("t3 app", () => {
               cause: { message: "The desktop app response is invalid." },
             });
           }
-        }).pipe(Effect.scoped),
+        }).pipe(Effect.provideService(HostProcess.HomeDirectory, root), Effect.scoped),
       ),
   );
 });

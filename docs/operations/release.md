@@ -134,16 +134,19 @@ Optional `production` environment variables:
 - `RELAY_DOMAIN` when overriding the derived `relay.<RELAY_API_ZONE_NAME>` domain
 - `RELAY_TUNNEL_CLEANUP_MODE` with `off`, `dry-run`, or `enabled`. Missing and blank values use
   `off`.
+- `RELAY_LEGACY_TUNNEL_CLEANUP_MODE` with the same values, for tunnels whose host never registered
+  recovery. Missing and blank values use `off`.
 
 Required `production` environment secrets:
 
 - `CLERK_SECRET_KEY`
 - `APNS_PRIVATE_KEY`
 
-The relay Worker reads these variables and secrets when it is deployed. Alchemy does not redeploy the
-Worker when only one of these values changes ([alchemy-run/alchemy#1831](https://github.com/alchemy-run/alchemy/issues/1831)),
-so a push to `main` without relay code changes leaves the old value in place. After changing one, run
-the **Deploy T3 Connect relay** workflow manually from `main` with **force** checked.
+After changing a variable or secret, run the **Deploy T3 Connect relay** workflow manually from
+`main` with **force** unchecked. Alchemy compares the values the Worker reads and redeploys it when
+one changed. Check **force** only to redeploy resources with no detected change: a forced run also
+replaces the Postgres runtime role and its password
+([alchemy-run/alchemy#1832](https://github.com/alchemy-run/alchemy/issues/1832)).
 
 The account-scoped repository credentials are consumed by Alchemy while provisioning relay stages; they
 are not bound into the relay Worker. The production deployment uses an Axiom personal access token,
@@ -167,8 +170,8 @@ because those builds register recovery and replace a deleted tunnel after wake.
 
 1. Deploy the relay and migration with cleanup `off`.
 2. Release the server build and confirm current hosts register recovery. Older hosts stay marked
-   legacy and are never candidates.
-3. Set `dry-run`, run a forced relay deploy, and read the sweep counters (`scanned`, `wouldDelete`,
+   legacy and are only candidates under the legacy switch below.
+3. Set `dry-run`, run a relay deploy, and read the sweep counters (`scanned`, `wouldDelete`,
    `skippedLegacy`, `skippedOrphan`, `failed`, `truncated`) across several sweeps. Each sweep records
    them, and the active `mode`, as `relay.managed_endpoint_reaper.*` attributes on its
    `relay.managed_endpoint_reaper.sweep` span in Axiom.
@@ -178,11 +181,64 @@ because those builds register recovery and replace a deleted tunnel after wake.
 The job runs every five minutes with a five-minute grace period for tunnels that lost their
 connector, so a candidate is usually removed five to ten minutes after it goes down. Tunnels that
 never connected wait an hour. One sweep attempts at most 100 deletions, so a backlog takes longer.
-Changing `RELAY_TUNNEL_CLEANUP_MODE`, including turning cleanup off during an incident, needs a forced
-relay deploy. Confirm the new `mode` on the next sweep span.
+Changing `RELAY_TUNNEL_CLEANUP_MODE`, including turning cleanup off during an incident, needs a relay
+deploy without force. Confirm the new `mode` on the next sweep span.
 
-To roll back, set cleanup to `off` and run a forced relay deploy before downgrading any host. Keep the
+To roll back, set cleanup to `off` and run a relay deploy before downgrading any host. Keep the
 recovery endpoints deployed while current server builds are in use. The nullable columns can stay.
+
+### Legacy tunnel cleanup
+
+A legacy tunnel belongs to a host that never registered recovery, usually one that went offline
+before the recovery build shipped. `RELAY_LEGACY_TUNNEL_CLEANUP_MODE` deletes these once Cloudflare
+reports them down, or never connected, for more than 7 days. It is independent of
+`RELAY_TUNNEL_CLEANUP_MODE`, and every other check still applies.
+
+A deleted legacy tunnel keeps its allocation, so its hostname is kept. When the host comes back:
+
+- On a build with recovery, the connector is rejected and the host requests a replacement tunnel at
+  the same hostname.
+- On an older build with a CLI link, startup provisions a new tunnel.
+- On an older build linked from web or mobile, the host stays offline until T3 Code on that computer
+  is updated.
+
+Ship the web and mobile builds that show the offline reason before enabling legacy cleanup, so a
+user whose host is affected sees what to do. The relay adds the `tunnel_released_at` allocation
+column in its first deploy with this change; the legacy switch stays `off` until you set it.
+
+1. Run `vp run --filter t3code-relay tunnels:census` with a read-only Cloudflare token. It counts
+   tunnels in every relay stage. The reaper only sees its own stage's tunnels, so clean up the rest
+   by hand.
+2. Set the legacy mode to `dry-run`, deploy, and read `wouldDeleteLegacy`, `legacyOver30Days`,
+   `totalDown`, and `totalInactive` on the sweep spans for a day. `wouldDeleteLegacy` counts only the
+   tunnels a sweep inspected, at most 500 per status. `totalDown` and `totalInactive` are Cloudflare's
+   counts of this stage's tunnels down for over five minutes and never connected for over an hour.
+   They include ones the reaper skips, so they are an upper bound on the backlog. The share of `wouldDeleteLegacy` in each sweep's `scanned` estimates how
+   much of that total is eligible.
+3. Run the legacy steps of the disposable-host canary below.
+4. Before enabling, confirm the web and mobile builds that show the "update T3 Code on that computer"
+   message are live. Without them, a user whose older host lost its tunnel only sees it as offline.
+5. Set the legacy mode to `enabled`. One sweep deletes at most 100 tunnels, four at a time, and
+   stops starting new deletions after 90 seconds. A backlog of 20,000 takes about 17 hours if each
+   sweep finishes its 100. Watch `deletedLegacy`, `attempted`, `failed`, and `truncated`. An
+   `attempted` well under 100 with `truncated` set means the sweep stopped early: either the time
+   budget ran out or Cloudflare rate-limited a deletion. The counters don't say which; the relay
+   logs a warning with the Cloudflare error for each failed deletion.
+
+In Axiom, filter the relay traces dataset on `name == "relay.managed_endpoint_reaper.sweep"` and
+chart the `attributes.custom.relay.managed_endpoint_reaper.*` fields over time.
+
+Set the legacy mode back to `off` and deploy if any of these happen:
+
+- `failed` stays above a few per sweep. Read the warning log for the Cloudflare error.
+- Users report an environment that is offline with the update message after they have updated T3
+  Code on that computer and restarted it.
+- Relay request errors rise while sweeps run. Deletions share the Postgres connection pool with
+  request handlers.
+
+Turning the legacy mode off stops new legacy deletions; `RELAY_TUNNEL_CLEANUP_MODE` keeps deleting
+tunnels of hosts with recovery while it is `enabled`. Deleted tunnels stay deleted; their hosts
+recover as described above.
 
 ### Disposable-host canary
 
@@ -201,13 +257,26 @@ stage, test Cloudflare account, disposable host, and disposable T3 home. Keep pr
    and pause it with `kill -STOP <first-pid>`. Wait until Cloudflare reports it down for over five
    minutes.
 5. Confirm dry-run counts the first tunnel in `wouldDelete` and the second in `skippedLegacy`.
-6. Set cleanup `enabled` on the disposable stage and deploy it with `--force`. Confirm in the test
-   Cloudflare account that the first tunnel is deleted and the legacy tunnel still exists.
+6. Set cleanup `enabled` on the disposable stage and deploy. Confirm in the test Cloudflare account
+   that the first tunnel is deleted and the legacy tunnel still exists.
 7. Resume the first child with `kill -CONT <first-pid>`. Confirm the running server detects the
    repeated rejection, requests recovery, and becomes reachable at the same hostname without a
    restart.
 8. Resume the legacy child with `kill -CONT <legacy-pid>` and confirm its tunnel reconnects.
 9. Repeat with a physical sleep and wake cycle on a disposable laptop before broad rollout.
+
+Legacy cleanup, on the same disposable stage:
+
+10. Set `RELAY_LEGACY_TUNNEL_GRACE_MINUTES=10` and the legacy mode to `dry-run`, then deploy. The
+    override shortens the 7-day grace period and is ignored on `prod`. Pause the legacy child again
+    and wait until Cloudflare reports it down for over ten minutes.
+11. Confirm the sweep counts it in `wouldDeleteLegacy`, then set the legacy mode to `enabled` and
+    deploy. Confirm the legacy tunnel is deleted and its allocation row remains.
+12. With the legacy host still on its old build, resume the child. A CLI-linked host provisions a
+    new tunnel on its next restart; a web- or mobile-linked host stays offline.
+13. Update that host to the current build and start it. Confirm it requests recovery and is
+    reachable at the same hostname.
+14. Remove `RELAY_LEGACY_TUNNEL_GRACE_MINUTES` from the disposable stage.
 
 ## Marketing site deployment
 
@@ -484,6 +553,16 @@ Notes:
 - The workflow writes it to a temporary `AuthKey_<id>.p8` file at runtime.
 - The workflow decodes `MACOS_PROVISIONING_PROFILE`, validates it with `security cms`, and passes it
   to the desktop packager.
+- In-app browser passkeys depend on the same profile. The packager adds each entitlement only when
+  the profile grants it, because macOS will not launch an app that claims more than its profile
+  allows. The build log reports which ones it enabled.
+  - `keychain-access-groups` (`<TEAM_ID>.com.t3tools.t3code.webauthn`) enables Touch ID passkeys.
+    Profiles that grant the team's keychain groups (`<TEAM_ID>.*`) cover it.
+  - `com.apple.developer.web-browser.public-key-credential` lets the system passkey sheet (iCloud
+    Keychain, password managers, phones, security keys) serve any site. Apple grants it as a
+    managed capability: the Account Holder requests it through the
+    [macOS Browsers Passkeys form](https://developer.apple.com/contact/request/macos-browsers-passkeys/).
+    After approval, regenerate the profile and update `MACOS_PROVISIONING_PROFILE`.
 
 ## 3) Azure Trusted Signing setup (Windows)
 

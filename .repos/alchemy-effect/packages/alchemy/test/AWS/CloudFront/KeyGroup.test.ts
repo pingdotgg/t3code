@@ -31,124 +31,128 @@ JQIDAQAB
 -----END PUBLIC KEY-----
 `;
 
-describe("AWS.CloudFront.KeyGroup", () => {
-  test.provider(
-    "create, update items, and delete a key group",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+describe(
+  "AWS.CloudFront.KeyGroup",
+  { tags: ["provider:aws", "provider:aws:cloudfront", "live"] },
+  () => {
+    test.provider(
+      "create, update items, and delete a key group",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        const created = yield* stack.deploy(
-          Effect.gen(function* () {
-            const primary = yield* PublicKey("PrimarySigningKey", {
-              encodedKey: PRIMARY_PUBLIC_KEY,
-              comment: "primary",
-            });
-            const secondary = yield* PublicKey("SecondarySigningKey", {
-              encodedKey: SECONDARY_PUBLIC_KEY,
-              comment: "secondary",
-            });
-            const group = yield* KeyGroup("SignedUrlKeys", {
-              comment: "initial",
-              items: [primary.publicKeyId],
-            });
-            return { primary, secondary, group };
-          }),
-        );
-
-        const initial = yield* cloudfront.getKeyGroup({
-          Id: created.group.keyGroupId,
-        });
-        expect(initial.KeyGroup?.Id).toEqual(created.group.keyGroupId);
-        expect(initial.KeyGroup?.KeyGroupConfig?.Comment).toEqual("initial");
-        expect(initial.KeyGroup?.KeyGroupConfig?.Items).toEqual([
-          created.primary.publicKeyId,
-        ]);
-
-        const updated = yield* stack.deploy(
-          Effect.gen(function* () {
-            const primary = yield* PublicKey("PrimarySigningKey", {
-              encodedKey: PRIMARY_PUBLIC_KEY,
-              comment: "primary",
-            });
-            const secondary = yield* PublicKey("SecondarySigningKey", {
-              encodedKey: SECONDARY_PUBLIC_KEY,
-              comment: "secondary",
-            });
-            const group = yield* KeyGroup("SignedUrlKeys", {
-              comment: "updated",
-              items: [primary.publicKeyId, secondary.publicKeyId],
-            });
-            return { primary, secondary, group };
-          }),
-        );
-
-        expect(updated.group.keyGroupId).toEqual(created.group.keyGroupId);
-
-        // `getKeyGroup` right after `updateKeyGroup` can serve the
-        // pre-update config (control-plane reads are eventually
-        // consistent) — poll until the update is visible, then assert.
-        const after = yield* cloudfront
-          .getKeyGroup({ Id: updated.group.keyGroupId })
-          .pipe(
-            Effect.repeat({
-              schedule: Schedule.fixed("2 seconds"),
-              until: (response) =>
-                response.KeyGroup?.KeyGroupConfig?.Items?.length === 2,
-              times: 15,
+          const created = yield* stack.deploy(
+            Effect.gen(function* () {
+              const primary = yield* PublicKey("PrimarySigningKey", {
+                encodedKey: PRIMARY_PUBLIC_KEY,
+                comment: "primary",
+              });
+              const secondary = yield* PublicKey("SecondarySigningKey", {
+                encodedKey: SECONDARY_PUBLIC_KEY,
+                comment: "secondary",
+              });
+              const group = yield* KeyGroup("SignedUrlKeys", {
+                comment: "initial",
+                items: [primary.publicKeyId],
+              });
+              return { primary, secondary, group };
             }),
           );
-        expect(after.KeyGroup?.KeyGroupConfig?.Comment).toEqual("updated");
-        // CloudFront does not preserve the order of key-group items —
-        // compare as sets.
-        expect(
-          [...(after.KeyGroup?.KeyGroupConfig?.Items ?? [])].sort(),
-        ).toEqual(
-          [updated.primary.publicKeyId, updated.secondary.publicKeyId].sort(),
-        );
 
-        yield* stack.destroy();
-        yield* assertKeyGroupDeleted(updated.group.keyGroupId);
-        yield* assertPublicKeyDeleted(updated.primary.publicKeyId);
-        yield* assertPublicKeyDeleted(updated.secondary.publicKeyId);
-      }),
-    { timeout: 300_000 },
-  );
+          const initial = yield* cloudfront.getKeyGroup({
+            Id: created.group.keyGroupId,
+          });
+          expect(initial.KeyGroup?.Id).toEqual(created.group.keyGroupId);
+          expect(initial.KeyGroup?.KeyGroupConfig?.Comment).toEqual("initial");
+          expect(initial.KeyGroup?.KeyGroupConfig?.Items).toEqual([
+            created.primary.publicKeyId,
+          ]);
 
-  test.provider(
-    "list enumerates the deployed key group",
-    (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+          const updated = yield* stack.deploy(
+            Effect.gen(function* () {
+              const primary = yield* PublicKey("PrimarySigningKey", {
+                encodedKey: PRIMARY_PUBLIC_KEY,
+                comment: "primary",
+              });
+              const secondary = yield* PublicKey("SecondarySigningKey", {
+                encodedKey: SECONDARY_PUBLIC_KEY,
+                comment: "secondary",
+              });
+              const group = yield* KeyGroup("SignedUrlKeys", {
+                comment: "updated",
+                items: [primary.publicKeyId, secondary.publicKeyId],
+              });
+              return { primary, secondary, group };
+            }),
+          );
 
-        const deployed = yield* stack.deploy(
-          Effect.gen(function* () {
-            const primary = yield* PublicKey("PrimarySigningKey", {
-              encodedKey: PRIMARY_PUBLIC_KEY,
-              comment: "primary",
-            });
-            const group = yield* KeyGroup("ListKeyGroup", {
-              comment: "list",
-              items: [primary.publicKeyId],
-            });
-            return { primary, group };
-          }),
-        );
+          expect(updated.group.keyGroupId).toEqual(created.group.keyGroupId);
 
-        const provider = yield* Provider.findProvider(KeyGroup);
-        const all = yield* provider.list();
+          // `getKeyGroup` right after `updateKeyGroup` can serve the
+          // pre-update config (control-plane reads are eventually
+          // consistent) — poll until the update is visible, then assert.
+          const after = yield* cloudfront
+            .getKeyGroup({ Id: updated.group.keyGroupId })
+            .pipe(
+              Effect.repeat({
+                schedule: Schedule.fixed("2 seconds"),
+                until: (response) =>
+                  response.KeyGroup?.KeyGroupConfig?.Items?.length === 2,
+                times: 15,
+              }),
+            );
+          expect(after.KeyGroup?.KeyGroupConfig?.Comment).toEqual("updated");
+          // CloudFront does not preserve the order of key-group items —
+          // compare as sets.
+          expect(
+            [...(after.KeyGroup?.KeyGroupConfig?.Items ?? [])].sort(),
+          ).toEqual(
+            [updated.primary.publicKeyId, updated.secondary.publicKeyId].sort(),
+          );
 
-        expect(
-          all.some((g) => g.keyGroupId === deployed.group.keyGroupId),
-        ).toBe(true);
+          yield* stack.destroy();
+          yield* assertKeyGroupDeleted(updated.group.keyGroupId);
+          yield* assertPublicKeyDeleted(updated.primary.publicKeyId);
+          yield* assertPublicKeyDeleted(updated.secondary.publicKeyId);
+        }),
+      { timeout: 300_000 },
+    );
 
-        yield* stack.destroy();
-        yield* assertKeyGroupDeleted(deployed.group.keyGroupId);
-        yield* assertPublicKeyDeleted(deployed.primary.publicKeyId);
-      }),
-    { timeout: 300_000 },
-  );
-});
+    test.provider(
+      "list enumerates the deployed key group",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* stack.destroy();
+
+          const deployed = yield* stack.deploy(
+            Effect.gen(function* () {
+              const primary = yield* PublicKey("PrimarySigningKey", {
+                encodedKey: PRIMARY_PUBLIC_KEY,
+                comment: "primary",
+              });
+              const group = yield* KeyGroup("ListKeyGroup", {
+                comment: "list",
+                items: [primary.publicKeyId],
+              });
+              return { primary, group };
+            }),
+          );
+
+          const provider = yield* Provider.findProvider(KeyGroup);
+          const all = yield* provider.list();
+
+          expect(
+            all.some((g) => g.keyGroupId === deployed.group.keyGroupId),
+          ).toBe(true);
+
+          yield* stack.destroy();
+          yield* assertKeyGroupDeleted(deployed.group.keyGroupId);
+          yield* assertPublicKeyDeleted(deployed.primary.publicKeyId);
+        }),
+      { timeout: 300_000 },
+    );
+  },
+);
 
 const assertKeyGroupDeleted = (id: string) =>
   cloudfront.getKeyGroup({ Id: id }).pipe(

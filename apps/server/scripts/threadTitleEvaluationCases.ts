@@ -1,4 +1,4 @@
-import type { ThreadTitleMessage } from "../src/textGeneration/ThreadTitleContext.ts";
+import type { ThreadTitleMessage } from "@t3tools/provider-core/server/threadTitleContext";
 
 // Public PR subjects and existing title scenarios. Repeated text adds context pressure.
 export const threadTitleEvaluationCases = [

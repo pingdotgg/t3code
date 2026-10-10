@@ -7,18 +7,19 @@
  * terminal surfaces point at terminal session ids, file surfaces point at
  * workspace paths, and diff/files remain singleton surfaces.
  */
-import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
-  EnvironmentId,
-  ThreadId,
-  type ChatFileAttachment,
-  type ScopedThreadRef,
-} from "@t3tools/contracts";
+  parseScopedThreadKey,
+  scopedThreadKey,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
+import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
+import { useClosedViewStore } from "./closedViewStore";
 import { resolveStorage } from "./lib/storage";
 import type { ThreadPanelPresentation } from "./rightPanelLayout";
+import type { ChatFileAttachment } from "./types";
 
 const RIGHT_PANEL_KINDS = [
   "diff",
@@ -120,9 +121,17 @@ export interface ThreadPanelVisibility {
 
 interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
+  /**
+   * A thread whose right panel should open maximized the next time it shows,
+   * such as one started for a link the OS opened. Its view consumes it once.
+   */
+  pendingMaximizeThreadKey: string | null;
+  requestMaximize: (ref: ScopedThreadRef) => void;
+  consumeMaximizeRequest: (ref: ScopedThreadRef) => boolean;
   threadPanelVisibilityByThreadKey: Record<string, ThreadPanelVisibility>;
   /** Session-only count of user panel choices per thread. Automatic updates do not advance it. */
   userActionRevisionByThreadKey: Record<string, number>;
+  closeRevisionByThreadKey: Record<string, number>;
   getUserActionRevision: (ref: ScopedThreadRef) => number;
   /**
    * Open a surface on behalf of the app, not the user. Refused when the user
@@ -167,7 +176,12 @@ interface RightPanelStoreState {
   closeOtherSurfaces: (ref: ScopedThreadRef, surfaceId: string) => void;
   closeSurfacesToRight: (ref: ScopedThreadRef, surfaceId: string) => void;
   closeAllSurfaces: (ref: ScopedThreadRef) => void;
-  reconcileBrowserSurfaces: (ref: ScopedThreadRef, tabIds: readonly string[]) => void;
+  moveSurface: (ref: ScopedThreadRef, surfaceId: string, toIndex: number) => void;
+  reconcileBrowserSurfaces: (
+    ref: ScopedThreadRef,
+    tabIds: readonly string[],
+    hiddenTabIds?: ReadonlySet<string>,
+  ) => void;
   reconcileFileSurfaces: (ref: ScopedThreadRef, workspaceAvailable: boolean) => void;
   show: (ref: ScopedThreadRef) => void;
   close: (ref: ScopedThreadRef) => void;
@@ -387,6 +401,7 @@ const userAction = (
   state: RightPanelStoreState,
   threadKey: string,
   updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
+  closesView = false,
 ): Partial<RightPanelStoreState> => ({
   ...updateThread(state, threadKey, (current) => {
     const next = updater(current);
@@ -410,7 +425,21 @@ const userAction = (
     ...state.userActionRevisionByThreadKey,
     [threadKey]: (state.userActionRevisionByThreadKey[threadKey] ?? 0) + 1,
   },
+  ...(closesView
+    ? {
+        closeRevisionByThreadKey: {
+          ...state.closeRevisionByThreadKey,
+          [threadKey]: (state.closeRevisionByThreadKey[threadKey] ?? 0) + 1,
+        },
+      }
+    : {}),
 });
+
+const closeAction = (
+  state: RightPanelStoreState,
+  threadKey: string,
+  updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
+): Partial<RightPanelStoreState> => userAction(state, threadKey, updater, true);
 
 function normalizeRevealLine(line: number | undefined): number | null {
   if (line === undefined || !Number.isFinite(line)) return null;
@@ -569,8 +598,16 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
   persist(
     (set, get) => ({
       byThreadKey: {},
+      pendingMaximizeThreadKey: null,
+      requestMaximize: (ref) => set({ pendingMaximizeThreadKey: scopedThreadKey(ref) }),
+      consumeMaximizeRequest: (ref) => {
+        if (get().pendingMaximizeThreadKey !== scopedThreadKey(ref)) return false;
+        set({ pendingMaximizeThreadKey: null });
+        return true;
+      },
       threadPanelVisibilityByThreadKey: {},
       userActionRevisionByThreadKey: {},
+      closeRevisionByThreadKey: {},
       getUserActionRevision: (ref) =>
         get().userActionRevisionByThreadKey[scopedThreadKey(ref)] ?? 0,
       openProactive: (ref, surface, expectedUserActionRevision) => {
@@ -754,7 +791,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         ),
       closeTerminal: (ref, surfaceId, terminalId) =>
         set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => {
+          closeAction(state, scopedThreadKey(ref), (current) => {
             const surface = current.surfaces.find(
               (entry) => entry.id === surfaceId && entry.kind === "terminal",
             );
@@ -801,25 +838,28 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         ),
       closeSurface: (ref, surfaceId) =>
         set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => {
+          closeAction(state, scopedThreadKey(ref), (current) => {
             const index = current.surfaces.findIndex((surface) => surface.id === surfaceId);
             if (index < 0) return current;
             const surfaces = current.surfaces.filter((surface) => surface.id !== surfaceId);
-            if (current.activeSurfaceId !== surfaceId) {
-              return { ...current, isOpen: surfaces.length > 0 && current.isOpen, surfaces };
-            }
-            const fallback = surfaces[Math.min(index, surfaces.length - 1)] ?? null;
-            return {
+            const next = {
               ...current,
               isOpen: surfaces.length > 0 && current.isOpen,
               surfaces,
+            };
+            if (current.activeSurfaceId !== surfaceId) {
+              return next;
+            }
+            const fallback = surfaces[Math.min(index, surfaces.length - 1)] ?? null;
+            return {
+              ...next,
               activeSurfaceId: fallback?.id ?? null,
             };
           }),
         ),
       closeOtherSurfaces: (ref, surfaceId) =>
         set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => {
+          closeAction(state, scopedThreadKey(ref), (current) => {
             const surface = current.surfaces.find((entry) => entry.id === surfaceId);
             if (!surface || current.surfaces.length === 1) return current;
             return {
@@ -832,7 +872,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         ),
       closeSurfacesToRight: (ref, surfaceId) =>
         set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => {
+          closeAction(state, scopedThreadKey(ref), (current) => {
             const index = current.surfaces.findIndex((surface) => surface.id === surfaceId);
             if (index < 0 || index === current.surfaces.length - 1) return current;
             const surfaces = current.surfaces.slice(0, index + 1);
@@ -848,28 +888,39 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         ),
       closeAllSurfaces: (ref) =>
         set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) =>
+          closeAction(state, scopedThreadKey(ref), (current) =>
             current.surfaces.length === 0
               ? current
               : { ...current, isOpen: false, surfaces: [], activeSurfaceId: null },
           ),
         ),
-      reconcileBrowserSurfaces: (ref, tabIds) =>
+      // Reordering is not a choice about what the panel shows, so it leaves the
+      // user-action revision alone and proactive opens still apply.
+      moveSurface: (ref, surfaceId, toIndex) =>
+        set((state) =>
+          updateThread(state, scopedThreadKey(ref), (current) => {
+            const fromIndex = current.surfaces.findIndex((surface) => surface.id === surfaceId);
+            if (fromIndex < 0 || fromIndex === toIndex) return current;
+            const surfaces = [...current.surfaces];
+            surfaces.splice(toIndex, 0, ...surfaces.splice(fromIndex, 1));
+            return { ...current, surfaces };
+          }),
+        ),
+      reconcileBrowserSurfaces: (ref, tabIds, hiddenTabIds) =>
         set((state) =>
           automaticUpdate(state, scopedThreadKey(ref), (current) => {
             const validIds = new Set(tabIds.map((tabId) => `browser:${tabId}`));
-            const nonBrowser = current.surfaces.filter((surface) => surface.kind !== "preview");
-            const existingBrowser = current.surfaces.filter(
-              (surface): surface is Extract<RightPanelSurface, { kind: "preview" }> =>
-                surface.kind === "preview" &&
-                surface.id !== "browser:new" &&
-                validIds.has(surface.id),
+            // Filtered in place so browser tabs keep the order the user dragged them into.
+            const kept = current.surfaces.filter(
+              (surface) =>
+                surface.kind !== "preview" ||
+                (surface.id !== "browser:new" && validIds.has(surface.id)),
             );
-            const knownIds = new Set(existingBrowser.map((surface) => surface.id));
+            const knownIds = new Set(kept.map((surface) => surface.id));
             const added = tabIds
-              .filter((tabId) => !knownIds.has(`browser:${tabId}`))
+              .filter((tabId) => !knownIds.has(`browser:${tabId}`) && !hiddenTabIds?.has(tabId))
               .map((tabId) => browserSurface(tabId));
-            const surfaces = [...nonBrowser, ...existingBrowser, ...added];
+            const surfaces = [...kept, ...added];
             const activeStillExists = surfaces.some(
               (surface) => surface.id === current.activeSurfaceId,
             );
@@ -969,7 +1020,8 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           if (
             !(threadKey in state.byThreadKey) &&
             !(threadKey in state.threadPanelVisibilityByThreadKey) &&
-            !(threadKey in state.userActionRevisionByThreadKey)
+            !(threadKey in state.userActionRevisionByThreadKey) &&
+            !(threadKey in state.closeRevisionByThreadKey)
           ) {
             return state;
           }
@@ -978,10 +1030,13 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             state.threadPanelVisibilityByThreadKey;
           const { [threadKey]: _revision, ...userActionRevisionByThreadKey } =
             state.userActionRevisionByThreadKey;
+          const { [threadKey]: _closeRevision, ...closeRevisionByThreadKey } =
+            state.closeRevisionByThreadKey;
           return {
             byThreadKey,
             threadPanelVisibilityByThreadKey,
             userActionRevisionByThreadKey,
+            closeRevisionByThreadKey,
           };
         }),
     }),
@@ -1008,6 +1063,32 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
     },
   ),
 );
+
+useRightPanelStore.subscribe((next, previous) => {
+  if (next.closeRevisionByThreadKey === previous.closeRevisionByThreadKey) return;
+  for (const [threadKey, revision] of Object.entries(next.closeRevisionByThreadKey)) {
+    if (revision === previous.closeRevisionByThreadKey[threadKey]) continue;
+    const threadRef = parseScopedThreadKey(threadKey);
+    if (!threadRef) continue;
+    const before = previous.byThreadKey[threadKey] ?? EMPTY_THREAD_STATE;
+    const after = next.byThreadKey[threadKey] ?? EMPTY_THREAD_STATE;
+    const removed = before.surfaces.filter(
+      (surface) => !after.surfaces.some((entry) => entry.id === surface.id),
+    );
+    const closedInOrder = [
+      ...removed.filter((surface) => surface.id !== before.activeSurfaceId),
+      ...removed.filter((surface) => surface.id === before.activeSurfaceId),
+    ];
+    for (const surface of closedInOrder) {
+      if (
+        surface.kind === "terminal" ||
+        (surface.kind === "preview" && surface.resourceId !== null)
+      )
+        continue;
+      useClosedViewStore.getState().remember({ kind: "panel-tab", threadRef, surface });
+    }
+  }
+});
 
 export function selectThreadRightPanelState(
   byThreadKey: Record<string, ThreadRightPanelState>,

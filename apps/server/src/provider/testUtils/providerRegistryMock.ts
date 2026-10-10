@@ -1,13 +1,13 @@
-import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
+import * as ProviderRegistry from "../ProviderRegistry.ts";
 import type { ServerProvider } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 
 const makeProviderRegistryMock = (
   providers: ReadonlyArray<ServerProvider> = [],
-): ProviderRegistry.ProviderRegistryShape => ({
+): ProviderRegistry.ProviderRegistry["Service"] => ({
   getProviders: Effect.succeed(providers),
   refresh: () => Effect.succeed(providers),
   refreshInstance: () => Effect.succeed(providers),
@@ -18,5 +18,5 @@ const makeProviderRegistryMock = (
   streamChanges: Stream.empty,
 });
 
-export const makeProviderRegistryLayer = (providers: ReadonlyArray<ServerProvider> = []) =>
+export const layer = (providers: ReadonlyArray<ServerProvider> = []) =>
   Layer.succeed(ProviderRegistry.ProviderRegistry, makeProviderRegistryMock(providers));

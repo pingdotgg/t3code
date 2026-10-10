@@ -1,13 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, expect, it } from "@effect/vitest";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Terminal from "effect/Terminal";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { afterEach, vi } from "vite-plus/test";
 
 import packageJson from "../../package.json" with { type: "json" };
@@ -136,7 +136,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
         "--base-dir",
         baseDir,
       ]).pipe(
-        Effect.provideService(HostProcessEnvironment, {}),
+        Effect.provideService(HostProcess.Environment, {}),
         Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
       );
 
@@ -161,7 +161,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
           "--base-dir",
           baseDir,
         ]).pipe(
-          Effect.provideService(HostProcessEnvironment, {}),
+          Effect.provideService(HostProcess.Environment, {}),
           Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
           Effect.flip,
         );
@@ -190,7 +190,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
         baseDir,
         "--allow-downgrade",
       ]).pipe(
-        Effect.provideService(HostProcessEnvironment, {}),
+        Effect.provideService(HostProcess.Environment, {}),
         Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
       );
 

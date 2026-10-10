@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import { Argument, Command } from "effect/unstable/cli";
+import { Argument, Command } from "effect/cli";
 
 import { runClaudeHistoryWorker } from "../claudeHistoryWorker.ts";
 

@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
 
 import * as NodeStream from "@effect/platform-node/NodeStream";
 import {
@@ -23,7 +24,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as Ndjson from "effect/unstable/encoding/Ndjson";
+import * as Ndjson from "effect/encoding/Ndjson";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -463,13 +464,11 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
 
   if (config.desktopTelemetryFd !== undefined) {
     const fd = config.desktopTelemetryFd;
+    // The parent waits for this server before closing its pipe. Socket reads
+    // can be cancelled; filesystem reads would keep process.exit waiting.
     const readable = yield* Effect.acquireRelease(
       Effect.try({
-        try: () =>
-          NodeFS.createReadStream("", {
-            fd,
-            autoClose: true,
-          }),
+        try: () => new NodeNet.Socket({ fd, readable: true, writable: false }),
         catch: (cause) => new DesktopTelemetryStreamFailed({ fd, cause }),
       }),
       (stream) =>

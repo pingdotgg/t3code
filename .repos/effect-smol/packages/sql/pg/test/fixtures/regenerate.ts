@@ -171,6 +171,7 @@ const rowCases: ReadonlyArray<
   { name: "int8Max", type: "int8", oid: PgTypes.OID.int8, value: BigInt("9223372036854775807") },
   { name: "int8Min", type: "int8", oid: PgTypes.OID.int8, value: BigInt("-9223372036854775808") },
   { name: "oid", type: "oid", oid: PgTypes.OID.oid, value: 4294967295 },
+  { name: "regclass", type: "regclass", oid: PgTypes.OID.regclass, value: 4294967295 },
   { name: "float4", type: "float4", oid: PgTypes.OID.float4, value: 1.5 },
   { name: "float8", type: "float8", oid: PgTypes.OID.float8, value: -3.0625 },
   { name: "numeric", type: "numeric", oid: PgTypes.OID.numeric, value: "12345.6789" },
@@ -194,9 +195,9 @@ const rowCases: ReadonlyArray<
   { name: "dateNegInfinity", type: "date", oid: PgTypes.OID.date, value: "-infinity" },
   { name: "time", type: "time", oid: PgTypes.OID.time, value: BigInt(45296000000) },
   { name: "timetz", type: "timetz", oid: PgTypes.OID.timetz, value: "12:34:56+02:00" },
-  { name: "timestamp", type: "timestamp", oid: PgTypes.OID.timestamp, value: 1717171717123 },
+  { name: "timestamp", type: "timestamp", oid: PgTypes.OID.timestamp, value: new Date(1717171717123) },
   { name: "timestampInfinity", type: "timestamp", oid: PgTypes.OID.timestamp, value: Number.POSITIVE_INFINITY },
-  { name: "timestamptz", type: "timestamptz", oid: PgTypes.OID.timestamptz, value: 1717171717123 },
+  { name: "timestamptz", type: "timestamptz", oid: PgTypes.OID.timestamptz, value: new Date(1717171717123) },
   {
     name: "timestamptzNegInfinity",
     type: "timestamptz",
@@ -209,7 +210,7 @@ const rowCases: ReadonlyArray<
     name: "timestamptzArray",
     type: "timestamptz[]",
     oid: PgTypes.OID.timestamptzArray,
-    value: [0, null, 1717171717000]
+    value: [new Date(0), null, new Date(1717171717000)]
   }
 ]
 

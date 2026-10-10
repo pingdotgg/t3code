@@ -3,14 +3,14 @@
  *
  * @since 4.0.0
  */
+import * as Command from "effect/cli/Command"
+import * as Flag from "effect/cli/Flag"
 import * as Console from "effect/Console"
 import * as Effect from "effect/Effect"
 import * as FileSystem from "effect/FileSystem"
+import * as FetchHttpClient from "effect/http/FetchHttpClient"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
-import * as Command from "effect/unstable/cli/Command"
-import * as Flag from "effect/unstable/cli/Flag"
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient"
 import * as ProviderDiscovery from "./Discovery.ts"
 import * as CodeGenerator from "./Generator.ts"
 import * as Glob from "./Glob.ts"

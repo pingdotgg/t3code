@@ -1,9 +1,9 @@
 "@effect/platform/Ndjson#duplex":
   replacement: "Ndjson.duplex"
-  note: "The API moved to effect/unstable/encoding/Ndjson."
+  note: "The API moved to effect/encoding/Ndjson."
 "@effect/platform/Ndjson#duplexSchema":
   replacement: "Ndjson.duplexSchema"
-  note: "The API moved to effect/unstable/encoding/Ndjson and uses v4 Schema constraints."
+  note: "The API moved to effect/encoding/Ndjson and uses v4 Schema constraints."
 "@effect/platform/Ndjson#ErrorTypeId":
   replacement: "Ndjson.NdjsonError"
   note: "The public error marker was removed; use the NdjsonError class."
