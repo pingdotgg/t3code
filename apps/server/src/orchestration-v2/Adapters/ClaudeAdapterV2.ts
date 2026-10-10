@@ -7717,9 +7717,30 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               next.add(turnInput.providerTurnId);
               return next;
             });
-            yield* existing.query.interrupt;
-            yield* existing.query.close.pipe(Effect.ignore);
-            const closed = yield* Deferred.await(existing.closed).pipe(
+            existing.stopping = true;
+            yield* existing.query.interrupt.pipe(
+              Effect.timeoutOption("5 seconds"),
+              Effect.tap((interrupted) =>
+                Option.isNone(interrupted)
+                  ? Effect.logWarning("orchestration-v2.claude-query-interrupt-request-timeout", {
+                      providerSessionId: input.providerSessionId,
+                      providerThreadId: turnInput.providerThread.id,
+                      providerTurnId: turnInput.providerTurnId,
+                    })
+                  : Effect.void,
+              ),
+              Effect.catchCause((cause) =>
+                Effect.logWarning("orchestration-v2.claude-query-interrupt-request-failed", {
+                  providerSessionId: input.providerSessionId,
+                  providerThreadId: turnInput.providerThread.id,
+                  providerTurnId: turnInput.providerTurnId,
+                  cause,
+                }),
+              ),
+            );
+            const closed = yield* existing.query.close.pipe(
+              Effect.ignore,
+              Effect.andThen(Deferred.await(existing.closed)),
               Effect.timeoutOption("10 seconds"),
             );
             if (Option.isSome(closed)) {
@@ -7827,8 +7848,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           existing.stopping = true;
-          yield* existing.query.close.pipe(Effect.ignore);
-          const closed = yield* Deferred.await(existing.closed).pipe(
+          const closed = yield* existing.query.close.pipe(
+            Effect.ignore,
+            Effect.andThen(Deferred.await(existing.closed)),
             Effect.timeoutOption("10 seconds"),
           );
           if (Option.isSome(closed)) {

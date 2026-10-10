@@ -2105,7 +2105,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
   const makeWakeHarnessWithOptions = (options?: {
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
-    readonly interrupt?: Effect.Effect<void>;
+    readonly interrupt?: Effect.Effect<void, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
     readonly environment?: NodeJS.ProcessEnv;
     // A CLI process opened after the first streams from its own queue, so the
     // first one can exit (Queue.shutdown) and a later turn can start another.
@@ -2448,6 +2448,117 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
           ),
         ),
+      ),
+  );
+
+  it.effect.each(["hang", "error"] as const)(
+    "closes the query and permits another turn when Claude interrupt returns %s",
+    (behavior) =>
+      Effect.gen(function* () {
+        const interruptStarted = yield* Deferred.make<void>();
+        const queryClosed = yield* Deferred.make<void>();
+        const harness = yield* makeWakeHarnessWithOptions({
+          interrupt: Deferred.succeed(interruptStarted, undefined).pipe(
+            Effect.andThen(
+              behavior === "hang"
+                ? Effect.never
+                : Effect.fail(
+                    new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                      method: "interrupt",
+                      cause: new Error("Claude transport stopped responding"),
+                    }),
+                  ),
+            ),
+          ),
+          close: (sdkMessages) =>
+            Queue.shutdown(sdkMessages).pipe(
+              Effect.andThen(Deferred.succeed(queryClosed, undefined)),
+            ),
+        });
+        const attemptId = RunAttemptId.make("attempt-claude-unresponsive-interrupt");
+        const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeTurnId: `turn:${attemptId}`,
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId,
+            text: "Stop this task.",
+            attachments: [],
+          }),
+        );
+        const interrupt = yield* harness.runtime
+          .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(interruptStarted);
+        yield* TestClock.adjust("5 seconds");
+        yield* Deferred.await(queryClosed);
+        yield* Fiber.join(interrupt);
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "interrupted");
+        assert.lengthOf(harness.terminalEvents(), 1);
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-after-unresponsive-interrupt"),
+            providerTurnOrdinal: 2,
+            text: "Start fresh.",
+            attachments: [],
+          }),
+        );
+        assert.lengthOf(harness.offeredMessages, 2);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.mergeAll(IdAllocator.layer, NodeServices.layer, TestClock.layer())),
+      ),
+  );
+
+  it.effect.each(["close", "stream"] as const)(
+    "terminalizes Stop when Claude %s shutdown does not finish",
+    (behavior) =>
+      Effect.gen(function* () {
+        const closeStarted = yield* Deferred.make<void>();
+        const closeGate = yield* Deferred.make<void>();
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: () =>
+            Deferred.succeed(closeStarted, undefined).pipe(
+              Effect.andThen(behavior === "close" ? Deferred.await(closeGate) : Effect.void),
+            ),
+        });
+        const attemptId = RunAttemptId.make("attempt-claude-unresponsive-close");
+        const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeTurnId: `turn:${attemptId}`,
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId,
+            text: "Stop this task.",
+            attachments: [],
+          }),
+        );
+        const interrupt = yield* harness.runtime
+          .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(closeStarted);
+        yield* TestClock.adjust("10 seconds");
+        yield* Fiber.join(interrupt);
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "interrupted");
+        assert.lengthOf(harness.terminalEvents(), 1);
+        yield* Deferred.succeed(closeGate, undefined);
+        yield* Queue.shutdown(harness.sdkMessages);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.mergeAll(IdAllocator.layer, NodeServices.layer, TestClock.layer())),
       ),
   );
 
