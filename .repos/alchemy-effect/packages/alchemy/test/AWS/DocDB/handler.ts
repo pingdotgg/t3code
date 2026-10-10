@@ -2,8 +2,8 @@ import * as DocDB from "@/AWS/DocDB";
 import * as Lambda from "@/AWS/Lambda";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "handler.ts");
@@ -36,7 +36,7 @@ export class DocDBTestFunction extends Lambda.Function<Lambda.Function>()(
 export default DocDBTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     build: { external: MONGODB_OPTIONAL_DEPS },
   },
   Effect.gen(function* () {

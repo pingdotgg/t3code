@@ -10,9 +10,8 @@ import type { Instance } from "./Instance.ts";
  * Checks whether a user belongs to any of up to 100 groups in one call — the fast authorization primitive for group-gated routes. The instance's
  * `IdentityStoreId` is injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.IdentityCenter.IsMemberInGroupsHttp)`.
- * @binding
- * @section Querying Group Memberships
- * @example Gate a Route on Group Membership
+ * ### Querying Group Memberships
+ * **Example:** Gate a Route on Group Membership
  * ```typescript
  * // init — bind the operation to the Identity Center instance
  * const isMemberInGroups = yield* AWS.IdentityCenter.IsMemberInGroups(instance);
@@ -24,6 +23,8 @@ import type { Instance } from "./Instance.ts";
  * });
  * const isAdmin = Results?.[0]?.MembershipExists === true;
  * ```
+ *
+ * @binding
  */
 export interface IsMemberInGroups extends Binding.Service<
   IsMemberInGroups,

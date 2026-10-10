@@ -1,0 +1,19 @@
+---
+// On-demand SSR page exercising Astro's session API, backed by the
+// SESSION KV namespace that `Cloudflare.Website.Astro` auto-provisions.
+// Each request increments a per-visitor counter: a cookie-less request
+// sees 1, replaying the returned session cookie sees 2.
+const count = (((await Astro.session?.get("count")) as number | undefined) ?? 0) + 1;
+Astro.session?.set("count", count);
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Session — Astro Fixture</title>
+  </head>
+  <body>
+    <h1>Session</h1>
+    <p id="count">session-count={count}</p>
+  </body>
+</html>

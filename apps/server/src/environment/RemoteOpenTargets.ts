@@ -9,13 +9,13 @@
  * on the tailnet; `<hostname>.local` only on the same LAN).
  */
 import { type RemoteOpenTarget } from "@t3tools/contracts";
-import { HostProcessHostname } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import { readTailscaleStatus } from "@t3tools/tailscale";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 const SSH_PORT = 22;
 
@@ -26,6 +26,7 @@ export class RemoteOpenTargets extends Context.Service<
   }
 >()("t3/environment/RemoteOpenTargets") {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const net = yield* NetService.NetService;
@@ -57,7 +58,7 @@ export const make = Effect.gen(function* () {
 
     // os.hostname() may already be an FQDN (macOS often reports
     // "Name.local"); mDNS names are always `<first-label>.local`.
-    const hostname = yield* HostProcessHostname;
+    const hostname = yield* HostProcess.Hostname;
     const shortHostname = hostname.split(".")[0]?.trim();
     if (shortHostname !== undefined && shortHostname.length > 0) {
       targets.push({ kind: "mdns", host: `${shortHostname}.local` });

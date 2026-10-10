@@ -1,10 +1,12 @@
+import type { MenuAction } from "@react-native-menu/menu";
 import type {
   ModelCapabilities,
   ModelSelection,
+  RuntimeMode,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
 import {
-  buildProviderOptionSelectionsFromDescriptors,
+  buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 
@@ -15,16 +17,27 @@ export type ModelOption = {
   readonly providerKey: string;
   readonly providerLabel: string;
   readonly providerDriver: string;
+  readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
+  readonly providerIconUrl?: string | undefined;
   readonly isDefault: boolean;
   readonly isLegacy: boolean;
+  readonly isUnavailable?: boolean;
   readonly capabilities: ModelCapabilities | null;
   readonly selection: ModelSelection;
+  readonly providerUpdateRequired?: ProviderUpdateRequired;
 };
+
+type ProviderUpdateRequired = Pick<
+  T3ServerConfig["providers"][number],
+  "driver" | "updateRequiredModels"
+>;
 
 export type ProviderGroup = {
   readonly providerKey: string;
   readonly providerLabel: string;
   readonly models: ReadonlyArray<ModelOption>;
+  /** The provider fields that name announced models its CLI is too old to run. */
+  readonly updateRequired?: ProviderUpdateRequired;
 };
 
 function providerDisplayLabel(provider: {
@@ -35,6 +48,7 @@ function providerDisplayLabel(provider: {
   if (provider.displayName) return provider.displayName;
   if (provider.driver === "codex") return "Codex";
   if (provider.driver === "claudeAgent") return "Claude";
+  if (provider.driver === "pi") return "Pi";
   return provider.instanceId;
 }
 
@@ -45,11 +59,15 @@ function normalizeSelectionOptions(
   if (!capabilities) {
     return selection;
   }
-  const options = buildProviderOptionSelectionsFromDescriptors(
+  if (!selection.options?.length) {
+    return { instanceId: selection.instanceId, model: selection.model };
+  }
+  const options = buildExplicitProviderOptionSelectionsFromDescriptors(
     getProviderOptionDescriptors({
       caps: capabilities,
       selections: selection.options,
     }),
+    selection.options,
   );
   return options
     ? { ...selection, options }
@@ -59,12 +77,34 @@ function normalizeSelectionOptions(
       };
 }
 
+/** Whether a known Antigravity selection needs setup or a different model. */
+export function isModelSelectionUnavailable(
+  config: T3ServerConfig | null | undefined,
+  selection: ModelSelection | null | undefined,
+): boolean {
+  if (!config || !selection) {
+    return false;
+  }
+  const provider = config.providers.find(
+    (candidate) => candidate.instanceId === selection.instanceId,
+  );
+  const driver =
+    provider?.driver ?? config.settings?.providerInstances[selection.instanceId]?.driver;
+  return (
+    driver === "antigravity" &&
+    (!provider ||
+      !provider.enabled ||
+      !provider.installed ||
+      provider.auth.status === "unauthenticated" ||
+      provider.availability === "unavailable" ||
+      !provider.models.some((model) => model.slug === selection.model))
+  );
+}
+
 /**
- * A stored model selection is only usable when its provider instance is
- * currently enabled, installed, and authenticated on the server. Returns the
- * selection unchanged when usable, otherwise `null` so callers fall through to
- * the server's default model. A missing config (environment offline) cannot be
- * validated, so stored selections pass through untouched.
+ * Keep Antigravity selections when setup or catalog changes make them
+ * unavailable. Other providers fall through to the server default when they
+ * are disabled, missing, or signed out. Without config, keep stored selections.
  */
 export function resolveSelectableModelSelection(
   config: T3ServerConfig | null | undefined,
@@ -76,6 +116,11 @@ export function resolveSelectableModelSelection(
   const provider = config.providers.find(
     (candidate) => candidate.instanceId === selection.instanceId,
   );
+  const driver =
+    provider?.driver ?? config.settings?.providerInstances[selection.instanceId]?.driver;
+  if (driver === "antigravity") {
+    return selection;
+  }
   return provider &&
     provider.enabled &&
     provider.installed &&
@@ -85,11 +130,9 @@ export function resolveSelectableModelSelection(
 }
 
 /**
- * Like resolveSelectableModelSelection, but additionally rejects legacy
- * models. Used for implicit defaults (stored draft, project last-used): a
- * new thread should never quietly start on a legacy model, so those fall
- * through to the provider's default instead. Explicit picks in the settings
- * sheet are unaffected.
+ * Reject legacy models for implicit defaults, except Antigravity selections,
+ * which must not silently change after a catalog update. Explicit picks in
+ * the settings sheet are unaffected.
  */
 export function resolveDefaultableModelSelection(
   config: T3ServerConfig | null | undefined,
@@ -101,32 +144,63 @@ export function resolveDefaultableModelSelection(
   }
   const provider = config.providers.find((candidate) => candidate.instanceId === usable.instanceId);
   const model = provider?.models.find((candidate) => candidate.slug === usable.model);
-  return model?.isLegacy === true ? null : usable;
+  return provider?.driver !== "antigravity" && model?.isLegacy === true ? null : usable;
+}
+
+export function resolveNewTaskModelSelection(input: {
+  readonly draftSelection: ModelSelection | null;
+  readonly projectDefaultSelection: ModelSelection | null;
+  readonly stickySelection: ModelSelection | null;
+  readonly modelOptions: ReadonlyArray<ModelOption>;
+}): ModelSelection | null {
+  return (
+    input.draftSelection ??
+    input.projectDefaultSelection ??
+    input.stickySelection ??
+    input.modelOptions.find((option) => option.isDefault && !option.isUnavailable)?.selection ??
+    input.modelOptions.find((option) => !option.isUnavailable)?.selection ??
+    null
+  );
 }
 
 export function buildModelOptions(
   config: T3ServerConfig | null | undefined,
   fallbackModelSelection: ModelSelection | null,
+  providerInstanceId?: ModelSelection["instanceId"],
 ): ReadonlyArray<ModelOption> {
   const options = new Map<string, ModelOption>();
 
   for (const provider of config?.providers ?? []) {
-    if (!provider.enabled || !provider.installed || provider.auth.status === "unauthenticated") {
+    if (
+      (providerInstanceId !== undefined && provider.instanceId !== providerInstanceId) ||
+      !provider.enabled ||
+      !provider.installed ||
+      provider.auth.status === "unauthenticated" ||
+      (provider.driver === "antigravity" && provider.availability === "unavailable")
+    ) {
       continue;
     }
 
     const providerLabel = providerDisplayLabel(provider);
+    const updateRequired = provider.updateRequiredModels?.length
+      ? { driver: provider.driver, updateRequiredModels: provider.updateRequiredModels }
+      : undefined;
     for (const model of provider.models) {
       const key = `${provider.instanceId}:${model.slug}`;
       options.set(key, {
         key,
         label: model.name,
-        subtitle: providerLabel,
+        subtitle: model.subProvider ?? "",
         providerKey: provider.instanceId,
         providerLabel,
         providerDriver: provider.driver,
+        ...(provider.supportedRuntimeModes === undefined
+          ? {}
+          : { supportedRuntimeModes: provider.supportedRuntimeModes }),
+        ...(provider.iconUrl ? { providerIconUrl: provider.iconUrl } : {}),
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
+        ...(updateRequired ? { providerUpdateRequired: updateRequired } : {}),
         capabilities: model.capabilities,
         selection: normalizeSelectionOptions(
           {
@@ -139,26 +213,49 @@ export function buildModelOptions(
     }
   }
 
-  if (fallbackModelSelection) {
+  if (
+    fallbackModelSelection &&
+    (providerInstanceId === undefined || fallbackModelSelection.instanceId === providerInstanceId)
+  ) {
     const key = `${fallbackModelSelection.instanceId}:${fallbackModelSelection.model}`;
     const existing = options.get(key);
     if (existing) {
       options.set(key, {
         ...existing,
-        selection: normalizeSelectionOptions(fallbackModelSelection, existing.capabilities),
+        selection:
+          existing.providerDriver === "antigravity"
+            ? fallbackModelSelection
+            : normalizeSelectionOptions(fallbackModelSelection, existing.capabilities),
       });
     } else {
-      const providerLabel = fallbackModelSelection.instanceId;
+      const provider = config?.providers.find(
+        (candidate) => candidate.instanceId === fallbackModelSelection.instanceId,
+      );
+      const instanceConfig = config?.settings?.providerInstances[fallbackModelSelection.instanceId];
+      const model = provider?.models.find(
+        (candidate) => candidate.slug === fallbackModelSelection.model,
+      );
+      const providerDriver =
+        provider?.driver ?? instanceConfig?.driver ?? fallbackModelSelection.instanceId;
+      const providerLabel = providerDisplayLabel({
+        driver: providerDriver,
+        displayName: provider?.displayName ?? instanceConfig?.displayName,
+        instanceId: fallbackModelSelection.instanceId,
+      });
       options.set(key, {
         key,
-        label: fallbackModelSelection.model,
-        subtitle: providerLabel,
+        label: model?.name ?? fallbackModelSelection.model,
+        subtitle: model?.subProvider ?? "",
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,
-        providerDriver: fallbackModelSelection.instanceId,
+        providerDriver,
         isDefault: false,
-        isLegacy: false,
-        capabilities: null,
+        isLegacy: model?.isLegacy === true,
+        ...(isModelSelectionUnavailable(config, fallbackModelSelection) ||
+        provider?.updateRequiredModels?.some((gated) => gated.slug === fallbackModelSelection.model)
+          ? { isUnavailable: true }
+          : {}),
+        capabilities: model?.capabilities ?? null,
         selection: fallbackModelSelection,
       });
     }
@@ -168,15 +265,24 @@ export function buildModelOptions(
 }
 
 export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyArray<ProviderGroup> {
-  const groups = new Map<string, { providerLabel: string; models: ModelOption[] }>();
+  const groups = new Map<
+    string,
+    {
+      providerLabel: string;
+      models: ModelOption[];
+      updateRequired: ProviderUpdateRequired | undefined;
+    }
+  >();
   for (const option of options) {
     const existing = groups.get(option.providerKey);
     if (existing) {
       existing.models.push(option);
+      existing.updateRequired ??= option.providerUpdateRequired;
     } else {
       groups.set(option.providerKey, {
         providerLabel: option.providerLabel,
         models: [option],
+        updateRequired: option.providerUpdateRequired,
       });
     }
   }
@@ -185,5 +291,56 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
     providerKey,
     providerLabel: group.providerLabel,
     models: group.models,
+    ...(group.updateRequired ? { updateRequired: group.updateRequired } : {}),
   }));
+}
+
+function modelMenuAction(option: ModelOption, selectedModel: ModelSelection | null): MenuAction {
+  return {
+    id: `model:${option.key}`,
+    title: option.label,
+    state:
+      option.selection.instanceId === selectedModel?.instanceId &&
+      option.selection.model === selectedModel.model
+        ? "on"
+        : undefined,
+  };
+}
+
+export function buildModelMenuActions(
+  groups: ReadonlyArray<ProviderGroup>,
+  selectedModel: ModelSelection | null,
+): MenuAction[] {
+  return groups.flatMap((group) => {
+    const currentModels = group.models.filter((model) => !model.isLegacy);
+    const legacyModels = group.models.filter((model) => model.isLegacy);
+    const selected = group.models.find(
+      (model) =>
+        model.selection.instanceId === selectedModel?.instanceId &&
+        model.selection.model === selectedModel.model,
+    );
+
+    return [
+      ...(currentModels.length > 0
+        ? [
+            {
+              id: `provider:${group.providerKey}`,
+              title: group.providerLabel,
+              subtitle: selected && !selected.isLegacy ? selected.label : undefined,
+              subactions: currentModels.map((option) => modelMenuAction(option, selectedModel)),
+            },
+          ]
+        : []),
+      ...(legacyModels.length > 0
+        ? [
+            {
+              id: `legacy-models:${group.providerKey}`,
+              title: `${group.providerLabel} legacy models`,
+              subtitle: selected?.isLegacy ? selected.label : undefined,
+              subactions: legacyModels.map((option) => modelMenuAction(option, selectedModel)),
+            },
+          ]
+        : []),
+    ];
+  });
 }

@@ -34,7 +34,7 @@ export const SpecSourceConfig = Schema.Struct({
  *
  * **Example** (Decoding a codegen configuration)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import * as Config from "@effect/ai-codegen/Config"
  * import { Schema } from "effect"
  *
@@ -44,8 +44,7 @@ export const SpecSourceConfig = Schema.Struct({
  *   name: "MyClient"
  * })
  *
- * console.log(config.spec)
- * // "https://example.com/openapi.json"
+ * config.spec // => "https://example.com/openapi.json"
  * ```
  *
  * @category models
@@ -179,7 +178,7 @@ export declare namespace SpecSource {
  *
  * **Example** (Creating spec sources)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import * as Config from "@effect/ai-codegen/Config"
  *
  * // Create a URL-based source
@@ -187,6 +186,9 @@ export declare namespace SpecSource {
  *
  * // Create a file-based source
  * const fileSource = Config.SpecSource.File("/path/to/spec.json")
+ *
+ * urlSource._tag // => "Url"
+ * fileSource._tag // => "File"
  * ```
  *
  * @category constructors
@@ -252,13 +254,16 @@ export const SpecSource = {
  *
  * **Example** (Creating a config parse error)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import * as Config from "@effect/ai-codegen/Config"
  *
  * const error = new Config.ConfigParseError({
  *   path: "/path/to/codegen.json",
  *   cause: new Error("Invalid JSON")
  * })
+ *
+ * error._tag // => "ConfigParseError"
+ * error.path // => "/path/to/codegen.json"
  * ```
  *
  * @category errors
@@ -274,13 +279,16 @@ export class ConfigParseError extends Data.TaggedError("ConfigParseError")<{
  *
  * **Example** (Creating a config not found error)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import * as Config from "@effect/ai-codegen/Config"
  *
  * const error = new Config.ConfigNotFoundError({
  *   provider: "openai",
  *   expectedPath: "/path/to/packages/ai/openai/codegen.json"
  * })
+ *
+ * error._tag // => "ConfigNotFoundError"
+ * error.provider // => "openai"
  * ```
  *
  * @category errors

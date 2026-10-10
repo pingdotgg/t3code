@@ -5,8 +5,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "bindings-handler.ts");
@@ -46,7 +46,7 @@ export class AppSyncBindingsFunction extends Lambda.Function<Lambda.Function>()(
 export default AppSyncBindingsFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // The GraphQL round-trip fans out a signed HTTP call; AWS's 3s default
     // intermittently times out on a cold start.
     timeout: Duration.seconds(30),

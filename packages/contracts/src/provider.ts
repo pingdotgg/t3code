@@ -9,18 +9,21 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import {
-  ChatAttachment,
-  ModelSelection,
-  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  getProviderAttachmentLimitError,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  ChatAttachment,
+} from "./chatAttachment.ts";
+import { ModelSelection } from "./modelSelection.ts";
+import {
   ProviderApprovalDecision,
   ProviderApprovalPolicy,
   ProviderInteractionMode,
   ProviderRequestKind,
   ProviderSandboxMode,
   ProviderUserInputAnswers,
+  UserInputAttachments,
   RuntimeMode,
-} from "./orchestration.ts";
+} from "./providerPolicy.ts";
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
 
 const ProviderSessionStatus = Schema.Literals([
@@ -67,11 +70,16 @@ export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 
 export const ProviderSendTurnInput = Schema.Struct({
   threadId: ThreadId,
+  /** Internal recovery signal. Allows an empty turn only for adapters that
+      explicitly support promptless continuation. */
+  continuation: Schema.optional(Schema.Boolean),
   input: Schema.optional(
     TrimmedNonEmptyString.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
   ),
   attachments: Schema.optional(
-    Schema.Array(ChatAttachment).check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)),
+    Schema.Array(ChatAttachment).check(
+      Schema.makeFilter((attachments) => getProviderAttachmentLimitError(attachments) ?? true),
+    ),
   ),
   modelSelection: Schema.optional(ModelSelection),
   interactionMode: Schema.optional(ProviderInteractionMode),
@@ -107,6 +115,7 @@ export const ProviderRespondToUserInputInput = Schema.Struct({
   threadId: ThreadId,
   requestId: ApprovalRequestId,
   answers: ProviderUserInputAnswers,
+  attachmentsByQuestionId: Schema.optional(UserInputAttachments),
 });
 export type ProviderRespondToUserInputInput = typeof ProviderRespondToUserInputInput.Type;
 
@@ -121,7 +130,7 @@ export const ProviderUploadFeedbackResult = Schema.Struct({
 });
 export type ProviderUploadFeedbackResult = typeof ProviderUploadFeedbackResult.Type;
 
-export class ProviderUploadFeedbackError extends Schema.TaggedErrorClass<ProviderUploadFeedbackError>()(
+export class ProviderUploadFeedbackError extends Schema.TaggedError<ProviderUploadFeedbackError>()(
   "ProviderUploadFeedbackError",
   {
     threadId: ThreadId,

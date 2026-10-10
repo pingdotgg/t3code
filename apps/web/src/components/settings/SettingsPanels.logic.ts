@@ -1,7 +1,6 @@
 import type {
   BackgroundActivityProfile,
   BackgroundActivitySettings,
-  ProviderDriverKind,
   ProviderInstanceConfig,
   PreviewViewportSetting,
   ProviderInstanceId,
@@ -114,6 +113,10 @@ export type BrowserDefaultSettings = Pick<
   | "browserDefaultViewport"
   | "browserDefaultZoomFactor"
   | "browserDefaultAppearance"
+  | "browserRecordingFrameRate"
+  | "browserRecordingShowKeyPresses"
+  | "browserRecordingShowMousePresses"
+  | "browserLinkTarget"
   | "browserAutoShowFloatingPreview"
 >;
 
@@ -124,7 +127,7 @@ export type BrowserDefaultSettings = Pick<
  * reports every stored viewport as changed — including one that matches the
  * default.
  */
-export function isSamePreviewViewport(
+function isSamePreviewViewport(
   left: PreviewViewportSetting,
   right: PreviewViewportSetting,
 ): boolean {
@@ -150,6 +153,14 @@ export function getChangedBrowserSettingLabels(settings: BrowserDefaultSettings)
       : []),
     ...(settings.browserDefaultAppearance !== DEFAULT_UNIFIED_SETTINGS.browserDefaultAppearance
       ? ["Browser appearance"]
+      : []),
+    ...(settings.browserRecordingFrameRate !== DEFAULT_UNIFIED_SETTINGS.browserRecordingFrameRate
+      ? ["Recording frame rate"]
+      : []),
+    ...(settings.browserRecordingShowKeyPresses ? ["Recording key presses"] : []),
+    ...(settings.browserRecordingShowMousePresses ? ["Recording mouse presses"] : []),
+    ...(settings.browserLinkTarget !== DEFAULT_UNIFIED_SETTINGS.browserLinkTarget
+      ? ["Open links in"]
       : []),
     ...(settings.browserAutoShowFloatingPreview !==
     DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview
@@ -243,30 +254,14 @@ export function formatDiagnosticsDescription(input: {
 }
 
 export function buildProviderInstanceUpdatePatch(input: {
-  readonly settings: Pick<ServerSettings, "providers" | "providerInstances">;
+  readonly settings: Pick<ServerSettings, "providerInstances">;
   readonly instanceId: ProviderInstanceId;
   readonly instance: ProviderInstanceConfig;
-  readonly driver: ProviderDriverKind;
-  readonly isDefault: boolean;
   readonly textGenerationModelSelection?:
     | ServerSettings["textGenerationModelSelection"]
     | undefined;
 }): Partial<UnifiedSettings> {
-  type LegacyProviderSettings = ServerSettings["providers"][keyof ServerSettings["providers"]];
-  const legacyProviderDefaults = DEFAULT_UNIFIED_SETTINGS.providers as Record<
-    string,
-    LegacyProviderSettings | undefined
-  >;
-  const legacyProviderDefault = input.isDefault ? legacyProviderDefaults[input.driver] : undefined;
   return {
-    ...(legacyProviderDefault !== undefined
-      ? {
-          providers: {
-            ...input.settings.providers,
-            [input.driver]: legacyProviderDefault,
-          } as ServerSettings["providers"],
-        }
-      : {}),
     providerInstances: {
       ...input.settings.providerInstances,
       [input.instanceId]: input.instance,

@@ -156,9 +156,6 @@ export type Organization = Resource<
  * domain, login branding, session lifetimes, WARP authentication toggle, etc.
  *
  * Wraps `PUT /accounts/{account_id}/access/organizations`.
- * @resource
- * @product Access
- * @category Cloudflare One (Zero Trust)
  * @remarks
  * **This resource is a singleton.** Every Cloudflare account owns exactly one
  * Access Organization; you cannot create a second one and you cannot delete
@@ -170,8 +167,8 @@ export type Organization = Resource<
  * - The `delete` lifecycle is a **no-op** that logs a warning. Removing the
  *   resource from your stack leaves the Cloudflare-side settings untouched.
  *
- * @section Configuring the organization
- * @example Adopt and brand the organization
+ * ### Configuring the organization
+ * **Example:** Adopt and brand the organization
  * ```typescript
  * const org = yield* Cloudflare.Access.Organization("Org", {
  *   authDomain: "acme.cloudflareaccess.com",
@@ -185,6 +182,10 @@ export type Organization = Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
+ * @product Access
+ * @category Cloudflare One (Zero Trust)
  */
 export const Organization = Resource<Organization>(
   "Cloudflare.Access.Organization",
@@ -350,12 +351,12 @@ const observe = Effect.fn(function* () {
       // singleton org) under `result`; an account that has not yet
       // enabled Zero Trust returns a sparse object with no
       // `authDomain`. Treat that as "missing".
-      const typed = org as zeroTrust.ListOrganizationsResponse;
+      const typed = org;
       return typed && typed.authDomain ? typed : undefined;
     }),
     Effect.catchTag("OrganizationNotFound", () =>
-      Effect.succeed(
-        undefined as zeroTrust.ListOrganizationsResponse | undefined,
+      Effect.succeed<zeroTrust.ListOrganizationsResponse | undefined>(
+        undefined,
       ),
     ),
   );

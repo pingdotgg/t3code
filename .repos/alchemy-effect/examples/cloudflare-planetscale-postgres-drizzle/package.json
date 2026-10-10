@@ -23,10 +23,10 @@
     "alchemy": "workspace:*",
     "drizzle-orm": "catalog:",
     "effect": "catalog:",
-    "pg": "^8.13.0"
+    "pg": "catalog:"
   },
   "devDependencies": {
-    "@types/pg": "^8.11.0",
+    "@types/pg": "catalog:",
     "drizzle-kit": "catalog:"
   }
 }

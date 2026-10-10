@@ -1,4 +1,5 @@
 import type * as runtime from "@cloudflare/workers-types";
+import type * as SigV4 from "@distilled.cloud/aws/SigV4";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
@@ -9,6 +10,14 @@ export interface R2Object extends Omit<runtime.R2Object, "writeHttpMetadata"> {
 
 export interface ObjectBody extends R2Object {
   get body(): Stream.Stream<Uint8Array, R2Error>;
+  /**
+   * The platform's own body stream, untouched — for hot paths that hand
+   * bytes straight to a `Response` without an Effect stream in between
+   * (a `pipeTo` between native streams is zero JS per chunk). Consume
+   * EITHER this or `body`, never both. Absent on implementations that
+   * have no native stream to offer.
+   */
+  readonly readable?: ReadableStream<Uint8Array> | undefined;
   get bodyUsed(): boolean;
   arrayBuffer(): Effect.Effect<ArrayBuffer, R2Error>;
   bytes(): Effect.Effect<Uint8Array, R2Error>;
@@ -57,3 +66,9 @@ export interface MultipartUpload {
 export type MultipartOptions = runtime.R2MultipartOptions;
 export type UploadedPart = runtime.R2UploadedPart;
 export interface UploadPartOptions extends runtime.R2UploadPartOptions {}
+
+/**
+ * Failure while minting a presigned URL (`PresignGetObject` /
+ * `PresignPutObject`): a malformed URL or header, or a WebCrypto error.
+ */
+export type PresignError = SigV4.SigningError;

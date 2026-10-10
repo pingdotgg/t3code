@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as RpcClientError from "effect/unstable/rpc/RpcClientError";
+import * as RpcClientError from "effect/rpc/RpcClientError";
 
 import * as AcpSchema from "./_generated/schema.gen.ts";
 import { callRpc, runHandler } from "./_internal/shared.ts";
@@ -33,6 +33,24 @@ describe("effect-acp errors", () => {
       });
       expect(error.message).toBe("ACP transport operation call-rpc failed for method session/new.");
       expect(error.message).not.toContain(rootCause.message);
+    });
+  });
+
+  it.effect("preserves typed ACP failures carried by the RPC protocol", () => {
+    const original = new AcpError.AcpTransportError({
+      detail: "Sign in to the agent.",
+      cause: undefined,
+    });
+    const failure = new RpcClientError.RpcClientError({
+      reason: new RpcClientError.RpcClientDefect({
+        message: "ACP protocol terminated.",
+        cause: original,
+      }),
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* callRpc("initialize", Effect.fail(failure)).pipe(Effect.flip);
+      expect(error).toBe(original);
     });
   });
 

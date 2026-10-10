@@ -1,18 +1,70 @@
-import { EnvironmentId } from "@t3tools/contracts";
+// @vitest-environment jsdom
+
+import { EnvironmentId, type AuthEnvironmentScope } from "@t3tools/contracts";
+import { createRoot } from "react-dom/client";
+import { useThreadFindHighlights } from "./chat/threadFindHighlights";
+import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
+import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
+
+import { MarkdownFindContext } from "./chat/markdownFindContext";
+import { act, type ComponentProps, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
+import { GitHubIcon } from "./Icons";
+import { Button } from "./ui/button";
+import { setMarkdownTaskChecked } from "./files/filePreviewMode";
+
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
+vi.mock("./chat/MermaidDiagram", () => ({
+  // Real Mermaid needs layout APIs jsdom lacks; a rendered diagram is an SVG.
+  MermaidDiagram: () => <svg aria-label="Diagram" />,
+}));
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
+vi.mock("../hooks/useSettings", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../hooks/useSettings")>();
+  const settings = actual.getClientSettings();
+  return {
+    ...actual,
+    useClientSettings: (select?: (value: typeof settings) => unknown) =>
+      select ? select(settings) : settings,
+  };
+});
+vi.mock("./ui/tooltip", async () => {
+  const { cloneElement, isValidElement } = await import("react");
+  return {
+    Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
+    TooltipTrigger({
+      render,
+      children,
+    }: ComponentProps<typeof import("./ui/tooltip").TooltipTrigger>) {
+      if (!isValidElement(render)) return <>{children}</>;
+      return children === undefined ? render : cloneElement(render, undefined, children);
+    },
+    TooltipPopup: () => null,
+  };
+});
 vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
 vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
-vi.mock("../state/session", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../state/session")>()),
-  usePreparedConnection: () => ({ _tag: "Loading" }),
-}));
+vi.mock("../state/session", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../state/session")>();
+  const { AuthStandardClientScopes } = await import("@t3tools/contracts");
+  const grantedScopes = new Set<AuthEnvironmentScope>(AuthStandardClientScopes);
+  const hasScope = (environmentId: EnvironmentId | null, scope: AuthEnvironmentScope) =>
+    environmentId !== null && grantedScopes.has(scope);
+  return {
+    ...actual,
+    useEnvironmentScope: hasScope,
+    readEnvironmentScope: hasScope,
+    usePreparedConnection: () => ({ _tag: "Loading" }),
+  };
+});
 vi.mock("../state/entities", () => ({
   readThreadShell: () => null,
   useProjects: () => [],
+  useServerConfigs: () => new Map(),
 }));
 vi.mock("../remoteOpen", () => ({
   useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }),
@@ -22,18 +74,475 @@ vi.mock("../editorPreferences", () => ({
   usePreferredEditor: () => [null, vi.fn()],
 }));
 vi.mock("~/lib/openPullRequestLink", () => ({
-  findProjectForChangeRequest: () => undefined,
-  matchesLinkedPullRequestUrl: () => false,
+  findProjectOnChangeRequestHost: () => undefined,
   parseChangeRequestUrl: () => null,
+  resolvePullRequestPreviewTarget: () => null,
   useOpenChangeRequestLink: () => vi.fn(),
 }));
 
 import ChatMarkdown, {
   canUseMarkdownFileShellActions,
   hasMarkdownFilePrimaryAction,
-  orderedListGutterStyle,
   shouldUseMarkdownFileBrowserPrimaryAction,
 } from "./ChatMarkdown";
+
+function codeButton(renderer: ReactTestRenderer, label: string) {
+  const button = renderer.root
+    .findAllByType(Button)
+    .find((instance) => instance.props["aria-label"] === label);
+  if (!button) throw new Error(`Missing code button: ${label}`);
+  return button.props as ComponentProps<typeof Button>;
+}
+
+describe("ChatMarkdown bare anchor placeholders", () => {
+  it.each(["<A>", "<a>", "<a >", "<a/>", "<A/>", "<a />"])(
+    "preserves unmatched %s without linking later blocks",
+    (token) => {
+      const text = `- **"From ${token}"** appears in the header.\n\n- **Tests:** cover inheritance.\n\nThe deferred move continues on B.\n\nSee <a href="https://example.com">the link</a>.`;
+      const document = new DOMParser().parseFromString(
+        renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text={text} />),
+        "text/html",
+      );
+
+      expect(document.querySelector("strong")?.textContent).toBe(`"From ${token}"`);
+      expect([...document.querySelectorAll("a")].map((link) => link.textContent)).toEqual([
+        "the link",
+      ]);
+      expect(document.querySelectorAll("li")).toHaveLength(2);
+      expect(
+        [...document.querySelectorAll("p")].map((paragraph) => paragraph.textContent),
+      ).toContain("The deferred move continues on B.");
+    },
+  );
+
+  it.each(["</a>  ", "<div>more</div>\n</a>"])(
+    "preserves a paired anchor closing in the raw block %s",
+    (closing) => {
+      const document = new DOMParser().parseFromString(
+        renderToStaticMarkup(
+          <ChatMarkdown cwd="/tmp/project" text={`See <a>label\n\n${closing}\n\nfinish`} />,
+        ),
+        "text/html",
+      );
+      expect(document.querySelector("p")?.textContent).toBe("See label");
+    },
+  );
+
+  it("preserves a paired anchor after comment-looking raw text", () => {
+    const document = new DOMParser().parseFromString(
+      renderToStaticMarkup(
+        <ChatMarkdown cwd="/tmp/project" text="See <a>label<script><!-- </script> --></a>" />,
+      ),
+      "text/html",
+    );
+    expect(document.querySelector("p")?.textContent).toBe("See label -->");
+  });
+
+  it.each(["<!-- </a> -->", '<div title="</a>">more</div>', '<script>"</a>"</script>'])(
+    "ignores apparent closing anchors inside %s",
+    (html) => {
+      const document = new DOMParser().parseFromString(
+        renderToStaticMarkup(
+          <ChatMarkdown cwd="/tmp/project" text={`Before <A>.\n\n${html}\n\nAfter.`} />,
+        ),
+        "text/html",
+      );
+      expect(document.querySelector("p")?.textContent).toBe("Before <A>.");
+      expect(document.querySelectorAll("a")).toHaveLength(0);
+    },
+  );
+
+  it("preserves paired HTML anchors, details, markdown links, and inline code", () => {
+    const text =
+      'Bare <a>label</a>, <a id="section"></a>, `<A>`, and [docs](https://example.com).\n\n<details><summary>More</summary>Details</details>';
+    const document = new DOMParser().parseFromString(
+      renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text={text} />),
+      "text/html",
+    );
+
+    expect([...document.querySelectorAll("a")].map((link) => link.textContent)).toEqual([
+      "label",
+      "",
+      "docs",
+    ]);
+    expect(document.querySelector("code")?.textContent).toBe("<A>");
+    expect(document.querySelector("[data-markdown-details]")?.textContent).toContain("More");
+  });
+});
+
+describe("ChatMarkdown context references", () => {
+  it("renders text and image references through the chip renderer, with readable fallback", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const text =
+      "See [Terminal output](t3-context://v1/terminal/term-1) and ![Error image](t3-context://v1/image/img-1).";
+    try {
+      await act(async () => {
+        renderer = create(
+          <ChatMarkdown
+            cwd={undefined}
+            text={text}
+            renderContextReference={({ kind, label }) => (
+              <button>
+                {kind}: {label}
+              </button>
+            )}
+          />,
+        );
+      });
+      expect(
+        renderer!.root.findAllByType("button").map((button) => button.children.join("")),
+      ).toEqual(["terminal: Terminal output", "image: Error image"]);
+      expect(renderer!.root.findAllByType("img")).toHaveLength(0);
+      expect(renderer!.root.findAllByType("a")).toHaveLength(0);
+      await act(async () => {
+        renderer!.update(<ChatMarkdown cwd={undefined} text={text} />);
+      });
+      expect(renderer!.root.findAllByType("span").map((span) => span.children.join(""))).toEqual([
+        "Terminal output",
+        "Error image",
+      ]);
+      expect(renderer!.root.findAllByType("img")).toHaveLength(0);
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+      });
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("reads formatted context labels through nested markup instead of the context id", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const seen: Array<string> = [];
+    try {
+      await act(async () => {
+        renderer = create(
+          <ChatMarkdown
+            cwd={undefined}
+            text="See [**Bold** `code`](t3-context://v1/terminal/term-1)."
+            renderContextReference={({ kind, label }) => {
+              seen.push(`${kind}: ${label}`);
+              return <button>{label}</button>;
+            }}
+          />,
+        );
+      });
+      expect(seen).toEqual(["terminal: Bold code"]);
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+      });
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("ChatMarkdown favicon privacy", () => {
+  it("suppresses private link images while preserving public links across updates", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const markdown = (url: string) => <ChatMarkdown cwd="/tmp/project" text={`[Link](${url})`} />;
+    try {
+      await act(async () => {
+        renderer = create(markdown("https://example.com"));
+      });
+      expect(renderer!.root.findAllByType("img").map((image) => image.props.src)).toEqual([
+        "https://www.google.com/s2/favicons?domain=example.com&sz=32",
+      ]);
+      for (const url of ["http://192.168.1.10:8080", "http://localhost:3000", "http://home.arpa"]) {
+        await act(async () => {
+          renderer!.update(markdown(url));
+        });
+        expect(renderer!.root.findAllByType("img")).toHaveLength(0);
+      }
+      await act(async () => {
+        renderer!.update(markdown("https://example.com"));
+      });
+      expect(renderer!.root.findAllByType("img")).toHaveLength(1);
+      // GitHub links draw the brand mark in currentColor instead of fetching a favicon.
+      await act(async () => {
+        renderer!.update(markdown("https://github.com/pingdotgg/t3code/pull/1"));
+      });
+      expect(renderer!.root.findAllByType("img")).toHaveLength(0);
+      expect(renderer!.root.findAllByType(GitHubIcon)).toHaveLength(1);
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+      });
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("ChatMarkdown streaming", () => {
+  it("runs only a complete single-line shell block after a click", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const onRunShellCommand = vi.fn();
+    let renderer: ReactTestRenderer | undefined;
+    const message = (text: string, isStreaming = false) => (
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={text}
+        isStreaming={isStreaming}
+        onRunShellCommand={onRunShellCommand}
+      />
+    );
+    try {
+      await act(async () => {
+        renderer = create(message("```bash\necho hello\n```", true));
+      });
+      const mounted = renderer!;
+      expect(
+        mounted.root
+          .findAllByType(Button)
+          .some((button) => button.props["aria-label"] === "Run in terminal"),
+      ).toBe(false);
+
+      await act(async () => {
+        mounted.update(message("```bash\necho hello\n```"));
+      });
+      await act(async () => {
+        codeButton(mounted, "Run in terminal").onClick?.({} as never);
+      });
+      expect(onRunShellCommand).toHaveBeenCalledExactlyOnceWith("echo hello");
+
+      for (const text of [
+        "~~~bash\necho tilde\n~~~",
+        "> ```bash\n> echo quote\n> ```",
+        "````bash\necho four\n````",
+      ]) {
+        await act(async () => {
+          mounted.update(message(text));
+        });
+        expect(codeButton(mounted, "Run in terminal")).toBeDefined();
+      }
+
+      for (const text of [
+        "```bash\necho one\necho two\n```",
+        "```typescript\necho hello\n```",
+        "```bash\n\n```",
+        "```bash\necho hello\n\n```",
+        "```bash\necho hello\\\n```",
+        "```bash\necho safe \u202e#\n```",
+        "```bash\necho incomplete",
+        "~~~bash\necho incomplete",
+        "````bash\necho incomplete\n```",
+        '<pre><code class="language-bash">echo html</code></pre>',
+      ]) {
+        await act(async () => {
+          mounted.update(message(text));
+        });
+        expect(
+          mounted.root
+            .findAllByType(Button)
+            .some((button) => button.props["aria-label"] === "Run in terminal"),
+        ).toBe(false);
+      }
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does not retokenize completed lines when streaming finishes", async () => {
+    const highlighter = await getSyntaxHighlighterPromise("typescript");
+    const highlight = vi.spyOn(highlighter, "codeToHast");
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const text = "```typescript\nconst completed = 1;\nconst current = 2;";
+    try {
+      await act(async () => {
+        renderer = create(<ChatMarkdown cwd="/tmp/project" text={text} isStreaming />);
+      });
+      expect(highlight).toHaveBeenCalled();
+      highlight.mockClear();
+      await act(async () => {
+        renderer!.update(<ChatMarkdown cwd="/tmp/project" text={text + "\n```"} />);
+      });
+      expect(highlight.mock.calls.every(([code]) => !code.includes("const completed"))).toBe(true);
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("recovers highlighting after a failed fence changes without resetting its controls", async () => {
+    const highlighter = await getSyntaxHighlighterPromise("text");
+    const codeToHast = highlighter.codeToHast.bind(highlighter);
+    let fail = true;
+    vi.spyOn(highlighter, "codeToHast").mockImplementation((...args) => {
+      if (fail) throw new Error("Temporary highlighter failure");
+      return codeToHast(...args);
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+
+    try {
+      await act(async () => {
+        renderer = create(
+          <ChatMarkdown cwd="/tmp/project" text={"```text\ninitial\n```"} isStreaming />,
+        );
+      });
+      const mounted = renderer!;
+      const codeBlock = mounted.root.findByProps({ "data-language": "text" });
+      const initialWrap = codeBlock.props["data-wrap"] === "true";
+      const wrap = codeButton(mounted, initialWrap ? "Disable line wrap" : "Wrap lines");
+      await act(async () => {
+        wrap.onClick?.({} as Parameters<NonNullable<typeof wrap.onClick>>[0]);
+      });
+      expect(mounted.root.findAllByProps({ className: "chat-markdown-shiki" })).toHaveLength(0);
+
+      fail = false;
+      await act(async () => {
+        mounted.update(
+          <ChatMarkdown cwd="/tmp/project" text={"```text\nrecovered\n```"} isStreaming />,
+        );
+      });
+      expect(mounted.root.findAllByProps({ className: "chat-markdown-shiki" })).toHaveLength(1);
+      expect(mounted.root.findByProps({ "data-language": "text" })).toBe(codeBlock);
+      expect(codeBlock.props["data-wrap"]).toBe(String(!initialWrap));
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("preserves code controls and details without highlighting an unchanged fence again", async () => {
+    const highlighter = await getSyntaxHighlighterPromise("text");
+    const highlight = vi.spyOn(highlighter, "codeToHast");
+    const writeText = vi.fn(async (_text: string) => {});
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let renderer: ReactTestRenderer | undefined;
+    const text = [
+      "```text",
+      "First code block",
+      "```",
+      "",
+      "<details><summary>More</summary>",
+      "",
+      "Details content",
+      "",
+      "</details>",
+      "",
+      "Streaming reply",
+    ].join("\n");
+
+    try {
+      await act(async () => {
+        renderer = create(<ChatMarkdown cwd="/tmp/project" text={text} isStreaming />);
+      });
+      const mounted = renderer!;
+      const codeBlock = mounted.root.findByProps({ "data-language": "text" });
+      const initialWrap = codeBlock.props["data-wrap"] === "true";
+      const wrap = codeButton(mounted, initialWrap ? "Disable line wrap" : "Wrap lines");
+      const copy = codeButton(mounted, "Copy code");
+      await act(async () => {
+        wrap.onClick?.({} as Parameters<NonNullable<typeof wrap.onClick>>[0]);
+        copy.onClick?.({} as Parameters<NonNullable<typeof copy.onClick>>[0]);
+      });
+
+      const detailsButton = mounted.root.find(
+        (instance) =>
+          instance.type === "button" && instance.props["data-markdown-details-summary"] === "",
+      );
+      await act(async () => {
+        detailsButton.props.onClick({ nativeEvent: new Event("click") });
+      });
+      const details = mounted.root.findByProps({ "data-markdown-details": "" });
+      expect(details.props["data-markdown-details-open"]).toBe("true");
+      expect(writeText).toHaveBeenCalledWith("First code block\n");
+      expect(highlight).toHaveBeenCalledTimes(1);
+
+      for (let index = 0; index < 10; index += 1) {
+        await act(async () => {
+          mounted.update(<ChatMarkdown cwd="/tmp/project" text={`${text} ${index}`} isStreaming />);
+        });
+      }
+
+      expect(highlight).toHaveBeenCalledTimes(1);
+      expect(mounted.root.findByProps({ "data-language": "text" })).toBe(codeBlock);
+      expect(codeBlock.props["data-wrap"]).toBe(String(!initialWrap));
+      expect(mounted.root.findByProps({ "data-markdown-details": "" })).toBe(details);
+      expect(details.props["data-markdown-details-open"]).toBe("true");
+      await act(async () => {
+        mounted.update(
+          <ChatMarkdown
+            cwd="/tmp/project"
+            text={text.replace("First code block", "Updated code block")}
+            isStreaming
+          />,
+        );
+      });
+      const copyUpdated = codeButton(mounted, "Copied");
+      await act(async () => {
+        copyUpdated.onClick?.({} as Parameters<NonNullable<typeof copyUpdated.onClick>>[0]);
+      });
+      expect(writeText).toHaveBeenLastCalledWith("Updated code block\n");
+      expect(highlight).toHaveBeenCalledTimes(2);
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("edits the current task text and marker after reusing a renderer", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    let editedText: string | undefined;
+    const message = (text: string) => (
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={text}
+        onTaskListChange={({ markerOffset, checked }) => {
+          editedText = setMarkdownTaskChecked(text, markerOffset, checked);
+          renderer!.update(message(editedText));
+        }}
+      />
+    );
+
+    try {
+      await act(async () => {
+        renderer = create(message("- [ ] First\n- [ ] Second"));
+      });
+      const mounted = renderer!;
+      const originalInput = mounted.root.findAllByType("input")[1]!;
+      await act(async () => {
+        mounted.update(message("- [ ] A longer first task\n- [ ] Second"));
+      });
+
+      const input = mounted.root.findAllByType("input")[1]!;
+      const listItem = mounted.root.findAllByType("li")[1]!;
+      const { onChange } = input.props as ComponentProps<"input">;
+      if (!onChange) throw new Error("Task checkbox has no edit handler");
+      await act(async () => {
+        onChange({
+          currentTarget: {
+            checked: true,
+            closest: () => ({
+              dataset: { taskMarkerOffset: String(listItem.props["data-task-marker-offset"]) },
+            }),
+          },
+        } as unknown as Parameters<typeof onChange>[0]);
+      });
+
+      expect(input).toBe(originalInput);
+      expect(editedText).toBe("- [ ] A longer first task\n- [x] Second");
+      expect(mounted.root.findAllByType("input")[1]!.props.checked).toBe(true);
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+});
 
 describe("canUseMarkdownFileShellActions", () => {
   const environmentId = EnvironmentId.make("environment-1");
@@ -92,6 +601,46 @@ describe("hasMarkdownFilePrimaryAction", () => {
   });
 });
 
+describe("ChatMarkdown skill chips", () => {
+  it("updates digit-leading skill labels when discovered skills change", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const text = "Use $2spec with a $20k budget.";
+    try {
+      await act(async () => {
+        renderer = create(<ChatMarkdown cwd="/tmp/project" text={text} />);
+      });
+      const mounted = renderer!;
+      const labels = (label: string) =>
+        mounted.root.findAllByType("span").filter((node) => node.children.includes(label));
+      expect(labels("2Spec")).toHaveLength(0);
+
+      await act(async () => {
+        mounted.update(
+          <ChatMarkdown
+            cwd="/tmp/project"
+            text={text}
+            skills={[
+              { name: "2spec", displayName: "2Spec" },
+              { name: "20k", displayName: "MoneySkill" },
+            ]}
+          />,
+        );
+      });
+      expect(labels("2Spec")).toHaveLength(1);
+      expect(labels("MoneySkill")).toHaveLength(0);
+
+      await act(async () => {
+        mounted.update(<ChatMarkdown cwd="/tmp/project" text={text} skills={[]} />);
+      });
+      expect(labels("2Spec")).toHaveLength(0);
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe("ChatMarkdown file option chips", () => {
   it("keeps the fallback button text selectable", () => {
     const html = renderToStaticMarkup(
@@ -101,6 +650,236 @@ describe("ChatMarkdown file option chips", () => {
     expect(html).toContain("<button");
     expect(html).toContain('aria-haspopup="menu"');
     expect(html).toContain("select-text");
+  });
+
+  it.each([true, false])(
+    "renders Codex file citations as file chips with parseRawHtml=%s",
+    (parseRawHtml) => {
+      const html = renderToStaticMarkup(
+        <ChatMarkdown
+          cwd="/tmp/project"
+          text={
+            'Created :codex-file-citation{path="/tmp/project/outputs/report.xlsx" purpose="output"}.'
+          }
+          lineBreaks={!parseRawHtml}
+          parseRawHtml={parseRawHtml}
+        />,
+      );
+
+      expect(html).not.toContain("codex-file-citation");
+      expect(html).toContain("chat-markdown-file-link");
+      expect(html).toContain(
+        'data-markdown-copy="[report.xlsx](/tmp/project/outputs/report.xlsx)"',
+      );
+      expect(html).toContain("report.xlsx");
+    },
+  );
+
+  it("leaves an unfinished streaming citation visible until it is complete", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={'Created :codex-file-citation{path="/tmp/project/outputs/report.xlsx"'}
+        isStreaming
+      />,
+    );
+
+    expect(html).toContain(":codex-file-citation");
+    expect(html).not.toContain("chat-markdown-file-link");
+  });
+
+  it("leaves malformed and similarly named file directives literal", () => {
+    for (const text of [
+      ':codex-file-citation{purpose="output"}',
+      ':codex-file-citation-extra{path="/tmp/project/outputs/report.xlsx"}',
+    ]) {
+      const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text={text} />);
+
+      expect(html).toContain(text.replaceAll('"', "&quot;"));
+      expect(html).not.toContain("chat-markdown-file-link");
+    }
+  });
+
+  it("preserves Codex file citation examples inside code", () => {
+    const directive = ':codex-file-citation{path="/tmp/project/outputs/report.xlsx"}';
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={`Example: \`${directive}\`\n\n\`\`\`text\n${directive}\n\`\`\``}
+      />,
+    );
+
+    expect(html.match(/:codex-file-citation/g)).toHaveLength(2);
+    expect(html).not.toContain("chat-markdown-file-link");
+  });
+
+  it("preserves escaped Codex file citations as literal text", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={'Example: \\:codex-file-citation{path="/tmp/project/outputs/report.xlsx"}'}
+      />,
+    );
+
+    expect(html).toContain(":codex-file-citation");
+    expect(html).not.toContain("chat-markdown-file-link");
+  });
+
+  it("does not create a nested link for citations inside link text", () => {
+    const directive = ':codex-file-citation{path="/tmp/project/outputs/report.xlsx"}';
+    const html = renderToStaticMarkup(
+      <ChatMarkdown cwd="/tmp/project" text={`[See ${directive}](https://example.com)`} />,
+    );
+    const renderedText = html.replace(/<[^>]+>/g, "");
+
+    expect(renderedText).toContain("codex-file-citation");
+    expect(html).not.toContain("chat-markdown-file-link");
+  });
+
+  it("renders file citations created by over-indented list recovery", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={'-       Created :codex-file-citation{path="/tmp/project/outputs/report.xlsx"}'}
+      />,
+    );
+
+    expect(html).not.toContain("<pre>");
+    expect(html).toContain("Created ");
+    expect(html).toContain("chat-markdown-file-link");
+    expect(html).toContain("report.xlsx");
+  });
+
+  it("disambiguates Codex citations with the same basename", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={
+          'Changed :codex-file-citation{path="/tmp/project/src/index.ts"} and :codex-file-citation{path="/tmp/project/test/index.ts"}.'
+        }
+      />,
+    );
+
+    expect(html).toContain("index.ts · project/src");
+    expect(html).toContain("index.ts · project/test");
+  });
+
+  it("preserves rejected citations created by over-indented list recovery", () => {
+    const malformedHtml = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={'Leading text before list.\n\n-       Bad :codex-file-citation{purpose="output"}'}
+      />,
+    );
+    const nestedLinkHtml = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={
+          'Leading text before list.\n\n-       [Bad :codex-file-citation{path="/tmp/project/report.xlsx"}](https://example.com)'
+        }
+      />,
+    );
+    const nestedLinkText = nestedLinkHtml.replace(/<[^>]+>/g, "");
+
+    expect(malformedHtml).toContain(
+      "<li>Bad :codex-file-citation{purpose=&quot;output&quot;}</li>",
+    );
+    expect(nestedLinkText).toContain(
+      "Bad :codex-file-citation{path=&quot;/tmp/project/report.xlsx&quot;}",
+    );
+  });
+});
+
+const ARTIFACT_TEMPLATE_DIRECTIVE =
+  '::artifact-template{skill_name="artifact-template-hello-world" skill_directory="/Users/test/.codex/skills/artifact-template-hello-world" display_name="Hello World" artifact_kind="document"}';
+
+describe("ChatMarkdown artifact-template cards", () => {
+  it.each([true, false])("renders the Codex result card with parseRawHtml=%s", (parseRawHtml) => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={ARTIFACT_TEMPLATE_DIRECTIVE}
+        parseRawHtml={parseRawHtml}
+        onUseArtifactTemplate={() => undefined}
+      />,
+    );
+
+    expect(html).not.toContain("::artifact-template");
+    expect(html).toContain("data-chat-markdown-artifact-template");
+    expect(html).toContain('data-artifact-kind="document"');
+    expect(html).toContain('data-markdown-copy="Hello World (Document template)\n\n"');
+    expect(html).toContain('data-skill-name="artifact-template-hello-world"');
+    expect(html).toContain("Hello World");
+    expect(html).toContain("Document template");
+    expect(html).toContain("Use template");
+    expect(html).not.toContain("<p><div");
+  });
+
+  it("renders a passive card outside a composer-backed timeline", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown cwd="/tmp/project" text={ARTIFACT_TEMPLATE_DIRECTIVE} />,
+    );
+
+    expect(html).toContain("data-chat-markdown-artifact-template");
+    expect(html).not.toContain("Use template");
+  });
+
+  it("leaves malformed and unfinished artifact-template directives literal", () => {
+    const malformed =
+      '::artifact-template{skill_name="artifact-template-hello-world" display_name="Hello World" artifact_kind="document"}';
+    const unfinished = ARTIFACT_TEMPLATE_DIRECTIVE.slice(0, -1);
+
+    for (const text of [malformed, unfinished]) {
+      const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text={text} />);
+      expect(html).toContain("::artifact-template");
+      expect(html).not.toContain("data-chat-markdown-artifact-template");
+    }
+  });
+
+  it("leaves escaped and similarly named artifact-template directives literal", () => {
+    for (const text of [
+      `\\${ARTIFACT_TEMPLATE_DIRECTIVE}`,
+      ARTIFACT_TEMPLATE_DIRECTIVE.replace("::artifact-template", "::artifact-template-extra"),
+    ]) {
+      const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text={text} />);
+
+      expect(html).toContain("::artifact-template");
+      expect(html).not.toContain("data-chat-markdown-artifact-template");
+    }
+  });
+
+  it("preserves artifact-template examples inside code", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={`\`${ARTIFACT_TEMPLATE_DIRECTIVE}\`\n\n\`\`\`text\n${ARTIFACT_TEMPLATE_DIRECTIVE}\n\`\`\``}
+      />,
+    );
+
+    expect(html.match(/::artifact-template/g)).toHaveLength(2);
+    expect(html).not.toContain("data-chat-markdown-artifact-template");
+  });
+});
+
+describe("ChatMarkdown heading levels", () => {
+  it("exposes headings below the host heading without changing their tags", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={"# Top\n\n## Section\n\n###### Fine print"}
+        headingLevelOffset={3}
+      />,
+    );
+
+    expect(html).toContain('<h1 id="user-content-top" aria-level="4">Top</h1>');
+    expect(html).toContain('<h2 id="user-content-section" aria-level="5">Section</h2>');
+    expect(html).toContain('<h6 id="user-content-fine-print" aria-level="6">Fine print</h6>');
+  });
+
+  it("leaves heading levels alone when the markdown is not nested", () => {
+    const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text="# Top" />);
+
+    expect(html).toContain('<h1 id="user-content-top">Top</h1>');
   });
 });
 
@@ -147,47 +926,6 @@ describe("shouldUseMarkdownFileBrowserPrimaryAction", () => {
   });
 });
 
-describe("orderedListGutterStyle", () => {
-  it("leaves the default gutter alone for single-digit lists", () => {
-    expect(orderedListGutterStyle(9, undefined)).toBeUndefined();
-  });
-
-  it("leaves the default gutter alone for two-digit lists", () => {
-    expect(orderedListGutterStyle(99, undefined)).toBeUndefined();
-  });
-
-  it("leaves the default gutter alone for a two-digit list that starts above 1", () => {
-    // start=50 + 49 items => last marker is "98", still two digits.
-    expect(orderedListGutterStyle(49, 50)).toBeUndefined();
-  });
-
-  it("widens the gutter once the last marker reaches three digits", () => {
-    // item 100 is the bug from #6512: a 100-item list starting at 1.
-    expect(orderedListGutterStyle(100, undefined)).toEqual({ "--list-gutter": "4ch" });
-  });
-
-  it("accounts for a non-default start attribute", () => {
-    // start=95 + 9 items => last marker is "103", three digits.
-    expect(orderedListGutterStyle(9, 95)).toEqual({ "--list-gutter": "4ch" });
-    expect(orderedListGutterStyle(5, "999995")).toEqual({ "--list-gutter": "7ch" });
-  });
-
-  it("scales further for four-digit markers", () => {
-    expect(orderedListGutterStyle(1000, undefined)).toEqual({ "--list-gutter": "5ch" });
-  });
-
-  it("uses the widest marker and includes a negative start's minus sign", () => {
-    expect(orderedListGutterStyle(1001, -1000)).toEqual({ "--list-gutter": "6ch" });
-    expect(orderedListGutterStyle(3, -15)).toEqual({ "--list-gutter": "4ch" });
-    expect(orderedListGutterStyle(3, -5)).toBeUndefined();
-  });
-
-  it("treats a missing/zero item count as a single item", () => {
-    expect(orderedListGutterStyle(0, undefined)).toBeUndefined();
-    expect(orderedListGutterStyle(0, 100)).toEqual({ "--list-gutter": "4ch" });
-  });
-});
-
 describe("ChatMarkdown Windows file links", () => {
   const environmentId = EnvironmentId.make("env-windows");
 
@@ -220,6 +958,23 @@ describe("ChatMarkdown Windows file links", () => {
     expect(html).toContain('href="C:/Users/shawn/project/src/main.ts"');
     expect(html).toContain("chat-markdown-file-link");
   });
+
+  it.each([true, false])(
+    "keeps backslashes CommonMark would read as escapes with parseRawHtml=%s",
+    (parseRawHtml) => {
+      const html = renderToStaticMarkup(
+        <ChatMarkdown
+          cwd="C:/Users/shawn/project"
+          environmentId={environmentId}
+          text={String.raw`[settings](C:\Users\shawn\.claude\settings.json)`}
+          lineBreaks={!parseRawHtml}
+          parseRawHtml={parseRawHtml}
+        />,
+      );
+
+      expect(html).toContain('href="C:/Users/shawn/.claude/settings.json"');
+    },
+  );
 
   it.each([true, false])(
     "distinguishes same-named backslash paths with parseRawHtml=%s",
@@ -288,4 +1043,306 @@ describe("ChatMarkdown Windows file links", () => {
     expect(html).not.toContain("d:alert");
     expect(html).not.toContain("chat-markdown-file-link");
   });
+});
+
+it("opens a disclosure only when find selects a match inside it", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal(
+    "Highlight",
+    class extends Set<Range> {
+      constructor(...ranges: Range[]) {
+        super(ranges);
+      }
+    },
+  );
+  const highlights = new Map<string, Set<Range>>();
+  vi.stubGlobal("CSS", { highlights, escape: (value: string) => value });
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const openStates = () =>
+    [...container.querySelectorAll("[data-markdown-details-open]")].map((node) =>
+      node.getAttribute("data-markdown-details-open"),
+    );
+  function Probe({
+    activeOccurrence,
+    searching = true,
+  }: {
+    activeOccurrence: number;
+    searching?: boolean;
+  }) {
+    useThreadFindHighlights({
+      container,
+      query: searching ? "needle" : "",
+      activeRowId: "row",
+      activeOccurrence,
+      onActiveRange: () => {},
+    });
+    return (
+      <div data-timeline-row-id="row">
+        <div data-thread-find-text>
+          <MarkdownFindContext value={searching}>
+            <ChatMarkdown
+              cwd={undefined}
+              text={[
+                "Visible needle.",
+                "<details><summary>Unrelated</summary><p>nothing here</p></details>",
+                "<details><summary>Outer</summary><details><summary>Inner</summary><p>needle</p></details></details>",
+              ].join("\n\n")}
+            />
+          </MarkdownFindContext>
+        </div>
+      </div>
+    );
+  }
+  const frame = () =>
+    act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  try {
+    // Closed panels are unmounted until find starts, as in the app.
+    await act(() => root.render(<Probe activeOccurrence={0} searching={false} />));
+    expect(container.textContent).not.toContain("nothing here");
+    await act(() => root.render(<Probe activeOccurrence={0} />));
+    await frame();
+    // Selecting the visible match opens nothing; the folded one is counted but not painted.
+    expect(openStates()).toEqual(["false", "false", "false"]);
+    expect(container.textContent).toContain("nothing here");
+    expect(
+      [...(highlights.get("t3-thread-find-active") ?? [])].map((range) => range.toString()),
+    ).toEqual(["needle"]);
+    expect(highlights.get("t3-thread-find")?.size).toBe(0);
+
+    await act(() => root.render(<Probe activeOccurrence={1} />));
+    await frame();
+    await frame();
+    // Stepping to the folded match opens its two ancestors, not the unrelated one.
+    expect(openStates()).toEqual(["false", "true", "true"]);
+    expect(highlights.get("t3-thread-find-active")?.size).toBe(1);
+  } finally {
+    await act(() => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
+  }
+});
+
+it("keeps Mermaid diagrams rendered until find selects a match in their source", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal(
+    "Highlight",
+    class extends Set<Range> {
+      constructor(...ranges: Range[]) {
+        super(ranges);
+      }
+    },
+  );
+  const highlights = new Map<string, Set<Range>>();
+  vi.stubGlobal("CSS", { highlights, escape: (value: string) => value });
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const diagram = "```mermaid\ngraph TD; Alpha-->Beta\n```";
+  function Probe({ query }: { query: string }) {
+    useThreadFindHighlights({
+      container,
+      query,
+      activeRowId: "row",
+      activeOccurrence: 0,
+      onActiveRange: () => {},
+    });
+    return (
+      <div data-timeline-row-id="row">
+        <div data-thread-find-text>
+          <MarkdownFindContext value={true}>
+            <ChatMarkdown cwd={undefined} text={`Needle first.\n\n${diagram}\n\n${diagram}`} />
+          </MarkdownFindContext>
+        </div>
+      </div>
+    );
+  }
+  const frame = () =>
+    act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  const diagrams = () => container.querySelectorAll('svg[aria-label="Diagram"]').length;
+  try {
+    await act(() => root.render(<Probe query="Needle" />));
+    await frame();
+    expect(diagrams()).toBe(2);
+    await act(() => root.render(<Probe query="Alpha" />));
+    await frame();
+    await frame();
+    // Only the diagram holding the selected match switches to source.
+    expect(diagrams()).toBe(1);
+    expect(
+      [...(highlights.get("t3-thread-find-active") ?? [])].map((range) => range.toString()),
+    ).toEqual(["Alpha"]);
+  } finally {
+    await act(() => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
+  }
+});
+
+it.each([
+  {
+    text: "```mermaid\ngraph TD; SearchSourceAlpha-->B\n```",
+    query: "SearchSourceAlpha",
+    count: 1,
+  },
+  {
+    text: "★ Insight ─────\nfirst line\nsecond line",
+    query: "first line second",
+    count: 0,
+    lineBreaks: true,
+  },
+  { text: '```ts title="src/needle.ts"\nconst a = 1;\n```', query: "needle", count: 0 },
+  { text: "```weirdlang\nconst a = 1;\n```", query: "weirdlang", count: 0 },
+  { text: "Use $test-t3-app now", query: "T3 App Testing", count: 1 },
+  { text: "`/tmp/file.ts:42`", query: "file.ts · L42", count: 1, user: true, lineBreaks: true },
+  { text: "> [!NOTE]\n> Searchable alert", query: "Searchable alert", count: 1 },
+  {
+    text: "<details><summary>Folded</summary><p>Hidden needle</p></details>",
+    query: "Hidden needle",
+    count: 1,
+  },
+  { text: ARTIFACT_TEMPLATE_DIRECTIVE, query: "Hello World", count: 1, useTemplate: true },
+  { text: ARTIFACT_TEMPLATE_DIRECTIVE, query: "Document template", count: 1, useTemplate: true },
+  { text: ARTIFACT_TEMPLATE_DIRECTIVE, query: "World Document", count: 0, useTemplate: true },
+  { text: ARTIFACT_TEMPLATE_DIRECTIVE, query: "Use template", count: 0, useTemplate: true },
+])(
+  "highlights the indexed occurrences of $query in $text",
+  async ({ text, query, count, lineBreaks, user, useTemplate }) => {
+    const skills = [{ name: "test-t3-app", displayName: "T3 App Testing" }];
+    const highlights = new Map<string, Set<Range>>();
+    vi.stubGlobal(
+      "Highlight",
+      class extends Set<Range> {
+        constructor(...ranges: Range[]) {
+          super(ranges);
+        }
+      },
+    );
+    vi.stubGlobal("CSS", { highlights, escape: (value: string) => value });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    function Probe() {
+      useThreadFindHighlights({
+        container,
+        query,
+        activeRowId: "row",
+        activeOccurrence: 0,
+        onActiveRange: () => {},
+      });
+      return (
+        <div data-timeline-row-id="row">
+          <div data-thread-find-text>
+            <MarkdownFindContext value={true}>
+              <ChatMarkdown
+                text={text}
+                cwd={undefined}
+                skills={skills}
+                lineBreaks={lineBreaks ?? false}
+                parseRawHtml={!user}
+                onUseArtifactTemplate={useTemplate ? () => undefined : undefined}
+              />
+            </MarkdownFindContext>
+          </div>
+        </div>
+      );
+    }
+    try {
+      await act(() => root.render(<Probe />));
+      await act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+      const ranges = [...highlights.values()].flatMap((value) => [...value]);
+      expect(ranges.map((range) => range.toString())).toEqual(
+        Array.from({ length: count }, () => query),
+      );
+      const segments =
+        searchableMessageSegments(
+          { role: user ? "user" : "assistant", text, streaming: false },
+          undefined,
+          skills,
+        ) ?? [];
+      expect(
+        segments.reduce((sum, segment) => sum + countThreadSearchOccurrences(segment, query), 0),
+      ).toBe(count);
+    } finally {
+      await act(() => root.unmount());
+      container.remove();
+      vi.unstubAllGlobals();
+    }
+  },
+);
+
+describe("ChatMarkdown heading ids", () => {
+  it("never gives two headings the same id, even when a suffix matches another heading", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        parseRawHtml
+        text={
+          '## Setup\n\n## Setup\n\n## Setup-1\n\n<h2 id="install-1">Pinned</h2>\n\n## Install\n\n## Install'
+        }
+      />,
+    );
+    const ids = [...html.matchAll(/<h2 id="([^"]+)"/g)].map((match) => match[1]);
+    expect(ids).toEqual([
+      "user-content-setup",
+      "user-content-setup-1",
+      "user-content-setup-1-1",
+      "user-content-install-1",
+      "user-content-install",
+      "user-content-install-2",
+    ]);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe("ChatMarkdown in-page links", () => {
+  it.each([true, false])(
+    "scrolls a table-of-contents link to its heading without touching the URL (parseRawHtml=%s)",
+    async (parseRawHtml) => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const { createRoot } = await import("react-dom/client");
+      const container = document.createElement("div");
+      document.body.append(container);
+      const root = createRoot(container);
+      window.history.replaceState(null, "", "/#/env/thread");
+      const scrollIntoView = vi.fn();
+      HTMLElement.prototype.scrollIntoView = scrollIntoView;
+      try {
+        await act(async () => {
+          root.render(
+            <ChatMarkdown
+              cwd="/tmp/project"
+              parseRawHtml={parseRawHtml}
+              text={
+                "- [Operating model](#1-operating-model)\n- [Missing](#nowhere)\n\n## 1. Operating model\n\n## 1. Operating model"
+              }
+            />,
+          );
+        });
+        const headings = [...container.querySelectorAll("h2")];
+        expect(headings.map((heading) => heading.id)).toEqual([
+          "user-content-1-operating-model",
+          "user-content-1-operating-model-1",
+        ]);
+
+        const [tocLink, missingLink] = [...container.querySelectorAll("a")];
+        const click = () => new MouseEvent("click", { bubbles: true, cancelable: true });
+        const tocClick = click();
+        tocLink!.dispatchEvent(tocClick);
+        expect(tocClick.defaultPrevented).toBe(true);
+        expect(scrollIntoView.mock.contexts).toEqual([headings[0]]);
+
+        const missingClick = click();
+        missingLink!.dispatchEvent(missingClick);
+        expect(missingClick.defaultPrevented).toBe(true);
+        expect(scrollIntoView).toHaveBeenCalledTimes(1);
+        expect(window.location.hash).toBe("#/env/thread");
+      } finally {
+        await act(async () => root.unmount());
+        container.remove();
+      }
+    },
+  );
 });

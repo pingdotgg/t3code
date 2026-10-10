@@ -8,28 +8,28 @@
  *
  * @since 4.0.0
  */
+import * as CliError from "effect/cli/CliError"
+import * as Command from "effect/cli/Command"
+import * as Flag from "effect/cli/Flag"
 import * as Console from "effect/Console"
 import * as Effect from "effect/Effect"
+import type { OpenAPISpec } from "effect/http-api/OpenApi"
 import type * as Schema from "effect/Schema"
-import * as CliError from "effect/unstable/cli/CliError"
-import * as Command from "effect/unstable/cli/Command"
-import * as Flag from "effect/unstable/cli/Flag"
-import type { OpenAPISpec } from "effect/unstable/httpapi/OpenApi"
 import * as OpenApiGenerator from "./OpenApiGenerator.ts"
 import * as OpenApiPatch from "./OpenApiPatch.ts"
 
-const spec = Flag.fileParse("spec").pipe(
+const spec = Flag.FileParse("spec").pipe(
   Flag.withAlias("s"),
   Flag.withDescription("The OpenAPI spec file to generate output from")
 )
 
-const name = Flag.string("name").pipe(
+const name = Flag.String("name").pipe(
   Flag.withAlias("n"),
   Flag.withDescription("The name of the generated output"),
   Flag.withDefault("Client")
 )
 
-const format = Flag.choice("format", ["httpclient", "httpclient-type-only", "httpapi"] as const).pipe(
+const format = Flag.Literals("format", ["httpclient", "httpclient-type-only", "httpapi"] as const).pipe(
   Flag.withAlias("f"),
   Flag.withDescription(
     "Output format to generate: httpclient | httpclient-type-only | httpapi (default: httpclient)"
@@ -37,7 +37,7 @@ const format = Flag.choice("format", ["httpclient", "httpclient-type-only", "htt
   Flag.withDefault("httpclient")
 )
 
-const patch = Flag.string("patch").pipe(
+const patch = Flag.String("patch").pipe(
   Flag.withAlias("p"),
   Flag.withDescription(
     "JSON patch to apply to OpenAPI spec before generation. " +

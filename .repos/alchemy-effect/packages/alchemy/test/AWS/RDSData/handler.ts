@@ -4,8 +4,8 @@ import * as RDSData from "@/AWS/RDSData";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 import { RDSDataInfra } from "./infra.ts";
 
@@ -30,7 +30,7 @@ export class RDSDataTestFunction extends Lambda.Function<Lambda.Function>()(
 export default RDSDataTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Data API statements can take tens of seconds while the serverless
     // cluster scales from idle — keep the Lambda alive through that.
     timeout: Duration.seconds(60),

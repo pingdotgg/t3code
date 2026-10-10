@@ -1,0 +1,265 @@
+---
+title: SolidStart
+description: Deploy a SolidStart app to Hetzner with Hetzner.Website.SolidStart — nitro's node preset as a systemd unit on port 3000, prerendered pages baked into the unit, and SolidStart's own Vite dev server under alchemy dev.
+sidebar:
+  order: 10.5
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`Hetzner.Website.SolidStart` deploys a
+[SolidStart](https://start.solidjs.com) app to a Hetzner Cloud Server.
+It runs your project's own `vite build` and appends nitro's `node`
+preset: the SSR server runs as a systemd
+[`Hetzner.Service`](/hetzner/compute/services) on port 3000, and
+client assets plus prerendered pages are baked into the unit and
+served first. Omit `server` and Alchemy creates a `cpx12` Ubuntu
+24.04 box in `fsn1`. The live URL is `http://{ipv4}:3000` — the
+Service has no TLS. No adapter.
+
+:::note[Verified version line]
+This page tracks `@solidjs/start` **2.x** with
+`@solidjs/vite-plugin-nitro-2` — the Vite-native line where
+`solidStart()` is a plain Vite plugin and nitro is a second plugin.
+:::
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads its
+`/solidstart` and `/solidstart/node` exports from your project at
+deploy time. It is only used at build time, so a dev dependency is
+enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+`@solidjs/vite-plugin-nitro-2` is the server half of a SolidStart
+build and must be a project dependency too:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code="bun add @solidjs/vite-plugin-nitro-2" lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code="npm install @solidjs/vite-plugin-nitro-2" lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code="pnpm add @solidjs/vite-plugin-nitro-2" lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code="yarn add @solidjs/vite-plugin-nitro-2" lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Configure Vite
+
+Your `vite.config.ts` is the SolidStart plugin — no adapter, no
+nitro wiring. Vite plugins like Tailwind go in `plugins` as usual:
+
+```typescript
+// vite.config.ts
+import { solidStart } from "@solidjs/start/config";
+import tailwindcss from "@tailwindcss/vite";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [solidStart(), tailwindcss()],
+});
+```
+
+Alchemy appends its own `nitroV2Plugin()` instance at build time,
+carrying nitro's `node` preset. Don't register `nitroV2Plugin()`
+yourself — the appended instance would discard its options, so the
+build fails with an actionable error instead. Pass nitro options
+through the resource's `nitro` prop; see [Prerendering](#prerendering)
+below.
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack):
+
+```typescript
+// alchemy.run.ts
+import * as Hetzner from "alchemy/Hetzner";
+
+export const Website = Hetzner.Website.SolidStart("Website");
+```
+
+Pass `server` to host the site on an existing
+[`Hetzner.Server`](/hetzner/compute/servers) — several sites and
+APIs can share one box. `rootDir` is the project root — the directory
+holding `package.json` and `vite.config.*`. It defaults to `"."`, so
+set it only when the app does not sit next to `alchemy.run.ts`:
+
+```typescript
+export const Website = Hetzner.Website.SolidStart("Website", {
+  rootDir: "./app",
+});
+```
+
+## Add it to the Stack
+
+Yield the site from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MySolidStartSite",
+  {
+    providers: Hetzner.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+The live `url` is `http://{ipv4}:3000`. `site.server` and
+`site.service` are the Hetzner resources underneath — `undefined`
+during `alchemy dev`.
+
+See the [SolidStart API reference](/providers/hetzner/website/solidstart)
+for every prop and attribute.
+
+## Add environment variables
+
+Process environment is a top-level `env` map — plain strings, or
+`Redacted` values:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = Hetzner.Website.SolidStart("Website", {
++  env: {
++    API_BASE: "https://api.example.com",
++  },
+});
+```
+
+The values are copied onto `process.env` before the build and the
+dev server, and onto the systemd unit at deploy time, so server
+code reads the same keys in both modes. Client inlining is whatever
+Vite does (`VITE_` prefixes).
+
+An output from another resource only exists once that resource is
+yielded, so declare the site inside the Stack generator instead:
+
+```typescript
+// alchemy.run.ts
+Effect.gen(function* () {
+  const api = yield* Api;
+
+  const site = yield* Hetzner.Website.SolidStart("Website", {
+    env: { API_BASE: api.url },
+  });
+
+  return { url: site.url };
+});
+```
+
+## Read the environment in server code
+
+The SolidStart server is a plain Node process, so API routes,
+server functions, and SSR read the environment from `process.env`:
+
+```typescript
+// src/routes/api/hello.ts
+export function GET() {
+  return new Response(process.env.API_BASE ?? "unset");
+}
+```
+
+Values prefixed `VITE_` are inlined into the client bundle at build
+time instead, as `import.meta.env.VITE_*` — set those in the shell
+that runs `alchemy deploy`, not in `env`.
+
+## Prerendering
+
+Nitro renders the routes you list at build time into `.output/public`.
+They are baked into the unit and served as static files with no
+handler invocation:
+
+```typescript
+export const Website = Hetzner.Website.SolidStart("Website", {
+  nitro: { prerender: { routes: ["/", "/about"] } },
+});
+```
+
+`prerender` takes the routes to render (`routes`) and can crawl links
+from prerendered pages to prerender them too (`crawlLinks`). The
+`nitro` prop is the home for all nitro options (route rules, storage,
+...) — the integration owns the plugin instance, so they cannot live
+in `vite.config.ts`. Values must be JSON-serializable; `preset` is
+owned by the Node deploy target, and a foreign preset is a hard error.
+
+## Local dev
+
+```sh
+bun alchemy dev
+```
+
+`alchemy dev` runs SolidStart's own Vite dev server (native HMR)
+instead of deploying; `site.url` is the local address and no Hetzner
+resources are created. Nitro plays no part in dev. Wrap the site in
+`Alchemy.remote()` to deploy the live Server and Service even during
+dev:
+
+```typescript
+export const Website = Hetzner.Website.SolidStart("Website").pipe(
+  Alchemy.remote(),
+);
+```
+
+SolidStart's plugin resolves its app root and route directory from
+the process working directory, so one `alchemy dev` process serves
+one SolidStart app at a time.
+
+:::caution[Run `alchemy dev` under Node]
+SolidStart 2's dev server answers requests through `srvx/node`, which
+returns the string `[object Object]` instead of the rendered document
+when it runs under Bun. Production builds are unaffected — only the
+dev server is. Until that upstream gap closes, run `alchemy dev` with
+Node (`npx alchemy dev`) for SolidStart projects.
+:::
+
+## Custom domain
+
+```typescript
+const zone = yield* Hetzner.Zone("dns", { name: "example.com" });
+const site = yield* Hetzner.Website.SolidStart("Web", {
+  domain: "app.example.com",
+  zone,
+});
+```
+
+`domain` requires an existing [`Hetzner.Zone`](/hetzner/networking/dns)
+— the Website does not create one. It adds an A record pointing at
+the Server's public IPv4. `url` becomes `http://app.example.com:3000`.
+There is no TLS on the Service.
+
+## Where next
+
+- [SolidStart API reference](/providers/hetzner/website/solidstart)
+- [Servers](/hetzner/compute/servers) and
+  [Services](/hetzner/compute/services)
+- [DNS](/hetzner/networking/dns)

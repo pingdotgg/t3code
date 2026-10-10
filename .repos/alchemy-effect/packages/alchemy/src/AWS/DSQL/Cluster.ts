@@ -61,27 +61,28 @@ export interface Cluster extends Resource<
  * excellent test economics. Create is asynchronous (`CREATING` -> `ACTIVE`),
  * usually completing in under a minute; the provider waits for `ACTIVE`
  * (bounded) before returning.
- * @resource
- * @section Creating a Cluster
- * @example Basic Cluster
+ * ### Creating a Cluster
+ * **Example:** Basic Cluster
  * ```typescript
  * const cluster = yield* Cluster("AppDb", {});
  * // connect to cluster.endpoint on port 5432 as user "admin"
  * ```
  *
- * @example Cluster with Deletion Protection
+ * **Example:** Cluster with Deletion Protection
  * ```typescript
  * const cluster = yield* Cluster("AppDb", {
  *   deletionProtectionEnabled: true,
  * });
  * ```
  *
- * @example Cluster with a Customer-Managed KMS Key
+ * **Example:** Cluster with a Customer-Managed KMS Key
  * ```typescript
  * const cluster = yield* Cluster("AppDb", {
  *   kmsEncryptionKey: key.keyArn,
  * });
  * ```
+ *
+ * @resource
  */
 export const Cluster = Resource<Cluster>("AWS.DSQL.Cluster");
 

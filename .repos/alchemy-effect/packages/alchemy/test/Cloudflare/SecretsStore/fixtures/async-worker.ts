@@ -1,8 +1,8 @@
 import * as Cloudflare from "@/Cloudflare";
 import type * as runtime from "@cloudflare/workers-types";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { ApiKey } from "./secret.ts";
 
 /**
@@ -18,7 +18,7 @@ export default class AsyncSecretWorker extends Cloudflare.Worker<AsyncSecretWork
   "AsyncSecretBindingWorker",
   {
     main: import.meta.url,
-    subdomain: { enabled: true, previewsEnabled: false },
+    workersDev: { enabled: true, previewsEnabled: false },
     env: {
       MY_SECRET: ApiKey,
     },

@@ -61,7 +61,12 @@ export const makeGaAcceleratorHttpBinding = <
         request?: Omit<I, "AcceleratorArn">,
       ) {
         const acceleratorArn = yield* AcceleratorArn;
-        return yield* op({ ...request, AcceleratorArn: acceleratorArn } as I);
+        // The region must also be pinned at the call site: the yield-time
+        // snapshot is only a fallback — the calling fiber's ambient Region
+        // (the host Function's own region) wins over it.
+        return yield* withGaRegion(
+          op({ ...request, AcceleratorArn: acceleratorArn } as I),
+        );
       });
     });
   });
@@ -116,10 +121,13 @@ export const makeGaEndpointGroupHttpBinding = <
         request: Omit<I, "EndpointGroupArn">,
       ) {
         const endpointGroupArn = yield* EndpointGroupArn;
-        return yield* op({
-          ...request,
-          EndpointGroupArn: endpointGroupArn,
-        } as I);
+        // Call-site region pin — see makeGaAcceleratorHttpBinding above.
+        return yield* withGaRegion(
+          op({
+            ...request,
+            EndpointGroupArn: endpointGroupArn,
+          } as I),
+        );
       });
     });
   });

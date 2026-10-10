@@ -5,8 +5,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 
@@ -36,7 +36,7 @@ const desktopShellEnvironmentCommandFields = {
   argumentCount: Schema.Number,
 };
 
-export class DesktopShellEnvironmentCommandError extends Schema.TaggedErrorClass<DesktopShellEnvironmentCommandError>()(
+export class DesktopShellEnvironmentCommandError extends Schema.TaggedError<DesktopShellEnvironmentCommandError>()(
   "DesktopShellEnvironmentCommandError",
   {
     ...desktopShellEnvironmentCommandFields,
@@ -48,7 +48,7 @@ export class DesktopShellEnvironmentCommandError extends Schema.TaggedErrorClass
   }
 }
 
-export class DesktopShellEnvironmentCommandTimeoutError extends Schema.TaggedErrorClass<DesktopShellEnvironmentCommandTimeoutError>()(
+export class DesktopShellEnvironmentCommandTimeoutError extends Schema.TaggedError<DesktopShellEnvironmentCommandTimeoutError>()(
   "DesktopShellEnvironmentCommandTimeoutError",
   {
     ...desktopShellEnvironmentCommandFields,
@@ -85,6 +85,7 @@ const LOGIN_SHELL_ENV_NAMES = [
   "XDG_SESSION_DESKTOP",
   "XDG_SESSION_TYPE",
   "WAYLAND_DISPLAY",
+  "T3CODE_TELEMETRY_ENABLED",
 ] as const;
 const WINDOWS_PROFILE_ENV_NAMES = ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"] as const;
 const LOCALE_ENV_NAMES = ["LANG", "LC_ALL", "LC_CTYPE"] as const;
@@ -122,34 +123,13 @@ const linuxRuntimeDirCandidates = (
   return candidates.filter((candidate) => candidate.length > 0);
 };
 
-function resolveDefaultLinuxDbusSessionBusPath(input: {
-  readonly env: NodeJS.ProcessEnv;
-  readonly uid: number | undefined;
-  readonly exists?: (path: string) => boolean;
-}): string | null {
-  for (const runtimeDir of linuxRuntimeDirCandidates(input.env, input.uid)) {
-    const busPath = `${runtimeDir}/bus`;
-    if (input.exists === undefined || input.exists(busPath)) {
-      return busPath;
-    }
-  }
-
-  return null;
-}
-
-export function resolveDefaultLinuxDbusSessionBusAddress(input: {
-  readonly env: NodeJS.ProcessEnv;
-  readonly exists: (path: string) => boolean;
-  readonly uid: number | undefined;
-}): string | null {
-  const busPath = resolveDefaultLinuxDbusSessionBusPath(input);
-  return busPath !== null && input.exists(busPath) ? `unix:path=${busPath}` : null;
-}
-
 const pathComparisonKey = (entry: string, platform: NodeJS.Platform) => {
   const normalized = entry.trim().replace(/^"+|"+$/g, "");
   return platform === "win32" ? normalized.toLowerCase() : normalized;
 };
+
+const sanitizePathEntry = (entry: string, platform: NodeJS.Platform) =>
+  platform === "win32" ? entry.replaceAll('"', "") : entry;
 
 const mergePaths = (
   platform: NodeJS.Platform,
@@ -163,14 +143,14 @@ const mergePaths = (
     if (Option.isNone(value)) continue;
 
     for (const entry of value.value.split(delimiter)) {
-      const trimmed = entry.trim();
-      if (trimmed.length === 0) continue;
+      const sanitized = sanitizePathEntry(entry.trim(), platform);
+      if (sanitized.length === 0) continue;
 
-      const key = pathComparisonKey(trimmed, platform);
+      const key = pathComparisonKey(sanitized, platform);
       if (key.length === 0 || seen.has(key)) continue;
 
       seen.add(key);
-      entries.push(trimmed);
+      entries.push(sanitized);
     }
   }
 
@@ -471,6 +451,8 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       "XDG_DATA_HOME",
       "XDG_RUNTIME_DIR",
       "WAYLAND_DISPLAY",
+      // The telemetry opt-out is documented as a shell variable; GUI launches never see it.
+      "T3CODE_TELEMETRY_ENABLED",
     ] as const) {
       if (!config.env[name] && shellEnvironment[name]) {
         config.env[name] = shellEnvironment[name];
@@ -530,6 +512,7 @@ const installShellEnvironment = (
   return Effect.void;
 };
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;

@@ -17,10 +17,10 @@ import type { Mutable } from "../Types.ts"
 import * as effect from "./effect.ts"
 
 /** @internal */
-export const TypeId = "~effect/time/DateTime"
+export const TypeId = "~effect/DateTime"
 
 /** @internal */
-export const TimeZoneTypeId = "~effect/time/DateTime/TimeZone"
+export const TimeZoneTypeId = "~effect/DateTime/TimeZone"
 
 const Proto = {
   [TypeId]: TypeId,
@@ -221,7 +221,7 @@ export const makeUnsafe = <A extends DateTime.DateTime.Input>(input: A): DateTim
     return fromDateUnsafe(input) as DateTime.DateTime.PreserveZone<A>
   } else if (typeof input === "object") {
     if ("epochMilliseconds" in input) {
-      return makeUtc(input.epochMilliseconds) as DateTime.DateTime.PreserveZone<A>
+      return fromDateUnsafe(new Date(input.epochMilliseconds)) as DateTime.DateTime.PreserveZone<A>
     }
     const date = new Date(0)
     setPartsDate(date, input)
@@ -374,8 +374,9 @@ const formatOptions: Intl.DateTimeFormatOptions = {
 
 const zoneMakeIntl = (format: Intl.DateTimeFormat): DateTime.TimeZone.Named => {
   const zoneId = format.resolvedOptions().timeZone
-  if (validZoneCache.has(zoneId)) {
-    return validZoneCache.get(zoneId)!
+  const cached = validZoneCache.get(zoneId)
+  if (cached !== undefined) {
+    return cached
   }
   const zone = Object.create(ProtoTimeZoneNamed)
   zone.id = zoneId
@@ -386,16 +387,19 @@ const zoneMakeIntl = (format: Intl.DateTimeFormat): DateTime.TimeZone.Named => {
 
 /** @internal */
 export const zoneMakeNamedUnsafe = (zoneId: string): DateTime.TimeZone.Named => {
-  if (validZoneCache.has(zoneId)) {
-    return validZoneCache.get(zoneId)!
+  const cached = validZoneCache.get(zoneId)
+  if (cached !== undefined) {
+    return cached
   }
   try {
-    return zoneMakeIntl(
+    const zone = zoneMakeIntl(
       new Intl.DateTimeFormat("en-US", {
         ...formatOptions,
         timeZone: zoneId
       })
     )
+    validZoneCache.set(zoneId, zone)
+    return zone
   } catch {
     throw new IllegalArgumentError(`Invalid time zone: ${zoneId}`)
   }
@@ -571,7 +575,9 @@ export const toDate = (self: DateTime.DateTime): Date => {
     Number(parts[3].value),
     Number(parts[4].value),
     Number(parts[5].value),
-    Number(parts[6].value)
+    parts[6]?.type === "fractionalSecond"
+      ? Number(parts[6].value)
+      : ((self.epochMilliseconds % 1000) + 1000) % 1000
   )
   self.adjustedEpochMilliseconds = date.getTime()
   return date
@@ -599,6 +605,12 @@ export const zonedOffsetIso = (self: DateTime.Zoned): string => offsetToString(z
 
 /** @internal */
 export const toEpochMillis = (self: DateTime.DateTime): number => self.epochMilliseconds
+
+/** @internal */
+export const toEpochSeconds = (self: DateTime.DateTime): number => Math.floor(self.epochMilliseconds / 1000)
+
+/** @internal */
+export const fromEpochSeconds = (seconds: number): DateTime.Utc => makeUtc(seconds * 1000)
 
 /** @internal */
 export const removeTime = (self: DateTime.DateTime): DateTime.Utc =>
@@ -655,14 +667,12 @@ export const getPart: {
 } = dual(2, (self: DateTime.DateTime, part: keyof DateTime.DateTime.PartsWithWeekday): number => toParts(self)[part])
 
 const setPartsDate = (date: Date, parts: Partial<DateTime.DateTime.PartsWithWeekday>): void => {
-  if (parts.year !== undefined) {
-    date.setUTCFullYear(parts.year)
-  }
-  if (parts.month !== undefined) {
-    date.setUTCMonth(parts.month - 1)
-  }
-  if (parts.day !== undefined) {
-    date.setUTCDate(parts.day)
+  if (parts.year !== undefined || parts.month !== undefined || parts.day !== undefined) {
+    date.setUTCFullYear(
+      parts.year ?? date.getUTCFullYear(),
+      parts.month !== undefined ? parts.month - 1 : date.getUTCMonth(),
+      parts.day ?? date.getUTCDate()
+    )
   }
   if (parts.weekDay !== undefined) {
     const diff = parts.weekDay - date.getUTCDay()

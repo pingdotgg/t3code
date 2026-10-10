@@ -48,9 +48,8 @@ export interface CertificateAuthorityPolicy extends Resource<
  * policy Amazon Web Services Resource Access Manager (RAM) manages when a
  * CA is shared; attach it directly for fine-grained control.
  *
- * @resource
- * @section Attaching a CA Policy
- * @example Allow Another Account to Issue Certificates
+ * ### Attaching a CA Policy
+ * **Example:** Allow Another Account to Issue Certificates
  * ```typescript
  * import * as ACMPCA from "alchemy/AWS/ACMPCA";
  *
@@ -76,6 +75,8 @@ export interface CertificateAuthorityPolicy extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const CertificateAuthorityPolicy = Resource<CertificateAuthorityPolicy>(
   "AWS.ACMPCA.CertificateAuthorityPolicy",

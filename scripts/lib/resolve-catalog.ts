@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-export class CatalogDependencyResolutionError extends Schema.TaggedErrorClass<CatalogDependencyResolutionError>()(
+class CatalogDependencyResolutionError extends Schema.TaggedError<CatalogDependencyResolutionError>()(
   "CatalogDependencyResolutionError",
   {
     workspacePackage: Schema.String,
@@ -32,7 +32,12 @@ export function resolveCatalogDependencies(
       }
 
       const catalogKey = spec.slice("catalog:".length).trim();
-      const lookupKey = catalogKey.length > 0 ? catalogKey : name;
+      // Overrides can include a parent selector and a version range. A bare
+      // `catalog:` looks up the final package name, keeping its scope intact.
+      const selector = name.split(">").at(-1) ?? name;
+      const versionIndex = selector.indexOf("@", 1);
+      const packageName = versionIndex === -1 ? selector : selector.slice(0, versionIndex);
+      const lookupKey = catalogKey.length > 0 ? catalogKey : packageName;
       const resolved = catalog[lookupKey];
 
       if (typeof resolved !== "string" || resolved.length === 0) {

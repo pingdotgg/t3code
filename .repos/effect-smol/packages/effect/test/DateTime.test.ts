@@ -1,7 +1,8 @@
 import { describe, it } from "@effect/vitest"
-import { assertNone, assertSome, deepStrictEqual, strictEqual } from "@effect/vitest/utils"
+import { assertNone, assertSome, deepStrictEqual, strictEqual, throws } from "@effect/vitest/utils"
 import { DateTime, Duration, Effect, Option } from "effect"
 import { TestClock } from "effect/testing"
+import { vi } from "vitest"
 
 const setTo2024NZ = TestClock.setTime(new Date("2023-12-31T11:00:00.000Z").getTime())
 const assertSomeIso = (value: Option.Option<DateTime.DateTime>, expected: string) => {
@@ -11,6 +12,25 @@ const assertSomeIso = (value: Option.Option<DateTime.DateTime>, expected: string
 const isDeno = "Deno" in globalThis
 
 describe("DateTime", () => {
+  it("preserves pre-epoch milliseconds when Intl omits fractionalSecond", () => {
+    const formatToParts = Intl.DateTimeFormat.prototype.formatToParts
+    const mock = vi.spyOn(Intl.DateTimeFormat.prototype, "formatToParts").mockImplementation(function(
+      this: Intl.DateTimeFormat,
+      date
+    ) {
+      return formatToParts.call(this, date).filter((part) => part.type !== "fractionalSecond")
+    })
+    try {
+      const dt = DateTime.makeZonedUnsafe("1969-12-31T23:59:59.999Z", {
+        timeZone: "Australia/Brisbane"
+      })
+      strictEqual(DateTime.toDate(dt).toISOString(), "1970-01-01T09:59:59.999Z")
+      strictEqual(DateTime.formatIsoDate(dt), "1970-01-01")
+    } finally {
+      mock.mockRestore()
+    }
+  })
+
   describe("mutate", () => {
     it.effect("should mutate the date", () =>
       Effect.gen(function*() {
@@ -280,6 +300,12 @@ describe("DateTime", () => {
   })
 
   describe("setPartsUtc", () => {
+    it("applies calendar parts without intermediate overflow", () => {
+      const date = DateTime.makeUnsafe("2024-01-31T12:34:56.789Z")
+      const updated = DateTime.setPartsUtc(date, { month: 2, day: 1 })
+      strictEqual(DateTime.formatIso(updated), "2024-02-01T12:34:56.789Z")
+    })
+
     it("partial", () => {
       const date = DateTime.makeUnsafe({
         year: 2024,
@@ -381,6 +407,32 @@ describe("DateTime", () => {
     })
   })
 
+  describe("toEpochSeconds", () => {
+    it("returns epoch seconds", () => {
+      const dt = DateTime.makeUnsafe("2024-01-01T00:00:00Z")
+      strictEqual(DateTime.toEpochSeconds(dt), 1704067200)
+    })
+
+    it("floors to nearest second", () => {
+      const dt = DateTime.makeUnsafe("2024-01-01T00:00:00.999Z")
+      strictEqual(DateTime.toEpochSeconds(dt), 1704067200)
+    })
+  })
+
+  describe("fromEpochSeconds", () => {
+    it("creates DateTime from epoch seconds", () => {
+      const dt = DateTime.fromEpochSeconds(1704067200)
+      strictEqual(dt.toJSON(), "2024-01-01T00:00:00.000Z")
+    })
+
+    it("roundtrips with toEpochSeconds", () => {
+      const original = DateTime.makeUnsafe("2024-06-15T12:30:00Z")
+      const seconds = DateTime.toEpochSeconds(original)
+      const restored = DateTime.fromEpochSeconds(seconds)
+      strictEqual(DateTime.toEpochSeconds(restored), seconds)
+    })
+  })
+
   describe("makeZonedFromString", () => {
     it.effect("parses an instant with an offset and IANA zone", () =>
       Effect.gen(function*() {
@@ -455,7 +507,19 @@ describe("DateTime", () => {
       }))
   })
 
+  describe("make", () => {
+    it("rejects invalid object instants", () => {
+      assertNone(DateTime.make({ epochMilliseconds: NaN }))
+      assertNone(DateTime.make({ epochMilliseconds: 8_640_000_000_000_001 }))
+    })
+  })
+
   describe("makeUnsafe", () => {
+    it("throws for invalid object instants", () => {
+      throws(() => DateTime.makeUnsafe({ epochMilliseconds: NaN }))
+      throws(() => DateTime.makeUnsafe({ epochMilliseconds: 8_640_000_000_000_001 }))
+    })
+
     it("treats strings without zone info as UTC", () => {
       const dt = DateTime.makeUnsafe("2024-01-01 01:00:00")
       strictEqual(dt.toJSON(), "2024-01-01T01:00:00.000Z")

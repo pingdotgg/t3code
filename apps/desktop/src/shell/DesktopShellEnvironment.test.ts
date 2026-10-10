@@ -7,8 +7,8 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopShellEnvironment from "./DesktopShellEnvironment.ts";
@@ -70,13 +70,13 @@ function runShellEnvironment(input: {
   readonly handler: (command: ChildProcess.Command) => string;
   readonly failure?: PlatformError.PlatformError;
 }) {
-  const environmentLayer = Layer.succeed(
+  const layerEnvironment = Layer.succeed(
     DesktopEnvironment.DesktopEnvironment,
     DesktopEnvironment.DesktopEnvironment.of({
       platform: input.platform,
     } as DesktopEnvironment.DesktopEnvironment["Service"]),
   );
-  const spawnerLayer = Layer.succeed(
+  const layerSpawner = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) =>
       input.failure === undefined
@@ -91,7 +91,7 @@ function runShellEnvironment(input: {
   }).pipe(
     Effect.provide(
       DesktopShellEnvironment.layer.pipe(
-        Layer.provide(Layer.mergeAll(environmentLayer, NodeServices.layer, spawnerLayer)),
+        Layer.provide(Layer.mergeAll(layerEnvironment, NodeServices.layer, layerSpawner)),
       ),
     ),
   );
@@ -268,11 +268,13 @@ describe("DesktopShellEnvironment", () => {
           envOutput({
             PATH: "/home/linuxbrew/.linuxbrew/bin:/usr/bin",
             SSH_AUTH_SOCK: "/tmp/secretive.sock",
+            T3CODE_TELEMETRY_ENABLED: "false",
           }),
       });
 
       assert.equal(env.PATH, "/home/linuxbrew/.linuxbrew/bin:/usr/bin");
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
+      assert.equal(env.T3CODE_TELEMETRY_ENABLED, "false");
     }),
   );
 
@@ -320,7 +322,7 @@ describe("DesktopShellEnvironment", () => {
                 FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
                 FNM_MULTISHELL_PATH: "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
               })
-            : envOutput({ PATH: "C:\\Custom\\Bin;C:\\Windows\\System32" });
+            : envOutput({ PATH: 'C:\\Custom\\Bin;C:";C:\\Windows\\System32' });
         },
       });
 
@@ -337,6 +339,7 @@ describe("DesktopShellEnvironment", () => {
           "C:\\Users\\testuser\\.bun\\bin",
           "C:\\Users\\testuser\\scoop\\shims",
           "C:\\Custom\\Bin",
+          "C:",
         ].join(";"),
       );
       assert.equal(env.FNM_DIR, "C:\\Users\\testuser\\AppData\\Roaming\\fnm");
@@ -395,16 +398,6 @@ describe("DesktopShellEnvironment", () => {
       assert.equal(env.DBUS_SESSION_BUS_ADDRESS, "unix:path=/run/user/1000/bus");
     }),
   );
-
-  it("resolves dbus runtime dir candidates with existence checks", () => {
-    const busPath = DesktopShellEnvironment.resolveDefaultLinuxDbusSessionBusAddress({
-      env: { XDG_RUNTIME_DIR: "/tmp/stale-runtime" },
-      uid: 1000,
-      exists: (path) => path === "/run/user/1000/bus",
-    });
-
-    assert.equal(busPath, "unix:path=/run/user/1000/bus");
-  });
 
   it.effect("logs command failures with safe probe context and the exact cause", () => {
     const env: NodeJS.ProcessEnv = {

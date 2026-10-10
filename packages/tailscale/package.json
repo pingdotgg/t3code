@@ -9,11 +9,10 @@
     }
   },
   "scripts": {
-    "typecheck": "tsgo --noEmit",
-    "test": "vp test run"
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {
-    "@effect/platform-node": "catalog:",
     "@t3tools/shared": "workspace:*",
     "effect": "catalog:"
   },

@@ -70,24 +70,23 @@ export interface BackupVault extends Resource<
  * with a customer-managed KMS key, and access to the vault can be restricted
  * with a resource-based policy.
  *
- * @resource
- * @section Creating a Vault
- * @example Basic Vault
+ * ### Creating a Vault
+ * **Example:** Basic Vault
  * ```typescript
  * import * as Backup from "alchemy/AWS/Backup";
  *
  * const vault = yield* Backup.BackupVault("AppBackups");
  * ```
  *
- * @example Vault with a Customer-Managed KMS Key
+ * **Example:** Vault with a Customer-Managed KMS Key
  * ```typescript
  * const vault = yield* Backup.BackupVault("EncryptedBackups", {
  *   encryptionKeyArn: key.keyArn,
  * });
  * ```
  *
- * @section Vault Access Policy
- * @example Deny deletion of recovery points
+ * ### Vault Access Policy
+ * **Example:** Deny deletion of recovery points
  * ```typescript
  * const vault = yield* Backup.BackupVault("LockedBackups", {
  *   accessPolicy: {
@@ -103,6 +102,8 @@ export interface BackupVault extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const BackupVault = Resource<BackupVault>("AWS.Backup.BackupVault");
 

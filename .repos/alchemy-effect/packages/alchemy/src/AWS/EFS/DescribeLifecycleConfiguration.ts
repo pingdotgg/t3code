@@ -13,15 +13,16 @@ import type { FileSystem } from "./FileSystem.ts";
  * A file system without lifecycle management returns an empty array.
  * Provide the implementation with
  * `Effect.provide(AWS.EFS.DescribeLifecycleConfigurationHttp)`.
- * @binding
- * @section Lifecycle Management
- * @example Read the lifecycle policies
+ * ### Lifecycle Management
+ * **Example:** Read the lifecycle policies
  * ```typescript
  * const describeLifecycleConfiguration =
  *   yield* AWS.EFS.DescribeLifecycleConfiguration(files);
  *
  * const { LifecyclePolicies } = yield* describeLifecycleConfiguration();
  * ```
+ *
+ * @binding
  */
 export interface DescribeLifecycleConfiguration extends Binding.Service<
   DescribeLifecycleConfiguration,

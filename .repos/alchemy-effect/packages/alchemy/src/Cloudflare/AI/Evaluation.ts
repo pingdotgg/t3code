@@ -99,11 +99,8 @@ export type Evaluation = Resource<
  * traffic captured by one or more datasets on a gateway. They are
  * create-only on Cloudflare's side: any prop change replaces the
  * evaluation with a fresh job.
- * @resource
- * @product AI Gateway
- * @category AI
- * @section Creating an Evaluation
- * @example Evaluate a dataset for speed and cost
+ * ### Creating an Evaluation
+ * **Example:** Evaluate a dataset for speed and cost
  * ```typescript
  * const gateway = yield* Cloudflare.AI.Gateway("Gateway");
  *
@@ -123,6 +120,10 @@ export type Evaluation = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/ai-gateway/evaluations/
+ *
+ * @resource
+ * @product AI Gateway
+ * @category AI
  */
 export const Evaluation = Resource<Evaluation>(TypeId, {
   aliases: ["Cloudflare.AiGateway.Evaluation"],
@@ -175,10 +176,16 @@ export const EvaluationProvider = () =>
       const gatewayId =
         output?.gatewayId ?? (olds?.gatewayId as string | undefined);
       if (gatewayId === undefined) return undefined;
-      const knownTypeIds =
-        output?.evaluationTypeIds ??
-        (olds?.evaluationTypeIds as string[] | undefined) ??
-        [];
+      const known = {
+        datasetIds:
+          output?.datasetIds ??
+          (olds?.datasetIds as string[] | undefined) ??
+          [],
+        evaluationTypeIds:
+          output?.evaluationTypeIds ??
+          (olds?.evaluationTypeIds as string[] | undefined) ??
+          [],
+      };
 
       if (output?.evaluationId) {
         const observed = yield* getEvaluation(
@@ -186,16 +193,14 @@ export const EvaluationProvider = () =>
           gatewayId,
           output.evaluationId,
         );
-        return observed
-          ? toAttributes(observed, acct, knownTypeIds)
-          : undefined;
+        return observed ? toAttributes(observed, acct, known) : undefined;
       }
       // Cold read — recover from lost state by matching the deterministic
       // physical name. Names are not unique on Cloudflare's side; an exact
       // match on our generated/explicit name is the best identity we have.
       const name = yield* createEvaluationName(id, olds?.name);
       const match = yield* findByName(acct, gatewayId, name);
-      return match ? toAttributes(match, acct, knownTypeIds) : undefined;
+      return match ? toAttributes(match, acct, known) : undefined;
     }),
     reconcile: Effect.fn(function* ({ id, news, output }) {
       const { accountId } = yield* yield* CloudflareEnvironment;
@@ -219,11 +224,10 @@ export const EvaluationProvider = () =>
       if (observed) {
         // Evaluations are immutable; diff routes every prop change to a
         // replacement, so an observed evaluation is already converged.
-        return toAttributes(
-          observed,
-          accountId,
-          output?.evaluationTypeIds ?? evaluationTypeIds,
-        );
+        return toAttributes(observed, accountId, {
+          datasetIds: output?.datasetIds ?? datasetIds,
+          evaluationTypeIds: output?.evaluationTypeIds ?? evaluationTypeIds,
+        });
       }
 
       // Ensure — greenfield (or out-of-band delete). Cloudflare enforces
@@ -249,7 +253,10 @@ export const EvaluationProvider = () =>
             ),
           ),
         );
-      return toAttributes(created, accountId, evaluationTypeIds);
+      return toAttributes(created, accountId, {
+        datasetIds,
+        evaluationTypeIds,
+      });
     }),
     delete: Effect.fn(function* ({ output }) {
       yield* aiGateway
@@ -291,7 +298,10 @@ export const EvaluationProvider = () =>
             Effect.map((chunk) =>
               Array.from(chunk).flatMap((page) =>
                 (page.result ?? []).map((evaluation) =>
-                  toAttributes(evaluation, accountId, []),
+                  toAttributes(evaluation, accountId, {
+                    datasetIds: [],
+                    evaluationTypeIds: [],
+                  }),
                 ),
               ),
             ),
@@ -344,19 +354,24 @@ const toAttributes = (
     | aiGateway.CreateEvaluationResponse
     | aiGateway.ListEvaluationsResponse["result"][number],
   accountId: string,
-  knownTypeIds: string[],
+  known: { datasetIds: string[]; evaluationTypeIds: string[] },
 ): EvaluationAttributes => ({
   evaluationId: evaluation.id,
   accountId,
   gatewayId: evaluation.gatewayId,
   name: evaluation.name,
-  datasetIds: evaluation.datasets.map((d) => d.id),
+  // The API does not always echo the datasets back (the create response
+  // returns none), so fall back to what we asked for.
+  datasetIds:
+    evaluation.datasets.length > 0
+      ? evaluation.datasets.map((d) => d.id)
+      : known.datasetIds,
   // The API only echoes evaluation type ids back once results exist, so
   // prefer the observed result types and fall back to what we asked for.
   evaluationTypeIds:
     evaluation.results.length > 0
       ? [...new Set(evaluation.results.map((r) => r.evaluationTypeId))]
-      : knownTypeIds,
+      : known.evaluationTypeIds,
   processed: evaluation.processed,
   totalLogs: evaluation.totalLogs,
   createdAt: evaluation.createdAt,

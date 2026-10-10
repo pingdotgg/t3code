@@ -11,9 +11,8 @@ import type { Deployment } from "./Deployment.ts";
  * applied it never will. The deployment id is injected from the binding —
  * the canonical emergency-stop for a bad rollout. Provide the implementation
  * with `Effect.provide(AWS.GreengrassV2.CancelDeploymentHttp)`.
- * @binding
- * @section Monitoring Deployments
- * @example Emergency-Stop A Rollout
+ * ### Monitoring Deployments
+ * **Example:** Emergency-Stop A Rollout
  * ```typescript
  * // init — bind the operation to the deployment
  * const cancelDeployment = yield* AWS.GreengrassV2.CancelDeployment(deployment);
@@ -21,6 +20,8 @@ import type { Deployment } from "./Deployment.ts";
  * // runtime
  * yield* cancelDeployment();
  * ```
+ *
+ * @binding
  */
 export interface CancelDeployment extends Binding.Service<
   CancelDeployment,

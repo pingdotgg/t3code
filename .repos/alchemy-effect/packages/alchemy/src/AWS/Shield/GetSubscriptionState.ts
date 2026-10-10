@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * can branch on Shield Advanced availability before calling gated operations.
  * Provide the implementation with
  * `Effect.provide(AWS.Shield.GetSubscriptionStateHttp)`.
- * @binding
- * @section Subscription Visibility
- * @example Check Shield Advanced Availability
+ * ### Subscription Visibility
+ * **Example:** Check Shield Advanced Availability
  * ```typescript
  * // init — account-level binding, no resource argument
  * const getSubscriptionState = yield* AWS.Shield.GetSubscriptionState();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *   // Shield Advanced operations are available
  * }
  * ```
+ *
+ * @binding
  */
 export interface GetSubscriptionState extends Binding.Service<
   GetSubscriptionState,

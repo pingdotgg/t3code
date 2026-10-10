@@ -68,193 +68,204 @@ const expectConfigGone = (accountId: string) =>
     }),
   );
 
-describe.sequential("MagicNetworkMonitoring", () => {
-  test.provider(
-    "creates, updates in place, and deletes the account config",
-    (stack) =>
-      Effect.gen(function* () {
-        const { accountId } = yield* yield* CloudflareEnvironment;
+describe.sequential(
+  "MagicNetworkMonitoring",
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:magicnetworkmonitoring",
+      "live",
+    ],
+  },
+  () => {
+    test.provider(
+      "creates, updates in place, and deletes the account config",
+      (stack) =>
+        Effect.gen(function* () {
+          const { accountId } = yield* yield* CloudflareEnvironment;
 
-        yield* stack.destroy();
-        // The config is an account singleton — normalize to "absent" so the
-        // run starts from a known baseline even after an interrupted run.
-        yield* mnm.deleteConfig({ accountId }).pipe(
-          Effect.catchTag("MnmConfigNotFound", () => Effect.void),
-          Effect.retry(forbiddenRetry),
-        );
+          yield* stack.destroy();
+          // The config is an account singleton — normalize to "absent" so the
+          // run starts from a known baseline even after an interrupted run.
+          yield* mnm.deleteConfig({ accountId }).pipe(
+            Effect.catchTag("MnmConfigNotFound", () => Effect.void),
+            Effect.retry(forbiddenRetry),
+          );
 
-        const config = yield* stack.deploy(
-          Cloudflare.MagicNetworkMonitoring.Config("Config", {
-            name: "alchemy-mnm-test",
-            defaultSampling: 1,
-          }),
-        );
-
-        expect(config.accountId).toEqual(accountId);
-        expect(config.name).toEqual("alchemy-mnm-test");
-        expect(config.defaultSampling).toEqual(1);
-        expect(config.routerIps).toEqual([]);
-
-        const live = yield* getConfig(accountId);
-        expect(live?.name).toEqual("alchemy-mnm-test");
-        expect(live?.defaultSampling).toEqual(1);
-
-        // Update the name label + sampling in place (same singleton).
-        // Registering `routerIps` requires the router-flow entitlement
-        // (Cloudflare rejects any non-empty value with code 1003,
-        // `InvalidMnmConfig`, on this account), so only the always-available
-        // fields are exercised here.
-        const updated = yield* stack.deploy(
-          Cloudflare.MagicNetworkMonitoring.Config("Config", {
-            name: "alchemy-mnm-test-v2",
-            defaultSampling: 100,
-          }),
-        );
-
-        expect(updated.accountId).toEqual(accountId);
-        expect(updated.name).toEqual("alchemy-mnm-test-v2");
-        expect(updated.defaultSampling).toEqual(100);
-
-        const liveUpdated = yield* getConfig(accountId);
-        expect(liveUpdated?.name).toEqual("alchemy-mnm-test-v2");
-        expect(liveUpdated?.defaultSampling).toEqual(100);
-
-        // Redeploying identical props is a no-op.
-        const noop = yield* stack.deploy(
-          Cloudflare.MagicNetworkMonitoring.Config("Config", {
-            name: "alchemy-mnm-test-v2",
-            defaultSampling: 100,
-          }),
-        );
-        expect(noop.name).toEqual("alchemy-mnm-test-v2");
-
-        yield* stack.destroy();
-        yield* expectConfigGone(accountId);
-
-        // Destroy is idempotent — a second destroy of an already-deleted
-        // config must not fail.
-        yield* stack.destroy();
-      }).pipe(logLevel),
-  );
-
-  test.provider(
-    "creates a threshold rule, updates it in place, and replaces on type change",
-    (stack) =>
-      Effect.gen(function* () {
-        const { accountId } = yield* yield* CloudflareEnvironment;
-
-        yield* stack.destroy();
-        // The config is an account singleton with no ownership markers — a
-        // leftover from an interrupted run would surface as `Unowned` and
-        // block this stack's create, so normalize to "absent" first.
-        yield* mnm.deleteConfig({ accountId }).pipe(
-          Effect.catchTag("MnmConfigNotFound", () => Effect.void),
-          Effect.retry(forbiddenRetry),
-        );
-
-        const deployRule = (props: {
-          name: string;
-          type: "threshold" | "zscore";
-          prefixes: string[];
-          bandwidthThreshold?: number;
-          duration?: "1m" | "5m";
-          zscoreSensitivity?: "low" | "medium" | "high";
-          zscoreTarget?: "bits" | "packets";
-        }) =>
-          stack.deploy(
-            Effect.gen(function* () {
-              const config = yield* Cloudflare.MagicNetworkMonitoring.Config(
-                "Config",
-                {
-                  name: "alchemy-mnm-rule-test",
-                  defaultSampling: 1,
-                },
-              );
-              // Rules cannot exist without the account config — sequence the
-              // rule after the config via its accountId output.
-              const rule = yield* Cloudflare.MagicNetworkMonitoring.Rule(
-                "Rule",
-                {
-                  accountId: config.accountId,
-                  ...props,
-                },
-              );
-              return { config, rule };
+          const config = yield* stack.deploy(
+            Cloudflare.MagicNetworkMonitoring.Config("Config", {
+              name: "alchemy-mnm-test",
+              defaultSampling: 1,
             }),
           );
 
-        const { rule } = yield* deployRule({
-          name: "alchemy-mnm-rule",
-          type: "threshold",
-          prefixes: ["10.0.0.0/24"],
-          bandwidthThreshold: 1_000_000,
-          duration: "1m",
-        });
+          expect(config.accountId).toEqual(accountId);
+          expect(config.name).toEqual("alchemy-mnm-test");
+          expect(config.defaultSampling).toEqual(1);
+          expect(config.routerIps).toEqual([]);
 
-        expect(rule.ruleId).toBeDefined();
-        expect(rule.accountId).toEqual(accountId);
-        expect(rule.name).toEqual("alchemy-mnm-rule");
-        expect(rule.type).toEqual("threshold");
-        expect(rule.prefixes).toEqual(["10.0.0.0/24"]);
-        expect(rule.bandwidthThreshold).toEqual(1_000_000);
+          const live = yield* getConfig(accountId);
+          expect(live?.name).toEqual("alchemy-mnm-test");
+          expect(live?.defaultSampling).toEqual(1);
 
-        const live = yield* getRule(accountId, rule.ruleId);
-        expect(live.name).toEqual("alchemy-mnm-rule");
-        expect(live.type).toEqual("threshold");
-        expect(live.prefixes).toEqual(["10.0.0.0/24"]);
+          // Update the name label + sampling in place (same singleton).
+          // Registering `routerIps` requires the router-flow entitlement
+          // (Cloudflare rejects any non-empty value with code 1003,
+          // `InvalidMnmConfig`, on this account), so only the always-available
+          // fields are exercised here.
+          const updated = yield* stack.deploy(
+            Cloudflare.MagicNetworkMonitoring.Config("Config", {
+              name: "alchemy-mnm-test-v2",
+              defaultSampling: 100,
+            }),
+          );
 
-        // Update mutable props in place — same rule id.
-        const { rule: updated } = yield* deployRule({
-          name: "alchemy-mnm-rule-v2",
-          type: "threshold",
-          prefixes: ["10.0.0.0/24", "10.0.1.0/24"],
-          bandwidthThreshold: 2_000_000,
-          duration: "5m",
-        });
+          expect(updated.accountId).toEqual(accountId);
+          expect(updated.name).toEqual("alchemy-mnm-test-v2");
+          expect(updated.defaultSampling).toEqual(100);
 
-        expect(updated.ruleId).toEqual(rule.ruleId);
-        expect(updated.name).toEqual("alchemy-mnm-rule-v2");
-        expect([...updated.prefixes].sort()).toEqual([
-          "10.0.0.0/24",
-          "10.0.1.0/24",
-        ]);
-        expect(updated.bandwidthThreshold).toEqual(2_000_000);
+          const liveUpdated = yield* getConfig(accountId);
+          expect(liveUpdated?.name).toEqual("alchemy-mnm-test-v2");
+          expect(liveUpdated?.defaultSampling).toEqual(100);
 
-        const liveUpdated = yield* getRule(accountId, rule.ruleId);
-        expect(liveUpdated.name).toEqual("alchemy-mnm-rule-v2");
-        expect([...liveUpdated.prefixes].sort()).toEqual([
-          "10.0.0.0/24",
-          "10.0.1.0/24",
-        ]);
+          // Redeploying identical props is a no-op.
+          const noop = yield* stack.deploy(
+            Cloudflare.MagicNetworkMonitoring.Config("Config", {
+              name: "alchemy-mnm-test-v2",
+              defaultSampling: 100,
+            }),
+          );
+          expect(noop.name).toEqual("alchemy-mnm-test-v2");
 
-        // `type` is immutable — switching threshold → zscore replaces the
-        // rule (new rule id). The name changes too: rule names are unique
-        // per account and the replacement creates the new rule before
-        // deleting the old one.
-        const { rule: replaced } = yield* deployRule({
-          name: "alchemy-mnm-rule-zscore",
-          type: "zscore",
-          prefixes: ["10.0.0.0/24"],
-          zscoreSensitivity: "medium",
-          zscoreTarget: "bits",
-        });
+          yield* stack.destroy();
+          yield* expectConfigGone(accountId);
 
-        expect(replaced.ruleId).not.toEqual(rule.ruleId);
-        expect(replaced.type).toEqual("zscore");
-        expect(replaced.zscoreSensitivity).toEqual("medium");
-        expect(replaced.zscoreTarget).toEqual("bits");
+          // Destroy is idempotent — a second destroy of an already-deleted
+          // config must not fail.
+          yield* stack.destroy();
+        }).pipe(logLevel),
+      { exclusive: true },
+    );
 
-        // The old rule was deleted as part of the replacement.
-        yield* expectRuleGone(accountId, rule.ruleId);
+    test.provider(
+      "creates a threshold rule, updates it in place, and replaces on type change",
+      (stack) =>
+        Effect.gen(function* () {
+          const { accountId } = yield* yield* CloudflareEnvironment;
 
-        const liveReplaced = yield* getRule(accountId, replaced.ruleId);
-        expect(liveReplaced.type).toEqual("zscore");
+          yield* stack.destroy();
+          // The config is an account singleton with no ownership markers — a
+          // leftover from an interrupted run would surface as `Unowned` and
+          // block this stack's create, so normalize to "absent" first.
+          yield* mnm.deleteConfig({ accountId }).pipe(
+            Effect.catchTag("MnmConfigNotFound", () => Effect.void),
+            Effect.retry(forbiddenRetry),
+          );
 
-        yield* stack.destroy();
+          const deployRule = (props: {
+            name: string;
+            type: "threshold" | "zscore";
+            prefixes: string[];
+            bandwidthThreshold?: number;
+            duration?: "1m" | "5m";
+            zscoreSensitivity?: "low" | "medium" | "high";
+            zscoreTarget?: "bits" | "packets";
+          }) =>
+            stack.deploy(
+              Effect.gen(function* () {
+                const config = yield* Cloudflare.MagicNetworkMonitoring.Config(
+                  "Config",
+                  {
+                    name: "alchemy-mnm-rule-test",
+                    defaultSampling: 1,
+                  },
+                );
+                // Rules cannot exist without the account config — sequence the
+                // rule after the config via its accountId output.
+                const rule = yield* Cloudflare.MagicNetworkMonitoring.Rule(
+                  "Rule",
+                  {
+                    accountId: config.accountId,
+                    ...props,
+                  },
+                );
+                return { config, rule };
+              }),
+            );
 
-        yield* expectRuleGone(accountId, replaced.ruleId);
-        yield* expectConfigGone(accountId);
-      }).pipe(logLevel),
-    { timeout: 120_000 },
-  );
-});
+          const { rule } = yield* deployRule({
+            name: "alchemy-mnm-rule",
+            type: "threshold",
+            prefixes: ["10.0.0.0/24"],
+            bandwidthThreshold: 1_000_000,
+            duration: "1m",
+          });
+
+          expect(rule.ruleId).toBeDefined();
+          expect(rule.accountId).toEqual(accountId);
+          expect(rule.name).toEqual("alchemy-mnm-rule");
+          expect(rule.type).toEqual("threshold");
+          expect(rule.prefixes).toEqual(["10.0.0.0/24"]);
+          expect(rule.bandwidthThreshold).toEqual(1_000_000);
+
+          const live = yield* getRule(accountId, rule.ruleId);
+          expect(live.name).toEqual("alchemy-mnm-rule");
+          expect(live.type).toEqual("threshold");
+          expect(live.prefixes).toEqual(["10.0.0.0/24"]);
+
+          // Update mutable props in place — same rule id.
+          const { rule: updated } = yield* deployRule({
+            name: "alchemy-mnm-rule-v2",
+            type: "threshold",
+            prefixes: ["10.0.0.0/24", "10.0.1.0/24"],
+            bandwidthThreshold: 2_000_000,
+            duration: "5m",
+          });
+
+          expect(updated.ruleId).toEqual(rule.ruleId);
+          expect(updated.name).toEqual("alchemy-mnm-rule-v2");
+          expect([...updated.prefixes].sort()).toEqual([
+            "10.0.0.0/24",
+            "10.0.1.0/24",
+          ]);
+          expect(updated.bandwidthThreshold).toEqual(2_000_000);
+
+          const liveUpdated = yield* getRule(accountId, rule.ruleId);
+          expect(liveUpdated.name).toEqual("alchemy-mnm-rule-v2");
+          expect([...liveUpdated.prefixes].sort()).toEqual([
+            "10.0.0.0/24",
+            "10.0.1.0/24",
+          ]);
+
+          // `type` is immutable — switching threshold → zscore replaces the
+          // rule (new rule id). The name changes too: rule names are unique
+          // per account and the replacement creates the new rule before
+          // deleting the old one.
+          const { rule: replaced } = yield* deployRule({
+            name: "alchemy-mnm-rule-zscore",
+            type: "zscore",
+            prefixes: ["10.0.0.0/24"],
+            zscoreSensitivity: "medium",
+            zscoreTarget: "bits",
+          });
+
+          expect(replaced.ruleId).not.toEqual(rule.ruleId);
+          expect(replaced.type).toEqual("zscore");
+          expect(replaced.zscoreSensitivity).toEqual("medium");
+          expect(replaced.zscoreTarget).toEqual("bits");
+
+          // The old rule was deleted as part of the replacement.
+          yield* expectRuleGone(accountId, rule.ruleId);
+
+          const liveReplaced = yield* getRule(accountId, replaced.ruleId);
+          expect(liveReplaced.type).toEqual("zscore");
+
+          yield* stack.destroy();
+
+          yield* expectRuleGone(accountId, replaced.ruleId);
+          yield* expectConfigGone(accountId);
+        }).pipe(logLevel),
+      { timeout: 120_000, exclusive: true },
+    );
+  },
+);

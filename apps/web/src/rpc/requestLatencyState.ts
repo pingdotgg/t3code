@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { WS_METHODS } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "./atomRegistry";
 
@@ -28,7 +28,7 @@ interface PendingRpcAckRequest {
 }
 
 const pendingRpcAckRequests = new Map<string, PendingRpcAckRequest>();
-const untrackedRpcAckMethods = new Set<string>([WS_METHODS.previewAutomationConnect]);
+const untrackedRpcAckMethods = new Set<string>([WS_METHODS.serverGetUsageSummary]);
 const longRunningRpcAckMethods = new Set<string>([
   WS_METHODS.serverUpdateProvider,
   WS_METHODS.serverRefreshProviders,
@@ -109,7 +109,7 @@ export function acknowledgeRpcRequest(requestId: string): void {
   setSlowRpcAckRequests(slowRequests.filter((request) => request.requestId !== requestId));
 }
 
-export function clearAllTrackedRpcRequests(): void {
+function clearAllTrackedRpcRequests(): void {
   for (const pending of pendingRpcAckRequests.values()) {
     clearTimeout(pending.timeoutId);
   }
@@ -151,10 +151,6 @@ function evictOldestPendingRpcRequestIfNeeded(): void {
 export function resetRequestLatencyStateForTests(): void {
   slowRpcAckThresholdMs = SLOW_RPC_ACK_THRESHOLD_MS;
   clearAllTrackedRpcRequests();
-}
-
-export function setSlowRpcAckThresholdMsForTests(thresholdMs: number): void {
-  slowRpcAckThresholdMs = thresholdMs;
 }
 
 export function useSlowRpcAckRequests(): ReadonlyArray<SlowRpcAckRequest> {

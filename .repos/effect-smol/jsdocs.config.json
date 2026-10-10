@@ -6,8 +6,10 @@
   ],
   "exclude": [
     "**/node_modules/**",
+    "packages/**/ai-docs/**",
     "packages/tools/**",
     "packages/**/src/index.ts",
+    "packages/effect/src/StandardSchema.ts",
     "packages/**/src/*Generated.ts",
     "packages/**/src/internal/**",
     "packages/**/src/**/internal/**"

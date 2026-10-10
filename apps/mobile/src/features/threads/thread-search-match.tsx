@@ -1,61 +1,27 @@
+import { splitThreadSearchText } from "@t3tools/shared/threadSearch";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
-
-function foldAsciiCase(value: string): string {
-  return value.replace(/[A-Z]/g, (character) => character.toLowerCase());
-}
-
-function splitHighlightParts(text: string, query: string) {
-  const normalizedText = foldAsciiCase(text);
-  const normalizedQuery = foldAsciiCase(query.trim());
-  if (normalizedQuery.length === 0) {
-    return [{ text, highlighted: false, start: 0 }];
-  }
-
-  const parts: Array<{
-    readonly text: string;
-    readonly highlighted: boolean;
-    readonly start: number;
-  }> = [];
-  let cursor = 0;
-  while (cursor < text.length) {
-    const matchIndex = normalizedText.indexOf(normalizedQuery, cursor);
-    if (matchIndex === -1) {
-      parts.push({ text: text.slice(cursor), highlighted: false, start: cursor });
-      break;
-    }
-    if (matchIndex > cursor) {
-      parts.push({
-        text: text.slice(cursor, matchIndex),
-        highlighted: false,
-        start: cursor,
-      });
-    }
-    parts.push({
-      text: text.slice(matchIndex, matchIndex + normalizedQuery.length),
-      highlighted: true,
-      start: matchIndex,
-    });
-    cursor = matchIndex + normalizedQuery.length;
-  }
-  return parts;
-}
 
 export function ThreadSearchMatchExcerpt(props: {
   readonly match: EnvironmentThreadSearchMatch;
   readonly query: string;
   readonly selected?: boolean;
   readonly compact?: boolean;
+  readonly sidebar?: boolean;
 }) {
   const isUser = props.match.source === "user";
-  const parts = splitHighlightParts(props.match.snippet, props.query);
+  const parts = splitThreadSearchText(props.match.snippet, props.query);
   return (
     <Text
       className={cn(
         props.compact ? "text-sm" : "text-xs",
-        props.selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
+        props.selected
+          ? "text-thread-selected-foreground-muted"
+          : props.sidebar
+            ? "text-drawer-foreground-muted"
+            : "text-foreground-muted",
       )}
       numberOfLines={1}
     >
@@ -63,10 +29,12 @@ export function ThreadSearchMatchExcerpt(props: {
         className={cn(
           props.compact ? "text-sm font-t3-medium" : "text-xs font-t3-medium",
           props.selected
-            ? "text-user-bubble-foreground"
+            ? "text-thread-selected-foreground"
             : isUser
-              ? "text-blue-500 dark:text-blue-400"
-              : "text-emerald-600 dark:text-emerald-400",
+              ? props.sidebar
+                ? "text-drawer-foreground-muted"
+                : "text-foreground-secondary"
+              : "text-adaptive-emerald-600-400",
         )}
       >
         {isUser ? "You:" : "Agent:"}{" "}
@@ -77,10 +45,14 @@ export function ThreadSearchMatchExcerpt(props: {
             props.compact ? "text-sm" : "text-xs",
             part.highlighted && "font-t3-bold",
             props.selected
-              ? "text-user-bubble-foreground"
+              ? "text-thread-selected-foreground"
               : part.highlighted
-                ? "text-foreground"
-                : "text-foreground-muted",
+                ? props.sidebar
+                  ? "text-drawer-foreground"
+                  : "text-foreground"
+                : props.sidebar
+                  ? "text-drawer-foreground-muted"
+                  : "text-foreground-muted",
           )}
           key={part.start}
         >

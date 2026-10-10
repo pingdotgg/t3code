@@ -4,8 +4,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "handler.ts");
@@ -66,7 +66,7 @@ export class SNSApiFunction extends AWS.Lambda.Function<AWS.Lambda.Function>()(
 export const SNSApiFunctionLive = SNSApiFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // The sink's bounded partial-failure retry can sleep up to ~6s, which
     // exceeds Lambda's 3s default timeout (see PATTERNS §7).
     timeout: Duration.seconds(30),

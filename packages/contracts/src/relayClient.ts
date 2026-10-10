@@ -54,7 +54,7 @@ export const RelayClientInstallFailureReasonSchema = Schema.Literals([
 ]);
 export type RelayClientInstallFailureReason = typeof RelayClientInstallFailureReasonSchema.Type;
 
-export class RelayClientInstallFailedError extends Schema.TaggedErrorClass<RelayClientInstallFailedError>()(
+export class RelayClientInstallFailedError extends Schema.TaggedError<RelayClientInstallFailedError>()(
   "RelayClientInstallFailedError",
   {
     reason: RelayClientInstallFailureReasonSchema,

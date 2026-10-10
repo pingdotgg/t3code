@@ -77,9 +77,8 @@ export interface Dataset extends Resource<
  * is a cheap metadata operation; bulk imports and training happen through
  * separate import jobs and solutions.
  *
- * @resource
- * @section Creating a Dataset
- * @example Interactions Dataset
+ * ### Creating a Dataset
+ * **Example:** Interactions Dataset
  * ```typescript
  * const dataset = yield* Personalize.Dataset("Interactions", {
  *   schemaArn: schema.schemaArn,
@@ -87,6 +86,8 @@ export interface Dataset extends Resource<
  *   datasetType: "Interactions",
  * });
  * ```
+ *
+ * @resource
  */
 export const Dataset = Resource<Dataset>("AWS.Personalize.Dataset");
 

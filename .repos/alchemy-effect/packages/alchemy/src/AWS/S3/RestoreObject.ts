@@ -17,9 +17,8 @@ export interface RestoreObjectRequest extends Omit<
  * injected automatically and `s3:RestoreObject` is granted on the bucket's
  * objects. Provide the implementation with
  * `Effect.provide(AWS.S3.RestoreObjectHttp)`.
- * @binding
- * @section Archived Objects
- * @example Restore an Archived Object for 3 Days
+ * ### Archived Objects
+ * **Example:** Restore an Archived Object for 3 Days
  * ```typescript
  * const restoreObject = yield* AWS.S3.RestoreObject(bucket);
  *
@@ -31,6 +30,8 @@ export interface RestoreObjectRequest extends Omit<
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface RestoreObject extends Binding.Service<
   RestoreObject,

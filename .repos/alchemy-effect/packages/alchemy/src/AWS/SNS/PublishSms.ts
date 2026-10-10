@@ -14,9 +14,8 @@ export interface PublishSmsRequest extends Omit<
  * message straight to a phone number without a topic. Accounts start in the
  * SMS sandbox, where only verified destination numbers are deliverable.
  * Provide the `PublishSmsHttp` layer on the Function to implement the binding.
- * @binding
- * @section Sending SMS
- * @example Send a Text Message
+ * ### Sending SMS
+ * **Example:** Send a Text Message
  * ```typescript
  * const publishSms = yield* SNS.PublishSms();
  * yield* publishSms({
@@ -24,6 +23,8 @@ export interface PublishSmsRequest extends Omit<
  *   Message: "Your code is 123456",
  * });
  * ```
+ *
+ * @binding
  */
 export interface PublishSms extends Binding.Service<
   PublishSms,

@@ -12,9 +12,8 @@ import * as Binding from "../../Binding.ts";
  * `ResourceNotFoundException`.
  * Provide the implementation with
  * `Effect.provide(AWS.Shield.DescribeDRTAccessHttp)`.
- * @binding
- * @section Shield Response Team Access
- * @example Audit SRT Access
+ * ### Shield Response Team Access
+ * **Example:** Audit SRT Access
  * ```typescript
  * // init — account-level binding, no resource argument
  * const describeDRTAccess = yield* AWS.Shield.DescribeDRTAccess();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { RoleArn, LogBucketList } = yield* describeDRTAccess();
  * ```
+ *
+ * @binding
  */
 export interface DescribeDRTAccess extends Binding.Service<
   DescribeDRTAccess,

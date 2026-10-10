@@ -12,13 +12,14 @@ import type { Service } from "./Service.ts";
  * Provide `AppRunner.StartDeploymentHttp` on the hosting function's Effect
  * to implement the binding.
  *
- * @binding
- * @section Deploying at Runtime
- * @example Trigger a deployment and return its operation id
+ * ### Deploying at Runtime
+ * **Example:** Trigger a deployment and return its operation id
  * ```typescript
  * const startDeployment = yield* AppRunner.StartDeployment(service);
  * const { OperationId } = yield* startDeployment();
  * ```
+ *
+ * @binding
  */
 export interface StartDeployment extends Binding.Service<
   StartDeployment,

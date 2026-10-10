@@ -80,9 +80,8 @@ export interface DataCatalog extends Resource<
  * federated Lambda connector, an external Hive metastore, or a cross-account
  * Glue Data Catalog) that Athena queries can reference as a `catalog`.
  *
- * @resource
- * @section Registering Catalogs
- * @example A federated Lambda-backed catalog
+ * ### Registering Catalogs
+ * **Example:** A federated Lambda-backed catalog
  * ```typescript
  * const catalog = yield* AWS.Athena.DataCatalog("Cmdb", {
  *   name: "cmdb_connector",
@@ -93,6 +92,8 @@ export interface DataCatalog extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const DataCatalog = Resource<DataCatalog>("AWS.Athena.DataCatalog");
 

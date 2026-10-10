@@ -15,9 +15,8 @@ export interface ListTablesRequest extends bcm.ListTablesRequest {}
  * with each table's configurable properties. Useful for query builders that
  * present the available data sources. Provide the implementation with
  * `Effect.provide(AWS.BCMDataExports.ListTablesHttp)`.
- * @binding
- * @section Browsing the Table Dictionary
- * @example List the Available Tables
+ * ### Browsing the Table Dictionary
+ * **Example:** List the Available Tables
  * ```typescript
  * // init — account-level binding takes no resource
  * const listTables = yield* AWS.BCMDataExports.ListTables();
@@ -26,6 +25,8 @@ export interface ListTablesRequest extends bcm.ListTablesRequest {}
  * const result = yield* listTables();
  * const names = (result.Tables ?? []).map((table) => table.TableName);
  * ```
+ *
+ * @binding
  */
 export interface ListTables extends Binding.Service<
   ListTables,

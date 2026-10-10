@@ -8,15 +8,16 @@ import * as Binding from "../../Binding.ts";
  *
  * Lists the names and engine types of all domains the account owns in the active Region — the entry point for fleet-wide monitoring. Provide the implementation with
  * `Effect.provide(AWS.OpenSearch.ListDomainNamesHttp)`.
- * @binding
- * @section Monitoring Domains
- * @example List the Account's Domains
+ * ### Monitoring Domains
+ * **Example:** List the Account's Domains
  * ```typescript
  * const listDomainNames = yield* OpenSearch.ListDomainNames();
  *
  * const result = yield* listDomainNames();
  * // result.DomainNames → [{ DomainName, EngineType }, …]
  * ```
+ *
+ * @binding
  */
 export interface ListDomainNames extends Binding.Service<
   ListDomainNames,

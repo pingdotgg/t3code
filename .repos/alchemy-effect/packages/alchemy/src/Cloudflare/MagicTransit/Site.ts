@@ -94,11 +94,8 @@ export type MagicSite = Resource<
  *
  * `haMode` is create-only — changing it triggers a replacement. Everything
  * else is updated in place.
- * @resource
- * @product Magic Transit
- * @category Network
- * @section Creating a site
- * @example Basic site
+ * ### Creating a site
+ * **Example:** Basic site
  * ```typescript
  * const site = yield* Cloudflare.MagicTransit.MagicSite("hq", {
  *   description: "Headquarters",
@@ -106,7 +103,7 @@ export type MagicSite = Resource<
  * });
  * ```
  *
- * @example Site with LAN and WAN
+ * **Example:** Site with LAN and WAN
  * ```typescript
  * const site = yield* Cloudflare.MagicTransit.MagicSite("hq", {});
  *
@@ -123,6 +120,10 @@ export type MagicSite = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/magic-wan/configuration/connector/
+ *
+ * @resource
+ * @product Magic Transit
+ * @category Network
  */
 export const MagicSite = Resource<MagicSite>(TypeId);
 

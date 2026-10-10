@@ -2,8 +2,8 @@ import * as CloudHSMV2 from "@/AWS/CloudHSMV2";
 import * as Lambda from "@/AWS/Lambda";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "handler.ts");
@@ -26,7 +26,7 @@ export class CloudHSMV2TestFunction extends Lambda.Function<Lambda.Function>()(
 export default CloudHSMV2TestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     const describeClusters = yield* CloudHSMV2.DescribeClusters();

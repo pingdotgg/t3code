@@ -57,24 +57,21 @@ export type App = Resource<TypeId, AppProps, AppAttributes, never, Providers>;
  * apps that map to your projects or services; the app's `appId` is what a
  * Worker's `Flagship` binding points at and what every evaluation call is
  * scoped to. The name is mutable in place; the app id never changes.
- * @resource
- * @product Flagship
- * @category Developer Platform
- * @section Creating an App
- * @example App with a generated name
+ * ### Creating an App
+ * **Example:** App with a generated name
  * ```typescript
  * const app = yield* Cloudflare.Flagship.App("Flags", {});
  * ```
  *
- * @example App with an explicit name
+ * **Example:** App with an explicit name
  * ```typescript
  * const app = yield* Cloudflare.Flagship.App("Flags", {
  *   name: "my-service-flags",
  * });
  * ```
  *
- * @section Using the App
- * @example Define flags in the app
+ * ### Using the App
+ * **Example:** Define flags in the app
  * ```typescript
  * const app = yield* Cloudflare.Flagship.App("Flags", {});
  *
@@ -86,8 +83,8 @@ export type App = Resource<TypeId, AppProps, AppAttributes, never, Providers>;
  * });
  * ```
  *
- * @section Binding to a Worker
- * @example Effect-style Worker (recommended)
+ * ### Binding to a Worker
+ * **Example:** Effect-style Worker (recommended)
  * `Cloudflare.Flagship.ReadFlags(app)` attaches the binding to the surrounding
  * Worker and returns the runtime client for evaluating flags. Every `Flagship`
  * method is mirrored as an Effect, so no `Effect.tryPromise` wrapping is needed.
@@ -111,7 +108,7 @@ export type App = Resource<TypeId, AppProps, AppAttributes, never, Providers>;
  * );
  * ```
  *
- * @example Declare the binding on `env`
+ * **Example:** Declare the binding on `env`
  * Declaring the app on a Worker's `env` maps it to the native `Flagship`
  * runtime binding via `InferEnv`.
  * ```typescript
@@ -126,7 +123,7 @@ export type App = Resource<TypeId, AppProps, AppAttributes, never, Providers>;
  * //   { FLAGS: Flagship }
  * ```
  *
- * @example Async-style worker with the raw runtime binding
+ * **Example:** Async-style worker with the raw runtime binding
  * ```typescript
  * import type { WorkerEnv } from "../alchemy.run.ts";
  *
@@ -142,6 +139,10 @@ export type App = Resource<TypeId, AppProps, AppAttributes, never, Providers>;
  *
  * @see https://developers.cloudflare.com/flagship/
  * @see https://developers.cloudflare.com/api/resources/flagship/
+ *
+ * @resource
+ * @product Flagship
+ * @category Developer Platform
  */
 export const App = Resource<App>(TypeId);
 
@@ -211,18 +212,30 @@ export const AppProvider = () =>
         .pipe(Effect.catchTag("FlagshipAppNotFound", () => Effect.void));
     }),
     // Account-scoped collection (pattern b): enumerate every app in the
-    // ambient account via the paginated listApps op. The list item shape
-    // matches GetAppResponse, so each maps directly into Attributes.
+    // ambient account via the paginated listApps op. Cloudflare's list
+    // index can contain ghost rows — apps that were deleted but survive in
+    // the listing while GET/DELETE both return "App not found" — so each
+    // row is validated via getApp and ghosts are dropped (otherwise census
+    // tooling re-discovers an undeletable app forever).
     list: Effect.fn(function* () {
       const { accountId } = yield* yield* CloudflareEnvironment;
-      return yield* flagship.listApps.pages({ accountId }).pipe(
+      const listed = yield* flagship.listApps.pages({ accountId }).pipe(
         Stream.runCollect,
         Effect.map((chunk) =>
-          Array.from(chunk).flatMap((page) =>
-            (page.result ?? []).map((app) => toAttributes(app, accountId)),
-          ),
+          Array.from(chunk).flatMap((page) => page.result ?? []),
         ),
       );
+      const rows = yield* Effect.forEach(
+        listed,
+        (app) =>
+          getApp(accountId, app.id).pipe(
+            Effect.map((observed) =>
+              observed ? toAttributes(observed, accountId) : undefined,
+            ),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.filter((row): row is AppAttributes => row !== undefined);
     }),
   });
 

@@ -9,16 +9,6 @@ export interface TerminalLinkMatch {
   end: number;
 }
 
-export interface TerminalLinkBufferPosition {
-  x: number;
-  y: number;
-}
-
-export interface TerminalLinkBufferRange {
-  start: TerminalLinkBufferPosition;
-  end: TerminalLinkBufferPosition;
-}
-
 export interface TerminalBufferLineLike {
   readonly isWrapped?: boolean;
   translateToString(trimRight?: boolean): string;
@@ -40,9 +30,14 @@ const URL_PATTERN = /https?:\/\/[^\s"'`<>]+/giu;
 const FILE_PATH_PATTERN =
   /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
 const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
+// Paths also drop a trailing colon: compilers end `file:line:col:` with one.
+const TRAILING_PATH_PUNCTUATION_PATTERN = /[.,;:!?]+$/;
 
-function trimClosingDelimiters(value: string): string {
-  let output = value.replace(TRAILING_PUNCTUATION_PATTERN, "");
+function trimClosingDelimiters(value: string, kind: TerminalLinkKind): string {
+  let output = value.replace(
+    kind === "path" ? TRAILING_PATH_PUNCTUATION_PATTERN : TRAILING_PUNCTUATION_PATTERN,
+    "",
+  );
   if (output.length === 0) return output;
 
   const trimUnbalanced = (open: string, close: string) => {
@@ -78,7 +73,7 @@ function collectMatches(
     const start = rawMatch.index ?? -1;
     if (start < 0 || raw.length === 0) continue;
 
-    const trimmed = trimClosingDelimiters(raw);
+    const trimmed = trimClosingDelimiters(raw, kind);
     if (trimmed.length === 0) continue;
     if (kind === "path" && isTerminalUrl(trimmed)) continue;
 
@@ -96,74 +91,6 @@ function collectMatches(
   }
 
   return matches;
-}
-
-function isWindowsAbsolutePath(value: string): boolean {
-  return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
-}
-
-function isAbsolutePath(value: string): boolean {
-  return value.startsWith("/") || isWindowsAbsolutePath(value);
-}
-
-function isWindowsPathStyle(value: string): boolean {
-  return isWindowsAbsolutePath(value) || /[A-Za-z]:\\/.test(value);
-}
-
-function joinPath(base: string, next: string, separator: "/" | "\\"): string {
-  const cleanBase = base.replace(/[\\/]+$/, "");
-  if (separator === "\\") {
-    return `${cleanBase}\\${next.replaceAll("/", "\\")}`;
-  }
-  return `${cleanBase}/${next.replace(/^\/+/, "")}`;
-}
-
-function inferHomeFromCwd(cwd: string): string | undefined {
-  const posixUser = cwd.match(/^\/Users\/([^/]+)/);
-  if (posixUser?.[1]) {
-    return `/Users/${posixUser[1]}`;
-  }
-
-  const posixHome = cwd.match(/^\/home\/([^/]+)/);
-  if (posixHome?.[1]) {
-    return `/home/${posixHome[1]}`;
-  }
-
-  const windowsUser = cwd.match(/^([A-Za-z]:\\Users\\[^\\]+)/);
-  if (windowsUser?.[1]) {
-    return windowsUser[1];
-  }
-
-  return undefined;
-}
-
-export function splitPathAndPosition(value: string): {
-  path: string;
-  line: string | undefined;
-  column: string | undefined;
-} {
-  let path = value;
-  let column: string | undefined;
-  let line: string | undefined;
-
-  const columnMatch = path.match(/:(\d+)$/);
-  if (!columnMatch?.[1]) {
-    return { path, line: undefined, column: undefined };
-  }
-
-  column = columnMatch[1];
-  path = path.slice(0, -columnMatch[0].length);
-
-  const lineMatch = path.match(/:(\d+)$/);
-  if (lineMatch?.[1]) {
-    line = lineMatch[1];
-    path = path.slice(0, -lineMatch[0].length);
-  } else {
-    line = column;
-    column = undefined;
-  }
-
-  return { path, line, column };
 }
 
 export function extractTerminalLinks(line: string): TerminalLinkMatch[] {
@@ -223,43 +150,6 @@ export function collectWrappedTerminalLinkLine(
   };
 }
 
-function resolveCharacterPosition(
-  segments: ReadonlyArray<WrappedTerminalLinkLineSegment>,
-  characterIndex: number,
-): TerminalLinkBufferPosition {
-  for (const segment of segments) {
-    if (characterIndex < segment.endIndex) {
-      return {
-        x: characterIndex - segment.startIndex + 1,
-        y: segment.bufferLineNumber,
-      };
-    }
-  }
-
-  const lastSegment = segments[segments.length - 1];
-  return {
-    x: Math.max(lastSegment?.text.length ?? 0, 1),
-    y: lastSegment?.bufferLineNumber ?? 1,
-  };
-}
-
-export function resolveWrappedTerminalLinkRange(
-  wrappedLine: WrappedTerminalLinkLine,
-  match: Pick<TerminalLinkMatch, "start" | "end">,
-): TerminalLinkBufferRange {
-  return {
-    start: resolveCharacterPosition(wrappedLine.segments, match.start),
-    end: resolveCharacterPosition(wrappedLine.segments, match.end - 1),
-  };
-}
-
-export function wrappedTerminalLinkRangeIntersectsBufferLine(
-  range: TerminalLinkBufferRange,
-  bufferLineNumber: number,
-): boolean {
-  return range.start.y <= bufferLineNumber && bufferLineNumber <= range.end.y;
-}
-
 export function isTerminalLinkActivation(
   event: Pick<MouseEvent, "metaKey" | "ctrlKey">,
   platform = typeof navigator === "undefined" ? "" : navigator.platform,
@@ -268,23 +158,4 @@ export function isTerminalLinkActivation(
   return isMacPlatform(platform)
     ? event.metaKey && !event.ctrlKey
     : event.ctrlKey && !event.metaKey;
-}
-
-export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
-  const { path, line, column } = splitPathAndPosition(rawPath);
-
-  let resolvedPath = path;
-  if (path.startsWith("~/")) {
-    const home = inferHomeFromCwd(cwd);
-    if (home) {
-      const separator: "/" | "\\" = isWindowsPathStyle(home) ? "\\" : "/";
-      resolvedPath = joinPath(home, path.slice(2), separator);
-    }
-  } else if (!isAbsolutePath(path)) {
-    const separator: "/" | "\\" = isWindowsPathStyle(cwd) ? "\\" : "/";
-    resolvedPath = joinPath(cwd, path, separator);
-  }
-
-  if (!line) return resolvedPath;
-  return `${resolvedPath}:${line}${column ? `:${column}` : ""}`;
 }

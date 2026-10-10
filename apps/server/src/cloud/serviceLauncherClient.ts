@@ -1,5 +1,5 @@
 import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -14,7 +14,7 @@ import {
   type ServiceLauncherParentMessage,
 } from "./serviceProtocol.ts";
 
-export class ServiceLauncherClientError extends Schema.TaggedErrorClass<ServiceLauncherClientError>()(
+export class ServiceLauncherClientError extends Schema.TaggedError<ServiceLauncherClientError>()(
   "ServiceLauncherClientError",
   {
     operation: Schema.Literals([
@@ -49,7 +49,7 @@ export class ServiceLauncherClientError extends Schema.TaggedErrorClass<ServiceL
   }
 }
 
-export class ServiceLauncherRejectedError extends Schema.TaggedErrorClass<ServiceLauncherRejectedError>()(
+export class ServiceLauncherRejectedError extends Schema.TaggedError<ServiceLauncherRejectedError>()(
   "ServiceLauncherRejectedError",
   {
     targetVersion: Schema.String,
@@ -114,7 +114,7 @@ export class ServiceLauncherClient extends Context.Service<
 const resolveStartup = Effect.fn("cloud.service_launcher_client.resolve_startup")(
   function* (options?: { readonly currentVersion?: string }) {
     const host = yield* ServiceLauncherHostProcess;
-    const environment = yield* HostProcessEnvironment;
+    const environment = yield* HostProcess.Environment;
     const currentVersion = options?.currentVersion ?? packageJson.version;
     const rawContext = environment[SERVICE_LAUNCHER_CONTEXT_ENV];
     const context = rawContext === undefined ? undefined : decodeServiceLauncherContext(rawContext);

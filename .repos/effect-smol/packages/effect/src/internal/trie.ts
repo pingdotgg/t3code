@@ -1,6 +1,6 @@
 import * as Equal from "../Equal.ts"
 import { format } from "../Formatter.ts"
-import { dual, pipe } from "../Function.ts"
+import { dual } from "../Function.ts"
 import * as Hash from "../Hash.ts"
 import { NodeInspectSymbol, toJson } from "../Inspectable.ts"
 import * as Option from "../Option.ts"
@@ -12,7 +12,7 @@ import type * as TR from "../Trie.ts"
 import type { NoInfer } from "../Types.ts"
 
 /** @internal */
-export const TrieTypeId = "~effect/collections/Trie"
+export const TrieTypeId = "~effect/Trie"
 
 type TraversalMap<K, V, A> = (k: K, v: V) => A
 
@@ -29,20 +29,22 @@ const trieVariance = {
   _Value: (_: never) => _
 }
 
+const trieSeed = Hash.string(TrieTypeId)
+
 const TrieProto: TR.Trie<unknown> = {
   [TrieTypeId]: trieVariance,
   [Symbol.iterator]<V>(this: TrieImpl<V>): Iterator<[string, V]> {
     return new TrieIterator(this, (k, v) => [k, v], () => true)
   },
   [Hash.symbol](this: TR.Trie<unknown>): number {
-    let hash = Hash.hash(TrieTypeId)
+    let hash = trieSeed
     for (const item of this) {
-      hash ^= pipe(Hash.hash(item[0]), Hash.combine(Hash.hash(item[1])))
+      hash ^= Hash.combine(Hash.hash(item[0]), Hash.hash(item[1]))
     }
-    return hash
+    return Hash.optimize(hash)
   },
   [Equal.symbol]<V>(this: TrieImpl<V>, that: unknown): boolean {
-    if (isTrie(that)) {
+    if (isTrie(that) && size(this) === size(that)) {
       const entries = Array.from(that)
       return Array.from(this).every((itemSelf, i) => {
         const itemThat = entries[i]
@@ -103,8 +105,8 @@ class TrieIterator<in out V, out T> implements IterableIterator<T> {
         const value = node.value
         if (value !== undefined) {
           const key = keyString + node.key
-          if (this.filter(key, value)) {
-            return { done: false, value: this.f(key, value) }
+          if (this.filter(key, value.value)) {
+            return { done: false, value: this.f(key, value.value) }
           }
         }
       } else {
@@ -172,7 +174,7 @@ export const insert = dual<
     key: key[0],
     count: 0
   }
-  const count = n.count + 1
+  let count = n.count + 1
   let cIndex = 0
 
   while (cIndex < key.length) {
@@ -194,7 +196,17 @@ export const insert = dual<
       }
     } else {
       if (cIndex === key.length - 1) {
-        n.value = value
+        if (n.value !== undefined) {
+          count -= 1
+        }
+        nStack[nStack.length - 1] = {
+          key: n.key,
+          count,
+          value: { value },
+          left: n.left,
+          mid: n.mid,
+          right: n.right
+        }
       } else if (n.mid === undefined) {
         dStack.push(0)
         n = { key: key[cIndex + 1], count }
@@ -403,7 +415,7 @@ export const get = dual<
         }
       } else {
         if (cIndex === key.length - 1) {
-          return Option.fromUndefinedOr(n.value)
+          return n.value === undefined ? Option.none() : Option.some(n.value.value)
         } else {
           if (n.mid === undefined) {
             return Option.none()
@@ -506,7 +518,10 @@ export const remove = dual<
       const n2 = nStack[s]
       const d = dStack[s]
       const child = nStack[s + 1]
-      const nc = child.left === undefined && child.mid === undefined && child.right === undefined ? undefined : child
+      const nc =
+        child.value === undefined && child.left === undefined && child.mid === undefined && child.right === undefined
+          ? undefined
+          : child
       if (d === -1) {
         // left
         nStack[s] = {
@@ -632,7 +647,7 @@ export const modify = dual<
     nStack[nStack.length - 1] = {
       key: updateNode.key,
       count: updateNode.count,
-      value: f(updateNode.value), // Update
+      value: { value: f(updateNode.value.value) }, // Update
       left: updateNode.left,
       mid: updateNode.mid,
       right: updateNode.right
@@ -693,10 +708,6 @@ export const longestPrefixOf = dual<
     let cIndex = 0
     while (cIndex < key.length) {
       const c = key[cIndex]
-      if (n.value !== undefined) {
-        longestPrefixNode = Option.some([key.slice(0, cIndex + 1), n.value])
-      }
-
       if (c > n.key) {
         if (n.right === undefined) {
           break
@@ -710,6 +721,9 @@ export const longestPrefixOf = dual<
           n = n.left
         }
       } else {
+        if (n.value !== undefined) {
+          longestPrefixNode = Option.some([key.slice(0, cIndex + 1), n.value.value])
+        }
         if (n.mid === undefined) {
           break
         } else {
@@ -726,7 +740,7 @@ export const longestPrefixOf = dual<
 interface Node<V> {
   key: string
   count: number
-  value?: V | undefined
+  value?: { readonly value: V } | undefined
   left?: Node<V> | undefined
   mid?: Node<V> | undefined
   right?: Node<V> | undefined

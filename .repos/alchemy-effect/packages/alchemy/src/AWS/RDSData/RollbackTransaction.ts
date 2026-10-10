@@ -22,9 +22,8 @@ export interface RollbackTransactionRequest extends Omit<
  * Bind it to the same `DBCluster` and credentials secret as the rest of the
  * transaction; provide the implementation with
  * `Effect.provide(AWS.RDSData.RollbackTransactionHttp)`.
- * @binding
- * @section Transactions
- * @example Roll Back on Failure
+ * ### Transactions
+ * **Example:** Roll Back on Failure
  * ```typescript
  * // init
  * const rollbackTransaction = yield* AWS.RDSData.RollbackTransaction(
@@ -38,6 +37,8 @@ export interface RollbackTransactionRequest extends Omit<
  * });
  * // rollback.transactionStatus === "Rollback Complete"
  * ```
+ *
+ * @binding
  */
 export interface RollbackTransaction extends Binding.Service<
   RollbackTransaction,

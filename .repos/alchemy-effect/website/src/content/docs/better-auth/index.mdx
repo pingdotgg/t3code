@@ -1,0 +1,46 @@
+---
+title: Better Auth
+description: Build authentication with an Effect service, automatic database bindings, and deploy-time migrations.
+---
+
+Build sign-in and protected APIs with [Better Auth](https://better-auth.com), using ordinary Effect services and layers. Alchemy supplies database bindings, a stable signing secret, and supported schema migrations.
+
+## Start the tutorial
+
+```typescript
+import { BetterAuth } from "@alchemy.run/better-auth";
+
+const makeAuth = BetterAuth({
+  basePath: "/api/auth",
+  emailAndPassword: { enabled: true },
+});
+```
+
+The [six-part tutorial](/better-auth/tutorial/part-1) turns this into a running application with browser sign-in, session middleware, and GitHub authentication.
+
+| Part | Build |
+| --- | --- |
+| [1. Create an Auth service](/better-auth/tutorial/part-1) | Install the module and provide a database layer |
+| [2. Mount the HTTP API](/better-auth/tutorial/part-2) | Serve authentication and application routes |
+| [3. Build sign-in](/better-auth/tutorial/part-3) | Sign up, sign in, read sessions, and sign out |
+| [4. Protect API endpoints](/better-auth/tutorial/part-4) | Provide the current user through Effect middleware |
+| [5. Add GitHub sign-in](/better-auth/tutorial/part-5) | Register an OAuth app and bind its credentials |
+| [6. Deploy and verify](/better-auth/tutorial/part-6) | Configure production callbacks and check persistence |
+
+## Choose a sign-in provider
+
+Use [email/password](/better-auth/sign-in-providers/email-password), [GitHub](/better-auth/sign-in-providers/github), [Google](/better-auth/sign-in-providers/google), [Microsoft](/better-auth/sign-in-providers/microsoft), or [custom OAuth](/better-auth/sign-in-providers/custom-oauth). Each guide covers registration, configuration, and browser sign-in.
+
+## Choose a database
+
+Keep the Auth service and change the database layer. The [database guides](/better-auth/databases) cover D1, Hyperdrive, Neon, Aurora, Postgres, MySQL, Drizzle, SQLite, and memory.
+
+## Extend the application
+
+Use [Config and secrets](/better-auth/guides/configuration) for deployment bindings, [HTTP API middleware](/better-auth/guides/http-api-middleware) for Effect handlers, and [secondary storage](/better-auth/guides/secondary-storage) for custom storage layers.
+
+For Better Auth's authentication features and options, see the [Better Auth documentation](https://better-auth.com/docs).
+
+## Upgrade an existing installation
+
+The [1.6 → 1.7.5 upgrade guide](/better-auth/upgrades/from-1-6-to-1-7) separates package and API changes from manual data preparation. [Migrations](/better-auth/guides/migrations) explains what deployment applies automatically.

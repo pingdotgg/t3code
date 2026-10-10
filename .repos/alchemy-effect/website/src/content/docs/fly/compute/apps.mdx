@@ -1,0 +1,128 @@
+---
+title: Apps
+description: A global namespace containing Machines, Services, Secrets, IPs, and certificates.
+---
+
+A [`Fly.App`](/providers/fly/app) is a global namespace in your
+account. It contains Machines, Services, Secrets, IPs, and
+certificates.
+
+A [Service](/fly/compute/services) creates and manages its own App,
+so you do not declare one to deploy a Service. Declare a `Fly.App`
+when you need one directly:
+
+- [Machines](/fly/compute/machines) run in an App you declare.
+- [`Fly.Secret`](/fly/data/secrets), `SecretKey`,
+  [`Fly.Certificate`](/fly/networking#use-your-own-hostname), and
+  [`IpAssignment`](/fly/networking#addresses-for-a-shared-app) attach
+  to a `Fly.App`, not to a Service's own App.
+- Several Services share one hostname, secrets, or domain — see
+  [Group Services in one App](/fly/compute/services#group-services-in-one-app).
+
+## Create an App
+
+Alchemy generates a unique name unless you pass one.
+
+```typescript
+const site = yield* Fly.App("Site");
+```
+
+`url` is `https://{appName}.fly.dev`. Nothing answers there until a
+[Machine](/fly/compute/machines) or a grouped
+[Service](/fly/compute/services#group-services-in-one-app) publishes
+a proxy service and the App has an
+[IP assignment](/fly/networking#addresses-for-a-shared-app).
+
+:::note
+Prefer omitting `name` in tests and CI so names stay unique and
+reclaimable.
+:::
+
+## A stable hostname
+
+Pass `name` when you need a stable `fly.dev` hostname.
+
+```typescript
+const site = yield* Fly.App("Site", {
+  name: "my-site",
+});
+```
+
+:::caution[Changing `name` replaces the App]
+Fly cannot have two Apps with the same name. Alchemy deletes the
+old App first, then creates the new one.
+:::
+
+## Organization
+
+Org defaults to the current token. Pass `orgSlug` to pin it.
+
+```diff lang="typescript"
+const site = yield* Fly.App("Site", {
+  name: "my-site",
++  orgSlug: "my-org",
+});
+```
+
+:::caution[Changing `orgSlug` replaces the App]
+The App is created in the new org. The old App is deleted.
+:::
+
+## Subdomains
+
+`enableSubdomains: true` turns on `*.{appName}.fly.dev`.
+
+```diff lang="typescript"
+const site = yield* Fly.App("Site", {
+  name: "my-site",
+  orgSlug: "my-org",
++  enableSubdomains: true,
+});
+```
+
+:::note[Create-only]
+Flipping `enableSubdomains` later is ignored.
+:::
+
+## Isolated network
+
+`network` is an optional 6PN name.
+
+```diff lang="typescript"
+const site = yield* Fly.App("Site", {
+  name: "my-site",
+  orgSlug: "my-org",
+  enableSubdomains: true,
++  network: "private",
+});
+```
+
+:::caution[Changing `network` replaces the App]
+The App is recreated on the new network.
+:::
+
+## Module-scope declarations
+
+Declare the App once. Pass it into every child.
+
+```typescript
+// src/app.ts
+import * as Fly from "alchemy/Fly";
+
+export const Site = Fly.App("Site");
+```
+
+Resource-valued props accept the resource or an Effect producing
+it. Do not unwrap it just to pass it along.
+
+## Destroy
+
+`alchemy destroy` deletes children, then the App.
+
+## Where next
+
+[Services](/fly/compute/services) own their App by default and join
+one with `app`. [Machines](/fly/compute/machines) run a raw image in
+an App. [IPs & certificates](/fly/networking) covers addresses and
+domains on an App. The [`App` reference](/providers/fly/app) lists
+every prop.

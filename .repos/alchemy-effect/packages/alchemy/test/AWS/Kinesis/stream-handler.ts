@@ -3,7 +3,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export class KinesisStreamFunction extends AWS.Lambda.Function<AWS.Lambda.Function>()(
   "KinesisStreamFunction",
@@ -35,7 +35,7 @@ export const StreamAndQueueLive = Layer.effect(
 export default KinesisStreamFunction.make(
   {
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     const { stream, queue } = yield* StreamAndQueue;

@@ -1,4 +1,5 @@
 import type * as Credentials from "@distilled.cloud/aws/Credentials";
+import type * as SigV4 from "@distilled.cloud/aws/SigV4";
 import type * as Effect from "effect/Effect";
 import * as Binding from "../../Binding.ts";
 import type {
@@ -22,7 +23,7 @@ export interface WriteDomainClient {
     options?: IndexDocumentOptions,
   ): Effect.Effect<
     WriteDocumentResponse,
-    OpenSearchApiError | Credentials.CredentialsError
+    OpenSearchApiError | Credentials.CredentialsError | SigV4.SigningError
   >;
   /**
    * Partially update one document (`POST /{index}/_update/{id}`). The body
@@ -35,7 +36,7 @@ export interface WriteDomainClient {
     options?: WriteDocumentOptions,
   ): Effect.Effect<
     WriteDocumentResponse,
-    OpenSearchApiError | Credentials.CredentialsError
+    OpenSearchApiError | Credentials.CredentialsError | SigV4.SigningError
   >;
   /**
    * Delete one document (`DELETE /{index}/_doc/{id}`). Deleting a missing
@@ -47,7 +48,7 @@ export interface WriteDomainClient {
     options?: WriteDocumentOptions,
   ): Effect.Effect<
     WriteDocumentResponse,
-    OpenSearchApiError | Credentials.CredentialsError
+    OpenSearchApiError | Credentials.CredentialsError | SigV4.SigningError
   >;
   /**
    * Bulk-apply index/create/update/delete operations (`POST /_bulk`). Pass
@@ -58,7 +59,7 @@ export interface WriteDomainClient {
     options?: WriteDocumentOptions,
   ): Effect.Effect<
     BulkResponse,
-    OpenSearchApiError | Credentials.CredentialsError
+    OpenSearchApiError | Credentials.CredentialsError | SigV4.SigningError
   >;
 }
 
@@ -71,9 +72,8 @@ export interface WriteDomainClient {
  * domain's endpoint, made with the host Function's own credentials — the
  * domain's access policy must allow the function's role. Provide the
  * implementation with `Effect.provide(AWS.OpenSearch.DomainWriteHttp)`.
- * @binding
- * @section Writing Documents
- * @example Index and Delete Documents
+ * ### Writing Documents
+ * **Example:** Index and Delete Documents
  * ```typescript
  * // init — grants es:ESHttpPut/Post/Delete/Patch on the domain
  * const writer = yield* AWS.OpenSearch.DomainWrite(domain);
@@ -86,6 +86,8 @@ export interface WriteDomainClient {
  * );
  * yield* writer.deleteDocument("songs", "1", { refresh: true });
  * ```
+ *
+ * @binding
  */
 export interface DomainWrite extends Binding.Service<
   DomainWrite,

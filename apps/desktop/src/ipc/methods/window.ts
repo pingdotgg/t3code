@@ -9,18 +9,20 @@ import {
   PickFolderOptionsSchema,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   REMOTE_CAPABLE_EDITOR_IDS,
+  SystemSettingsPaneSchema,
   type DesktopEnvironmentBootstrap,
   type PickedThemeFile,
 } from "@t3tools/contracts";
 import { WORKSPACE_IMAGE_PREVIEW_EXTENSIONS } from "@t3tools/shared/filePreview";
-import { isCommandAvailable } from "@t3tools/shared/shell";
-import * as NodeOS from "node:os";
+import { resolveEditorCommand } from "@t3tools/shared/editor";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
@@ -33,6 +35,9 @@ import * as ElectronMenu from "../../electron/ElectronMenu.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
 import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as Electron from "electron";
+import * as MacPermissions from "../../permissions/MacPermissions.ts";
+import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import {
@@ -90,6 +95,7 @@ export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
   result: Schema.Array(DesktopEnvironmentBootstrapSchema),
   handler: Effect.fn("desktop.ipc.window.getLocalEnvironmentBootstraps")(function* () {
     const pool = yield* DesktopBackendPool.DesktopBackendPool;
+    const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
     const instances = yield* pool.list;
     const bootstraps: DesktopEnvironmentBootstrap[] = [];
     for (const instance of instances) {
@@ -137,9 +143,16 @@ export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
         runningDistro,
         httpBaseUrl: httpBaseUrl.href,
         wsBaseUrl: toWebSocketBaseUrl(httpBaseUrl),
-        ...(bootstrap.desktopBootstrapToken
-          ? { bootstrapToken: bootstrap.desktopBootstrapToken }
-          : {}),
+        // A backend launched with the desktop secret accepts whichever token
+        // the secret derives for the current window, so hand out that one
+        // rather than the token frozen into its launch config. Every backend
+        // the desktop launches (primary, staged or mounted WSL runtime) is the
+        // server build bundled with this desktop, so it understands the secret.
+        ...(bootstrap.desktopBootstrapSecret
+          ? { bootstrapToken: yield* configuration.currentBootstrapToken }
+          : bootstrap.desktopBootstrapToken
+            ? { bootstrapToken: bootstrap.desktopBootstrapToken }
+            : {}),
       });
     }
     return bootstraps;
@@ -178,6 +191,11 @@ export const pickFolder = DesktopIpc.makeIpcMethod({
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
     const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
+    const settings = yield* appSettings.get;
+    // A picked path only means something to a backend on this machine.
+    if (!settings.localEnvironmentEnabled) {
+      return null;
+    }
     // Three picker modes:
     //   - targetEnvironmentId omitted: default to the primary picker. Keeps
     //     the historical behavior unchanged for users who never enabled the
@@ -196,7 +214,6 @@ export const pickFolder = DesktopIpc.makeIpcMethod({
       targetId !== undefined &&
       targetId !== PRIMARY_LOCAL_ENVIRONMENT_ID &&
       targetId.startsWith(DesktopWslBackend.WSL_INSTANCE_ID_PREFIX);
-    const settings = yield* appSettings.get;
     // Fall back to the persisted wslDistro when the id is the
     // "wsl:default" sentinel; the orchestrator uses the same fallback
     // for the actual backend.
@@ -242,6 +259,10 @@ export const pickProjectFavicon = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.window.pickProjectFavicon")(function* (initialPath) {
     const dialog = yield* ElectronDialog.ElectronDialog;
     const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
+    if (!(yield* appSettings.get).localEnvironmentEnabled) {
+      return null;
+    }
     const paths = yield* dialog.pickFiles({
       owner: yield* electronWindow.focusedMainOrFirst,
       defaultPath: Option.fromNullishOr(initialPath),
@@ -298,27 +319,65 @@ export const openExternal = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const openSystemSettings = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.OPEN_SYSTEM_SETTINGS_CHANNEL,
+  payload: SystemSettingsPaneSchema,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.openSystemSettings")(function* (pane) {
+    const shell = yield* ElectronShell.ElectronShell;
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    if (environment.platform !== "darwin") return false;
+    const owner = Electron.BrowserWindow.getFocusedWindow();
+    const opened = yield* shell.openSystemSettings(pane);
+    if (opened && environment.isPackaged) {
+      const permissions = yield* MacPermissions.MacPermissions;
+      const isGranted = yield* safariPermissionCheck;
+      yield* permissions.showHelper(pane, owner, isGranted);
+    }
+    return opened;
+  }),
+});
+
 export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PROBE_REMOTE_EDITORS_CHANNEL,
   payload: Schema.Undefined,
   result: Schema.Array(EditorId),
-  // Probes THIS machine (where the renderer runs) for remote-capable editor
-  // CLIs, unlike the server's probe which walks the environment host's PATH.
-  // A Finder-launched app can miss PATH entries; an empty result makes the
-  // renderer fall back to VS Code only, so that fails soft.
   handler: Effect.fn("desktop.ipc.window.probeRemoteEditors")(function* () {
     const available: Array<EditorId> = [];
+    const env = yield* HostProcess.Environment;
     for (const editorId of REMOTE_CAPABLE_EDITOR_IDS) {
-      const commands = EDITORS.find((editor) => editor.id === editorId)?.commands;
-      if (!commands) continue;
-      for (const command of commands) {
-        if (yield* isCommandAvailable(command, { env: process.env })) {
-          available.push(editorId);
-          break;
-        }
+      const editor = EDITORS.find((editor) => editor.id === editorId);
+      if (editor && Option.isSome(yield* resolveEditorCommand(editor, env))) {
+        available.push(editorId);
       }
     }
     return available;
+  }),
+});
+
+export const pasteAsText = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PASTE_AS_TEXT_CHANNEL,
+  payload: Schema.Undefined,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.pasteAsText")(function* (_input, event) {
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const window = yield* electronWindow.main;
+    if (
+      event === undefined ||
+      Option.isNone(window) ||
+      window.value.isDestroyed() ||
+      window.value.webContents.id !== event.sender.id
+    ) {
+      return;
+    }
+    const focused = Electron.webContents.getFocusedWebContents();
+    if (
+      focused &&
+      !focused.isDestroyed() &&
+      Electron.BrowserWindow.fromWebContents(focused) === window.value
+    ) {
+      focused.paste();
+    }
   }),
 });
 
@@ -338,7 +397,7 @@ export const pickThemeFiles = DesktopIpc.makeIpcMethod({
     // The VS Code extensions directory is the same dotfolder on Windows,
     // macOS, and Linux; when it is missing the picker opens wherever the
     // platform would by default.
-    const extensionsDir = path.join(NodeOS.homedir(), ".vscode", "extensions");
+    const extensionsDir = path.join(yield* HostProcess.HomeDirectory, ".vscode", "extensions");
     const defaultPath = yield* fileSystem
       .exists(extensionsDir)
       .pipe(Effect.orElseSucceed(() => false));
@@ -366,5 +425,17 @@ export const pickThemeFiles = DesktopIpc.makeIpcMethod({
         Effect.orElseSucceed((): PickedThemeFile => ({ name, size: 0, text: "" })),
       );
     });
+  }),
+});
+
+export const checkSystemPermission = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.CHECK_SYSTEM_PERMISSION_CHANNEL,
+  payload: SystemSettingsPaneSchema,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.checkSystemPermission")(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    if (environment.platform !== "darwin") return false;
+    const check = yield* safariPermissionCheck;
+    return yield* Effect.promise(check);
   }),
 });

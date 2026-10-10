@@ -4,11 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NetService from "@t3tools/shared/Net";
-import {
-  HostProcessEnvironment,
-  HostProcessPlatform,
-  HostProcessWorkingDirectory,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -17,7 +13,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
   checkPortAvailabilityOnHosts,
@@ -74,6 +70,20 @@ const devServerInput = {
 } as const;
 
 it.layer(NodeServices.layer)("dev-runner", (it) => {
+  it.effect("accepts a dry run without the optional browser flag", () =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const output = yield* spawner.string(
+        ChildProcess.make(process.execPath, ["scripts/dev-runner.ts", "dev", "--dry-run"], {
+          cwd: path.resolve(import.meta.dirname, ".."),
+        }),
+      );
+
+      assert.include(output, "[dev-runner] mode=dev");
+    }),
+  );
+
   describe("getDevRunnerModeArgs", () => {
     it.effect("lets Vite+ honor the desktop dev task graph", () =>
       Effect.sync(() => {
@@ -138,6 +148,27 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
   });
 
   describe("createDevRunnerEnv", () => {
+    it.effect("forwards the reusable auth token to web dev and removes it for desktop", () =>
+      Effect.gen(function* () {
+        const input = {
+          baseEnv: { T3CODE_DEV_AUTH_TOKEN: "reusable-dev-auth-token-that-is-long-enough" },
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: undefined,
+          browser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: undefined,
+          devUrl: undefined,
+        } as const;
+        const web = yield* createDevRunnerEnv({ ...input, mode: "dev" });
+        const desktop = yield* createDevRunnerEnv({ ...input, mode: "dev:desktop" });
+
+        assert.equal(web.T3CODE_DEV_AUTH_TOKEN, input.baseEnv.T3CODE_DEV_AUTH_TOKEN);
+        assert.equal(desktop.T3CODE_DEV_AUTH_TOKEN, undefined);
+      }),
+    );
     it.effect("leaves the shared home implicit and disables browser auto-open", () =>
       Effect.gen(function* () {
         const env = yield* createDevRunnerEnv({
@@ -379,8 +410,9 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
     // Browser dev is single-origin: Vite proxies the backend, and the client
     // resolves it from window.location.origin. Baking a localhost URL here is
     // what breaks sharing a dev server to another device.
-    for (const mode of ["dev", "dev:web"] as const) {
-      it.effect(`leaves the client backend URLs unset in ${mode} mode`, () =>
+    it.effect.each(["dev", "dev:web"] as const)(
+      "leaves the client backend URLs unset in %s mode",
+      (mode) =>
         Effect.gen(function* () {
           const env = yield* createDevRunnerEnv({
             mode,
@@ -407,8 +439,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           // the intent has to be stated positively.
           assert.equal(env.T3CODE_SINGLE_ORIGIN_DEV, "1");
         }),
-      );
-    }
+    );
 
     // Desktop pins the renderer at loopback deliberately; an ambient marker
     // must not make Vite discard those URLs.
@@ -457,27 +488,25 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
     // HOST is Vite's bind address and gates the HMR pin in vite.config.ts. An
     // inherited one would survive into browser dev and point HMR at the wrong
     // interface — invisible over a shared origin, since the page still loads.
-    for (const mode of ["dev", "dev:web"] as const) {
-      it.effect(`drops an inherited HOST in ${mode} mode`, () =>
-        Effect.gen(function* () {
-          const env = yield* createDevRunnerEnv({
-            mode,
-            baseEnv: { HOST: "0.0.0.0" },
-            serverOffset: 0,
-            webOffset: 0,
-            t3Home: undefined,
-            browser: undefined,
-            autoBootstrapProjectFromCwd: undefined,
-            logWebSocketEvents: undefined,
-            host: undefined,
-            port: undefined,
-            devUrl: undefined,
-          });
+    it.effect.each(["dev", "dev:web"] as const)("drops an inherited HOST in %s mode", (mode) =>
+      Effect.gen(function* () {
+        const env = yield* createDevRunnerEnv({
+          mode,
+          baseEnv: { HOST: "0.0.0.0" },
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: undefined,
+          browser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: undefined,
+          devUrl: undefined,
+        });
 
-          assert.equal(env.HOST, undefined);
-        }),
-      );
-    }
+        assert.equal(env.HOST, undefined);
+      }),
+    );
 
     // --host configures the *backend* (T3CODE_HOST). It must not become Vite's
     // bind address by way of an inherited HOST that happens to agree with it.
@@ -854,7 +883,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       return Effect.gen(function* () {
         const error = yield* runDevRunnerWithInput(devServerInput).pipe(
           Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-          Effect.provideService(HostProcessPlatform, "linux"),
+          Effect.provideService(HostProcess.Platform, "linux"),
           Effect.flip,
         );
 
@@ -920,7 +949,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           share: true,
         }).pipe(
           Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-          Effect.provideService(HostProcessPlatform, "linux"),
+          Effect.provideService(HostProcess.Platform, "linux"),
         );
 
         assert.equal(spawnCount, 1);
@@ -944,7 +973,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           host: "192.168.1.10",
         }).pipe(
           Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-          Effect.provideService(HostProcessPlatform, "linux"),
+          Effect.provideService(HostProcess.Platform, "linux"),
           Effect.flip,
         );
 
@@ -979,7 +1008,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           host: "0.0.0.0",
         }).pipe(
           Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-          Effect.provideService(HostProcessPlatform, "linux"),
+          Effect.provideService(HostProcess.Platform, "linux"),
         );
 
         assert.equal(spawnCount, 1);
@@ -1004,7 +1033,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           host: "192.168.1.10",
         }).pipe(
           Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-          Effect.provideService(HostProcessPlatform, "linux"),
+          Effect.provideService(HostProcess.Platform, "linux"),
         );
 
         assert.equal(spawnCount, 1);
@@ -1064,9 +1093,9 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             share: true,
           }).pipe(
             Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-            Effect.provideService(HostProcessPlatform, "linux"),
+            Effect.provideService(HostProcess.Platform, "linux"),
             Effect.provideService(
-              HostProcessEnvironment,
+              HostProcess.Environment,
               input.ambientBundledDev === undefined
                 ? {}
                 : { T3CODE_BUNDLED_DEV: input.ambientBundledDev },
@@ -1111,8 +1140,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             port: undefined,
           }).pipe(
             Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-            Effect.provideService(HostProcessPlatform, "linux"),
-            Effect.provideService(HostProcessEnvironment, {}),
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(HostProcess.Environment, {}),
           );
 
           assert.equal(captured?.T3CODE_BUNDLED_DEV, undefined);
@@ -1139,7 +1168,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           share: true,
         }).pipe(
           Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-          Effect.provideService(HostProcessPlatform, "linux"),
+          Effect.provideService(HostProcess.Platform, "linux"),
         );
 
         assert.equal(spawnCount, 0);
@@ -1155,7 +1184,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       return Effect.gen(function* () {
         const error = yield* runDevRunnerWithInput(devServerInput).pipe(
           Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-          Effect.provideService(HostProcessPlatform, "linux"),
+          Effect.provideService(HostProcess.Platform, "linux"),
           Effect.flip,
         );
 
@@ -1188,7 +1217,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       return Effect.gen(function* () {
         const error = yield* runDevRunnerWithInput(devServerInput).pipe(
           Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-          Effect.provideService(HostProcessPlatform, "linux"),
+          Effect.provideService(HostProcess.Platform, "linux"),
           Effect.flip,
         );
 
@@ -1241,10 +1270,10 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
 
           yield* runDevRunnerWithInput({ ...devServerInput, t3Home: input.t3Home }).pipe(
             Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
-            Effect.provideService(HostProcessPlatform, "linux"),
-            Effect.provideService(HostProcessWorkingDirectory, input.cwd),
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(HostProcess.WorkingDirectory, input.cwd),
             Effect.provideService(
-              HostProcessEnvironment,
+              HostProcess.Environment,
               input.ambientHome === undefined ? {} : { T3CODE_HOME: input.ambientHome },
             ),
           );

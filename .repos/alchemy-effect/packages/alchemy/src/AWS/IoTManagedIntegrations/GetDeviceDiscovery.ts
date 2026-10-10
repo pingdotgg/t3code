@@ -16,14 +16,15 @@ export interface GetDeviceDiscoveryRequest
  * {@link StartDeviceDiscovery}. Provide the implementation with
  * `Effect.provide(AWS.IoTManagedIntegrations.GetDeviceDiscoveryHttp)`.
  *
- * @binding
- * @section Discovering Devices
- * @example Poll a Discovery Scan
+ * ### Discovering Devices
+ * **Example:** Poll a Discovery Scan
  * ```typescript
  * const getDiscovery = yield* IoTManagedIntegrations.GetDeviceDiscovery();
  *
  * const { Status } = yield* getDiscovery({ Identifier: discoveryId });
  * ```
+ *
+ * @binding
  */
 export interface GetDeviceDiscovery extends Binding.Service<
   GetDeviceDiscovery,

@@ -109,7 +109,7 @@ export interface TokenConfigurationAttributes {
   /** Where the token is looked for on incoming requests. */
   tokenSources: string[];
   /** The token format. */
-  tokenType: "JWT";
+  tokenType: "JWT" | (string & {});
   /** The JWKS key set currently active on the configuration. */
   keys: JwkKey[];
   /** ISO8601 creation timestamp. */
@@ -143,11 +143,8 @@ export type TokenConfiguration = Resource<
  * Title, description, and token sources are patched in place; the key set
  * is rotated in place via the credentials endpoint. Only `zoneId` and
  * `tokenType` force a replacement.
- * @resource
- * @product Token Validation
- * @category Application Security
- * @section Creating a Configuration
- * @example JWT configuration with an RSA key
+ * ### Creating a Configuration
+ * **Example:** JWT configuration with an RSA key
  * ```typescript
  * const config = yield* Cloudflare.TokenValidation.TokenConfiguration("ApiJwt", {
  *   zoneId: zone.zoneId,
@@ -164,8 +161,8 @@ export type TokenConfiguration = Resource<
  * });
  * ```
  *
- * @section Rotating Keys
- * @example Replace the key set in place
+ * ### Rotating Keys
+ * **Example:** Replace the key set in place
  * ```typescript
  * // Changing `keys` PUTs the full key set to the credentials endpoint —
  * // the configuration (and its UUID) stays in place.
@@ -176,8 +173,8 @@ export type TokenConfiguration = Resource<
  * });
  * ```
  *
- * @section Enforcing Validation
- * @example Reference the configuration from a rule
+ * ### Enforcing Validation
+ * **Example:** Reference the configuration from a rule
  * ```typescript
  * yield* Cloudflare.TokenValidation.Rule("RequireJwt", {
  *   zoneId: zone.zoneId,
@@ -188,6 +185,10 @@ export type TokenConfiguration = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/api-shield/security/jwt-validation/
+ *
+ * @resource
+ * @product Token Validation
+ * @category Application Security
  */
 export const TokenConfiguration = Resource<TokenConfiguration>(TypeId);
 

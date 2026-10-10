@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
+import {
+  EMPTY_TERMINAL_BUFFER_STATE,
+  type KnownTerminalSession,
+} from "@t3tools/client-runtime/state/terminal";
 import { DEFAULT_TERMINAL_ID, EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
@@ -55,12 +58,13 @@ function makeKnownSession(input: {
             updatedAt: input.updatedAt ?? "2026-04-15T20:00:00.000Z",
           }
         : null,
-      buffer: "",
+      output: EMPTY_TERMINAL_BUFFER_STATE.output,
       status: input.status,
       error: null,
       hasRunningSubprocess: false,
       updatedAt: input.updatedAt ?? "2026-04-15T20:00:00.000Z",
       version: 1,
+      lifecycleVersion: 1,
     },
   };
 }
@@ -125,6 +129,19 @@ describe("buildTerminalMenuSessions", () => {
 });
 
 describe("nextOpenTerminalId", () => {
+  it("allocates separate terminals on repeated visits without readable metadata", () => {
+    const first = nextOpenTerminalId({
+      listedTerminalIds: [],
+      uniqueSuffix: "783c91cc-a413-47c7-8312-c2a5a1f05e40",
+    });
+    const nextVisit = nextOpenTerminalId({
+      listedTerminalIds: [],
+      uniqueSuffix: "102315fc-ceef-45c4-b978-c4d4947d3c26",
+    });
+    expect(first).not.toBe(DEFAULT_TERMINAL_ID);
+    expect(nextVisit).not.toBe(first);
+  });
+
   it("matches nextTerminalId when not on a terminal route", () => {
     expect(nextOpenTerminalId({ listedTerminalIds: [] })).toBe(DEFAULT_TERMINAL_ID);
     expect(nextOpenTerminalId({ listedTerminalIds: [DEFAULT_TERMINAL_ID] })).toBe("term-2");
@@ -204,6 +221,16 @@ describe("previousLiveTerminalId", () => {
 });
 
 describe("resolveProjectScriptTerminalId", () => {
+  it("never targets an unseen default terminal when metadata is unavailable", () => {
+    const terminalId = resolveProjectScriptTerminalId({
+      existingTerminalIds: [],
+      hasRunningTerminal: false,
+      uniqueSuffix: "783c91cc-a413-47c7-8312-c2a5a1f05e40",
+    });
+    expect(terminalId).not.toBe(DEFAULT_TERMINAL_ID);
+    expect(getTerminalLabel(terminalId)).toBe("Terminal 1");
+  });
+
   it("reuses the default shell when no terminal is running", () => {
     expect(
       resolveProjectScriptTerminalId({

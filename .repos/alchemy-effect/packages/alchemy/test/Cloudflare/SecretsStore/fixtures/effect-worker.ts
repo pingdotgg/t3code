@@ -1,7 +1,7 @@
 import * as Cloudflare from "@/Cloudflare";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { ApiKey } from "./secret.ts";
 import { secretRoutes } from "./secret-routes.ts";
 
@@ -15,7 +15,7 @@ export default class EffectSecretWorker extends Cloudflare.Worker<EffectSecretWo
   "EffectSecretBindingWorker",
   {
     main: import.meta.url,
-    subdomain: { enabled: true, previewsEnabled: false },
+    workersDev: { enabled: true, previewsEnabled: false },
   },
   Effect.gen(function* () {
     const secret = yield* ApiKey;

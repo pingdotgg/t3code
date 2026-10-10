@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * endpoints — so a function can discover the host names to route Gremlin or
  * openCypher traffic to. Provide the implementation with
  * `Effect.provide(AWS.Neptune.DescribeDBClusterEndpointsHttp)`.
- * @binding
- * @section Monitoring Clusters
- * @example Discover a Cluster's Endpoints
+ * ### Monitoring Clusters
+ * **Example:** Discover a Cluster's Endpoints
  * ```typescript
  * const describeDBClusterEndpoints =
  *   yield* AWS.Neptune.DescribeDBClusterEndpoints();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * const endpoints = page.DBClusterEndpoints?.map((e) => e.Endpoint);
  * ```
+ *
+ * @binding
  */
 export interface DescribeDBClusterEndpoints extends Binding.Service<
   DescribeDBClusterEndpoints,

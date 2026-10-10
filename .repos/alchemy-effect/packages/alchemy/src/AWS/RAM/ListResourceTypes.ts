@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * are chosen per request at runtime, so the binding takes no resource
  * argument. Provide the implementation with
  * `Effect.provide(AWS.RAM.ListResourceTypesHttp)`.
- * @binding
- * @section Discovering Shares & Shared Resources
- * @example List the Shareable Resource Types
+ * ### Discovering Shares & Shared Resources
+ * **Example:** List the Shareable Resource Types
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listResourceTypes = yield* AWS.RAM.ListResourceTypes();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { resourceTypes } = yield* listResourceTypes();
  * ```
+ *
+ * @binding
  */
 export interface ListResourceTypes extends Binding.Service<
   ListResourceTypes,

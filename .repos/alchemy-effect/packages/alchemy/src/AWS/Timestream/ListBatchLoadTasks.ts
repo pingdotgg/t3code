@@ -14,9 +14,8 @@ export interface ListBatchLoadTasksRequest
  * Provide `Timestream.ListBatchLoadTasksHttp` on the Function to implement
  * the binding.
  *
- * @binding
- * @section Batch Loading
- * @example List in-progress imports
+ * ### Batch Loading
+ * **Example:** List in-progress imports
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listBatchLoadTasks = yield* Timestream.ListBatchLoadTasks();
@@ -25,6 +24,8 @@ export interface ListBatchLoadTasksRequest
  * const tasks = yield* listBatchLoadTasks({ TaskStatus: "IN_PROGRESS" });
  * // tasks.BatchLoadTasks lists each task's TaskId and status
  * ```
+ *
+ * @binding
  */
 export interface ListBatchLoadTasks extends Binding.Service<
   ListBatchLoadTasks,

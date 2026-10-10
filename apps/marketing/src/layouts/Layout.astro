@@ -1,4 +1,9 @@
 ---
+import { getImage, Image } from "astro:assets";
+import appIcon from "../assets/icon.webp";
+import socialCard from "../assets/social-card.webp";
+import dmSansLatinUrl from "../assets/fonts/dm-sans-latin.woff2?url";
+import "../styles/fonts.css";
 import {
   ANDROID_PLAY_STORE_URL,
   GITHUB_REPOSITORY_URL,
@@ -14,9 +19,24 @@ interface Props {
 
 const {
   title = "T3 Code",
-  description = "T3 Code — The open-source control plane for coding agents.",
+  description = "T3 Code. The open-source control plane for coding agents.",
   pageClass,
 } = Astro.props;
+
+// Social preview card, shared by og:image and twitter:image. Link unfurlers
+// (Instagram, iMessage, X, Slack) want a 1200x630 jpg or png at an absolute URL.
+// The source is a 2x export so the downscale stays sharp.
+const socialImage = await getImage({
+  src: socialCard,
+  width: 1200,
+  height: 630,
+  format: "jpg",
+  quality: 90,
+});
+const socialImageUrl = new URL(socialImage.src, Astro.site);
+const socialImageAlt =
+  "T3 Code: the open-source control plane for coding agents, with Claude Code, Codex, Cursor, OpenCode, Grok and Antigravity.";
+const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
 ---
 
 <html lang="en">
@@ -24,11 +44,28 @@ const {
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content={description} />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="canonical" href={canonicalUrl} />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="T3 Code" />
+    <meta property="og:url" content={canonicalUrl} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content={socialImageUrl} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content={socialImageAlt} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@t3dotgg" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={socialImageUrl} />
+    <meta name="twitter:image:alt" content={socialImageAlt} />
     <link
-      href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap"
-      rel="stylesheet"
+      rel="preload"
+      href={dmSansLatinUrl}
+      as="font"
+      type="font/woff2"
+      crossorigin="anonymous"
     />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="icon" type="image/png" href="/favicon-32x32.png" sizes="32x32" />
@@ -41,9 +78,18 @@ const {
       <nav class="nav">
         <div class="nav-inner">
           <a href="/" class="nav-brand" aria-label="T3 Code home">
-            <span class="nav-brand-name">T3 Code</span>
+            <svg
+              class="nav-brand-mark"
+              viewBox="15.5309 37 94.3941 56.96"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <path d="M33.4509 93V47.56H15.5309V37H64.3309V47.56H46.4109V93H33.4509ZM86.7253 93.96C82.832 93.96 78.9653 93.4533 75.1253 92.44C71.2853 91.3733 68.032 89.88 65.3653 87.96L70.4053 78.04C72.5386 79.5867 75.0186 80.8133 77.8453 81.72C80.672 82.6267 83.5253 83.08 86.4053 83.08C89.6586 83.08 92.2186 82.44 94.0853 81.16C95.952 79.88 96.8853 78.12 96.8853 75.88C96.8853 73.7467 96.0586 72.0667 94.4053 70.84C92.752 69.6133 90.0853 69 86.4053 69H80.4853V60.44L96.0853 42.76L97.5253 47.4H68.1653V37H107.365V45.4L91.8453 63.08L85.2853 59.32H89.0453C95.9253 59.32 101.125 60.8667 104.645 63.96C108.165 67.0533 109.925 71.0267 109.925 75.88C109.925 79.0267 109.099 81.9867 107.445 84.76C105.792 87.48 103.259 89.6933 99.8453 91.4C96.432 93.1067 92.0586 93.96 86.7253 93.96Z" />
+            </svg>
+            <span class="nav-brand-name">Code</span>
           </a>
           <div class="nav-right">
+            <a class="nav-link" href="/download">Download</a>
             <a
               class="nav-stars"
               href={GITHUB_REPOSITORY_URL}
@@ -67,7 +113,17 @@ const {
       <footer class="footer">
         <div class="footer-inner">
           <div class="footer-brand">
-            <img src="/icon.webp" alt="" />
+            <Image
+              src={appIcon}
+              alt=""
+              width={20}
+              height={20}
+              densities={[1, 2, 3]}
+              format="webp"
+              quality={90}
+              loading="lazy"
+              decoding="async"
+            />
             <span>&copy; {new Date().getFullYear()} T3 Tools Inc · MIT licensed</span>
           </div>
           <div class="footer-links">
@@ -268,21 +324,17 @@ const {
     }
   }
 
-  @keyframes pulse {
-    50% { opacity: 0.4; }
+  /* Page-load sequence: [data-rise] plays once with delay --d. */
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: none; }
   }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
+  [data-rise] {
+    animation: rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+    animation-delay: var(--d, 0ms);
   }
-
-  @keyframes floatDrift {
-    0%, 100% { translate: 0 0; }
-    50%      { translate: 0 -10px; }
-  }
-
-  @keyframes blink {
-    50% { opacity: 0; }
+  @media (prefers-reduced-motion: reduce) {
+    [data-rise] { animation: none; }
   }
 </style>
 
@@ -321,7 +373,8 @@ const {
 
   .nav-brand {
     display: inline-flex;
-    align-items: center;
+    align-items: baseline;
+    gap: 4px;
     color: var(--fg);
     transition: color 0.2s ease;
   }
@@ -330,17 +383,37 @@ const {
     color: #fff;
   }
 
+  .nav-brand-mark {
+    height: 1cap;
+    width: auto;
+    flex: none;
+  }
+
   .nav-brand-name {
     font-size: 16px;
-    font-weight: 650;
+    font-weight: 500;
     letter-spacing: -0.025em;
     line-height: 1;
+    color: var(--fg-muted);
   }
 
   .nav-right {
     display: inline-flex;
     align-items: center;
     gap: 8px;
+  }
+
+  .nav-link {
+    padding: 0 10px;
+    color: var(--fg-muted);
+    font-size: 13px;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+    transition: color 0.18s ease;
+  }
+
+  .nav-link:hover {
+    color: var(--fg);
   }
 
   .nav-stars {

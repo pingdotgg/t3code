@@ -8,6 +8,7 @@
  * It also includes `configToAttributes` for turning service metadata into raw
  * OpenTelemetry attributes.
  *
+ * @stability unstable
  * @since 4.0.0
  */
 import type * as OtelApi from "@opentelemetry/api"
@@ -28,6 +29,7 @@ import * as Rec from "effect/Record"
  * Use to provide process, service, and deployment metadata that should be
  * attached to spans, metrics, and logs.
  *
+ * @stability unstable
  * @category services
  * @since 4.0.0
  */
@@ -39,6 +41,7 @@ export class Resource extends Context.Service<
 /**
  * Creates a `Resource` layer from service metadata and additional OpenTelemetry attributes.
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */
@@ -75,7 +78,8 @@ export const layer = (config: {
  * @see {@link layer} for creating a `Resource` layer from explicit metadata
  * @see {@link layerFromEnv} for merging attributes with OpenTelemetry environment variables
  *
- * @category configuration
+ * @stability unstable
+ * @category converting
  * @since 4.0.0
  */
 export const configToAttributes = (options: {
@@ -100,6 +104,7 @@ export const configToAttributes = (options: {
 /**
  * Creates a `Resource` layer from OpenTelemetry environment variables, optionally merging additional attributes.
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */
@@ -111,8 +116,8 @@ export const layerFromEnv = (
   Layer.effect(
     Resource,
     Effect.gen(function*() {
-      const serviceName = yield* Config.option(Config.string("OTEL_SERVICE_NAME"))
-      const attributes = yield* Config.string("OTEL_RESOURCE_ATTRIBUTES").pipe(
+      const serviceName = yield* Config.option(Config.String("OTEL_SERVICE_NAME"))
+      const attributes = yield* Config.String("OTEL_RESOURCE_ATTRIBUTES").pipe(
         Config.withDefault(""),
         Config.map((s) => {
           const attrs = s.split(",")
@@ -139,6 +144,7 @@ export const layerFromEnv = (
 /**
  * Layer that provides an empty OpenTelemetry resource.
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */

@@ -1,8 +1,4 @@
-import {
-  HostProcessArchitecture,
-  HostProcessEnvironment,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -11,9 +7,9 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 
-export class ResourceMonitorBinaryUnsupported extends Schema.TaggedErrorClass<ResourceMonitorBinaryUnsupported>()(
+export class ResourceMonitorBinaryUnsupported extends Schema.TaggedError<ResourceMonitorBinaryUnsupported>()(
   "ResourceMonitorBinaryUnsupported",
   {
     platform: Schema.String,
@@ -25,7 +21,7 @@ export class ResourceMonitorBinaryUnsupported extends Schema.TaggedErrorClass<Re
   }
 }
 
-export class ResourceMonitorBinaryNotFound extends Schema.TaggedErrorClass<ResourceMonitorBinaryNotFound>()(
+export class ResourceMonitorBinaryNotFound extends Schema.TaggedError<ResourceMonitorBinaryNotFound>()(
   "ResourceMonitorBinaryNotFound",
   {
     platform: Schema.String,
@@ -38,7 +34,7 @@ export class ResourceMonitorBinaryNotFound extends Schema.TaggedErrorClass<Resou
   }
 }
 
-export class ResourceMonitorBinaryNotExecutable extends Schema.TaggedErrorClass<ResourceMonitorBinaryNotExecutable>()(
+export class ResourceMonitorBinaryNotExecutable extends Schema.TaggedError<ResourceMonitorBinaryNotExecutable>()(
   "ResourceMonitorBinaryNotExecutable",
   {
     path: Schema.String,
@@ -90,7 +86,7 @@ export const ResourceMonitorHostLinuxLibc = Context.Reference<ResourceMonitorLin
   },
 );
 
-export function resourceMonitorPlatformKey(
+function resourceMonitorPlatformKey(
   platform: NodeJS.Platform,
   architecture: NodeJS.Architecture,
 ): string | undefined {
@@ -103,7 +99,7 @@ export function resourceMonitorPlatformKey(
   return `${platform}-${architecture}`;
 }
 
-export function resourceMonitorRustTarget(
+function resourceMonitorRustTarget(
   platform: NodeJS.Platform,
   architecture: NodeJS.Architecture,
   linuxLibc?: ResourceMonitorLinuxLibc,
@@ -136,12 +132,12 @@ export function resourceMonitorRustTarget(
 }
 
 export const make = Effect.fn("resourceTelemetry.resourceMonitorBinary.make")(function* () {
-  const config = yield* ServerConfig;
+  const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const platform = yield* HostProcessPlatform;
-  const architecture = yield* HostProcessArchitecture;
-  const environment = yield* HostProcessEnvironment;
+  const platform = yield* HostProcess.Platform;
+  const architecture = yield* HostProcess.Architecture;
+  const environment = yield* HostProcess.Environment;
   const linuxLibc = platform === "linux" ? yield* ResourceMonitorHostLinuxLibc : undefined;
   const executableName = binaryName(platform);
   const platformKey = resourceMonitorPlatformKey(platform, architecture);

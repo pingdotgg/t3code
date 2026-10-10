@@ -44,9 +44,8 @@ export interface ResourcePolicy extends Resource<
  * `osis:CreatePipelineEndpoint` so another account can attach a VPC
  * endpoint. A resource has at most one.
  *
- * @resource
- * @section Creating a Resource Policy
- * @example Allow Another Account to Ingest
+ * ### Creating a Resource Policy
+ * **Example:** Allow Another Account to Ingest
  * ```typescript
  * const policy = yield* OSIS.ResourcePolicy("CrossAccountIngest", {
  *   resourceArn: pipeline.pipelineArn,
@@ -63,6 +62,8 @@ export interface ResourcePolicy extends Resource<
  *   }`,
  * });
  * ```
+ *
+ * @resource
  */
 export const ResourcePolicy = Resource<ResourcePolicy>(
   "AWS.OSIS.ResourcePolicy",

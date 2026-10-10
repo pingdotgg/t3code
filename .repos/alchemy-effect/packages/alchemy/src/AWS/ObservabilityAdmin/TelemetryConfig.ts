@@ -4,7 +4,7 @@ import * as obs from "@distilled.cloud/aws/observabilityadmin";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import type * as HttpClient from "effect/unstable/http/HttpClient";
+import type * as HttpClient from "effect/http/HttpClient";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
 import type { Providers } from "../Providers.ts";
@@ -50,21 +50,22 @@ export interface TelemetryConfig extends Resource<
  * deploying it onboards the account, and destroying it restores whatever
  * onboarding state the account had before the stack first managed it.
  *
- * @resource
- * @section Managing telemetry config
- * @example Onboard the account
+ * ### Managing telemetry config
+ * **Example:** Onboard the account
  * ```typescript
  * import * as ObservabilityAdmin from "alchemy/AWS/ObservabilityAdmin";
  *
  * const telemetry = yield* ObservabilityAdmin.TelemetryConfig("Telemetry");
  * ```
  *
- * @example Keep the resource but switch the feature off
+ * **Example:** Keep the resource but switch the feature off
  * ```typescript
  * const telemetry = yield* ObservabilityAdmin.TelemetryConfig("Telemetry", {
  *   enabled: false,
  * });
  * ```
+ *
+ * @resource
  */
 export const TelemetryConfig = Resource<TelemetryConfig>(
   "AWS.ObservabilityAdmin.TelemetryConfig",

@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * {@link ResetEnabledControl} to poll a drift-remediation run to
  * completion. Provide the implementation with
  * `Effect.provide(AWS.ControlTower.GetControlOperationHttp)`.
- * @binding
- * @section Polling Asynchronous Operations
- * @example Poll a Control Operation
+ * ### Polling Asynchronous Operations
+ * **Example:** Poll a Control Operation
  * ```typescript
  * // init — account-level binding takes no resource
  * const getControlOperation = yield* AWS.ControlTower.GetControlOperation();
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * console.log(controlOperation.status);
  * ```
+ *
+ * @binding
  */
 export interface GetControlOperation extends Binding.Service<
   GetControlOperation,

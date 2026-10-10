@@ -5,8 +5,16 @@ import {
 } from "@/State/HttpStateStore.ts";
 import { describe, expect, it } from "alchemy-test";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as Logger from "effect/Logger";
+import * as Redacted from "effect/Redacted";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as HttpApiError from "effect/http-api/HttpApiError";
 
 /**
  * Hermetic tests driven by the production failure modes observed in
@@ -52,7 +60,7 @@ const makeStore = makeHttpStateStore({
   id: "test-http",
 });
 
-describe("describeStateStoreFailure", () => {
+describe("describeStateStoreFailure", { tags: ["unit", "local"] }, () => {
   it("never returns an empty message", () => {
     class Empty extends Error {
       readonly _tag = "SomeTaggedError";
@@ -62,47 +70,98 @@ describe("describeStateStoreFailure", () => {
     }
     const message = describeStateStoreFailure(new Empty());
     expect(message.length).toBeGreaterThan(0);
-    expect(message).toContain("SomeTaggedError");
   });
 
-  it("maps Unauthorized-tagged errors to an actionable message", () => {
-    class Unauthorized extends Error {
-      readonly _tag = "Unauthorized";
-      constructor() {
-        super("");
-      }
-    }
-    const message = describeStateStoreFailure(new Unauthorized());
+  it("maps Unauthorized errors to an actionable message", () => {
+    const message = describeStateStoreFailure(new HttpApiError.Unauthorized());
     expect(message).toContain("unauthorized");
-    expect(message).toContain("alchemy login");
+    expect(message).toContain("alchemy profile edit");
   });
 
   it("appends the HTTP status when the error carries a response", () => {
-    class WithResponse extends Error {
-      readonly _tag = "HttpClientError";
-      readonly response = { status: 500 };
-      constructor() {
-        super("something broke");
-      }
-    }
-    expect(describeStateStoreFailure(new WithResponse())).toContain("500");
+    const request = HttpClientRequest.put("https://state-store.test");
+    const response = HttpClientResponse.fromWeb(
+      request,
+      new Response(null, { status: 500 }),
+    );
+    const error = new HttpClientError.HttpClientError({
+      reason: new HttpClientError.StatusCodeError({ request, response }),
+    });
+    expect(describeStateStoreFailure(error)).toContain("500");
   });
 
-  it("appends a distinct cause message", () => {
-    const cause = new Error("connection reset by peer");
-    const outer = new Error("fetch failed");
+  it("omits arbitrary error and cause messages", () => {
+    const cause = new Error("secret cause");
+    const outer = new Error("secret message");
     outer.cause = cause;
     const message = describeStateStoreFailure(outer);
-    expect(message).toContain("fetch failed");
-    expect(message).toContain("connection reset by peer");
+    expect(message).not.toContain("secret");
+    expect(message.length).toBeGreaterThan(0);
   });
 
-  it("stringifies non-Error failures", () => {
-    expect(describeStateStoreFailure("boom")).toBe("boom");
+  it("omits non-Error failures that may contain state", () => {
+    expect(describeStateStoreFailure("secret state")).not.toContain("secret");
   });
 });
 
-describe("makeHttpStateStore", () => {
+describe("makeHttpStateStore", { tags: ["unit", "local"] }, () => {
+  // Regression: https://github.com/reve-ai/kommunikasie/commit/f2e7320ff261833092b84d8aa25e3563710661e8
+  // State encoding unwraps Redacted values before HTTP. Neither the request
+  // object nor transport/decoder messages may escape through diagnostics.
+  for (const failure of ["status", "decode", "transport"] as const) {
+    it.effect(
+      `does not expose serialized state after a ${failure} failure`,
+      () => {
+        const secret = "STATE_PAYLOAD_SENTINEL_91f4";
+        const logs: string[] = [];
+        let requestBody = "";
+        const logger = Logger.make(({ cause, message }) => {
+          logs.push(JSON.stringify({ cause, message }));
+        });
+        const stub: FetchStub = async (_input, init) => {
+          requestBody = await new Response(init?.body).text();
+          if (failure === "transport") throw new Error(secret);
+          return new Response(secret, {
+            status: failure === "status" ? 400 : 200,
+            headers: { "content-type": "application/json" },
+          });
+        };
+        return Effect.gen(function* () {
+          const store = yield* makeStore;
+          const fiber = yield* store
+            .set({
+              stack: "s",
+              stage: "dev",
+              fqn: "secret",
+              value: {
+                kind: "action",
+                actionType: "SecretState",
+                namespace: undefined,
+                fqn: "secret",
+                logicalId: "secret",
+                status: "ran",
+                downstream: [],
+                inputHash: "input-hash",
+                input: { token: Redacted.make(secret) },
+                output: null,
+              },
+            })
+            .pipe(Effect.flip, Effect.forkChild);
+          yield* TestClock.adjust("30 seconds");
+          const error = yield* Fiber.join(fiber);
+          expect(requestBody).toContain(secret);
+          expect(JSON.stringify({ error, logs })).not.toContain(secret);
+          expect(error.cause).toBeUndefined();
+          expect(error.message).not.toContain(secret);
+          expect(error.message.length).toBeGreaterThan(0);
+        }).pipe(
+          Effect.provide(stubHttpClient(stub)),
+          Effect.provide(Logger.layer([logger])),
+        );
+      },
+    );
+  }
+
   it.live("retries transient 5xx and then succeeds", () => {
     let calls = 0;
     const stub: FetchStub = async () => {
@@ -162,7 +221,7 @@ describe("makeHttpStateStore", () => {
       expect(error._tag).toBe("StateStoreError");
       expect(error.message.trim().length).toBeGreaterThan(0);
       expect(error.message).toContain("unauthorized");
-      expect(error.message).toContain("alchemy login");
+      expect(error.message).toContain("alchemy profile edit");
     }).pipe(Effect.provide(stubHttpClient(stub)));
   });
 
@@ -184,7 +243,7 @@ describe("makeHttpStateStore", () => {
   );
 });
 
-describe("checkHttpStateStoreAuth", () => {
+describe("checkHttpStateStoreAuth", { tags: ["unit", "local"] }, () => {
   const check = checkHttpStateStoreAuth({
     url: "https://state-store.test",
     authToken: "token",

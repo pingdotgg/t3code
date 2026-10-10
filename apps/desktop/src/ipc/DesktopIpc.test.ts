@@ -41,13 +41,42 @@ describe("DesktopIpc", () => {
       const error = yield* Effect.flip(Effect.scoped(ipc.handle(invokeMethod)));
 
       assert.instanceOf(error, DesktopIpc.DesktopIpcRegistrationError);
-      assert.isTrue(DesktopIpc.isDesktopIpcError(error));
       assert.strictEqual(error.handlerKind, "invoke");
       assert.strictEqual(error.channel, invokeMethod.channel);
       assert.strictEqual(error.cause, cause);
       assert.include(error.message, "invoke");
       assert.include(error.message, invokeMethod.channel);
       assert.notInclude(error.message, cause.message);
+    }),
+  );
+
+  it.effect("forwards the invoke sender to the method", () =>
+    Effect.gen(function* () {
+      let listener: DesktopIpc.DesktopIpcHandleListener | undefined;
+      const ipc = DesktopIpc.make(
+        makeIpcMain({
+          handle: (_channel, registered) => {
+            listener = registered;
+          },
+        }),
+      );
+      const sender = { sender: { id: 7 } };
+      let received: DesktopIpc.DesktopIpcInvokeEvent | undefined;
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* ipc.handle({
+            channel: "desktop.test.sender",
+            handler: (_raw, event) =>
+              Effect.sync(() => {
+                received = event;
+              }),
+          });
+          yield* Effect.promise(async () => listener!(sender, undefined));
+        }),
+      );
+
+      assert.strictEqual(received, sender);
     }),
   );
 
@@ -69,7 +98,6 @@ describe("DesktopIpc", () => {
       if (exit._tag === "Success") return;
       const error = Cause.squash(exit.cause);
       assert.instanceOf(error, DesktopIpc.DesktopIpcUnregistrationError);
-      assert.isTrue(DesktopIpc.isDesktopIpcError(error));
       assert.strictEqual(error.handlerKind, "sync");
       assert.strictEqual(error.channel, syncMethod.channel);
       assert.strictEqual(error.cause, cause);

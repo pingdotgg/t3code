@@ -1,0 +1,10 @@
+{
+  "uuid": "snap-shot@t3.codes",
+  "files": [
+    "metadata.json",
+    "extension.js",
+    "captureService.js",
+    "captureFeedback.js",
+    "feedbackGeometry.js"
+  ]
+}

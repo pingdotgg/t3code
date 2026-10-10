@@ -10,15 +10,16 @@ import * as Binding from "../../Binding.ts";
  * identifier — e.g. an ops function that checks whether the warehouse is
  * `available` before submitting a load. Provide the implementation with
  * `Effect.provide(AWS.Redshift.DescribeClustersHttp)`.
- * @binding
- * @section Monitoring Clusters
- * @example Check a Cluster's Status
+ * ### Monitoring Clusters
+ * **Example:** Check a Cluster's Status
  * ```typescript
  * const describeClusters = yield* AWS.Redshift.DescribeClusters();
  *
  * const page = yield* describeClusters({ ClusterIdentifier: clusterId });
  * const status = page.Clusters?.[0]?.ClusterStatus;
  * ```
+ *
+ * @binding
  */
 export interface DescribeClusters extends Binding.Service<
   DescribeClusters,

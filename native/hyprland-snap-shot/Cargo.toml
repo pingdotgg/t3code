@@ -1,0 +1,31 @@
+[package]
+name = "t3-hyprland-snap-shot"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+bitflags = "2"
+wayland-backend = "0.3"
+png = "0.18"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+wayland-client = "0.31"
+wayland-scanner = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "unstable", "staging"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+smithay-client-toolkit = { version = "0.19.2", default-features = false }
+rustix = { version = "1", features = ["event"] }
+
+[dev-dependencies]
+wayland-server = "0.31"
+wayland-protocols = { version = "0.32", features = ["server", "staging"] }
+wayland-protocols-wlr = { version = "0.3", features = ["server"] }
+tempfile = "3"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"
+strip = true

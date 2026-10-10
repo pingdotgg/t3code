@@ -11,44 +11,32 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
-import { GrokSettings, ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderInstanceId } from "@t3tools/contracts";
+import { GrokSettings } from "@t3tools/provider-grok/settings";
 
 import * as ServerConfig from "../config.ts";
 import * as TextGeneration from "./TextGeneration.ts";
-import { makeGrokTextGeneration } from "./GrokTextGeneration.ts";
+import { makeGrokTextGeneration } from "@t3tools/provider-grok/testing";
+import { execScriptSource, writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
-const mockAgentPath = NodePath.join(__dirname, "../../scripts/acp-mock-agent.ts");
+const mockAgentPath = NodePath.join(__dirname, "../provider/testFixtures/grok-text-mock-agent.mjs");
 
-function shellSingleQuote(value: string): string {
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
-}
-
-const GrokTextGenerationTestLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
+const layerGrokTextGenerationTest = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-grok-text-generation-test-",
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
 function makeAcpGrokWrapper(dir: string, env: Record<string, string>): string {
-  const binDir = NodePath.join(dir, "bin");
-  const grokPath = NodePath.join(binDir, "grok");
-  NodeFS.mkdirSync(binDir, { recursive: true });
-  NodeFS.writeFileSync(
-    grokPath,
-    [
-      "#!/bin/sh",
-      ...Object.entries(env).map(([key, value]) => `export ${key}=${shellSingleQuote(value)}`),
-      'if [ "$1" != "agent" ] || [ "$2" != "stdio" ]; then',
-      '  printf "%s\\n" "unexpected args: $*" >&2',
-      "  exit 11",
-      "fi",
-      `exec ${JSON.stringify(process.execPath)} ${JSON.stringify(mockAgentPath)}`,
-      "",
-    ].join("\n"),
-    "utf8",
-  );
-  NodeFS.chmodSync(grokPath, 0o755);
-  return grokPath;
+  return writeFakeCli({
+    directory: NodePath.join(dir, "bin"),
+    name: "grok",
+    env,
+    source: execScriptSource({
+      scriptPath: mockAgentPath,
+      expectedArgs: ["agent", "stdio"],
+    }),
+  });
 }
 
 function withFakeAcpGrok<A, E, R>(
@@ -79,7 +67,7 @@ function readJsonRpcRequests(
     .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> });
 }
 
-it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
+it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
   it.effect("uses ACP with disabled tool capabilities and forwards the requested model id", () => {
     const requestLogDir = NodeFS.mkdtempSync(
       NodePath.join(NodeOS.tmpdir(), "t3code-grok-text-log-"),

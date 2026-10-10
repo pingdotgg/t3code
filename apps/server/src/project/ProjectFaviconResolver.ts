@@ -6,8 +6,12 @@
  *
  * @module ProjectFaviconResolver
  */
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -17,6 +21,30 @@ import * as Schema from "effect/Schema";
 
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as T3ProjectFileLoader from "./T3ProjectFileLoader.ts";
+
+// Resolution probes 21 well-known paths plus 7 source files, so a miss
+// costs ~30 filesystem probes. AssetAccess resolves on every project-favicon
+// asset URL, and a project's icon does not move, so the answer is cached.
+const FAVICON_CACHE_CAPACITY = 512;
+const FAVICON_POSITIVE_CACHE_TTL = Duration.minutes(10);
+const FAVICON_NEGATIVE_CACHE_TTL = Duration.minutes(1);
+
+function faviconCacheKey(cwd: string, faviconPath?: string): string {
+  return `${faviconPath ?? ""}\0${cwd}`;
+}
+
+function parseFaviconCacheKey(key: string): {
+  readonly cwd: string;
+  readonly faviconPath?: string;
+} {
+  const separatorIndex = key.indexOf("\0");
+  if (separatorIndex === -1) {
+    return { cwd: key };
+  }
+  const faviconPath = key.slice(0, separatorIndex);
+  const cwd = key.slice(separatorIndex + 1);
+  return faviconPath.length === 0 ? { cwd } : { cwd, faviconPath };
+}
 
 // Well-known favicon paths checked in order.
 const FAVICON_CANDIDATES = [
@@ -63,7 +91,7 @@ const LINK_ICON_HTML_RE =
 const ICON_REL_RE = /\brel\s*:\s*["'](?:icon|shortcut icon)["']/i;
 const ICON_HREF_RE = /\bhref\s*:\s*["']([^"'?]+)/i;
 
-export class ProjectFaviconResolutionError extends Schema.TaggedErrorClass<ProjectFaviconResolutionError>()(
+export class ProjectFaviconResolutionError extends Schema.TaggedError<ProjectFaviconResolutionError>()(
   "ProjectFaviconResolutionError",
   {
     operation: Schema.Literals([
@@ -82,6 +110,12 @@ export class ProjectFaviconResolutionError extends Schema.TaggedErrorClass<Proje
     return `Failed to resolve project favicon during ${this.operation} for workspace ${this.workspaceRoot}.`;
   }
 }
+
+const isWorkspaceRootNotExistsError = Schema.is(WorkspacePaths.WorkspaceRootNotExistsError);
+
+/** True when the workspace root itself is gone, e.g. a moved or deleted checkout. */
+export const isMissingWorkspaceRoot = (error: ProjectFaviconResolutionError): boolean =>
+  error.operation === "normalize-workspace" && isWorkspaceRootNotExistsError(error.cause);
 
 /** Service tag for project favicon resolution. */
 export class ProjectFaviconResolver extends Context.Service<
@@ -116,7 +150,7 @@ const optionOnNotFound = <A, R>(
   effect: Effect.Effect<A, PlatformError.PlatformError, R>,
 ): Effect.Effect<Option.Option<A>, PlatformError.PlatformError, R> =>
   effect.pipe(
-    Effect.map(Option.some),
+    Effect.asSome,
     Effect.catchTags({
       PlatformError: (error) =>
         error.reason._tag === "NotFound" ? Effect.succeed(Option.none<A>()) : Effect.fail(error),
@@ -148,7 +182,7 @@ export const make = Effect.gen(function* () {
               relativePath,
             })
       ).pipe(
-        Effect.map(Option.some),
+        Effect.asSome,
         Effect.catchTags({
           WorkspacePathOutsideRootError: () =>
             Effect.succeed(
@@ -178,9 +212,73 @@ export const make = Effect.gen(function* () {
     return null;
   });
 
-  const resolvePath: ProjectFaviconResolver["Service"]["resolvePath"] = Effect.fn(
-    "ProjectFaviconResolver.resolvePath",
-  )(function* (cwd, faviconPath) {
+  // Reads one source file and resolves the icon it declares, if any.
+  const findIconFromSource = Effect.fn("ProjectFaviconResolver.findIconFromSource")(function* (
+    projectCwd: string,
+    sourceFile: string,
+  ): Effect.fn.Return<string | null, ProjectFaviconResolutionError> {
+    const sourcePath = yield* workspacePaths
+      .resolveRelativePathWithinRoot({
+        workspaceRoot: projectCwd,
+        relativePath: sourceFile,
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectFaviconResolutionError({
+              operation: "resolve-path",
+              workspaceRoot: projectCwd,
+              relativePath: sourceFile,
+              cause,
+            }),
+        ),
+      );
+    const source = yield* optionOnNotFound(fileSystem.readFileString(sourcePath.absolutePath)).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProjectFaviconResolutionError({
+            operation: "read-source",
+            workspaceRoot: projectCwd,
+            relativePath: sourceFile,
+            absolutePath: sourcePath.absolutePath,
+            cause,
+          }),
+      ),
+    );
+    if (Option.isNone(source)) {
+      return null;
+    }
+    const href = extractIconHref(source.value);
+    if (!href) {
+      return null;
+    }
+    return yield* findExistingFile(projectCwd, resolveIconHref(href), "workspace");
+  });
+
+  // Starts every probe at once and returns the first hit in list order. A miss
+  // costs one round of filesystem latency instead of one per probe, which
+  // matters when the disk is slow. Fibers are joined in order, so a hit returns
+  // without waiting for lower-ranked probes (the scope interrupts them), and a
+  // failure surfaces only when no earlier probe found a file.
+  const firstInOrder = <A>(
+    items: ReadonlyArray<A>,
+    probe: (item: A) => Effect.Effect<string | null, ProjectFaviconResolutionError>,
+  ) =>
+    Effect.gen(function* () {
+      const fibers = yield* Effect.forEach(items, (item) => Effect.forkScoped(probe(item)));
+      for (const fiber of fibers) {
+        const found = yield* Fiber.join(fiber);
+        if (found) {
+          return found;
+        }
+      }
+      return null;
+    }).pipe(Effect.scoped);
+
+  const resolvePathUncached = Effect.fn("ProjectFaviconResolver.resolvePathUncached")(function* (
+    cwd: string,
+    faviconPath?: string,
+  ): Effect.fn.Return<string | null, ProjectFaviconResolutionError> {
     const projectCwd = yield* workspacePaths.normalizeWorkspaceRoot(cwd).pipe(
       Effect.mapError(
         (cause) =>
@@ -213,58 +311,62 @@ export const make = Effect.gen(function* () {
       }
     }
 
-    for (const candidate of FAVICON_CANDIDATES) {
-      const existing = yield* findExistingFile(projectCwd, [candidate], "workspace");
-      if (existing) {
-        return existing;
-      }
+    const wellKnown = yield* firstInOrder(FAVICON_CANDIDATES, (candidate) =>
+      findExistingFile(projectCwd, [candidate], "workspace"),
+    );
+    if (wellKnown) {
+      return wellKnown;
     }
 
-    for (const sourceFile of ICON_SOURCE_FILES) {
-      const sourcePath = yield* workspacePaths
-        .resolveRelativePathWithinRoot({
-          workspaceRoot: projectCwd,
-          relativePath: sourceFile,
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProjectFaviconResolutionError({
-                operation: "resolve-path",
-                workspaceRoot: projectCwd,
-                relativePath: sourceFile,
-                cause,
-              }),
-          ),
-        );
-      const source = yield* optionOnNotFound(
-        fileSystem.readFileString(sourcePath.absolutePath),
-      ).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProjectFaviconResolutionError({
-              operation: "read-source",
-              workspaceRoot: projectCwd,
-              relativePath: sourceFile,
-              absolutePath: sourcePath.absolutePath,
-              cause,
-            }),
-        ),
-      );
-      if (Option.isNone(source)) {
-        continue;
-      }
-      const href = extractIconHref(source.value);
-      if (!href) {
-        continue;
-      }
-      const existing = yield* findExistingFile(projectCwd, resolveIconHref(href), "workspace");
-      if (existing) {
-        return existing;
-      }
+    return yield* firstInOrder(ICON_SOURCE_FILES, (sourceFile) =>
+      findIconFromSource(projectCwd, sourceFile),
+    );
+  });
+
+  const faviconCache = yield* Cache.makeWith<string, string | null, ProjectFaviconResolutionError>(
+    (key) => {
+      const { cwd, faviconPath } = parseFaviconCacheKey(key);
+      return resolvePathUncached(cwd, faviconPath);
+    },
+    {
+      capacity: FAVICON_CACHE_CAPACITY,
+      timeToLive: Exit.match({
+        onSuccess: (value: string | null) =>
+          value === null ? FAVICON_NEGATIVE_CACHE_TTL : FAVICON_POSITIVE_CACHE_TTL,
+        onFailure: () => Duration.zero,
+      }),
+    },
+  );
+
+  const resolvePath: ProjectFaviconResolver["Service"]["resolvePath"] = Effect.fn(
+    "ProjectFaviconResolver.resolvePath",
+  )(function* (cwd, faviconPath) {
+    const key = faviconCacheKey(cwd, faviconPath);
+    const cached = yield* Cache.get(faviconCache, key);
+    if (cached === null) {
+      return null;
     }
 
-    return null;
+    // A hit still confirms the file with one stat rather than the ~20 probes a
+    // full walk costs, so a deleted icon falls back at once instead of after
+    // the TTL.
+    const stats = yield* optionOnNotFound(fileSystem.stat(cached)).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProjectFaviconResolutionError({
+            operation: "stat-candidate",
+            workspaceRoot: cwd,
+            absolutePath: cached,
+            cause,
+          }),
+      ),
+    );
+    if (Option.isSome(stats) && stats.value.type === "File") {
+      return cached;
+    }
+
+    yield* Cache.invalidate(faviconCache, key);
+    return yield* Cache.get(faviconCache, key);
   });
 
   return ProjectFaviconResolver.of({ resolvePath });

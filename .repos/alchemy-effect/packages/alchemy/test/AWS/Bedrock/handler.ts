@@ -5,8 +5,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "handler.ts");
@@ -31,7 +31,7 @@ export class BedrockTestFunction extends Lambda.Function<Lambda.Function>()(
 export default BedrockTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Model inference (and agent orchestration especially) regularly
     // exceeds Lambda's 3s default timeout.
     timeout: Duration.seconds(60),

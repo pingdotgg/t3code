@@ -1,20 +1,38 @@
+# @effect/docgen
+
 An opinionated documentation generator for Effect projects.
 
-# Credits
+## Installation
+
+```sh
+npm install -D @effect/docgen
+```
+
+## Links
+
+- [Website](https://effect.website): documentation, guides, and news.
+- [Reference](https://effect.website/docs/v4/api/docgen): API documentation for this package.
+- [Discord](https://discord.gg/effect-ts): ask questions, share what you're building, and talk to the core team.
+- [Community](https://effect.website/community-hub): meetups and events, or bring Effect to your own.
+- [Issues](https://github.com/Effect-TS/effect/issues): bug reports and feature requests.
+
+## Let's talk
+
+Whether your team is considering Effect, rolling it out, or already running it in production, we'd love to hear from you: what you're building, what works, and what you need from Effect next.
+
+- **Talk to the maintainers.** Introduce your team on [Discord](https://discord.gg/effect-ts) or email [contact@effectful.co](mailto:contact@effectful.co). We're happy to connect privately on Slack or Discord for feedback and help with adoption.
+- **Production support.** We're exploring how to better support teams running Effect in production. If your organization has specific support needs, let's discuss them.
+- **Adoption help.** Our [adoption partners](https://effect.website/adoption-partners) offer implementation, consulting, team extension, training, and commercial support.
+
+## Credits
 
 This library was inspired by the following projects:
 
 - [docs-ts](https://github.com/gcanti/docs-ts)
 
-# Setup
+## Setup
 
-1. Install `@effect/docgen` as a dev dependency:
-
-```shell
-pnpm add @effect/docgen -D
-```
-
-2. (Optional) Add a `docgen.json` configuration file.
+1. (Optional) Add a `docgen.json` configuration file.
 
 ```json
 {
@@ -22,7 +40,7 @@ pnpm add @effect/docgen -D
 }
 ```
 
-3. Add the following script to your `package.json` file:
+2. Add the following script to your `package.json` file:
 
 ```json
 {
@@ -35,7 +53,7 @@ pnpm add @effect/docgen -D
 > [!WARNING]
 > To use "@effect/docgen", Node.js v18 or above is required.
 
-## Example Configuration
+### Example Configuration
 
 The `docgen.json` configuration file allows you to customize `docgen`'s behavior. Here's an example configuration:
 
@@ -73,7 +91,7 @@ The `docgen.json` configuration file allows you to customize `docgen`'s behavior
 }
 ```
 
-# Supported JSDoc Tags
+## Supported JSDoc Tags
 
 | Tag           | Description                                                                                                                                                                                                                                    | Default   |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
@@ -86,7 +104,7 @@ The `docgen.json` configuration file allows you to customize `docgen`'s behavior
 
 By default, `docgen` will search for files in the `src` directory and will output generated files into a `docs` directory. For information on how to configure `docgen`, see the [Configuration](#configuration) section below.
 
-# Configuration
+## Configuration
 
 `docgen` is meant to be a zero-configuration command-line tool by default. However, there are several configuration settings that can be specified for `docgen`. To customize the configuration of `docgen`, create a `docgen.json` file in the root directory of your project and indicate the custom configuration parameters that the tool should use when generating documentation.
 
@@ -128,12 +146,12 @@ The following table describes each configuration parameter, its purpose, and its
 | parseCompilerOptions    | tsconfig for parsing options (or path to a tsconfig)                                                                                                                                | {}                                 |
 | examplesCompilerOptions | tsconfig for the examples options (or path to a tsconfig)                                                                                                                           | {}                                 |
 
-# FAQ
+## FAQ
 
 **Q:** For functions that have overloaded definitions, is it possible to document each overload separately?
 
 **A:** No, `docgen` will use the documentation provided for the first overload of a function in its generated output.
 
-# License
+## License
 
 The MIT License (MIT)

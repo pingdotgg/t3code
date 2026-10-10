@@ -9,12 +9,12 @@ import {
 } from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as HttpClient from "effect/http/HttpClient";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import type { NetworkInterfaces } from "./DesktopNetworkInterfaces.ts";
 
-export { isTailscaleIpv4Address, parseTailscaleMagicDnsName } from "@t3tools/tailscale";
+export { parseTailscaleMagicDnsName } from "@t3tools/tailscale";
 
 const TAILSCALE_ENDPOINT_PROVIDER: AdvertisedEndpointProvider = {
   id: "tailscale",
@@ -121,7 +121,7 @@ export const resolveTailscaleAdvertisedEndpoints = Effect.fn("resolveTailscaleAd
       input.readMagicDnsName ??
       readTailscaleStatus.pipe(
         Effect.map((status) => status.magicDnsName),
-        Effect.orElseSucceed(() => null),
+        Effect.orElseSucceed((): string | null => null),
       );
     const dnsName =
       input.statusJson === undefined

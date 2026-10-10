@@ -1,4 +1,5 @@
 import type * as Credentials from "@distilled.cloud/aws/Credentials";
+import type * as SigV4 from "@distilled.cloud/aws/SigV4";
 import type * as Effect from "effect/Effect";
 import * as Binding from "../../Binding.ts";
 import type {
@@ -20,14 +21,15 @@ export interface GetMetricMetadataRequest {
  * `api/v1/metadata` endpoint, SigV4-signed with the host Function's
  * credentials.
  *
- * @binding
- * @section Reading Metric Metadata
- * @example All Metric Metadata
+ * ### Reading Metric Metadata
+ * **Example:** All Metric Metadata
  * ```typescript
  * const getMetricMetadata = yield* AMP.GetMetricMetadata(workspace);
  * const metadata = yield* getMetricMetadata({});
  * // { http_requests_total: [{ type: "counter", help: "...", unit: "" }], ... }
  * ```
+ *
+ * @binding
  */
 export interface GetMetricMetadata extends Binding.Service<
   GetMetricMetadata,
@@ -39,7 +41,7 @@ export interface GetMetricMetadata extends Binding.Service<
       request: GetMetricMetadataRequest,
     ) => Effect.Effect<
       Record<string, PrometheusMetricMetadata[]>,
-      PrometheusApiError | Credentials.CredentialsError
+      PrometheusApiError | Credentials.CredentialsError | SigV4.SigningError
     >
   >
 > {}

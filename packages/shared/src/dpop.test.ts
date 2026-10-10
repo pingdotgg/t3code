@@ -1,3 +1,4 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no KeyObject, generateKeyPairSync, or sign.
 import * as NodeCrypto from "node:crypto";
 
 import { assert, describe, it } from "@effect/vitest";
@@ -143,6 +144,43 @@ describe("verifyDpopProof", () => {
       }).ok,
       false,
     );
+  });
+
+  it("reports a time-window failure only after the proof signature is valid", () => {
+    const thumbprint = computeDpopJwkThumbprint(publicJwk);
+    const outsideWindow = verifyDpopProof({
+      proof,
+      method: "POST",
+      url: "https://example.com/oauth/token",
+      nowEpochSeconds: 1_000,
+      expectedThumbprint: thumbprint,
+    });
+    if (outsideWindow.ok) {
+      assert.fail("Expected an old DPoP proof to fail.");
+    }
+    assert.equal(outsideWindow.code, "time_window");
+
+    const { privateKey: otherPrivateKey } = NodeCrypto.generateKeyPairSync("ec", {
+      namedCurve: "P-256",
+    });
+    const invalidSignatureProof = signDpopProof({
+      method: "POST",
+      url: "https://example.com/oauth/token",
+      iat: 100,
+      privateKey: otherPrivateKey,
+      publicJwk,
+    });
+    const invalidSignature = verifyDpopProof({
+      proof: invalidSignatureProof,
+      method: "POST",
+      url: "https://example.com/oauth/token",
+      nowEpochSeconds: 1_000,
+      expectedThumbprint: thumbprint,
+    });
+    if (invalidSignature.ok) {
+      assert.fail("Expected a proof signed by a different key to fail.");
+    }
+    assert.equal(invalidSignature.code, "invalid_signature");
   });
 
   it("requires the RFC 9449 access token hash when an access token is expected", () => {

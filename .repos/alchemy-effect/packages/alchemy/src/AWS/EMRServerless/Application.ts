@@ -129,9 +129,8 @@ export interface Application extends Resource<
  * state costs nothing; billing only occurs for workers while the application
  * is started (including any pre-initialized `initialCapacity`).
  *
- * @resource
- * @section Creating Applications
- * @example Spark Application
+ * ### Creating Applications
+ * **Example:** Spark Application
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -141,7 +140,7 @@ export interface Application extends Resource<
  * // app.applicationId is passed to StartJobRun
  * ```
  *
- * @example Hive Application with Auto-Stop Tuning
+ * **Example:** Hive Application with Auto-Stop Tuning
  * ```typescript
  * const app = yield* AWS.EMRServerless.Application("Hive", {
  *   type: "HIVE",
@@ -151,8 +150,8 @@ export interface Application extends Resource<
  * });
  * ```
  *
- * @section Capacity
- * @example Pre-Initialized Capacity for Low-Latency Jobs
+ * ### Capacity
+ * **Example:** Pre-Initialized Capacity for Low-Latency Jobs
  * ```typescript
  * const app = yield* AWS.EMRServerless.Application("Warm", {
  *   releaseLabel: "emr-7.9.0",
@@ -170,8 +169,8 @@ export interface Application extends Resource<
  * });
  * ```
  *
- * @section Networking
- * @example VPC-Connected Application
+ * ### Networking
+ * **Example:** VPC-Connected Application
  * ```typescript
  * const app = yield* AWS.EMRServerless.Application("InVpc", {
  *   releaseLabel: "emr-7.9.0",
@@ -181,6 +180,8 @@ export interface Application extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Application = Resource<Application>(
   "AWS.EMRServerless.Application",

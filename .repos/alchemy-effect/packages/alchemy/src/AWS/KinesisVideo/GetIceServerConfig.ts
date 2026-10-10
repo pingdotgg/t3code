@@ -18,9 +18,8 @@ export interface GetIceServerConfigRequest extends Omit<
  * get a callable that resolves the per-channel HTTPS signaling endpoint
  * (`GetSignalingChannelEndpoint`) and returns TURN server URIs with
  * short-lived credentials for establishing WebRTC connectivity.
- * @binding
- * @section WebRTC Connectivity
- * @example ICE Server Configuration
+ * ### WebRTC Connectivity
+ * **Example:** ICE Server Configuration
  * ```typescript
  * // init
  * const getIceServers = yield* AWS.KinesisVideo.GetIceServerConfig(channel);
@@ -29,11 +28,11 @@ export interface GetIceServerConfigRequest extends Omit<
  * const { IceServerList } = yield* getIceServers({ ClientId: "viewer-1" });
  * ```
  *
- * @example Wire into a Lambda Function
+ * **Example:** Wire into a Lambda Function
  * ```typescript
  * // Provide the GetIceServerConfigHttp layer on the Function's init Effect.
  * export default SignalingFunction.make(
- *   { main: import.meta.url, url: true, timeout: Duration.seconds(30) },
+ *   { main: import.meta.url, functionUrl: true, timeout: Duration.seconds(30) },
  *   Effect.gen(function* () {
  *     const channel = yield* AWS.KinesisVideo.SignalingChannel("Doorbell");
  *     const getIceServers = yield* AWS.KinesisVideo.GetIceServerConfig(channel);
@@ -48,6 +47,8 @@ export interface GetIceServerConfigRequest extends Omit<
  *   }).pipe(Effect.provide(AWS.KinesisVideo.GetIceServerConfigHttp)),
  * );
  * ```
+ *
+ * @binding
  */
 export interface GetIceServerConfig extends Binding.Service<
   GetIceServerConfig,

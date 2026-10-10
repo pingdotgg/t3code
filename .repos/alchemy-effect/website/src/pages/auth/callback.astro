@@ -1,0 +1,107 @@
+---
+import Auth from "../../layouts/Auth.astro";
+---
+
+<Auth
+  title="Complete Authentication"
+  message="Trying to complete the OAuth flow"
+>
+  <section class="relay" aria-live="polite">
+    <p id="relay-connecting">Connecting to your local Alchemy process…</p>
+    <div id="relay-manual" hidden>
+      <code id="relay-code"></code>
+      <div class="relay__actions">
+        <button id="relay-copy" type="button">Copy code</button>
+        <a id="relay-local" href="#">Try local callback anyway</a>
+      </div>
+    </div>
+  </section>
+</Auth>
+
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get("code");
+  const state = params.get("state");
+  const error = params.get("error");
+  const localCallback = new URL("http://localhost:9976/auth/callback");
+  localCallback.search = params.toString();
+
+  const connecting = document.querySelector<HTMLElement>("#relay-connecting")!;
+  const manual = document.querySelector<HTMLElement>("#relay-manual")!;
+  const codeBox = document.querySelector<HTMLElement>("#relay-code")!;
+  const copyButton = document.querySelector<HTMLButtonElement>("#relay-copy")!;
+  const localLink = document.querySelector<HTMLAnchorElement>("#relay-local")!;
+
+  localLink.href = localCallback.toString();
+
+  const showManual = () => {
+    connecting.textContent = error
+      ? "Cloudflare did not authorize the request."
+      : "Couldn't connect to your local Alchemy process.";
+    if (!code || !state) return;
+    codeBox.textContent = `${code}#${state}`;
+    manual.hidden = false;
+  };
+
+  if (error || !code || !state) {
+    showManual();
+  } else {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 10000);
+    
+    fetch("http://localhost:9976/auth/ping", {
+      mode: "cors",
+      cache: "no-store",
+      signal: controller.signal,
+    })
+    .then(async (response) => {
+        if (!response.ok) throw new Error("Local callback unavailable");
+        window.location.replace(localCallback);
+      })
+      .catch(showManual)
+      .finally(() => window.clearTimeout(timeout));
+  }
+
+  copyButton.addEventListener("click", async () => {
+    await navigator.clipboard.writeText(codeBox.textContent ?? "");
+    copyButton.textContent = "Copied";
+  });
+</script>
+
+<style>
+  .relay {
+    width: 100%;
+    color: var(--alc-fg-2);
+  }
+  .relay p {
+    line-height: 1.6;
+  }
+  .relay code {
+    display: block;
+    overflow-wrap: anywhere;
+    padding: 1rem;
+    border: 1px solid var(--alc-hairline-2);
+    border-radius: 0.5rem;
+    background: var(--alc-bg-elev-1);
+    color: var(--alc-fg-1);
+    text-align: left;
+    user-select: all;
+  }
+  .relay__actions {
+    display: flex;
+    justify-content: center;
+    gap: 0.75rem;
+    margin-top: 1rem;
+  }
+  .relay__actions button,
+  .relay__actions a {
+    padding: 0.625rem 1rem;
+    border: 1px solid var(--alc-hairline-2);
+    border-radius: 0.5rem;
+    background: var(--alc-bg-elev-1);
+    color: var(--alc-fg-1);
+    font: inherit;
+    text-decoration: none;
+    cursor: pointer;
+  }
+</style>

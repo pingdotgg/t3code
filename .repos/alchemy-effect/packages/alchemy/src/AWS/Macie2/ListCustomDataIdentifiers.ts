@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.Macie2.ListCustomDataIdentifiersHttp)`.
- * @binding
- * @section Custom Data Identifiers & Lists
- * @example List Custom Data Identifiers
+ * ### Custom Data Identifiers & Lists
+ * **Example:** List Custom Data Identifiers
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listCustomDataIdentifiers = yield* AWS.Macie2.ListCustomDataIdentifiers();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { items } = yield* listCustomDataIdentifiers();
  * ```
+ *
+ * @binding
  */
 export interface ListCustomDataIdentifiers extends Binding.Service<
   ListCustomDataIdentifiers,

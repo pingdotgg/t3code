@@ -6,17 +6,17 @@
  */
 import { Effect, Schema } from "effect"
 
-class InvalidPayload extends Schema.TaggedErrorClass<InvalidPayload>()("InvalidPayload", {
+class InvalidPayload extends Schema.TaggedError<InvalidPayload>()("InvalidPayload", {
   input: Schema.String,
   cause: Schema.Defect()
 }) {}
 
-class UserLookupError extends Schema.TaggedErrorClass<UserLookupError>()("UserLookupError", {
+class UserLookupError extends Schema.TaggedError<UserLookupError>()("UserLookupError", {
   userId: Schema.Int,
   cause: Schema.Defect()
 }) {}
 
-class MissingWorkspaceId extends Schema.TaggedErrorClass<MissingWorkspaceId>()("MissingWorkspaceId", {}) {}
+class MissingWorkspaceId extends Schema.TaggedError<MissingWorkspaceId>()("MissingWorkspaceId", {}) {}
 
 // Some request fields are optional and may be absent.
 const requestHeaders = new Map<string, string>([

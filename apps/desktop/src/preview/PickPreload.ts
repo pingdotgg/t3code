@@ -1,4 +1,4 @@
-// @effect-diagnostics globalDate:off - This isolated Electron preload does not run inside an Effect runtime.
+// @effect-diagnostics globalDate:off globalTimers:off - This isolated Electron preload does not run inside an Effect runtime.
 import { ipcRenderer } from "electron";
 import { getElementContext } from "react-grab/primitives";
 import type {
@@ -16,13 +16,21 @@ import type {
 
 import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
 import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
+import { installRecordingCursor } from "./RecordingCursor.ts";
+import { DEFAULT_RECORDING_INPUT_OPTIONS } from "./RecordingInput.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
+  ANNOTATION_SEND_ENABLED_CHANNEL,
   ANNOTATION_THEME_CHANNEL,
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
   MOUSE_NAVIGATE_CHANNEL,
+  RECORDING_CURSOR_CHANNEL,
+  RECORDING_POINTER_CHANNEL,
+  RECORDING_KEY_CHANNEL,
+  RECORDING_INPUT_CHANNEL,
+  RECORDING_CONTROLLER_CHANNEL,
   START_PICK_CHANNEL,
 } from "./GuestProtocol.ts";
 const OVERLAY_ATTRIBUTE = "data-t3code-annotation-ui";
@@ -30,8 +38,84 @@ const Z_INDEX_OVERLAY = 2147483646;
 const PRIMARY = "var(--t3-primary)";
 const PRIMARY_FILL = "color-mix(in srgb, var(--t3-primary) 10%, transparent)";
 const MAX_MARQUEE_ELEMENTS = 20;
+/** Upper bound on one element's React context lookup during submit. */
+const ELEMENT_CONTEXT_TIMEOUT_MS = 5_000;
 const CONTENT_LAYER_Z_INDEX = 1;
 const CHROME_LAYER_Z_INDEX = 10;
+
+let recordingCursor: ReturnType<typeof installRecordingCursor> | null = null;
+ipcRenderer.on(
+  RECORDING_CURSOR_CHANNEL,
+  (_event, active: unknown, inputOptions: unknown, controller: unknown) => {
+    if (active === true) {
+      const options =
+        typeof inputOptions === "object" && inputOptions !== null
+          ? {
+              showKeyPresses:
+                "showKeyPresses" in inputOptions && inputOptions.showKeyPresses === true,
+              showMousePresses:
+                "showMousePresses" in inputOptions && inputOptions.showMousePresses === true,
+            }
+          : DEFAULT_RECORDING_INPUT_OPTIONS;
+      recordingCursor ??= installRecordingCursor(document, window, options, (input) =>
+        ipcRenderer.send(RECORDING_INPUT_CHANNEL, input),
+      );
+      recordingCursor.setTheme(annotationTheme);
+      if (controller === "agent" || controller === "human" || controller === "none")
+        recordingCursor.setController(controller);
+    } else {
+      recordingCursor?.dispose();
+      recordingCursor = null;
+    }
+  },
+);
+ipcRenderer.on(RECORDING_CONTROLLER_CHANNEL, (_event, controller: unknown, point: unknown) => {
+  const humanPoint =
+    typeof point === "object" &&
+    point !== null &&
+    "x" in point &&
+    typeof point.x === "number" &&
+    Number.isFinite(point.x) &&
+    "y" in point &&
+    typeof point.y === "number" &&
+    Number.isFinite(point.y)
+      ? { x: point.x, y: point.y }
+      : undefined;
+  if (controller === "agent" || controller === "human" || controller === "none")
+    recordingCursor?.setController(controller, humanPoint);
+});
+ipcRenderer.on(RECORDING_KEY_CHANNEL, (_event, input: unknown) => {
+  if (
+    typeof input !== "object" ||
+    input === null ||
+    !("key" in input) ||
+    typeof input.key !== "string"
+  )
+    return;
+  recordingCursor?.keyPress({
+    key: input.key,
+    metaKey: "metaKey" in input && input.metaKey === true,
+    ctrlKey: "ctrlKey" in input && input.ctrlKey === true,
+    altKey: "altKey" in input && input.altKey === true,
+    shiftKey: "shiftKey" in input && input.shiftKey === true,
+  });
+});
+ipcRenderer.on(RECORDING_POINTER_CHANNEL, (_event, point: unknown) => {
+  if (
+    typeof point === "object" &&
+    point !== null &&
+    "x" in point &&
+    typeof point.x === "number" &&
+    Number.isFinite(point.x) &&
+    "y" in point &&
+    typeof point.y === "number" &&
+    Number.isFinite(point.y)
+  )
+    recordingCursor?.move(
+      { x: point.x, y: point.y },
+      "phase" in point && point.phase === "click" ? "click" : "move",
+    );
+});
 
 type AnnotationTool = "select" | "marquee" | "draw" | "erase";
 
@@ -46,6 +130,7 @@ interface SelectedElement {
 interface AnnotationSession {
   teardown: (notifyMain: boolean) => void;
   applyTheme: (theme: DesktopPreviewAnnotationTheme) => void;
+  setSendEnabled: (enabled: boolean) => void;
 }
 
 let activeSession: AnnotationSession | null = null;
@@ -231,10 +316,41 @@ function createBox(color: string, fill: string): HTMLDivElement {
 }
 
 function positionBox(node: HTMLElement, rect: PreviewAnnotationRect): void {
+  if (rect.width <= 0 || rect.height <= 0) {
+    node.style.display = "none";
+    return;
+  }
   node.style.display = "block";
   node.style.transform = `translate(${rect.x}px, ${rect.y}px)`;
   node.style.width = `${rect.width}px`;
   node.style.height = `${rect.height}px`;
+}
+
+/** Clamps a box to the viewport and clipping ancestors, so its border is never painted off-screen. */
+function visibleElementRect(element: Element): PreviewAnnotationRect {
+  const rect = element.getBoundingClientRect();
+  let left = Math.max(0, rect.left);
+  let top = Math.max(0, rect.top);
+  let right = Math.min(document.documentElement.clientWidth, rect.right);
+  let bottom = Math.min(document.documentElement.clientHeight, rect.bottom);
+  if (getComputedStyle(element).position !== "fixed") {
+    for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      if (ancestor === document.body || ancestor === document.documentElement) break;
+      const style = getComputedStyle(ancestor);
+      const bounds = ancestor.getBoundingClientRect();
+      const clipLeft = bounds.left + ancestor.clientLeft;
+      const clipTop = bounds.top + ancestor.clientTop;
+      if (style.overflowX !== "visible") {
+        left = Math.max(left, clipLeft);
+        right = Math.min(right, clipLeft + ancestor.clientWidth);
+      }
+      if (style.overflowY !== "visible") {
+        top = Math.max(top, clipTop);
+        bottom = Math.min(bottom, clipTop + ancestor.clientHeight);
+      }
+    }
+  }
+  return { x: left, y: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
 }
 
 function createLabel(): HTMLDivElement {
@@ -258,11 +374,15 @@ function updateSelectedVisual(target: SelectedElement): void {
     target.label.style.display = "none";
     return;
   }
-  const rect = target.element.getBoundingClientRect();
-  positionBox(target.outline, rectFromDomRect(rect));
+  const rect = visibleElementRect(target.element);
+  positionBox(target.outline, rect);
+  if (rect.width === 0 || rect.height === 0) {
+    target.label.style.display = "none";
+    return;
+  }
   target.label.textContent = describeRawElement(target.element);
   target.label.style.display = "block";
-  target.label.style.transform = `translate(${Math.max(4, rect.left)}px, ${Math.max(4, rect.top - 22)}px)`;
+  target.label.style.transform = `translate(${Math.max(4, rect.x)}px, ${Math.max(4, rect.y - 22)}px)`;
 }
 
 function toStackFrame(frame: {
@@ -279,25 +399,67 @@ function toStackFrame(frame: {
   };
 }
 
-async function captureElement(element: Element): Promise<PickedElementPayload | null> {
+/**
+ * Resolves to `null` instead of hanging when `promise` outlives `millis`.
+ * `getElementContext` walks the inspected page's React internals, and some
+ * pages leave it pending forever. Without a bound, the whole submit chain
+ * stalls and the overlay sits on "Capturing…".
+ */
+function withCaptureTimeout<A>(promise: Promise<A>, millis: number): Promise<A | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), millis);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+/** Truncation for the DOM-only preview used when React context is unavailable. */
+const HTML_PREVIEW_MAX_CHARS = 500;
+
+/**
+ * Describes a picked element. The React context lookup can stall or throw on
+ * some pages, so the element is never dropped: without context it still
+ * carries its tag, a short HTML preview, and its rect so the crop stays on the
+ * pick instead of falling back to the whole viewport.
+ */
+async function captureElement(element: Element): Promise<PickedElementPayload> {
+  const base = {
+    pageUrl: location.href,
+    pageTitle: document.title?.trim() || null,
+    tagName: element.tagName.toLowerCase(),
+    pickedAt: new Date().toISOString(),
+  };
   try {
-    const context = await getElementContext(element);
-    const stack = (context.stack ?? []).map(toStackFrame);
-    return {
-      pageUrl: location.href,
-      pageTitle: document.title?.trim() || null,
-      tagName: element.tagName.toLowerCase(),
-      selector: context.selector,
-      htmlPreview: context.htmlPreview ?? "",
-      componentName: context.componentName,
-      source: stack[0] ?? null,
-      stack,
-      styles: context.styles ?? "",
-      pickedAt: new Date().toISOString(),
-    };
+    const context = await withCaptureTimeout(
+      Promise.resolve(getElementContext(element)),
+      ELEMENT_CONTEXT_TIMEOUT_MS,
+    );
+    if (context) {
+      const stack = (context.stack ?? []).map(toStackFrame);
+      return {
+        ...base,
+        selector: context.selector,
+        htmlPreview: context.htmlPreview ?? "",
+        componentName: context.componentName,
+        source: stack[0] ?? null,
+        stack,
+        styles: context.styles ?? "",
+      };
+    }
   } catch {
-    return null;
+    // Fall through to the DOM-only payload.
   }
+  return {
+    ...base,
+    selector: null,
+    htmlPreview: element.outerHTML.slice(0, HTML_PREVIEW_MAX_CHARS),
+    componentName: null,
+    source: null,
+    stack: [],
+    styles: "",
+  };
 }
 
 function createButton(label: string, title: string): HTMLButtonElement {
@@ -387,7 +549,7 @@ function strokeBounds(
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
-function startAnnotation(): void {
+function startAnnotation(sendEnabled: boolean): void {
   activeSession?.teardown(false);
   let finished = false;
   const host = document.createElement("div");
@@ -464,6 +626,12 @@ function startAnnotation(): void {
   composerRow.appendChild(dragHandle);
 
   const submit = createButton("Attach", "Attach annotation and screenshot (Enter)");
+  const updateSendHint = () => {
+    submit.title = sendEnabled
+      ? "Attach annotation and screenshot (Enter). Send with Cmd/Ctrl+Enter."
+      : "Attach annotation and screenshot (Enter)";
+  };
+  updateSendHint();
   submit.className +=
     " h-8 shrink-0 border-primary bg-primary px-3 text-primary-foreground shadow-sm hover:bg-primary/90";
   composerRow.appendChild(submit);
@@ -862,8 +1030,9 @@ function startAnnotation(): void {
   const getAnnotationBounds = (): PreviewAnnotationRect | null =>
     unionRects(
       [
-        ...Array.from(selected.values(), (target) =>
-          rectFromDomRect(target.element.getBoundingClientRect()),
+        // Follow the visible outline, so a clipped selection does not anchor the editor off-screen.
+        ...Array.from(selected.values(), (target) => visibleElementRect(target.element)).filter(
+          (rect) => rect.width > 0 && rect.height > 0,
         ),
         ...regions.map((region) => region.rect),
         ...strokes.map((stroke) => stroke.bounds),
@@ -975,6 +1144,8 @@ function startAnnotation(): void {
     for (const target of selected.values()) updateSelectedVisual(target);
     queueEditorLayout();
   };
+  // A scrollbar appearing narrows the viewport without a window resize.
+  const rootResizeObserver = new ResizeObserver(repaint);
 
   const removeTargetAtPoint = (x: number, y: number): boolean => {
     for (const target of Array.from(selected.values()).toReversed()) {
@@ -1059,7 +1230,7 @@ function startAnnotation(): void {
     }
     if (tool === "select" && dragStart === null) {
       const target = pickFromPoint(event.clientX, event.clientY);
-      if (target) positionBox(hoverOutline, rectFromDomRect(target.getBoundingClientRect()));
+      if (target) positionBox(hoverOutline, visibleElementRect(target));
       else clearHoverOutline();
       return;
     }
@@ -1177,6 +1348,7 @@ function startAnnotation(): void {
   const teardown = (notifyMain: boolean): void => {
     if (finished) return;
     finished = true;
+    rootResizeObserver.disconnect();
     restoreStyles();
     window.removeEventListener("pointermove", onPointerMove, true);
     window.removeEventListener("pointerdown", onPointerDown, true);
@@ -1220,17 +1392,26 @@ function startAnnotation(): void {
   };
 
   const submitAnnotation = (submission: PreviewAnnotationSubmission): void => {
+    if (submission === "send" && !sendEnabled) return;
     if (pendingCapture || (selected.size === 0 && regions.length === 0 && strokes.length === 0))
       return;
     pendingCapture = true;
     submit.disabled = true;
     submit.textContent = "Capturing…";
+    // Snapshot everything the annotation will carry before the capture runs.
+    // The element context lookup can take up to its timeout, and the user can
+    // keep editing meanwhile; the annotation must describe what they submitted.
+    const submittedComment = comment.value.trim();
+    const submittedRegions = [...regions];
+    const submittedStrokes = [...strokes];
+    const submittedStyleChanges = Array.from(styleChanges.values(), (change) => ({ ...change }));
     void Promise.all(
       Array.from(selected.values()).map(async (target) => {
         const element = await captureElement(target.element);
-        if (!element) return null;
-        for (const change of styleChanges.values()) {
-          if (change.targetId === target.id) change.selector = element.selector;
+        for (const change of submittedStyleChanges) {
+          if (change.targetId === target.id && element.selector !== null) {
+            change.selector = element.selector;
+          }
         }
         return {
           id: target.id,
@@ -1238,34 +1419,51 @@ function startAnnotation(): void {
           rect: rectFromDomRect(target.element.getBoundingClientRect()),
         };
       }),
-    ).then((captured) => {
-      const elements = captured.filter((target) => target !== null);
-      const annotation: PreviewAnnotationPayload = {
-        id: nextId("annotation"),
-        pageUrl: location.href,
-        pageTitle: document.title?.trim() || null,
-        comment: comment.value.trim(),
-        elements,
-        regions: [...regions],
-        strokes: [...strokes],
-        styleChanges: Array.from(styleChanges.values()),
-        screenshot: null,
-        createdAt: new Date().toISOString(),
-      };
-      editor.style.display = "none";
-      toolbar.style.display = "none";
-      hoverOutline.style.display = "none";
-      const screenshotRect = unionRects([
-        ...elements.map((target) => target.rect),
-        ...regions.map((region) => region.rect),
-        ...strokes.map((stroke) => stroke.bounds),
-      ]);
-      ipcRenderer.send(ELEMENT_PICKED_CHANNEL, annotation, screenshotRect, submission);
-    });
+    )
+      .then((elements) => {
+        // The overlay may have been cancelled or replaced while the capture
+        // ran. A late submit must not deliver into the next pick's listener.
+        if (finished) return;
+        const annotation: PreviewAnnotationPayload = {
+          id: nextId("annotation"),
+          pageUrl: location.href,
+          pageTitle: document.title?.trim() || null,
+          comment: submittedComment,
+          elements,
+          regions: submittedRegions,
+          strokes: submittedStrokes,
+          styleChanges: submittedStyleChanges,
+          screenshot: null,
+          createdAt: new Date().toISOString(),
+        };
+        editor.style.display = "none";
+        toolbar.style.display = "none";
+        hoverOutline.style.display = "none";
+        const screenshotRect = unionRects([
+          ...elements.map((target) => target.rect),
+          ...submittedRegions.map((region) => region.rect),
+          ...submittedStrokes.map((stroke) => stroke.bounds),
+        ]);
+        ipcRenderer.send(
+          ELEMENT_PICKED_CHANNEL,
+          annotation,
+          screenshotRect,
+          submission === "send" && !sendEnabled ? "attach" : submission,
+          // Main crops a full-page capture, whose pixels are CSS px × this.
+          window.devicePixelRatio,
+        );
+      })
+      .catch(() => {
+        // Last resort. Main is waiting on this message, so hand it an empty
+        // pick rather than leaving the button stuck on "Capturing…" and the
+        // renderer's pick promise pending. teardown is a no-op once finished.
+        teardown(true);
+      });
   };
   submit.addEventListener("click", () => submitAnnotation("attach"));
   root.addEventListener("keydown", (event) => {
-    const submission = event.target === comment ? resolveAnnotationSubmission(event) : null;
+    const submission =
+      event.target === comment ? resolveAnnotationSubmission(event, sendEnabled) : null;
     // Keep this in the bubble phase so editor inputs receive the event before
     // it is isolated from listeners installed by the inspected page.
     event.stopImmediatePropagation();
@@ -1286,20 +1484,32 @@ function startAnnotation(): void {
   ipcRenderer.on(CANCEL_PICK_CHANNEL, onCancel);
   ipcRenderer.on(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
   document.documentElement.appendChild(host);
+  rootResizeObserver.observe(document.documentElement);
   refreshToolButtons();
   updateStatus();
   activeSession = {
     teardown,
     applyTheme: (theme) => applyAnnotationTheme(host, theme),
+    setSendEnabled: (enabled) => {
+      sendEnabled = enabled;
+      updateSendHint();
+    },
   };
 }
 
-ipcRenderer.on(START_PICK_CHANNEL, (_event, theme: DesktopPreviewAnnotationTheme | undefined) => {
-  if (theme) annotationTheme = theme;
-  startAnnotation();
+ipcRenderer.on(
+  START_PICK_CHANNEL,
+  (_event, theme: DesktopPreviewAnnotationTheme | undefined, sendEnabled?: boolean) => {
+    if (theme) annotationTheme = theme;
+    startAnnotation(sendEnabled === true);
+  },
+);
+ipcRenderer.on(ANNOTATION_SEND_ENABLED_CHANNEL, (_event, enabled: boolean) => {
+  activeSession?.setSendEnabled(enabled === true);
 });
 ipcRenderer.on(ANNOTATION_THEME_CHANNEL, (_event, theme: DesktopPreviewAnnotationTheme) => {
   annotationTheme = theme;
+  recordingCursor?.setTheme(theme);
   activeSession?.applyTheme(theme);
 });
 ipcRenderer.on(CANCEL_PICK_CHANNEL, () => activeSession?.teardown(false));

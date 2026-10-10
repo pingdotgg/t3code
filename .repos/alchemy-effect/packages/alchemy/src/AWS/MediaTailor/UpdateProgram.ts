@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * account-level and grants `mediatailor:UpdateProgram` on `*`. Provide the
  * implementation with `Effect.provide(AWS.MediaTailor.UpdateProgramHttp)`.
  *
- * @binding
- * @section Channel Assembly
- * @example Reschedule a program
+ * ### Channel Assembly
+ * **Example:** Reschedule a program
  * ```typescript
  * const updateProgram = yield* AWS.MediaTailor.UpdateProgram();
  *
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *   ScheduleConfiguration: { Transition: { ScheduledStartTimeMillis: startAt } },
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateProgram extends Binding.Service<
   UpdateProgram,

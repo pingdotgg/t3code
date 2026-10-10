@@ -1,10 +1,14 @@
-import { verifyDpopProof } from "@t3tools/shared/dpop";
+import {
+  type DpopVerificationFailureCode as DpopVerificationFailureCodeType,
+  verifyDpopProof,
+} from "@t3tools/shared/dpop";
+import type { DpopFailureReason } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Option from "effect/Option";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 
 import {
   ServerAuthDpopReplayKeyCalculationError,
@@ -14,12 +18,35 @@ import {
 } from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 
+/** Secret store name prefix of DPoP replay markers. The server prunes expired ones. */
+export const DPOP_REPLAY_MARKER_PREFIX = "dpop-proof-";
+
+export const mapDpopFailureReason = (code: DpopVerificationFailureCodeType): DpopFailureReason => {
+  switch (code) {
+    case "time_window":
+      return "time_window";
+    case "key_mismatch":
+      return "key_mismatch";
+    case "method_mismatch":
+    case "url_mismatch":
+      return "request_mismatch";
+    case "access_token_hash_mismatch":
+      return "token_mismatch";
+    case "missing_proof":
+    case "malformed_proof":
+    case "invalid_signature":
+    case "invalid_proof":
+      return "invalid_proof";
+  }
+};
+
 export const mapDpopReplayStoreError = (
   error: ServerSecretStore.SecretStoreError,
 ): ServerAuthInvalidCredentialError | ServerAuthInternalError =>
   ServerSecretStore.isSecretAlreadyExistsError(error)
     ? new ServerAuthInvalidCredentialError({
         diagnostic: "DPoP proof replayed.",
+        dpopFailureReason: "replay",
         cause: error,
       })
     : new ServerAuthDpopReplayStateRecordError({
@@ -49,8 +76,12 @@ export const verifyRequestDpopProof = (input: {
       ...(input.expectedAccessToken ? { expectedAccessToken: input.expectedAccessToken } : {}),
     });
     if (!result.ok) {
+      yield* Effect.annotateCurrentSpan({
+        "environment.dpop.failure_code": result.code,
+      });
       return yield* new ServerAuthInvalidCredentialError({
         diagnostic: result.reason,
+        dpopFailureReason: mapDpopFailureReason(result.code),
       });
     }
     const secretStore = yield* ServerSecretStore.ServerSecretStore;
@@ -58,7 +89,7 @@ export const verifyRequestDpopProof = (input: {
       Effect.flatMap((crypto) =>
         crypto.digest("SHA-256", new TextEncoder().encode(`${result.thumbprint}:${result.jti}`)),
       ),
-      Effect.map(Encoding.encodeBase64Url),
+      Effect.map(Base64Url.encode),
       Effect.mapError(
         (cause) =>
           new ServerAuthDpopReplayKeyCalculationError({
@@ -68,7 +99,7 @@ export const verifyRequestDpopProof = (input: {
     );
     yield* secretStore
       .create(
-        `dpop-proof-${replayKey}`,
+        `${DPOP_REPLAY_MARKER_PREFIX}${replayKey}`,
         new TextEncoder().encode(
           [
             `thumbprint=${result.thumbprint}`,
@@ -80,7 +111,15 @@ export const verifyRequestDpopProof = (input: {
       )
       .pipe(
         Effect.catchIf(ServerSecretStore.isSecretStoreError, (error) =>
-          Effect.fail(mapDpopReplayStoreError(error)),
+          Effect.gen(function* () {
+            const mapped = mapDpopReplayStoreError(error);
+            if (mapped._tag === "ServerAuthInvalidCredentialError") {
+              yield* Effect.annotateCurrentSpan({
+                "environment.dpop.failure_code": mapped.dpopFailureReason,
+              });
+            }
+            return yield* mapped;
+          }),
         ),
       );
     return result.thumbprint;

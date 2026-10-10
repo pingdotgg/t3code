@@ -6,11 +6,11 @@
  *
  * @since 4.0.0
  */
+import * as Telemetry from "effect/ai/Telemetry"
 import { dual } from "effect/Function"
 import * as String from "effect/String"
 import type { Span } from "effect/Tracer"
 import type { Simplify } from "effect/Types"
-import * as Telemetry from "effect/unstable/ai/Telemetry"
 
 /**
  * The attributes used to describe telemetry in the context of Generative
@@ -28,7 +28,7 @@ import * as Telemetry from "effect/unstable/ai/Telemetry"
 export type OpenAiTelemetryAttributes = Simplify<
   & Telemetry.GenAITelemetryAttributes
   & Telemetry.AttributesWithPrefix<RequestAttributes, "gen_ai.openai.request">
-  & Telemetry.AttributesWithPrefix<ResponseAttributes, "gen_ai.openai.request">
+  & Telemetry.AttributesWithPrefix<ResponseAttributes, "gen_ai.openai.response">
 >
 
 /**

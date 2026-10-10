@@ -99,8 +99,8 @@ export interface Analysis extends Resource<
  * one, create operations fail with the typed `QuickSightSubscriptionRequired`
  * error.
  *
- * @section Creating an Analysis
- * @example Analysis from a Template
+ * ### Creating an Analysis
+ * **Example:** Analysis from a Template
  * ```typescript
  * const analysis = yield* Analysis("explore-sales", {
  *   name: "Explore Sales",

@@ -11,9 +11,8 @@ export interface ListMetricStreamsRequest
  *
  * Provide `CloudWatch.ListMetricStreamsHttp` on the hosting Lambda
  * Function to satisfy the requirement.
- * @binding
- * @section Reading Metric Streams
- * @example List Metric Streams
+ * ### Reading Metric Streams
+ * **Example:** List Metric Streams
  * ```typescript
  * // init — grants cloudwatch:ListMetricStreams
  * const listMetricStreams = yield* AWS.CloudWatch.ListMetricStreams();
@@ -22,6 +21,8 @@ export interface ListMetricStreamsRequest
  * const result = yield* listMetricStreams();
  * const entries = result.Entries ?? [];
  * ```
+ *
+ * @binding
  */
 export interface ListMetricStreams extends Binding.Service<
   ListMetricStreams,

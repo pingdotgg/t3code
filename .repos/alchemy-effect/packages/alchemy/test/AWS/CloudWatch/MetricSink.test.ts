@@ -6,8 +6,8 @@ import { expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClient from "effect/http/HttpClient";
 import {
   MetricSinkFunction,
   MetricSinkFunctionLive,
@@ -145,5 +145,13 @@ test.provider(
     }),
   // Deploy (~60-120s) + readiness poll (bounded ~150s) + metric visibility
   // poll (bounded ~180s) + destroy. All waits are bounded.
-  { timeout: 420_000 },
+  {
+    tags: [
+      "provider:aws",
+      "provider:aws:cloudwatch",
+      "provider:aws:lambda",
+      "live",
+    ],
+    timeout: 420_000,
+  },
 );

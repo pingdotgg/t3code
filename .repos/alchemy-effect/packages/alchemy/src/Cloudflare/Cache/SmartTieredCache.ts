@@ -68,11 +68,8 @@ export type SmartTieredCache = Resource<
  *
  * Only one `SmartTieredCache` resource per zone makes sense — two instances
  * managing the same zone would fight over the singleton.
- * @resource
- * @product Cache
- * @category Performance & Reliability
- * @section Managing Smart Tiered Cache
- * @example Enable Smart Tiered Cache on a zone
+ * ### Managing Smart Tiered Cache
+ * **Example:** Enable Smart Tiered Cache on a zone
  * ```typescript
  * const zone = yield* Cloudflare.Zone.Zone("Site", { name: "example.com" });
  *
@@ -81,7 +78,7 @@ export type SmartTieredCache = Resource<
  * });
  * ```
  *
- * @example Explicitly disable Smart Tiered Cache
+ * **Example:** Explicitly disable Smart Tiered Cache
  * ```typescript
  * yield* Cloudflare.Cache.SmartTieredCache("SmartCache", {
  *   zoneId: zone.zoneId,
@@ -90,6 +87,10 @@ export type SmartTieredCache = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/cache/how-to/tiered-cache/
+ *
+ * @resource
+ * @product Cache
+ * @category Performance & Reliability
  */
 export const SmartTieredCache = Resource<SmartTieredCache>(TypeId);
 

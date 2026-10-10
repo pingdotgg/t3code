@@ -18,9 +18,8 @@ export interface CreateLicenseRequest
  *
  * Provide the implementation with
  * `Effect.provide(AWS.LicenseManager.CreateLicenseHttp)`.
- * @binding
- * @section Issuing Licenses
- * @example Issue a License on Purchase
+ * ### Issuing Licenses
+ * **Example:** Issue a License on Purchase
  * ```typescript
  * // init — account-level binding takes no resource
  * const createLicense = yield* AWS.LicenseManager.CreateLicense();
@@ -43,6 +42,8 @@ export interface CreateLicenseRequest
  *   ClientToken: crypto.randomUUID(),
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateLicense extends Binding.Service<
   CreateLicense,

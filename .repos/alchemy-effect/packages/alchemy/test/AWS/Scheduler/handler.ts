@@ -5,8 +5,8 @@ import * as SQS from "@/AWS/SQS";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "handler.ts");
@@ -25,7 +25,7 @@ export class SchedulerTestFunction extends Lambda.Function<Lambda.Function>()(
 export default SchedulerTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // AWS's 3s default intermittently kills invocations that fan out SDK
     // calls (create + describe schedules) — always set an explicit timeout.
     timeout: Duration.seconds(30),

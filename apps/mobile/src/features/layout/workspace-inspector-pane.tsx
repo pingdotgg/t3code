@@ -4,9 +4,11 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withTiming,
+  type SharedValue,
 } from "react-native-reanimated";
 
 import { constrainAuxiliaryPaneWidth, type WorkspacePaneLayout } from "../../lib/layout";
+import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspacePaneDivider } from "./workspace-pane-divider";
 
@@ -22,6 +24,8 @@ import { WorkspacePaneDivider } from "./workspace-pane-divider";
  * module stays import-cycle-free with AdaptiveWorkspaceLayout.
  */
 export function WorkspaceInspectorPane(props: {
+  readonly pathname: string;
+  readonly renderedInspectorWidth: SharedValue<number>;
   /**
    * When false the pane animates closed but keeps its content mounted for the
    * exit transition (a route that lost focus). `onClosed` fires once the
@@ -45,7 +49,7 @@ export function WorkspaceInspectorPane(props: {
   // inspector at its final position so route replacement never replays an
   // entering transition. Only visibility and explicit resizing change it.
   const inspectorProgress = useSharedValue(inspectorVisible ? 1 : 0);
-  const renderedInspectorWidth = useSharedValue(inspectorVisible ? (inspectorWidth ?? 0) : 0);
+  const { renderedInspectorWidth } = props;
   // The content keeps its own width so the reveal (outer width) clips a
   // fully-laid-out pane instead of reflowing text every frame. When the OPEN
   // pane's target width changes (e.g. the sidebar toggles and reserves
@@ -137,10 +141,23 @@ export function WorkspaceInspectorPane(props: {
           style={inspectorStyle}
         >
           <Animated.View className="flex-1" style={inspectorContentStyle}>
-            {props.renderInspector?.()}
+            <RenderErrorBoundary
+              resetKeys={[props.pathname]}
+              renderFallback={(fallback) => (
+                <RenderFailureView {...fallback} title="The inspector couldn't be displayed" />
+              )}
+            >
+              <InspectorRenderer render={props.renderInspector} />
+            </RenderErrorBoundary>
           </Animated.View>
         </Animated.View>
       ) : null}
     </>
   );
+}
+
+// The render callback must run inside the boundary's child, not while its
+// parent constructs the boundary element.
+function InspectorRenderer(props: { readonly render?: () => ReactNode }) {
+  return <>{props.render?.()}</>;
 }

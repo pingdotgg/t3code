@@ -76,16 +76,22 @@ export interface Cluster extends Resource<
 
 /**
  * An Amazon ECS cluster for running tasks and services.
- * @resource
- * @section Creating Clusters
- * @example Default Cluster
+ * ### Creating Clusters
+ * **Example:** Default Cluster
  * ```typescript
  * const cluster = yield* Cluster("AppCluster", {});
  * ```
+ *
+ * @resource
  */
 export const Cluster = Resource<Cluster>("AWS.ECS.Cluster");
 
 class ClusterStillActive extends Data.TaggedError("ClusterStillActive")<{
+  readonly cluster: string;
+  readonly status: string | undefined;
+}> {}
+
+class ClusterNotActive extends Data.TaggedError("ClusterNotActive")<{
   readonly cluster: string;
   readonly status: string | undefined;
 }> {}
@@ -234,7 +240,10 @@ export const ClusterProvider = () =>
               ];
             });
           }),
-        reconcile: Effect.fn(function* ({ id, news, session }) {
+        reconcile: Effect.fn(function* ({ id, news: rawNews, session }) {
+          // Every ClusterProps field is optional, so `Cluster("Id")` (no
+          // props object at all) is a legal instantiation — normalize.
+          const news = rawNews ?? {};
           const { accountId, region } = yield* AWSEnvironment.current;
           const clusterName = yield* toClusterName(id, news);
           const clusterArn =
@@ -266,6 +275,34 @@ export const ClusterProvider = () =>
             });
             cluster = created.cluster;
           }
+
+          // CreateCluster may return before the cluster is ready for updates.
+          // Re-read its status before configuration, capacity-provider or tag writes.
+          cluster = yield* ecs
+            .describeClusters({
+              clusters: [clusterArn],
+              include: ["SETTINGS", "TAGS", "CONFIGURATIONS"],
+            })
+            .pipe(
+              Effect.flatMap((response) => {
+                const observed = response.clusters?.find(
+                  (candidate) => candidate.clusterArn === clusterArn,
+                );
+                return observed?.status === "ACTIVE"
+                  ? Effect.succeed(observed)
+                  : Effect.fail(
+                      new ClusterNotActive({
+                        cluster: clusterArn,
+                        status: observed?.status,
+                      }),
+                    );
+              }),
+              Effect.retry({
+                while: (error) => error._tag === "ClusterNotActive",
+                schedule: Schedule.spaced("2 seconds"),
+                times: 10,
+              }),
+            );
 
           // Sync cluster config — call updateCluster to converge settings,
           // configuration, and serviceConnectDefaults to desired state.

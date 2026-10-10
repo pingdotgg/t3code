@@ -9,9 +9,8 @@ import type { WorkGroup } from "./WorkGroup.ts";
  * Reads the state, statistics, and configuration of a single query execution
  * that ran in the bound workgroup. Provide the implementation with
  * `Effect.provide(AWS.Athena.GetQueryExecutionHttp)`.
- * @binding
- * @section Inspecting Query Executions
- * @example Check a Query's State
+ * ### Inspecting Query Executions
+ * **Example:** Check a Query's State
  * ```typescript
  * // init — bind the operation to the workgroup
  * const getQueryExecution = yield* AWS.Athena.GetQueryExecution(workGroup);
@@ -20,6 +19,8 @@ import type { WorkGroup } from "./WorkGroup.ts";
  * const res = yield* getQueryExecution({ QueryExecutionId: id });
  * console.log(res.QueryExecution?.Status?.State);
  * ```
+ *
+ * @binding
  */
 export interface GetQueryExecution extends Binding.Service<
   GetQueryExecution,

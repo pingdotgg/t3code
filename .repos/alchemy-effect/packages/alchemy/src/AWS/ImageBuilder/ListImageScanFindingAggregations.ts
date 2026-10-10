@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * `imageBuildVersionArn`, `accountId`, `vulnerabilityId`) when a filter is
  * supplied. Provide the implementation with
  * `Effect.provide(AWS.ImageBuilder.ListImageScanFindingAggregationsHttp)`.
- * @binding
- * @section Scan Findings
- * @example Aggregate Findings by Pipeline
+ * ### Scan Findings
+ * **Example:** Aggregate Findings by Pipeline
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listImageScanFindingAggregations =
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *   filter: { name: "imagePipelineArn", values: [pipelineArn] },
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListImageScanFindingAggregations extends Binding.Service<
   ListImageScanFindingAggregations,

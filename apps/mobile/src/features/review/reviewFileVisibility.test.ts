@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  getDefaultReviewExpandedFileIds,
   getValidExplicitReviewFileIds,
   getValidReviewFileIds,
   removeReviewFileId,
@@ -29,7 +28,6 @@ describe("review file visibility", () => {
   const files = [makeFile("a.ts"), makeFile("b.ts")];
 
   it("defaults expanded files to every renderable file", () => {
-    expect(getDefaultReviewExpandedFileIds(files)).toEqual(["a.ts", "b.ts"]);
     expect(getValidReviewFileIds(files, undefined)).toEqual(["a.ts", "b.ts"]);
   });
 

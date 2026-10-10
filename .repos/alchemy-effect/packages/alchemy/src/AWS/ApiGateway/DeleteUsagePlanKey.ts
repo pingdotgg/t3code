@@ -15,9 +15,8 @@ export interface DeleteUsagePlanKeyRequest extends Omit<
  * Provide `ApiGateway.DeleteUsagePlanKeyHttp` on the Function effect to
  * implement the binding.
  *
- * @binding
- * @section Managing plan keys
- * @example Unenroll a key on subscription cancellation
+ * ### Managing plan keys
+ * **Example:** Unenroll a key on subscription cancellation
  * ```typescript
  * // init
  * const deleteUsagePlanKey = yield* ApiGateway.DeleteUsagePlanKey(plan);
@@ -27,6 +26,8 @@ export interface DeleteUsagePlanKeyRequest extends Omit<
  *   Effect.catchTag("NotFoundException", () => Effect.void),
  * );
  * ```
+ *
+ * @binding
  */
 export interface DeleteUsagePlanKey extends Binding.Service<
   DeleteUsagePlanKey,

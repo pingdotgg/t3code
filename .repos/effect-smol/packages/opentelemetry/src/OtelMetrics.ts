@@ -7,6 +7,7 @@
  * layer. The `TemporalityPreference` type lets callers choose cumulative or
  * delta metric values.
  *
+ * @stability unstable
  * @since 4.0.0
  */
 import type { MetricProducer, MetricReader } from "@opentelemetry/sdk-metrics"
@@ -30,6 +31,7 @@ import { Resource } from "./Resource.ts"
  * changes since the last export. Each interval is independent with no
  * dependency on previous measurements.
  *
+ * @stability unstable
  * @category models
  * @since 4.0.0
  */
@@ -52,6 +54,7 @@ export type TemporalityPreference = "cumulative" | "delta"
  * @see {@link registerProducer} for attaching a producer to metric readers
  * @see {@link layer} for creating and registering a producer in a scoped layer
  *
+ * @stability unstable
  * @category constructors
  * @since 4.0.0
  */
@@ -65,7 +68,8 @@ export const makeProducer = (temporality?: TemporalityPreference): Effect.Effect
 /**
  * Registers a metric producer with one or more metric readers.
  *
- * @category constructors
+ * @stability unstable
+ * @category resource management
  * @since 4.0.0
  */
 export const registerProducer = (
@@ -79,7 +83,7 @@ export const registerProducer = (
     Effect.sync(() => {
       const reader = metricReader()
       const readers: Array<MetricReader> = Array.isArray(reader) ? reader : [reader] as any
-      readers.forEach((reader) => reader.setMetricProducer(self))
+      readers.forEach((reader) => reader.setMetricProducer(self instanceof MetricProducerImpl ? self.fork() : self))
       return readers
     }),
     (readers) =>
@@ -97,31 +101,43 @@ export const registerProducer = (
 /**
  * Creates a Layer that registers a metric producer with metric readers.
  *
- * **Example** (Creating a metrics layer with temporality)
+ * **Example** (Exporting delta metrics)
  *
- * ```ts
- * import { OtelMetrics } from "@effect/opentelemetry"
- * import { PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics"
- * import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http"
+ * ```ts import.meta.vitest
+ * import { OtelMetrics, Resource } from "@effect/opentelemetry"
+ * import {
+ *   AggregationTemporality,
+ *   InMemoryMetricExporter,
+ *   PeriodicExportingMetricReader
+ * } from "@opentelemetry/sdk-metrics"
+ * import { Effect, Layer, Metric } from "effect"
  *
- * const metricExporter = new OTLPMetricExporter({ url: "<your-otel-url>" })
- *
- * // Use delta temporality for backends like Datadog or Dynatrace
- * const metricsLayer = OtelMetrics.layer(
- *   () => new PeriodicExportingMetricReader({
- *     exporter: metricExporter,
- *     exportIntervalMillis: 10000
- *   }),
- *   { temporality: "delta" }
+ * const exporter = new InMemoryMetricExporter(AggregationTemporality.DELTA)
+ * const reader = new PeriodicExportingMetricReader({
+ *   exporter,
+ *   exportIntervalMillis: 60_000
+ * })
+ * const metricsLayer = OtelMetrics.layer(() => reader, { temporality: "delta" }).pipe(
+ *   Layer.provide(Resource.layerEmpty)
  * )
  *
- * // Use cumulative temporality for backends like Prometheus (default)
- * const cumulativeLayer = OtelMetrics.layer(
- *   () => new PeriodicExportingMetricReader({ exporter: metricExporter }),
- *   { temporality: "cumulative" }
+ * const program = Effect.gen(function*() {
+ *   yield* Metric.update(Metric.counter("docs.requests", { incremental: true }), 2)
+ *   yield* Effect.promise(() => reader.forceFlush())
+ *
+ *   const metric = exporter.getMetrics()[0]?.scopeMetrics[0]?.metrics.find(
+ *     (metric) => metric.descriptor.name === "docs.requests"
+ *   )
+ *   return [metric?.descriptor.name, metric?.aggregationTemporality, metric?.dataPoints[0]?.value] as const
+ * }).pipe(
+ *   Effect.provide(metricsLayer),
+ *   Effect.provideService(Metric.MetricRegistry, new Map())
  * )
+ *
+ * await Effect.runPromise(program) // => ["docs.requests", AggregationTemporality.DELTA, 2]
  * ```
  *
+ * @stability unstable
  * @category layers
  * @since 4.0.0
  */

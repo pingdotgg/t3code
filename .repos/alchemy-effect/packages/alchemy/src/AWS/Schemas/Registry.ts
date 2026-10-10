@@ -62,16 +62,15 @@ export interface Registry extends Resource<
  * documents; AWS also maintains the built-in `aws.events` and
  * `discovered-schemas` registries.
  *
- * @resource
- * @section Creating a Registry
- * @example Basic Registry
+ * ### Creating a Registry
+ * **Example:** Basic Registry
  * ```typescript
  * const registry = yield* AWS.Schemas.Registry("app-events", {
  *   description: "Schemas for application events",
  * });
  * ```
  *
- * @example Registry with Tags
+ * **Example:** Registry with Tags
  * ```typescript
  * const registry = yield* AWS.Schemas.Registry("orders", {
  *   description: "Order lifecycle events",
@@ -79,8 +78,8 @@ export interface Registry extends Resource<
  * });
  * ```
  *
- * @section Sharing a Registry
- * @example Registry with a Resource Policy
+ * ### Sharing a Registry
+ * **Example:** Registry with a Resource Policy
  * ```typescript
  * const registry = yield* AWS.Schemas.Registry("shared-events", {
  *   policy: {
@@ -97,8 +96,8 @@ export interface Registry extends Resource<
  * });
  * ```
  *
- * @section Adding Schemas
- * @example Registry with a Schema
+ * ### Adding Schemas
+ * **Example:** Registry with a Schema
  * ```typescript
  * const registry = yield* AWS.Schemas.Registry("app-events", {});
  * const schema = yield* AWS.Schemas.Schema("OrderCreated", {
@@ -107,6 +106,8 @@ export interface Registry extends Resource<
  *   content: JSON.stringify(openApiDocument),
  * });
  * ```
+ *
+ * @resource
  */
 export const Registry = Resource<Registry>("AWS.Schemas.Registry");
 

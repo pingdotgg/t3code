@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * `StartImagePipelineExecution`. The idempotency `clientToken` is generated
  * automatically. Provide the implementation with
  * `Effect.provide(AWS.ImageBuilder.CancelImageCreationHttp)`.
- * @binding
- * @section Running Builds
- * @example Cancel an In-Flight Build
+ * ### Running Builds
+ * **Example:** Cancel an In-Flight Build
  * ```typescript
  * // init — account-level binding, no resource argument
  * const cancelBuild = yield* AWS.ImageBuilder.CancelImageCreation();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* cancelBuild({ imageBuildVersionArn });
  * ```
+ *
+ * @binding
  */
 export interface CancelImageCreation extends Binding.Service<
   CancelImageCreation,

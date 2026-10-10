@@ -1,0 +1,68 @@
+{
+  "name": "@t3tools/provider-opencode",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./client": {
+      "types": "./src/client.ts",
+      "import": "./src/client.ts"
+    },
+    "./settings": {
+      "types": "./src/settings.ts",
+      "import": "./src/settings.ts"
+    },
+    "./server": {
+      "types": "./src/server.ts",
+      "import": "./src/server.ts"
+    },
+    "./testing": {
+      "types": "./src/testing.ts",
+      "import": "./src/testing.ts"
+    },
+    "./server/OpenCodeRuntime": {
+      "types": "./src/server/OpenCodeRuntime.ts",
+      "import": "./src/server/OpenCodeRuntime.ts"
+    },
+    "./server/OpenCodeServerLedger": {
+      "types": "./src/server/OpenCodeServerLedger.ts",
+      "import": "./src/server/OpenCodeServerLedger.ts"
+    },
+    "./server/v2/adapter": {
+      "types": "./src/server/v2/adapter.ts",
+      "import": "./src/server/v2/adapter.ts"
+    },
+    "./server/v2/OpenCode2Client": {
+      "types": "./src/server/v2/OpenCode2Client.ts",
+      "import": "./src/server/v2/OpenCode2Client.ts"
+    },
+    "./server/v2/OpenCode2Server": {
+      "types": "./src/server/v2/OpenCode2Server.ts",
+      "import": "./src/server/v2/OpenCode2Server.ts"
+    },
+    "./server/v2/textGeneration": {
+      "types": "./src/server/v2/textGeneration.ts",
+      "import": "./src/server/v2/textGeneration.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "^1.3.15",
+    "@opencode/client": "2.0.23",
+    "@opencode/protocol": "2.0.23",
+    "@opencode/schema": "2.0.23",
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/provider-core": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@t3tools/provider-testing": "workspace:*",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

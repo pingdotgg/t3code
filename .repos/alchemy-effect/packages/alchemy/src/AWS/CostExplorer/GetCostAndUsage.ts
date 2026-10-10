@@ -14,9 +14,8 @@ export interface GetCostAndUsageRequest extends ce.GetCostAndUsageRequest {}
  * filtered and grouped by dimension over a time range — the core Cost
  * Explorer query. Provide the implementation with
  * `Effect.provide(AWS.CostExplorer.GetCostAndUsageHttp)`.
- * @binding
- * @section Querying Cost and Usage
- * @example Query Last Month's Unblended Cost
+ * ### Querying Cost and Usage
+ * **Example:** Query Last Month's Unblended Cost
  * ```typescript
  * // init — account-level binding takes no resource
  * const getCostAndUsage = yield* AWS.CostExplorer.GetCostAndUsage();
@@ -29,6 +28,8 @@ export interface GetCostAndUsageRequest extends ce.GetCostAndUsageRequest {}
  * });
  * const total = result.ResultsByTime?.[0]?.Total?.UnblendedCost?.Amount;
  * ```
+ *
+ * @binding
  */
 export interface GetCostAndUsage extends Binding.Service<
   GetCostAndUsage,

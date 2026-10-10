@@ -5,8 +5,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "handler.ts");
@@ -51,7 +51,7 @@ const CODE_BINDING_LANGUAGE = "Python36";
 export default SchemasTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
     // The default 128 MB sits at ~114 MB used; the last routes in a test run
     // OOM the instance (platform-level 500 with no handler log).
@@ -152,7 +152,7 @@ export default SchemasTestFunction.make(
             Effect.catchTag("ForbiddenException", (e) =>
               Effect.succeed({
                 outcome: "forbidden" as const,
-                message: e.Message ?? "",
+                message: e.message ?? "",
               }),
             ),
           );
