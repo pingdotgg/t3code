@@ -247,6 +247,42 @@ export function getCustomThemes(): ReadonlyArray<ThemeDefinition> {
   return snapshot.status === "ready" ? snapshot.themes : EMPTY_CUSTOM_THEMES;
 }
 
+export const DESKTOP_LOCAL_THEME_ID = "desktop-local-theme";
+let desktopLocalTheme: ThemeDefinition | null = null;
+
+type DesktopLocalThemeSource = "unavailable" | "loading" | "configured";
+let desktopLocalThemeSource: DesktopLocalThemeSource = "unavailable";
+let manualThemeSelectionRevision = 0;
+
+export function getDesktopLocalThemeSource(): DesktopLocalThemeSource {
+  return desktopLocalThemeSource;
+}
+
+export function setDesktopLocalThemeSource(source: DesktopLocalThemeSource): void {
+  if (source === desktopLocalThemeSource) return;
+  desktopLocalThemeSource = source;
+  notifyCustomThemeListeners();
+}
+
+export function getManualThemeSelectionRevision(): number {
+  return manualThemeSelectionRevision;
+}
+
+export function recordManualThemeSelection(): void {
+  manualThemeSelectionRevision += 1;
+}
+
+export function getDesktopLocalTheme(): ThemeDefinition | null {
+  return desktopLocalTheme;
+}
+
+export function setDesktopLocalTheme(theme: ThemeDefinition | null): boolean {
+  if (Equal.equals(desktopLocalTheme, theme)) return false;
+  desktopLocalTheme = theme;
+  notifyCustomThemeListeners();
+  return true;
+}
+
 export function getEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
   return environmentThemeDefinitions;
 }
@@ -1091,6 +1127,7 @@ const BUILT_IN_THEME_DEFINITIONS: ReadonlyArray<ThemeDefinition> = BUILT_IN_THEM
 
 export function getThemeDefinition(theme: ThemePreference): ThemeDefinition | null {
   const themeId = themeIdFromPreference(theme);
+  if (desktopLocalTheme?.id === themeId) return desktopLocalTheme;
   return (
     BUILT_IN_THEME_DEFINITIONS.find((definition) => definition.id === themeId) ??
     getCustomThemes().find((definition) => definition.id === themeId) ??

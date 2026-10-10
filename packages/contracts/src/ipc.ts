@@ -1,4 +1,11 @@
 import * as Schema from "effect/Schema";
+import { EnvironmentThemeFile } from "./server.ts";
+
+export const DesktopLocalThemeStateSchema = Schema.Struct({
+  enabled: Schema.Boolean,
+  theme: Schema.NullOr(EnvironmentThemeFile),
+});
+export type DesktopLocalThemeState = typeof DesktopLocalThemeStateSchema.Type;
 
 import { SnapShotSource } from "./chatAttachment.ts";
 import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -1116,6 +1123,8 @@ export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
 export interface DesktopBridge {
+  getLocalTheme?: () => Promise<DesktopLocalThemeState>;
+  onLocalTheme?: (listener: (state: DesktopLocalThemeState) => void) => () => void;
   getAppBranding: () => DesktopAppBranding | null;
   /** Absolute path of a dropped or picked file; absent on desktop builds predating it. */
   getPathForFile?: (file: File) => string;

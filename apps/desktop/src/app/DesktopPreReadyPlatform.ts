@@ -100,6 +100,8 @@ export const make = Effect.gen(function* () {
               appVersion: Electron.app.getVersion(),
             }).displayName,
             execTarget: process.env.APPIMAGE?.trim() || process.execPath,
+            localThemeFile: process.env.T3CODE_DESKTOP_THEME_FILE?.trim() || undefined,
+            disableAutoUpdate: ["true", "1"].includes(process.env.T3CODE_DISABLE_AUTO_UPDATE ?? ""),
             scheme: ElectronProtocol.getDesktopScheme(linux.isDevelopment),
             ...(iconPath === undefined ? {} : { iconPath }),
           }),

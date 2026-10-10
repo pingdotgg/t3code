@@ -1,9 +1,14 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 
 import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { primaryServerSettingsAtom } from "../state/server";
-import { getThemeDefinition, singleAppearanceOf } from "../themePalette";
+import {
+  getDesktopLocalThemeSource,
+  subscribeToCustomThemes,
+  getThemeDefinition,
+  singleAppearanceOf,
+} from "../themePalette";
 import { useEnvironmentThemeDefinitions } from "./useEnvironmentTheme";
 import { useTheme } from "./useTheme";
 
@@ -71,6 +76,11 @@ function writeAppliedGeneration(storageKey: string, generation: string): void {
  * resolve yet — the setting and the palette it names arrive independently.
  */
 export function useDefaultThemeAdoption(): void {
+  const desktopSource = useSyncExternalStore(
+    subscribeToCustomThemes,
+    getDesktopLocalThemeSource,
+    () => "unavailable",
+  );
   const environmentId = useAtomValue(primaryEnvironmentIdAtom);
   const settings = useAtomValue(primaryServerSettingsAtom);
   const { defaultTheme, defaultThemeSetAt } = settings;
@@ -80,7 +90,13 @@ export function useDefaultThemeAdoption(): void {
   const environmentThemes = useEnvironmentThemeDefinitions();
 
   useEffect(() => {
-    if (typeof window === "undefined" || environmentId === null) return;
+    if (
+      typeof window === "undefined" ||
+      environmentId === null ||
+      desktopSource !== "unavailable" ||
+      getDesktopLocalThemeSource() !== "unavailable"
+    )
+      return;
     const storageKey = `${APPLIED_DEFAULT_THEME_STORAGE_PREFIX}${environmentId}`;
     const definition = getThemeDefinition(defaultTheme);
     const generation = defaultThemeToApply({
@@ -105,6 +121,7 @@ export function useDefaultThemeAdoption(): void {
     if (half !== null && !setAppearanceMode(half)) return;
     writeAppliedGeneration(storageKey, generation);
   }, [
+    desktopSource,
     environmentId,
     defaultTheme,
     defaultThemeSetAt,

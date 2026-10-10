@@ -32,6 +32,8 @@ const makeEnvironment = (path: Path.Path, overrides: Record<string, unknown> = {
     linuxDesktopEntryName: "com.t3tools.T3Code.desktop",
     linuxWmClass: "t3code",
     linuxApplicationsDir: "/home/alice/.local/share/applications",
+    localThemeFile: Option.none(),
+    disableAutoUpdate: false,
     appImagePath: Option.some("/home/alice/Applications/T3-Code.AppImage"),
     path,
     ...overrides,
@@ -155,6 +157,22 @@ const emptyRecording = (): RecordedRegistration => ({
   files: [],
   commands: [],
   copies: [],
+});
+
+describe("local theme launch configuration", () => {
+  it("carries theme following and update hold into cold URL launches", () => {
+    const entry = DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
+      displayName: "T3 Code",
+      execTarget: "/home/alice/Custom T3.AppImage",
+      scheme: "t3code",
+      localThemeFile: "/home/alice/My palette.json",
+      disableAutoUpdate: true,
+    });
+    assert.include(
+      entry,
+      'Exec=env -u ELECTRON_RUN_AS_NODE "T3CODE_DESKTOP_THEME_FILE=/home/alice/My palette.json" T3CODE_DISABLE_AUTO_UPDATE=true "/home/alice/Custom T3.AppImage" %U',
+    );
+  });
 });
 
 describe("DesktopLinuxUrlHandler", () => {

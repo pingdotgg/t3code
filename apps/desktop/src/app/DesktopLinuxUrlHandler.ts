@@ -88,12 +88,26 @@ export function renderUrlHandlerDesktopEntry(input: {
   readonly execTarget: string;
   readonly scheme: string;
   readonly iconPath?: string;
+  readonly localThemeFile?: string | undefined;
+  readonly disableAutoUpdate?: boolean;
 }): string {
   return [
     "[Desktop Entry]",
     "Type=Application",
     `Name=${escapeDesktopEntryString(input.displayName)}`,
-    `Exec=${escapeDesktopEntryExecArgument(input.execTarget)} %U`,
+    `Exec=${[
+      ...(input.localThemeFile === undefined
+        ? []
+        : [
+            "env",
+            "-u",
+            "ELECTRON_RUN_AS_NODE",
+            escapeDesktopEntryExecArgument(`T3CODE_DESKTOP_THEME_FILE=${input.localThemeFile}`),
+            ...(input.disableAutoUpdate ? ["T3CODE_DISABLE_AUTO_UPDATE=true"] : []),
+          ]),
+      escapeDesktopEntryExecArgument(input.execTarget),
+      "%U",
+    ].join(" ")}`,
     ...(input.iconPath === undefined ? [] : [`Icon=${escapeDesktopEntryString(input.iconPath)}`]),
     "Terminal=false",
     "NoDisplay=true",
@@ -133,6 +147,8 @@ export const make = Effect.gen(function* () {
       displayName: environment.displayName,
       execTarget,
       scheme,
+      localThemeFile: Option.getOrUndefined(environment.localThemeFile),
+      disableAutoUpdate: environment.disableAutoUpdate,
       ...(environment.isPackaged ? { iconPath } : {}),
     });
     // Pre-ready setup normally wrote this already. Avoid truncating a valid
