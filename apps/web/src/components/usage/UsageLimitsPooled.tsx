@@ -13,7 +13,7 @@ import {
   type LimitPoolWindow,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
-import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
+import { AlertTriangleIcon, ExternalLinkIcon, RotateCwIcon, TicketIcon } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
 
 import { ensureLocalApi } from "../../localApi";
@@ -291,21 +291,8 @@ function PoolSegment({
           ) : null}
           <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
           {/* Countdown and badge get their own plate: fill and hatching run under them otherwise. */}
-          <span className="ms-auto flex shrink-0 items-center gap-1.5 rounded-sm bg-background/85 px-1.5 py-0.5 text-2xs text-foreground tabular-nums">
-            {resetsIn?.replace("resets in ", "↻ ") ?? ""}
-            {credits ? (
-              <>
-                {resetsIn ? (
-                  <span aria-hidden className="text-muted-foreground">
-                    ·
-                  </span>
-                ) : null}
-                <span aria-hidden className="inline-flex items-center gap-0.5 font-semibold">
-                  <TicketIcon className="size-3" aria-hidden />
-                  {credits}
-                </span>
-              </>
-            ) : null}
+          <span className="ms-auto flex shrink-0 items-center gap-1.5 rounded-sm bg-background/85 px-1.5 py-0.5 text-2xs leading-none text-foreground tabular-nums">
+            <ResetBadges resetsIn={resetsIn} credits={credits} />
           </span>
         </div>
       </PopoverTrigger>
@@ -373,25 +360,55 @@ function LegendRow({
       </span>
       <AccountName account={account} className="min-w-0 truncate font-medium text-foreground" />
       <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
-      <span className="ms-auto flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground tabular-nums">
-        {resetsIn?.replace("resets in ", "↻ ") ?? ""}
+      <span className="ms-auto flex shrink-0 items-center gap-1.5 text-2xs leading-none text-muted-foreground tabular-nums">
+        <ResetBadges resetsIn={resetsIn} credits={credits} />
         {credits ? (
-          <>
-            {resetsIn ? <span aria-hidden>·</span> : null}
-            <span
-              aria-hidden
-              className="inline-flex items-center gap-0.5 font-semibold text-foreground"
-            >
-              <TicketIcon className="size-3" aria-hidden />
-              {credits}
-            </span>
-            <span className="sr-only">
-              {credits} reset {credits === 1 ? "credit" : "credits"} banked
-            </span>
-          </>
+          <span className="sr-only">
+            {credits} reset {credits === 1 ? "credit" : "credits"} banked
+          </span>
         ) : null}
       </span>
     </PopoverTrigger>
+  );
+}
+
+/**
+ * Countdown and banked-credit count shown at the end of a segment and its legend
+ * row. Icons rather than glyphs so every item centres on the same axis.
+ */
+function ResetBadges({
+  resetsIn,
+  credits,
+}: {
+  readonly resetsIn: string | null;
+  readonly credits: number;
+}) {
+  return (
+    <>
+      {resetsIn ? (
+        <>
+          <span aria-hidden className="inline-flex items-center gap-1">
+            <RotateCwIcon className="size-3" />
+            {resetsIn.replace("resets in ", "")}
+          </span>
+          <span className="sr-only">{resetsIn}</span>
+        </>
+      ) : null}
+      {resetsIn && credits ? (
+        <span aria-hidden className="text-muted-foreground">
+          ·
+        </span>
+      ) : null}
+      {credits ? (
+        <span
+          aria-hidden
+          className="inline-flex items-center gap-0.5 font-semibold text-foreground"
+        >
+          <TicketIcon className="size-3" aria-hidden />
+          {credits}
+        </span>
+      ) : null}
+    </>
   );
 }
 
