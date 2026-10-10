@@ -39,6 +39,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as HttpClientError from "effect/http/HttpClientError";
@@ -50,7 +51,45 @@ export interface ManagedRelayDpopProofInput {
   readonly method: HttpMethod.HttpMethod;
   readonly url: string;
   readonly accessToken?: string;
+  /** Overrides the local clock for `iat`, used to re-sign against a verifier's time. */
+  readonly issuedAtSeconds?: number;
 }
+
+const timeWindowServerTime = (error: unknown): number | undefined =>
+  Predicate.hasProperty(error, "dpopFailureReason") &&
+  error.dpopFailureReason === "time_window" &&
+  Predicate.hasProperty(error, "serverTime") &&
+  typeof error.serverTime === "number"
+    ? error.serverTime
+    : undefined;
+
+/**
+ * The verifier's clock from a `time_window` rejection, read from an environment
+ * or relay auth error, or from a relay request failure that wraps one. Older
+ * verifiers omit it.
+ */
+export const dpopRejectionServerTime = (error: unknown): number | undefined =>
+  timeWindowServerTime(error) ??
+  (Predicate.hasProperty(error, "relayError") ? timeWindowServerTime(error.relayError) : undefined);
+
+/** Proof input fields that sign `iat` with a verifier's time when one is given. */
+export const dpopIssuedAt = (issuedAtSeconds: number | undefined) =>
+  issuedAtSeconds === undefined ? {} : { issuedAtSeconds };
+
+/**
+ * Sends a DPoP request and, when the verifier rejects the proof's `iat` and
+ * reports its own clock, re-signs and sends it once more with that time. No
+ * offset is remembered, so the next request starts from the local clock.
+ */
+export const withDpopClockRetry = <A, E, R>(
+  send: (issuedAtSeconds: number | undefined) => Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  send(undefined).pipe(
+    Effect.catch((error) => {
+      const serverTime = dpopRejectionServerTime(error);
+      return serverTime === undefined ? Effect.fail(error) : send(serverTime);
+    }),
+  );
 
 export class ManagedRelayDpopKeyLoadError extends Schema.TaggedError<ManagedRelayDpopKeyLoadError>()(
   "ManagedRelayDpopKeyLoadError",
@@ -485,13 +524,17 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
     function* (input: {
       readonly clerkToken: string;
       readonly scopes: ReadonlyArray<RelayDpopAccessTokenScope>;
+      readonly issuedAtSeconds?: number;
     }) {
       yield* Effect.annotateCurrentSpan({
         "relay.client_id": options.clientId,
         "relay.scopes": input.scopes.join(" "),
       });
       const proof = yield* signer
-        .createProof(dpopProofTargets.exchangeAccessToken())
+        .createProof({
+          ...dpopProofTargets.exchangeAccessToken(),
+          ...dpopIssuedAt(input.issuedAtSeconds),
+        })
         .pipe(
           Effect.mapError(
             (error) => new ManagedRelayTokenProofCreationError(proofCreationErrorFields(error)),
@@ -529,6 +572,7 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
       readonly clerkToken: string;
       readonly scopes: ReadonlyArray<RelayDpopAccessTokenScope>;
       readonly thumbprint: string;
+      readonly issuedAtSeconds?: number;
     }) {
       yield* Effect.annotateCurrentSpan({
         "relay.client_id": options.clientId,
@@ -612,6 +656,7 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
     readonly clerkToken: string;
     readonly scopes: ReadonlyArray<RelayDpopAccessTokenScope>;
     readonly target: DpopProofTarget;
+    readonly issuedAtSeconds?: number;
   }) {
     yield* Effect.annotateCurrentSpan({
       "relay.client_id": options.clientId,
@@ -624,11 +669,13 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
       clerkToken: input.clerkToken,
       scopes: input.scopes,
       thumbprint,
+      ...dpopIssuedAt(input.issuedAtSeconds),
     });
     const proof = yield* signer
       .createProof({
         ...input.target,
         accessToken: token.accessToken,
+        ...dpopIssuedAt(input.issuedAtSeconds),
       })
       .pipe(
         Effect.mapError(
@@ -662,8 +709,11 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
       authorization: ManagedRelayAuthorization,
     ) => Effect.Effect<A, ManagedRelayClientError>,
   ): Effect.Effect<A, ManagedRelayClientError> => {
-    const attempt = (refreshRejectedToken: boolean): Effect.Effect<A, ManagedRelayClientError> =>
-      authorize(input).pipe(
+    const attempt = (
+      refreshRejectedToken: boolean,
+      issuedAtSeconds: number | undefined,
+    ): Effect.Effect<A, ManagedRelayClientError> =>
+      authorize({ ...input, ...dpopIssuedAt(issuedAtSeconds) }).pipe(
         Effect.flatMap((authorization) =>
           request(authorization).pipe(
             Effect.catchIf(isRejectedDpopAccessToken, (error) =>
@@ -682,13 +732,15 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
                       )
                     : Effect.void,
                 ),
-                Effect.andThen(refreshRejectedToken ? attempt(false) : Effect.fail(error)),
+                Effect.andThen(
+                  refreshRejectedToken ? attempt(false, issuedAtSeconds) : Effect.fail(error),
+                ),
               ),
             ),
           ),
         ),
       );
-    return attempt(true);
+    return withDpopClockRetry((issuedAtSeconds) => attempt(true, issuedAtSeconds));
   };
 
   const mobileRegistrationRequest = <A>(

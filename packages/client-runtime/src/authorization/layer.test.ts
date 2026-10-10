@@ -91,6 +91,19 @@ const authInvalid = () =>
     { status: 401 },
   );
 
+const clockRejected = (serverTime: number) =>
+  Response.json(
+    {
+      _tag: "EnvironmentAuthInvalidError",
+      code: "auth_invalid",
+      reason: "invalid_credential",
+      dpopFailureReason: "time_window",
+      serverTime,
+      traceId: "trace-clock",
+    },
+    { status: 401 },
+  );
+
 const persistedToken = (
   input: {
     readonly environmentId?: EnvironmentId;
@@ -133,13 +146,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
   );
   const thumbprint = yield* Ref.make("thumbprint-1");
   const tokenReads = yield* Queue.unbounded<EnvironmentId>();
-  const proofInputs = yield* Ref.make<
-    ReadonlyArray<{
-      readonly method: string;
-      readonly url: string;
-      readonly accessToken?: string;
-    }>
-  >([]);
+  const proofInputs = yield* Ref.make<ReadonlyArray<ManagedRelay.ManagedRelayDpopProofInput>>([]);
   const fetch = recordedFetch(input.responses);
 
   const tokenStore = TokenStore.RemoteDpopAccessTokenStore.of({
@@ -629,6 +636,54 @@ describe("RemoteEnvironmentAuthorization", () => {
         detail: `The environment credential is invalid. ${DPOP_UNKNOWN_HINT}`,
         traceId: "trace-auth-invalid",
       });
+      expect(harness.fetch.calls).toHaveLength(2);
+    }),
+  );
+
+  it.effect("re-signs token and ticket proofs once with the server's time after clock skew", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        responses: [
+          Response.json(DESCRIPTOR),
+          clockRejected(1_234),
+          accessToken("access-token"),
+          clockRejected(1_300),
+          websocketTicket("ticket"),
+        ],
+      });
+
+      const authorized = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        return yield* remote.authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID });
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(authorized.socketUrl).toContain("wsTicket=ticket");
+      expect((yield* Ref.get(harness.proofInputs)).map((proof) => proof.issuedAtSeconds)).toEqual([
+        undefined,
+        1_234,
+        undefined,
+        1_300,
+      ]);
+    }),
+  );
+
+  it.effect("surfaces a second clock-skew rejection of the token exchange", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        responses: [Response.json(DESCRIPTOR), clockRejected(1_234), clockRejected(1_234)],
+      });
+
+      const failure = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        return yield* remote.authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID });
+      }).pipe(Effect.provide(harness.layer), Effect.flip);
+
+      expect(failure).toMatchObject({
+        _tag: "ConnectionBlockedError",
+        reason: "authentication",
+        traceId: "trace-clock",
+      });
+      expect(harness.fetch.calls).toHaveLength(3);
     }),
   );
 

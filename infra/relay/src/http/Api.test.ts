@@ -47,6 +47,7 @@ import { RELAY_MANAGED_TUNNEL_RECOVERY_TYP, signRelayJwt } from "@t3tools/shared
 import {
   RELAY_HTTP_ROUTER_CONFIG,
   RELAY_REQUEST_DEADLINE_MS,
+  mapRelayCommonApiErrors,
   recoverEnvironmentTunnelRecord,
   registerEnvironmentTunnelRecovery,
   relayDpopFailureReason,
@@ -60,6 +61,7 @@ import {
 import * as RelayHttpApi from "./Api.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as RelayDb from "../db.ts";
+import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
 import * as HeldHooks from "../hooks/HeldHooks.ts";
 import * as HookInbox from "../hooks/HookInbox.ts";
@@ -262,6 +264,22 @@ describe("relay DPoP failure mapping", () => {
       expect(relayDpopFailureReason(code)).toBe(expected);
     }
   });
+
+  it.effect("sends the relay time with time-window rejections", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        Effect.fail(
+          new DpopProofs.DpopProofRejected({ code: "time_window", serverTime: 1_234 }),
+        ).pipe(mapRelayCommonApiErrors("invalid_dpop")),
+      );
+
+      expect(error).toMatchObject({
+        _tag: "RelayAuthInvalidError",
+        dpopFailureReason: "time_window",
+        serverTime: 1_234,
+      });
+    }),
+  );
 });
 
 describe("relay environment authentication", () => {

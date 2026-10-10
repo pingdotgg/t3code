@@ -114,6 +114,20 @@ function credentialRejectedResponse(reason = "invalid_credential") {
   );
 }
 
+function clockRejectedResponse(serverTime?: number) {
+  return Response.json(
+    {
+      _tag: "EnvironmentAuthInvalidError",
+      code: "auth_invalid",
+      reason: "invalid_credential",
+      dpopFailureReason: "time_window",
+      ...(serverTime === undefined ? {} : { serverTime }),
+      traceId: "trace-clock",
+    },
+    { status: 401 },
+  );
+}
+
 function makeHarness(reply: (requestNumber: number) => Response | Promise<Response>) {
   const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
   const authorizations: Array<
@@ -482,6 +496,54 @@ describe("authenticated environment HTTP requests", () => {
       expect(new Headers(harness.calls[0]!.init.headers).get("authorization")).toBe(
         "DPoP current-token",
       );
+    }),
+  );
+
+  it.effect("re-signs a clock-skew rejection once with the server's time", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness((requestNumber) =>
+        requestNumber === 1 ? clockRejectedResponse(1_234) : Response.json(DIFF_RESULT),
+      );
+      const result = yield* PullRequestDiffLoader.fetchEnvironmentPullRequestDiff({
+        ...harness.input,
+        diff: DIFF,
+      }).pipe(Effect.provide(harness.httpLayer));
+
+      expect(result).toEqual(DIFF_RESULT);
+      expect(harness.proofs.map((proof) => proof.issuedAtSeconds)).toEqual([undefined, 1_234]);
+      expect(
+        harness.calls.map((call) => new Headers(call.init.headers).get("authorization")),
+      ).toEqual(["DPoP current-token", "DPoP current-token"]);
+    }),
+  );
+
+  it.effect("surfaces a second clock-skew rejection without renewing the token", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() => clockRejectedResponse(1_234));
+      const error = yield* PullRequestDiffLoader.fetchEnvironmentPullRequestDiff({
+        ...harness.input,
+        diff: DIFF,
+      }).pipe(Effect.provide(harness.httpLayer), Effect.flip);
+
+      expect(error).toMatchObject({ traceId: "trace-clock" });
+      expect(harness.calls).toHaveLength(2);
+      expect(harness.authorizations.every((input) => input.rejectedAccessToken === undefined)).toBe(
+        true,
+      );
+    }),
+  );
+
+  it.effect("neither re-signs nor renews when an older server omits its time", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() => clockRejectedResponse());
+      const error = yield* PullRequestDiffLoader.fetchEnvironmentPullRequestDiff({
+        ...harness.input,
+        diff: DIFF,
+      }).pipe(Effect.provide(harness.httpLayer), Effect.flip);
+
+      expect(error).toMatchObject({ traceId: "trace-clock" });
+      expect(harness.calls).toHaveLength(1);
+      expect(harness.authorizations).toHaveLength(1);
     }),
   );
 

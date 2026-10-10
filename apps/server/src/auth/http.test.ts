@@ -1,3 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync or sign.
+import * as NodeCrypto from "node:crypto";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AuthSessionId,
@@ -9,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import { expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -158,6 +162,72 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
         }),
       ([environmentA, environmentB]) =>
         Effect.promise(() => Promise.all([environmentA.dispose(), environmentB.dispose()])),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+const signDpopProof = (input: { readonly url: string; readonly iat: number }) => {
+  const { privateKey, publicKey } = NodeCrypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const header = encode({
+    typ: "dpop+jwt",
+    alg: "ES256",
+    jwk: publicKey.export({ format: "jwk" }),
+  });
+  const payload = encode({ htm: "POST", htu: input.url, jti: "proof-1", iat: input.iat });
+  const signature = NodeCrypto.sign("sha256", Buffer.from(`${header}.${payload}`), {
+    key: privateKey,
+    dsaEncoding: "ieee-p1363",
+  }).toString("base64url");
+  return `${header}.${payload}.${signature}`;
+};
+
+// Live clock: the web handler verifies against real time, outside the test clock.
+it.live("reports the server time when a DPoP proof is outside the time window", () =>
+  Effect.gen(function* () {
+    const crypto = yield* Crypto.Crypto;
+    const clientTime = Math.floor((yield* Clock.currentTimeMillis) / 1_000) - 3_600;
+    const requestContext = Context.make(Crypto.Crypto, crypto).pipe(
+      Context.add(
+        ServerSecretStore.ServerSecretStore,
+        ServerSecretStore.ServerSecretStore.of({
+          get: () => Effect.succeedNone,
+          set: () => Effect.void,
+          create: () => Effect.void,
+          getOrCreateRandom: () => Effect.die("Not used by this route."),
+          remove: () => Effect.void,
+        }),
+      ),
+    );
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
+      (environment) =>
+        Effect.tryPromise(async () => {
+          const response = await environment.handler(
+            new Request("http://127.0.0.1/oauth/token", {
+              method: "POST",
+              headers: {
+                // The route rebuilds the URL from the absent Host header as localhost.
+                dpop: signDpopProof({ url: "http://localhost/oauth/token", iat: clientTime }),
+              },
+              body: new URLSearchParams({
+                grant_type: AuthTokenExchangeGrantType,
+                subject_token: DEV_TOKEN,
+                subject_token_type: AuthEnvironmentBootstrapTokenType,
+                requested_token_type: AuthAccessTokenType,
+              }),
+            }),
+            requestContext,
+          );
+          expect(response.status).toBe(401);
+          const body = (await response.json()) as {
+            dpopFailureReason?: string;
+            serverTime?: number;
+          };
+          expect(body.dpopFailureReason).toBe("time_window");
+          expect(body.serverTime).toBeGreaterThanOrEqual(clientTime + 3_600);
+        }),
+      (environment) => Effect.promise(() => environment.dispose()),
     );
   }).pipe(Effect.provide(NodeServices.layer)),
 );

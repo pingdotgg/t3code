@@ -16,7 +16,7 @@ const REPLAY_MARKER_PREFIXES = [DPOP_REPLAY_MARKER_PREFIX, ...CLOUD_REPLAY_MARKE
 
 /**
  * How long a replay marker stays on disk. A marker only matters while its proof
- * can pass the time check (about 5 minutes for DPoP, 7 for cloud proofs). After
+ * can pass the time check (about 10 minutes for DPoP, 7 for cloud proofs). After
  * that, the time check rejects a replay by itself. The sweep and the time check
  * both use the wall clock, so a pruned marker can let a replay through only if
  * the clock moves back by almost a day, or if the filesystem stamps mtimes almost

@@ -221,30 +221,35 @@ export const make = Effect.gen(function* () {
       timeoutMs?: number,
       endpoint: { readonly httpBaseUrl: string; readonly wsBaseUrl: string } = token.endpoint,
     ) {
-      const ticketProof = yield* signer
-        .createProof({
-          method: "POST",
-          url: environmentEndpointUrl(endpoint.httpBaseUrl, "/api/auth/websocket-ticket"),
-          accessToken: token.accessToken,
-        })
-        .pipe(
-          Effect.mapError(
-            () =>
-              new ConnectionBlockedError({
-                reason: "configuration",
-                detail: "Could not create the websocket authorization proof.",
-              }),
-          ),
-        );
-      return yield* resolveRemoteDpopWebSocketConnectionUrl({
-        wsBaseUrl: endpoint.wsBaseUrl,
-        httpBaseUrl: endpoint.httpBaseUrl,
-        accessToken: token.accessToken,
-        dpopProof: ticketProof,
-        clientMetadata: presentation.metadata,
-        connectionMethod: "relay",
-        ...(timeoutMs === undefined ? {} : { timeoutMs }),
-      }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+      return yield* ManagedRelay.withDpopClockRetry((issuedAtSeconds) =>
+        Effect.gen(function* () {
+          const ticketProof = yield* signer
+            .createProof({
+              method: "POST",
+              url: environmentEndpointUrl(endpoint.httpBaseUrl, "/api/auth/websocket-ticket"),
+              accessToken: token.accessToken,
+              ...ManagedRelay.dpopIssuedAt(issuedAtSeconds),
+            })
+            .pipe(
+              Effect.mapError(
+                () =>
+                  new ConnectionBlockedError({
+                    reason: "configuration",
+                    detail: "Could not create the websocket authorization proof.",
+                  }),
+              ),
+            );
+          return yield* resolveRemoteDpopWebSocketConnectionUrl({
+            wsBaseUrl: endpoint.wsBaseUrl,
+            httpBaseUrl: endpoint.httpBaseUrl,
+            accessToken: token.accessToken,
+            dpopProof: ticketProof,
+            clientMetadata: presentation.metadata,
+            connectionMethod: "relay",
+            ...(timeoutMs === undefined ? {} : { timeoutMs }),
+          }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+        }),
+      );
     },
   );
 
@@ -322,31 +327,35 @@ export const make = Effect.gen(function* () {
           actual: descriptor.environmentId,
         });
       }
-      const bootstrapProof = yield* signer
-        .createProof({
-          method: "POST",
-          url: environmentEndpointUrl(bootstrap.endpoint.httpBaseUrl, "/oauth/token"),
-        })
-        .pipe(
-          Effect.mapError(
-            () =>
-              new ConnectionBlockedError({
-                reason: "configuration",
-                detail: "Could not create the environment authorization proof.",
-              }),
-          ),
-        );
-      yield* assertSession(identity);
-      const access = yield* exchangeRemoteDpopAccessToken({
-        httpBaseUrl: bootstrap.endpoint.httpBaseUrl,
-        credential: bootstrap.credential,
-        dpopProof: bootstrapProof,
-        clientMetadata: presentation.metadata,
-      }).pipe(
-        Effect.mapError(mapRemoteDpopEnvironmentError),
-        Effect.provideService(HttpClient.HttpClient, httpClient),
-        Effect.withSpan("environment.authorization.accessToken.exchange"),
-      );
+      const access = yield* ManagedRelay.withDpopClockRetry((issuedAtSeconds) =>
+        Effect.gen(function* () {
+          const bootstrapProof = yield* signer
+            .createProof({
+              method: "POST",
+              url: environmentEndpointUrl(bootstrap.endpoint.httpBaseUrl, "/oauth/token"),
+              ...ManagedRelay.dpopIssuedAt(issuedAtSeconds),
+            })
+            .pipe(
+              Effect.mapError(
+                () =>
+                  new ConnectionBlockedError({
+                    reason: "configuration",
+                    detail: "Could not create the environment authorization proof.",
+                  }),
+              ),
+            );
+          yield* assertSession(identity);
+          return yield* exchangeRemoteDpopAccessToken({
+            httpBaseUrl: bootstrap.endpoint.httpBaseUrl,
+            credential: bootstrap.credential,
+            dpopProof: bootstrapProof,
+            clientMetadata: presentation.metadata,
+          }).pipe(
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.withSpan("environment.authorization.accessToken.exchange"),
+          );
+        }),
+      ).pipe(Effect.mapError(mapDpopSocketError));
       const issuedAt = yield* Clock.currentTimeMillis;
       return new TokenStore.RemoteDpopAccessToken({
         environmentId: descriptor.environmentId,

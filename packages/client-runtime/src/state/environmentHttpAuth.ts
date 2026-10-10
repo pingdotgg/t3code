@@ -10,7 +10,11 @@ import { FetchHttpClient, type HttpMethod } from "effect/http";
 
 import type { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import type { PreparedConnection, PreparedHttpAuthorization } from "../connection/model.ts";
-import type { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
+import {
+  dpopIssuedAt,
+  dpopRejectionServerTime,
+  type ManagedRelayDpopSigner,
+} from "../relay/managedRelay.ts";
 import {
   executeEnvironmentHttpRequest,
   makeEnvironmentHttpApiGroupClient,
@@ -68,6 +72,7 @@ const buildEnvironmentAuthHeaders = (
   method: HttpMethod.HttpMethod,
   url: string,
   signer: Option.Option<ManagedRelayDpopSigner["Service"]>,
+  issuedAtSeconds: number | undefined,
 ): Effect.Effect<EnvironmentHttpAuthHeaders, RemoteEnvironmentAuthFetchError> =>
   Effect.gen(function* () {
     if (authorization === null) {
@@ -83,7 +88,12 @@ const buildEnvironmentAuthHeaders = (
       });
     }
     const proof = yield* signer.value
-      .createProof({ method, url, accessToken: authorization.accessToken })
+      .createProof({
+        method,
+        url,
+        accessToken: authorization.accessToken,
+        ...dpopIssuedAt(issuedAtSeconds),
+      })
       .pipe(
         Effect.mapError(
           (cause) =>
@@ -99,7 +109,9 @@ const buildEnvironmentAuthHeaders = (
 /**
  * Resolve relay credentials at request time without replacing the live socket.
  * A rejected credential gets one refresh and retry, with a new request-bound
- * proof. Cookie and bearer requests keep their existing authentication behavior.
+ * proof. A proof rejected for clock skew is re-signed once with the server's
+ * reported time. Cookie and bearer requests keep their existing authentication
+ * behavior.
  *
  * A DPoP request is T3 Connect work, so its span starts an exported trace that
  * the environment continues; its local caller's span would leave that trace
@@ -156,6 +168,7 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
     input.url(makeEnvironmentHttpApiUrlBuilder(baseUrl)[input.group]);
   return yield* Effect.gen(function* () {
     let rejectedAccessToken: string | undefined;
+    let issuedAtSeconds: number | undefined;
     for (;;) {
       let authorization = input.prepared.httpAuthorization;
       if (authorization?._tag === "Dpop") {
@@ -194,6 +207,7 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
         input.method,
         requestUrl,
         input.signer,
+        issuedAtSeconds,
       );
       const result = yield* executeEnvironmentHttpRequest(
         requestUrl,
@@ -202,11 +216,22 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
       ).pipe(Effect.result);
 
       if (Result.isFailure(result)) {
+        // A clock-skew rejection says nothing about the token, so it is never renewed for one.
+        const serverTime = dpopRejectionServerTime(result.failure);
+        if (authorization?._tag === "Dpop" && serverTime !== undefined) {
+          if (issuedAtSeconds !== undefined) {
+            return yield* result.failure;
+          }
+          issuedAtSeconds = serverTime;
+          continue;
+        }
         if (
           authorization?._tag === "Dpop" &&
           rejectedAccessToken === undefined &&
           result.failure._tag === "EnvironmentAuthInvalidError" &&
-          result.failure.reason === "invalid_credential"
+          result.failure.reason === "invalid_credential" &&
+          // Older servers report clock skew without their time; a new token cannot fix that.
+          result.failure.dpopFailureReason !== "time_window"
         ) {
           rejectedAccessToken = authorization.accessToken;
           continue;

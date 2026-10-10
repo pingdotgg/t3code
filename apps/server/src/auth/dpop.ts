@@ -67,11 +67,12 @@ export const verifyRequestDpopProof = (input: {
       });
     }
     const now = yield* DateTime.now;
+    const nowEpochSeconds = Math.floor(now.epochMilliseconds / 1_000);
     const result = verifyDpopProof({
       proof,
       method: input.request.method,
       url: url.value.href,
-      nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
+      nowEpochSeconds,
       ...(input.expectedThumbprint ? { expectedThumbprint: input.expectedThumbprint } : {}),
       ...(input.expectedAccessToken ? { expectedAccessToken: input.expectedAccessToken } : {}),
     });
@@ -82,6 +83,8 @@ export const verifyRequestDpopProof = (input: {
       return yield* new ServerAuthInvalidCredentialError({
         diagnostic: result.reason,
         dpopFailureReason: mapDpopFailureReason(result.code),
+        // Lets a client with a skewed clock re-sign against this server's time.
+        ...(result.code === "time_window" ? { serverTime: nowEpochSeconds } : {}),
       });
     }
     const secretStore = yield* ServerSecretStore.ServerSecretStore;

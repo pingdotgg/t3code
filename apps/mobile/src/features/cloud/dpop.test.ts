@@ -134,6 +134,19 @@ describe("mobile DPoP", () => {
     }).pipe(Effect.provide(Dpop.layer)),
   );
 
+  it.effect("signs with the requested issued-at time", () =>
+    Effect.gen(function* () {
+      const proof = yield* createDpopProof({
+        method: "POST",
+        url: "https://desktop.example.test/oauth/token",
+        issuedAtSeconds: 1_700_000_000,
+        proofKey: yield* generateDpopProofKeyPair(),
+      });
+
+      expect(proofIat(proof.proof)).toBe(1_700_000_000);
+    }).pipe(Effect.provide(Dpop.layer)),
+  );
+
   it.effect("signs DPoP proofs with RFC 9449 htu normalization", () =>
     Effect.gen(function* () {
       const proofKey = yield* generateDpopProofKeyPair();

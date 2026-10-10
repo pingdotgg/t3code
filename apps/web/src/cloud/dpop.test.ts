@@ -33,4 +33,19 @@ describe("browser DPoP proofs", () => {
       ).toMatchObject({ ok: true });
     }),
   );
+
+  it.effect("signs with the requested issued-at time", () =>
+    Effect.gen(function* () {
+      vi.stubGlobal("indexedDB", undefined);
+      const proofKey = yield* generateBrowserDpopKey;
+      const proof = yield* createBrowserDpopProof({
+        method: "POST",
+        url: "https://desktop.example.test/oauth/token",
+        issuedAtSeconds: 1_700_000_000,
+        proofKey,
+      }).pipe(Effect.provide(Dpop.layer));
+
+      expect(decodeJwt(proof.proof).iat).toBe(1_700_000_000);
+    }),
+  );
 });

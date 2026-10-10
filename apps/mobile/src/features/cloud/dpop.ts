@@ -247,6 +247,7 @@ export function createDpopProof(input: {
   readonly method: string;
   readonly url: string;
   readonly accessToken?: string;
+  readonly issuedAtSeconds?: number;
   readonly proofKey?: DpopProofKeyPair;
 }): Effect.Effect<
   { readonly proof: string; readonly thumbprint: string },
@@ -280,7 +281,7 @@ export function createDpopProof(input: {
       htm: input.method.toUpperCase(),
       htu,
       jti,
-      iat: Math.floor(nowMs / 1_000),
+      iat: input.issuedAtSeconds ?? Math.floor(nowMs / 1_000),
       ...(ath ? { ath } : {}),
     }).pipe(
       Effect.map(Base64Url.encode),

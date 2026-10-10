@@ -18,7 +18,7 @@ import {
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
 } from "@t3tools/contracts";
-import type { AuthEnvironmentScope, DpopFailureReason } from "@t3tools/contracts";
+import type { AuthEnvironmentScope } from "@t3tools/contracts";
 import { parseOAuthScope } from "@t3tools/shared/oauthScope";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as Clock from "effect/Clock";
@@ -95,7 +95,7 @@ export function annotateEnvironmentRequest(endpoint: string) {
 
 export function failEnvironmentAuthInvalid(
   reason: EnvironmentAuthInvalidReason,
-  dpopFailureReason?: DpopFailureReason,
+  dpopFailure: EnvironmentAuth.ServerAuthDpopFailure = {},
 ) {
   return currentEnvironmentTraceId.pipe(
     Effect.flatMap((traceId) =>
@@ -103,7 +103,7 @@ export function failEnvironmentAuthInvalid(
         new EnvironmentAuthInvalidError({
           code: "auth_invalid",
           reason,
-          ...(dpopFailureReason === undefined ? {} : { dpopFailureReason }),
+          ...dpopFailure,
           traceId,
         }),
       ),
@@ -172,7 +172,7 @@ export const authenticateMediaRequest = (requiredScope: AuthEnvironmentScope) =>
           if (EnvironmentAuth.isServerAuthCredentialError(error)) {
             return yield* failEnvironmentAuthInvalid(
               EnvironmentAuth.serverAuthCredentialReason(error),
-              EnvironmentAuth.serverAuthDpopFailureReason(error),
+              EnvironmentAuth.serverAuthDpopFailure(error),
             );
           }
           return yield* failEnvironmentInternal("internal_error", error);
@@ -238,7 +238,7 @@ export const layerAuthenticatedAuth = Layer.effect(
           Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
             failEnvironmentAuthInvalid(
               EnvironmentAuth.serverAuthCredentialReason(error),
-              EnvironmentAuth.serverAuthDpopFailureReason(error),
+              EnvironmentAuth.serverAuthDpopFailure(error),
             ),
           ),
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
@@ -342,7 +342,7 @@ export const layer = HttpApiBuilder.group(
           Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
             failEnvironmentAuthInvalid(
               EnvironmentAuth.serverAuthCredentialReason(error),
-              EnvironmentAuth.serverAuthDpopFailureReason(error),
+              EnvironmentAuth.serverAuthDpopFailure(error),
             ),
           ),
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
@@ -370,7 +370,7 @@ export const layer = HttpApiBuilder.group(
                       Effect.andThen(
                         failEnvironmentAuthInvalid(
                           "invalid_credential",
-                          EnvironmentAuth.serverAuthDpopFailureReason(error),
+                          EnvironmentAuth.serverAuthDpopFailure(error),
                         ),
                       ),
                     ),
@@ -401,7 +401,7 @@ export const layer = HttpApiBuilder.group(
           Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
             failEnvironmentAuthInvalid(
               EnvironmentAuth.serverAuthCredentialReason(error),
-              EnvironmentAuth.serverAuthDpopFailureReason(error),
+              EnvironmentAuth.serverAuthDpopFailure(error),
             ),
           ),
           Effect.catchIf(EnvironmentAuth.isServerAuthInvalidRequestError, (error) =>

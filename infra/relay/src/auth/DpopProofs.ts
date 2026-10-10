@@ -5,7 +5,11 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { lt } from "drizzle-orm";
 
-import { DpopVerificationFailureCode, verifyDpopProof } from "@t3tools/shared/dpop";
+import {
+  DPOP_REPLAY_WINDOW_SECONDS,
+  DpopVerificationFailureCode,
+  verifyDpopProof,
+} from "@t3tools/shared/dpop";
 import * as RelayDb from "../db.ts";
 import { relayDpopProofs } from "../persistence/schema.ts";
 
@@ -35,6 +39,8 @@ export class DpopProofRejected extends Schema.TaggedError<DpopProofRejected>()(
   "DpopProofRejected",
   {
     code: DpopProofFailureCode,
+    /** Relay clock in epoch seconds, set for `time_window` so clients can re-sign. */
+    serverTime: Schema.optionalKey(Schema.Int),
   },
 ) {
   override get message(): string {
@@ -104,11 +110,12 @@ const make = Effect.gen(function* () {
       "relay.dpop.expected_thumbprint_present": input.expectedThumbprint !== undefined,
       "relay.dpop.expected_access_token_present": input.expectedAccessToken !== undefined,
     });
+    const nowEpochSeconds = Math.floor(input.now.epochMilliseconds / 1_000);
     const result = verifyDpopProof({
       proof: input.proof,
       method: input.method,
       url: input.url,
-      nowEpochSeconds: Math.floor(input.now.epochMilliseconds / 1_000),
+      nowEpochSeconds,
       ...(input.expectedThumbprint ? { expectedThumbprint: input.expectedThumbprint } : {}),
       ...(input.expectedAccessToken ? { expectedAccessToken: input.expectedAccessToken } : {}),
     });
@@ -123,13 +130,14 @@ const make = Effect.gen(function* () {
       });
       return yield* new DpopProofRejected({
         code: result.code,
+        ...(result.code === "time_window" ? { serverTime: nowEpochSeconds } : {}),
       });
     }
     const consumed = yield* consume({
       thumbprint: result.thumbprint,
       jti: result.jti,
       iat: result.iat,
-      expiresAt: DateTime.add(input.now, { minutes: 5 }),
+      expiresAt: DateTime.add(input.now, { seconds: DPOP_REPLAY_WINDOW_SECONDS }),
     });
     if (!consumed) {
       yield* Effect.logWarning("relay dpop proof replay rejected", {

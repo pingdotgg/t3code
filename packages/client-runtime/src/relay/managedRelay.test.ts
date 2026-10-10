@@ -30,7 +30,9 @@ function layerManagedRelayTest(
     ManagedRelay.ManagedRelayDpopSigner.of({
       thumbprint: Effect.succeed("client-thumbprint"),
       createProof: (input: ManagedRelay.ManagedRelayDpopProofInput) =>
-        Effect.succeed(`proof:${input.url}`),
+        Effect.succeed(
+          `proof:${input.url}${input.issuedAtSeconds === undefined ? "" : `@${input.issuedAtSeconds}`}`,
+        ),
     }),
   );
   return ManagedRelay.layer({
@@ -458,6 +460,105 @@ describe("ManagedRelayClient", () => {
         },
       ]);
     }).pipe(Effect.provide(layerManagedRelayTest(fetchFn, undefined, accessTokenStore)));
+  });
+
+  describe("clock skew", () => {
+    const statusFetch = (rejection: {
+      readonly serverTime?: number;
+      readonly rejectReSigned: boolean;
+    }) => {
+      const statusProofs: Array<string | null> = [];
+      const fetchFn = ((input, init) => {
+        if (String(input).endsWith("/v1/client/dpop-token")) {
+          return Promise.resolve(
+            Response.json({
+              access_token: "relay-token",
+              issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+              token_type: "DPoP",
+              expires_in: 1_800,
+              scope: RelayEnvironmentStatusScope,
+            }),
+          );
+        }
+        const proof = new Headers(init?.headers).get("dpop");
+        statusProofs.push(proof);
+        if (rejection.rejectReSigned || !proof?.includes("@")) {
+          return Promise.resolve(
+            Response.json(
+              {
+                _tag: "RelayAuthInvalidError",
+                code: "auth_invalid",
+                reason: "invalid_dpop",
+                dpopFailureReason: "time_window",
+                ...(rejection.serverTime === undefined ? {} : { serverTime: rejection.serverTime }),
+                traceId: "trace-clock",
+              },
+              { status: 401 },
+            ),
+          );
+        }
+        return Promise.resolve(
+          Response.json({
+            environmentId: "env-1",
+            endpoint: {
+              httpBaseUrl: "https://desktop.example.test/",
+              wsBaseUrl: "wss://desktop.example.test/ws",
+              providerKind: "cloudflare_tunnel",
+            },
+            status: "online",
+            checkedAt: "2026-06-05T20:00:00.000Z",
+            descriptor: {
+              environmentId: "env-1",
+              label: "Desktop",
+              platform: { os: "darwin", arch: "arm64" },
+              serverVersion: "0.0.0-test",
+              capabilities: { repositoryIdentity: true },
+            },
+          }),
+        );
+      }) satisfies typeof globalThis.fetch;
+      return { fetchFn, statusProofs };
+    };
+    const getStatus = Effect.gen(function* () {
+      const relayClient = yield* ManagedRelay.ManagedRelayClient;
+      return yield* relayClient.getEnvironmentStatus({
+        clerkToken: clerkToken("user-1", "session-1"),
+        scopes: [RelayEnvironmentStatusScope],
+        environmentId: EnvironmentId.make("env-1"),
+      });
+    });
+    const statusUrl = "https://relay.example.test/v1/environments/env-1/status";
+
+    it.effect("re-signs a time-window rejection once with the relay's time", () => {
+      const { fetchFn, statusProofs } = statusFetch({ serverTime: 1_234, rejectReSigned: false });
+      return Effect.gen(function* () {
+        const result = yield* getStatus;
+
+        expect(result.status).toBe("online");
+        expect(statusProofs).toEqual([`proof:${statusUrl}`, `proof:${statusUrl}@1234`]);
+      }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)));
+    });
+
+    it.effect("surfaces a second time-window rejection", () => {
+      const { fetchFn, statusProofs } = statusFetch({ serverTime: 1_234, rejectReSigned: true });
+      return Effect.gen(function* () {
+        const error = yield* Effect.flip(getStatus);
+
+        expect(error).toMatchObject({
+          relayError: { dpopFailureReason: "time_window", serverTime: 1_234 },
+        });
+        expect(statusProofs).toHaveLength(2);
+      }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)));
+    });
+
+    it.effect("does not retry when an older relay omits its time", () => {
+      const { fetchFn, statusProofs } = statusFetch({ rejectReSigned: true });
+      return Effect.gen(function* () {
+        yield* Effect.flip(getStatus);
+
+        expect(statusProofs).toEqual([`proof:${statusUrl}`]);
+      }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)));
+    });
   });
 
   it.effect("does not persist tokens when the Clerk subject cannot be decoded", () => {

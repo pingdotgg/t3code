@@ -394,6 +394,7 @@ export class ServerAuthInvalidCredentialError extends Schema.TaggedError<ServerA
   {
     diagnostic: Schema.optional(Schema.String),
     dpopFailureReason: Schema.optionalKey(DpopFailureReason),
+    serverTime: Schema.optionalKey(Schema.Int),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -413,10 +414,20 @@ export const serverAuthCredentialReason = (
 ): "missing_credential" | "invalid_credential" =>
   error._tag === "ServerAuthMissingCredentialError" ? "missing_credential" : "invalid_credential";
 
-export const serverAuthDpopFailureReason = (
-  error: ServerAuthCredentialError,
-): DpopFailureReasonType | undefined =>
-  error._tag === "ServerAuthInvalidCredentialError" ? error.dpopFailureReason : undefined;
+export interface ServerAuthDpopFailure {
+  readonly dpopFailureReason?: DpopFailureReasonType;
+  readonly serverTime?: number;
+}
+
+export const serverAuthDpopFailure = (error: ServerAuthCredentialError): ServerAuthDpopFailure =>
+  error._tag === "ServerAuthInvalidCredentialError"
+    ? {
+        ...(error.dpopFailureReason === undefined
+          ? {}
+          : { dpopFailureReason: error.dpopFailureReason }),
+        ...(error.serverTime === undefined ? {} : { serverTime: error.serverTime }),
+      }
+    : {};
 
 export class ServerAuthInvalidScopeError extends Schema.TaggedError<ServerAuthInvalidScopeError>()(
   "ServerAuthInvalidScopeError",

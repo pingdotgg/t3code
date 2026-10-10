@@ -146,6 +146,7 @@ export function createBrowserDpopProof(input: {
   readonly method: string;
   readonly url: string;
   readonly accessToken?: string;
+  readonly issuedAtSeconds?: number;
   readonly proofKey: BrowserDpopKey;
 }): Effect.Effect<
   { readonly proof: string; readonly thumbprint: string },
@@ -176,7 +177,7 @@ export function createBrowserDpopProof(input: {
             alg: "ES256",
             jwk: input.proofKey.publicJwk,
           })
-          .setIssuedAt()
+          .setIssuedAt(input.issuedAtSeconds)
           .sign(input.proofKey.privateKey),
       catch: (cause) => dpopError("Could not sign DPoP proof.", cause),
     });

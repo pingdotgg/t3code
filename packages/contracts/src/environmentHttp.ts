@@ -152,6 +152,8 @@ export class EnvironmentAuthInvalidError extends Schema.TaggedError<EnvironmentA
     reason: EnvironmentAuthInvalidReason,
     // Older servers do not send a DPoP failure category.
     dpopFailureReason: Schema.optionalKey(DpopFailureReason),
+    // Verifier clock in epoch seconds, sent with `time_window` so clients can re-sign.
+    serverTime: Schema.optionalKey(Schema.Int),
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 401 },

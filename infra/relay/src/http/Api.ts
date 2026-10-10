@@ -1492,7 +1492,7 @@ function relayInternalErrorResponse(reason: RelayInternalError["reason"]) {
   );
 }
 
-function mapRelayCommonApiErrors(authReason: RelayAuthInvalidReason) {
+export function mapRelayCommonApiErrors(authReason: RelayAuthInvalidReason) {
   const mapError = Effect.fnUntraced(function* <E>(error: E) {
     const traceId = yield* currentTraceId;
     if (isDpopProofRejected(error)) {
@@ -1504,7 +1504,10 @@ function mapRelayCommonApiErrors(authReason: RelayAuthInvalidReason) {
           code: "auth_invalid",
           reason: authReason,
           ...(authReason === "invalid_dpop"
-            ? { dpopFailureReason: relayDpopFailureReason(error.code) }
+            ? {
+                dpopFailureReason: relayDpopFailureReason(error.code),
+                ...(error.serverTime === undefined ? {} : { serverTime: error.serverTime }),
+              }
             : {}),
           traceId,
         }) as MapRelayCommonApiError<E>,
