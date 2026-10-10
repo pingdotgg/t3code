@@ -4842,7 +4842,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               headRepositoryOwnerLogin: "pingdotgg",
             },
             repositoryCloneUrls: {
-              "pingdotgg/codething-mvp": {
+              "github.com/pingdotgg/codething-mvp": {
                 url: remoteDir,
                 sshUrl: remoteDir,
               },
@@ -5081,7 +5081,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             headRepositoryOwnerLogin: "octocat",
           },
           repositoryCloneUrls: {
-            "octocat/codething-mvp": {
+            "github.com/octocat/codething-mvp": {
               url: missingForkDir,
               sshUrl: missingForkDir,
             },
@@ -5170,6 +5170,61 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("fetches a same-named fork from the pull request host", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      const enterpriseForkDir = yield* createBareRemote();
+      const defaultHostForkDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/host"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "host.txt"), "enterprise\n");
+      yield* runGit(repoDir, ["add", "host.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Enterprise fork"]);
+      yield* runGit(repoDir, ["push", enterpriseForkDir, "feature/host"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "host.txt"), "default host\n");
+      yield* runGit(repoDir, ["commit", "-am", "Default host fork"]);
+      yield* runGit(repoDir, ["push", defaultHostForkDir, "feature/host"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 83,
+            title: "Enterprise fork PR",
+            url: "https://github.example.com/pingdotgg/codething-mvp/pull/83",
+            baseRefName: "main",
+            headRefName: "feature/host",
+            state: "open",
+            isCrossRepository: true,
+            headRepositoryNameWithOwner: "fork/repo",
+            headRepositoryOwnerLogin: "fork",
+          },
+          repositoryCloneUrls: {
+            "fork/repo": { url: defaultHostForkDir, sshUrl: defaultHostForkDir },
+            "github.example.com/fork/repo": { url: enterpriseForkDir, sshUrl: enterpriseForkDir },
+          },
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "83",
+        mode: "worktree",
+      });
+
+      const worktreePath = result.worktreePath as string;
+      expect(NodeFS.readFileSync(NodePath.join(worktreePath, "host.txt"), "utf8")).toBe(
+        "enterprise\n",
+      );
+      expect(
+        (yield* runGit(worktreePath, ["config", "--get", "remote.fork.url"])).stdout.trim(),
+      ).toBe(enterpriseForkDir);
+    }),
+  );
+
   it.effect("preserves fork upstream tracking when preparing a worktree PR thread", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -5200,7 +5255,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             headRepositoryOwnerLogin: "octocat",
           },
           repositoryCloneUrls: {
-            "octocat/codething-mvp": {
+            "github.com/octocat/codething-mvp": {
               url: forkDir,
               sshUrl: forkDir,
             },
@@ -5263,7 +5318,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             headRepositoryOwnerLogin: "octocat",
           },
           repositoryCloneUrls: {
-            "octocat/codething-mvp": {
+            "github.com/octocat/codething-mvp": {
               url: forkDir,
               sshUrl: forkDir,
             },
@@ -5320,7 +5375,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             headRepositoryOwnerLogin: "binbandit",
           },
           repositoryCloneUrls: {
-            "binbandit/t3code": {
+            "github.com/binbandit/t3code": {
               url: forkDir,
               sshUrl: forkDir,
             },
@@ -5903,7 +5958,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             headRepositoryOwnerLogin: "octocat",
           },
           repositoryCloneUrls: {
-            "octocat/codething-mvp": {
+            "github.com/octocat/codething-mvp": {
               url: forkDir,
               sshUrl: forkDir,
             },
@@ -5968,7 +6023,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               headRepositoryOwnerLogin: "octocat",
             },
             repositoryCloneUrls: {
-              "octocat/codething-mvp": {
+              "github.com/octocat/codething-mvp": {
                 url: forkDir,
                 sshUrl: forkDir,
               },
@@ -6029,7 +6084,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               headRepositoryOwnerLogin: "octocat",
             },
             repositoryCloneUrls: {
-              "octocat/codething-mvp": {
+              "github.com/octocat/codething-mvp": {
                 url: forkDir,
                 sshUrl: forkDir,
               },
@@ -6092,7 +6147,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             headRepositoryOwnerLogin: "octocat",
           },
           repositoryCloneUrls: {
-            "octocat/codething-mvp": {
+            "github.com/octocat/codething-mvp": {
               url: forkDir,
               sshUrl: forkDir,
             },
