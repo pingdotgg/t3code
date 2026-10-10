@@ -9,7 +9,8 @@
  *   via `compressImageToByteLimit` instead of rejecting the paste.
  *
  * Supported images already within budget pass through untouched. HEIC/HEIF
- * photos are decoded to JPEG first because providers cannot consume them.
+ * photos are decoded to JPEG and DNG photos to PNG because providers cannot
+ * consume them.
  */
 
 /**
@@ -36,6 +37,8 @@ const QUALITY_STEPS = [0.92, 0.85, 0.78, 0.68] as const;
 /** Extra downscale passes applied when even the lowest quality overflows. */
 const FALLBACK_SCALE_STEPS = [0.75, 0.55] as const;
 const HEIC_IMAGE_MIME_TYPE = /^image\/hei(?:c|f)$/i;
+const MAX_DNG_DECODE_PIXELS = 64_000_000;
+const DNG_DECODE_TIMEOUT_MS = 60_000;
 const HEIC_IMAGE_EXTENSION = /\.(?:heic|heif)$/i;
 
 type ImageSize = { width: number; height: number };
@@ -71,6 +74,17 @@ export function isHeicImageFile(file: Pick<File, "name" | "type">): boolean {
   return (
     (file.type === "" || file.type.toLowerCase() === "application/octet-stream") &&
     HEIC_IMAGE_EXTENSION.test(file.name)
+  );
+}
+
+/** DNG drags may arrive without a MIME type, or as their TIFF container type. */
+export function isDngImageFile(file: Pick<File, "name" | "type">): boolean {
+  const mimeType = file.type.toLowerCase();
+  return (
+    mimeType === "image/dng" ||
+    mimeType === "image/x-adobe-dng" ||
+    (["", "application/octet-stream", "image/tiff", "image/x-tiff"].includes(mimeType) &&
+      /\.dng$/i.test(file.name))
   );
 }
 
@@ -182,7 +196,8 @@ export function dataUrlToFile(dataUrl: string, name: string, mimeType: string): 
  * about its contents. Swap the extension to match the encoded mime type.
  */
 function fileNameForMimeType(name: string, mimeType: string): string {
-  const extension = mimeType === "image/webp" ? ".webp" : ".jpg";
+  const extension =
+    mimeType === "image/png" ? ".png" : mimeType === "image/webp" ? ".webp" : ".jpg";
   const dotIndex = name.lastIndexOf(".");
   const base = dotIndex > 0 ? name.slice(0, dotIndex) : name;
   return `${base}${extension}`;
@@ -283,7 +298,7 @@ async function encodeWithinBudget(
   bitmap: ImageBitmap,
   maxDimension: number,
   budgetChars: number,
-  preferredMimeType?: "image/jpeg",
+  preferredMimeType?: "image/jpeg" | "image/png",
 ): Promise<{ blob: Blob; mimeType: string; imageSize: ImageSize } | null> {
   const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
   const width = Math.max(1, Math.round(bitmap.width * scale));
@@ -305,7 +320,7 @@ async function encodeWithinBudget(
   }
   target.context.drawImage(bitmap, 0, 0, width, height);
 
-  for (const quality of QUALITY_STEPS) {
+  for (const quality of mimeType === "image/png" ? [1] : QUALITY_STEPS) {
     const encoded = await encodeCanvas(target.canvas, quality, mimeType);
     if (!encoded) break;
     if (dataUrlLength(encoded) <= budgetChars) {
@@ -326,7 +341,7 @@ type ReencodeResult =
 async function reencodeWithinBudget(
   file: File,
   budgetChars: number,
-  preferredMimeType?: "image/jpeg",
+  preferredMimeType?: "image/jpeg" | "image/png",
 ): Promise<ReencodeResult> {
   if (!canRecompress()) {
     return { ok: false, reason: "too-large" };
@@ -425,7 +440,7 @@ export async function compressImageForStash(
 
 /**
  * Shrinks `file` until its binary size fits `maxBytes`, returning a new
- * `File` (WebP or JPEG). Files already within the limit pass through
+ * `File` (WebP or JPEG by default, or the requested format). Files within the limit pass through
  * untouched, preserving their exact bytes and format. Sources above
  * `MAX_COMPRESSIBLE_SOURCE_BYTES` are refused outright — decoding them is
  * the risk, so no amount of output budget makes them safe. An internally
@@ -435,7 +450,7 @@ export async function compressImageForStash(
 export async function compressImageToByteLimit(
   file: File,
   maxBytes: number,
-  options?: { preferredMimeType?: "image/jpeg"; sourceSizeBytes?: number },
+  options?: { preferredMimeType?: "image/jpeg" | "image/png"; sourceSizeBytes?: number },
 ): Promise<CompressImageFileResult> {
   if (file.size <= maxBytes) {
     return { ok: true, file, recompressed: false };
@@ -463,14 +478,114 @@ export async function compressImageToByteLimit(
   };
 }
 
+/** Decode sensor pixels rather than relying on a DNG's optional embedded preview. */
+async function prepareDngForAttachment(
+  file: File,
+  maxBytes: number,
+): Promise<CompressImageFileResult> {
+  if (file.size > MAX_COMPRESSIBLE_SOURCE_BYTES) {
+    return { ok: false, reason: "too-large" };
+  }
+
+  const { default: LibRaw } = await import("libraw-wasm");
+  const raw = new LibRaw();
+  // A worker load failure must not leave the composer permanently preparing an image.
+  const timeout = setTimeout(() => raw.dispose(), DNG_DECODE_TIMEOUT_MS);
+  try {
+    await raw.open(new Uint8Array(await file.arrayBuffer()), {
+      outputBps: 8,
+      outputColor: 1,
+      useCameraWb: true,
+    });
+    const metadata = await raw.metadata();
+    if (!metadata || metadata.raw_width <= 0 || metadata.raw_height <= 0) {
+      return { ok: false, reason: "unreadable" };
+    }
+    if (metadata.raw_width > MAX_DNG_DECODE_PIXELS / metadata.raw_height) {
+      return { ok: false, reason: "too-large" };
+    }
+    const image = await raw.imageData();
+    if (
+      !image ||
+      image.bits !== 8 ||
+      image.colors !== 3 ||
+      image.width <= 0 ||
+      image.height <= 0 ||
+      image.width > MAX_DNG_DECODE_PIXELS / image.height ||
+      image.data.length !== image.width * image.height * 3
+    ) {
+      return { ok: false, reason: "unreadable" };
+    }
+    // Bound both RGBA allocation and main-thread work before the first PNG encode.
+    const scale = Math.min(1, MAX_DIMENSION / Math.max(image.width, image.height));
+    const width = Math.max(1, Math.round(image.width * scale));
+    const height = Math.max(1, Math.round(image.height * scale));
+    const surface = createCanvas(width, height);
+    if (!surface) return { ok: false, reason: "unreadable" };
+    const pixels = surface.context.createImageData(width, height);
+    for (let y = 0; y < height; y += 1) {
+      const sourceY = Math.max(0, ((y + 0.5) * image.height) / height - 0.5);
+      const y0 = Math.floor(sourceY);
+      const y1 = Math.min(image.height - 1, y0 + 1);
+      const dy = sourceY - y0;
+      for (let x = 0; x < width; x += 1) {
+        const sourceX = Math.max(0, ((x + 0.5) * image.width) / width - 0.5);
+        const x0 = Math.floor(sourceX);
+        const x1 = Math.min(image.width - 1, x0 + 1);
+        const dx = sourceX - x0;
+        const top = (y0 * image.width + x0) * 3;
+        const bottom = (y1 * image.width + x0) * 3;
+        const right = (x1 - x0) * 3;
+        const target = (y * width + x) * 4;
+        for (let channel = 0; channel < 3; channel += 1) {
+          const upper =
+            image.data[top + channel]! * (1 - dx) + image.data[top + right + channel]! * dx;
+          const lower =
+            image.data[bottom + channel]! * (1 - dx) + image.data[bottom + right + channel]! * dx;
+          pixels.data[target + channel] = upper * (1 - dy) + lower * dy;
+        }
+        pixels.data[target + 3] = 255;
+      }
+    }
+    surface.context.putImageData(pixels, 0, 0);
+    const blob = await encodeCanvas(surface.canvas, 1, "image/png");
+    if (!blob) return { ok: false, reason: "unreadable" };
+    const png = new File([blob], fileNameForMimeType(file.name || "image", "image/png"), {
+      type: "image/png",
+      lastModified: file.lastModified,
+    });
+    const result = await compressImageToByteLimit(png, maxBytes, {
+      preferredMimeType: "image/png",
+      sourceSizeBytes: file.size,
+    });
+    return result.ok
+      ? {
+          ...result,
+          recompressed: true,
+          imageSize: result.imageSize ?? { width, height },
+        }
+      : result;
+  } finally {
+    clearTimeout(timeout);
+    raw.dispose();
+  }
+}
+
 /**
- * Converts HEIC/HEIF photos to provider-compatible JPEG before applying the
- * attachment size limit. The decoder is loaded only when such a photo arrives.
+ * Converts DNG photos to PNG and HEIC/HEIF photos to JPEG before applying the
+ * attachment size limit. Decoders are loaded only when their format arrives.
  */
 export async function prepareImageForAttachment(
   file: File,
   maxBytes: number,
 ): Promise<CompressImageFileResult> {
+  if (isDngImageFile(file)) {
+    try {
+      return await prepareDngForAttachment(file, maxBytes);
+    } catch {
+      return { ok: false, reason: "unreadable" };
+    }
+  }
   if (!isHeicImageFile(file)) {
     return compressImageToByteLimit(file, maxBytes);
   }

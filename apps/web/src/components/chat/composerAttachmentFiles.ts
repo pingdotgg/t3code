@@ -9,7 +9,7 @@ import {
 } from "@t3tools/client-runtime/state/attachments";
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
-import { isHeicImageFile } from "../../lib/imageCompression";
+import { isDngImageFile, isHeicImageFile } from "../../lib/imageCompression";
 import { isVideoAttachment } from "../../types";
 
 type ComposerAttachmentFileKind = "image" | "file" | "unsupported-image";
@@ -65,7 +65,7 @@ export function normalizeComposerImageFileMimeType(file: File): File {
 export function classifyComposerAttachmentFile(
   file: Pick<File, "name" | "type">,
 ): ComposerAttachmentFileKind {
-  if (isHeicImageFile(file)) {
+  if (isHeicImageFile(file) || isDngImageFile(file)) {
     return "image";
   }
   if (inferImageMimeTypeForUnknownFile(file)) {

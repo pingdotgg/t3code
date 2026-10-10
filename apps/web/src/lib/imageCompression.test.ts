@@ -6,6 +6,7 @@ import {
   compressImageToByteLimit,
   dataUrlToFile,
   isHeicImageFile,
+  isDngImageFile,
   MAX_COMPRESSIBLE_SOURCE_BYTES,
   MAX_STASH_IMAGE_DATA_URL_CHARS,
   prepareImageForAttachment,
@@ -17,10 +18,23 @@ import { resizeSnapShotSource } from "./snapShotSource";
 
 const mocks = vi.hoisted(() => ({
   heicTo: vi.fn(),
+  rawOpen: vi.fn(),
+  rawMetadata: vi.fn(),
+  rawImageData: vi.fn(),
+  rawDispose: vi.fn(),
 }));
 
 vi.mock("heic-to/csp", () => ({
   heicTo: mocks.heicTo,
+}));
+
+vi.mock("libraw-wasm", () => ({
+  default: class {
+    open = mocks.rawOpen;
+    metadata = mocks.rawMetadata;
+    imageData = mocks.rawImageData;
+    dispose = mocks.rawDispose;
+  },
 }));
 
 /**
@@ -149,7 +163,7 @@ function stubCanvasPipeline(
 }
 
 afterEach(() => {
-  mocks.heicTo.mockReset();
+  for (const mock of Object.values(mocks)) mock.mockReset();
   vi.unstubAllGlobals();
   globalThis.createImageBitmap = originalCreateImageBitmap;
   globalThis.OffscreenCanvas = originalOffscreenCanvas;
@@ -674,5 +688,191 @@ describe("snapshot coordinates after compression", () => {
 
   it("keeps uncompressed sources unchanged", () => {
     expect(resizeSnapShotSource(source)).toBe(source);
+  });
+});
+
+describe("DNG attachment preparation", () => {
+  const image = {
+    width: 2,
+    height: 1,
+    bits: 8,
+    colors: 3,
+    data: new Uint8Array([255, 0, 0, 0, 255, 0]),
+  };
+  let putImageData: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mocks.rawMetadata.mockResolvedValue({ raw_width: 2, raw_height: 1 });
+    mocks.rawImageData.mockResolvedValue(image);
+    putImageData = vi.fn();
+    vi.stubGlobal(
+      "OffscreenCanvas",
+      class {
+        getContext() {
+          return {
+            createImageData: (width: number, height: number) => ({
+              data: new Uint8ClampedArray(width * height * 4),
+            }),
+            putImageData,
+          };
+        }
+        async convertToBlob({ type }: { type: string }) {
+          return new Blob(["png"], { type });
+        }
+      },
+    );
+  });
+
+  it("recognizes DNG MIME types and TIFF containers without misclassifying other files", () => {
+    expect(isDngImageFile({ name: "photo.raw", type: "image/x-adobe-dng" })).toBe(true);
+    expect(isDngImageFile({ name: "photo.DNG", type: "image/tiff" })).toBe(true);
+    expect(isDngImageFile({ name: "photo.tiff", type: "image/tiff" })).toBe(false);
+    expect(isDngImageFile({ name: "photo.dng", type: "image/png" })).toBe(false);
+  });
+
+  it("converts even small DNG files to PNG with opaque RGB pixels and a matching name", async () => {
+    const file = new File(["raw"], "photo.DNG", { type: "", lastModified: 1234 });
+    const result = await prepareImageForAttachment(file, 1024);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.file.name).toBe("photo.png");
+    expect(result.file.type).toBe("image/png");
+    expect(result.file.lastModified).toBe(1234);
+    expect(await result.file.text()).toBe("png");
+    expect(result.recompressed).toBe(true);
+    expect(result.imageSize).toEqual({ width: 2, height: 1 });
+    expect(putImageData.mock.calls[0]![0].data).toEqual(
+      new Uint8ClampedArray([255, 0, 0, 255, 0, 255, 0, 255]),
+    );
+    expect(mocks.rawDispose).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { width: 8192, height: 1 },
+    { width: 1, height: 8192 },
+  ])(
+    "bounds the first PNG allocation for a $width × $height DNG and samples its RGB pixels",
+    async ({ width, height }) => {
+      const allocations: number[][] = [];
+      const encodedSizes: number[][] = [];
+      mocks.rawMetadata.mockResolvedValue({ raw_width: width, raw_height: height });
+      mocks.rawImageData.mockResolvedValue({
+        ...image,
+        width,
+        height,
+        data: Uint8Array.from(
+          { length: width * height * 3 },
+          (_, index) => Math.floor(index / 3) % 256,
+        ),
+      });
+      vi.stubGlobal(
+        "OffscreenCanvas",
+        class {
+          constructor(
+            public width: number,
+            public height: number,
+          ) {
+            allocations.push([width, height]);
+          }
+          getContext() {
+            return {
+              createImageData: (w: number, h: number) => {
+                allocations.push([w, h]);
+                return { data: new Uint8ClampedArray(w * h * 4) };
+              },
+              putImageData,
+            };
+          }
+          async convertToBlob() {
+            encodedSizes.push([this.width, this.height]);
+            return new Blob(["png"], { type: "image/png" });
+          }
+        },
+      );
+      const result = await prepareImageForAttachment(new File(["raw"], "large.dng"), 1024);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const size = width > height ? [2048, 1] : [1, 2048];
+      expect(allocations).toEqual([size, size]);
+      expect(encodedSizes).toEqual([size]);
+      expect(result.imageSize).toEqual({ width: size[0], height: size[1] });
+      const rgba = putImageData.mock.calls[0]![0].data as Uint8ClampedArray;
+      expect(rgba.length).toBe(2048 * 4);
+      expect(rgba.slice(0, 4)).toEqual(new Uint8ClampedArray([2, 2, 2, 255]));
+      expect(rgba.slice(-4)).toEqual(new Uint8ClampedArray([254, 254, 254, 255]));
+    },
+  );
+
+  it("keeps PNG output when resizing a converted DNG to the byte limit", async () => {
+    stubCanvasPipeline(() => 512);
+    let encodes = 0;
+    const requestedTypes: string[] = [];
+    vi.stubGlobal(
+      "OffscreenCanvas",
+      class {
+        getContext() {
+          return {
+            drawImage: vi.fn(),
+            createImageData: (width: number, height: number) => ({
+              data: new Uint8ClampedArray(width * height * 4),
+            }),
+            putImageData,
+          };
+        }
+        async convertToBlob({ type }: { type: string; quality: number }) {
+          requestedTypes.push(type);
+          return new Blob([new Uint8Array(++encodes === 1 ? 2048 : 512)], { type });
+        }
+      },
+    );
+    const result = await prepareImageForAttachment(new File(["raw"], "photo.dng"), 1024);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.file.type).toBe("image/png");
+    expect(result.file.name).toBe("photo.png");
+    expect(result.file.size).toBeLessThanOrEqual(1024);
+    expect(requestedTypes).toEqual(["image/png", "image/png"]);
+  });
+
+  it("rejects oversized sources before loading a decoder", async () => {
+    const file = new File([new Uint8Array(MAX_COMPRESSIBLE_SOURCE_BYTES + 1)], "huge.dng");
+    expect(await prepareImageForAttachment(file, 1024)).toEqual({ ok: false, reason: "too-large" });
+    expect(mocks.rawOpen).not.toHaveBeenCalled();
+  });
+
+  it("checks sensor dimensions before unpacking pixel data", async () => {
+    mocks.rawMetadata.mockResolvedValue({ raw_width: 100_000, raw_height: 100_000 });
+    expect(await prepareImageForAttachment(new File(["raw"], "huge.dng"), 1024)).toEqual({
+      ok: false,
+      reason: "too-large",
+    });
+    expect(mocks.rawImageData).not.toHaveBeenCalled();
+    expect(mocks.rawDispose).toHaveBeenCalledOnce();
+  });
+
+  it("times out an unresponsive decoder and clears image preparation", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.rawOpen.mockImplementation(
+        () =>
+          new Promise((_, reject) => {
+            mocks.rawDispose.mockImplementation(() => reject(new Error("disposed")));
+          }),
+      );
+      const result = prepareImageForAttachment(new File(["raw"], "stalled.dng"), 1024);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(await result).toEqual({ ok: false, reason: "unreadable" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports corrupt DNG files and disposes the worker", async () => {
+    mocks.rawOpen.mockRejectedValue(new Error("Invalid DNG"));
+    expect(await prepareImageForAttachment(new File(["bad"], "broken.dng"), 1024)).toEqual({
+      ok: false,
+      reason: "unreadable",
+    });
+    expect(mocks.rawDispose).toHaveBeenCalledOnce();
   });
 });

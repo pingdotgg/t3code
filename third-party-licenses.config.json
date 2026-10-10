@@ -149,6 +149,58 @@
       "name": "Expo text editor implementation",
       "noticeFile": "apps/mobile/modules/t3-composer-editor/LICENSE",
       "sourceUrl": "https://github.com/expo/expo"
+    },
+    {
+      "bundles": ["desktop", "web"],
+      "license": "CDDL-1.0",
+      "name": "LibRaw (via libraw-wasm)",
+      "sourceUrl": "https://github.com/LibRaw/LibRaw/tree/0.22.1",
+      "version": "0.22.1",
+      "generatedNotices": [
+        {
+          "licenseId": "CDDL-1.0",
+          "copyrights": ["Copyright (C) 2008-2025 LibRaw LLC"],
+          "preamble": [
+            "The DNG decoder bundles LibRaw through libraw-wasm. Source and build instructions: https://github.com/ybouane/LibRaw-Wasm/tree/v1.6.0\nLibRaw source: https://github.com/LibRaw/LibRaw/tree/0.22.1\nLibRaw includes code from dcraw, copyright 1997-2018 Dave Coffin."
+          ]
+        },
+        {
+          "licenseId": "BSD-3-Clause",
+          "copyrights": [
+            "Copyright (C) 2010 Jacek Gozdz (DCB demosaic and FBDD denoise)",
+            "Copyright (c) 2010 Roland Karlsson (X3F library)"
+          ]
+        },
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright (c) 2005 Adobe Systems Incorporated (DNG SDK)"]
+        }
+      ]
+    },
+    {
+      "bundles": ["desktop", "web"],
+      "license": "MIT",
+      "name": "Little CMS (via libraw-wasm)",
+      "sourceUrl": "https://github.com/mm2/Little-CMS/tree/lcms2.19.1",
+      "version": "2.19.1",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright (c) 2023 Marti Maria Saguer"]
+        }
+      ]
+    },
+    {
+      "bundles": ["desktop", "web"],
+      "license": "IJG",
+      "name": "Independent JPEG Group (via libraw-wasm)",
+      "sourceUrl": "https://www.ijg.org/",
+      "generatedNotices": [
+        {
+          "licenseId": "IJG",
+          "copyrights": ["Copyright (C) 2024, Thomas G. Lane, Guido Vollbeding"]
+        }
+      ]
     }
   ],
   "packageOverrides": [
@@ -647,6 +699,15 @@
         "licenseId": "MIT",
         "copyrights": ["Copyright (c) 2019-present Fabio Spampinato, Andrew Maney"]
       }
+    },
+    {
+      "name": "libraw-wasm",
+      "version": "1.6.0",
+      "generatedNotices": [
+        {
+          "licenseId": "ISC"
+        }
+      ]
     }
   ]
 }

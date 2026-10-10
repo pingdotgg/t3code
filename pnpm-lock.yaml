@@ -889,6 +889,9 @@ importers:
       jszip:
         specifier: 3.10.1
         version: 3.10.1
+      libraw-wasm:
+        specifier: 1.6.0
+        version: 1.6.0
       lucide:
         specifier: ^0.564.0
         version: 0.564.0
@@ -9519,6 +9522,9 @@ packages:
   leven@3.1.0:
     resolution: {integrity: sha512-qsda+H8jTaUaN/x5vzW2rzc+8Rw4TAQ/4KjB46IwK5VH+IlVeeeje/EoZRpiXvIqjFgK84QffqPztGI3VBLG1A==}
     engines: {node: '>=6'}
+
+  libraw-wasm@1.6.0:
+    resolution: {integrity: sha512-VfvWq2XGGkc07wexymRLn1H82j6smmC1LAbVl41vnW2Z5RrEPLN+YHi1Hmga2TbxxrY4rOjmTwHwSyTZmypE1g==}
 
   libsodium-wrappers@0.8.4:
     resolution: {integrity: sha512-mu8aAWucZjTB5O/BtGXtW4e1agy7uHxNYG7zPthmmD1jU43LCDmSWZLN4JhflbdPXj3yDO4lxM1O9hLDgIOXDw==}
@@ -20236,6 +20242,8 @@ snapshots:
   lazy-val@1.0.5: {}
 
   leven@3.1.0: {}
+
+  libraw-wasm@1.6.0: {}
 
   libsodium-wrappers@0.8.4:
     dependencies:

@@ -47,6 +47,19 @@ describe("composer attachment files", () => {
     expect(classifyComposerAttachmentFile({ name: "photo.heic", type: "" })).toBe("image");
   });
 
+  it.each(["", "application/octet-stream", "image/dng", "image/x-adobe-dng", "image/tiff"])(
+    "routes DNG uploads and drops with MIME type %s through image preparation",
+    (type) => {
+      expect(classifyComposerAttachmentFile({ name: "photo.DNG", type })).toBe("image");
+      expect(
+        shouldHandleComposerAttachmentPaste({
+          files: [new File(["raw"], "photo.DNG", { type })],
+          plainText: "caption",
+        }),
+      ).toBe(true);
+    },
+  );
+
   it("rejects unsupported image types instead of attaching them as generic files", () => {
     expect(classifyComposerAttachmentFile({ name: "diagram.svg", type: "image/svg+xml" })).toBe(
       "unsupported-image",

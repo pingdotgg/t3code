@@ -42,9 +42,12 @@ Uploads begin when you add an attachment. All uploads must finish before the
 message can send. Retry or remove a failed upload. On web and desktop, reloading
 before an upload finishes requires you to attach that file again.
 
-You can drag or paste images into the web or desktop composer. HEIC and HEIF
-photos are converted to JPEG there and when selected from the mobile photo
-library; photos over the image limit are also resized to fit. On mobile, you can
+You can drag, paste, or select images in the web or desktop composer. DNG photos
+are converted to PNG before uploading; DNG sources must be at most 50 MiB and
+64 megapixels, and the converted PNG is resized to at most 2048 pixels on its
+longest edge. HEIC and HEIF photos are converted to JPEG there and when selected
+from the mobile photo library; photos over the image limit are also resized to fit.
+On mobile, you can
 also send files to T3 Code through another app's system share sheet.
 
 See [images and videos](#images-and-videos-in-messages) for previewing and saving media.
