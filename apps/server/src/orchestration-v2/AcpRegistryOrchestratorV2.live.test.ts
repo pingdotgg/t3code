@@ -38,7 +38,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import * as ProviderTurnStartServiceTestkit from "./ProviderTurnStartService.testkit.ts";
+import * as WorktreeRevivalServiceTestkit from "../vcs/WorktreeRevivalService.testkit.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
 
@@ -143,7 +143,7 @@ const layerLive = RuntimeLayer.layer.pipe(
   Layer.provide(layerProviderInstanceRegistry),
   Layer.provide(ResetCreditCoordinator.layer),
   Layer.provide(layerBackgroundPolicy),
-  Layer.provide(ProviderTurnStartServiceTestkit.layer),
+  Layer.provide(WorktreeRevivalServiceTestkit.layerNoop),
   Layer.provide(layerPlatformTest),
   Layer.provide(McpProviderSessions.layer),
 );

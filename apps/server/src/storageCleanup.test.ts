@@ -18,6 +18,8 @@ import {
 import * as ServerConfig from "./config.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+import * as WorktreeLifecycle from "./vcs/WorktreeLifecycle.ts";
+import * as WorktreeService from "./vcs/WorktreeService.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as Settings from "./serverSettings.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
@@ -26,158 +28,11 @@ import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { ServerActivation } from "./serverActivation.ts";
 import { describe, expect, it } from "@effect/vitest";
-import {
-  ProjectId,
-  ProviderInstanceId,
-  RunId,
-  RuntimeRequestId,
-  ThreadId,
-  type OrchestrationV2ThreadShell,
-} from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
-import {
-  storageCleanupActivityAt,
-  storageCleanupPullRequestMerged,
-  storageCleanupThreadIdle,
-} from "./storageCleanup.ts";
+import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { storageCleanupPullRequestMerged } from "./storageCleanup.ts";
+import { makeThreadShell as shell } from "./vcs/worktreeThreadState.testkit.ts";
 
-const NOW_MS = Date.parse("2026-06-10T12:00:00.000Z");
-const DAY_MS = 24 * 60 * 60 * 1_000;
 const decodeCleanupReport = Schema.decodeSync(StorageCleanupReport);
-
-function at(offsetMs: number): DateTime.Utc {
-  return DateTime.makeUnsafe(NOW_MS + offsetMs);
-}
-
-function shell(overrides: Partial<OrchestrationV2ThreadShell> = {}): OrchestrationV2ThreadShell {
-  return {
-    id: ThreadId.make("thread-1"),
-    projectId: ProjectId.make("project-1"),
-    title: "Thread",
-    providerInstanceId: ProviderInstanceId.make("codex"),
-    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    worktreePath: null,
-    activeProviderThreadId: null,
-    lineage: {
-      rootThreadId: ThreadId.make("thread-1"),
-      parentThreadId: null,
-      relationshipToParent: null,
-    },
-    forkedFrom: null,
-    createdBy: "user",
-    creationSource: "web",
-    activeRunId: null,
-    latestVisibleMessage: null,
-    hasActionableProposedPlan: false,
-    itemCount: 0,
-    visibleItemCount: 0,
-    lastVisitedAt: null,
-    deletedAt: null,
-    branch: null,
-    linkedPullRequest: null,
-    status: "idle",
-    activityRunStatus: null,
-    pendingRuntimeRequest: null,
-    pendingBackgroundTasks: [],
-    latestRunId: null,
-    latestRunRequestedAt: null,
-    latestRunStartedAt: null,
-    latestRunCompletedAt: null,
-    latestUserMessageAt: null,
-    createdAt: at(-30 * DAY_MS),
-    updatedAt: at(-10 * DAY_MS),
-    archivedAt: null,
-    settledOverride: null,
-    settledAt: null,
-    snoozedUntil: null,
-    snoozedAt: null,
-    pinnedAt: null,
-    ...overrides,
-  };
-}
-
-describe("V2 storage cleanup eligibility", () => {
-  const candidate = () => shell({ branch: "feature", worktreePath: "/worktrees/feature" });
-
-  it("allows an idle worktree and rejects the project checkout", () => {
-    expect(storageCleanupThreadIdle(candidate(), NOW_MS)).toBe(true);
-    expect(storageCleanupThreadIdle(shell(), NOW_MS)).toBe(false);
-  });
-
-  it.each(["running", "starting", "preparing", "waiting", "queued"] as const)(
-    "retains a worktree while its thread is %s",
-    (status) => {
-      expect(storageCleanupThreadIdle(candidateWithStatus(status), NOW_MS)).toBe(false);
-    },
-  );
-
-  it.each(["idle", "completed", "interrupted", "failed", "cancelled", "rolled_back"] as const)(
-    "allows cleanup once its thread is %s",
-    (status) => {
-      expect(storageCleanupThreadIdle(candidateWithStatus(status), NOW_MS)).toBe(true);
-    },
-  );
-
-  it.each(["completed", "interrupted", "cancelled", "rolled_back"] as const)(
-    "retains %s while background work is pending",
-    (status) => {
-      expect(
-        storageCleanupThreadIdle(
-          {
-            ...candidateWithStatus(status),
-            pendingBackgroundTasks: [{ taskId: "task-1", kind: "command" }],
-          },
-          NOW_MS,
-        ),
-      ).toBe(false);
-    },
-  );
-
-  it.each(["completed", "interrupted", "cancelled", "rolled_back"] as const)(
-    "retains %s while a runtime request is pending",
-    (status) => {
-      expect(
-        storageCleanupThreadIdle(
-          {
-            ...candidateWithStatus(status),
-            pendingRuntimeRequest: {
-              id: RuntimeRequestId.make("request-1"),
-              kind: "command",
-              createdAt: at(0),
-            },
-          },
-          NOW_MS,
-        ),
-      ).toBe(false);
-    },
-  );
-
-  it("retains an active run even if the shell status is idle", () => {
-    expect(
-      storageCleanupThreadIdle({ ...candidate(), activeRunId: RunId.make("run") }, NOW_MS),
-    ).toBe(false);
-  });
-
-  it("retains a queued prompt before the new run has been projected", () => {
-    expect(
-      storageCleanupThreadIdle({ ...candidate(), latestUserMessageAt: at(-1_000) }, NOW_MS),
-    ).toBe(false);
-  });
-
-  it("uses V2 run activity instead of metadata refreshes for retention", () => {
-    const thread = candidate();
-    const runTime = at(-3 * DAY_MS);
-    expect(
-      storageCleanupActivityAt({ ...thread, latestRunCompletedAt: runTime, updatedAt: at(0) }),
-    ).toBe(DateTime.toEpochMillis(runTime));
-  });
-
-  function candidateWithStatus(status: OrchestrationV2ThreadShell["status"]) {
-    return { ...candidate(), status };
-  }
-});
 
 describe("merged pull request cleanup", () => {
   const HEAD_SHA = "a".repeat(40);
@@ -248,15 +103,23 @@ const cleanupFixture = Effect.gen(function* () {
   };
   let threads = [shell({ branch: "feature", worktreePath: worktree })];
   let editBeforeRemoval = false;
-  const context = yield* Layer.build(StorageCleanup.layer).pipe(
+  const lateEdit = Effect.suspend(() =>
+    editBeforeRemoval ? fs.writeFileString(`${worktree}/tracked.txt`, "late edit\n") : Effect.void,
+  );
+  // Removal safety is WorktreeService's, so cleanup runs over the real one.
+  const context = yield* Layer.build(
+    StorageCleanup.layer.pipe(
+      Layer.provideMerge(WorktreeService.layer),
+      Layer.provideMerge(WorktreeLifecycle.layer),
+    ),
+  ).pipe(
     Effect.provideService(GitVcsDriver.GitVcsDriver, {
       ...git,
       execute: (input) =>
-        Effect.gen(function* () {
-          if (editBeforeRemoval && input.args.includes("remove"))
-            yield* fs.writeFileString(`${worktree}/tracked.txt`, "late edit\n");
-          return yield* git.execute(input);
-        }),
+        (input.args.includes("remove") ? lateEdit : Effect.void).pipe(
+          Effect.andThen(git.execute(input)),
+        ),
+      removeWorktree: (input) => lateEdit.pipe(Effect.andThen(git.removeWorktree(input))),
     }),
     Effect.provideService(Settings.ServerSettingsService, {
       getSettings: Effect.sync(() => settings),
@@ -267,7 +130,10 @@ const cleanupFixture = Effect.gen(function* () {
     } as unknown as ProjectStore.ProjectStoreV2["Service"]),
     Effect.provideService(ProjectionStore.ProjectionStoreV2, {
       getShellSnapshot: (input?: { location?: string }) =>
-        Effect.sync(() => ({ threads: input?.location === "archive" ? [] : threads })),
+        Effect.sync(() => ({
+          threads: input?.location === "archive" ? [] : threads,
+          archivedThreads: [],
+        })),
     } as unknown as ProjectionStore.ProjectionStoreV2["Service"]),
     Effect.provideService(Orchestrator.OrchestratorV2, {
       streamDomainEvents: Stream.empty,
@@ -284,10 +150,12 @@ const cleanupFixture = Effect.gen(function* () {
   );
   return {
     service: Context.get(context, StorageCleanup.StorageCleanup),
+    lifecycle: Context.get(context, WorktreeLifecycle.WorktreeLifecycle),
     editBeforeRemoval: () => {
       editBeforeRemoval = true;
     },
     fs,
+    repo,
     worktree,
     config,
     command,
@@ -355,6 +223,19 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live("keeps the branch and tells the worktree inventory about the removal", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, repo, worktree, command, lifecycle } = yield* cleanupFixture;
+        const before = yield* lifecycle.revision;
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
+        expect(yield* fs.exists(worktree)).toBe(false);
+        expect(yield* lifecycle.revision).toBeGreaterThan(before);
+        // Revival recreates the checkout from this branch on the thread's next turn.
+        yield* command(repo, ["show-ref", "--verify", "--quiet", "refs/heads/feature"]);
+      }),
+    ),
+  );
   it.live("still removes a worktree when measuring its size fails", () =>
     runCleanupTest(
       Effect.gen(function* () {
@@ -404,7 +285,7 @@ describe("storage cleanup reports and local file policies", () => {
         const report = yield* Fiber.join(cleanup);
         expect(report.entries[0]).toMatchObject({
           outcome: "kept",
-          reason: "Thread activity or shared worktree changed since check",
+          reason: "Thread is running or has pending work",
           bytes: null,
         });
         expect(report.bytesFreed).toBe(0);
@@ -488,7 +369,8 @@ describe("storage cleanup reports and local file policies", () => {
         const report = yield* fixture.service.runNow;
         expect(report.entries[0]).toMatchObject({ outcome: "failed", bytes: null, files: null });
         expect(report.bytesFreed).toBe(0);
-        expect(report.entries[0]?.reason).toContain("contains modified or untracked files");
+        // Git refuses the removal; its stderr stays out of the report.
+        expect(report.entries[0]?.reason).toContain("Git worktree remove failed");
         expect(yield* fixture.fs.readFileString(`${fixture.worktree}/tracked.txt`)).toBe(
           "late edit\n",
         );
@@ -644,7 +526,7 @@ describe("storage cleanup reports and local file policies", () => {
         yield* command(worktree, ["worktree", "lock", worktree]);
         const report = yield* service.runNow;
         expect(report.entries[0]).toMatchObject({ outcome: "failed" });
-        expect(report.entries[0]?.reason).toContain("git worktree remove: fatal:");
+        expect(report.entries[0]?.reason).toContain("Git worktree remove failed");
         expect(report.entries.map((entry) => entry.kind)).toEqual([
           "worktree",
           "browser-artifacts",

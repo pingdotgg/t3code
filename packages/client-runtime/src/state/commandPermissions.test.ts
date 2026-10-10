@@ -85,6 +85,32 @@ describe("command permissions", () => {
     ),
   );
 
+  it.effect("requires the destination source control grant to prune worktrees", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const prune = createCommandPermissions(runtime, WS_METHODS.vcsPruneWorktrees);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(prune.permissionAtom(env))).toBe(false);
+        expect((yield* prune.authorize(registry, env).pipe(Effect.flip)).requiredPermission).toBe(
+          AuthSourceControlWriteScope,
+        );
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(true),
+            scopes: [AuthSourceControlWriteScope],
+            permissions: [AuthSourceControlWriteScope],
+          }),
+        );
+        expect(registry.get(prune.permissionAtom(env))).toBe(true);
+        yield* prune.authorize(registry, env);
+        registry.set(sessions(other), AsyncResult.success(grant(false)));
+        expect(registry.get(prune.permissionAtom(other))).toBe(false);
+      }),
+    ),
+  );
+
   it.effect("uses the target grant for both availability and execution", () =>
     Effect.scoped(
       Effect.gen(function* () {

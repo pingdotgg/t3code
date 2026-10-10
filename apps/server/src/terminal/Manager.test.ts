@@ -40,6 +40,7 @@ import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { resolveWorkspaceLeasePath, withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as TerminalManager from "./Manager.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 
@@ -119,6 +120,8 @@ class FakePtyAdapter {
   private readonly mode: "sync" | "async";
   private nextPid = 9000;
   exitOnSubscribe: PtyAdapter.PtyExitEvent | undefined;
+  /** Runs once before the next spawn, so a test can hold a terminal mid-startup. */
+  beforeNextSpawn: Effect.Effect<void> | undefined;
 
   constructor(mode: "sync" | "async" = "sync") {
     this.mode = mode;
@@ -127,6 +130,11 @@ class FakePtyAdapter {
   spawn(
     input: PtyAdapter.PtySpawnInput,
   ): Effect.Effect<PtyAdapter.PtyProcess, PtyAdapter.PtySpawnError> {
+    const gate = this.beforeNextSpawn;
+    if (gate) {
+      this.beforeNextSpawn = undefined;
+      return gate.pipe(Effect.andThen(Effect.suspend(() => this.spawn(input))));
+    }
     this.spawnInputs.push(input);
     const failure = this.spawnFailures.shift();
     if (failure) {
@@ -920,6 +928,43 @@ it.layer(
       assert.equal(reopened.history, "");
       yield* waitFor(Effect.map(readFileString(logPath), (text) => text === ""));
     }),
+  );
+
+  it.effect.each([false, true])(
+    "holds the checkout lease during terminal startup (nested repository: %s)",
+    (nestedRepository) =>
+      Effect.gen(function* () {
+        const ptyAdapter = new FakePtyAdapter();
+        const { manager, baseDir } = yield* createManager(5, { ptyAdapter });
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const checkout = path.join(baseDir, "checkout");
+        const nestedCwd = path.join(checkout, "src");
+        yield* makeDirectory(nestedCwd);
+        yield* fs.writeFileString(path.join(checkout, ".git"), "gitdir: /repo/.git/worktrees/x\n");
+        if (nestedRepository) yield* makeDirectory(path.join(nestedCwd, ".git"));
+        const spawnStarted = yield* Deferred.make<void>();
+        const releaseSpawn = yield* Deferred.make<void>();
+        ptyAdapter.beforeNextSpawn = Deferred.succeed(spawnStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseSpawn)),
+        );
+
+        const opening = yield* manager.open(openInput({ cwd: nestedCwd })).pipe(Effect.forkChild);
+        yield* Deferred.await(spawnStarted);
+        // Worktree removal leases the checkout root. Starting immediately, it would
+        // take a free lease before startup finishes, so it must find the lease held.
+        const checkoutLease = yield* resolveWorkspaceLeasePath(checkout);
+        const removal = yield* withWorkspaceLease(
+          checkoutLease,
+          Effect.sync(() => ptyAdapter.processes.length),
+        ).pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.succeed(releaseSpawn, undefined);
+
+        const snapshot = yield* Fiber.join(opening);
+        assert.equal(yield* Fiber.join(removal), 1);
+        assert.equal(snapshot.cwd, nestedCwd);
+        assert.equal(ptyAdapter.spawnInputs[0]?.cwd, nestedCwd);
+      }),
   );
 
   it.effect("propagates explicit worktree metadata through snapshots and lifecycle events", () =>

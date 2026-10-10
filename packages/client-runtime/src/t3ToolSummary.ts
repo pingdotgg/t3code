@@ -301,6 +301,13 @@ export function summarizeT3ToolCalls(
     case "worktree-status":
       label = phrase("Checked", "check", `worktree status ${times}`);
       break;
+    case "worktree-inventory":
+      label = phrase("Listed", "list", `managed worktrees ${times}`);
+      break;
+    // The server may keep a worktree, so this is a request, not a removal.
+    case "worktree-remove":
+      label = phrase("Requested removal of", "request removal of", `managed worktrees ${times}`);
+      break;
     case "project-list":
       label = phrase("Listed", "list", `projects ${times}`);
       break;

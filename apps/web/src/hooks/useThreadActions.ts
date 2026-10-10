@@ -16,6 +16,7 @@ import {
   ThreadId,
   sessionGrantsScope,
 } from "@t3tools/contracts";
+import { worktreeRemovalOutcome } from "@t3tools/client-runtime/state/worktrees";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
@@ -26,12 +27,12 @@ import { useCallback, useMemo, useRef } from "react";
 import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { environmentSession, readEnvironmentScope } from "../state/session";
-import { terminalEnvironment } from "../state/terminal";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../state/server";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
+import { worktreeEnvironment } from "../state/worktrees";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
 import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
@@ -313,6 +314,9 @@ export function useThreadActions() {
   const loadSessionState = useAtomQueryRunner(environmentSession.sessionStateAtom, {
     reportFailure: false,
   });
+  const pruneWorktrees = useAtomCommand(worktreeEnvironment.prune, {
+    reportFailure: false,
+  });
   const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
     reportFailure: false,
   });
@@ -580,43 +584,32 @@ export function useThreadActions() {
         return deleteResult;
       }
 
-      const removeResult = readEnvironmentScope(
-        threadRef.environmentId,
-        AuthSourceControlWriteScope,
-      )
-        ? await removeWorktree({
-            environmentId: threadRef.environmentId,
-            input: {
-              cwd: threadProject.workspaceRoot,
-              path: orphanedWorktreePath,
-              force: true,
-            },
-          })
-        : AsyncResult.failure(
+      // Removal never forces: the server keeps a worktree that is still in
+      // use or holds unsaved or ignored files, and says why. A server without
+      // worktree management only has the legacy removal.
+      const worktreeLabel = displayWorktreePath ?? orphanedWorktreePath;
+      const removal = !readEnvironmentScope(threadRef.environmentId, AuthSourceControlWriteScope)
+        ? AsyncResult.failure(
             Cause.fail(
               new EnvironmentAuthorizationError({
                 message: "This connection can no longer remove worktrees.",
                 requiredScope: AuthSourceControlWriteScope,
               }),
             ),
-          );
-      const refreshResult =
-        removeResult._tag === "Success"
-          ? await refreshVcsStatus({
+          )
+        : environmentConfig?.environment.capabilities.worktreeManagement
+          ? await pruneWorktrees({
               environmentId: threadRef.environmentId,
-              input: { cwd: threadProject.workspaceRoot },
+              input: { projectId: thread.projectId, paths: [orphanedWorktreePath] },
             })
-          : null;
-      const cleanupFailure =
-        removeResult._tag === "Failure"
-          ? removeResult
-          : refreshResult?._tag === "Failure"
-            ? refreshResult
-            : null;
-      if (cleanupFailure) {
-        const removalFailed = removeResult._tag === "Failure";
-        const error = squashAtomCommandFailure(cleanupFailure);
-        const message = error instanceof Error ? error.message : "An error occurred.";
+          : await removeWorktree({
+              environmentId: threadRef.environmentId,
+              input: { cwd: threadProject.workspaceRoot, path: orphanedWorktreePath, force: true },
+            });
+      // The thread was deleted. Cleanup has its own toast; returning its
+      // failure would make callers incorrectly report a thread deletion error.
+      if (removal._tag === "Failure") {
+        const error = squashAtomCommandFailure(removal);
         console.error("Worktree cleanup failed after thread deletion", {
           threadId: threadRef.threadId,
           projectCwd: threadProject.workspaceRoot,
@@ -626,16 +619,44 @@ export function useThreadActions() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: removalFailed
-              ? "Failed to delete worktree"
-              : "Worktree deleted, but Git status refresh failed",
-            description: removalFailed
-              ? `Could not remove ${displayWorktreePath ?? orphanedWorktreePath}. ${message}`
-              : message,
+            title: "Failed to delete worktree",
+            description: `Could not remove ${worktreeLabel}. ${
+              error instanceof Error ? error.message : "An error occurred."
+            }`,
           }),
         );
-        // The thread was deleted. Cleanup has its own toast; returning its
-        // failure would make callers incorrectly report a thread deletion error.
+        return deleteResult;
+      }
+      // The legacy removal has no result: it either removed the worktree or failed.
+      const outcome = removal.value === undefined ? null : worktreeRemovalOutcome(removal.value);
+      if (outcome !== null && !outcome.removed) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: `Kept worktree ${worktreeLabel}`,
+            description: outcome.message,
+          }),
+        );
+        return deleteResult;
+      }
+      const refreshResult = await refreshVcsStatus({
+        environmentId: threadRef.environmentId,
+        input: { cwd: threadProject.workspaceRoot },
+      });
+      if (refreshResult._tag === "Failure") {
+        const error = squashAtomCommandFailure(refreshResult);
+        console.error("Git status refresh failed after worktree deletion", {
+          threadId: threadRef.threadId,
+          projectCwd: threadProject.workspaceRoot,
+          error,
+        });
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Worktree deleted, but Git status refresh failed",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
       }
       return deleteResult;
     },
@@ -646,6 +667,7 @@ export function useThreadActions() {
       deleteThreadMutation,
       getCurrentRouteThreadRef,
       loadSessionState,
+      pruneWorktrees,
       refreshVcsStatus,
       removeWorktree,
       router,

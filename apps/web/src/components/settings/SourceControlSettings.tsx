@@ -1,16 +1,20 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, GitBranchIcon, RefreshCwIcon } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useAtomValue } from "@effect/atom-react";
 import type {
   BackgroundActivitySettings,
+  EnvironmentId,
   SourceControlProviderKind,
   SourceControlDiscoveryResult,
   SourceControlProviderAuth,
   SourceControlProviderDiscoveryItem,
   VcsDriverKind,
   VcsDiscoveryItem,
+  WorktreeInfo,
 } from "@t3tools/contracts";
 import {
   getBackgroundActivityBaseProfile,
@@ -22,8 +26,39 @@ import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings"
 import { useSettingsScope } from "./SettingsScopeContext";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { cn } from "../../lib/utils";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
+import { useProject } from "../../state/entities";
+import { environmentServerConfigsAtom } from "../../state/server";
 import { useEnvironmentQuery } from "../../state/query";
 import { sourceControlEnvironment } from "../../state/sourceControl";
+import { worktreeEnvironment } from "../../state/worktrees";
+import {
+  confirmWorktreeRemoval,
+  formatWorktreeAge,
+  groupWorktreesByProject,
+  NO_CONFIRMED_WORKTREE_REMOVALS,
+  primaryLinkedThread,
+  visibleWorktrees,
+  worktreeBranchLabel,
+  worktreeGroupSummary,
+  worktreeIgnoredNote,
+  worktreeInventoryRefreshKey,
+  worktreeRemovalConfirmation,
+  worktreeRemovalOutcome,
+  worktreeStateLabel,
+  type WorktreeProjectGroup,
+} from "@t3tools/client-runtime/state/worktrees";
+import { toastManager } from "../ui/toast";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
@@ -57,6 +92,7 @@ import {
   JujutsuIcon,
   type Icon,
 } from "../Icons";
+import { ProjectFavicon } from "../ProjectFavicon";
 import { BitbucketCredentialsSettings } from "./BitbucketCredentialsSettings";
 import { GitHubAccountSettings } from "./GitHubAccountSettings";
 import { GitHubTokenSettings } from "./GitHubTokenSettings";
@@ -68,6 +104,7 @@ import {
   SettingsPageContainer,
   SettingsSearchTarget,
   SettingsSection,
+  useRelativeTimeTick,
   useSettingsSearchTargetId,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -520,6 +557,509 @@ function EmptySourceControlDiscovery({
   );
 }
 
+type WorktreeRowProps = {
+  readonly environmentId: EnvironmentId;
+  readonly worktree: WorktreeInfo;
+  readonly nowMs: number;
+  readonly onPrune: (worktree: WorktreeInfo) => void;
+  readonly pendingPath: string | null;
+  readonly canPrune: boolean;
+};
+
+function WorktreeThreadCell({
+  environmentId,
+  worktree,
+}: Pick<WorktreeRowProps, "environmentId" | "worktree">) {
+  const { thread, otherCount } = primaryLinkedThread(worktree);
+  if (thread === null) {
+    return <span className="truncate text-muted-foreground/60">No linked threads</span>;
+  }
+  const title = thread.title || "Untitled thread";
+  return (
+    <span className="flex min-w-0 items-center gap-1.5">
+      {thread.status === "archived" ? (
+        <span className="truncate">Archived: {title}</span>
+      ) : (
+        <Link
+          to="/$environmentId/$threadId"
+          params={{ environmentId, threadId: thread.threadId }}
+          className="truncate hover:text-foreground"
+        >
+          {title}
+        </Link>
+      )}
+      {otherCount > 0 ? (
+        <span className="shrink-0 tabular-nums text-muted-foreground/60">+{otherCount}</span>
+      ) : null}
+    </span>
+  );
+}
+
+/** Right-edge cell with one fixed edge: the Remove action, what keeps the worktree, or Removing. */
+function WorktreeStateCell({
+  worktree,
+  onPrune,
+  pendingPath,
+  canPrune,
+}: Pick<WorktreeRowProps, "worktree" | "onPrune" | "pendingPath" | "canPrune">) {
+  if (pendingPath === worktree.path) {
+    return (
+      <span role="status" className="text-muted-foreground">
+        Removing
+      </span>
+    );
+  }
+  const state = worktreeStateLabel(worktree);
+  if (state === null) {
+    const ignoredNote = worktreeIgnoredNote(worktree);
+    return (
+      <>
+        {ignoredNote ? <span className="text-muted-foreground/60">{ignoredNote}</span> : null}
+        <Button
+          size="xs"
+          variant="ghost-destructive"
+          onClick={() => onPrune(worktree)}
+          disabled={!canPrune || pendingPath !== null}
+          aria-label={`Remove worktree ${worktreeBranchLabel(worktree)}`}
+        >
+          Remove
+        </Button>
+      </>
+    );
+  }
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            className={cn(
+              "truncate",
+              state.tone === "warning" ? "text-warning" : "text-muted-foreground",
+            )}
+          >
+            {state.text}
+          </span>
+        }
+      />
+      <TooltipPopup side="top">{state.detail}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+/** Branch, thread, age and state on fixed tracks, so every row lines up down the list. */
+function WorktreeRow({
+  environmentId,
+  worktree,
+  nowMs,
+  onPrune,
+  pendingPath,
+  canPrune,
+}: WorktreeRowProps) {
+  const removing = pendingPath === worktree.path;
+  return (
+    <div
+      className={cn(
+        "grid min-h-8 grid-cols-[minmax(0,1fr)_2.5rem_minmax(6rem,auto)] items-center gap-x-3 text-xs sm:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_2.5rem_minmax(8.5rem,auto)]",
+        removing && "opacity-60",
+      )}
+    >
+      <span className="flex min-w-0 items-baseline gap-1.5">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span className={cn("truncate", worktree.branch === null && "text-muted-foreground")}>
+                {worktree.branch ?? "Detached HEAD"}
+              </span>
+            }
+          />
+          <TooltipPopup side="top">
+            <code className="text-2xs">{worktree.path}</code>
+          </TooltipPopup>
+        </Tooltip>
+        {worktree.branch === null && worktree.headShortSha !== null ? (
+          <code className="shrink-0 text-2xs text-muted-foreground/60">
+            {worktree.headShortSha}
+          </code>
+        ) : null}
+      </span>
+      <span className="hidden min-w-0 text-muted-foreground sm:block">
+        <WorktreeThreadCell environmentId={environmentId} worktree={worktree} />
+      </span>
+      <span className="text-right text-2xs tabular-nums text-muted-foreground/60">
+        {worktree.lastActivityAt ? formatWorktreeAge(worktree.lastActivityAt, nowMs) : null}
+      </span>
+      <span className="flex min-w-0 items-center justify-end gap-2 text-2xs tabular-nums">
+        <WorktreeStateCell
+          worktree={worktree}
+          onPrune={onPrune}
+          pendingPath={pendingPath}
+          canPrune={canPrune}
+        />
+      </span>
+    </div>
+  );
+}
+
+/** Project heading with its counts; the workspace path lives in the title tooltip. */
+function WorktreeGroupHeading({
+  environmentId,
+  group,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly group: WorktreeProjectGroup;
+}) {
+  const otherProjectCount = group.projectTitles.length - 1;
+  const project = useProject({ environmentId, projectId: group.projectId });
+  return (
+    <div className="flex min-w-0 items-center gap-2 px-3 pt-3 pb-1 sm:px-4">
+      {project ? <ProjectFavicon project={project} className="size-3.5 shrink-0" /> : null}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <h3 className="truncate text-xs font-medium text-foreground">{group.projectTitle}</h3>
+          }
+        />
+        <TooltipPopup side="top">
+          <code className="text-2xs">{group.workspaceRoot}</code>
+        </TooltipPopup>
+      </Tooltip>
+      {otherProjectCount > 0 ? (
+        <span className="shrink-0 text-2xs text-muted-foreground/60">
+          +{otherProjectCount} project{otherProjectCount === 1 ? "" : "s"}
+        </span>
+      ) : null}
+      <span className="ml-auto shrink-0 text-2xs tabular-nums text-muted-foreground/60">
+        {worktreeGroupSummary(group)}
+      </span>
+    </div>
+  );
+}
+
+function WorktreeList(props: {
+  readonly environmentId: EnvironmentId;
+  readonly worktrees: ReadonlyArray<WorktreeInfo>;
+  readonly onPrune: (worktree: WorktreeInfo) => void;
+  readonly pendingPath: string | null;
+  readonly canPrune: boolean;
+}) {
+  const nowMs = useRelativeTimeTick(30_000);
+  return groupWorktreesByProject(props.worktrees).map((group) => (
+    <section key={group.projectId} aria-label={`${group.projectTitle} worktrees`}>
+      <WorktreeGroupHeading environmentId={props.environmentId} group={group} />
+      <div className="mx-3 divide-y divide-border/40 sm:mx-4">
+        {group.worktrees.map((worktree) => (
+          <WorktreeRow
+            key={worktree.path}
+            environmentId={props.environmentId}
+            worktree={worktree}
+            nowMs={nowMs}
+            onPrune={props.onPrune}
+            pendingPath={props.pendingPath}
+            canPrune={props.canPrune}
+          />
+        ))}
+      </div>
+    </section>
+  ));
+}
+
+/** Names what stays and, when removal deletes ignored files, which ones. */
+function WorktreePruneConfirmation({
+  open,
+  worktree,
+  onOpenChange,
+  onOpenChangeComplete,
+  onConfirm,
+}: {
+  readonly open: boolean;
+  readonly worktree: WorktreeInfo | null;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly onOpenChangeComplete: (open: boolean) => void;
+  readonly onConfirm: () => void;
+}) {
+  const confirmation = worktree === null ? null : worktreeRemovalConfirmation(worktree);
+  return (
+    <AlertDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      onOpenChangeComplete={onOpenChangeComplete}
+    >
+      <AlertDialogPopup>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{confirmation?.title}</AlertDialogTitle>
+          <AlertDialogDescription>{confirmation?.message}</AlertDialogDescription>
+        </AlertDialogHeader>
+        {confirmation?.allowIgnoredFiles ? (
+          <ul className="max-h-40 space-y-0.5 overflow-y-auto px-6 pb-4 text-xs text-muted-foreground">
+            {confirmation.ignoredFiles.map((file) => (
+              <li key={file} className="truncate">
+                <code>{file}</code>
+              </li>
+            ))}
+            {confirmation.ignoredMoreCount > 0 ? (
+              <li>and {confirmation.ignoredMoreCount} more</li>
+            ) : null}
+          </ul>
+        ) : null}
+        <AlertDialogFooter>
+          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+          <Button variant="destructive" onClick={onConfirm}>
+            Remove worktree
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogPopup>
+    </AlertDialog>
+  );
+}
+
+type WorktreeEnvironmentTarget = {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly isPrimary: boolean;
+};
+
+/** Worktree inventory for one environment. Mounted per environment, so state
+    can never leak across servers. */
+function WorktreeEnvironmentGroup({
+  target,
+  showLabel,
+  refreshToken,
+  onPendingChange,
+}: {
+  readonly target: WorktreeEnvironmentTarget;
+  readonly showLabel: boolean;
+  readonly refreshToken: number;
+  readonly onPendingChange: (environmentId: EnvironmentId, pending: boolean) => void;
+}) {
+  const environmentId = target.environmentId;
+  const canPrune = useAtomValue(worktreeEnvironment.prune.permissionAtom(environmentId));
+  const inventory = useEnvironmentQuery(worktreeEnvironment.list({ environmentId, input: {} }));
+  const { refresh: refreshInventory, isPending: inventoryPending } = inventory;
+  const listedRevision = inventory.data?.revision;
+  const streamRevision = useEnvironmentQuery(
+    worktreeEnvironment.changes({ environmentId, input: {} }),
+  ).data?.revision;
+  const pruneWorktrees = useAtomCommand(worktreeEnvironment.prune, {
+    label: "prune worktrees",
+  });
+  const [pendingPath, setPendingPath] = useState<string | null>(null);
+  const [pruneCandidate, setPruneCandidate] = useState<WorktreeInfo | null>(null);
+  const [pruneDialogOpen, setPruneDialogOpen] = useState(false);
+  // Hides a confirmed removal right away, before the inventory is read again.
+  const [removals, setRemovals] = useState(NO_CONFIRMED_WORKTREE_REMOVALS);
+  const worktrees = visibleWorktrees(inventory.data, removals);
+  const lastRefreshKey = useRef<string | null>(null);
+
+  useEffect(() => {
+    const refreshKey = worktreeInventoryRefreshKey({
+      listedRevision,
+      streamRevision,
+      isPending: inventoryPending,
+      lastRefreshKey: lastRefreshKey.current,
+    });
+    if (refreshKey === null) return;
+    lastRefreshKey.current = refreshKey;
+    refreshInventory();
+  }, [refreshInventory, inventoryPending, listedRevision, streamRevision]);
+
+  useEffect(() => {
+    if (refreshToken === 0) return;
+    refreshInventory();
+  }, [refreshInventory, refreshToken]);
+
+  useEffect(() => {
+    onPendingChange(environmentId, inventoryPending);
+  }, [environmentId, inventoryPending, onPendingChange]);
+
+  useEffect(
+    () => () => {
+      onPendingChange(environmentId, false);
+    },
+    [environmentId, onPendingChange],
+  );
+
+  const handlePrune = (worktree: WorktreeInfo) => {
+    if (!canPrune || !worktree.safeToPrune || pendingPath !== null) return;
+    setPruneCandidate(worktree);
+    setPruneDialogOpen(true);
+  };
+
+  const handleConfirmPrune = () => {
+    if (!canPrune || pruneCandidate === null || pendingPath !== null) return;
+    const worktree = pruneCandidate;
+    // Opt in to deleting ignored files only when this dialog listed them.
+    const { allowIgnoredFiles } = worktreeRemovalConfirmation(worktree);
+    setPendingPath(worktree.path);
+    setPruneDialogOpen(false);
+    void pruneWorktrees({
+      environmentId,
+      input: {
+        projectId: worktree.projectId,
+        paths: [worktree.path],
+        ...(allowIgnoredFiles ? { allowIgnoredFiles } : {}),
+      },
+    })
+      .then((result) => {
+        if (result._tag !== "Success") return;
+        const outcome = worktreeRemovalOutcome(result.value);
+        if (outcome.removed) {
+          setRemovals((current) => confirmWorktreeRemoval(current, listedRevision, worktree.path));
+          return;
+        }
+        // The row stays; the read below gives it its new reason.
+        toastManager.add({
+          type: "warning",
+          title: `Kept ${worktreeBranchLabel(worktree)}`,
+          description: outcome.message,
+        });
+      })
+      .finally(() => {
+        setPendingPath(null);
+        refreshInventory();
+      });
+  };
+
+  return (
+    <div>
+      {showLabel ? (
+        <div className="flex items-baseline gap-2 px-3 pb-1 sm:px-4">
+          <h3 className="text-sm font-medium text-foreground">{target.label}</h3>
+          {target.isPrimary ? (
+            <span className="text-2xs text-muted-foreground">primary</span>
+          ) : null}
+        </div>
+      ) : null}
+      {/* Rows from the last read stay up while a refresh runs or fails. */}
+      {inventory.error !== null ? (
+        <p className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground sm:px-4">
+          Couldn't read worktrees.
+          <Button size="xs" variant="link" onClick={refreshInventory}>
+            Retry
+          </Button>
+        </p>
+      ) : null}
+      {inventory.data === null ? (
+        inventory.error === null ? (
+          <p role="status" className="px-3 py-2 text-xs text-muted-foreground sm:px-4">
+            Reading worktrees
+          </p>
+        ) : null
+      ) : worktrees.length === 0 ? (
+        <p className="px-3 py-2 text-xs text-muted-foreground sm:px-4">No worktrees</p>
+      ) : (
+        <WorktreeList
+          environmentId={environmentId}
+          worktrees={worktrees}
+          onPrune={handlePrune}
+          pendingPath={pendingPath}
+          canPrune={canPrune}
+        />
+      )}
+      <WorktreePruneConfirmation
+        open={pruneDialogOpen}
+        worktree={pruneCandidate}
+        onOpenChange={setPruneDialogOpen}
+        onOpenChangeComplete={(open) => {
+          if (!open) setPruneCandidate(null);
+        }}
+        onConfirm={handleConfirmPrune}
+      />
+    </div>
+  );
+}
+
+/**
+ * Every connected environment's managed worktrees. An environment whose
+ * server predates worktree management is left out rather than shown broken.
+ * Cleanup rules stay in Storage settings; this only links there.
+ */
+function WorktreeManagementSection() {
+  const { environments } = useEnvironments();
+  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const [refreshToken, setRefreshToken] = useState(0);
+  const [pendingEnvironmentIds, setPendingEnvironmentIds] = useState<ReadonlySet<EnvironmentId>>(
+    () => new Set(),
+  );
+  const handlePendingChange = useCallback((environmentId: EnvironmentId, pending: boolean) => {
+    setPendingEnvironmentIds((current) => {
+      const alreadyPending = current.has(environmentId);
+      if (alreadyPending === pending) return current;
+      const next = new Set(current);
+      if (pending) next.add(environmentId);
+      else next.delete(environmentId);
+      return next;
+    });
+  }, []);
+  const isPending = pendingEnvironmentIds.size > 0;
+  const targets: WorktreeEnvironmentTarget[] = environments
+    .filter(
+      (environment) =>
+        environment.connection.phase === "connected" &&
+        serverConfigs.get(environment.environmentId)?.environment.capabilities
+          .worktreeManagement === true,
+    )
+    .map((environment) => ({
+      environmentId: environment.environmentId,
+      label: environment.label,
+      isPrimary: environment.environmentId === primaryEnvironmentId,
+    }))
+    .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.label.localeCompare(b.label));
+
+  return (
+    <SettingsSection
+      id={searchableSetting("worktrees").id}
+      title="Worktrees"
+      icon={<GitBranchIcon className="size-4 text-muted-foreground" />}
+      headerAction={
+        <div className="flex items-center gap-2">
+          <Link
+            to="/settings/storage"
+            className="text-xs text-muted-foreground hover:text-foreground"
+          >
+            Cleanup rules
+          </Link>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon-micro"
+                  variant="ghost-muted"
+                  onClick={() => setRefreshToken((token) => token + 1)}
+                  disabled={isPending}
+                  aria-busy={isPending}
+                  aria-label="Refresh worktrees"
+                >
+                  <RefreshCwIcon className="size-3" />
+                </Button>
+              }
+            />
+            <TooltipPopup side="top">Refresh worktrees</TooltipPopup>
+          </Tooltip>
+        </div>
+      }
+    >
+      {targets.length === 0 ? (
+        <p className="px-3 py-2 text-xs text-muted-foreground sm:px-4">
+          Connect an up-to-date server to manage its worktrees.
+        </p>
+      ) : (
+        <div className="space-y-6">
+          {targets.map((target) => (
+            <WorktreeEnvironmentGroup
+              key={target.environmentId}
+              target={target}
+              showLabel={targets.length > 1}
+              refreshToken={refreshToken}
+              onPendingChange={handlePendingChange}
+            />
+          ))}
+        </div>
+      )}
+    </SettingsSection>
+  );
+}
+
 export function SourceControlSettingsPanel() {
   const { scope, environment, connectedEnvironments } = useSettingsScope();
   // Discovery scans one machine's tools, so it shows the representative
@@ -650,6 +1190,7 @@ export function SourceControlSettingsPanel() {
         />
       )}
 
+      <WorktreeManagementSection />
       <SourceControlWritingSettingsSection />
     </SettingsPageContainer>
   );
