@@ -99,7 +99,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                   size="xs"
                   variant="ghost-muted"
                   aria-label="Open diff"
-                  onClick={() => onOpenTurnDiff(runId, files[0]?.path)}
+                  onClick={() => onOpenTurnDiff(runId)}
                 />
               }
             >

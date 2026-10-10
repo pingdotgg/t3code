@@ -122,4 +122,13 @@ describe("diffPanelStore", () => {
       revealRequestId: 1,
     });
   });
+
+  it("sets filePath to null when selecting a turn without a specific file", () => {
+    const turnId = RunId.make("turn-1");
+    useDiffPanelStore.getState().selectTurn(THREAD_REF, turnId);
+
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "turn", turnId, filePath: null, revealRequestId: 1 });
+  });
 });
