@@ -266,9 +266,8 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const previous = scopeByThread.get(threadId);
       scopeByThread.delete(threadId);
+      if (unit !== undefined) scopeByThread.set(threadId, { unit, oomKilled: false });
       if (previous !== undefined) yield* forget(systemctl, previous.unit);
-      if (unit === undefined) return;
-      scopeByThread.set(threadId, { unit, oomKilled: false });
       if (scopeByThread.size > MAX_TRACKED_THREADS) yield* evictOldest(systemctl);
     });
 
