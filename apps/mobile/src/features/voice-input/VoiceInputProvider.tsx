@@ -1,3 +1,4 @@
+import { RegistryContext } from "@effect/atom-react";
 import {
   AudioModule,
   RecordingPresets,
@@ -20,9 +21,12 @@ import {
   type ReactNode,
 } from "react";
 import { AppState, Platform } from "react-native";
+import { AsyncResult } from "effect/reactivity";
 import { useSharedValue } from "react-native-reanimated";
 
+import { preferredMicrophoneInput, resolveMicrophonePriority } from "../../lib/microphonePriority";
 import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import { getNativeShowcaseScene } from "../showcase/nativeShowcaseScene";
 import {
   VOICE_RECORDING_LIMIT_SECONDS,
@@ -91,6 +95,7 @@ export function useGlobalVoiceInput() {
 }
 
 function useVoiceInputRuntime() {
+  const registry = use(RegistryContext);
   const [{ state, ownerKey, label }, setState] = useState({
     state: INITIAL_STATE,
     ownerKey: null as string | null,
@@ -125,6 +130,16 @@ function useVoiceInputRuntime() {
           error: status.error,
           url: status.url,
         });
+      },
+      // Read when recording starts so preference changes do not re-render every composer.
+      selectInput: (inputs) => {
+        const preferences = registry.get(mobilePreferencesAtom);
+        return preferredMicrophoneInput(
+          inputs,
+          resolveMicrophonePriority(
+            AsyncResult.isSuccess(preferences) ? preferences.value.microphonePriority : undefined,
+          ),
+        );
       },
     });
     recorderRef.current = recorder;

@@ -2,6 +2,11 @@ import type { VoiceRecorder } from "@t3tools/client-runtime/voice-input";
 
 type Subscription = { remove(): void };
 
+export interface VoiceRecordingInput {
+  readonly uid: string;
+  readonly type: string;
+}
+
 // The subset of expo-audio's native `AudioRecorder` the voice input hook uses.
 export interface NativeVoiceRecorder<TStatus, TRecorderState> {
   readonly uri: string | null;
@@ -13,6 +18,8 @@ export interface NativeVoiceRecorder<TStatus, TRecorderState> {
     eventName: "recordingStatusUpdate",
     listener: (status: TStatus) => void,
   ): Subscription;
+  getAvailableInputs(): ReadonlyArray<VoiceRecordingInput>;
+  setInput(uid: string): void;
   release(): void;
 }
 
@@ -34,6 +41,8 @@ export interface LazyVoiceRecorder<TRecorderState> extends VoiceRecorder {
 export function createLazyVoiceRecorder<TStatus, TRecorderState>(input: {
   readonly create: () => NativeVoiceRecorder<TStatus, TRecorderState>;
   readonly onStatus: (status: TStatus) => void;
+  /** Picks the input to record from once the session lists them, or null to keep the system's. */
+  readonly selectInput?: (inputs: ReadonlyArray<VoiceRecordingInput>) => VoiceRecordingInput | null;
 }): LazyVoiceRecorder<TRecorderState> {
   let recorder: NativeVoiceRecorder<TStatus, TRecorderState> | null = null;
   let subscription: Subscription | null = null;
@@ -57,7 +66,18 @@ export function createLazyVoiceRecorder<TStatus, TRecorderState>(input: {
         recorder = input.create();
         subscription = recorder.addListener("recordingStatusUpdate", input.onStatus);
       }
-      return track(recorder.prepareToRecordAsync());
+      const prepared = recorder;
+      return track(
+        prepared.prepareToRecordAsync().then(() => {
+          if (!input.selectInput) return;
+          try {
+            const selected = input.selectInput(prepared.getAvailableInputs());
+            if (selected) prepared.setInput(selected.uid);
+          } catch {
+            // The input can disconnect in between. The system's route still records.
+          }
+        }),
+      );
     },
     record(options) {
       if (!recorder) throw new Error("Voice recorder is not prepared.");
