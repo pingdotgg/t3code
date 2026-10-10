@@ -250,14 +250,14 @@ describe("OpenCode database lock startup", () => {
         yield* fs.writeFileString(
           scriptPath,
           `
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, writeSync } from "node:fs";
 import { createServer } from "node:http";
 const path = process.env.T3_TEST_ATTEMPTS;
 let attempt = 0;
 try { attempt = Number(readFileSync(path, "utf8")); } catch {}
 writeFileSync(path, String(++attempt));
 if (${JSON.stringify(mode)} !== "transient" || attempt < 3) {
-  process.stderr.write(${JSON.stringify(mode === "configuration" ? "Invalid configuration" : "SQLiteError: database is locked (SQLITE_BUSY)")} + "\\n");
+  writeSync(2, ${JSON.stringify(mode === "configuration" ? "Invalid configuration" : "SQLiteError: database is locked (SQLITE_BUSY)")} + "\\n");
   process.exit(1);
 }
 const server = createServer((req, res) => res.end("ok"));
