@@ -2,6 +2,7 @@ import { SessionPermissions } from "./SessionPermissions";
 import { AUTH_SCOPE_OPTIONS as PAIRING_SCOPE_OPTIONS } from "@t3tools/shared/authScopeOptions";
 import {
   ChevronRightIcon,
+  CopyIcon,
   ChevronsLeftRightEllipsisIcon,
   EllipsisIcon,
   PlusIcon,
@@ -1436,6 +1437,32 @@ function NetworkAccessDescription({
   );
 }
 
+function CopyMcpUrlMenuItem({ url }: { url: string | null }) {
+  const { copyToClipboard } = useCopyToClipboard<string>({
+    target: "MCP URL",
+    onCopy: (url) =>
+      toastManager.add({
+        type: "success",
+        title: "MCP URL copied",
+        description: `Add it to an agent, e.g. claude mcp add --transport http t3 ${url}`,
+      }),
+    onError: (error) =>
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not copy MCP URL",
+          description: error.message,
+        }),
+      ),
+  });
+  return url ? (
+    <MenuItem onClick={() => copyToClipboard(url, url)}>
+      <CopyIcon />
+      Copy MCP URL
+    </MenuItem>
+  ) : null;
+}
+
 type SavedBackendListRowProps = {
   environment: EnvironmentPresentation;
   removingEnvironmentId: EnvironmentId | null;
@@ -1526,25 +1553,6 @@ function SavedBackendListRow({
     },
     [copyTraceIdToClipboard],
   );
-  const { copyToClipboard: copyMcpUrl } = useCopyToClipboard<{ url: string }>({
-    target: "MCP URL",
-    onCopy: ({ url }) => {
-      toastManager.add({
-        type: "success",
-        title: "MCP URL copied",
-        description: `Add it to an agent, e.g. claude mcp add --transport http t3 ${url}`,
-      });
-    },
-    onError: (error) => {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not copy MCP URL",
-          description: error.message,
-        }),
-      );
-    },
-  });
   const versionMismatch = resolveServerConfigVersionMismatch(environment.serverConfig);
   const serverUpdateState = useAtomValue(serverEnvironment.updateStateAtom(environmentId));
   const resumingServerUpdate =
@@ -1569,7 +1577,7 @@ function SavedBackendListRow({
     relayDiscovery.environments.get(environmentId)?.environment.endpoint.httpBaseUrl;
   const [lastRelayHttpBaseUrl, setLastRelayHttpBaseUrl] = useState(discoveredRelayHttpBaseUrl);
   if (
-    discoveredRelayHttpBaseUrl !== undefined &&
+    (!relayDiscovery.refreshing || discoveredRelayHttpBaseUrl !== undefined) &&
     discoveredRelayHttpBaseUrl !== lastRelayHttpBaseUrl
   ) {
     setLastRelayHttpBaseUrl(discoveredRelayHttpBaseUrl);
@@ -1776,9 +1784,7 @@ function SavedBackendListRow({
             <RouteIcon />
             {routesOpen ? "Hide routes" : "Routes"}
           </MenuItem>
-          {mcpUrl ? (
-            <MenuItem onClick={() => copyMcpUrl(mcpUrl, { url: mcpUrl })}>Copy MCP URL</MenuItem>
-          ) : null}
+          <CopyMcpUrlMenuItem url={mcpUrl} />
           {errorTraceId ? (
             <MenuItem onClick={() => copyTraceId(errorTraceId)}>Copy trace ID</MenuItem>
           ) : null}
@@ -2045,6 +2051,22 @@ export function ConnectionsSettings() {
     reportFailure: false,
   });
   const relayDiscoveryState = useRelayEnvironmentDiscovery();
+  // Discovery clears its map while refreshing; retain URLs only until it settles.
+  const [lastDiscovery, setLastDiscovery] = useState(relayDiscoveryState);
+  if (!relayDiscoveryState.refreshing && relayDiscoveryState !== lastDiscovery) {
+    setLastDiscovery(relayDiscoveryState);
+  }
+  const primaryMcpUrl = primaryEnvironment
+    ? environmentMcpUrl({
+        entry: primaryEnvironment.entry,
+        relayHttpBaseUrl: (
+          relayDiscoveryState.environments.get(primaryEnvironment.environmentId) ??
+          (relayDiscoveryState.refreshing
+            ? lastDiscovery.environments.get(primaryEnvironment.environmentId)
+            : undefined)
+        )?.environment.endpoint.httpBaseUrl,
+      })
+    : null;
   const setEnvironmentEnabled = useAtomCommand(environmentCatalog.setEnabled, {
     reportFailure: false,
   });
@@ -3646,6 +3668,7 @@ export function ConnectionsSettings() {
                       environmentId={primaryEnvironmentId}
                       serverConfig={primaryServerConfig}
                     />
+                    <CopyMcpUrlMenuItem url={primaryMcpUrl} />
                   </MenuPopup>
                 </Menu>
               ) : null
