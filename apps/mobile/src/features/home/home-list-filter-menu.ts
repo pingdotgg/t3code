@@ -1,3 +1,4 @@
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId } from "@t3tools/contracts";
 
 export interface HomeListFilterMenuEnvironment {
@@ -8,6 +9,8 @@ export interface HomeListFilterMenuEnvironment {
 export interface HomeListFilterMenuProject {
   readonly key: string;
   readonly label: string;
+  /** Project whose favicon stands for the scope; Android draws it beside the label. */
+  readonly representative?: EnvironmentProject;
 }
 
 type HomeListFilterMenuAction = {
