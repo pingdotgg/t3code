@@ -137,17 +137,28 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.defaultPrevented || event.isComposing) return;
+      const isFindShortcut =
+        event.key.toLowerCase() === "f" &&
+        (event.metaKey || event.ctrlKey) &&
+        !event.altKey &&
+        !event.shiftKey;
+      const isSlashShortcut =
+        event.key === "/" && !event.metaKey && !event.ctrlKey && !event.altKey;
+      if (!isFindShortcut && !isSlashShortcut) return;
 
       const target = event.target;
       if (
         target instanceof HTMLElement &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable ||
-          // Keep focus inside open dialogs and popups instead of escaping
-          // their focus trap into the sidebar search.
-          target.closest('[role="dialog"], [aria-modal="true"], [data-slot$="popup"]') !== null)
+        ((isSlashShortcut &&
+          (target.tagName === "INPUT" ||
+            target.tagName === "TEXTAREA" ||
+            target.isContentEditable)) ||
+          // Preserve dialog and popup focus traps, and let shortcut recorders
+          // capture the keypress without moving focus into the sidebar search.
+          target.closest(
+            '[role="dialog"], [aria-modal="true"], [data-slot$="popup"], [data-keybinding-capture]',
+          ) !== null)
       ) {
         return;
       }
