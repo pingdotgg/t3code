@@ -909,9 +909,14 @@ it.effect("registers annotated tools and preserves authenticated request context
         .pipe(
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.provideService(McpSchema.McpServerClient, client),
-          Effect.flip,
         );
-      expect(malformed._tag).toBe("InvalidParams");
+      expect(malformed.isError).toBe(true);
+      expect(malformed.content).toMatchObject([
+        {
+          type: "text",
+          text: expect.stringContaining("Invalid parameters for tool 'preview_click'"),
+        },
+      ]);
 
       const snapshot = yield* server
         .callTool({

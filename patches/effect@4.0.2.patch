@@ -1,5 +1,23 @@
+diff --git a/dist/ai/McpServer.js b/dist/ai/McpServer.js
+index 8b22eb63c2b9f7c53392f8555719384c42a2bf6c..779f284c5ecc00031f719ba5aa09916195762d4f 100644
+--- a/dist/ai/McpServer.js
++++ b/dist/ai/McpServer.js
+@@ -1378,10 +1378,10 @@ export const registerToolkit = /*#__PURE__*/Effect.fnUntraced(function* (toolkit
+       if (Result.isSuccess(failure)) {
+         const error = failure.success.error;
+         const origin = Context.get(Cause.reasonAnnotations(failure.success), Toolkit.FailureOrigin);
++        // A tool result rather than a JSON-RPC InvalidParams error, so the model sees why
++        // the call failed and can retry; some clients only show "tool call failed" for the latter.
+         if (origin === "parameters" && isParameterValidationError(error)) {
+-          return Effect.fail(new InvalidParams({
+-            message: error.reason.message
+-          }));
++          return Effect.succeed(toolErrorResult(error.reason.message));
+         }
+         if (origin === "handler" && isDeclaredFailure(error)) {
+           return Effect.catchCause(declaredFailureResult(error), internalToolError);
 diff --git a/dist/rpc/RpcClient.d.ts b/dist/rpc/RpcClient.d.ts
-index ebfe86f..3ff235d 100644
+index ebfe86fa46ae56830747d15fdae357871841b435..3ff235dfca449a1a6da88a331fee40a937a0f750 100644
 --- a/dist/rpc/RpcClient.d.ts
 +++ b/dist/rpc/RpcClient.d.ts
 @@ -320,6 +320,8 @@ export declare const layerProtocolWorker: (options: {
@@ -12,7 +30,7 @@ index ebfe86f..3ff235d 100644
  /**
   * Represents optional client protocol hooks that run when a transport connects
 diff --git a/dist/rpc/RpcClient.js b/dist/rpc/RpcClient.js
-index f5b14ef..cccf0a4 100644
+index f5b14efe8beff4c0fe0127ce6dc0d13d7d289338..cccf0a472a2c933a960227d9a3043c1a66327843 100644
 --- a/dist/rpc/RpcClient.js
 +++ b/dist/rpc/RpcClient.js
 @@ -688,11 +688,11 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
@@ -29,3 +47,19 @@ index f5b14ef..cccf0a4 100644
    }).pipe(Option.isSome(hooks) ? Effect.ensuring(hooks.value.onDisconnect) : identity, Effect.tapCause(cause => {
      const error = Cause.findError(cause);
      const hasError = Result.isSuccess(error);
+diff --git a/src/ai/McpServer.ts b/src/ai/McpServer.ts
+index 3c9bfab9fb857fba1752eeb64479d82f20157c9d..1a40a7891604946ff5f4a00398f9e4ab34b6778c 100644
+--- a/src/ai/McpServer.ts
++++ b/src/ai/McpServer.ts
+@@ -1917,8 +1917,10 @@ export const registerToolkit: <Tools extends Record<string, Tool.Any>>(
+       if (Result.isSuccess(failure)) {
+         const error = failure.success.error
+         const origin = Context.get(Cause.reasonAnnotations(failure.success), Toolkit.FailureOrigin)
++        // A tool result rather than a JSON-RPC InvalidParams error, so the model sees why
++        // the call failed and can retry; some clients only show "tool call failed" for the latter.
+         if (origin === "parameters" && isParameterValidationError(error)) {
+-          return Effect.fail(new InvalidParams({ message: error.reason.message }))
++          return Effect.succeed(toolErrorResult(error.reason.message))
+         }
+         if (origin === "handler" && isDeclaredFailure(error)) {
+           return Effect.catchCause(declaredFailureResult(error), internalToolError)

@@ -302,26 +302,33 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
   ),
 );
 
-it.effect("returns invalid parameter errors through the production registration", () =>
-  Effect.gen(function* () {
-    const server = yield* McpServer.McpServer;
-    const error = yield* server
-      .callTool({ name: "t3_thread_organize", arguments: { action: "invalid" } })
-      .pipe(
-        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
-        Effect.provideService(McpSchema.McpServerClient, client),
-        Effect.flip,
-      );
-    expect(error._tag).toBe("InvalidParams");
-  }).pipe(
-    Effect.provide(
-      layerThreadToolkit.pipe(
-        Layer.provideMerge(McpServer.McpServer.layer),
-        Layer.provide(NodeCrypto.layer),
-        Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
+it.effect(
+  "returns invalid parameter errors as tool results through the production registration",
+  () =>
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const result = yield* server
+        .callTool({ name: "t3_thread_organize", arguments: { action: "invalid" } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(result.isError).toBe(true);
+      expect(result.content).toMatchObject([
+        {
+          type: "text",
+          text: expect.stringContaining("Invalid parameters for tool 't3_thread_organize'"),
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        layerThreadToolkit.pipe(
+          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provide(NodeCrypto.layer),
+          Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
+        ),
       ),
     ),
-  ),
 );
 
 it.effect("keeps unexpected handler defects private through the production registration", () =>
