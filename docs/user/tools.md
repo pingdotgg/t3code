@@ -19,6 +19,26 @@ off and can't be turned on here.
 With a project selected, a switch overrides the environment for that project only: you can turn a
 skill off for one project, or back on where the environment has it off.
 
+A **Conflict** mark means two different skills share a name. The switch turns both of them on or
+off. **View files** in a skill's menu shows what is in its folder; a skill marked **Includes
+scripts** has files an agent could run.
+
+### Adding skills
+
+**Add skills** installs skills from a GitHub `owner/repo`, a git URL, or a folder on the
+environment, the same way `npx skills add` does. T3 Code lists the skills in the source first, so
+you can pick some and check which include scripts. Install only sources you trust.
+
+With a project selected, skills go into the project's `.agents/skills` folder and its
+`skills-lock.json`, which you can commit for your team. Otherwise they go into `~/.agents/skills`
+for every project. Agents that only read their own folder, such as Claude, get a link to the skill.
+
+Skills installed this way, here or with `npx skills` in a terminal, are grouped by where they came
+from, with one switch for the group. Their menu has **Update**, which installs the latest version
+from the same source, and **Remove**. Installing runs the open-source
+[`skills`](https://github.com/vercel-labs/skills) installer built into T3 Code, with its telemetry
+off. Installing, updating and removing skills needs permission to manage providers.
+
 ## MCP servers
 
 The **MCP servers** tab lists servers T3 Code adds to every agent session, next to its own

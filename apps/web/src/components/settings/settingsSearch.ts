@@ -631,7 +631,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/tools",
     scope: "project-defaults",
     searchTerms: [
-      "agent skills SKILL.md disable enable hide turn off slash commands .agents claude codex cursor",
+      "agent skills SKILL.md disable enable hide turn off slash commands .agents claude codex cursor install add npx skills github repo update remove scripts conflict",
     ],
   },
   {

@@ -100,6 +100,9 @@ export const SkillFolderInfo = Schema.Struct({
   folder: Schema.String,
   /** SHA-256 of SKILL.md, so two copies of a name can be compared. */
   hash: Schema.String,
+  /** The folder's files, up to a limit, for viewing them with `projects.readFile`. */
+  files: Schema.Array(SkillFileEntry),
+  filesTruncated: Schema.Boolean,
   scripts: Schema.Boolean,
   /** Set when the `skills` CLI installed this folder: its lock names the source. */
   installed: Schema.optional(

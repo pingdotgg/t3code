@@ -14,6 +14,9 @@ import {
   parseArgs,
   parseMcpServerJson,
   formatArgs,
+  skillRowDetails,
+  splitRowsBySource,
+  type SkillRow,
 } from "./toolsSettings.logic";
 
 const provider = (
@@ -96,6 +99,82 @@ describe("collectSkillRows", () => {
     expect(collectSkillRows([provider("a", [skill(false)])], null)[0]?.disabledByProvider).toBe(
       true,
     );
+  });
+});
+
+describe("skill row details", () => {
+  const row = (paths: ReadonlyArray<string>): SkillRow => ({
+    name: "review",
+    description: undefined,
+    group: "personal",
+    paths,
+    providers: [],
+    disabledByProvider: false,
+  });
+  const folder = (path: string, folderPath: string, hash: string, scripts = false) => ({
+    path,
+    folder: folderPath,
+    hash,
+    files: [],
+    filesTruncated: false,
+    scripts,
+  });
+
+  it("flags a conflict only when two folders hold different text", () => {
+    const linked = new Map([
+      // Claude reaches the same folder through its link.
+      [
+        "/h/.claude/skills/review/SKILL.md",
+        folder("/h/.claude/skills/review/SKILL.md", "/h/.agents/skills/review", "a"),
+      ],
+      [
+        "/h/.agents/skills/review/SKILL.md",
+        folder("/h/.agents/skills/review/SKILL.md", "/h/.agents/skills/review", "a"),
+      ],
+    ]);
+    expect(skillRowDetails(row([...linked.keys()]), linked).conflict).toBe(false);
+
+    const copies = new Map([
+      [
+        "/h/.claude/skills/review/SKILL.md",
+        folder("/h/.claude/skills/review/SKILL.md", "/h/.claude/skills/review", "a"),
+      ],
+      [
+        "/p/.agents/skills/review/SKILL.md",
+        folder("/p/.agents/skills/review/SKILL.md", "/p/.agents/skills/review", "b", true),
+      ],
+    ]);
+    const details = skillRowDetails(row([...copies.keys()]), copies);
+    expect(details.conflict).toBe(true);
+    expect(details.scripts).toBe(true);
+  });
+
+  it("knows nothing about a row whose folders weren't inspected", () => {
+    expect(skillRowDetails(row(["/x/SKILL.md"]), new Map())).toEqual({
+      folder: null,
+      scripts: false,
+      conflict: false,
+      installed: null,
+    });
+  });
+
+  it("splits rows by source, unsourced first, then by source name", () => {
+    const rows = [
+      { name: "tdd", source: "mattpocock/skills" },
+      { name: "mine", source: null },
+      { name: "deploy", source: "acme/tools" },
+      { name: "grill-me", source: "mattpocock/skills" },
+    ];
+    expect(
+      splitRowsBySource(rows, (entry) => entry.source).map((group) => [
+        group.source,
+        group.rows.map((entry) => entry.name),
+      ]),
+    ).toEqual([
+      [null, ["mine"]],
+      ["acme/tools", ["deploy"]],
+      ["mattpocock/skills", ["tdd", "grill-me"]],
+    ]);
   });
 });
 

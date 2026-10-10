@@ -83,11 +83,16 @@ const withLibrary = <A, E>(
       Ref.update(refreshed, (entries) => [...entries, entry]).pipe(
         Effect.andThen(Ref.get(providers)),
       );
-    const registry = ProviderRegistry.ProviderRegistry.of({
+    const stub: Pick<
+      ProviderRegistry.ProviderRegistry["Service"],
+      "getProviders" | "refreshInstance" | "refreshWorkspaceSnapshot"
+    > = {
       getProviders: Ref.get(providers),
       refreshInstance: (instanceId) => record(`instance:${instanceId}`),
       refreshWorkspaceSnapshot: ({ instanceId, cwd }) => record(`workspace:${instanceId}:${cwd}`),
-    } as unknown as ProviderRegistry.ProviderRegistry["Service"]);
+    };
+    // SkillLibrary reads provider snapshots and asks for rescans, nothing else.
+    const registry = stub as ProviderRegistry.ProviderRegistry["Service"];
     const realProject = yield* fileSystem.realPath(project);
     const projects = ProjectService.ProjectService.of({
       getByWorkspaceRoot: (root: string) =>
