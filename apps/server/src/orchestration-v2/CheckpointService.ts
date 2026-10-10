@@ -19,7 +19,7 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { parseTurnDiffFilesFromNumstat } from "../checkpointing/Diffs.ts";
+import { isGitImport, parseTurnDiffFilesFromNumstat } from "../checkpointing/Diffs.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
@@ -440,33 +440,49 @@ export const layer: Layer.Layer<
                 }).pipe(Effect.as(false)),
               ),
             );
+          const refs = {
+            cwd: input.scope.cwd,
+            fromCheckpointRef: previousCheckpointRef,
+            toCheckpointRef: checkpointRef,
+          };
+          // A pull or rebase can change thousands of files the turn did not write.
+          // Keep only the files the turn's own work touched.
           const files = previousExists
-            ? yield* checkpointStore
-                .diffCheckpoints({
-                  cwd: input.scope.cwd,
-                  fromCheckpointRef: previousCheckpointRef,
-                  toCheckpointRef: checkpointRef,
+            ? yield* Effect.all([
+                checkpointStore.diffCheckpoints({
+                  ...refs,
                   fallbackFromToHead: false,
                   ignoreWhitespace: false,
                   format: "numstat",
-                })
-                .pipe(
-                  Effect.map((diff) =>
-                    parseTurnDiffFilesFromNumstat(diff).map((file) => ({
+                }),
+                checkpointStore.listAuthoredPaths(refs).pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("orchestration V2 checkpoint authored paths failed", {
+                      scopeId: input.scope.id,
+                      checkpointRef,
+                      cause: String(cause),
+                    }).pipe(Effect.as(null)),
+                  ),
+                ),
+              ]).pipe(
+                Effect.map(([diff, authoredPaths]) =>
+                  parseTurnDiffFilesFromNumstat(diff)
+                    .filter((file) => !isGitImport(file, authoredPaths))
+                    .map((file) => ({
                       path: file.path,
                       kind: "modified",
                       additions: file.additions,
                       deletions: file.deletions,
                     })),
-                  ),
-                  Effect.catch((cause) =>
-                    Effect.logWarning("orchestration V2 checkpoint diff summary failed", {
-                      scopeId: input.scope.id,
-                      checkpointRef,
-                      cause: String(cause),
-                    }).pipe(Effect.as([])),
-                  ),
-                )
+                ),
+                Effect.catch((cause) =>
+                  Effect.logWarning("orchestration V2 checkpoint diff summary failed", {
+                    scopeId: input.scope.id,
+                    checkpointRef,
+                    cause: String(cause),
+                  }).pipe(Effect.as([])),
+                ),
+              )
             : [];
 
           return makeCheckpoint({

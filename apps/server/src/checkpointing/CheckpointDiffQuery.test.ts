@@ -48,6 +48,7 @@ function makeProjection(): ProjectionCheckpointContext {
 function layerFor(input: {
   readonly projection: Effect.Effect<ProjectionCheckpointContext, OrchestratorProjectionError>;
   readonly diffCheckpoints?: CheckpointStore.CheckpointStore["Service"]["diffCheckpoints"];
+  readonly authoredPaths?: ReadonlySet<string>;
 }) {
   return CheckpointDiffQuery.layer.pipe(
     Layer.provide(
@@ -57,6 +58,7 @@ function layerFor(input: {
         }),
         Layer.mock(CheckpointStore.CheckpointStore)({
           diffCheckpoints: input.diffCheckpoints ?? (() => Effect.succeed("diff")),
+          listAuthoredPaths: () => Effect.succeed(input.authoredPaths ?? null),
         }),
       ),
     ),
@@ -90,6 +92,34 @@ it.effect("computes V2 run diffs from projected checkpoint scopes", () => {
       fallbackFromToHead: false,
       ignoreWhitespace: true,
     });
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("leaves Git imports out of large turn diffs", () => {
+  const ownPaths = Array.from({ length: 1_000 }, (_, index) => `src/module-${index}/file.ts`);
+  const diffCheckpoints = vi.fn((input: CheckpointStore.DiffCheckpointsInput) =>
+    Effect.succeed(
+      input.format === "numstat"
+        ? [...ownPaths, "upstream.ts"].map((path) => `1\t0\t${path}\0`).join("")
+        : (input.filePaths ?? ["all"]).join("\n"),
+    ),
+  );
+  const layer = layerFor({
+    projection: Effect.succeed(makeProjection()),
+    diffCheckpoints,
+    authoredPaths: new Set(ownPaths),
+  });
+
+  return Effect.gen(function* () {
+    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+    yield* query.getFullThreadDiff({ threadId, toTurnCount: 2 });
+
+    const patchPaths = diffCheckpoints.mock.calls
+      .map(([call]) => call)
+      .filter((call) => call.format !== "numstat")
+      .map((call) => call.filePaths ?? ["all"]);
+    assert.isAbove(patchPaths.length, 1);
+    assert.sameMembers(patchPaths.flat(), ownPaths);
   }).pipe(Effect.provide(layer));
 });
 
