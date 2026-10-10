@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
-import { Argument, Command, Flag, GlobalFlag } from "effect/unstable/cli";
+import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 
@@ -19,6 +19,7 @@ import {
   formatSessionList,
 } from "../cliAuthFormat.ts";
 import * as ServerConfig from "../config.ts";
+import { authScopesFlag } from "./authScopes.ts";
 import {
   authLocationFlags,
   type CliAuthLocationFlags,
@@ -42,7 +43,7 @@ const runWithEnvironmentAuth = <A, E>(
       return yield* run(environmentAuth);
     }).pipe(
       Effect.provide(
-        Layer.mergeAll(EnvironmentAuth.runtimeLayer).pipe(
+        Layer.mergeAll(EnvironmentAuth.layerRuntime).pipe(
           Layer.provide(ServerConfig.layer(config)),
           Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
         ),
@@ -50,39 +51,40 @@ const runWithEnvironmentAuth = <A, E>(
     );
   });
 
-const ttlFlag = Flag.string("ttl").pipe(
+const ttlFlag = Flag.String("ttl").pipe(
   Flag.withSchema(DurationFromString),
   Flag.withDescription("TTL, for example `5m`, `1h`, `30d`, or `15 minutes`."),
   Flag.optional,
 );
 
-const jsonFlag = Flag.boolean("json").pipe(
+const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDescription("Emit JSON instead of human-readable output."),
   Flag.withDefault(false),
 );
 
-const labelFlag = Flag.string("label").pipe(
+const labelFlag = Flag.String("label").pipe(
   Flag.withDescription("Optional human-readable label."),
   Flag.optional,
 );
 
-const subjectFlag = Flag.string("subject").pipe(
+const subjectFlag = Flag.String("subject").pipe(
   Flag.withDescription("Optional session subject."),
   Flag.optional,
 );
 
-const baseUrlFlag = Flag.string("base-url").pipe(
+const baseUrlFlag = Flag.String("base-url").pipe(
   Flag.withDescription("Optional public base URL used to print a ready `/pair#token=...` link."),
   Flag.optional,
 );
 
-const tokenOnlyFlag = Flag.boolean("token-only").pipe(
+const tokenOnlyFlag = Flag.Boolean("token-only").pipe(
   Flag.withDescription("Print only the issued bearer token."),
   Flag.withDefault(false),
 );
 
 const pairingCreateCommand = Command.make("create", {
   ...authLocationFlags,
+  scopes: authScopesFlag(AuthStandardClientScopes),
   ttl: ttlFlag,
   label: labelFlag,
   baseUrl: baseUrlFlag,
@@ -95,7 +97,7 @@ const pairingCreateCommand = Command.make("create", {
       (environmentAuth) =>
         Effect.gen(function* () {
           const issued = yield* environmentAuth.createPairingLink({
-            scopes: AuthStandardClientScopes,
+            scopes: flags.scopes,
             subject: "one-time-token",
             ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
             ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
@@ -137,7 +139,7 @@ const pairingListCommand = Command.make("list", {
 
 const pairingRevokeCommand = Command.make("revoke", {
   ...authLocationFlags,
-  id: Argument.string("id").pipe(Argument.withDescription("Pairing credential id to revoke.")),
+  id: Argument.String("id").pipe(Argument.withDescription("Pairing credential id to revoke.")),
 }).pipe(
   Command.withDescription("Revoke an active client pairing token."),
   Command.withHandler((flags) =>
@@ -161,6 +163,7 @@ const pairingCommand = Command.make("pairing").pipe(
 
 const sessionIssueCommand = Command.make("issue", {
   ...authLocationFlags,
+  scopes: authScopesFlag(AuthAdministrativeScopes),
   ttl: ttlFlag,
   label: labelFlag,
   subject: subjectFlag,
@@ -174,7 +177,7 @@ const sessionIssueCommand = Command.make("issue", {
       (environmentAuth) =>
         Effect.gen(function* () {
           const issued = yield* environmentAuth.issueSession({
-            scopes: AuthAdministrativeScopes,
+            scopes: flags.scopes,
             ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
             ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
             ...(Option.isSome(flags.subject) ? { subject: flags.subject.value } : {}),
@@ -215,7 +218,7 @@ const sessionListCommand = Command.make("list", {
 
 const sessionRevokeCommand = Command.make("revoke", {
   ...authLocationFlags,
-  sessionId: Argument.string("session-id").pipe(
+  sessionId: Argument.String("session-id").pipe(
     Argument.withDescription("Session id to revoke."),
     Argument.withSchema(AuthSessionId),
   ),

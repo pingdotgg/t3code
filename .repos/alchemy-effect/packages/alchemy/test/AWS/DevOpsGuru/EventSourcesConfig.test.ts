@@ -18,11 +18,14 @@ const observedProfilerStatus = devopsguru
   );
 
 // Ungated typed probe: the describe call always answers with the config.
-test.provider("describeEventSourcesConfig returns the configuration", () =>
-  Effect.gen(function* () {
-    const status = yield* observedProfilerStatus;
-    expect(["ENABLED", "DISABLED"]).toContain(status);
-  }),
+test.provider(
+  "describeEventSourcesConfig returns the configuration",
+  () =>
+    Effect.gen(function* () {
+      const status = yield* observedProfilerStatus;
+      expect(["ENABLED", "DISABLED"]).toContain(status);
+    }),
+  { tags: ["provider:aws", "provider:aws:devopsguru", "live"] },
 );
 
 // The configuration is an account/region singleton. Only run the destructive
@@ -75,5 +78,8 @@ test.provider(
       yield* stack.destroy();
       expect(yield* observedProfilerStatus).toBe("DISABLED");
     }),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:aws", "provider:aws:devopsguru", "live"],
+    timeout: 180_000,
+  },
 );

@@ -188,7 +188,15 @@ test.provider(
       // Destroy again — delete must be idempotent (the job is already gone).
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:logpush",
+      "provider:cloudflare:r2",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );
 
 test.provider(
@@ -226,7 +234,15 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:logpush",
+      "provider:cloudflare:r2",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );
 
 // Requires entitlement for a second account-scoped dataset. On the testing
@@ -270,5 +286,13 @@ test.provider.skip(
 
       yield* waitForDelete(accountId, replaced.job.jobId);
     }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:logpush",
+      "provider:cloudflare:r2",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );

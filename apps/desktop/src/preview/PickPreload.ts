@@ -16,13 +16,21 @@ import type {
 
 import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
 import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
+import { installRecordingCursor } from "./RecordingCursor.ts";
+import { DEFAULT_RECORDING_INPUT_OPTIONS } from "./RecordingInput.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
+  ANNOTATION_SEND_ENABLED_CHANNEL,
   ANNOTATION_THEME_CHANNEL,
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
   MOUSE_NAVIGATE_CHANNEL,
+  RECORDING_CURSOR_CHANNEL,
+  RECORDING_POINTER_CHANNEL,
+  RECORDING_KEY_CHANNEL,
+  RECORDING_INPUT_CHANNEL,
+  RECORDING_CONTROLLER_CHANNEL,
   START_PICK_CHANNEL,
 } from "./GuestProtocol.ts";
 const OVERLAY_ATTRIBUTE = "data-t3code-annotation-ui";
@@ -34,6 +42,80 @@ const MAX_MARQUEE_ELEMENTS = 20;
 const ELEMENT_CONTEXT_TIMEOUT_MS = 5_000;
 const CONTENT_LAYER_Z_INDEX = 1;
 const CHROME_LAYER_Z_INDEX = 10;
+
+let recordingCursor: ReturnType<typeof installRecordingCursor> | null = null;
+ipcRenderer.on(
+  RECORDING_CURSOR_CHANNEL,
+  (_event, active: unknown, inputOptions: unknown, controller: unknown) => {
+    if (active === true) {
+      const options =
+        typeof inputOptions === "object" && inputOptions !== null
+          ? {
+              showKeyPresses:
+                "showKeyPresses" in inputOptions && inputOptions.showKeyPresses === true,
+              showMousePresses:
+                "showMousePresses" in inputOptions && inputOptions.showMousePresses === true,
+            }
+          : DEFAULT_RECORDING_INPUT_OPTIONS;
+      recordingCursor ??= installRecordingCursor(document, window, options, (input) =>
+        ipcRenderer.send(RECORDING_INPUT_CHANNEL, input),
+      );
+      recordingCursor.setTheme(annotationTheme);
+      if (controller === "agent" || controller === "human" || controller === "none")
+        recordingCursor.setController(controller);
+    } else {
+      recordingCursor?.dispose();
+      recordingCursor = null;
+    }
+  },
+);
+ipcRenderer.on(RECORDING_CONTROLLER_CHANNEL, (_event, controller: unknown, point: unknown) => {
+  const humanPoint =
+    typeof point === "object" &&
+    point !== null &&
+    "x" in point &&
+    typeof point.x === "number" &&
+    Number.isFinite(point.x) &&
+    "y" in point &&
+    typeof point.y === "number" &&
+    Number.isFinite(point.y)
+      ? { x: point.x, y: point.y }
+      : undefined;
+  if (controller === "agent" || controller === "human" || controller === "none")
+    recordingCursor?.setController(controller, humanPoint);
+});
+ipcRenderer.on(RECORDING_KEY_CHANNEL, (_event, input: unknown) => {
+  if (
+    typeof input !== "object" ||
+    input === null ||
+    !("key" in input) ||
+    typeof input.key !== "string"
+  )
+    return;
+  recordingCursor?.keyPress({
+    key: input.key,
+    metaKey: "metaKey" in input && input.metaKey === true,
+    ctrlKey: "ctrlKey" in input && input.ctrlKey === true,
+    altKey: "altKey" in input && input.altKey === true,
+    shiftKey: "shiftKey" in input && input.shiftKey === true,
+  });
+});
+ipcRenderer.on(RECORDING_POINTER_CHANNEL, (_event, point: unknown) => {
+  if (
+    typeof point === "object" &&
+    point !== null &&
+    "x" in point &&
+    typeof point.x === "number" &&
+    Number.isFinite(point.x) &&
+    "y" in point &&
+    typeof point.y === "number" &&
+    Number.isFinite(point.y)
+  )
+    recordingCursor?.move(
+      { x: point.x, y: point.y },
+      "phase" in point && point.phase === "click" ? "click" : "move",
+    );
+});
 
 type AnnotationTool = "select" | "marquee" | "draw" | "erase";
 
@@ -48,6 +130,7 @@ interface SelectedElement {
 interface AnnotationSession {
   teardown: (notifyMain: boolean) => void;
   applyTheme: (theme: DesktopPreviewAnnotationTheme) => void;
+  setSendEnabled: (enabled: boolean) => void;
 }
 
 let activeSession: AnnotationSession | null = null;
@@ -233,10 +316,41 @@ function createBox(color: string, fill: string): HTMLDivElement {
 }
 
 function positionBox(node: HTMLElement, rect: PreviewAnnotationRect): void {
+  if (rect.width <= 0 || rect.height <= 0) {
+    node.style.display = "none";
+    return;
+  }
   node.style.display = "block";
   node.style.transform = `translate(${rect.x}px, ${rect.y}px)`;
   node.style.width = `${rect.width}px`;
   node.style.height = `${rect.height}px`;
+}
+
+/** Clamps a box to the viewport and clipping ancestors, so its border is never painted off-screen. */
+function visibleElementRect(element: Element): PreviewAnnotationRect {
+  const rect = element.getBoundingClientRect();
+  let left = Math.max(0, rect.left);
+  let top = Math.max(0, rect.top);
+  let right = Math.min(document.documentElement.clientWidth, rect.right);
+  let bottom = Math.min(document.documentElement.clientHeight, rect.bottom);
+  if (getComputedStyle(element).position !== "fixed") {
+    for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      if (ancestor === document.body || ancestor === document.documentElement) break;
+      const style = getComputedStyle(ancestor);
+      const bounds = ancestor.getBoundingClientRect();
+      const clipLeft = bounds.left + ancestor.clientLeft;
+      const clipTop = bounds.top + ancestor.clientTop;
+      if (style.overflowX !== "visible") {
+        left = Math.max(left, clipLeft);
+        right = Math.min(right, clipLeft + ancestor.clientWidth);
+      }
+      if (style.overflowY !== "visible") {
+        top = Math.max(top, clipTop);
+        bottom = Math.min(bottom, clipTop + ancestor.clientHeight);
+      }
+    }
+  }
+  return { x: left, y: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
 }
 
 function createLabel(): HTMLDivElement {
@@ -260,11 +374,15 @@ function updateSelectedVisual(target: SelectedElement): void {
     target.label.style.display = "none";
     return;
   }
-  const rect = target.element.getBoundingClientRect();
-  positionBox(target.outline, rectFromDomRect(rect));
+  const rect = visibleElementRect(target.element);
+  positionBox(target.outline, rect);
+  if (rect.width === 0 || rect.height === 0) {
+    target.label.style.display = "none";
+    return;
+  }
   target.label.textContent = describeRawElement(target.element);
   target.label.style.display = "block";
-  target.label.style.transform = `translate(${Math.max(4, rect.left)}px, ${Math.max(4, rect.top - 22)}px)`;
+  target.label.style.transform = `translate(${Math.max(4, rect.x)}px, ${Math.max(4, rect.y - 22)}px)`;
 }
 
 function toStackFrame(frame: {
@@ -431,7 +549,7 @@ function strokeBounds(
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
-function startAnnotation(): void {
+function startAnnotation(sendEnabled: boolean): void {
   activeSession?.teardown(false);
   let finished = false;
   const host = document.createElement("div");
@@ -508,6 +626,12 @@ function startAnnotation(): void {
   composerRow.appendChild(dragHandle);
 
   const submit = createButton("Attach", "Attach annotation and screenshot (Enter)");
+  const updateSendHint = () => {
+    submit.title = sendEnabled
+      ? "Attach annotation and screenshot (Enter). Send with Cmd/Ctrl+Enter."
+      : "Attach annotation and screenshot (Enter)";
+  };
+  updateSendHint();
   submit.className +=
     " h-8 shrink-0 border-primary bg-primary px-3 text-primary-foreground shadow-sm hover:bg-primary/90";
   composerRow.appendChild(submit);
@@ -906,8 +1030,9 @@ function startAnnotation(): void {
   const getAnnotationBounds = (): PreviewAnnotationRect | null =>
     unionRects(
       [
-        ...Array.from(selected.values(), (target) =>
-          rectFromDomRect(target.element.getBoundingClientRect()),
+        // Follow the visible outline, so a clipped selection does not anchor the editor off-screen.
+        ...Array.from(selected.values(), (target) => visibleElementRect(target.element)).filter(
+          (rect) => rect.width > 0 && rect.height > 0,
         ),
         ...regions.map((region) => region.rect),
         ...strokes.map((stroke) => stroke.bounds),
@@ -1019,6 +1144,8 @@ function startAnnotation(): void {
     for (const target of selected.values()) updateSelectedVisual(target);
     queueEditorLayout();
   };
+  // A scrollbar appearing narrows the viewport without a window resize.
+  const rootResizeObserver = new ResizeObserver(repaint);
 
   const removeTargetAtPoint = (x: number, y: number): boolean => {
     for (const target of Array.from(selected.values()).toReversed()) {
@@ -1103,7 +1230,7 @@ function startAnnotation(): void {
     }
     if (tool === "select" && dragStart === null) {
       const target = pickFromPoint(event.clientX, event.clientY);
-      if (target) positionBox(hoverOutline, rectFromDomRect(target.getBoundingClientRect()));
+      if (target) positionBox(hoverOutline, visibleElementRect(target));
       else clearHoverOutline();
       return;
     }
@@ -1221,6 +1348,7 @@ function startAnnotation(): void {
   const teardown = (notifyMain: boolean): void => {
     if (finished) return;
     finished = true;
+    rootResizeObserver.disconnect();
     restoreStyles();
     window.removeEventListener("pointermove", onPointerMove, true);
     window.removeEventListener("pointerdown", onPointerDown, true);
@@ -1264,6 +1392,7 @@ function startAnnotation(): void {
   };
 
   const submitAnnotation = (submission: PreviewAnnotationSubmission): void => {
+    if (submission === "send" && !sendEnabled) return;
     if (pendingCapture || (selected.size === 0 && regions.length === 0 && strokes.length === 0))
       return;
     pendingCapture = true;
@@ -1315,7 +1444,14 @@ function startAnnotation(): void {
           ...submittedRegions.map((region) => region.rect),
           ...submittedStrokes.map((stroke) => stroke.bounds),
         ]);
-        ipcRenderer.send(ELEMENT_PICKED_CHANNEL, annotation, screenshotRect, submission);
+        ipcRenderer.send(
+          ELEMENT_PICKED_CHANNEL,
+          annotation,
+          screenshotRect,
+          submission === "send" && !sendEnabled ? "attach" : submission,
+          // Main crops a full-page capture, whose pixels are CSS px × this.
+          window.devicePixelRatio,
+        );
       })
       .catch(() => {
         // Last resort. Main is waiting on this message, so hand it an empty
@@ -1326,7 +1462,8 @@ function startAnnotation(): void {
   };
   submit.addEventListener("click", () => submitAnnotation("attach"));
   root.addEventListener("keydown", (event) => {
-    const submission = event.target === comment ? resolveAnnotationSubmission(event) : null;
+    const submission =
+      event.target === comment ? resolveAnnotationSubmission(event, sendEnabled) : null;
     // Keep this in the bubble phase so editor inputs receive the event before
     // it is isolated from listeners installed by the inspected page.
     event.stopImmediatePropagation();
@@ -1347,20 +1484,32 @@ function startAnnotation(): void {
   ipcRenderer.on(CANCEL_PICK_CHANNEL, onCancel);
   ipcRenderer.on(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
   document.documentElement.appendChild(host);
+  rootResizeObserver.observe(document.documentElement);
   refreshToolButtons();
   updateStatus();
   activeSession = {
     teardown,
     applyTheme: (theme) => applyAnnotationTheme(host, theme),
+    setSendEnabled: (enabled) => {
+      sendEnabled = enabled;
+      updateSendHint();
+    },
   };
 }
 
-ipcRenderer.on(START_PICK_CHANNEL, (_event, theme: DesktopPreviewAnnotationTheme | undefined) => {
-  if (theme) annotationTheme = theme;
-  startAnnotation();
+ipcRenderer.on(
+  START_PICK_CHANNEL,
+  (_event, theme: DesktopPreviewAnnotationTheme | undefined, sendEnabled?: boolean) => {
+    if (theme) annotationTheme = theme;
+    startAnnotation(sendEnabled === true);
+  },
+);
+ipcRenderer.on(ANNOTATION_SEND_ENABLED_CHANNEL, (_event, enabled: boolean) => {
+  activeSession?.setSendEnabled(enabled === true);
 });
 ipcRenderer.on(ANNOTATION_THEME_CHANNEL, (_event, theme: DesktopPreviewAnnotationTheme) => {
   annotationTheme = theme;
+  recordingCursor?.setTheme(theme);
   activeSession?.applyTheme(theme);
 });
 ipcRenderer.on(CANCEL_PICK_CHANNEL, () => activeSession?.teardown(false));

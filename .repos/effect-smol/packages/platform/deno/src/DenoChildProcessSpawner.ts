@@ -15,18 +15,18 @@ import * as Layer from "effect/Layer"
 import * as Path from "effect/Path"
 import * as PlatformError from "effect/PlatformError"
 import * as Predicate from "effect/Predicate"
-import type * as Scope from "effect/Scope"
-import * as Sink from "effect/Sink"
-import * as Stream from "effect/Stream"
-import * as ChildProcess from "effect/unstable/process/ChildProcess"
-import type { ChildProcessHandle } from "effect/unstable/process/ChildProcessSpawner"
+import * as ChildProcess from "effect/process/ChildProcess"
+import type { ChildProcessHandle } from "effect/process/ChildProcessSpawner"
 import {
   ChildProcessSpawner,
   ExitCode,
   make as makeSpawner,
   makeHandle,
   ProcessId
-} from "effect/unstable/process/ChildProcessSpawner"
+} from "effect/process/ChildProcessSpawner"
+import type * as Scope from "effect/Scope"
+import * as Sink from "effect/Sink"
+import * as Stream from "effect/Stream"
 
 const commandString = (command: ChildProcess.Command): string => {
   const { commands } = flattenCommand(command)

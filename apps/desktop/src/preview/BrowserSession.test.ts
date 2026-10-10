@@ -13,7 +13,7 @@ const { fromPartition, sessions } = vi.hoisted(() => ({
     {
       readonly clearCache: ReturnType<typeof vi.fn>;
       readonly clearStorageData: ReturnType<typeof vi.fn>;
-      readonly getUserAgent: ReturnType<typeof vi.fn>;
+      readonly getUserAgent: ReturnType<typeof vi.fn<() => string>>;
       readonly setPermissionRequestHandler: ReturnType<typeof vi.fn>;
       readonly setPermissionCheckHandler: ReturnType<typeof vi.fn>;
       readonly setUserAgent: ReturnType<typeof vi.fn>;
@@ -21,15 +21,35 @@ const { fromPartition, sessions } = vi.hoisted(() => ({
   >(),
 }));
 
+const { fromWebContents } = vi.hoisted(() => ({
+  fromWebContents: vi.fn<(webContents: unknown) => unknown>(() => null),
+}));
+
 vi.mock("electron", () => ({
+  BrowserWindow: { fromWebContents },
   session: {
     fromPartition,
   },
 }));
 
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 
-const layer = BrowserSession.layer.pipe(Layer.provide(NodeServices.layer));
+const { showMessageBox } = vi.hoisted(() => ({
+  showMessageBox: vi.fn<
+    (options: Electron.MessageBoxOptions, owner?: Electron.BrowserWindow) => number
+  >(() => 1),
+}));
+const layerDialog = Layer.succeed(ElectronDialog.ElectronDialog, {
+  pickFolder: () => Effect.die("unused"),
+  pickFiles: () => Effect.die("unused"),
+  showMessageBox: (options, owner) =>
+    Effect.sync(() => ({ response: showMessageBox(options, owner), checkboxChecked: false })),
+  showErrorBox: () => Effect.void,
+});
+const layer = BrowserSession.layer.pipe(
+  Layer.provide(Layer.merge(NodeServices.layer, layerDialog)),
+);
 
 describe("BrowserSession", () => {
   beforeEach(() => {
@@ -102,6 +122,44 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  // A rewritten session UA — any variant, even ones that keep the Electron
+  // token — makes Cloudflare Turnstile loop with error 600010 (#5002), so
+  // the guest must end up with Electron's native User-Agent. The mock applies
+  // setUserAgent calls, so this fails on any reintroduced rewrite while still
+  // permitting a harmless re-set of the unchanged native string.
+  it.effect("keeps the guest's effective User-Agent equal to Electron's native one", () =>
+    Effect.gen(function* () {
+      // Electron's real UA shape: app token, then Chrome, then Electron, then
+      // Safari — the token order and casing matter to any strip regex.
+      const nativeUserAgent =
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) T3Code(Alpha)/0.0.33 Chrome/146.0.7680.216 Electron/41.5.0 Safari/537.36";
+      fromPartition.mockReset();
+      fromPartition.mockImplementation((partition: string) => {
+        let userAgent = nativeUserAgent;
+        const browserSession = {
+          clearCache: vi.fn(() => Promise.resolve()),
+          clearStorageData: vi.fn(() => Promise.resolve()),
+          getUserAgent: vi.fn(() => userAgent),
+          setPermissionRequestHandler: vi.fn(),
+          setPermissionCheckHandler: vi.fn(),
+          setUserAgent: vi.fn((next: string) => {
+            userAgent = next;
+          }),
+        };
+        sessions.set(partition, browserSession);
+        return browserSession;
+      });
+
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-a");
+      yield* browserSessions.getSession("scope-a");
+
+      const browserSession = sessions.get(partition);
+      assert.isDefined(browserSession);
+      assert.strictEqual(browserSession.getUserAgent(), nativeUserAgent);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("grants clipboard-sanitized-write through both the request and check handlers", () =>
     Effect.gen(function* () {
       const browserSessions = yield* BrowserSession.BrowserSession;
@@ -130,6 +188,7 @@ describe("BrowserSession", () => {
         "clipboard-sanitized-write",
         "notifications",
         "geolocation",
+        "fullscreen",
       ]) {
         assert.isTrue(requestAllows(permission), `request handler should allow ${permission}`);
         assert.isTrue(
@@ -151,6 +210,73 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("opens custom-scheme links externally only after the user confirms", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-a");
+      yield* browserSessions.getSession("scope-a");
+      const requestHandler =
+        sessions.get(partition)?.setPermissionRequestHandler.mock.calls[0]?.[0];
+      assert.isFunction(requestHandler);
+
+      const request = (externalURL: string) =>
+        Effect.callback<boolean>((resume) => {
+          requestHandler(
+            null,
+            "openExternal",
+            (granted: boolean) => resume(Effect.succeed(granted)),
+            { externalURL },
+          );
+        });
+
+      showMessageBox.mockReset();
+      showMessageBox.mockReturnValueOnce(0).mockReturnValueOnce(1);
+      assert.isTrue(yield* request("slack://open?team=T1"));
+      assert.isFalse(yield* request("zoommtg://zoom.us/join"));
+      assert.strictEqual(showMessageBox.mock.calls.length, 2);
+
+      for (const url of ["file:///etc/passwd", "javascript:alert(1)", "data:text/html,x"]) {
+        assert.isFalse(yield* request(url), `${url} must never open externally`);
+      }
+      assert.strictEqual(showMessageBox.mock.calls.length, 2);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  // A prompt without an owner can open behind the app window, leaving the one
+  // prompt slot taken and every later link silently denied.
+  it.effect("attaches the open-externally prompt to the window hosting the preview", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-a");
+      yield* browserSessions.getSession("scope-a");
+      const requestHandler =
+        sessions.get(partition)?.setPermissionRequestHandler.mock.calls[0]?.[0];
+      assert.isFunction(requestHandler);
+
+      const hostWindow = { id: 7 } as unknown as Electron.BrowserWindow;
+      const host = { isDestroyed: () => false };
+      const guest = { isDestroyed: () => false, hostWebContents: host };
+      fromWebContents.mockImplementation((webContents) =>
+        webContents === host ? hostWindow : null,
+      );
+      showMessageBox.mockReset();
+      showMessageBox.mockReturnValueOnce(1);
+
+      yield* Effect.callback<boolean>((resume) => {
+        requestHandler(
+          guest,
+          "openExternal",
+          (granted: boolean) => resume(Effect.succeed(granted)),
+          {
+            externalURL: "slack://open?team=T1",
+          },
+        );
+      });
+
+      assert.strictEqual(showMessageBox.mock.calls[0]?.[1], hostWindow);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("preserves partition scope and the platform failure chain", () => {
     const nativeCause = new Error("native digest failed");
     const platformCause = PlatformError.systemError({
@@ -159,7 +285,7 @@ describe("BrowserSession", () => {
       method: "digest",
       cause: nativeCause,
     });
-    const failingCryptoLayer = Layer.succeed(
+    const layerFailingCrypto = Layer.succeed(
       Crypto.Crypto,
       Crypto.make({
         randomBytes: (size) => new Uint8Array(size),
@@ -180,7 +306,11 @@ describe("BrowserSession", () => {
         "Failed to derive a desktop preview browser partition for scope environment-a.",
       );
       assert.notInclude(error.message, nativeCause.message);
-    }).pipe(Effect.provide(BrowserSession.layer.pipe(Layer.provide(failingCryptoLayer))));
+    }).pipe(
+      Effect.provide(
+        BrowserSession.layer.pipe(Layer.provide(Layer.merge(layerFailingCrypto, layerDialog))),
+      ),
+    );
   });
 
   it.effect("preserves session scope, partition, and the Electron failure", () =>

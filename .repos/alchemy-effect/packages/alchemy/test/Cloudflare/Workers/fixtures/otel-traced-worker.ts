@@ -3,8 +3,8 @@ import * as Telemetry from "@/Telemetry.ts";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 /**
  * Effect-native Worker exercising the built-in `Telemetry.layerOtlp` binding
@@ -40,7 +40,7 @@ export default class OtelTracedWorker extends Cloudflare.Worker<OtelTracedWorker
         // polls this route until it reports 200 before asserting on
         // exported telemetry.
         if (url.pathname === "/probe") {
-          const endpoint = yield* Config.string("COLLECTOR_URL").pipe(
+          const endpoint = yield* Config.String("COLLECTOR_URL").pipe(
             Effect.orDie,
           );
           const result = yield* Effect.tryPromise(() =>
@@ -71,7 +71,7 @@ export default class OtelTracedWorker extends Cloudflare.Worker<OtelTracedWorker
     Effect.provide(
       Layer.unwrap(
         Effect.gen(function* () {
-          const url = yield* Config.string("COLLECTOR_URL");
+          const url = yield* Config.String("COLLECTOR_URL");
           return Layer.mergeAll(
             Telemetry.layerOtlp({ url, serviceName: "otel-traced-test" }),
             Telemetry.layerOtlp({ traces: { url: `${url}/v1/second-traces` } }),

@@ -155,7 +155,7 @@ export const ensureMySQLProductionBranchClusterSize = Effect.fn(function* (
     }
 
     const resize = yield* ps
-      .createKeyspaceResizeRequest({
+      .updateKeyspaceResizeRequest({
         organization,
         database,
         branch,

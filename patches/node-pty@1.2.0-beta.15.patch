@@ -1,0 +1,35 @@
+diff --git a/lib/windowsConoutConnection.js b/lib/windowsConoutConnection.js
+--- a/lib/windowsConoutConnection.js
++++ b/lib/windowsConoutConnection.js
+@@ -63,7 +63,11 @@
+             conoutPipeName: _conoutPipeName
+         };
+         var scriptPath = __dirname.replace('node_modules.asar', 'node_modules.asar.unpacked');
+-        this._worker = new worker_threads_1.Worker((0, path_1.join)(scriptPath, 'worker/conoutSocketWorker.js'), { workerData: workerData });
++        // Node's watch mode reports dependencies through worker messages.
++        // Keep the host's watch environment out of this protocol worker.
++        var workerEnv = Object.assign({}, process.env);
++        delete workerEnv.WATCH_REPORT_DEPENDENCIES;
++        this._worker = new worker_threads_1.Worker((0, path_1.join)(scriptPath, 'worker/conoutSocketWorker.js'), { workerData: workerData, env: workerEnv, execArgv: [] });
+         this._worker.on('message', function (message) {
+             switch (message) {
+                 case 1 /* ConoutWorkerMessage.READY */:
+diff --git a/lib/windowsPtyAgent.js b/lib/windowsPtyAgent.js
+--- a/lib/windowsPtyAgent.js
++++ b/lib/windowsPtyAgent.js
+@@ -218,8 +218,14 @@
+             return Promise.resolve([]);
+         }
+         return new Promise(function (resolve) {
+-            var agent = (0, child_process_1.fork)(path.join(__dirname, 'conpty_console_list_agent'), [_this._innerPid.toString()]);
++            // Node's watch mode sends its own messages over the helper's IPC channel.
++            var agentEnv = Object.assign({}, process.env);
++            delete agentEnv.WATCH_REPORT_DEPENDENCIES;
++            var agent = (0, child_process_1.fork)(path.join(__dirname, 'conpty_console_list_agent'), [_this._innerPid.toString()], { env: agentEnv, execArgv: [] });
+             agent.on('message', function (message) {
++                if (!Array.isArray(message.consoleProcessList)) {
++                    return;
++                }
+                 clearTimeout(timeout);
+                 resolve(message.consoleProcessList);
+             });

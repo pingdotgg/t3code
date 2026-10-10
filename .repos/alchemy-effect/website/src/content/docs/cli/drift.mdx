@@ -1,0 +1,49 @@
+---
+title: drift
+description: Detect infrastructure drift by re-observing the cloud, and optionally repair it back to the last deployed state.
+---
+
+```sh
+alchemy drift [options]
+```
+
+Re-observe every deployed resource and compare the live cloud state
+against what alchemy last persisted. The result renders exactly like a
+deploy plan: unchanged resources are no-ops, out-of-band edits show as
+**drifted**, and resources deleted behind alchemy's back show as
+**missing**.
+
+By default, `drift` only reports changes. Pass `--repair` to restore drifted
+and missing resources to the last deployed state. Alchemy shows the plan and
+asks for approval unless you pass `--yes`. It reads the cloud state again
+before applying the repair.
+
+## Flags
+
+| Option              | Description                                                        |
+| ------------------- | ------------------------------------------------------------------ |
+| `--repair`          | Repair detected drift after showing and confirming the plan        |
+| `--stage <name>`    | Stage to check (defaults to `$ALCHEMY_STAGE` or `live_$USER`)       |
+| `--yes`             | Skip the repair confirmation prompt                                |
+| `--profile <name>`  | Auth profile to use (defaults to `$ALCHEMY_PROFILE` or `default`) |
+| `--env-file <path>` | Load environment variables from a file                             |
+| `--config, -c <file>` | Stack file to check (defaults to `alchemy.run.ts`)               |
+
+## Examples
+
+```sh
+# Report drift for the default stage
+alchemy drift
+
+# Check production
+alchemy drift --stage prod
+
+# Repair drift without an interactive prompt (e.g. a scheduled job)
+alchemy drift --stage prod --repair --yes
+```
+
+## Where next
+
+- [plan](/cli/plan) previews desired-state changes instead of drift
+- [Resource Lifecycle](/infrastructure-as-code/resource-lifecycle) explains how reconcile updates observed state
+- [Inspecting State](/cli/inspecting-state) explains how to inspect Alchemy's deployment record

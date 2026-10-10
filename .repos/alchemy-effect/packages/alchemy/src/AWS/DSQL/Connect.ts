@@ -1,4 +1,4 @@
-import type { CredentialsError } from "@distilled.cloud/aws/Credentials";
+import type { PresignError } from "@distilled.cloud/aws/Presign";
 import type * as Effect from "effect/Effect";
 import * as Binding from "../../Binding.ts";
 import type { RuntimeContext } from "../../RuntimeContext.ts";
@@ -86,7 +86,7 @@ export interface Connect extends Binding.Service<
     cluster: Cluster,
     options?: ConnectOptions,
   ) => Effect.Effect<
-    Effect.Effect<SqlConnectionInfo, CredentialsError, RuntimeContext>
+    Effect.Effect<SqlConnectionInfo, PresignError, RuntimeContext>
   >
 > {}
 export const Connect = Binding.Service<Connect>("AWS.DSQL.Connect");

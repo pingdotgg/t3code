@@ -17,9 +17,20 @@ shutdown, but a supervisor created after its cleanup runs would escape it. A clo
 parent scope also closes late arrivals, preventing interrupted startup or runtime
 replacement from leaving a WebSocket alive outside the new registry.
 
-The [Uniwind patch](../../patches/uniwind@1.11.0.patch) still compiles CSS on Metro
-updates so newly used classes are discovered. It skips global style invalidation
-only when the generated stylesheet and theme list are unchanged. Skipping compilation
-would lose new classes; invalidating every consumer for unchanged output makes an
-ordinary component edit refresh the whole app. The fingerprint is recorded only
-after initialization succeeds.
+Uniwind compiles CSS on Metro updates so newly used classes are discovered. It
+skips global style invalidation only when the generated stylesheet and theme list
+are unchanged. Skipping compilation would lose new classes; invalidating every
+consumer for unchanged output makes an ordinary component edit refresh the whole
+app. The fingerprint is recorded only after initialization succeeds.
+
+The [expo-notifications patch](../../patches/expo-notifications@57.0.15.patch) protects
+`NotificationCenterManager`'s delegates and pending responses with a lock. React runtimes can
+register and remove delegates concurrently during reloads or scene startup. Delivery snapshots
+delegates under the lock and invokes them after releasing it. Pending-response replay removes
+only the responses in its snapshot, preserving responses received during callbacks. Changes to
+this native patch require reinstalling dependencies and rebuilding the iOS app.
+The native modules under `apps/mobile/modules/` are `file:` dependencies, and pnpm
+copies those into its virtual store instead of linking them. Metro bundles the copy,
+so an edit to a module's TypeScript is invisible to a running dev client until
+`vp i` re-syncs it, while Gradle and CocoaPods compile the worktree directory
+directly. A JavaScript change that "has no effect" on device is usually this.

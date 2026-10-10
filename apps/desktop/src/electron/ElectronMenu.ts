@@ -1,5 +1,5 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -80,6 +80,7 @@ function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextM
       destructive: sourceItem.destructive === true,
       disabled: sourceItem.disabled === true,
       ...(sourceItem.separatorBefore === true ? { separatorBefore: true } : {}),
+      ...(typeof sourceItem.checked === "boolean" ? { checked: sourceItem.checked } : {}),
     };
 
     if (sourceItem.children) {
@@ -113,7 +114,7 @@ const normalizePosition = (
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   let destructiveMenuIconCache: Option.Option<Electron.NativeImage> | undefined;
 
   const getDestructiveMenuIcon = (): Option.Option<Electron.NativeImage> => {
@@ -168,6 +169,7 @@ export const make = Effect.gen(function* () {
       const itemOption: Electron.MenuItemConstructorOptions = {
         label: item.label,
         enabled: !item.disabled,
+        ...(typeof item.checked === "boolean" ? { type: "checkbox", checked: item.checked } : {}),
       };
       if (item.children && item.children.length > 0) {
         itemOption.submenu = buildTemplate(item.children, complete);
@@ -224,7 +226,7 @@ export const make = Effect.gen(function* () {
       Effect.callback<Option.Option<string>>((resume) => {
         const normalizedItems = normalizeContextMenuItems(input.items);
         if (normalizedItems.length === 0) {
-          resume(Effect.succeed(Option.none()));
+          resume(Effect.succeedNone);
           return;
         }
 

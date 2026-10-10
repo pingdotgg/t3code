@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -24,7 +24,9 @@ import {
   resolveSpawnCommand,
   resolveWindowsEnvironment,
   SpawnExecutableResolution,
+  type SpawnExecutableResolver,
   WindowsShellEnvironment,
+  withPathDirectoryListings,
   type WindowsShellEnvironmentReader,
 } from "./shell.ts";
 
@@ -340,7 +342,7 @@ effectIt.layer(NodeServices.layer)("isCommandAvailable", (it) => {
       expect(
         yield* isCommandAvailable("definitely-not-installed", {
           env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
-        }).pipe(Effect.provideService(HostProcessPlatform, "win32")),
+        }).pipe(Effect.provideService(HostProcess.Platform, "win32")),
       ).toBe(false);
     }),
   );
@@ -351,7 +353,7 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
     Effect.gen(function* () {
       const result = yield* resolveCommandPath("definitely-not-installed", {
         env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
-      }).pipe(Effect.provideService(HostProcessPlatform, "win32"), Effect.result);
+      }).pipe(Effect.provideService(HostProcess.Platform, "win32"), Effect.result);
 
       expect(result._tag).toBe("Failure");
     }),
@@ -365,7 +367,7 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
     Effect.gen(function* () {
       const probed: Array<string> = [];
       const result = yield* resolveCommandPath("definitely-not-installed", { env }).pipe(
-        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(HostProcess.Platform, "win32"),
         Effect.provideService(CommandResolutionCache, new Map()),
         Effect.provide(
           FileSystem.layerNoop({
@@ -423,7 +425,7 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
         const resolved = yield* resolveCommandPath(command, {
           env: { PATH: cwd, PATHEXT: ".CMD" },
         }).pipe(
-          Effect.provideService(HostProcessPlatform, "win32"),
+          Effect.provideService(HostProcess.Platform, "win32"),
           Effect.provideService(CommandResolutionCache, new Map()),
           Effect.provideService(FileSystem.FileSystem, {
             ...fs,
@@ -456,7 +458,7 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       yield* TestClock.adjust("30 seconds");
       expect(yield* resolveCommandPath("appeared", options)).toBe(executable);
     }).pipe(
-      Effect.provideService(HostProcessPlatform, "win32"),
+      Effect.provideService(HostProcess.Platform, "win32"),
       Effect.provideService(CommandResolutionCache, new Map()),
     ),
   );
@@ -473,6 +475,40 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       expect(probed.filter((filePath) => /\.(com|exe|bat|cmd)$/.test(filePath))).toHaveLength(4);
     }),
   );
+
+  it.effect("probes only listed PATH names and relists a directory that changes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const first = yield* fs.makeTempDirectoryScoped();
+      const second = yield* fs.makeTempDirectoryScoped();
+      yield* fs.writeFileString(path.join(first, "cursor.CMD"), "");
+      yield* fs.writeFileString(path.join(second, "cursor.EXE"), "");
+      const env = { PATH: `${first};${second}`, PATHEXT: ".EXE;.CMD" };
+      const probed: Array<string> = [];
+      yield* Effect.gen(function* () {
+        expect(yield* resolveCommandPath("cursor", { env })).toBe(path.join(first, "cursor.CMD"));
+        expect(yield* isCommandAvailable("absent", { env })).toBe(false);
+        yield* fs.writeFileString(path.join(second, "late.EXE"), "");
+        yield* fs.utimes(second, 4_102_444_800, 4_102_444_800); // seconds: 2100-01-01
+        expect(yield* resolveCommandPath("late", { env })).toBe(path.join(second, "late.EXE"));
+      }).pipe(
+        withPathDirectoryListings,
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          stat: (file) => {
+            // Record candidate probes, not the per-lookup directory mtime checks.
+            if (file !== first && file !== second) probed.push(file);
+            return fs.stat(file);
+          },
+        }),
+      );
+      expect(probed).toEqual([path.join(first, "cursor.CMD"), path.join(second, "late.EXE")]);
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provideService(CommandResolutionCache, new Map()),
+    ),
+  );
 });
 
 effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
@@ -480,7 +516,10 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
     Effect.gen(function* () {
       const command = yield* resolveSpawnCommand("node.exe", ["script.js", "hello & goodbye"], {
         env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
-      }).pipe(Effect.provideService(HostProcessPlatform, "win32"));
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(CommandResolutionCache, new Map()),
+      );
 
       expect(command).toEqual({
         command: "node.exe",
@@ -497,7 +536,8 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
         ["run", "value & calc", "%PATH%", 'quote"value'],
         { env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" } },
       ).pipe(
-        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(CommandResolutionCache, new Map()),
         Effect.provideService(
           SpawnExecutableResolution,
           () => "C:\\Program Files\\npm & tools\\vp.cmd",
@@ -523,8 +563,9 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
         env: { CODEX_HOME: "C:\\Users\\tester\\.codex" },
         extendEnv: true,
       }).pipe(
-        Effect.provideService(HostProcessPlatform, "win32"),
-        Effect.provideService(HostProcessEnvironment, {
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(CommandResolutionCache, new Map()),
+        Effect.provideService(HostProcess.Environment, {
           PATH: "C:\\Users\\tester\\AppData\\Roaming\\npm",
           PATHEXT: ".COM;.EXE;.BAT;.CMD",
         }),
@@ -542,11 +583,58 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
     }),
   );
 
+  it.effect("scans PATH once per command until the search environment changes", () =>
+    Effect.gen(function* () {
+      const scans: Array<string> = [];
+      const scan: SpawnExecutableResolver = (name, _platform, env) => {
+        scans.push(`${name}@${env.PATH}`);
+        return name === "missing" ? undefined : `${env.PATH}\\${name}.exe`;
+      };
+      const resolve = (command: string, path: string, resolver = scan) =>
+        resolveSpawnCommand(command, [], { env: { PATH: path, PATHEXT: ".EXE" } }).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(SpawnExecutableResolution, resolver),
+        );
+
+      expect((yield* resolve("git", "C:\\one")).command).toBe("C:\\one\\git.exe");
+      expect((yield* resolve("git", "C:\\one")).command).toBe("C:\\one\\git.exe");
+      // A failed spawn is how a provider reports "not installed", so a miss
+      // must clear the moment the binary appears.
+      yield* resolve("missing", "C:\\one");
+      yield* resolve("missing", "C:\\one");
+      expect((yield* resolve("git", "C:\\two")).command).toBe("C:\\two\\git.exe");
+      // Callers probe explicit paths they may have just written.
+      yield* resolve("C:\\tools\\git.exe", "C:\\one");
+      yield* resolve("C:\\tools\\git.exe", "C:\\one");
+      expect(scans).toEqual([
+        "git@C:\\one",
+        "missing@C:\\one",
+        "missing@C:\\one",
+        "git@C:\\two",
+        "C:\\tools\\git.exe@C:\\one",
+        "C:\\tools\\git.exe@C:\\one",
+      ]);
+
+      yield* TestClock.adjust("31 seconds");
+      yield* resolve("git", "C:\\one");
+      expect(scans).toHaveLength(7);
+
+      // Another resolver sharing the cache gets its own answer, not the cached one.
+      const elsewhere = yield* resolve("git", "C:\\one", () => "D:\\elsewhere\\git.exe");
+      expect(elsewhere.command).toBe("D:\\elsewhere\\git.exe");
+      expect((yield* resolve("git", "C:\\one")).command).toBe("C:\\one\\git.exe");
+      expect(scans).toHaveLength(7);
+    }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
+  );
+
   it.effect("does not fall back to a shell for unresolved Windows commands", () =>
     Effect.gen(function* () {
       const command = yield* resolveSpawnCommand("missing & calc", ["unsafe & value"], {
         env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
-      }).pipe(Effect.provideService(HostProcessPlatform, "win32"));
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(CommandResolutionCache, new Map()),
+      );
 
       expect(command).toEqual({
         command: "missing & calc",

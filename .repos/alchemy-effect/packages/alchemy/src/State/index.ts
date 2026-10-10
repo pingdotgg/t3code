@@ -12,3 +12,4 @@ export * from "./State.ts";
 export * from "./ActionState.ts";
 export * from "./StateEncoding.ts";
 export * from "./Sync.ts";
+export * from "./Tree.ts";

@@ -12,7 +12,7 @@ messages between peers, and **survives hibernation**.
 
 Cloudflare can evict an idle Durable Object from memory while
 keeping its WebSocket connections open. When a message arrives the
-DO is reconstructed from scratch, your init Effect runs again, and
+DO is reconstructed from scratch, your constructor Effect runs again, and
 your `webSocketMessage` handler is invoked. Any per-instance state
 you held in JavaScript variables is gone — you have to put it back.
 
@@ -81,7 +81,7 @@ export default class Room extends Cloudflare.DurableObject<Room>()(
 ) {}
 ```
 
-`socket.serializeAttachment({ id })` persists a JSON-safe value
+`socket.serializeAttachment({ id })` persists a structured-cloneable value
 **alongside the socket itself**. Cloudflare keeps it across
 hibernation, so when the DO wakes back up the socket still
 remembers which session it belongs to. We'll need that in the next
@@ -144,8 +144,21 @@ return {
 +    if (attachment) sessions.delete(attachment.id);
 +    yield* ws.close(code, reason);
 +  }),
++  webSocketError: Effect.fn(function* (
++    ws: Cloudflare.WebSocket,
++    error: unknown,
++  ) {
++    // Cloudflare closes an errored socket after this handler runs; only
++    // the session bookkeeping is ours to clean up.
++    const attachment = ws.deserializeAttachment<{ id: string }>();
++    if (attachment) sessions.delete(attachment.id);
++  }),
 };
 ```
+
+`webSocketError` fires when the connection fails instead of closing
+cleanly (a network reset, a protocol error). The runtime closes the
+socket afterwards, so the handler only has to drop the peer's state.
 
 ## Restore sessions after hibernation
 
@@ -156,7 +169,7 @@ your `sessions` map starts empty — but the open sockets are still
 there.
 
 Resolve `Cloudflare.DurableObjectState` in the **outer** Effect,
-then rehydrate the map at the top of the inner init by reading
+then rehydrate the map at the top of the inner constructor by reading
 every attached socket back from the runtime:
 
 ```diff lang="typescript"
@@ -185,13 +198,100 @@ current instance, and `deserializeAttachment` recovers the
 first message after hibernation would broadcast to nobody.
 
 :::note
-The `state` *reference* is resolved in the outer (init) Effect, but
+The `state` *reference* is resolved in the outer (Construction) Effect, but
 `state.getWebSockets()` is
-[colored with `RuntimeContext`](/infrastructure-as-effects/layers#runtime-as-a-colored-function),
+[colored with `RuntimeContext`](/infrastructure-as-effects/layers#the-types-hold-the-boundary),
 so it can only run in the inner (runtime) Effect — which is exactly
 where it needs to be, since it must re-run every time Cloudflare
 reconstructs the instance after hibernation.
 :::
+
+## Define the session data
+
+You can save session data on a WebSocket and validate it when reading it
+back—even after the Durable Object wakes from hibernation. First, define
+what a valid session contains:
+
+```typescript
+import * as Schema from "effect/Schema";
+
+const Session = Schema.Struct({
+  id: Schema.String,
+  joinedAt: Schema.DateFromString,
+});
+```
+
+`id` is a string. `joinedAt` is a `Date` in your code; this schema converts
+it to a string for storage and back to a `Date` when you read it.
+
+## Save session data on a socket
+
+Replace the `serializeAttachment` call in `fetch` with:
+
+```typescript
+const joinedAt = yield* Effect.sync(() => new Date());
+yield* socket.setAttachment(Session, { id, joinedAt });
+```
+
+This saves the session on this connection, so it survives hibernation.
+Cloudflare must be able to serialize the stored value, and the serialized
+attachment must fit within 16,384 bytes, including serialization overhead.
+
+## Read the session back
+
+```typescript
+const session = yield* socket.getAttachment(Session);
+
+session.id;       // string
+session.joinedAt; // Date
+```
+
+`getAttachment` checks the saved data against `Session`. Missing or invalid
+data fails with `WebSocketAttachmentError` instead of returning an invalid
+session. The existing `serializeAttachment` and `deserializeAttachment`
+methods remain available if you do not want schema validation.
+
+## Validate attachments after hibernation
+
+Use `getAttachment` in the restoration loop to validate surviving sockets:
+
+```typescript
+for (const socket of yield* state.getWebSockets()) {
+  yield* socket.getAttachment(Session).pipe(
+    Effect.tap((session) =>
+      Effect.sync(() => sessions.set(session.id, socket)),
+    ),
+    Effect.catchTag("WebSocketAttachmentError", () =>
+      socket.close(1008, "Invalid session"),
+    ),
+  );
+}
+```
+
+This example closes connections whose sessions are missing or invalid,
+including older sessions without `joinedAt`. Your code chooses this behavior;
+`getAttachment` does not close the connection for you.
+
+For diagnostics, `WebSocketAttachmentError.reason` identifies `encode`,
+`decode`, `missing`, `read`, or `write`; `cause` contains the original error.
+A stored `null` or `undefined` counts as missing.
+
+## Choose an attachment error policy
+
+A handler can instead ignore an invalid attachment:
+
+```typescript
+const session = yield* socket.getAttachment(Session).pipe(
+  Effect.catchTag("WebSocketAttachmentError", () =>
+    Effect.succeed(undefined),
+  ),
+);
+if (session === undefined) return;
+```
+
+Omit `catchTag` to propagate the typed failure, or handle it at your normal
+Effect boundary. These helpers are for application-owned attachments, not
+the internal serializer metadata of WebSocket RPC connections.
 
 ## Extract a broadcast helper
 
@@ -250,8 +350,8 @@ to the matching DO instance:
 // src/worker.ts
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
-+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
++import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 +import Room from "./room.ts";
 
 export default Cloudflare.Worker(
@@ -314,7 +414,7 @@ import { expect } from "bun:test";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
-import * as Socket from "effect/unstable/socket/Socket";
+import * as Socket from "effect/socket/Socket";
 import Stack from "../alchemy.run.ts";
 
 const { test, beforeAll, deploy } = Test.make({
@@ -475,16 +575,34 @@ Alice's `"hello bob"` arrives at the Room as a `webSocketMessage`,
 the broadcast loop sends `"[<alice-id>] hello bob"` to every peer,
 and Bob's `next` resolves with it from the queue.
 
-## Schedule a future broadcast (alarms)
+## Register a reminder callback
 
 Durable Objects have **alarms** — single-shot timers backed by the
-DO's storage. Alchemy ships a small SQLite-backed scheduler on top
-so you can register many named events instead of juggling a single
-alarm timestamp yourself. We'll use it to add a
-`/remind <seconds> <message>` chat command.
+DO's storage. `Alchemy.makeCallback` uses SQLite and native alarms to
+persist typed jobs across hibernation. Register a reminder handler in
+the inner Effect, after restoring sessions and defining `broadcast`:
 
-First, recognise the command inside `webSocketMessage` and schedule
-the event:
+```diff lang="typescript"
+// src/room.ts
++import * as Alchemy from "alchemy";
+
+// Inside the inner Effect, after defining broadcast:
++const onReminder = yield* Alchemy.makeCallback(
++  "reminder",
++  Effect.fn(function* (payload: { message: string }) {
++    yield* broadcast(`[reminder] ${payload.message}`);
++  }),
++);
+```
+
+The inner Effect registers this handler again after each hibernation.
+Alchemy invokes it when a persisted job is due, so this example does
+not need a custom `alarm` handler.
+
+## Schedule a future broadcast (alarms)
+
+Recognise `/remind <seconds> <message>` inside `webSocketMessage`
+and schedule a job using the callback handle:
 
 ```diff lang="typescript"
 webSocketMessage: Effect.fn(function* (socket, message) {
@@ -498,9 +616,11 @@ webSocketMessage: Effect.fn(function* (socket, message) {
 +  if (remindMatch) {
 +    const delaySec = parseInt(remindMatch[1], 10);
 +    const reminder = remindMatch[2];
-+    const id = crypto.randomUUID();
-+    const runAt = new Date(Date.now() + delaySec * 1000);
-+    yield* Cloudflare.Workers.scheduleEvent(id, runAt, { message: reminder });
++    const id = yield* Effect.sync(() => crypto.randomUUID());
++    yield* onReminder.schedule(id, {
++      after: `${delaySec} seconds`,
++      payload: { message: reminder },
++    });
 +    yield* socket.send(`[system] Reminder scheduled in ${delaySec}s`);
 +    return;
 +  }
@@ -509,36 +629,28 @@ webSocketMessage: Effect.fn(function* (socket, message) {
 }),
 ```
 
-`scheduleEvent` upserts a row into a DO-local SQLite table and
-sets the DO alarm to the earliest pending timestamp. The `id` is
-the upsert key, so reusing it overwrites the previous schedule.
+Each random ID creates an independent reminder in this Room. Reusing
+an ID would replace its pending reminder; `onReminder.cancel(id)`
+cancels it. The payload is typed by the registered handler.
 
-Now add an `alarm` handler to drain fired events:
+:::caution[Broadcasts can repeat]
+Callback delivery is at least once. If a broadcast reaches some peers
+and then fails, a retry can send the reminder again. For deduplicated
+messages, include a stable message ID and have clients ignore IDs they
+have already received. This example delivers to the peers connected
+when it runs; it does not queue messages for disconnected users.
+:::
 
-```diff lang="typescript"
-return {
-  fetch: /* ... */,
-  webSocketMessage: /* ... */,
-  webSocketClose: /* ... */,
-+  alarm: () =>
-+    Effect.gen(function* () {
-+      const fired = yield* Cloudflare.Workers.processScheduledEvents;
-+      for (const event of fired) {
-+        const payload = event.payload as { message: string };
-+        yield* broadcast(`[reminder] ${payload.message}`);
-+      }
-+    }),
-  broadcast,
-};
-```
+If you previously deployed this tutorial using `scheduleEvent`, keep
+your existing `alarm` handler and `processScheduledEvents` call until
+those jobs drain. Old rows are preserved, not converted to callbacks.
+See [upgrading existing schedules](/cloudflare/compute/durable-objects#upgrade-existing-schedules)
+and the [native alarm retry limitation](/cloudflare/compute/durable-objects#retry-failed-callbacks).
 
-`processScheduledEvents` returns every event whose `runAt <= now`,
-deletes the one-shot ones (or re-schedules repeating ones), and
-re-sets the alarm to the next pending event. All you do is loop
-over the returned events and act on them.
+## Verify the reminder
 
-Verify it with a test that sends `/remind 1 hello` and waits up to
-5 seconds for the broadcast to arrive:
+Add a test that sends `/remind 1 hello` and waits for the callback's
+broadcast:
 
 ```typescript
 // test/integ.test.ts (additions)

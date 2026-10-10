@@ -1,6 +1,7 @@
 import { HStack, Image, Spacer, Text, VStack, ZStack } from "@expo/ui/swift-ui";
 import type { ComponentProps } from "react";
 import {
+  activityBackgroundTint,
   font,
   foregroundStyle,
   frame,
@@ -56,14 +57,13 @@ export function AgentActivity(
 ): LiveActivityLayout {
   "widget";
 
-  // Use SwiftUI's semantic label colors rather than fixed hex keyed off the
-  // device color scheme. A Live Activity banner always renders over a dark
-  // system material regardless of the device's light/dark setting, so
-  // scheme-derived dark text read as unreadable dark-on-dark on the lock
-  // screen. Semantic colors adapt to whatever material the OS places them on:
-  // the dark LA banner and the (light or dark) home-screen widget alike.
-  const primaryForeground = "primary";
-  const secondaryForeground = "secondary";
+  // Hierarchical styles inherit the system's foreground treatment, including
+  // tinted and vibrant presentations, rather than resolving to a label color.
+  type Foreground = Parameters<typeof foregroundStyle>[0];
+  const primaryForeground = { type: "hierarchical", style: "primary" } as const;
+  const secondaryForeground = { type: "hierarchical", style: "secondary" } as const;
+  const monochrome =
+    environment.widgetRenderingMode === "accented" || environment.widgetRenderingMode === "vibrant";
 
   // Status tints mirror the web sidebar's pills
   // (apps/web/src/components/Sidebar.logic.ts resolveThreadStatusPill): amber
@@ -72,9 +72,12 @@ export function AgentActivity(
   // Mac notification center) renders it on a light one — so pick the web
   // palette's light (-600) or dark (-300) variant off the color scheme.
   const isLightScheme = environment.colorScheme === "light";
-  const phaseTint = (phase: AgentActivityPhase | undefined): string => {
+  const phaseTint = (phase: AgentActivityPhase | undefined): Foreground => {
     if (environment.isLuminanceReduced) {
       return secondaryForeground;
+    }
+    if (monochrome) {
+      return primaryForeground;
     }
     switch (phase) {
       case "waiting_for_approval":
@@ -85,6 +88,8 @@ export function AgentActivity(
         return isLightScheme ? "#dc2626" : "#fca5a5"; // red-600 / red-300
       case "completed":
         return isLightScheme ? "#059669" : "#6ee7b7"; // emerald-600 / emerald-300
+      case "stale":
+        return secondaryForeground;
       case "starting":
       case "running":
       default:
@@ -100,20 +105,28 @@ export function AgentActivity(
     if (phase === "running" || phase === "starting") return 2;
     return 3;
   };
-  const ordered = [...props.activities].sort(
-    (a, b) => phasePriority(a.phase) - phasePriority(b.phase),
-  );
+  // Past the stale date the system stops vouching for the content, so every
+  // in-flight row degrades to "stale" rather than claiming an agent is still
+  // working. Terminal phases keep their own state.
+  const activities: ReadonlyArray<AgentActivityRowProps> = environment.isStale
+    ? props.activities.map((row) =>
+        row.phase === "completed" || row.phase === "failed"
+          ? row
+          : { ...row, phase: "stale", status: "Out of date" },
+      )
+    : props.activities;
+  const ordered = [...activities].sort((a, b) => phasePriority(a.phase) - phasePriority(b.phase));
   const row0 = ordered[0];
   const row1 = ordered[1];
   const row2 = ordered[2];
   const row3 = ordered[3];
   const row4 = ordered[4];
 
-  const attentionRows = props.activities.filter(
+  const attentionRows = activities.filter(
     (row) => row.phase === "waiting_for_approval" || row.phase === "waiting_for_input",
   );
   const attentionRow = attentionRows[0];
-  const failedRow = props.activities.find((row) => row.phase === "failed");
+  const failedRow = activities.find((row) => row.phase === "failed");
   const heroRow = attentionRow ?? failedRow ?? row0;
   const tint = phaseTint(heroRow?.phase);
   // Headline count leans on the accent when a human is actually blocked.
@@ -138,12 +151,20 @@ export function AgentActivity(
   // the two parts in-line so the attention half can carry the accent color;
   // `summary` is the short form for tight spots (expanded center, watch card).
   const agentWord = props.activeCount === 1 ? "agent" : "agents";
-  const agentsLabel = allDone ? outcomeLabel : `${props.activeCount} active ${agentWord}`;
+  const agentsLabel = allDone
+    ? outcomeLabel
+    : environment.isStale
+      ? "Agent status out of date"
+      : `${props.activeCount} active ${agentWord}`;
   const attentionSuffix =
     attentionRows.length > 0
       ? `${attentionRows.length} need${attentionRows.length === 1 ? "s" : ""} attention`
       : "";
-  const activeLabel = allDone ? doneLabel : `${props.activeCount} active`;
+  const activeLabel = allDone
+    ? doneLabel
+    : environment.isStale
+      ? "Out of date"
+      : `${props.activeCount} active`;
   const summary = attentionSuffix || activeLabel;
 
   // Any registered scheme variant routes back to this app; taps are delivered
@@ -179,7 +200,7 @@ export function AgentActivity(
 
   // SF Symbols, like the logo, ignore frame/foregroundStyle applied directly to
   // the image; size + tint them through a container the resizable symbol fills.
-  const renderGlyph = (systemName: SFName, size: number, color: string) => (
+  const renderGlyph = (systemName: SFName, size: number, color: Foreground) => (
     <HStack modifiers={[frame({ width: size, height: size }), foregroundStyle(color)]}>
       <Image systemName={systemName} modifiers={[resizable()]} />
     </HStack>
@@ -229,7 +250,7 @@ export function AgentActivity(
   // frame the resizable image fills and tint it through the container's
   // foreground style, which the template image inherits. The 3:2 frame matches
   // the glyph's aspect ratio so it never distorts.
-  const renderLogo = (height: number, color: string) => (
+  const renderLogo = (height: number, color: Foreground) => (
     <HStack modifiers={[frame({ width: height * 1.5, height }), foregroundStyle(color)]}>
       <Image assetName="T3Mark" modifiers={[resizable()]} />
     </HStack>
@@ -240,7 +261,12 @@ export function AgentActivity(
       <VStack
         alignment="leading"
         spacing={6}
-        modifiers={deepLink ? [padding({ all: 14 }), widgetURL(deepLink)] : [padding({ all: 14 })]}
+        modifiers={[
+          padding({ all: 14 }),
+          // A clear tint reveals iOS 26's glass material; older hosts keep the standard surface.
+          activityBackgroundTint(environment.isLiquidGlassAvailable ? "clear" : null),
+          ...(deepLink ? [widgetURL(deepLink)] : []),
+        ]}
       >
         {/* Logo pinned to the leading edge; the status texts centered across the
             full width (ZStack so the logo doesn't skew the centering). No footer —

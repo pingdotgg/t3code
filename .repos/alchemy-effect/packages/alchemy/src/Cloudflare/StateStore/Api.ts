@@ -1,12 +1,13 @@
+import { DEFAULT_COMPATIBILITY_DATE } from "@alchemy.run/cloudflare-runtime/core/internal/constants";
 import { Redacted } from "effect";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Etag from "effect/unstable/http/Etag";
-import * as HttpPlatform from "effect/unstable/http/HttpPlatform";
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import * as HttpApiError from "effect/unstable/httpapi/HttpApiError";
+import * as Etag from "effect/http/Etag";
+import * as HttpPlatform from "effect/http/HttpPlatform";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import * as HttpApiError from "effect/http-api/HttpApiError";
 import crypto from "node:crypto";
 import { RuntimeContext } from "../../RuntimeContext.ts";
 import {
@@ -105,8 +106,7 @@ export default Worker(
     main: import.meta.url,
     workersDev: true,
     compatibility: {
-      flags: ["nodejs_compat"],
-      date: "2026-03-17",
+      date: DEFAULT_COMPATIBILITY_DATE,
     },
   },
   Effect.gen(function* () {

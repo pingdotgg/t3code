@@ -15,10 +15,20 @@
  * process at a time, wiring the selected source stream (`stdout`, `stderr`,
  * `all`, or `fdN`) to the destination `stdin` or `fdN`.
  *
+ * Scoped release and `kill` wait for the signalled process group. Without
+ * `forceKillAfter`, the wait is limited to one second and never escalates.
+ * With it, cleanup may take the configured duration plus a final one-second
+ * wait after `SIGKILL`. Zombie descendants can consume either full bound. On
+ * Windows, `taskkill` terminates the tree and only the leader's exit is awaited.
+ *
+ * POSIX cleanup targets a numeric process-group ID. If the group disappears
+ * and its ID is reused before cleanup, an unrelated group may be signalled.
+ *
  * @since 4.0.0
  */
 import type * as Arr from "effect/Array"
 import * as Deferred from "effect/Deferred"
+import * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import * as FileSystem from "effect/FileSystem"
@@ -26,18 +36,18 @@ import * as Layer from "effect/Layer"
 import * as Path from "effect/Path"
 import type * as PlatformError from "effect/PlatformError"
 import * as Predicate from "effect/Predicate"
-import type * as Scope from "effect/Scope"
-import * as Sink from "effect/Sink"
-import * as Stream from "effect/Stream"
-import * as ChildProcess from "effect/unstable/process/ChildProcess"
-import type { ChildProcessHandle } from "effect/unstable/process/ChildProcessSpawner"
+import * as ChildProcess from "effect/process/ChildProcess"
+import type { ChildProcessHandle } from "effect/process/ChildProcessSpawner"
 import {
   ChildProcessSpawner,
   ExitCode,
   make as makeSpawner,
   makeHandle,
   ProcessId
-} from "effect/unstable/process/ChildProcessSpawner"
+} from "effect/process/ChildProcessSpawner"
+import type * as Scope from "effect/Scope"
+import * as Sink from "effect/Sink"
+import * as Stream from "effect/Stream"
 import * as NodeChildProcess from "node:child_process"
 import { PassThrough } from "node:stream"
 import { buildSpawnOptions } from "./internal/nodeChildProcessSpawner.ts"
@@ -65,6 +75,25 @@ const toPlatformError = (
 
 type ExitCodeWithSignal = readonly [code: number | null, signal: NodeJS.Signals | null]
 type ExitSignal = Deferred.Deferred<ExitCodeWithSignal>
+
+const processGroupGraceMillis = 1_000
+const processGroupPollIntervalMillis = 10
+
+/** The leader has not exited, or a member of its process group still exists. */
+const isProcessAlive = (childProcess: NodeChildProcess.ChildProcess, exitSignal: ExitSignal): boolean => {
+  if (!Deferred.isDoneUnsafe(exitSignal)) {
+    return true
+  }
+  if (globalThis.process.platform === "win32") {
+    return false
+  }
+  try {
+    globalThis.process.kill(-childProcess.pid!, 0)
+    return true
+  } catch {
+    return false
+  }
+}
 
 const taskkill = (
   childProcess: NodeChildProcess.ChildProcess,
@@ -413,26 +442,56 @@ const make = Effect.gen(function*() {
       return Effect.void
     })
 
-  const withTimeout = (
+  /** Waits for the leader and its process group, bounded by native time. */
+  const awaitProcessExit = (
     childProcess: NodeChildProcess.ChildProcess,
+    exitSignal: ExitSignal,
+    timeoutMillis: number
+  ): Effect.Effect<void> =>
+    Effect.callback<void>((resume) => {
+      const deadline = Date.now() + timeoutMillis
+      let timer: NodeJS.Timeout | undefined
+      const stop = () => {
+        clearTimeout(timer)
+        childProcess.removeListener("exit", poll)
+      }
+      const poll = () => {
+        clearTimeout(timer)
+        if (Date.now() >= deadline || !isProcessAlive(childProcess, exitSignal)) {
+          stop()
+          resume(Effect.void)
+          return
+        }
+        timer = setTimeout(poll, processGroupPollIntervalMillis)
+      }
+      // spawn's exit listener completes exitSignal before this listener runs
+      childProcess.on("exit", poll)
+      poll()
+      return Effect.sync(stop)
+    })
+
+  const terminateProcessGroup = Effect.fnUntraced(function*(
     command: ChildProcess.StandardCommand,
+    childProcess: NodeChildProcess.ChildProcess,
+    exitSignal: ExitSignal,
     options: ChildProcess.KillOptions | undefined
-  ) =>
-  <A, E, R>(
-    kill: (
-      command: ChildProcess.StandardCommand,
-      childProcess: NodeChildProcess.ChildProcess,
-      signal: NodeJS.Signals
-    ) => Effect.Effect<A, E, R>
-  ) => {
-    const killSignal = options?.killSignal ?? "SIGTERM"
-    return Predicate.isUndefined(options?.forceKillAfter)
-      ? kill(command, childProcess, killSignal)
-      : Effect.timeoutOrElse(kill(command, childProcess, killSignal), {
-        duration: options.forceKillAfter,
-        orElse: () => kill(command, childProcess, "SIGKILL")
-      })
-  }
+  ) {
+    const signalGroup = (signal: NodeJS.Signals) =>
+      killProcessGroup(command, childProcess, signal).pipe(
+        Effect.catch(() => killProcess(command, childProcess, signal))
+      )
+    yield* signalGroup(options?.killSignal ?? "SIGTERM")
+    if (Predicate.isUndefined(options?.forceKillAfter)) {
+      yield* awaitProcessExit(childProcess, exitSignal, processGroupGraceMillis)
+    } else {
+      yield* awaitProcessExit(childProcess, exitSignal, Duration.toMillis(options.forceKillAfter))
+      if (isProcessAlive(childProcess, exitSignal)) {
+        yield* signalGroup("SIGKILL")
+        yield* awaitProcessExit(childProcess, exitSignal, processGroupGraceMillis)
+      }
+    }
+    yield* Deferred.await(exitSignal)
+  })
 
   /**
    * Get the appropriate source stream from a process handle based on the
@@ -485,28 +544,19 @@ const make = Effect.gen(function*() {
           spawn(cmd, buildSpawnOptions(cmd.options, { cwd, env, stdio }, process.platform)),
           Effect.fnUntraced(function*([childProcess, exitSignal]) {
             const exited = yield* Deferred.isDone(exitSignal)
-            const killWithTimeout = withTimeout(childProcess, cmd, cmd.options)
             if (exited) {
-              // Process already exited, check if children need cleanup
               const [code] = yield* Deferred.await(exitSignal)
               if (code !== 0 && Predicate.isNotNull(code)) {
-                // Non-zero exit code ,attempt to clean up process group
-                return yield* Effect.ignore(killWithTimeout(killProcessGroup))
+                yield* Effect.ignore(terminateProcessGroup(cmd, childProcess, exitSignal, cmd.options))
+              } else if (isReferenced && process.platform !== "win32" && cmd.options.detached !== false) {
+                yield* Effect.ignore(terminateProcessGroup(cmd, childProcess, exitSignal, cmd.options))
               }
-              return yield* Effect.void
+              return
             }
             if (!isReferenced) {
-              return yield* Effect.void
+              return
             }
-            // Process is still running, kill it
-            return yield* killWithTimeout((command, childProcess, signal) =>
-              killProcessGroup(command, childProcess, signal).pipe(
-                Effect.catch(() => killProcess(command, childProcess, signal)),
-                Effect.andThen(Deferred.await(exitSignal))
-              )
-            ).pipe(
-              Effect.ignore
-            )
+            yield* Effect.ignore(terminateProcessGroup(cmd, childProcess, exitSignal, cmd.options))
           })
         )
 
@@ -543,17 +593,8 @@ const make = Effect.gen(function*() {
           const error = new globalThis.Error(`Process interrupted due to receipt of signal: '${signal}'`)
           return Effect.fail(toPlatformError("exitCode", error, cmd))
         })
-        const kill = (options?: ChildProcess.KillOptions | undefined) => {
-          const killWithTimeout = withTimeout(childProcess, cmd, options)
-          return killWithTimeout((command, childProcess, signal) =>
-            killProcessGroup(command, childProcess, signal).pipe(
-              Effect.catch(() => killProcess(command, childProcess, signal)),
-              Effect.andThen(Deferred.await(exitSignal))
-            )
-          ).pipe(
-            Effect.asVoid
-          )
-        }
+        const kill = (options?: ChildProcess.KillOptions | undefined) =>
+          terminateProcessGroup(cmd, childProcess, exitSignal, options)
 
         return makeHandle({
           pid,
@@ -639,7 +680,7 @@ const make = Effect.gen(function*() {
           exitCode: handle.exitCode,
           isRunning: handle.isRunning,
           kill,
-          stdin: handle.stdin,
+          stdin: handles[0].stdin,
           stdout: handle.stdout,
           stderr: handle.stderr,
           all: handle.all,

@@ -2,6 +2,7 @@ import { NodeHttpServer } from "@effect/platform-node"
 import { assert, describe, expect, it } from "@effect/vitest"
 import {
   Array,
+  ByteSize,
   Cause,
   Context,
   DateTime,
@@ -9,6 +10,7 @@ import {
   Equal,
   FileSystem,
   Layer,
+  Option,
   Redacted,
   Ref,
   Schema,
@@ -28,7 +30,7 @@ import {
   HttpServerRequest,
   HttpServerResponse,
   Multipart
-} from "effect/unstable/http"
+} from "effect/http"
 import {
   HttpApi,
   HttpApiBuilder,
@@ -41,7 +43,7 @@ import {
   HttpApiSecurity,
   HttpApiTest,
   OpenApi
-} from "effect/unstable/httpapi"
+} from "effect/http-api"
 
 function* assertServerText(res: HttpClientResponse.HttpClientResponse, status: number, text: string) {
   assert.strictEqual(res.status, status)
@@ -706,7 +708,7 @@ describe("HttpApi", () => {
           assert.strictEqual(typeof defect, "string")
           assert.include(defect, "HttpApiGroup \"health\" not found")
           assert.include(defect, "HttpApiBuilder.group(api, \"health\", ...)")
-          assert.include(defect, "Available groups: effect/httpapi/HttpApiGroup/users")
+          assert.include(defect, "Available groups: effect/http-api/HttpApiGroup/users")
         })
       )
     ) as Effect.Effect<void, HttpClientResponse.HttpClientResponse>
@@ -1744,7 +1746,7 @@ const HttpUsersLayer = HttpApiBuilder.group(
           const stat = yield* fs.stat(_.payload.file.path).pipe(Effect.orDie)
           return {
             contentType: _.payload.file.contentType,
-            length: Number(stat.size)
+            length: Option.getOrThrow(ByteSize.toNumber(stat.size))
           }
         }))
       .handle("uploadStream", (_) =>

@@ -3,8 +3,8 @@ import * as Hetzner from "alchemy/Hetzner";
 import { desc, sql } from "drizzle-orm";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { ENSURE_NOTES_SQL, Notes } from "./schema.ts";
 import { API_PORT, Box, NeonBranch } from "./shared.ts";
 
@@ -37,7 +37,7 @@ export default class Api extends Hetzner.Service<Api>()(
   }),
   Effect.succeed({
     fetch: Effect.gen(function* () {
-      const databaseUrl = yield* Config.redacted("DATABASE_URL");
+      const databaseUrl = yield* Config.Redacted("DATABASE_URL");
       const db = yield* Drizzle.Postgres(Effect.succeed(databaseUrl));
       const request = yield* HttpServerRequest;
       const path = new URL(request.url, "http://service").pathname;

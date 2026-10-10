@@ -6,8 +6,8 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { Api, ApiLive } from "./fixtures/rpc-api.ts";
 import Caller from "./fixtures/rpc-caller.ts";
 import Greeter from "./fixtures/rpc-greeter.ts";
@@ -47,7 +47,7 @@ const getText = (url: string) =>
       ),
       Effect.retry({
         schedule: Schedule.spaced("4 seconds"),
-        times: 20,
+        times: 10,
       }),
     );
   });
@@ -101,7 +101,15 @@ test.provider.skip(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  {
+    tags: [
+      "provider:railway",
+      "provider:railway:bind",
+      "provider:railway:function",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skip(
@@ -163,5 +171,14 @@ test.provider.skip(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  {
+    tags: [
+      "provider:railway",
+      "provider:railway:bind",
+      "provider:railway:function",
+      "provider:railway:service",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

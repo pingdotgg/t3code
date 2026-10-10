@@ -7,7 +7,12 @@ import { pipeArguments } from "../Pipeable.ts"
 import { hasProperty } from "../Predicate.ts"
 
 /** @internal */
-export const TypeId = "~effect/collections/Graph"
+export const TypeId = "~effect/Graph"
+
+/** @internal */
+export const isGraph = <N = unknown, E = unknown, T extends Graph.Kind = Graph.Kind, U = never>(
+  u: U | Graph.Graph<N, E, T> | Graph.MutableGraph<N, E, T>
+): u is Graph.Graph<N, E, T> | Graph.MutableGraph<N, E, T> => hasProperty(u, TypeId)
 
 /** @internal */
 export interface GraphImpl<in out N, in out E, T extends Graph.Kind>
@@ -62,7 +67,17 @@ const edgeEquals = (type: Graph.Kind, self: Graph.Edge<any>, that: Graph.Edge<an
 const edgeHash = (type: Graph.Kind, edge: Graph.Edge<any>): number =>
   type === "directed"
     ? Hash.hash(edge)
-    : Hash.optimize(Hash.hash(edge.data) ^ (Hash.hash(edge.source) + Hash.hash(edge.target)))
+    : Hash.optimize(Hash.combine(Hash.hash(edge.data), endpointsHash(edge.source, edge.target)))
+
+/**
+ * Addition is commutative and does not cancel self-loops.
+ *
+ * @internal
+ */
+export const endpointsHash = (source: unknown, target: unknown): number =>
+  Hash.combine(0, Hash.hash(source)) + Hash.combine(0, Hash.hash(target))
+
+const graphSeed = Hash.string("Graph")
 
 const ProtoGraph = {
   [TypeId]: {
@@ -101,17 +116,17 @@ const ProtoGraph = {
     return false
   },
   [Hash.symbol](this: GraphImpl<any, any, any>): number {
-    let hash = Hash.string("Graph")
+    let hash = graphSeed
     hash = hash ^ Hash.string(this.type)
     hash = hash ^ Hash.number(this.nodes.size)
     hash = hash ^ Hash.number(this.edges.size)
     for (const [nodeIndex, nodeData] of this.nodes) {
-      hash = hash ^ (Hash.hash(nodeIndex) + Hash.hash(nodeData))
+      hash ^= Hash.combine(Hash.hash(nodeIndex), Hash.hash(nodeData))
     }
     for (const [edgeIndex, edgeData] of this.edges) {
-      hash = hash ^ (Hash.hash(edgeIndex) + edgeHash(this.type, edgeData))
+      hash ^= Hash.combine(Hash.hash(edgeIndex), edgeHash(this.type, edgeData))
     }
-    return hash
+    return Hash.optimize(hash)
   },
   toJSON(this: GraphImpl<any, any, any>) {
     return {

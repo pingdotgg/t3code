@@ -76,6 +76,13 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:customnameserver",
+      "live",
+    ],
+  },
 );
 
 // Canonical `list()` test (account collection). On the unentitled testing
@@ -83,23 +90,32 @@ test.provider(
 // which `list()` maps to an empty collection — so the read-only assertion is
 // "list returns a well-typed array" (here, `[]`). An entitled account also
 // runs the deploy+presence variant below.
-test.provider("list enumerates account custom nameservers", (stack) =>
-  Effect.gen(function* () {
-    yield* stack.destroy();
+test.provider(
+  "list enumerates account custom nameservers",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
 
-    const provider = yield* Provider.findProvider(
-      Cloudflare.CustomNameserver.CustomNameserver,
-    );
-    const all = yield* provider.list();
+      const provider = yield* Provider.findProvider(
+        Cloudflare.CustomNameserver.CustomNameserver,
+      );
+      const all = yield* provider.list();
 
-    // Always a well-typed array; `[]` on unentitled accounts.
-    expect(Array.isArray(all)).toBe(true);
-    if (!entitled) {
-      expect(all).toEqual([]);
-    }
+      // Always a well-typed array; `[]` on unentitled accounts.
+      expect(Array.isArray(all)).toBe(true);
+      if (!entitled) {
+        expect(all).toEqual([]);
+      }
 
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:customnameserver",
+      "live",
+    ],
+  },
 );
 
 test.provider.skipIf(!entitled)(
@@ -122,7 +138,14 @@ test.provider.skipIf(!entitled)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:customnameserver",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!entitled)(
@@ -171,5 +194,12 @@ test.provider.skipIf(!entitled)(
       yield* expectGone(accountId, nsName);
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:customnameserver",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

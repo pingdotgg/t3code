@@ -31,10 +31,14 @@ export const RuntimeSubpathExportPlugin = (): rolldown.Plugin => ({
     }
 
     const [, component, modulePath] = match;
+    // Wire constants are internal and safe to inline in the Vite bundle.
+    if (component === "core" && modulePath === "globals/ProxyHeaders.shared") {
+      return;
+    }
     const subpath =
       modulePath === "index"
         ? component
-        : `${component}/${modulePath.replace(/\/index$/, "")}`;
+        : `${component}/${modulePath.replace(/\.shared$/, "").replace(/\/index$/, "")}`;
     return { id: `${PACKAGE_NAME}/${subpath}`, external: true };
   },
 });

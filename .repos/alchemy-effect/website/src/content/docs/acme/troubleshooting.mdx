@@ -1,0 +1,129 @@
+---
+title: Troubleshooting
+description: Diagnose failed DNS challenges, rejected orders, rate limits, and runtime certificate operations.
+---
+
+Start with the error tag and the affected identifier. Verify your DNS path with
+Let's Encrypt staging before repeatedly placing production orders. Preserve
+sanitized error metadata, but keep account keys, certificate keys, EAB HMAC
+values, and authorization headers out of logs.
+
+## Missing DNS solver
+
+`ACME.DnsSolverNotRegistered` means the descriptor's `type` has no registered
+factory in the stack's provider context. For Cloudflare, register both providers:
+
+```typescript
+const providers = Layer.mergeAll(ACME.providers(), Cloudflare.providers());
+```
+
+Pass this layer as the stack's `providers`. For runtime issuance, use
+`acmeDnsSolver(dns)` with a bound DNS client instead of passing the deploy-time
+descriptor returned by `AcmeSolver`.
+
+## DNS API access fails
+
+`ACME.DnsSolverError` wraps a failure publishing or cleaning up a challenge.
+Check the zone ID, credential scope, and whether the DNS name belongs to that
+zone. An API credential valid for one Cloudflare account is not necessarily
+valid for another account's zone.
+
+For runtime `WriteDnsHttp`, the deployment identity must also be allowed to
+create the scoped token. A failed cleanup is operationally significant even
+if the CA validated the name; inspect the TXT records and retry cleanup safely.
+
+## TXT propagation times out
+
+`ACME.DnsPropagationTimeout` identifies the challenge name that was not observed
+within the configured budget. Check authoritative delegation, the zone ID, the
+exact TXT value, and whether there is an existing CNAME at that name. Public
+recursive DNS may still have a negative or previous-value cache entry.
+
+The deploy-time Cloudflare timeout defaults to 90 seconds and includes the
+60-second post-visibility delay. A timeout shorter than the delay cannot work.
+Lookup attempts are also bounded; increasing `timeout` alone does not remove
+that cap. See [DNS validation](/acme/dns-validation#adjust-the-propagation-budget).
+
+## The CA rejects a challenge
+
+`ACME.ChallengeFailed` carries the identifier, CA problem type, and detail.
+`ACME.OrderInvalid` carries the order URL and reported problems. A successful
+DNS API write does not prove that every CA validator sees the record.
+
+For an "incorrect TXT record" failure, inspect stale records and cached values
+before shortening propagation delays or retrying. Check CAA policy if the CA
+reports that it is not authorized to issue. Wildcards require DNS-01 support;
+`ACME.ChallengeUnsupported` reports the challenge types the CA offered instead.
+
+## An order times out
+
+`ACME.OrderTimeout` means polling did not reach a terminal state within the
+implementation's bounded polling budget. Keep the order URL and status for
+investigation. The CA may finish processing later; immediately starting another
+order can consume additional issuance allowance without resolving the original
+problem.
+
+## Rate limits
+
+The SDK exposes `AcmeRateLimited` and an optional `retryAfter` Effect `Duration`.
+Honor that hint when scheduling the next attempt. The [runtime Worker example](/acme/runtime#assemble-the-worker)
+returns HTTP 429 and a `Retry-After` header when the hint is available.
+
+SDK retries apply to individual protocol requests, not a durable end-to-end
+certificate job. If you need protocol errors to surface without the default
+request retries, add `@distilled.cloud/acme` as a direct dependency and provide
+its retry policy around the operation:
+
+```typescript
+import * as Acme from "@distilled.cloud/acme";
+
+const issued = yield* issuer.issue({
+  identifiers: ["api.example.com"],
+  solver,
+}).pipe(Acme.Retry.none);
+```
+
+Disabling retries does not bypass the CA's limits. Keep renewal jobs serialized,
+reuse valid stored certificates, and avoid an unbounded retry around `issue`.
+
+## Staging certificates are untrusted
+
+A Let's Encrypt staging certificate can be correctly issued and still fail
+browser trust checks. Use staging to validate your flow, then switch to a
+production CA in the intended stage. Uploading a staging chain to a public
+consumer does not make it trusted.
+
+## ZeroSSL rejects account registration
+
+Confirm that `eab.keyId` and `eab.hmacKey` are the matching CA-issued pair. The
+HMAC value is not your ZeroSSL API key. Keep its base64url encoding intact, load
+it as a redacted secret, and verify that the account uses `ACME.ZeroSSL` rather
+than another CA's directory.
+
+## A CA works locally but fails in a Worker
+
+Check connectivity from the deployed host, not only from your laptop. Live tests
+encountered Let's Encrypt TLS failures from Cloudflare Workers, so the deployed
+example uses ZeroSSL. For private CAs, `trustedRoot` currently relies on Bun's
+fetch TLS option and is not a portable Worker trust-store override.
+
+A Cloudflare runtime solver waits 60 seconds by default. Ensure the request and
+client remain alive long enough. Use a durable job design for issuance that must
+continue independently of a disconnected HTTP client.
+
+## A deployed certificate has not renewed
+
+Check that a deployment actually ran against the correct stack and stage with
+access to the same state. Renewal is evaluated on deployment; it has no
+background scheduler. Verify that `notAfter` is within `renewBefore`, then check
+whether the consumer loaded the updated output.
+
+The resource's read operation uses persisted certificate attributes rather than
+checking revocation status at the CA. If you revoked a certificate out of band,
+do not assume the next read will detect it and issue a replacement automatically.
+
+## Certificate and private key do not match
+
+Use the certificate's `chain` and `privateKey` from the same issuance result.
+The account private key signs ACME requests and cannot serve as the TLS key.
+After renewal, update both values together and reload the TLS consumer.

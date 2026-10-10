@@ -27,6 +27,7 @@ import { makeEntrypointLayer } from "../../Runtime.ts";
 import { Self } from "../../Self.ts";
 import { Stack } from "../../Stack.ts";
 import { provideProcessTelemetry } from "../../Telemetry.ts";
+import { withManagedHttpShutdown } from "./ManagedHttpShutdown.ts";
 
 /**
  * The tag every bundled platform program registers itself under
@@ -49,8 +50,8 @@ export const stackFromEnv: Layer.Layer<Stack, Config.ConfigError> =
   Layer.effect(
     Stack,
     Effect.all([
-      Config.string("ALCHEMY_STACK_NAME"),
-      Config.string("ALCHEMY_STAGE"),
+      Config.String("ALCHEMY_STACK_NAME"),
+      Config.String("ALCHEMY_STAGE"),
     ]).pipe(
       Effect.map(([name, stage]) => ({
         name,
@@ -106,7 +107,14 @@ export const resolveProgram = (
 export const runProcess = (
   label: string,
   program: Effect.Effect<unknown, unknown>,
-  options?: { readonly exitOnComplete?: boolean },
+  options?: {
+    readonly exitOnComplete?: boolean;
+    /**
+     * Enable process-wide SIGTERM/SIGINT handling and bounded cleanup for the
+     * managed Fly bootstrap. May force process exit; see {@link withManagedHttpShutdown}.
+     */
+    readonly managedHttpShutdownTimeoutMs?: number;
+  },
 ): Promise<void> => {
   console.log(`${label} bootstrap starting...`);
   // Node 26 exits 13 (unsettled TLA) when the event loop is empty while
@@ -114,10 +122,15 @@ export const runProcess = (
   // no native handle; an HTTP `listen` does. Hold a timer so run-only
   // Services stay up the same way Bun does.
   const keepAlive = setInterval(() => undefined, 1 << 30);
-  return Effect.runPromise(program).then(
-    () => {
+  const managed = options?.managedHttpShutdownTimeoutMs;
+  const execution =
+    managed === undefined
+      ? program.pipe(Effect.as(false))
+      : withManagedHttpShutdown(program, managed);
+  return Effect.runPromise(execution).then(
+    (shutdown) => {
       clearInterval(keepAlive);
-      if (options?.exitOnComplete) {
+      if (shutdown || options?.exitOnComplete) {
         console.log(`${label} completed.`);
         process.exit(0);
       }

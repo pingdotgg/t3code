@@ -1,4 +1,5 @@
-import * as railway from "@distilled.cloud/railway";
+import { Query } from "@distilled.cloud/core/query";
+import { Railway as RailwayApi } from "@distilled.cloud/railway";
 import * as Railway from "@/Railway";
 import { suitePartition } from "./suiteProject.ts";
 import * as Test from "@/Test/Alchemy";
@@ -17,30 +18,87 @@ const logLevel = Effect.provideService(
 
 const TEST_DOMAIN = process.env.RAILWAY_TEST_DOMAIN;
 
+const readCustomDomains = Query.fn(
+  (input: { environmentId: string; projectId: string; serviceId: string }) => ({
+    customDomains: RailwayApi.domains(input).customDomains.pipe(
+      Query.map((domain) => ({
+        id: domain.id,
+        domain: domain.domain,
+        targetPort: domain.targetPort,
+        deletedAt: domain.deletedAt,
+        syncStatus: domain.syncStatus,
+      })),
+    ),
+  }),
+);
+
+const readCustomDomainDeletion = Query.fn((id: string, projectId: string) => {
+  const domain = RailwayApi.customDomain({ id, projectId });
+  return { deletedAt: domain.deletedAt, syncStatus: domain.syncStatus };
+});
+
+const readCustomDomain = Query.fn((id: string, projectId: string) => {
+  const domain = RailwayApi.customDomain({ id, projectId });
+  return {
+    id: domain.id,
+    domain: domain.domain,
+    targetPort: domain.targetPort,
+  };
+});
+
+const readCustomDomainVerification = Query.fn(
+  (id: string, projectId: string) => {
+    const domain = RailwayApi.customDomain({ id, projectId });
+    return {
+      domain: domain.domain,
+      status: { verified: domain.status.verified },
+    };
+  },
+);
+
+const createCustomDomain = Query.fn(
+  (input: {
+    domain: string;
+    environmentId: string;
+    projectId: string;
+    serviceId: string;
+  }) => ({ id: RailwayApi.customDomainCreate({ input }).id }),
+);
+
+const createService = Query.fn(
+  (input: { projectId: string; environmentId: string; image: string }) => ({
+    id: RailwayApi.serviceCreate({
+      input: {
+        projectId: input.projectId,
+        environmentId: input.environmentId,
+        source: { image: input.image },
+      },
+    }).id,
+  }),
+);
+
 const listLive = (
   environmentId: string,
   projectId: string,
   serviceId: string,
 ) =>
-  railway.domains({ environmentId, projectId, serviceId }).pipe(
+  readCustomDomains({ environmentId, projectId, serviceId }).pipe(
     Effect.map((result) =>
       result.customDomains.filter(
         (domain) => domain.deletedAt == null && domain.syncStatus !== "DELETED",
       ),
     ),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.succeed([])),
+    Effect.catchTag("RailwayNotFound", () => Effect.succeed([])),
   );
 
 const waitUntilDomainGone = (customDomainId: string, projectId: string) =>
-  railway.customDomain({ id: customDomainId, projectId }).pipe(
+  readCustomDomainDeletion(customDomainId, projectId).pipe(
     Effect.map((domain) =>
       domain.deletedAt != null || domain.syncStatus === "DELETED"
         ? ("gone" as const)
         : ("found" as const),
     ),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
-      Effect.succeed("gone" as const),
-    ),
+    Effect.catchTag("RailwayNotFound", () => Effect.succeed("gone" as const)),
     Effect.repeat({
       schedule: Schedule.spaced("1 second"),
       until: (status) => status === "gone",
@@ -49,13 +107,7 @@ const waitUntilDomainGone = (customDomainId: string, projectId: string) =>
   );
 
 const createTargetService = (projectId: string, environmentId: string) =>
-  railway.serviceCreate({
-    input: {
-      projectId,
-      environmentId,
-      source: { image: "hashicorp/http-echo" },
-    },
-  });
+  createService({ projectId, environmentId, image: "hashicorp/http-echo" });
 
 test.provider(
   "create, update targetPort, and delete a custom domain",
@@ -71,27 +123,21 @@ test.provider(
       );
 
       const rejected = yield* Effect.result(
-        railway.customDomainCreate({
-          input: {
-            domain: "not a hostname",
-            environmentId: environment.environmentId,
-            projectId: project.projectId,
-            serviceId: service.id,
-          },
+        createCustomDomain({
+          domain: "not a hostname",
+          environmentId: environment.environmentId,
+          projectId: project.projectId,
+          serviceId: service.id,
         }),
       );
       expect(Result.isFailure(rejected)).toBe(true);
       if (Result.isFailure(rejected)) {
-        expect(rejected.failure._tag).not.toEqual("UnknownRailwayError");
-        const message =
-          "message" in rejected.failure ? String(rejected.failure.message) : "";
-        expect({ tag: rejected.failure._tag, message }).toEqual({
-          tag: "RailwayValidationError",
-          message,
-        });
+        expect(rejected.failure._tag === "RailwayValidationError").toBe(true);
       }
 
-      const hostname = `${project.name}.example.com`;
+      // The suite project is shared. Derive the hostname from this test's
+      // environment so another partition's domain cannot collide with it.
+      const hostname = `graphql-${environment.environmentId.slice(0, 8)}.alchemy-test-2.us`;
 
       const created = yield* stack.deploy(
         Effect.gen(function* () {
@@ -127,10 +173,10 @@ test.provider(
       expect(fetched?.domain).toEqual(hostname);
       expect(fetched?.targetPort).toEqual(5678);
 
-      const outOfBand = yield* railway.customDomain({
-        id: created.domain.customDomainId,
-        projectId: project.projectId,
-      });
+      const outOfBand = yield* readCustomDomain(
+        created.domain.customDomainId,
+        project.projectId,
+      );
       expect(outOfBand.id).toEqual(created.domain.customDomainId);
       expect(outOfBand.domain).toEqual(hostname);
       expect(outOfBand.targetPort).toEqual(5678);
@@ -155,10 +201,10 @@ test.provider(
       expect(updated.domain.domain).toEqual(hostname);
       expect(updated.project.projectId).toEqual(project.projectId);
 
-      const fetchedUpdate = yield* railway.customDomain({
-        id: updated.domain.customDomainId,
-        projectId: project.projectId,
-      });
+      const fetchedUpdate = yield* readCustomDomain(
+        updated.domain.customDomainId,
+        project.projectId,
+      );
       expect(fetchedUpdate.targetPort).toEqual(8080);
 
       yield* stack.destroy();
@@ -169,7 +215,16 @@ test.provider(
       );
       expect(domainGone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  {
+    tags: [
+      "provider:railway",
+      "provider:railway:customdomain",
+      "provider:railway:project",
+      "provider:railway:projectenvironment",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider.skipIf(!TEST_DOMAIN)(
@@ -202,10 +257,10 @@ test.provider.skipIf(!TEST_DOMAIN)(
       expect(created.domain.domain).toEqual(hostname);
       expect(created.domain.customDomainId.length).toBeGreaterThan(0);
 
-      const fetched = yield* railway.customDomain({
-        id: created.domain.customDomainId,
-        projectId: project.projectId,
-      });
+      const fetched = yield* readCustomDomainVerification(
+        created.domain.customDomainId,
+        project.projectId,
+      );
       expect(fetched.domain).toEqual(hostname);
       expect(
         fetched.status.verified === true || fetched.status.verified === false,
@@ -219,5 +274,14 @@ test.provider.skipIf(!TEST_DOMAIN)(
       );
       expect(domainGone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  {
+    tags: [
+      "provider:railway",
+      "provider:railway:customdomain",
+      "provider:railway:project",
+      "provider:railway:projectenvironment",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

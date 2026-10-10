@@ -47,7 +47,8 @@ describe("makeNodeServeEntrySource", () => {
     expect(source).toContain("http.createServer(async (req, res) => {");
     expect(source).toContain("server.listen");
     expect(source).toContain("lookupStatic");
-    expect(source).toContain("max-age=31536000, immutable");
+    expect(source).toContain('"cache-control": "no-cache"');
+    expect(source).not.toContain("max-age=31536000");
     expect(source).toContain(`import { handler } from "./index.mjs";`);
     expect(source).not.toContain("aws-lambda");
     expect(source).not.toContain("cloudflare:");

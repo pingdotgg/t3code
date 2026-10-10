@@ -20,21 +20,20 @@ per replica.
 
 ## Mount a disk into the Service
 
-There is no standalone Volume resource. Inside the Service's init,
+There is no standalone Volume resource. Inside the Service's constructor,
 `Fly.MountVolume({ path, sizeGb })` creates a per-replica disk in
-the Service's app and region:
+the Service's App and region:
 
 ```diff lang="typescript"
 // src/api.ts
 import * as Fly from "alchemy/Fly";
 import * as Effect from "effect/Effect";
-import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { Site } from "./app.ts";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export default class Api extends Fly.Service<Api>()(
   "Api",
-  { app: Site, main: import.meta.url, region: "iad", port: 3000 },
+  { main: import.meta.url, region: "iad", port: 3000 },
   Effect.gen(function* () {
 +    const mount = yield* Fly.MountVolume({ path: "/data", sizeGb: 1 });
 
@@ -52,7 +51,7 @@ at runtime it hands you the resolved `mount.path`.
 ## Provide the binding layer
 
 Bindings declare a capability; layers implement it. Provide
-`MountVolumeLive` on the Service's init Effect:
+`MountVolumeLive` on the Service's constructor Effect:
 
 ```diff lang="typescript"
   Effect.gen(function* () {
@@ -66,7 +65,7 @@ Bindings declare a capability; layers implement it. Provide
 ) {}
 ```
 
-## Resolve FileSystem in init
+## Resolve FileSystem in the constructor
 
 Yield `FileSystem` in the outer Effect. Close over it in `fetch`.
 Do not yield it per request.
@@ -87,7 +86,7 @@ Do not yield it per request.
 
 ## Write files with `PUT /:name`
 
-The Volume is a directory. Use `fs` from init:
+The Volume is a directory. Use `fs` from the constructor:
 
 ```diff lang="typescript"
 fetch: Effect.gen(function* () {
@@ -121,7 +120,7 @@ if (request.method === "PUT") {
 
 +if (request.method === "GET") {
 +  const text = yield* fs.readFileString(file).pipe(
-+    Effect.catchAll(() => Effect.succeed(undefined)),
++    Effect.catch(() => Effect.succeed(undefined)),
 +  );
 +  if (text === undefined) {
 +    return HttpServerResponse.text("Not found", { status: 404 });
@@ -165,10 +164,10 @@ the Service's region (`iad`).
 
 ```sh
 # Store a file on the Volume
-curl -X PUT https://myapp-site-dev-a1b2c3d4.fly.dev/hello.txt -d 'Hello, Volume!'
+curl -X PUT https://myapp-api-dev-a1b2c3d4.fly.dev/hello.txt -d 'Hello, Volume!'
 
 # Read it back
-curl https://myapp-site-dev-a1b2c3d4.fly.dev/hello.txt
+curl https://myapp-api-dev-a1b2c3d4.fly.dev/hello.txt
 # → Hello, Volume!
 ```
 
@@ -184,5 +183,5 @@ You now have:
   no SDK, just files
 - Data that outlives deploys and Machine replacement
 
-In [Part 4](/fly/tutorial/part-4), you'll store a secret on the App
-and read it from the Service, then tear the stack down.
+In [Part 4](/fly/tutorial/part-4), you'll read a secret from `.env`
+in the Service, then tear the stack down.

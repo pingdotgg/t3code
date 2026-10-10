@@ -16,8 +16,8 @@
  * instanceId-guarded delete, invalidate, stop hook) by driving the generated
  * provider service directly.
  */
-import { Cli } from "@/Cli/Cli.ts";
-import type { AnnotateEvent, StatusChangeEvent } from "@/Cli/Event.ts";
+import { Cli } from "@/Report.ts";
+import type { ResourceAnnotated, ResourceStatusChanged } from "@/Report.ts";
 import * as LocalProvider from "@/Local/LocalProvider.ts";
 import * as Provider from "@/Provider.ts";
 import { remote, type ProviderMode } from "@/ProviderMode.ts";
@@ -29,6 +29,7 @@ import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import {
   Bucket,
   inDev,
@@ -67,7 +68,45 @@ const callsFor = (stackName: string) =>
 const buildsFor = (stackName: string) =>
   modalBuilds.filter((b) => b.stack === stackName);
 
-describe("provider modes", () => {
+describe("provider modes", { tags: ["unit", "local"] }, () => {
+  test.provider(
+    "lookup resolves concrete modes while registration lookup stays lazy",
+    (stack) =>
+      Effect.gen(function* () {
+        const registration = yield* Provider.tryFindProviderRegistrationByType(
+          ModalResource.Type,
+        );
+        expect(Option.isSome(registration)).toBe(true);
+        expect(buildsFor(stack.name)).toHaveLength(0);
+
+        const live = yield* Provider.findProvider(ModalResource);
+        expect(live.mode).toBe("live");
+        expect(typeof live.read).toBe("function");
+        expect(buildsFor(stack.name).map((build) => build.mode)).toEqual([
+          "live",
+        ]);
+
+        const local = yield* inDev(
+          Provider.findProviderByType(ModalResource.Type),
+        );
+        expect(local.mode).toBe("local");
+        expect(typeof local.read).toBe("function");
+        const explicitLive = yield* inDev(
+          Provider.findProvider(ModalResource, "live"),
+        );
+        expect(explicitLive).toBe(live);
+        expect(buildsFor(stack.name).map((build) => build.mode)).toEqual([
+          "live",
+          "local",
+        ]);
+        expect(
+          Option.isNone(
+            yield* Provider.tryFindProviderByType("Test.MissingProvider"),
+          ),
+        ).toBe(true);
+      }),
+  );
+
   test.provider(
     "default mode is live; providerMode is stamped; local variant is never built",
     (stack) =>
@@ -87,6 +126,26 @@ describe("provider modes", () => {
         expect(
           buildsFor(stack.name).filter((b) => b.mode === "live").length,
         ).toBeGreaterThan(0);
+
+        yield* stack.destroy();
+      }),
+  );
+
+  test.provider(
+    "no variant is built until a resource of the type is planned",
+    (stack) =>
+      Effect.gen(function* () {
+        const bucketOnly = Effect.gen(function* () {
+          yield* Bucket("B", {});
+          return {};
+        });
+        // Registration alone constructs nothing — in either default mode.
+        // (In dev, the local variant is what spawns a provider sidecar, so
+        // a stack without the type must not pay for one.)
+        yield* bucketOnly.pipe(stack.deploy);
+        expect(buildsFor(stack.name)).toHaveLength(0);
+        yield* inDev(bucketOnly.pipe(stack.deploy));
+        expect(buildsFor(stack.name)).toHaveLength(0);
 
         yield* stack.destroy();
       }),
@@ -380,10 +439,17 @@ describe("provider modes", () => {
     "status events carry the resolved mode, the plan carries the run default, and mode switches carry the transition",
     (stack) =>
       Effect.gen(function* () {
-        const events: StatusChangeEvent[] = [];
-        const notes: AnnotateEvent[] = [];
+        const events: ResourceStatusChanged[] = [];
+        const notes: ResourceAnnotated[] = [];
         let planDefaultMode: ProviderMode | undefined;
         const cli = Cli.of({
+          startPlanningSession: () =>
+            Effect.succeed({
+              update: () => Effect.void,
+              succeed: () => Effect.void,
+              fail: () => Effect.void,
+              close: Effect.void,
+            }),
           approvePlan: () => Effect.succeed(true),
           displayPlan: () => Effect.void,
           startApplySession: (plan) =>
@@ -393,8 +459,9 @@ describe("provider modes", () => {
                 done: () => Effect.void,
                 emit: (event) =>
                   Effect.sync(() => {
-                    if (event.kind === "status-change") events.push(event);
-                    if (event.kind === "annotate") notes.push(event);
+                    if (event._tag === "apply.resource.status")
+                      events.push(event);
+                    if (event._tag === "apply.resource.note") notes.push(event);
                   }),
               };
             }),
@@ -434,7 +501,8 @@ describe("provider modes", () => {
         ).toBe(true);
         // A local instance whose attrs carry a `url` announces it.
         expect(notes).toContainEqual({
-          kind: "annotate",
+          _tag: "apply.resource.note",
+          fqn: "A",
           id: "A",
           message: "ready at http://localhost:1337",
         });
@@ -595,4 +663,5 @@ test(
       }),
     ),
   ),
+  { tags: ["unit", "local"] },
 );

@@ -18,8 +18,8 @@ const bundle = await rolldown({
   input: "./src/index.ts",
   plugins: [
     cloudflare({
-      compatibilityDate: "2026-04-01",
-      compatibilityFlags: ["nodejs_compat"],
+      // Node.js compatibility is default-on for this date.
+      compatibilityDate: "2026-08-31",
     }),
   ],
 });
@@ -35,7 +35,8 @@ await bundle.write({
 
 - Applies Cloudflare-friendly Rolldown defaults for resolution and output targeting.
 - Treats supported `cloudflare:*` imports as external.
-- Enables Node.js compatibility shims when `nodejs_compat` is set.
+- Enables Node.js compatibility shims when `nodejs_compat` is set or the
+  compatibility date is `2026-08-04` or later.
 - Supports Cloudflare-style additional modules for `.wasm`, `.bin`, `.txt`, `.html`, and `.sql`.
 - Supports `.wasm?init` imports.
 

@@ -116,7 +116,10 @@ test.provider(
       const gone = yield* getMap(accountId, created.addressMapId);
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:addressing", "live"],
+    timeout: 120_000,
+  },
 );
 
 // `list()` enumerates every Address Map on the account (paginated) and
@@ -188,5 +191,8 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:addressing", "live"],
+    timeout: 120_000,
+  },
 );

@@ -24,7 +24,7 @@ import { Bucket } from "../Bucket.ts";
 import { Certificate } from "../Certificate.ts";
 import { IpAssignment } from "../IpAssignment.ts";
 import type { Providers } from "../Providers.ts";
-import { Service } from "../Service.ts";
+import { Service, type ServiceProps } from "../Service.ts";
 import { AssetDeployment } from "./AssetDeployment.ts";
 
 /**
@@ -40,6 +40,14 @@ export { staticConfigFromAssets };
  * Props shared by every Fly framework website composite.
  */
 export interface FrameworkSiteProps {
+  /** Deployment strategy forwarded to the hosted Fly Service. */
+  deploy?: ServiceProps["deploy"];
+  /** Process shutdown policy. The framework server must handle the signal. */
+  shutdown?: ServiceProps["shutdown"];
+  /** Named Machine readiness checks. */
+  checks?: ServiceProps["checks"];
+  /** Override proxy services and their routing health checks. */
+  services?: ServiceProps["services"];
   /**
    * Project root directory (the directory containing `package.json`).
    * @default "."
@@ -307,6 +315,10 @@ const runFrameworkSite = Effect.fn("Fly.Website.FrameworkSite")(function* (
 
   const service = yield* Service("Service", {
     app,
+    deploy: props.deploy,
+    shutdown: props.shutdown,
+    checks: props.checks,
+    services: props.services,
     main: main as unknown as string,
     port: DEFAULT_PORT,
     // Node + nitro SSR needs more than the Machine default 256MB.

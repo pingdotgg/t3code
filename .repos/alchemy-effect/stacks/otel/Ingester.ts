@@ -2,8 +2,8 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import { Stack } from "alchemy/Stack";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Logs, Metrics, Traces } from "./Datasets.ts";
 import { IngestToken } from "./IngestToken.ts";
 
@@ -33,12 +33,8 @@ export default class Ingester extends Cloudflare.Worker<Ingester>()(
     observability: { enabled: true },
     domain:
       stage === "prod"
-        ? ["otel.alchemy.run", "analytics.alchemy.run"]
+        ? { name: "otel.alchemy.run", aliases: ["analytics.alchemy.run"] }
         : undefined,
-    compatibility: {
-      date: "2026-03-17",
-      flags: ["nodejs_compat"],
-    },
   })),
   Effect.gen(function* () {
     const tokenValue = yield* (yield* IngestToken).token;

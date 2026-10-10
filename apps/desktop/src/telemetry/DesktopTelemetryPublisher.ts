@@ -23,6 +23,7 @@ import * as Stream from "effect/Stream";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronPowerMonitor from "../electron/ElectronPowerMonitor.ts";
+import * as DesktopRendererHistory from "./DesktopRendererHistory.ts";
 
 const LIVE_SAMPLE_INTERVAL = Duration.seconds(1);
 const BATTERY_SAMPLE_INTERVAL = Duration.seconds(5);
@@ -63,7 +64,6 @@ export class DesktopTelemetryPublisher extends Context.Service<
     readonly latest: Effect.Effect<Option.Option<DesktopHostTelemetrySnapshot>>;
     readonly changes: Stream.Stream<DesktopHostTelemetrySnapshot>;
     readonly encoded: Stream.Stream<Uint8Array>;
-    readonly handleControl: (message: DesktopTelemetryControlMessage) => Effect.Effect<void>;
     readonly handleControlForSource: (
       sourceId: string,
       message: DesktopTelemetryControlMessage,
@@ -149,6 +149,7 @@ function sampleInterval(
 export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const powerMonitor = yield* ElectronPowerMonitor.ElectronPowerMonitor;
+  const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
   yield* electronApp.whenReady;
 
   const initialPowerState: PowerState = {
@@ -213,10 +214,13 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
           powerMonitor.getSystemIdleTime,
           powerMonitor.getSystemIdleState(IDLE_THRESHOLD_SECONDS),
           powerMonitor.isOnBatteryPower,
-          demand ? electronApp.getAppMetrics : Effect.succeed([]),
+          electronApp.getAppMetrics,
         ],
         { concurrency: "unbounded" },
       );
+      // One Electron sampler preserves the shared CPU measurement interval.
+      // History follows the existing power-aware cadence, even without demand.
+      yield* rendererHistory.recordMetrics(metrics);
       const polledLocked =
         systemIdleState === "unknown"
           ? currentPower.locked
@@ -271,7 +275,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
           updatedAt: sampledAt,
         },
         speedLimitPercent: observedPower.speedLimitPercent,
-        electronProcesses: metrics.map((metric) => ({
+        electronProcesses: (demand ? metrics : []).map((metric) => ({
           pid: metric.pid,
           creationTimeMs: Math.max(0, Math.round(metric.creationTime)),
           type: metric.type,
@@ -290,12 +294,12 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
       yield* Ref.set(latest, Option.some(snapshot));
       yield* PubSub.publish(changes, snapshot);
     }).pipe(
-      Effect.catchCause((cause) =>
-        Cause.hasInterrupts(cause)
-          ? Effect.failCause(cause)
-          : Effect.logWarning("Failed to sample Electron telemetry", {
-              cause: String(cause),
-            }),
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterrupts(cause),
+        (cause) =>
+          Effect.logWarning("Failed to sample Electron telemetry", {
+            cause: String(cause),
+          }),
       ),
     );
 
@@ -307,6 +311,7 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
         Ref.get(diagnosticsDemandSources).pipe(Effect.map((sources) => sources.size > 0)),
         Ref.get(hostPowerIntervals),
       ]);
+      // @effect-diagnostics-next-line raceFirstWithSleepToTimeout:off - races a trigger queue against the interval; both arms are real outcomes, not a timeout
       const allowSuspendRecovery = yield* Effect.raceFirst(
         Queue.take(sampleTriggers).pipe(Effect.as(false)),
         Effect.sleep(sampleInterval(currentPower, demand, intervals)).pipe(Effect.as(true)),
@@ -365,8 +370,6 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
           : Queue.offer(sampleTriggers, undefined).pipe(Effect.asVoid),
       ),
     );
-  const handleControl: DesktopTelemetryPublisher["Service"]["handleControl"] = (message) =>
-    handleControlForSource("legacy", message);
 
   const snapshots = Stream.unwrap(
     Effect.gen(function* () {
@@ -415,7 +418,6 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
     latest: Ref.get(latest),
     changes: Stream.fromPubSub(changes),
     encoded,
-    handleControl,
     handleControlForSource,
     removeControlSource,
     publishUpdateReport,
