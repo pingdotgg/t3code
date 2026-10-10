@@ -145,7 +145,7 @@ import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import { truncate } from "@t3tools/shared/String";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
-import { Debouncer } from "@tanstack/react-pacer";
+import { createTimelineEndAffordance } from "./chat/timelineEndAffordance";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import {
@@ -204,6 +204,7 @@ import { type LegendListRef } from "@legendapp/list/react";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
   timelineContentOverflowsViewport,
+  getAnchoredTurnMetrics,
   readTimelinePosition,
   observeTimelineRun,
   type TimelineRunObservation,
@@ -6351,9 +6352,7 @@ export default function ChatView(props: ChatViewProps) {
   // Debounce *showing* the scroll-to-bottom pill so it doesn't flash during
   // thread switches. LegendList fires scroll events with isAtEnd=false while
   // initialScrollAtEnd is settling; hiding is always immediate.
-  const showScrollDebouncer = useRef(
-    new Debouncer(() => setShowScrollToBottom(true), { wait: 150 }),
-  );
+  const showScrollDebouncer = useRef(createTimelineEndAffordance(setShowScrollToBottom));
   const timelineScrollIntentRef = useRef<"toward-end" | "away-from-end" | null>(null);
   const timelineScrollModeRef = useRef<TimelineScrollMode>("following-end");
   // State mirror of the follow mode refs. LegendList's maintainScrollAtEnd
@@ -6510,6 +6509,8 @@ export default function ChatView(props: ChatViewProps) {
     liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
     setTimelineLiveFollowEnabled(true);
     pendingTimelineAnchorRef.current = null;
+    positionedTimelineAnchorRef.current = null;
+    settledTimelineAnchorRef.current = null;
     activeTimelineAnchorIndexRef.current = null;
     showScrollDebouncer.current.cancel();
     setShowScrollToBottom(false);
@@ -6726,59 +6727,72 @@ export default function ChatView(props: ChatViewProps) {
     };
     requestAnimationFrame(() => positionAnchor(12));
   }, []);
-  const onTimelineAnchorSizeChanged = useCallback((messageId: MessageId) => {
-    if (settledTimelineAnchorRef.current !== messageId) {
-      return;
-    }
-    if (liveFollowUserScrollGenerationRef.current === anchorUserScrollGenerationRef.current) {
-      return;
-    }
-    const scrollOffset = legendListRef.current?.getState().scroll;
-    if (scrollOffset === undefined) {
-      return;
-    }
-    if (pendingAnchorScrollRestoreRef.current === null) {
-      pendingAnchorScrollRestoreRef.current = {
-        messageId,
-        offset: scrollOffset,
-        userScrollGeneration: anchorUserScrollGenerationRef.current,
-      };
-    }
-    if (anchorScrollRestoreFrameRef.current !== null) {
-      return;
-    }
-    anchorScrollRestoreFrameRef.current = requestAnimationFrame(() => {
-      anchorScrollRestoreFrameRef.current = null;
-      const pending = pendingAnchorScrollRestoreRef.current;
-      pendingAnchorScrollRestoreRef.current = null;
-      if (
-        pending &&
-        settledTimelineAnchorRef.current === pending.messageId &&
-        pending.userScrollGeneration === anchorUserScrollGenerationRef.current
-      ) {
-        const list = legendListRef.current;
-        const currentScrollOffset = list?.getState().scroll;
-        if (
-          typeof currentScrollOffset === "number" &&
-          Math.abs(currentScrollOffset - pending.offset) <= 2
-        ) {
-          void list?.scrollToOffset({ offset: pending.offset, animated: false });
+  const onTimelineAnchorSizeChanged = useCallback(
+    (messageId: MessageId) => {
+      if (liveFollowUserScrollGenerationRef.current === anchorUserScrollGenerationRef.current) {
+        const state = legendListRef.current?.getState();
+        const anchorIndex = activeTimelineAnchorIndexRef.current;
+        if (state && anchorIndex !== null && positionedTimelineAnchorRef.current === messageId) {
+          const metrics = getAnchoredTurnMetrics({
+            state,
+            anchorIndex,
+            composerOverlayHeight: composerTimelineInset,
+            anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
+          });
+          // Short answers stay framed under the prompt; long answers resume following.
+          if (metrics?.overflowsUsableViewport) scrollToEnd();
         }
+        return;
       }
-    });
-  }, []);
+      if (settledTimelineAnchorRef.current !== messageId) return;
+      const scrollOffset = legendListRef.current?.getState().scroll;
+      if (scrollOffset === undefined) {
+        return;
+      }
+      if (pendingAnchorScrollRestoreRef.current === null) {
+        pendingAnchorScrollRestoreRef.current = {
+          messageId,
+          offset: scrollOffset,
+          userScrollGeneration: anchorUserScrollGenerationRef.current,
+        };
+      }
+      if (anchorScrollRestoreFrameRef.current !== null) {
+        return;
+      }
+      anchorScrollRestoreFrameRef.current = requestAnimationFrame(() => {
+        anchorScrollRestoreFrameRef.current = null;
+        const pending = pendingAnchorScrollRestoreRef.current;
+        pendingAnchorScrollRestoreRef.current = null;
+        if (
+          pending &&
+          settledTimelineAnchorRef.current === pending.messageId &&
+          pending.userScrollGeneration === anchorUserScrollGenerationRef.current
+        ) {
+          const list = legendListRef.current;
+          const currentScrollOffset = list?.getState().scroll;
+          if (
+            typeof currentScrollOffset === "number" &&
+            Math.abs(currentScrollOffset - pending.offset) <= 2
+          ) {
+            void list?.scrollToOffset({ offset: pending.offset, animated: false });
+          }
+        }
+      });
+    },
+    [composerTimelineInset, scrollToEnd],
+  );
 
   const onToolOutputCollapsedAtEnd = useCallback(() => {
     composerRef.current?.restoreAfterTimelineReachedEnd();
   }, [composerRef]);
 
   const onIsAtEndChange = useCallback((isAtEnd: boolean) => {
+    // Follow intent cannot hide the recovery button when the viewport falls behind.
+    showScrollDebouncer.current.report(isAtEnd);
     if (
       !isAtEnd &&
       liveFollowUserScrollGenerationRef.current === anchorUserScrollGenerationRef.current
     ) {
-      showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
       return;
     }
     if (isAtEndRef.current === isAtEnd) return;
@@ -6800,7 +6814,6 @@ export default function ChatView(props: ChatViewProps) {
     } else {
       timelineScrollModeRef.current = "free-scrolling";
       liveFollowUserScrollGenerationRef.current = null;
-      showScrollDebouncer.current.maybeExecute();
     }
   }, []);
 
