@@ -13,7 +13,7 @@ import { initReactI18next, useTranslation } from "react-i18next";
 import { createI18n, resolveLanguage } from "@t3tools/client-runtime/i18n";
 import type { SupportedLanguage } from "@t3tools/client-runtime/i18n";
 
-import { useClientSettings } from "./hooks/useSettings";
+import { useClientSettings, useClientSettingsHydrated } from "./hooks/useSettings";
 
 export const i18n = createI18n({ plugins: [initReactI18next] });
 
@@ -44,15 +44,19 @@ export function useTranslate() {
  * at module load would freeze the choice before settings hydrate.
  */
 export function LanguageSync() {
+  const settingsHydrated = useClientSettingsHydrated();
   const languagePreference = useClientSettings((settings) => settings.languagePreference);
 
   useEffect(() => {
+    // The pre-hydration `system` default is not the user's saved preference.
+    if (!settingsHydrated) return;
+
     const language = resolveLanguage(languagePreference, navigator.languages);
     if (i18n.resolvedLanguage !== language) {
       void changeLanguage(language);
     }
     document.documentElement.lang = language;
-  }, [languagePreference]);
+  }, [languagePreference, settingsHydrated]);
 
   return null;
 }
