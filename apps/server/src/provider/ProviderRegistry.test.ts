@@ -36,6 +36,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import { deepMerge } from "@t3tools/shared/Struct";
 import { createModelCapabilities } from "@t3tools/shared/model";
+import { limitsNotice } from "@t3tools/shared/usageLimits";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
@@ -504,6 +505,11 @@ it.layer(
         assert.strictEqual(status.auth.status, "unauthenticated");
         assert.strictEqual(
           status.message,
+          "Codex CLI is not authenticated. Run `codex login` and try again.",
+        );
+        assert.isDefined(status.usageLimits);
+        assert.strictEqual(
+          limitsNotice(status.usageLimits!),
           "Codex CLI is not authenticated. Run `codex login` and try again.",
         );
       }),
