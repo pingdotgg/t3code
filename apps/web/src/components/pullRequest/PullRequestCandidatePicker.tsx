@@ -77,7 +77,7 @@ export function PullRequestCandidatePicker<T>({
       <Tooltip>
         <TooltipTrigger
           render={
-            <Button size="icon-xs" variant="ghost" disabled aria-label={label}>
+            <Button size="icon-xs" variant="ghost" aria-disabled="true" aria-label={label}>
               {icon}
             </Button>
           }
