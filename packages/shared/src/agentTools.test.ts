@@ -10,7 +10,7 @@ import {
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { skillsDisabledPatch } from "./agentTools.ts";
+import { mcpServerEnabledPatch, skillsDisabledPatch } from "./agentTools.ts";
 import { resolveProjectSettings } from "./projectSettings.ts";
 import { applyServerSettingsPatch } from "./serverSettings.ts";
 
@@ -118,6 +118,15 @@ describe("skill switch names", () => {
       skillsDisabledPatch(settings, projectId, ["__proto__"], true),
     );
     expect(resolveProjectSettings(next, projectId).settings.disabledSkills).toEqual(["__proto__"]);
+  });
+});
+
+describe("server switch names", () => {
+  it("refuses a server the settings only inherit from Object", () => {
+    expect(
+      mcpServerEnabledPatch(DEFAULT_SERVER_SETTINGS, projectId, "constructor", false),
+    ).toBeNull();
+    expect(mcpServerEnabledPatch(DEFAULT_SERVER_SETTINGS, null, "constructor", false)).toBeNull();
   });
 });
 
