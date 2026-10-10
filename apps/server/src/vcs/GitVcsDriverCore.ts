@@ -461,6 +461,13 @@ const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFai
   // Quoted-path forms only: an unquoted `fatal: <thing> already exists` also
   // covers tag and ref collisions, which are not path collisions.
   [/fatal: '[^']+' already exists|destination path .+ already exists/i, "path_already_exists"],
+  // Only wordings that can mean nothing but a ref or revision that does not
+  // resolve. `unknown revision or path not in the working tree` and
+  // `pathspec ... did not match` are left out: they also cover a missing file.
+  [
+    /fatal: (?:invalid reference: |not a valid object name|needed a single revision|bad revision |'[^']+' is not a commit and a branch '[^']+' cannot be created from it)/i,
+    "ref_not_found",
+  ],
 ];
 
 // Hooks write to the same stream git does, and nothing distinguishes their

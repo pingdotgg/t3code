@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import {
+  GitCommandError,
   VcsCreateWorktreeInput,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
@@ -20,6 +21,35 @@ const decodePreparePullRequestThreadResult = Schema.decodeUnknownSync(
 const decodeRunStackedActionInput = Schema.decodeUnknownSync(GitRunStackedActionInput);
 const decodeRunStackedActionResult = Schema.decodeUnknownSync(GitRunStackedActionResult);
 const decodeResolvePullRequestResult = Schema.decodeUnknownSync(GitResolvePullRequestResult);
+
+describe("GitCommandError", () => {
+  const decodeGitCommandError = Schema.decodeUnknownSync(Schema.toCodecJson(GitCommandError));
+  const encoded = {
+    _tag: "GitCommandError",
+    operation: "GitVcsDriver.createWorktree",
+    command: "git",
+    cwd: "/repo",
+    detail: "git worktree add failed",
+  };
+
+  it("names a known failure reason in the message", () => {
+    const error = decodeGitCommandError({ ...encoded, reason: "ref_not_found" });
+
+    expect(error.reason).toBe("ref_not_found");
+    expect(error.message).toBe(
+      "Git command failed in GitVcsDriver.createWorktree (/repo): git worktree add failed (ref_not_found)",
+    );
+  });
+
+  it("keeps decoding when a newer server sends a reason this build does not know", () => {
+    const error = decodeGitCommandError({ ...encoded, reason: "added_by_a_newer_server" });
+
+    expect(error.reason).toBeUndefined();
+    expect(error.message).toBe(
+      "Git command failed in GitVcsDriver.createWorktree (/repo): git worktree add failed",
+    );
+  });
+});
 
 describe("VcsCreateWorktreeInput", () => {
   it("accepts omitted newRefName for existing-refName worktrees", () => {
