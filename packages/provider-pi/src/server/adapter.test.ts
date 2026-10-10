@@ -448,6 +448,60 @@ const startTurn = Effect.fnUntraced(function* (
   });
 });
 
+const asyncRunDirectory = (run: string) => `/tmp/pi-subagents/async-subagent-runs/${run}`;
+
+/** A pi-subagents async launch, shaped like the `pi_async_subagent` replay fixture. */
+const launchAsyncEcho = (fake: FakePi, run: string, isError = false) =>
+  Effect.gen(function* () {
+    const toolCallId = `call_${run}`;
+    yield* fake.emit({
+      type: "tool_execution_start",
+      toolCallId,
+      toolName: "subagent",
+      args: { agent: "echo", task: `task ${run}`, async: true },
+    });
+    yield* fake.emit({
+      type: "tool_execution_end",
+      toolCallId,
+      toolName: "subagent",
+      isError,
+      result: {
+        content: [{ type: "text", text: `Async: echo [${run}]` }],
+        details: {
+          mode: "single",
+          runId: run,
+          asyncId: run,
+          asyncDir: asyncRunDirectory(run),
+          results: [],
+        },
+      },
+    });
+  });
+
+interface AsyncNoticeRun {
+  readonly run: string;
+  readonly status: string;
+  readonly source?: "async" | "foreground";
+}
+
+/**
+ * pi-subagents' `subagent-notify` message. From 0.77.0 each `details.runs`
+ * entry carries the run id; the output stays in `content`.
+ */
+const asyncNotice = (runs: ReadonlyArray<AsyncNoticeRun>, withRunIds = true) => ({
+  role: "custom",
+  customType: "subagent-notify",
+  display: false,
+  details: {
+    runs: runs.map(({ run, status, source = "async" }) => ({
+      agent: "echo",
+      status,
+      ...(withRunIds ? { runId: run, source, asyncDir: asyncRunDirectory(run) } : {}),
+    })),
+  },
+  content: runs.map(({ run }) => `echo:\n${run} finished`).join("\n\n"),
+});
+
 const expectModelFailure = (errorMessage: string) =>
   Effect.gen(function* () {
     const fake = yield* makeFakePi;
@@ -2172,8 +2226,17 @@ describe("PiAdapterV2", () => {
           },
         },
       });
+      const node = yield* takeEvent(
+        (event) => event.type === "node.updated" && event.node.kind === "subagent",
+      );
       const running = yield* takeEvent(
         (event) => event.type === "subagent.updated" && event.subagent.status === "running",
+      );
+      assert.isTrue(
+        node.type === "node.updated" &&
+          running.type === "subagent.updated" &&
+          node.node.id === running.subagent.id &&
+          node.node.status === "running",
       );
       assert.isTrue(
         running.type === "subagent.updated" &&
@@ -2226,6 +2289,377 @@ describe("PiAdapterV2", () => {
           subagentItem.turnItem.type === "subagent" &&
           subagentItem.turnItem.childThreadId === null,
       );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("settles each pi-subagents async child named by run id in a notice", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      for (const run of ["first", "second", "third"]) {
+        yield* launchAsyncEcho(fake, run);
+        yield* takeEvent(
+          (event) =>
+            event.type === "subagent.updated" &&
+            event.subagent.prompt === `task ${run}` &&
+            event.subagent.status === "running",
+        );
+      }
+      yield* fake.emit({ type: "agent_settled" });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+
+      // Every run uses the same agent, so only the run id tells them apart.
+      const secondDone = asyncNotice([{ run: "second", status: "completed" }]);
+      yield* fake.emit({ type: "message_end", message: secondDone });
+      yield* fake.emit({ type: "message_end", message: secondDone });
+      // pi-subagents before 0.77.0 sent no run ids, and a foreground run is never tracked.
+      yield* fake.emit({
+        type: "message_end",
+        message: asyncNotice([{ run: "first", status: "completed" }], false),
+      });
+      yield* fake.emit({
+        type: "message_end",
+        message: asyncNotice([{ run: "foreground", status: "completed", source: "foreground" }]),
+      });
+      yield* fake.emit({
+        type: "message_end",
+        message: asyncNotice([
+          { run: "first", status: "stopped" },
+          { run: "third", status: "failed" },
+        ]),
+      });
+      const settled: Array<ReadonlyArray<string>> = [];
+      let thirdResult: string | null = null;
+      for (let count = 0; count < 3; count += 1) {
+        const event = yield* takeEvent(
+          (candidate) =>
+            candidate.type === "subagent.updated" && candidate.subagent.status !== "running",
+        );
+        if (event.type !== "subagent.updated") continue;
+        settled.push([event.subagent.prompt, event.subagent.status]);
+        if (event.subagent.prompt === "task third") thirdResult = event.subagent.result;
+      }
+      assert.deepEqual(settled, [
+        ["task second", "completed"],
+        ["task first", "interrupted"],
+        ["task third", "failed"],
+      ]);
+      assert.include(thirdResult ?? "", "third finished");
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["a later turn is running", "its wake waits for a turn"] as const)(
+    "settles a pi-subagents async run on its launching run while %s",
+    (moment) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const offers =
+          yield* Queue.unbounded<ProviderContinuationRequests.ProviderContinuationRequest>();
+        const { runtime, takeEvent } = yield* openRuntime(
+          fake,
+          "default",
+          THREAD_ID,
+          SESSION_ID,
+          undefined,
+          { offer: (request) => Queue.offer(offers, request).pipe(Effect.asVoid) },
+        );
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* startTurn(runtime, providerThread);
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({ type: "agent_start" });
+        yield* launchAsyncEcho(fake, "only");
+        const running = yield* takeEvent(
+          (event) => event.type === "subagent.updated" && event.subagent.status === "running",
+        );
+        yield* fake.emit({ type: "agent_settled" });
+        yield* takeEvent((event) => event.type === "turn.terminal");
+
+        const notice = asyncNotice([{ run: "only", status: "completed" }]);
+        if (moment === "a later turn is running") {
+          yield* startTurn(runtime, providerThread, "default", [], "Next", undefined, 2);
+          yield* fake.takeRequest("prompt");
+          yield* fake.emit({ type: "agent_start" });
+          yield* fake.emit({ type: "message_end", message: notice });
+        } else {
+          yield* fake.emit({ type: "agent_start" });
+          const offer = yield* Queue.take(offers);
+          yield* fake.emit({ type: "message_end", message: notice });
+          assert.isTrue(yield* runtime.hasPendingBackgroundWork!, "the wake holds the notice");
+          yield* offer.dispatchIfCurrent!(Effect.void);
+          yield* startTurn(
+            runtime,
+            providerThread,
+            "default",
+            [],
+            "Wake",
+            undefined,
+            2,
+            THREAD_ID,
+            true,
+          );
+        }
+        const settled = yield* takeEvent(
+          (event) => event.type === "subagent.updated" && event.subagent.status !== "running",
+        );
+        assert.isTrue(
+          running.type === "subagent.updated" &&
+            settled.type === "subagent.updated" &&
+            settled.subagent.id === running.subagent.id &&
+            settled.subagent.runId === running.subagent.runId &&
+            settled.subagent.status === "completed",
+        );
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps a pi-subagents async run when its own session is registered again", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* launchAsyncEcho(fake, "only");
+      yield* fake.emit({ type: "agent_settled" });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+
+      // A model change reloads the same native session.
+      yield* runtime.resumeThread({
+        threadId: THREAD_ID,
+        providerThread,
+        modelSelection: modelSelection("other"),
+      });
+      yield* fake.emit({
+        type: "message_end",
+        message: asyncNotice([{ run: "only", status: "completed" }]),
+      });
+      const settled = yield* takeEvent(
+        (event) => event.type === "subagent.updated" && event.subagent.status !== "running",
+      );
+      assert.equal(settled.type === "subagent.updated" && settled.subagent.status, "completed");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    ["completed", "completed"],
+    ["failed", "failed"],
+    ["stopped", "interrupted"],
+    ["paused", "idle"],
+  ] as const)("shows a %s pi-subagents async run as %s", ([notified, shown]) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* launchAsyncEcho(fake, "only");
+      yield* fake.emit({ type: "agent_settled" });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+      yield* fake.emit({
+        type: "message_end",
+        message: asyncNotice([{ run: "only", status: notified }]),
+      });
+      const settled = yield* takeEvent(
+        (event) => event.type === "subagent.updated" && event.subagent.status !== "running",
+      );
+      assert.isTrue(
+        settled.type === "subagent.updated" &&
+          settled.subagent.status === shown &&
+          (settled.subagent.completedAt === null) === (shown === "idle"),
+      );
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(providerThread));
+      if (shown === "idle") {
+        // A paused run is unfinished, so a later notice for its directory still settles it.
+        yield* fake.emit({
+          type: "message_end",
+          message: asyncNotice([{ run: "only", status: "completed" }]),
+        });
+        const finished = yield* takeEvent(
+          (event) => event.type === "subagent.updated" && event.subagent.status === "completed",
+        );
+        assert.isTrue(
+          settled.type === "subagent.updated" &&
+            finished.type === "subagent.updated" &&
+            finished.subagent.id === settled.subagent.id,
+        );
+      }
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps a paused pi-subagents async run paused when Pi exits", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* launchAsyncEcho(fake, "only");
+      yield* fake.emit({ type: "agent_settled" });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+      yield* fake.emit({
+        type: "message_end",
+        message: asyncNotice([{ run: "only", status: "paused" }]),
+      });
+      yield* takeEvent(
+        (event) => event.type === "subagent.updated" && event.subagent.status === "idle",
+      );
+
+      yield* fake.closeStdout;
+      const next = yield* takeEvent(
+        (event) =>
+          event.type === "subagent.updated" ||
+          (event.type === "provider_session.updated" && event.providerSession.status === "error"),
+      );
+      assert.equal(next.type, "provider_session.updated", "the paused row is not rewritten");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    "Stop reaches the settled turn",
+    "Pi exits",
+    "a new native session starts",
+    "another native session file is resumed",
+    "a rollback forks the session",
+    "the launching turn fails",
+    "Stop ends the launching turn",
+  ] as const)("interrupts a pi-subagents async run when %s", (trigger) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      const runningTurn = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+      );
+      if (runningTurn.type !== "provider_turn.updated") return assert.fail("expected a turn");
+      // Pi can report an aborted tool as an error after pi-subagents launched its run.
+      yield* launchAsyncEcho(fake, "only", trigger === "Stop ends the launching turn");
+      const running = yield* takeEvent(
+        (event) => event.type === "subagent.updated" && event.subagent.status === "running",
+      );
+      if (trigger === "Stop ends the launching turn") {
+        yield* runtime.interruptTurn({
+          providerThread,
+          providerTurnId: runningTurn.providerTurn.id,
+        });
+        yield* fake.takeRequest("abort");
+        yield* fake.emit({ type: "agent_settled" });
+      } else if (trigger === "the launching turn fails") {
+        yield* fake.emit({
+          type: "message_end",
+          message: { role: "assistant", content: [], stopReason: "error", errorMessage: "boom" },
+        });
+        yield* fake.emit({ type: "agent_settled" });
+      } else {
+        yield* fake.emit({ type: "agent_settled" });
+        const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+        if (terminal.type !== "turn.terminal") return assert.fail("expected the turn to settle");
+        assert.isTrue(
+          yield* runtime.hasPendingBackgroundWorkForThread!(providerThread),
+          "a running child keeps its thread loaded",
+        );
+        if (trigger === "Stop reaches the settled turn") {
+          yield* runtime.interruptTurn({
+            providerThread,
+            providerTurnId: terminal.providerTurnId,
+            requestRuntimeRestart: true,
+          });
+        } else if (trigger === "Pi exits") {
+          yield* fake.closeStdout;
+        } else if (trigger === "a new native session starts") {
+          yield* runtime.ensureThread({
+            threadId: THREAD_ID,
+            modelSelection: modelSelection("default"),
+            runtimePolicy,
+          });
+        } else if (trigger === "another native session file is resumed") {
+          yield* runtime.resumeThread({
+            threadId: THREAD_ID,
+            providerThread: {
+              ...providerThread,
+              nativeThreadRef: {
+                driver: PI_PROVIDER,
+                nativeId: "/fake/other-session.jsonl",
+                strength: "strong",
+              },
+            },
+          });
+        } else {
+          yield* runtime
+            .rollbackThread({
+              providerThread,
+              target: {
+                type: "thread_start",
+                checkpointId: CheckpointId.make("checkpoint-start"),
+                appRunOrdinal: 0,
+              },
+              providerThreadTurns: [
+                {
+                  id: terminal.providerTurnId,
+                  providerThreadId: providerThread.id,
+                  nodeId: NodeId.make("launching-node"),
+                  runAttemptId: null,
+                  nativeTurnRef: {
+                    driver: PI_PROVIDER,
+                    nativeId: "user-launch",
+                    strength: "strong",
+                  },
+                  ordinal: 1,
+                  status: "completed",
+                  startedAt: providerThread.createdAt,
+                  completedAt: providerThread.createdAt,
+                },
+              ],
+            })
+            .pipe(Effect.forkScoped);
+        }
+      }
+      const interrupted = yield* takeEvent(
+        (event) => event.type === "subagent.updated" && event.subagent.status !== "running",
+      );
+      assert.isTrue(
+        running.type === "subagent.updated" &&
+          interrupted.type === "subagent.updated" &&
+          interrupted.subagent.id === running.subagent.id &&
+          interrupted.subagent.runId === running.subagent.runId &&
+          interrupted.subagent.status === "interrupted",
+      );
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(providerThread));
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

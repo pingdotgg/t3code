@@ -54,6 +54,13 @@ installs Pi's example `subagent` extension, T3 Code also shows its task progress
 UI. Pi runs those children without a session, so they cannot be opened or resumed as T3 Code
 threads.
 
+With the pi-subagents extension installed, ask the agent to run one of its agents in the
+background. The agent calls the extension's `subagent` tool for that agent with `async: true`. The
+run stays running in the subagent UI after the turn ends, and settles when the extension reports
+that it finished. Stop marks it interrupted in T3 Code, but the extension's detached run keeps
+going. T3 Code needs pi-subagents 0.77.0 or later to see the run finish. With an older version,
+the run shows as running until you press Stop or the Pi session ends.
+
 ## Troubleshooting
 
 - If Pi is unavailable, confirm that the configured binary runs on the server machine, then refresh
