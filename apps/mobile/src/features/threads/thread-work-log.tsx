@@ -23,6 +23,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useEffectEvent,
   useId,
   useLayoutEffect,
   useMemo,
@@ -623,63 +624,59 @@ function ThreadWorkGroupList(props: {
       void listRef.current?.scrollToEnd({ animated: false });
     }
   }, []);
-  const onContentSizeChange = useCallback(
-    (nextHeight: number) => {
-      const previous = previousContent.current;
-      const detailsChanged = previous.expandedRows !== props.expandedRows;
-      const followAppend =
-        loadedRef.current &&
-        shouldFollowThreadWorkGroupAppend({
-          previousRows: previous.rows,
-          rows: props.activities,
-          previousContentHeight: previous.height,
-          contentHeight: nextHeight,
-          viewportHeight: Math.min(previous.height, WORK_GROUP_MAX_HEIGHT),
-          scrollOffset: scrollOffset.value,
-          detailsChanged,
-          userScrolling: userScrollingRef.current,
-        });
-      previousContent.current = {
+  // LegendList reports totalSize from its own layout effects, which run before
+  // this component's. React updates an Effect Event before any layout effect,
+  // so an append is compared with the rows that caused it, not the last render's.
+  const onContentSizeChange = useEffectEvent((nextHeight: number) => {
+    const previous = previousContent.current;
+    const detailsChanged = previous.expandedRows !== props.expandedRows;
+    const followAppend =
+      loadedRef.current &&
+      shouldFollowThreadWorkGroupAppend({
+        previousRows: previous.rows,
         rows: props.activities,
-        height: nextHeight,
-        expandedRows: props.expandedRows,
-      };
-      setMeasuredContent((current) =>
-        current.height === nextHeight && current.rowCount === props.activities.length
-          ? current
-          : { height: nextHeight, rowCount: props.activities.length },
-      );
-      // Follow new calls only, never a detail toggle or a growing tool result.
-      if (followAppend) {
-        pendingAppendHeightRef.current = Math.min(nextHeight, WORK_GROUP_MAX_HEIGHT);
-      } else if (detailsChanged || userScrollingRef.current || previous.rows !== props.activities) {
-        pendingAppendHeightRef.current = null;
-      } else if (pendingAppendHeightRef.current !== null) {
-        pendingAppendHeightRef.current = Math.min(nextHeight, WORK_GROUP_MAX_HEIGHT);
-      }
-      // A short group can grow its viewport on this append. Wait for that
-      // layout before calculating the end offset, rather than jumping twice.
-      finishPendingAppend();
-      rememberPosition();
-    },
-    [props.activities, props.expandedRows, scrollOffset, finishPendingAppend, rememberPosition],
-  );
+        previousContentHeight: previous.height,
+        contentHeight: nextHeight,
+        viewportHeight: Math.min(previous.height, WORK_GROUP_MAX_HEIGHT),
+        scrollOffset: scrollOffset.value,
+        detailsChanged,
+        userScrolling: userScrollingRef.current,
+      });
+    previousContent.current = {
+      rows: props.activities,
+      height: nextHeight,
+      expandedRows: props.expandedRows,
+    };
+    setMeasuredContent((current) =>
+      current.height === nextHeight && current.rowCount === props.activities.length
+        ? current
+        : { height: nextHeight, rowCount: props.activities.length },
+    );
+    // Follow new calls only, never a detail toggle or a growing tool result.
+    if (followAppend) {
+      pendingAppendHeightRef.current = Math.min(nextHeight, WORK_GROUP_MAX_HEIGHT);
+    } else if (detailsChanged || userScrollingRef.current || previous.rows !== props.activities) {
+      pendingAppendHeightRef.current = null;
+    } else if (pendingAppendHeightRef.current !== null) {
+      pendingAppendHeightRef.current = Math.min(nextHeight, WORK_GROUP_MAX_HEIGHT);
+    }
+    // A short group can grow its viewport on this append. Wait for that
+    // layout before calculating the end offset, rather than jumping twice.
+    finishPendingAppend();
+    rememberPosition();
+  });
   // The native ScrollView reports its content size a frame or more after
   // LegendList has laid the rows out, so a detail toggle rendered the group
   // at its old height while the rows below already moved. Read the size
   // LegendList computes on the JS thread instead; it settles in the same
   // commit as the row measurement that changed it.
-  const onContentSizeChangeRef = useRef(onContentSizeChange);
   useLayoutEffect(() => {
-    onContentSizeChangeRef.current = onContentSizeChange;
-  }, [onContentSizeChange]);
-  const subscribeToContentSize = useCallback((list: LegendListRef | null) => {
-    listRef.current = list;
+    const list = listRef.current;
     if (!list) return;
     const unsubscribe = list.getState().listen("totalSize", () => {
-      onContentSizeChangeRef.current(list.getState().contentLength);
+      onContentSizeChange(list.getState().contentLength);
     });
-    onContentSizeChangeRef.current(list.getState().contentLength);
+    onContentSizeChange(list.getState().contentLength);
     return unsubscribe;
   }, []);
   const getFixedItemSize = useCallback(
@@ -701,7 +698,7 @@ function ThreadWorkGroupList(props: {
   return (
     <View style={{ height, overflow: "hidden" }}>
       <AnimatedLegendList
-        ref={subscribeToContentSize}
+        ref={listRef}
         data={props.activities}
         keyExtractor={workLogRowKey}
         estimatedItemSize={props.rowSizing.estimatedRowHeight + WORK_ROW_GAP}
