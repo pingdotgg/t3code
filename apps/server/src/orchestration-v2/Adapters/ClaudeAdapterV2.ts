@@ -1113,6 +1113,46 @@ function textFromClaudeContent(content: SDKAssistantMessage["message"]["content"
   return content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
 }
 
+/** Resume transcripts can report ended tasks as synthetic XML user messages. */
+export function claudeTranscriptTaskNotifications(
+  message: SDKMessage,
+): ReadonlyArray<Extract<SDKMessage, { subtype: "task_notification" }>> {
+  if (
+    message.type !== "user" ||
+    message.isSynthetic !== true ||
+    message.parent_tool_use_id !== null ||
+    message.session_id === undefined ||
+    message.uuid === undefined
+  )
+    return [];
+  const content = message.message.content;
+  const text =
+    typeof content === "string"
+      ? content
+      : content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n");
+  return Array.from(text.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)).flatMap(
+    (match) => {
+      const body = match[1]!;
+      const taskId = /<task-id>([^<]+)<\/task-id>/.exec(body)?.[1]?.trim();
+      const status = /<status>(completed|failed|stopped)<\/status>/.exec(body)?.[1];
+      const summary = /<summary>([\s\S]*?)<\/summary>/.exec(body)?.[1];
+      if (!taskId || !status || summary === undefined) return [];
+      return [
+        {
+          type: "system" as const,
+          subtype: "task_notification" as const,
+          task_id: taskId,
+          status: status as "completed" | "failed" | "stopped",
+          summary,
+          output_file: "",
+          uuid: message.uuid!,
+          session_id: message.session_id!,
+        },
+      ];
+    },
+  );
+}
+
 // In SDK mode Claude reports `/goal` only through the transcript (its
 // `active_goal` event is remote-only): synthetic command output names the
 // goal, and each unmet evaluator check returns as Stop hook feedback.
@@ -3304,6 +3344,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     openSession: Effect.fn("ClaudeAdapterV2.openSession")(
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
         const sessionScope = yield* Effect.scope;
+        const ownerThreadId = input.threadId;
         const now = yield* DateTime.now;
         const session = providerSession({
           providerSessionId: input.providerSessionId,
@@ -7056,6 +7097,29 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
         });
 
+        const reconcileUntrackedTask = Effect.fnUntraced(function* (message: SDKMessage) {
+          if (
+            message.type !== "system" ||
+            message.subtype !== "task_notification" ||
+            (yield* Ref.get(sessionSubagentsByTaskId)).has(message.task_id)
+          )
+            return;
+          const live = yield* Ref.get(queryContext);
+          if (
+            live === null ||
+            (yield* isKnownOpaqueBackgroundTaskOnNativeThread(live.nativeThreadId, message.task_id))
+          )
+            return;
+          yield* emitProviderEvent({
+            type: "subagent.native-task-ended",
+            driver: CLAUDE_PROVIDER,
+            threadId: ownerThreadId,
+            nativeTaskId: message.task_id,
+            status: claudeTaskOutcome(message.status),
+            result: message.summary,
+          });
+        });
+
         // A prompt offered while Claude has a turn of its own queued (a
         // background task or subagent finished, a peer message arrived, a
         // resume reports work the previous process left) is answered only
@@ -7074,6 +7138,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly message: SDKMessage;
         }) {
           const message = input.message;
+          const transcriptNotifications = claudeTranscriptTaskNotifications(message);
+          for (const notification of transcriptNotifications) {
+            yield* reconcileUntrackedTask(notification);
+            yield* handleRoutedSdkMessage({ query: input.query, message: notification });
+          }
+          // A synthesized receipt never replaces its source frame: the
+          // original still takes the normal path for prompt echo, goals, and
+          // wake buffering.
+          if (transcriptNotifications.length === 0) yield* reconcileUntrackedTask(message);
           const context = yield* Ref.get(activeTurn);
           const liveQuery = yield* Ref.get(queryContext);
           if (

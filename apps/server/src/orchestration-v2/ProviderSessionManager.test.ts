@@ -3779,6 +3779,61 @@ it.effect("ProviderSessionManagerV2 persists session-scoped runtime requests wit
   }),
 );
 
+it.effect("ProviderSessionManagerV2 republishes native task receipts to run subscribers", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const projectId = yield* idAllocator.allocate.project({
+        fixtureName: "provider-session-manager-receipt-publish",
+      });
+      const threadId = yield* idAllocator.allocate.thread({
+        fixtureName: "provider-session-manager-receipt-publish",
+        projectId,
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const subscribeEvents = runtime.subscribeEvents;
+      if (subscribeEvents === undefined) {
+        throw new Error("Test runtime must expose subscribeEvents.");
+      }
+      const subscription = yield* subscribeEvents;
+      const adapterEvents = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+      assert.isDefined(adapterEvents);
+      yield* Queue.offer(adapterEvents!, {
+        type: "subagent.native-task-ended",
+        driver: CODEX_DRIVER,
+        threadId,
+        nativeTaskId: "old-task",
+        status: "cancelled",
+        result: "Previous session ended",
+      });
+
+      const published = Array.from(
+        yield* subscription.events.pipe(Stream.take(1), Stream.runCollect),
+      );
+      assert.equal(published[0]?.type, "subagent.native-task-ended");
+    });
+
+    yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
+  }),
+);
+
 it.effect(
   "ProviderSessionManagerV2 preserves item identity during eager native session activation",
   () =>

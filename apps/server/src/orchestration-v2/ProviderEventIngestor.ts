@@ -19,6 +19,7 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  isOrchestrationV2WorkActive,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -606,6 +607,123 @@ export const layer: Layer.Layer<
                 nodeId: input.event.subagent.id,
               }),
             ];
+          case "subagent.native-task-ended": {
+            const ended = input.event;
+            const projection = yield* projections.getThreadRecords(ended.threadId, [
+              "subagents",
+              "nodes",
+              "turnItems",
+            ]);
+            const task = projection.subagents.find(
+              (task) =>
+                task.origin === "provider_native" &&
+                task.driver === ended.driver &&
+                task.nativeTaskRef?.nativeId === ended.nativeTaskId &&
+                isOrchestrationV2WorkActive(task.status),
+            );
+            if (task === undefined) return [];
+            const now = yield* DateTime.now;
+            const owner = { ...input, providerInstanceId: task.providerInstanceId };
+            const events = [
+              yield* makeDomainEvent(owner, {
+                type: "subagent.updated",
+                threadId: task.threadId,
+                runId: task.runId,
+                nodeId: task.id,
+                payload: {
+                  ...task,
+                  status: ended.status,
+                  result: ended.result,
+                  completedAt: now,
+                  updatedAt: now,
+                },
+              }),
+            ];
+            const node = projection.nodes.find((node) => node.id === task.id);
+            if (node !== undefined && isOrchestrationV2WorkActive(node.status))
+              events.push(
+                yield* makeDomainEvent(owner, {
+                  type: "node.updated",
+                  threadId: node.threadId,
+                  runId: node.runId,
+                  nodeId: node.id,
+                  payload: { ...node, status: ended.status, completedAt: now },
+                }),
+              );
+            for (const item of projection.turnItems) {
+              if (item.nodeId !== task.id || !isOrchestrationV2WorkActive(item.status)) continue;
+              events.push(
+                yield* makeDomainEvent(owner, {
+                  type: "turn-item.updated",
+                  threadId: item.threadId,
+                  runId: item.runId,
+                  nodeId: item.nodeId,
+                  payload: {
+                    ...item,
+                    ...(item.type === "subagent" ? { result: ended.result } : {}),
+                    status: ended.status,
+                    completedAt: now,
+                    updatedAt: now,
+                  },
+                }),
+              );
+            }
+            if (task.childThreadId !== null) {
+              // The child thread's own root turn and the items under it were
+              // only ever settled by the provider process that ran them, so
+              // the receipt ends them too. Items under other roots stay.
+              const child = yield* projections.getThreadRecords(task.childThreadId, [
+                "nodes",
+                "turnItems",
+              ]);
+              const settledChildRootIds = new Set<NodeId>();
+              for (const node of child.nodes) {
+                if (
+                  node.kind !== "root_turn" ||
+                  !isOrchestrationV2WorkActive(node.status) ||
+                  node.nativeItemRef?.driver !== ended.driver ||
+                  node.nativeItemRef.nativeId !== ended.nativeTaskId
+                )
+                  continue;
+                settledChildRootIds.add(node.id);
+                events.push(
+                  yield* makeDomainEvent(owner, {
+                    type: "node.updated",
+                    threadId: node.threadId,
+                    runId: node.runId,
+                    nodeId: node.id,
+                    payload: { ...node, status: ended.status, completedAt: now },
+                  }),
+                );
+              }
+              for (const item of child.turnItems) {
+                if (
+                  item.nodeId === null ||
+                  !settledChildRootIds.has(item.nodeId) ||
+                  !isOrchestrationV2WorkActive(item.status)
+                )
+                  continue;
+                events.push(
+                  yield* makeDomainEvent(owner, {
+                    type: "turn-item.updated",
+                    threadId: item.threadId,
+                    runId: item.runId,
+                    nodeId: item.nodeId,
+                    payload: {
+                      ...item,
+                      status: ended.status,
+                      completedAt: now,
+                      updatedAt: now,
+                      ...(item.type === "reasoning" || item.type === "assistant_message"
+                        ? { streaming: false }
+                        : {}),
+                    },
+                  }),
+                );
+              }
+            }
+            return events;
+          }
           case "message.updated":
             return [
               yield* makeDomainEvent(input, {

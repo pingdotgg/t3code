@@ -277,7 +277,7 @@ it("routes only exact same-thread background items inherited from settled runs",
   };
   const initial = RunExecutionService.makeProviderEventRoutingState({
     identity,
-    inheritedBackgroundTurnItems: [{ id: itemId, runId: priorRunId }],
+    inheritedBackgroundTurnItems: [{ id: itemId, runId: priorRunId, nativeTaskId: null }],
     providerTurnId: null,
   });
   const inheritedRunning = {
@@ -458,9 +458,9 @@ it("selects only live background items from non-completed settled prior runs", (
   });
 
   assert.deepEqual(selected, [
-    { id: inheritedItemId, runId: interruptedRunId },
-    { id: failedItemId, runId: failedRunId },
-    { id: cancelledItemId, runId: cancelledRunId },
+    { id: inheritedItemId, runId: interruptedRunId, nativeTaskId: null },
+    { id: failedItemId, runId: failedRunId, nativeTaskId: null },
+    { id: cancelledItemId, runId: cancelledRunId, nativeTaskId: null },
   ]);
 });
 
@@ -1656,7 +1656,9 @@ it.effect("seeds inherited background items before their next update", () =>
       ],
       {
         loadInheritedBackgroundTurnItems: () =>
-          Effect.succeed([{ id: TurnItemId.make(`turn-item:${key}`), runId: priorRunId }]),
+          Effect.succeed([
+            { id: TurnItemId.make(`turn-item:${key}`), runId: priorRunId, nativeTaskId: null },
+          ]),
       },
     );
 
@@ -1677,11 +1679,47 @@ it.effect("releases the live run after an inherited background item terminalizes
       ],
       {
         loadInheritedBackgroundTurnItems: () =>
-          Effect.succeed([{ id: TurnItemId.make(`turn-item:${key}`), runId: priorRunId }]),
+          Effect.succeed([
+            { id: TurnItemId.make(`turn-item:${key}`), runId: priorRunId, nativeTaskId: null },
+          ]),
       },
     );
 
     assert.deepEqual(observed, ["turn_item:running", "root-finalized", "turn_item:completed"]);
+  }),
+);
+
+it.effect("releases an inherited background item when its native task receipt settles it", () =>
+  Effect.gen(function* () {
+    const key = "inherited-background-receipt";
+    const priorRunId = RunId.make(`run:${key}:prior`);
+    const observed = yield* runBackgroundItemScenario(
+      key,
+      (ids) => [
+        rootTerminalEvent(ids, "completed"),
+        {
+          type: "subagent.native-task-ended",
+          driver,
+          threadId: ids.threadId,
+          nativeTaskId: "old-task",
+          status: "cancelled",
+          result: "Previous session ended",
+        },
+      ],
+      {
+        keepEventStreamOpen: true,
+        loadInheritedBackgroundTurnItems: () =>
+          Effect.succeed([
+            {
+              id: TurnItemId.make(`turn-item:${key}`),
+              runId: priorRunId,
+              nativeTaskId: "old-task",
+            },
+          ]),
+      },
+    );
+
+    assert.deepEqual(observed, ["root-finalized"]);
   }),
 );
 
@@ -4137,7 +4175,7 @@ function runBackgroundItemScenario(
   options?: {
     readonly keepEventStreamOpen?: boolean;
     readonly loadInheritedBackgroundTurnItems?: () => Effect.Effect<
-      ReadonlyArray<{ readonly id: TurnItemId; readonly runId: RunId }>
+      ReadonlyArray<RunExecutionService.InheritedBackgroundTurnItemRoute>
     >;
     readonly onSubscribe?: Effect.Effect<void>;
   },
