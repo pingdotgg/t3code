@@ -32,6 +32,7 @@ import {
   xAiSubagentFinishedNotice,
   XAiAskUserQuestionRequest,
 } from "./xaiAcpExtension.ts";
+import { applyTerminalProjectedToolStatus } from "@t3tools/provider-acp/server/adapter";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   type AcpToolCallState,
@@ -698,6 +699,86 @@ describe("XAiAcpExtension", () => {
       {
         taskId: "019f54a0-06a8-77f2-8214-e24937cad564",
         status: "completed",
+      },
+    ]);
+  });
+
+  it("hydrates a Grok 1.0.50 background shell whose task id is the tool call id", () => {
+    // Recorded from Grok 1.0.50 `_x.ai/session/update` plus the following
+    // TaskOutput (session 01a11ff6-ad09). The id is `call-<uuid>-<n>`, not a
+    // bare UUID, and the shell's own tool update stays a start ACK.
+    const taskId = "call-3e89cd85-00b8-4678-acaf-d4d13afe3289-36";
+    const started = {
+      toolCallId: taskId,
+      title: "Run schema and file MIME tests",
+      status: "completed" as const,
+      data: {
+        rawOutput: {
+          type: "BackgroundTaskStarted",
+          task_id: taskId,
+        },
+      },
+    };
+    expect(extractXAiMonitorTaskId(started)).toBe(taskId);
+    expect(normalizeXAiAcpToolCallState(started).status).toBe("inProgress");
+    const polled = {
+      toolCallId: "call-get-shell",
+      title: "get_command_or_subagent_output",
+      status: "completed" as const,
+      data: {
+        rawInput: {
+          variant: "TaskOutput",
+          task_id: taskId,
+        },
+        rawOutput: {
+          type: "TaskOutput",
+          Result: {
+            task_id: taskId,
+            status: "failed",
+            exit_code: 101,
+            output: "error: could not compile `forward`\n",
+          },
+        },
+      },
+    };
+    expect(extractXAiBackgroundTaskCompletion(polled)).toEqual([
+      {
+        taskId,
+        status: "failed",
+        appendOutput: "error: could not compile `forward`",
+      },
+    ]);
+    // A shell poll must not open a phantom subagent for the tool-call id.
+    expect(extractXAiAcpSubagentUpdate(polled)).toBeUndefined();
+    // The start ACK is what Grok re-sends. After the shell is failed, normalize
+    // would reopen it; the stored terminal status has to survive that replay.
+    const failedShell = { ...started, status: "failed" as const };
+    const replayed = normalizeXAiAcpToolCallState(mergeToolCallState(failedShell, started));
+    expect(replayed.status).toBe("inProgress");
+    expect(applyTerminalProjectedToolStatus(replayed, undefined, failedShell).status).toBe(
+      "failed",
+    );
+    expect(
+      extractXAiBackgroundTaskCompletion({
+        ...polled,
+        data: {
+          rawOutput: {
+            type: "Text",
+            text: [
+              `=== Task ${taskId} ===`,
+              "Status: failed",
+              "Exit Code: 101",
+              "=== Output ===",
+              "error: could not compile",
+            ].join("\n"),
+          },
+        },
+      }),
+    ).toEqual([
+      {
+        taskId,
+        status: "failed",
+        appendOutput: "error: could not compile",
       },
     ]);
   });
@@ -1567,6 +1648,142 @@ describe("XAiAcpExtension", () => {
       expect(response.stopReason).toBe("end_turn");
       expect(notices).toHaveLength(1);
     }),
+  );
+
+  it.effect(
+    "finishes background shells from _x.ai/session/update without dropping subagent_finished",
+    () =>
+      Effect.gen(function* () {
+        const handlers = new Map<string, (notification: unknown) => Effect.Effect<void>>();
+        let capturedMeta: Record<string, unknown> | null | undefined;
+        const hungPrompt = yield* Deferred.make<never>();
+        const baseRuntime = {
+          start: () =>
+            Effect.succeed({
+              sessionId: "root-session",
+              initializeResult: {},
+              sessionSetupResult: {},
+              modelConfigId: undefined,
+            }),
+          prompt: (payload: { readonly _meta?: Record<string, unknown> | null }) => {
+            capturedMeta = payload._meta ?? null;
+            return Deferred.await(hungPrompt);
+          },
+          cancel: Effect.void,
+          handleExtNotification: (
+            method: string,
+            _schema: unknown,
+            handler: (notification: unknown) => Effect.Effect<void>,
+          ) => {
+            handlers.set(method, handler);
+            return Effect.void;
+          },
+        } as unknown as AcpSessionRuntime.AcpSessionRuntime["Service"];
+        const runtime = yield* makeXAiPromptCompletionRuntime(baseRuntime);
+        const mutations: Array<unknown> = [];
+        const notices: Array<unknown> = [];
+        // Same order as registerGrokAcpExtensions. The second registration must
+        // not replace the first, and a schema miss in one must not skip the other.
+        yield* registerXAiBackgroundTaskTracking(runtime, (mutation) =>
+          Effect.sync(() => mutations.push(mutation)),
+        );
+        yield* registerXAiSubagentFinished(runtime, (notice) =>
+          Effect.sync(() => notices.push(notice)),
+        );
+        const sessionUpdate = handlers.get("_x.ai/session/update")!;
+        const taskId = "call-3e89cd85-00b8-4678-acaf-d4d13afe3289-36";
+
+        yield* sessionUpdate({
+          sessionId: "root-session",
+          update: {
+            sessionUpdate: "subagent_finished",
+            child_session_id: "child-session",
+            status: "completed",
+            output: "SUBAGENT_DONE",
+            // Poison for the task schema only. Excess on the subagent schema.
+            task_snapshot: { exit_code: "nope" },
+          },
+        });
+        expect(notices).toEqual([
+          {
+            sessionId: "root-session",
+            childSessionId: "child-session",
+            status: "completed",
+            result: "SUBAGENT_DONE",
+          },
+        ]);
+        expect(mutations).toEqual([]);
+
+        yield* sessionUpdate({
+          sessionId: "root-session",
+          update: {
+            sessionUpdate: "task_backgrounded",
+            tool_call_id: taskId,
+            task_id: taskId,
+            command: "cargo test -p forward --lib",
+            cwd: "/tmp/worktree",
+            output_file: "/tmp/cargo.log",
+            description: "Run schema and file MIME tests",
+          },
+        });
+        yield* sessionUpdate({
+          sessionId: "root-session",
+          update: {
+            sessionUpdate: "task_completed",
+            will_wake: false,
+            task_snapshot: {
+              task_id: taskId,
+              command: "cargo test -p forward --lib",
+              cwd: "/tmp/worktree",
+              start_time: { secs_since_epoch: 1791537832, nanos_since_epoch: 0 },
+              end_time: { secs_since_epoch: 1791537905, nanos_since_epoch: 0 },
+              output: "error: could not compile `forward`\n",
+              output_file: "/tmp/cargo.log",
+              truncated: true,
+              output_total_bytes: 47221,
+              exit_code: 101,
+              signal: null,
+              completed: true,
+              kind: "bash",
+              block_waited: true,
+              explicitly_killed: false,
+              kill_result_delivered: false,
+              owner_session_id: "root-session",
+              description: "Run schema and file MIME tests",
+              is_backgrounded: true,
+            },
+          },
+        });
+        expect(mutations).toMatchObject([
+          { sessionId: "root-session", taskId, status: "running" },
+          {
+            sessionId: "root-session",
+            taskId,
+            status: "failed",
+            output: "error: could not compile `forward`\n",
+            report: { kind: "command", exitCode: 101 },
+          },
+        ]);
+
+        const promptFiber = yield* runtime
+          .prompt({ prompt: [{ type: "text", text: "hi" }] })
+          .pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* sessionUpdate({
+          sessionId: "root-session",
+          update: {
+            sessionUpdate: "turn_completed",
+            prompt_id: capturedMeta?.promptId,
+            stop_reason: "end_turn",
+            usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+            elapsed_ms: 10,
+          },
+        });
+        const response = yield* Fiber.join(promptFiber);
+        expect(response.stopReason).toBe("end_turn");
+        expect(notices).toHaveLength(1);
+        expect(mutations).toHaveLength(2);
+      }),
   );
 
   it.effect("settles a hung prompt from _x.ai/session/update turn_completed", () =>
