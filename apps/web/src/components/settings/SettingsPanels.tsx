@@ -616,6 +616,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.composerRichTextEnabled !== DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled
         ? ["Rich text composer"]
         : []),
+      ...(settings.copyOnHighlight !== DEFAULT_UNIFIED_SETTINGS.copyOnHighlight
+        ? ["Copy on highlight"]
+        : []),
       ...(settings.sendShortcut !== DEFAULT_UNIFIED_SETTINGS.sendShortcut ? ["Send shortcut"] : []),
       ...(settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior
         ? ["Follow-up behavior"]
@@ -682,6 +685,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadUnpin,
       settings.composerCollapseOnScroll,
       settings.composerRichTextEnabled,
+      settings.copyOnHighlight,
       settings.sendShortcut,
       settings.followUpBehavior,
       settings.addProjectBaseDirectory,
@@ -804,6 +808,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
+      copyOnHighlight: DEFAULT_UNIFIED_SETTINGS.copyOnHighlight,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
@@ -2761,6 +2766,28 @@ export function GeneralSettingsPanel() {
                 updateSettings({ composerRichTextEnabled: Boolean(checked) })
               }
               aria-label="Rich text composer"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("copy-on-highlight")}
+          description="Automatically copy selected conversation text when you finish highlighting it."
+          resetAction={
+            settings.copyOnHighlight !== DEFAULT_UNIFIED_SETTINGS.copyOnHighlight ? (
+              <SettingResetButton
+                label="copy on highlight"
+                onClick={() =>
+                  updateSettings({ copyOnHighlight: DEFAULT_UNIFIED_SETTINGS.copyOnHighlight })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.copyOnHighlight}
+              onCheckedChange={(checked) => updateSettings({ copyOnHighlight: Boolean(checked) })}
+              aria-label="Copy on highlight"
             />
           }
         />
