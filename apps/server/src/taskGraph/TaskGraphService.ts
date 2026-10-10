@@ -442,6 +442,24 @@ const make = Effect.gen(function* () {
         : null;
     });
 
+  /** A succeeded node's thread has nothing left to do; settle it so it leaves the active list. */
+  const settleNodeThread = (threadId: ThreadId) =>
+    threads
+      .settleThread({
+        threadId,
+        commandId: CommandId.make(`task-graph-settle:${threadId}`),
+        byOwnAgent: false,
+      })
+      .pipe(
+        Effect.asVoid,
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not settle a succeeded task graph node's thread", {
+            threadId,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
+
   const finishLocalNode = (graphId: TaskGraphId, key: string, threadId: ThreadId) =>
     Effect.gen(function* () {
       const projection = yield* threads.getThreadProjection(threadId);
@@ -518,7 +536,7 @@ const make = Effect.gen(function* () {
           ? Exit.succeed(null)
           : yield* Effect.exit(deliver(stored, node, worktreePath));
       const completedAt = yield* nowIso;
-      yield* updateNode(graphId, key, (current) =>
+      const finished = yield* updateNode(graphId, key, (current) =>
         current.status !== "delivering"
           ? current
           : Exit.isSuccess(delivered)
@@ -542,6 +560,11 @@ const make = Effect.gen(function* () {
                   completedAt,
                 },
       );
+      if (
+        finished.stored.nodes.find((candidate) => candidate.key === key)?.status === "succeeded"
+      ) {
+        yield* settleNodeThread(threadId);
+      }
       yield* advance;
     }).pipe(
       Effect.catchCause((cause) =>

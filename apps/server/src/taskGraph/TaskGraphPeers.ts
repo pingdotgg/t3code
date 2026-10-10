@@ -343,6 +343,21 @@ const make = Effect.gen(function* () {
               ),
             );
       tracked.delete(thread.id);
+      // Settle the finished thread there, as a local node's is. Servers without
+      // settlement refuse the command; the node still counts as succeeded.
+      yield* state.client[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+        type: "thread.settle",
+        commandId: CommandId.make(`task-graph-settle:${thread.id}`),
+        threadId: thread.id,
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not settle a peer task graph node's thread", {
+            environmentId,
+            threadId: thread.id,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
       yield* Queue.offer(completions, {
         threadId: thread.id,
         outcome: {

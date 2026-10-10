@@ -36,6 +36,8 @@ interface Harness {
   readonly launches: Queue.Queue<ThreadLaunch.ThreadLaunchInput>;
   readonly gitActions: Array<GitRunStackedActionInput>;
   readonly interrupted: Array<ThreadId>;
+  /** Node threads the service settled, in order. */
+  readonly settled: Queue.Queue<ThreadId>;
   /** Commands the service dispatched to threads, such as arming usage limit recovery. */
   readonly dispatched: Array<OrchestrationV2ServerCommand>;
   /** Replaces a node thread's projection, then emits a run event with `status`. */
@@ -93,12 +95,14 @@ const withService = <A, E>(
     ]);
     const gitActions: Array<GitRunStackedActionInput> = [];
     const interrupted: Array<ThreadId> = [];
+    const settled = yield* Queue.unbounded<ThreadId>();
     const dispatched: Array<OrchestrationV2ServerCommand> = [];
 
     const harness: Harness = {
       launches,
       gitActions,
       interrupted,
+      settled,
       dispatched,
       setThread: (threadId, next, status) =>
         Effect.gen(function* () {
@@ -160,6 +164,8 @@ const withService = <A, E>(
                 dispatched.push(command);
                 return {} as never;
               }),
+            settleThread: (input) =>
+              Queue.offer(settled, input.threadId).pipe(Effect.as({ sequence: 0 })),
             interruptThread: (input) =>
               Effect.sync(() => {
                 interrupted.push(input.threadId);
@@ -255,6 +261,12 @@ it.effect("fans out, merges, opens a PR at the end, and reports to the proposing
 
       const report = yield* Deferred.await(harness.report);
       assert.include(report, 'Task graph "Security audit" finished: succeeded.');
+      // Each succeeded node's thread is settled, so finished work leaves the active list.
+      const settled = yield* Effect.forEach([a, ...fanOut, d], () => Queue.take(harness.settled));
+      assert.deepEqual(
+        settled.toSorted(),
+        [a, ...fanOut, d].map((launch) => launch.threadId!).toSorted(),
+      );
       assert.include(report, "PR: https://pr//worktrees/t3/d");
       // Only the branch end opens a PR, so it targets the graph base and carries all the work.
       assert.equal(
@@ -400,6 +412,8 @@ it.effect("follows a failed node that someone continues in its own thread", () =
       const a = yield* Queue.take(harness.launches);
       yield* harness.finish(a, { reply: "crashed", branch: "t3/a", status: "failed" });
       assert.include(yield* Deferred.await(harness.report), "finished: failed");
+      // A failed node's thread stays active so someone can pick it up.
+      assert.equal(yield* Queue.size(harness.settled), 0);
 
       // The user sends a follow-up in a's thread and that run succeeds.
       yield* harness.finish(a, { reply: "", branch: "t3/a", status: "running" });
