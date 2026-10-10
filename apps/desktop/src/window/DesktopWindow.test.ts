@@ -1,3 +1,4 @@
+// @effect-diagnostics globalTimers:off -- flushAsyncWork uses a macrotask so runPromise chains settle before assertions.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -42,6 +43,7 @@ import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
@@ -131,6 +133,7 @@ function makeFakeBrowserWindow() {
 
   return {
     window: window as unknown as Electron.BrowserWindow,
+    close: window.close,
     getBounds: window.getBounds,
     getNormalBounds: window.getNormalBounds,
     isDestroyed: window.isDestroyed,
@@ -162,7 +165,15 @@ const layerDesktopClientSettings = Layer.mock(DesktopClientSettings.DesktopClien
 
 const layerElectronApp = Layer.mock(ElectronApp.ElectronApp)({
   quit: Effect.void,
+  on: () => Effect.void,
 });
+
+const layerElectronDialog = Layer.succeed(ElectronDialog.ElectronDialog, {
+  pickFolder: () => Effect.succeedNone,
+  pickFiles: () => Effect.succeed([]),
+  showMessageBox: () => Effect.die("unexpected showMessageBox"),
+  showErrorBox: () => Effect.void,
+} satisfies ElectronDialog.ElectronDialog["Service"]);
 
 const layerDesktopAssets = Layer.succeed(DesktopAssets.DesktopAssets, {
   iconPaths: Effect.succeed({
@@ -233,7 +244,31 @@ function layerTest(input: {
   readonly previewZoomReapplies?: number[];
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
   readonly focusedWindow?: Electron.BrowserWindow;
+  readonly platform?: "darwin" | "linux";
+  readonly showMessageBox?: ElectronDialog.ElectronDialog["Service"]["showMessageBox"];
 }) {
+  const dialogShowMessageBox =
+    input.showMessageBox ?? (() => Effect.die("unexpected showMessageBox"));
+  const electronDialogLayer = Layer.succeed(ElectronDialog.ElectronDialog, {
+    pickFolder: () => Effect.succeedNone,
+    pickFiles: () => Effect.succeed([]),
+    showMessageBox: dialogShowMessageBox,
+    showErrorBox: () => Effect.void,
+  } satisfies ElectronDialog.ElectronDialog["Service"]);
+  const environmentLayerFor = (platform: NodeJS.Platform) =>
+    DesktopEnvironment.layer({ ...environmentInput, platform }).pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          DesktopConfig.layerTest({
+            T3CODE_PORT: "3773",
+            VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
+          }),
+        ),
+      ),
+    );
+  const environmentLayer =
+    input.platform === undefined ? layerDesktopEnvironment : environmentLayerFor(input.platform);
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const layerDesktopAppSettings = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
     get: Effect.sync(() => desktopSettings),
@@ -301,12 +336,13 @@ function layerTest(input: {
           recordMetrics: () => Effect.void,
           shutdown: Effect.void,
         }),
-        layerDesktopEnvironment,
+        environmentLayer,
         layerDesktopAppSettings,
         layerDesktopClientSettings,
         layerDesktopServerExposure,
         DesktopState.layer,
         layerElectronApp,
+        electronDialogLayer,
         Layer.succeed(ElectronMenu.ElectronMenu, {
           setApplicationMenu: () => Effect.void,
           showContextMenu: () => Effect.succeedNone,
@@ -431,6 +467,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           layerDesktopClientSettings,
           layerDesktopServerExposure,
           layerElectronApp,
+          layerElectronDialog,
           layerElectronMenu,
           Layer.succeed(ElectronShell.ElectronShell, {
             openExternal: () => Effect.succeed(true),
@@ -1026,6 +1063,80 @@ describe("DesktopWindow", () => {
         assert.deepEqual(mainWindowMaximizedUpdates, [true]);
         assert.equal(fakeWindow.getNormalBounds.mock.calls.length, 1);
         assert.equal(fakeWindow.getBounds.mock.calls.length, 0);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  const flushAsyncWork = Effect.promise(
+    () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
+  );
+
+  it.effect("close with running activity prompts and closes only after confirming", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const showMessageBoxCalls: Electron.MessageBoxOptions[] = [];
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        platform: "linux",
+        showMessageBox: (options) => {
+          showMessageBoxCalls.push(options);
+          return Effect.succeed({ response: 1, checkboxChecked: false });
+        },
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        yield* desktopWindow.setLocalActivityProbe(Effect.succeed(2));
+
+        const close = fakeWindow.windowListeners.get("close");
+        if (!close) {
+          return yield* Effect.die("window close listener was not registered");
+        }
+        const event = { preventDefault: vi.fn() };
+        close(event);
+        yield* flushAsyncWork;
+
+        assert.equal(event.preventDefault.mock.calls.length, 1);
+        assert.equal(showMessageBoxCalls.length, 1);
+        assert.deepEqual(showMessageBoxCalls[0]?.buttons, ["Cancel", "Close anyway"]);
+        assert.equal(fakeWindow.close.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("cancelling the close confirmation keeps the window open", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        platform: "linux",
+        showMessageBox: () => Effect.succeed({ response: 0, checkboxChecked: false }),
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        yield* desktopWindow.setLocalActivityProbe(Effect.succeed(1));
+
+        const close = fakeWindow.windowListeners.get("close");
+        if (!close) {
+          return yield* Effect.die("window close listener was not registered");
+        }
+        const event = { preventDefault: vi.fn() };
+        close(event);
+        yield* flushAsyncWork;
+
+        assert.equal(event.preventDefault.mock.calls.length, 1);
+        assert.equal(fakeWindow.close.mock.calls.length, 0);
       }).pipe(Effect.provide(layer));
     }),
   );

@@ -31,7 +31,9 @@ import * as PreviewPasskeys from "../preview/Passkeys.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
+import { makeCloseGuardHandler } from "./CloseGuard.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
 
 const TITLEBAR_HEIGHT = 40;
@@ -83,6 +85,7 @@ type DesktopWindowRuntimeServices =
   | DesktopAppSettings.DesktopAppSettings
   | DesktopClientSettings.DesktopClientSettings
   | ElectronApp.ElectronApp
+  | ElectronDialog.ElectronDialog
   | ElectronMenu.ElectronMenu
   | ElectronShell.ElectronShell
   | ElectronTheme.ElectronTheme
@@ -122,6 +125,8 @@ export class DesktopWindow extends Context.Service<
     // produce a stranded window pointing at nothing.
     readonly handleBackendNotReady: Effect.Effect<void>;
     readonly flushMainWindowBounds: Effect.Effect<void>;
+    /** Arms the close guard's live-activity probe; injected from main.ts. */
+    readonly setLocalActivityProbe: (probe: Effect.Effect<number>) => Effect.Effect<void>;
     readonly prepareCaptureReveal: Effect.Effect<void>;
     readonly dispatchMenuAction: (
       action: string,
@@ -332,6 +337,7 @@ export const make = Effect.gen(function* () {
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   const electronApp = yield* ElectronApp.ElectronApp;
+  const electronDialog = yield* ElectronDialog.ElectronDialog;
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
   // Window-side latch for the primary backend's readiness. Set by
   // handleBackendReady (driven by the pool's onReady callback), cleared
@@ -346,6 +352,14 @@ export const make = Effect.gen(function* () {
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
   let flushMainWindowBounds: Effect.Effect<void> = Effect.void;
+  // Close-guard state: the injected probe (null until main.ts arms it) and
+  // the quit latch. "before-quit" always fires before any window "close"
+  // during app.quit(), so explicit quit paths disarm the guard here.
+  let localActivityProbe: Effect.Effect<number> | null = null;
+  let quitting = false;
+  yield* electronApp.on("before-quit", () => {
+    quitting = true;
+  });
 
   const dismissConnectingSplash = Effect.gen(function* () {
     const splash = yield* Ref.getAndSet(splashWindowRef, Option.none());
@@ -698,8 +712,43 @@ export const make = Effect.gen(function* () {
     window.on("move", scheduleBoundsPersist);
     window.on("maximize", scheduleBoundsPersist);
     window.on("unmaximize", scheduleBoundsPersist);
-    window.on("close", () => {
+    // Closing the window ends the app on Linux and Windows, which would stop
+    // any agent turns running on this machine. See CloseGuard.ts.
+    const closeGuard = makeCloseGuardHandler({
+      platform: environment.platform,
+      shouldGuard: () => localActivityProbe !== null && !quitting,
+      hasRunningActivity: () => runPromise(localActivityProbe ?? Effect.succeed(0)),
+      confirmClose: (runningCount) =>
+        runPromise(
+          electronDialog
+            .showMessageBox(
+              {
+                type: "warning",
+                title: environment.displayName,
+                message: "Agents are still running",
+                detail:
+                  runningCount === 1
+                    ? "1 thread is running an agent turn. Closing now will stop it."
+                    : `${runningCount} threads are running agent turns. Closing now will stop them.`,
+                buttons: ["Cancel", "Close anyway"],
+                defaultId: 0,
+                cancelId: 0,
+                noLink: true,
+              },
+              window,
+            )
+            .pipe(
+              Effect.map(({ response }) => response === 1),
+              Effect.orElseSucceed(() => false),
+            ),
+        ),
+      close: () => {
+        if (!window.isDestroyed()) window.close();
+      },
+    });
+    window.on("close", (event) => {
       runFork(flushBoundsPersist);
+      closeGuard(event);
     });
 
     if (environment.platform === "darwin") {
@@ -1016,6 +1065,10 @@ export const make = Effect.gen(function* () {
     flushMainWindowBounds: Effect.suspend(() => flushMainWindowBounds).pipe(
       Effect.withSpan("desktop.window.flushMainWindowBounds"),
     ),
+    setLocalActivityProbe: (probe) =>
+      Effect.sync(() => {
+        localActivityProbe = probe;
+      }),
     dispatchMenuAction: Effect.fn("desktop.window.dispatchMenuAction")(function* (action, options) {
       yield* Effect.annotateCurrentSpan({ action });
       yield* dispatchRendererEvent(MENU_ACTION_CHANNEL, action, options);

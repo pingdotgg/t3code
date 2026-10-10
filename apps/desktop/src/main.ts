@@ -12,6 +12,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
+import * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
@@ -73,6 +74,7 @@ import * as DesktopBrowserHost from "./preview/DesktopBrowserHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PreviewPasskeys from "./preview/Passkeys.ts";
 import * as DesktopWindow from "./window/DesktopWindow.ts";
+import * as LocalActivityProbe from "./window/LocalActivityProbe.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
@@ -212,6 +214,22 @@ const layerDesktopLocalEnvironmentAuth = DesktopLocalEnvironmentAuth.layer.pipe(
   Layer.provideMerge(layerDesktopBackend),
 );
 
+// Arms the main window's close guard with the local live-activity probe. This
+// sits above the pool + auth layers because the window layer is built below
+// them (the pool drives the window via handleBackendReady, so the window
+// cannot require the pool back without a layer cycle).
+const layerDesktopCloseGuard = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const desktopWindow = yield* DesktopWindow.DesktopWindow;
+    const pool = yield* DesktopBackendPool.DesktopBackendPool;
+    const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth;
+    const httpClient = yield* HttpClient.HttpClient;
+    yield* desktopWindow.setLocalActivityProbe(
+      LocalActivityProbe.makeLocalActivityProbe({ pool, auth, httpClient }),
+    );
+  }),
+);
+
 const layerDesktopApplication = Layer.mergeAll(
   DesktopLifecycle.layer,
   layerDesktopAppActivation,
@@ -221,6 +239,7 @@ const layerDesktopApplication = Layer.mergeAll(
   DesktopCliCommand.layer,
   DesktopShellEnvironment.layer,
   layerDesktopSsh,
+  layerDesktopCloseGuard,
 ).pipe(
   Layer.provideMerge(layerDesktopSnapShot),
   Layer.provideMerge(DesktopUpdates.layer),
