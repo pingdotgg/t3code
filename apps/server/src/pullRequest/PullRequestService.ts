@@ -1784,6 +1784,9 @@ export const make = Effect.gen(function* () {
             reviewers: changeRequest.reviewers,
             labels: changeRequest.labels,
             checks: changeRequest.checks,
+            ...(changeRequest.expectedChecks === undefined
+              ? {}
+              : { expectedChecks: changeRequest.expectedChecks }),
             mergeCapabilities: changeRequest.mergeCapabilities,
             viewerPermissions: changeRequest.viewerPermissions,
             ...(viewer === null || viewer.trim().length === 0 ? {} : { viewer }),
@@ -1791,6 +1794,9 @@ export const make = Effect.gen(function* () {
               ? {}
               : { baseComparison: changeRequest.baseComparison }),
             ...(changeRequest.behindBy === undefined ? {} : { behindBy: changeRequest.behindBy }),
+            ...(changeRequest.behindBlocksMerge === undefined
+              ? {}
+              : { behindBlocksMerge: changeRequest.behindBlocksMerge }),
             ...(changeRequest.autoMergeEnabled === undefined
               ? {}
               : { autoMergeEnabled: changeRequest.autoMergeEnabled }),

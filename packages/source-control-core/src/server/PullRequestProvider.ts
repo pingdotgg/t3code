@@ -236,11 +236,15 @@ export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
   readonly closedAt: string | null;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly checks: ReadonlyArray<PullRequestCheck>;
+  /** Names of the checks the base branch requires; absent where the host cannot say. */
+  readonly expectedChecks?: ReadonlyArray<string>;
   readonly mergeCapabilities: PullRequestMergeCapabilities;
   readonly viewerPermissions: PullRequestViewerPermissions;
   /** Absent from a host that cannot compare the branch with its base, which is most of them. */
   readonly baseComparison?: PullRequestBaseComparison;
   readonly behindBy?: number;
+  /** The host says merging waits for the branch to catch up; absent where it cannot tell. */
+  readonly behindBlocksMerge?: boolean | null;
   /** Absent from a host that does not report whether it is armed to merge this on its own. */
   readonly autoMergeEnabled?: boolean;
   /** The strategy stored with an armed auto-merge, where the host reports it. */

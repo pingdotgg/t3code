@@ -5,12 +5,19 @@ import type {
   PullRequestDetail,
   ThreadPullRequestWatch,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 /**
- * Wakes in a row that bring only comments. Check, conflict, or push news resets the count, so
- * this only stops a chatty bot looping an agent that is replying to it.
+ * Wakes in a row that bring only comments or a branch falling behind. Check, conflict, or push
+ * news resets the count, so this only stops a chatty bot, or a base that keeps moving, looping an
+ * agent that is replying to it.
  */
 export const PULL_REQUEST_WATCH_WAKE_LIMIT = 10;
+/**
+ * How long after a push a required check may stay silent before it is called missing. Hosts
+ * create checks a few minutes after a push, and some only after a maintainer approves a run.
+ */
+export const PULL_REQUEST_WATCH_MISSING_GRACE_MS = 10 * 60_000;
 const LISTED_ITEMS = 10;
 const SNIPPET_LENGTH = 200;
 
@@ -18,6 +25,8 @@ export type PullRequestWatchChange =
   | { readonly kind: "checks-failed"; readonly failed: ReadonlyArray<PullRequestCheck> }
   | { readonly kind: "checks-passed"; readonly count: number; readonly required: boolean }
   | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
+  | { readonly kind: "checks-missing"; readonly missing: ReadonlyArray<string> }
+  | { readonly kind: "behind" }
   | { readonly kind: "conflicting" };
 
 export interface PullRequestWatchReport {
@@ -28,6 +37,37 @@ export interface PullRequestWatchReport {
   /** This report spends the last wake before the limit, so watching stops after it. */
   readonly exhausted: boolean;
 }
+
+/**
+ * A check reports under its own name, or qualified by its workflow as "workflow / name" when two
+ * workflows share one.
+ */
+const reportsAs = (check: PullRequestCheck, expected: string) =>
+  check.name === expected || check.name.endsWith(` / ${expected}`);
+
+/**
+ * The required checks no pass has seen report. `null` where this read cannot tell: the host does
+ * not say what is required, or the check list is empty, which a failed check read also gives.
+ */
+const absentRequiredChecks = (
+  detail: Pick<PullRequestDetail, "checks" | "expectedChecks">,
+): ReadonlyArray<string> | null =>
+  detail.expectedChecks === undefined || detail.checks.length === 0
+    ? null
+    : detail.expectedChecks.filter(
+        (name) => !detail.checks.some((check) => reportsAs(check, name)),
+      );
+
+/**
+ * Whether a required check is still expected to show up, or to run out its wait. The reactor
+ * keeps reading such a pull request though nothing else moves. A check the agent was already told
+ * about is not waited on, so one that never reports does not force a read on every pass.
+ */
+export const awaitsRequiredChecks = (
+  watch: Pick<ThreadPullRequestWatch, "missingChecks">,
+  detail: Pick<PullRequestDetail, "checks" | "expectedChecks">,
+): boolean =>
+  (absentRequiredChecks(detail) ?? []).some((name) => !watch.missingChecks.includes(name));
 
 // "action-required" is a finished check that needs someone, so the agent hears about it.
 const isFailedCheck = (check: PullRequestCheck) =>
@@ -40,11 +80,28 @@ const isFailedCheck = (check: PullRequestCheck) =>
  * checks where the host marks none required. Remarks count when someone other than the agent's
  * own account wrote them, so its own replies never wake it. `remarks` is null when the
  * conversation could not be read; remarks then wait for a later pass.
+ *
+ * A required check that never reports is invisible in `checks`, so `detail.expectedChecks` names
+ * what the base requires. One still absent `PULL_REQUEST_WATCH_MISSING_GRACE_MS` after the head
+ * was first seen is reported once, and holds back "passed" for as long as it is absent. Without
+ * `now` or without `expectedChecks`, nothing is called missing. An empty `checks` is not
+ * evidence either: a host answers with one when its check read fails.
  */
 export function evaluatePullRequestWatch(
   watch: ThreadPullRequestWatch,
-  detail: Pick<PullRequestDetail, "headSha" | "checks" | "mergeability" | "viewer" | "author">,
+  detail: Pick<
+    PullRequestDetail,
+    | "headSha"
+    | "checks"
+    | "expectedChecks"
+    | "mergeability"
+    | "baseComparison"
+    | "behindBlocksMerge"
+    | "viewer"
+    | "author"
+  >,
   remarks: ReadonlyArray<PullRequestComment> | null,
+  clock: { readonly now?: number } = {},
 ): PullRequestWatchReport {
   const changes: Array<PullRequestWatchChange> = [];
   const headSha = detail.headSha ?? null;
@@ -54,6 +111,33 @@ export function evaluatePullRequestWatch(
   let failedChecks = headMoved ? [] : watch.failedChecks;
   let passed = headMoved ? false : watch.passed;
   let passedChecks = headMoved ? [] : watch.passedChecks;
+  let missingChecks = headMoved ? [] : watch.missingChecks;
+  const nowIso =
+    clock.now === undefined ? null : DateTime.formatIso(DateTime.makeUnsafe(clock.now));
+  // A watch saved before the head time was kept starts its wait from the first pass that sees one.
+  const headSeenAt = headMoved || watch.headSeenAt === null ? nowIso : watch.headSeenAt;
+
+  // Absent from the list, not failing in it, so only the names the host says are required can
+  // tell. The wait lets the host create the check, and holds back "passed" in the meantime.
+  const absentNow = absentRequiredChecks(detail);
+  // A pass that cannot tell still holds "passed" back for a check it called missing and has not
+  // seen report since, so it cannot announce success the last pass said was not there yet.
+  const stillMissing = missingChecks.filter(
+    (name) => !detail.checks.some((check) => reportsAs(check, name)),
+  );
+  const absent = absentNow ?? stillMissing;
+  const graceOver =
+    clock.now !== undefined &&
+    headSeenAt !== null &&
+    clock.now - Date.parse(headSeenAt) >= PULL_REQUEST_WATCH_MISSING_GRACE_MS;
+  // A pass that cannot tell keeps what was reported, so the next one does not say it again.
+  if (graceOver && absentNow !== null) {
+    const newlyMissing = absent.filter((name) => !missingChecks.includes(name));
+    if (newlyMissing.length > 0) changes.push({ kind: "checks-missing", missing: newlyMissing });
+    // Kept until the head moves, so a check that reports and vanishes again is not said twice.
+    missingChecks = [...missingChecks, ...newlyMissing];
+  }
+
   if (detail.checks.length > 0) {
     const failed = detail.checks.filter(isFailedCheck);
     const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
@@ -63,7 +147,9 @@ export function evaluatePullRequestWatch(
 
     const required = detail.checks.filter((check) => check.required === true);
     const gate = required.length > 0 ? required : detail.checks;
-    const passedNow = gate.every((check) => check.status !== "pending" && !isFailedCheck(check));
+    const passedNow =
+      absent.length === 0 &&
+      gate.every((check) => check.status !== "pending" && !isFailedCheck(check));
     const gateNames = gate.map((check) => check.name);
     // A watch saved before passedChecks existed takes the current names, so it does not wake.
     const told = passed && passedChecks.length === 0 ? gateNames : passedChecks;
@@ -105,9 +191,29 @@ export function evaluatePullRequestWatch(
   const conflicting =
     detail.mergeability === "unknown" ? watch.conflicting : detail.mergeability === "conflicting";
 
-  const commentsOnly = changes.length > 0 && changes.every((change) => change.kind === "remarks");
-  const progress = headMoved || (changes.length > 0 && !commentsOnly);
-  const wakes = (progress ? 0 : watch.wakes) + (commentsOnly ? 1 : 0);
+  // Where the host tells apart a branch that must catch up from one that merely trails, only the
+  // first is news; elsewhere the comparison stands in. A pass that cannot tell keeps the last
+  // state, and a push starts over so a branch still behind is reported on its new commit.
+  // `null` from the host is "distinguishes, but could not tell this time"; absent is "does not
+  // distinguish", where the comparison stands in.
+  const behindNow =
+    detail.behindBlocksMerge === null
+      ? null
+      : (detail.behindBlocksMerge ??
+        (detail.baseComparison === undefined || detail.baseComparison === "unknown"
+          ? null
+          : detail.baseComparison === "behind"));
+  const wasBehind = headMoved ? false : watch.behind;
+  if (behindNow === true && !wasBehind) changes.push({ kind: "behind" });
+  const behind = behindNow ?? wasBehind;
+
+  // Comments and a branch falling behind are chatter a bot or a busy base can keep producing,
+  // so a run of only those ends the watch, where check results and pushes start the count over.
+  const quietOnly =
+    changes.length > 0 &&
+    changes.every((change) => change.kind === "remarks" || change.kind === "behind");
+  const progress = headMoved || (changes.length > 0 && !quietOnly);
+  const wakes = (progress ? 0 : watch.wakes) + (quietOnly ? 1 : 0);
   return {
     changes,
     next: {
@@ -119,9 +225,12 @@ export function evaluatePullRequestWatch(
       remarksThrough,
       remarkIds,
       conflicting,
+      behind,
       wakes,
+      headSeenAt,
+      missingChecks,
     },
-    exhausted: commentsOnly && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
+    exhausted: quietOnly && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
   };
 }
 
@@ -167,6 +276,13 @@ function changeLines(
           return `  - ${remark.author?.login ?? "someone"}${where}: ${said}${remark.url ? ` ${remark.url}` : ""}`;
         }),
       ];
+    case "checks-missing":
+      return [
+        `- Required checks have not reported${context.commit} after ${PULL_REQUEST_WATCH_MISSING_GRACE_MS / 60_000} minutes:`,
+        ...listed(change.missing, (name) => `  - ${name}`),
+      ];
+    case "behind":
+      return [`- The branch is behind ${context.baseBranch} and needs to catch up with it.`];
     case "conflicting":
       return [`- The branch now conflicts with ${context.baseBranch}.`];
   }
@@ -175,7 +291,9 @@ function changeLines(
 const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
   "checks-failed": "checks failed",
   "checks-passed": "checks passed",
+  "checks-missing": "required checks missing",
   remarks: "new comments",
+  behind: "behind base",
   conflicting: "merge conflict",
 };
 
@@ -197,11 +315,14 @@ export function pullRequestWatchMessage(input: {
     ...changes.flatMap((change) => changeLines(change, context)),
     "",
     exhausted
-      ? `T3 Code stopped watching after ${PULL_REQUEST_WATCH_WAKE_LIMIT} comment-only updates in a row. Call watch_pull_request to watch it again.`
+      ? `T3 Code stopped watching after ${PULL_REQUEST_WATCH_WAKE_LIMIT} updates in a row. Call watch_pull_request to watch it again.`
       : "Look into each item and act on it as your task requires. T3 Code keeps watching and wakes you on the next change, so end your turn when you are done. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.",
   ].join("\n");
   const failed = changes.some(
-    (change) => change.kind === "checks-failed" || change.kind === "conflicting",
+    (change) =>
+      change.kind === "checks-failed" ||
+      change.kind === "checks-missing" ||
+      change.kind === "conflicting",
   );
   const summary = changes.map((change) => SUMMARY[change.kind]);
   if (exhausted) summary.push("stopped watching");

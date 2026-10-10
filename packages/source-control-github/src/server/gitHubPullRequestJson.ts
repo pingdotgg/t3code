@@ -449,6 +449,61 @@ const RawWorkflowRunsSchema = Schema.Struct({
   ),
 });
 
+const toBlocksMerge = (status: string | null | undefined): boolean | null => {
+  const normalized = status?.toUpperCase();
+  return normalized === undefined || normalized === "UNKNOWN" ? null : normalized === "BEHIND";
+};
+
+/** `GET /repos/{owner}/{repo}/rules/branches/{branch}`: the rulesets that apply to a branch. */
+const RawBranchRulesSchema = Schema.Array(
+  Schema.Struct({
+    type: Schema.String,
+    parameters: Schema.optional(
+      Schema.NullOr(
+        Schema.Struct({
+          required_status_checks: Schema.optional(
+            Schema.NullOr(
+              Schema.Array(
+                Schema.Struct({
+                  context: Schema.String,
+                  integration_id: Schema.optional(Schema.NullOr(Schema.Int)),
+                }),
+              ),
+            ),
+          ),
+        }),
+      ),
+    ),
+  }),
+);
+
+/** `GET /repos/{owner}/{repo}/branches/{branch}`, of which only classic protection is read. */
+const RawBranchProtectionSchema = Schema.Struct({
+  protection: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        required_status_checks: Schema.optional(
+          Schema.NullOr(
+            Schema.Struct({
+              contexts: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
+              checks: Schema.optional(
+                Schema.NullOr(
+                  Schema.Array(
+                    Schema.Struct({
+                      context: Schema.String,
+                      app_id: Schema.optional(Schema.NullOr(Schema.Int)),
+                    }),
+                  ),
+                ),
+              ),
+            }),
+          ),
+        ),
+      }),
+    ),
+  ),
+});
+
 const RawPullRequestHeadsSchema = Schema.Struct({
   data: Schema.Struct({
     repository: Schema.NullOr(
@@ -711,6 +766,7 @@ const RawCoreSchema = Schema.Struct({
         ...RawDetailSchema.fields,
         ...RawViewerFieldsSchema.fields,
         viewerCanUpdateBranch: Schema.Boolean,
+        mergeStateStatus: Schema.optional(Schema.NullOr(Schema.String)),
         baseRef: Schema.NullOr(
           Schema.Struct({
             compare: Schema.NullOr(Schema.Struct({ behindBy: Schema.Int })),
@@ -832,7 +888,7 @@ export const pullRequestCoreGraphQlQuery = (host: string) => {
       headRepositoryOwner { login }
       author { login avatarUrl ... on User { id name } }
       autoMergeRequest { mergeMethod }
-      viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch
+      viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch mergeStateStatus
       baseRef { compare(headRef: $headRef) { behindBy } }
       reviewRequests(first: 100) {
         nodes { requestedReviewer { ... on User { login name } ... on Bot { login } ... on Team { slug name } } }
@@ -1784,6 +1840,8 @@ const decodeSearchItem = Schema.decodeUnknownExit(RawSearchItemSchema);
 const decodeStats = decodeJsonResult(RawStatsSchema);
 const decodeDetail = decodeJsonResult(RawDetailSchema);
 const decodeWorkflowRuns = decodeJsonResult(RawWorkflowRunsSchema);
+const decodeBranchRules = decodeJsonResult(RawBranchRulesSchema);
+const decodeBranchProtection = decodeJsonResult(RawBranchProtectionSchema);
 const decodePullRequestHeads = decodeJsonResult(RawPullRequestHeadsSchema);
 const decodeActivity = decodeJsonResult(RawActivitySchema);
 const decodeRepositoryPullRequests = decodeJsonResult(RawRepositoryPullRequestsSchema);
@@ -2340,6 +2398,10 @@ export function decodePullRequestCoreJson(
         : {
             behindBy: pr.baseRef.compare.behindBy,
             viewerCanUpdate: pr.viewerCanUpdateBranch,
+            // GitHub names BEHIND only when its branch rules make catching up a condition to
+            // merge. When a higher-priority blocker exists (a missing review) it reports BLOCKED
+            // instead, so a branch that is both stays unreported here until that clears.
+            blocksMerge: toBlocksMerge(pr.mergeStateStatus),
           },
     checksTruncated: contexts?.pageInfo.hasNextPage === true,
   });
@@ -2352,6 +2414,44 @@ export function decodePullRequestDetailJson(
   return Result.isSuccess(decoded)
     ? Result.succeed(toDetail(decoded.success))
     : Result.fail(decoded.failure);
+}
+
+/**
+ * Names of the status checks the rulesets on a branch require, or null when one is tied to a
+ * specific app: a check list carries names, not apps, so a same-named check from another app
+ * could not be told from the required one.
+ */
+export function decodeBranchRulesJson(
+  raw: string,
+): Result.Result<ReadonlyArray<string> | null, DecodeFailure> {
+  const decoded = decodeBranchRules(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const checks = decoded.success.flatMap((rule) =>
+    rule.type === "required_status_checks" ? (rule.parameters?.required_status_checks ?? []) : [],
+  );
+  // A missing or null integration accepts any app.
+  return Result.succeed(
+    checks.some((check) => check.integration_id != null)
+      ? null
+      : checks.map((check) => check.context),
+  );
+}
+
+/**
+ * Names of the status checks classic branch protection requires, in either of its two lists, or
+ * null when one is tied to a specific app. `app_id` of -1 or null accepts any app.
+ */
+export function decodeBranchProtectionJson(
+  raw: string,
+): Result.Result<ReadonlyArray<string> | null, DecodeFailure> {
+  const decoded = decodeBranchProtection(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const required = decoded.success.protection?.required_status_checks;
+  const checks = required?.checks ?? [];
+  if (checks.some((check) => check.app_id != null && check.app_id > 0)) {
+    return Result.succeed(null);
+  }
+  return Result.succeed([...(required?.contexts ?? []), ...checks.map((check) => check.context)]);
 }
 
 export interface GitHubWorkflowRunPage {
@@ -2918,6 +3018,11 @@ export interface GitHubBaseComparison {
   /** Null where the host could not compare, which the page reads as "unknown". */
   readonly behindBy: number | null;
   readonly viewerCanUpdate: boolean;
+  /**
+   * The branch rules require the branch to be up to date and it is not. Null while GitHub has not
+   * computed the merge state, which is not the same as "does not block".
+   */
+  readonly blocksMerge: boolean | null;
 }
 
 export const REVIEWER_CANDIDATES_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {

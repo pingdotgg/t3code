@@ -894,6 +894,11 @@ export const PullRequestDetail = Schema.Struct({
   reviewers: Schema.Array(PullRequestActor),
   labels: Schema.Array(PullRequestLabel),
   checks: Schema.Array(PullRequestCheck),
+  /**
+   * Names of the checks the base branch requires, so one that never reports can be told apart
+   * from one that passed. Absent where the host cannot say, which is not the same as none.
+   */
+  expectedChecks: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   mergeCapabilities: PullRequestMergeCapabilities,
   /**
    * Who the host says the reader is, which is the one thing a conversation cannot be read without
@@ -910,6 +915,13 @@ export const PullRequestDetail = Schema.Struct({
   baseComparison: Schema.optional(PullRequestBaseComparison),
   /** How many commits the base is ahead by, where the host counted them. */
   behindBy: Schema.optional(NonNegativeInt),
+  /**
+   * The host says merging waits until the branch catches up with its base, which is narrower than
+   * `baseComparison`: a branch can be behind with nothing requiring it to be current. Absent where
+   * the host does not tell the two apart. Null where it does, but could not say this time (GitHub
+   * still computing the merge state), which is not the same as "does not block".
+   */
+  behindBlocksMerge: Schema.optional(Schema.NullOr(Schema.Boolean)),
   /**
    * Whether the host is already armed to merge this on its own. Absent where the host does not
    * report it, which is not the same as off: a page that reads silence as "not armed" offers to

@@ -34,7 +34,11 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { evaluatePullRequestWatch, pullRequestWatchMessage } from "./pullRequestWatch.ts";
+import {
+  awaitsRequiredChecks,
+  evaluatePullRequestWatch,
+  pullRequestWatchMessage,
+} from "./pullRequestWatch.ts";
 
 /**
  * Minutes between passes. Checks take minutes, so a faster pass mostly spends the host's rate
@@ -206,6 +210,9 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
     left.remarksThrough === right.remarksThrough &&
     left.remarkIds.join("\n") === right.remarkIds.join("\n") &&
     left.conflicting === right.conflicting &&
+    left.behind === right.behind &&
+    left.headSeenAt === right.headSeenAt &&
+    left.missingChecks.join("\n") === right.missingChecks.join("\n") &&
     left.wakes === right.wakes
   );
 }
@@ -535,12 +542,23 @@ export const make = Effect.gen(function* () {
     const remarks = Option.isSome(activity)
       ? yield* readRemarks(group.key, reference, activity.value)
       : null;
+    // Each watch is evaluated once, before the read is recorded: whether a required check is
+    // still awaited depends on what this pass tells the agent, not on what it was told before.
+    const reports = new Map(
+      group.targets.map(
+        (target) =>
+          [target, evaluatePullRequestWatch(target.watch, detail, remarks, { now })] as const,
+      ),
+    );
     lastReads.set(group.key, {
       at: plan.activity || last === undefined ? now : last.at,
       fingerprint: group.fingerprint,
+      // A required check that has not reported yet is in flight too: it may appear, or the wait
+      // before it counts as missing may end, with nothing else moving.
       inFlight:
         detail.mergeability === "unknown" ||
-        detail.checks.some((check) => check.status === "pending"),
+        detail.checks.some((check) => check.status === "pending") ||
+        group.targets.some((target) => awaitsRequiredChecks(reports.get(target)!.next, detail)),
       // Comments a partial read could not see are read again next pass.
       remarksComplete: plan.activity ? remarks !== null : (last?.remarksComplete ?? false),
       watches: new Set(group.targets.map(watchKey)),
@@ -548,7 +566,7 @@ export const make = Effect.gen(function* () {
       remarks: fingerprint?.remarks ?? null,
     });
     yield* eachTarget(group, (target) => {
-      const report = evaluatePullRequestWatch(target.watch, detail, remarks);
+      const report = reports.get(target)!;
       if (report.changes.length > 0) {
         return record(
           target,

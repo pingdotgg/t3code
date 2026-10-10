@@ -119,6 +119,14 @@ export const ThreadPullRequestWatch = Schema.Struct({
   /** Remarks created exactly at `remarksThrough` that were reported, so a late one still counts. */
   remarkIds: Schema.Array(TrimmedNonEmptyString),
   conflicting: Schema.Boolean,
+  /** The agent was told the branch is behind its base, until it catches up or the head moves. */
+  behind: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** When a pass first saw `headSha`, which starts the wait before a check is called missing. */
+  headSeenAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** Required checks on that commit the agent was told never reported. */
+  missingChecks: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   /** Comment-only wakes in a row. Watching stops at a limit, so bots cannot loop it. */
   wakes: NonNegativeInt,
 });

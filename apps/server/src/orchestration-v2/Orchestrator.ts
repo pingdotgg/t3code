@@ -3129,6 +3129,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     remarksThrough: startedAt,
                     remarkIds: [],
                     conflicting: false,
+                    behind: false,
+                    headSeenAt: null,
+                    missingChecks: [],
                     wakes: 0,
                   });
           if (watch === existing.watch && links === linked) return thread;

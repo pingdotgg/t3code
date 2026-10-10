@@ -408,7 +408,35 @@ export const make = Effect.gen(function* () {
           ...(pullRequest.comparison?.behindBy == null
             ? {}
             : { behindBy: pullRequest.comparison.behindBy }),
+          ...(pullRequest.comparison === null
+            ? {}
+            : { behindBlocksMerge: pullRequest.comparison.blocksMerge }),
         })),
+        // A pull request that is no longer open has no checks left to wait for.
+        Effect.flatMap((detail) =>
+          detail.state !== "open"
+            ? Effect.succeed(detail)
+            : cli
+                .listRequiredCheckNames({
+                  cwd: input.cwd,
+                  repository: input.repository,
+                  host: input.host,
+                  baseBranch: detail.baseBranch,
+                })
+                .pipe(
+                  Effect.map((expectedChecks): ProviderChangeRequestDetail =>
+                    expectedChecks === null ? detail : { ...detail, expectedChecks },
+                  ),
+                  // The detail does without this enrichment, but a rate limit still fails the
+                  // read: the watch then pauses, rather than judging checks it cannot compare.
+                  Effect.catchIf(
+                    (error) =>
+                      error._tag !== "GitHubApiRateLimitError" &&
+                      error._tag !== "SourceControlRateLimitPausedError",
+                    () => Effect.succeed(detail),
+                  ),
+                ),
+        ),
         Effect.mapError(fail("getChangeRequest")),
       ),
 

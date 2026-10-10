@@ -2495,6 +2495,167 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  /** The ruleset and branch reads of one base branch, answered by what each path asks for. */
+  const requiredCheckRoutes = (rules: unknown, branch: unknown): void => {
+    mockedExecute.mockImplementation((call) =>
+      Effect.sync(() =>
+        output(
+          call.kind === "rest"
+            ? call.path.includes("/rules/branches/")
+              ? typeof rules === "string"
+                ? rules
+                : encodeJson(rules)
+              : typeof branch === "string"
+                ? branch
+                : encodeJson(branch)
+            : "{}",
+        ),
+      ),
+    );
+  };
+  const read = (repository: string, baseBranch = "main") =>
+    Effect.gen(function* () {
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      return yield* cli.listRequiredCheckNames({
+        cwd: "/w",
+        repository,
+        host: "github.com",
+        baseBranch,
+      });
+    });
+
+  it.effect("required checks: merges what rulesets and branch protection require, once each", () =>
+    Effect.gen(function* () {
+      requiredCheckRoutes(
+        [
+          {
+            type: "required_status_checks",
+            parameters: { required_status_checks: [{ context: "lint" }, { context: "e2e" }] },
+          },
+          { type: "pull_request", parameters: {} },
+        ],
+        {
+          name: "main",
+          protected: true,
+          protection: {
+            enabled: true,
+            required_status_checks: {
+              contexts: ["lint", "build"],
+              checks: [
+                { context: "lint", app_id: null },
+                { context: "build", app_id: -1 },
+              ],
+            },
+          },
+        },
+      );
+      assert.deepEqual(yield* read("acme/merged"), ["build", "e2e", "lint"]);
+      assert.deepEqual(
+        restCallsTo("acme/merged/").map((call) => call.path),
+        ["repos/acme/merged/rules/branches/main", "repos/acme/merged/branches/main"],
+      );
+    }),
+  );
+
+  it.effect("required checks: encodes a branch name that contains a slash", () =>
+    Effect.gen(function* () {
+      requiredCheckRoutes([], { name: "release/1.0", protected: false });
+      assert.deepEqual(yield* read("acme/slashed", "release/1.0"), []);
+      assert.deepEqual(
+        restCallsTo("acme/slashed/").map((call) => call.path),
+        [
+          "repos/acme/slashed/rules/branches/release%2F1.0",
+          "repos/acme/slashed/branches/release%2F1.0",
+        ],
+      );
+    }),
+  );
+
+  it.effect("required checks: answers none, not unknown, for a branch that requires nothing", () =>
+    Effect.gen(function* () {
+      requiredCheckRoutes([{ type: "pull_request", parameters: {} }], {
+        name: "main",
+        protected: false,
+      });
+      assert.deepEqual(yield* read("acme/open"), []);
+    }),
+  );
+
+  it.effect("required checks: answers unknown when either read cannot be understood", () =>
+    Effect.gen(function* () {
+      requiredCheckRoutes("not json", { name: "main", protected: false });
+      assert.isNull(yield* read("acme/bad-rules"));
+      requiredCheckRoutes([], "not json");
+      assert.isNull(yield* read("acme/bad-branch"));
+    }),
+  );
+
+  it.effect(
+    "required checks: reads a base branch once for every pull request that targets it",
+    () =>
+      Effect.gen(function* () {
+        requiredCheckRoutes(
+          [
+            {
+              type: "required_status_checks",
+              parameters: { required_status_checks: [{ context: "lint" }] },
+            },
+          ],
+          { name: "main", protected: false },
+        );
+        assert.deepEqual(yield* read("acme/cached"), ["lint"]);
+        assert.deepEqual(yield* read("acme/cached"), ["lint"]);
+        // The two REST calls are the first read's ruleset and branch endpoints; the second read
+        // is served from the cache and makes none.
+        assert.strictEqual(restCallsTo("acme/cached/").length, 2);
+      }),
+  );
+
+  it.effect("required checks: keeps one account's answer from another's", () =>
+    Effect.gen(function* () {
+      requiredCheckRoutes(
+        [
+          {
+            type: "required_status_checks",
+            parameters: { required_status_checks: [{ context: "lint" }] },
+          },
+        ],
+        { name: "main", protected: false },
+      );
+      const as = (fingerprint: string) =>
+        Effect.provideService(GitHubApi.PinnedGitHubCredential, {
+          host: "github.com",
+          token: Redacted.make(`token-${fingerprint}`),
+          credentialFingerprint: fingerprint,
+        });
+      yield* read("acme/accounts").pipe(as("a"));
+      yield* read("acme/accounts").pipe(as("b"));
+      yield* read("acme/accounts").pipe(as("a"));
+      // Two reads for each account, and the second look of the first account is cached.
+      assert.strictEqual(restCallsTo("acme/accounts/").length, 4);
+    }),
+  );
+
+  it.effect("required checks: asks again soon after an answer that could not be understood", () =>
+    Effect.gen(function* () {
+      requiredCheckRoutes("not json", { name: "main", protected: false });
+      assert.isNull(yield* read("acme/unknown"));
+      requiredCheckRoutes(
+        [
+          {
+            type: "required_status_checks",
+            parameters: { required_status_checks: [{ context: "lint" }] },
+          },
+        ],
+        { name: "main", protected: false },
+      );
+      yield* TestClock.adjust("1 minute");
+      assert.isNull(yield* read("acme/unknown"));
+      yield* TestClock.adjust("5 minutes");
+      assert.deepEqual(yield* read("acme/unknown"), ["lint"]);
+    }),
+  );
+
   it.effect("finds and approves every workflow waiting on a maintainer", () =>
     Effect.gen(function* () {
       workflowApprovalRoutes(() => crossRepositoryDetail(), heads([7]), workflowRuns([10, 11]));
@@ -3617,6 +3778,111 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("says the base blocks the merge only when GitHub calls the branch behind", () =>
+    Effect.gen(function* () {
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      // GitHub names BEHIND only when the branch rules make catching up a condition to merge.
+      const cases = [
+        ["BEHIND", true],
+        ["CLEAN", false],
+        ["BLOCKED", false],
+        // Not computed yet: the host cannot say, which is not the same as "does not block".
+        ["UNKNOWN", null],
+        [undefined, null],
+      ] as const;
+      for (const [index, [status, blocks]] of cases.entries()) {
+        const number = 40 + index;
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(output(encodeJson(coreResponse({ number, mergeStateStatus: status })))),
+        );
+        const detail = yield* cli.getPullRequestDetail({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number,
+        });
+        expect(detail.comparison?.blocksMerge).toBe(blocks);
+      }
+      const first = mockedExecute.mock.calls[0]?.[0];
+      expect(first?.kind === "graphql" ? first.query : "").toContain("mergeStateStatus");
+    }),
+  );
+
+  it.effect("required checks: leaves a requirement tied to a specific app unknown", () =>
+    Effect.gen(function* () {
+      // A name alone cannot tell an app's check from a same-named check from another app.
+      requiredCheckRoutes(
+        [
+          {
+            type: "required_status_checks",
+            parameters: { required_status_checks: [{ context: "lint", integration_id: 15368 }] },
+          },
+        ],
+        { name: "main", protected: false },
+      );
+      assert.isNull(yield* read("acme/ruleset-app"));
+      requiredCheckRoutes([], {
+        name: "main",
+        protected: true,
+        protection: {
+          enabled: true,
+          required_status_checks: { checks: [{ context: "lint", app_id: 15368 }] },
+        },
+      });
+      assert.isNull(yield* read("acme/protection-app"));
+    }),
+  );
+
+  it.effect("required checks: keeps requirements that accept any app", () =>
+    Effect.gen(function* () {
+      requiredCheckRoutes(
+        [
+          {
+            type: "required_status_checks",
+            parameters: { required_status_checks: [{ context: "lint", integration_id: null }] },
+          },
+        ],
+        {
+          name: "main",
+          protected: true,
+          protection: {
+            enabled: true,
+            required_status_checks: {
+              contexts: ["build"],
+              checks: [
+                { context: "build", app_id: -1 },
+                { context: "docs", app_id: null },
+              ],
+            },
+          },
+        },
+      );
+      assert.deepEqual(yield* read("acme/any-app"), ["build", "docs", "lint"]);
+    }),
+  );
+
+  it.effect("required checks: reads under the caller's pinned credential on a cache miss", () =>
+    Effect.gen(function* () {
+      requiredCheckRoutes([], { name: "main", protected: false });
+      // A host no earlier test touched, so the stored credential would be read here if used.
+      const host = "github.pinned.example";
+      mockedCredential.mockClear();
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      yield* cli
+        .listRequiredCheckNames({ cwd: "/w", repository: "acme/pinned", host, baseBranch: "main" })
+        .pipe(
+          Effect.provideService(GitHubApi.PinnedGitHubCredential, {
+            host,
+            token: Redacted.make("pinned-token"),
+            credentialFingerprint: "pinned",
+          }),
+        );
+      // The pinned account made the reads; the stored default credential was never consulted.
+      expect(mockedCredential).not.toHaveBeenCalled();
+      expect(restCallsTo("acme/pinned/").length).toBe(2);
+    }),
+  );
+
   it.effect("keeps the core detail read separate from conversation activity", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
@@ -3672,7 +3938,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
         squash: false,
         rebase: true,
       });
-      expect(detail.comparison).toEqual({ behindBy: 2, viewerCanUpdate: true });
+      expect(detail.comparison).toEqual({
+        behindBy: 2,
+        viewerCanUpdate: true,
+        blocksMerge: null, // the fixture names no merge status: "cannot tell", not "does not block"
+      });
       // Conversation activity is its own read, and asks for the head of the conversation once.
       expect(queryAt(1)).toContain("reviews(");
       expect(varsAt(1)).toMatchObject({ head: true, withComments: true, withReviews: true });

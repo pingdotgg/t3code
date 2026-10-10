@@ -1,6 +1,7 @@
 import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
 import { KnownWorkflowRuns, makeChecksRevalidator } from "./gitHubConditionalChecks.ts";
 import { runGitHubStackAction, type GitHubStackActionError } from "./githubStackActions.ts";
+import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
@@ -63,6 +64,8 @@ import {
   pullRequestSummaryGraphQlQuery,
   PULL_REQUEST_ACTIVITY_GRAPHQL_QUERY,
   PULL_REQUEST_HEADS_GRAPHQL_QUERY,
+  decodeBranchProtectionJson,
+  decodeBranchRulesJson,
   decodeWorkflowRunsJson,
   pullRequestCoreGraphQlQuery,
   type GitHubPullRequestCore,
@@ -553,6 +556,18 @@ export class GitHubPullRequestApi extends Context.Service<
       Omit<PullRequestPreview, "projectId" | "repository">,
       GitHubPullRequestApiError
     >;
+
+    /**
+     * Names of the status checks the base branch requires to merge, from its rulesets and from
+     * classic branch protection, or null where either read could not be understood. An empty
+     * list is the host saying nothing is required. Read once per base branch for a while.
+     */
+    readonly listRequiredCheckNames: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly baseBranch: string;
+    }) => Effect.Effect<ReadonlyArray<string> | null, GitHubPullRequestApiError>;
 
     readonly listWorkflowRunsRequiringApproval: (input: {
       readonly cwd: string;
@@ -1569,6 +1584,69 @@ export const make = Effect.gen(function* () {
     );
   };
 
+  // Required checks change when someone edits the branch rules, which is rare; a pull request
+  // watch reads its detail every few minutes, so this keeps the two extra reads off most passes.
+  const requiredCheckNames = yield* Cache.makeWith(
+    (key: string) => {
+      const [, host, repository, baseBranch] = key.split("\0") as [string, string, string, string];
+      const { owner, name } = parseRepositorySelector(repository);
+      const branch = encodeURIComponent(baseBranch);
+      const read = (operation: string, path: string, decode: typeof decodeBranchRulesJson) =>
+        restRead({ cwd: "", host, operation, path, decode });
+      return Effect.all(
+        [
+          read(
+            "listRequiredCheckNames",
+            `repos/${owner}/${name}/rules/branches/${branch}`,
+            decodeBranchRulesJson,
+          ),
+          read(
+            "listRequiredCheckNames",
+            `repos/${owner}/${name}/branches/${branch}`,
+            decodeBranchProtectionJson,
+          ),
+        ],
+        { concurrency: 2 },
+      ).pipe(
+        Effect.map(([rules, protection]): ReadonlyArray<string> | null =>
+          // Either read tied to a specific app leaves the whole answer unknown.
+          rules === null || protection === null
+            ? null
+            : [...new Set([...rules, ...protection])].toSorted(),
+        ),
+        // Only a rate limit is the host asking to wait; anything else is "cannot tell", and
+        // watching carries on without the missing-check signal.
+        Effect.catchIf(
+          (error) =>
+            error._tag !== "GitHubApiRateLimitError" &&
+            error._tag !== "SourceControlRateLimitPausedError",
+          () => Effect.succeed(null),
+        ),
+      );
+    },
+    {
+      capacity: 128,
+      // The lookup runs with the services of whoever asks, so it reads under their pinned
+      // credential rather than anything captured when the cache was built.
+      requireServicesAt: "lookup",
+      // An answer that could not be understood (null) is tried again soon: it may be a host
+      // hiccup or a token that could not see the rules, and nothing is waiting on it meanwhile.
+      timeToLive: (exit) =>
+        Exit.isSuccess(exit) ? (exit.value === null ? "5 minutes" : "30 minutes") : "0 seconds",
+    },
+  );
+  const listRequiredCheckNames: GitHubPullRequestApi["Service"]["listRequiredCheckNames"] = (
+    input,
+  ) =>
+    Effect.gen(function* () {
+      // What a token can see of the branch rules depends on its access, so accounts do not share.
+      const credential = yield* GitHubApi.PinnedGitHubCredential;
+      return yield* Cache.get(
+        requiredCheckNames,
+        `${credential?.credentialFingerprint ?? ""}\0${input.host}\0${input.repository}\0${input.baseBranch}`,
+      );
+    });
+
   const workflowApprovalLimit = 1_000;
   const workflowApprovalReadError = (cwd: string, cause: unknown) =>
     readError(cwd, "listWorkflowRunsRequiringApproval", cause);
@@ -2122,6 +2200,7 @@ export const make = Effect.gen(function* () {
       });
     },
     listWorkflowRunsRequiringApproval,
+    listRequiredCheckNames,
 
     getPullRequestStack: (input) => {
       const { owner, name } = parseRepositorySelector(input.repository);

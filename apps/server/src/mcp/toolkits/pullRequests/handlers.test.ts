@@ -264,6 +264,9 @@ describe("pull request toolkit handlers", () => {
         remarksThrough: "2026-08-20T00:00:00.000Z",
         remarkIds: [],
         conflicting: false,
+        behind: false,
+        headSeenAt: null,
+        missingChecks: [],
         wakes: 0,
       };
       const merged = makeLink(1, { headBranch: "done" });

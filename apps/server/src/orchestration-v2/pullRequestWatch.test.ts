@@ -3,10 +3,15 @@ import type {
   PullRequestComment,
   ThreadPullRequestWatch,
 } from "@t3tools/contracts";
+import { ThreadPullRequestWatch as ThreadPullRequestWatchSchema } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 
 import {
+  PULL_REQUEST_WATCH_MISSING_GRACE_MS,
   PULL_REQUEST_WATCH_WAKE_LIMIT,
+  awaitsRequiredChecks,
   evaluatePullRequestWatch,
   pullRequestWatchMessage,
 } from "./pullRequestWatch.ts";
@@ -23,6 +28,9 @@ const watch = (overrides: Partial<ThreadPullRequestWatch> = {}): ThreadPullReque
   remarkIds: [],
   conflicting: false,
   wakes: 0,
+  headSeenAt: null,
+  missingChecks: [],
+  behind: false,
   ...overrides,
 });
 
@@ -262,6 +270,338 @@ describe("evaluatePullRequestWatch", () => {
     const pushed = evaluatePullRequestWatch(tired, detail({ headSha: "cccccccccc" }), comments);
     assert.isFalse(pushed.exhausted);
     assert.equal(pushed.next.wakes, 1);
+  });
+});
+
+describe("evaluatePullRequestWatch missing required checks", () => {
+  const SEEN = "2026-10-02T12:00:00.000Z";
+  const seenMs = Date.parse(SEEN);
+  const required = (name: string, status: PullRequestCheck["status"]) => ({
+    ...check(name, status),
+    required: true,
+  });
+  const watching = (overrides: Partial<ThreadPullRequestWatch> = {}) =>
+    watch({ headSha: "aaaaaaaaaa", headSeenAt: SEEN, ...overrides });
+  const expecting = (checks: ReadonlyArray<PullRequestCheck>, expectedChecks = ["lint", "e2e"]) =>
+    detail({ checks, expectedChecks });
+  const lintOnly = [required("lint", "success")];
+  const after = (ms: number) => seenMs + ms;
+
+  it("waits out the grace period before calling a required check missing", () => {
+    const early = evaluatePullRequestWatch(watching(), expecting(lintOnly), noRemarks, {
+      now: after(PULL_REQUEST_WATCH_MISSING_GRACE_MS - 1),
+    });
+    assert.deepEqual(early.changes, []);
+    assert.deepEqual(early.next.missingChecks, []);
+
+    const late = evaluatePullRequestWatch(watching(), expecting(lintOnly), noRemarks, {
+      now: after(PULL_REQUEST_WATCH_MISSING_GRACE_MS),
+    });
+    assert.deepEqual(late.changes, [{ kind: "checks-missing", missing: ["e2e"] }]);
+    assert.deepEqual(late.next.missingChecks, ["e2e"]);
+  });
+
+  it("reports a missing check once per commit", () => {
+    const now = after(PULL_REQUEST_WATCH_MISSING_GRACE_MS * 2);
+    const first = evaluatePullRequestWatch(watching(), expecting(lintOnly), noRemarks, { now });
+    const again = evaluatePullRequestWatch(first.next, expecting(lintOnly), noRemarks, {
+      now: now + 60_000,
+    });
+    assert.deepEqual(again.changes, []);
+  });
+
+  it("reports only the checks that are newly missing", () => {
+    const now = after(PULL_REQUEST_WATCH_MISSING_GRACE_MS * 2);
+    const first = evaluatePullRequestWatch(
+      watching(),
+      expecting(lintOnly, ["lint", "e2e"]),
+      noRemarks,
+      { now },
+    );
+    const more = evaluatePullRequestWatch(
+      first.next,
+      expecting(lintOnly, ["lint", "e2e", "docs"]),
+      noRemarks,
+      { now },
+    );
+    assert.deepEqual(more.changes, [{ kind: "checks-missing", missing: ["docs"] }]);
+    assert.deepEqual(more.next.missingChecks, ["e2e", "docs"]);
+  });
+
+  it("does not say the required checks passed while one has not reported", () => {
+    const grace = { now: after(1_000) };
+    const held = evaluatePullRequestWatch(watching(), expecting(lintOnly), noRemarks, grace);
+    assert.deepEqual(held.changes, []);
+    assert.isFalse(held.next.passed);
+
+    const reported = [required("lint", "success"), required("e2e", "success")];
+    const done = evaluatePullRequestWatch(held.next, expecting(reported), noRemarks, grace);
+    assert.deepEqual(done.changes, [{ kind: "checks-passed", count: 2, required: true }]);
+  });
+
+  it("says a missing check once per commit, even if it reports and then vanishes again", () => {
+    const now = after(PULL_REQUEST_WATCH_MISSING_GRACE_MS * 2);
+    const missing = evaluatePullRequestWatch(watching(), expecting(lintOnly), noRemarks, { now });
+    const reported = [required("lint", "success"), required("e2e", "pending")];
+    const cleared = evaluatePullRequestWatch(missing.next, expecting(reported), noRemarks, { now });
+    assert.deepEqual(cleared.next.missingChecks, ["e2e"]);
+    const gone = evaluatePullRequestWatch(cleared.next, expecting(lintOnly), noRemarks, { now });
+    assert.deepEqual(gone.changes, []);
+    assert.deepEqual(gone.next.missingChecks, ["e2e"]);
+  });
+
+  it("does not say passed while a check it called missing is still absent and nothing says what is required", () => {
+    const now = after(PULL_REQUEST_WATCH_MISSING_GRACE_MS * 2);
+    const missing = evaluatePullRequestWatch(watching(), expecting(lintOnly), noRemarks, { now });
+    // The host cannot say what is required this time: no expectedChecks.
+    const unclear = detail({ checks: lintOnly });
+    const blind = evaluatePullRequestWatch(missing.next, unclear, noRemarks, { now });
+    assert.deepEqual(blind.changes, []);
+    assert.isFalse(blind.next.passed);
+    assert.deepEqual(blind.next.missingChecks, ["e2e"]);
+    // Once it is visibly reported, nothing holds "passed" back.
+    const reported = [required("lint", "success"), required("e2e", "success")];
+    const done = evaluatePullRequestWatch(blind.next, detail({ checks: reported }), noRemarks, {
+      now,
+    });
+    assert.deepEqual(done.changes, [{ kind: "checks-passed", count: 2, required: true }]);
+  });
+
+  it("counts a check qualified by its workflow as reported", () => {
+    const qualified = [required("lint", "success"), required("CI / e2e", "success")];
+    const result = evaluatePullRequestWatch(watching(), expecting(qualified), noRemarks, {
+      now: after(PULL_REQUEST_WATCH_MISSING_GRACE_MS * 2),
+    });
+    assert.deepEqual(result.changes, [{ kind: "checks-passed", count: 2, required: true }]);
+    assert.deepEqual(result.next.missingChecks, []);
+  });
+
+  it("restarts the grace period on a push and forgets the old commit's missing checks", () => {
+    const now = after(PULL_REQUEST_WATCH_MISSING_GRACE_MS * 2);
+    const missing = evaluatePullRequestWatch(watching(), expecting(lintOnly), noRemarks, { now });
+    const pushed = evaluatePullRequestWatch(
+      missing.next,
+      detail({ headSha: "bbbbbbbbbb", checks: lintOnly, expectedChecks: ["lint", "e2e"] }),
+      noRemarks,
+      { now },
+    );
+    assert.deepEqual(pushed.changes, []);
+    assert.deepEqual(pushed.next.missingChecks, []);
+    assert.equal(pushed.next.headSeenAt, DateTime.formatIso(DateTime.makeUnsafe(now)));
+  });
+
+  it("starts the grace period when a watch saved without a head time first sees one", () => {
+    const old = watching({ headSeenAt: null });
+    const now = after(PULL_REQUEST_WATCH_MISSING_GRACE_MS * 2);
+    const first = evaluatePullRequestWatch(old, expecting(lintOnly), noRemarks, { now });
+    assert.deepEqual(first.changes, []);
+    assert.equal(first.next.headSeenAt, DateTime.formatIso(DateTime.makeUnsafe(now)));
+  });
+
+  it("stays quiet when the host cannot say which checks are required", () => {
+    const now = after(PULL_REQUEST_WATCH_MISSING_GRACE_MS * 2);
+    const unknown = detail({ checks: lintOnly });
+    assert.deepEqual(evaluatePullRequestWatch(watching(), unknown, noRemarks, { now }).changes, [
+      { kind: "checks-passed", count: 1, required: true },
+    ]);
+  });
+
+  it("stays quiet when no check reported at all, which may be a failed read", () => {
+    const now = after(PULL_REQUEST_WATCH_MISSING_GRACE_MS * 2);
+    const result = evaluatePullRequestWatch(watching(), expecting([]), noRemarks, { now });
+    assert.deepEqual(result.changes, []);
+  });
+
+  it("reports nothing missing without a clock", () => {
+    const result = evaluatePullRequestWatch(watching(), expecting(lintOnly), noRemarks);
+    assert.deepEqual(result.changes, []);
+  });
+
+  it("does not spend the comment wake limit on a missing check", () => {
+    const tired = watching({ wakes: PULL_REQUEST_WATCH_WAKE_LIMIT - 1 });
+    const result = evaluatePullRequestWatch(tired, expecting(lintOnly), noRemarks, {
+      now: after(PULL_REQUEST_WATCH_MISSING_GRACE_MS * 2),
+    });
+    assert.isFalse(result.exhausted);
+    assert.equal(result.next.wakes, 0);
+  });
+
+  it("loads a watch saved before missing-check tracking", () => {
+    const decoded = Schema.decodeUnknownSync(ThreadPullRequestWatchSchema)({
+      startedAt: STARTED,
+      headSha: null,
+      failedChecks: [],
+      passed: false,
+      remarksThrough: STARTED,
+      remarkIds: [],
+      conflicting: false,
+      wakes: 0,
+    });
+    assert.isNull(decoded.headSeenAt);
+    assert.deepEqual(decoded.missingChecks, []);
+  });
+
+  it("tells the agent which required checks never reported", () => {
+    const report = evaluatePullRequestWatch(watching(), expecting(lintOnly), noRemarks, {
+      now: after(PULL_REQUEST_WATCH_MISSING_GRACE_MS * 2),
+    });
+    const message = pullRequestWatchMessage({
+      number: 12,
+      url: "https://github.com/o/r/pull/12",
+      baseBranch: "main",
+      headSha: report.next.headSha,
+      report,
+    });
+    assert.include(
+      message.text,
+      "- Required checks have not reported on aaaaaaa after 10 minutes:\n  - e2e",
+    );
+    assert.deepEqual(message.notification, {
+      source: { kind: "monitor" },
+      outcome: "failed",
+      summary: "#12: required checks missing",
+    });
+  });
+});
+
+describe("evaluatePullRequestWatch behind base", () => {
+  const behindBlocked = (overrides: Partial<Detail> = {}) =>
+    detail({ baseComparison: "behind", behindBlocksMerge: true, ...overrides });
+
+  it("reports a branch the base has left behind, once, until it catches up", () => {
+    const first = evaluatePullRequestWatch(watch(), behindBlocked(), noRemarks);
+    assert.deepEqual(first.changes, [{ kind: "behind" }]);
+    assert.isTrue(first.next.behind);
+    assert.deepEqual(evaluatePullRequestWatch(first.next, behindBlocked(), noRemarks).changes, []);
+
+    const caughtUp = evaluatePullRequestWatch(
+      first.next,
+      detail({ baseComparison: "up-to-date", behindBlocksMerge: false }),
+      noRemarks,
+    );
+    assert.deepEqual(caughtUp.changes, []);
+    assert.isFalse(caughtUp.next.behind);
+    // Falling behind again is news again.
+    assert.deepEqual(evaluatePullRequestWatch(caughtUp.next, behindBlocked(), noRemarks).changes, [
+      { kind: "behind" },
+    ]);
+  });
+
+  it("reports it again after a push that is still behind", () => {
+    const first = evaluatePullRequestWatch(
+      watch({ headSha: "aaaaaaaaaa" }),
+      behindBlocked(),
+      noRemarks,
+    );
+    const pushed = evaluatePullRequestWatch(
+      first.next,
+      behindBlocked({ headSha: "bbbbbbbbbb" }),
+      noRemarks,
+    );
+    assert.deepEqual(pushed.changes, [{ kind: "behind" }]);
+  });
+
+  it("ignores a branch that is behind without the host saying that blocks the merge", () => {
+    const quiet = detail({ baseComparison: "behind", behindBlocksMerge: false });
+    const result = evaluatePullRequestWatch(watch(), quiet, noRemarks);
+    assert.deepEqual(result.changes, []);
+    assert.isFalse(result.next.behind);
+  });
+
+  it("falls back to the comparison on a host that cannot say what blocks the merge", () => {
+    const result = evaluatePullRequestWatch(
+      watch(),
+      detail({ baseComparison: "behind" }),
+      noRemarks,
+    );
+    assert.deepEqual(result.changes, [{ kind: "behind" }]);
+  });
+
+  it("keeps its state when the host could not compare", () => {
+    const first = evaluatePullRequestWatch(watch(), behindBlocked(), noRemarks);
+    for (const unclear of [
+      detail({ baseComparison: "unknown" }),
+      detail(),
+      // GitHub has not computed the merge state: the host cannot tell, whatever the comparison says.
+      detail({ baseComparison: "up-to-date", behindBlocksMerge: null }),
+      detail({ baseComparison: "behind", behindBlocksMerge: null }),
+    ]) {
+      const result = evaluatePullRequestWatch(first.next, unclear, noRemarks);
+      assert.deepEqual(result.changes, []);
+      assert.isTrue(result.next.behind);
+    }
+  });
+
+  it("counts a behind-only wake toward the wake limit, as a comment-only one does", () => {
+    const tired = watch({ headSha: "aaaaaaaaaa", wakes: PULL_REQUEST_WATCH_WAKE_LIMIT - 1 });
+    const result = evaluatePullRequestWatch(tired, behindBlocked(), noRemarks);
+    assert.isTrue(result.exhausted);
+    assert.equal(result.next.wakes, PULL_REQUEST_WATCH_WAKE_LIMIT);
+  });
+
+  it("does not count a wake that also brings a check result", () => {
+    const tired = watch({ headSha: "aaaaaaaaaa", wakes: PULL_REQUEST_WATCH_WAKE_LIMIT - 1 });
+    const result = evaluatePullRequestWatch(
+      tired,
+      behindBlocked({ checks: [check("lint", "failure")] }),
+      noRemarks,
+    );
+    assert.isFalse(result.exhausted);
+    assert.equal(result.next.wakes, 0);
+  });
+
+  it("tells the agent to update the branch, and marks it as news rather than a failure", () => {
+    const report = evaluatePullRequestWatch(watch(), behindBlocked(), noRemarks);
+    const message = pullRequestWatchMessage({
+      number: 12,
+      url: "https://github.com/o/r/pull/12",
+      baseBranch: "main",
+      headSha: report.next.headSha,
+      report,
+    });
+    assert.include(message.text, "- The branch is behind main and needs to catch up with it.");
+    assert.deepEqual(message.notification, {
+      source: { kind: "monitor" },
+      outcome: "updated",
+      summary: "#12: behind base",
+    });
+  });
+
+  it("loads a watch saved before behind-base tracking", () => {
+    const decoded = Schema.decodeUnknownSync(ThreadPullRequestWatchSchema)({
+      startedAt: STARTED,
+      headSha: null,
+      failedChecks: [],
+      passed: false,
+      remarksThrough: STARTED,
+      remarkIds: [],
+      conflicting: false,
+      wakes: 0,
+    });
+    assert.isFalse(decoded.behind);
+  });
+});
+
+describe("awaitsRequiredChecks", () => {
+  const lintOnly = [check("lint", "success")];
+  const expecting = (checks: ReadonlyArray<PullRequestCheck>, expectedChecks?: Array<string>) =>
+    detail({ checks, ...(expectedChecks === undefined ? {} : { expectedChecks }) });
+
+  it("waits for a required check that has not reported and has not been called missing", () => {
+    assert.isTrue(awaitsRequiredChecks(watch(), expecting(lintOnly, ["lint", "e2e"])));
+  });
+
+  it("stops waiting once the agent was told, so an absent check does not force a read every pass", () => {
+    const told = watch({ missingChecks: ["e2e"] });
+    assert.isFalse(awaitsRequiredChecks(told, expecting(lintOnly, ["lint", "e2e"])));
+    // A second absent check the agent was not told about still counts.
+    assert.isTrue(awaitsRequiredChecks(told, expecting(lintOnly, ["lint", "e2e", "docs"])));
+  });
+
+  it("does not wait when every required check reported, or nothing says what is required", () => {
+    assert.isFalse(awaitsRequiredChecks(watch(), expecting(lintOnly, ["lint"])));
+    assert.isFalse(awaitsRequiredChecks(watch(), expecting(lintOnly)));
+    assert.isFalse(awaitsRequiredChecks(watch(), expecting([], ["lint"])));
   });
 });
 

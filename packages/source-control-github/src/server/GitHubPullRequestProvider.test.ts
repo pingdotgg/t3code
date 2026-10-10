@@ -15,7 +15,7 @@ import type { GitHubReviewThreadComments } from "./gitHubPullRequestJson.ts";
 
 const coreFields = {
   checksTruncated: false,
-  comparison: { behindBy: 0, viewerCanUpdate: true },
+  comparison: { behindBy: 0, viewerCanUpdate: true, blocksMerge: false },
   viewerAccess: {
     canWrite: true,
     canTriage: true,
@@ -342,6 +342,7 @@ describe("gitHubViewerPermissions", () => {
     }).pipe(
       Effect.provide(
         Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+          listRequiredCheckNames: () => Effect.succeed(null),
           revalidateChecks: (_input, read) => read,
           getPullRequestDetail: () =>
             Effect.succeed({
@@ -436,6 +437,7 @@ describe("gitHubViewerPermissions", () => {
     }).pipe(
       Effect.provide(
         Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+          listRequiredCheckNames: () => Effect.succeed(null),
           revalidateChecks: (_input, read) => read,
           getPullRequestDetail: () =>
             Effect.succeed({
@@ -540,8 +542,12 @@ it.effect(
       const provider = yield* make.pipe(
         Effect.provide(
           Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+            listRequiredCheckNames: () => Effect.succeed(null),
             getPullRequestDetail: () =>
-              Effect.succeed({ ...openDetail, comparison: { behindBy: 2, viewerCanUpdate: true } }),
+              Effect.succeed({
+                ...openDetail,
+                comparison: { behindBy: 2, viewerCanUpdate: true, blocksMerge: false },
+              }),
             listWorkflowRunsRequiringApproval: () =>
               Effect.succeed([{ id: 123, name: "tests", url: "https://example.com/runs/123" }]),
           }),
@@ -581,6 +587,7 @@ it.effect("does not classify same-repository gates as fork workflow approvals", 
   }).pipe(
     Effect.provide(
       Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+        listRequiredCheckNames: () => Effect.succeed(null),
         revalidateChecks: (_input, read) => read,
         getPullRequestDetail: () => Effect.succeed({ ...openDetail, isCrossRepository: false }),
         listWorkflowRunsRequiringApproval: () =>
@@ -620,6 +627,7 @@ it.effect("keeps an unsafe workflow approval scope visible as unknown", () =>
   }).pipe(
     Effect.provide(
       Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+        listRequiredCheckNames: () => Effect.succeed(null),
         revalidateChecks: (_input, read) => read,
         getPullRequestDetail: () => Effect.succeed(openDetail),
         listWorkflowRunsRequiringApproval: () =>
@@ -662,6 +670,7 @@ it.effect("propagates workflow discovery rate limits", () =>
   }).pipe(
     Effect.provide(
       Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+        listRequiredCheckNames: () => Effect.succeed(null),
         revalidateChecks: (_input, read) => read,
         getPullRequestDetail: () => Effect.succeed(openDetail),
         listWorkflowRunsRequiringApproval: () =>
@@ -749,7 +758,10 @@ describe("getViewerPermissions", () => {
     }).pipe(
       Effect.provide(
         layerWithDetail(
-          Effect.succeed({ ...openDetail, comparison: { behindBy: 3, viewerCanUpdate: true } }),
+          Effect.succeed({
+            ...openDetail,
+            comparison: { behindBy: 3, viewerCanUpdate: true, blocksMerge: false },
+          }),
         ),
       ),
     ),
@@ -1066,3 +1078,165 @@ describe("loginAvatarUrl", () => {
     }
   });
 });
+
+const requiredChecksProvider = (
+  listRequiredCheckNames: GitHubPullRequestApi.GitHubPullRequestApi["Service"]["listRequiredCheckNames"],
+  detail: Partial<Omit<typeof openDetail, "state">> & {
+    readonly state?: "open" | "merged" | "closed";
+  } = {},
+) =>
+  make.pipe(
+    Effect.provide(
+      Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+        getPullRequestDetail: () =>
+          Effect.succeed({ ...openDetail, isCrossRepository: false, ...detail }),
+        listRequiredCheckNames,
+      }),
+    ),
+  );
+
+const readDetail = (provider: Effect.Success<ReturnType<typeof requiredChecksProvider>>) =>
+  provider.getChangeRequest({
+    cwd: "/w",
+    repository: "acme/web",
+    host: "github.com",
+    number: 7,
+  });
+
+it.effect("names the checks the base branch requires, so one that never reports shows", () =>
+  Effect.gen(function* () {
+    const asked: Array<unknown> = [];
+    const provider = yield* requiredChecksProvider((input) =>
+      Effect.sync(() => {
+        asked.push(input);
+        return ["e2e", "lint"];
+      }),
+    );
+    const detail = yield* readDetail(provider);
+
+    expect(detail.expectedChecks).toEqual(["e2e", "lint"]);
+    expect(asked).toEqual([
+      { cwd: "/w", repository: "acme/web", host: "github.com", baseBranch: "main" },
+    ]);
+  }),
+);
+
+it.effect("says nothing about required checks when the host could not say", () =>
+  Effect.gen(function* () {
+    const provider = yield* requiredChecksProvider(() => Effect.succeed(null));
+    const detail = yield* readDetail(provider);
+
+    expect(detail.expectedChecks).toBeUndefined();
+  }),
+);
+
+it.effect("keeps an empty list apart from an unknown one", () =>
+  Effect.gen(function* () {
+    const provider = yield* requiredChecksProvider(() => Effect.succeed([]));
+    const detail = yield* readDetail(provider);
+
+    expect(detail.expectedChecks).toEqual([]);
+  }),
+);
+
+it.effect("does not read the required checks of a pull request that is no longer open", () =>
+  Effect.gen(function* () {
+    const provider = yield* requiredChecksProvider(
+      () => Effect.die("a merged pull request has no checks left to wait for"),
+      { state: "merged" as const },
+    );
+    const detail = yield* readDetail(provider);
+
+    expect(detail.expectedChecks).toBeUndefined();
+  }),
+);
+
+it.effect("still answers the detail when the required checks cannot be read", () =>
+  Effect.gen(function* () {
+    const provider = yield* requiredChecksProvider(() =>
+      Effect.fail(
+        new GitHubPullRequestApi.GitHubPullRequestReadError({
+          cwd: "/w",
+          operation: "listRequiredCheckNames",
+          cause: "rules unavailable",
+        }),
+      ),
+    );
+    const detail = yield* readDetail(provider);
+
+    expect(detail.number).toBe(7);
+    expect(detail.expectedChecks).toBeUndefined();
+  }),
+);
+
+it.effect("fails the detail on a rate limit, so the watch pauses instead of guessing", () =>
+  Effect.gen(function* () {
+    const provider = yield* requiredChecksProvider(() =>
+      Effect.fail(
+        new SourceControlRateLimit.SourceControlRateLimitPausedError({
+          provider: "github",
+          host: "github.com",
+          retryAt: 0,
+        }),
+      ),
+    );
+    const error = yield* readDetail(provider).pipe(Effect.flip);
+
+    expect(error).toMatchObject({ _tag: "PullRequestProviderError", reason: "rate-limited" });
+  }),
+);
+
+it.effect("tells the watch the branch must catch up only when GitHub blocks the merge on it", () =>
+  Effect.gen(function* () {
+    for (const [blocksMerge, behindBy] of [
+      [true, 3],
+      [false, 3],
+      // GitHub has not computed the merge state yet: carried through as "cannot tell".
+      [null, 3],
+    ] as const) {
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+            getPullRequestDetail: () =>
+              Effect.succeed({
+                ...openDetail,
+                isCrossRepository: false,
+                comparison: { behindBy, viewerCanUpdate: true, blocksMerge },
+              }),
+            listRequiredCheckNames: () => Effect.succeed(null),
+          }),
+        ),
+      );
+      const detail = yield* provider.getChangeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+      expect(detail.baseComparison).toBe("behind");
+      expect(detail.behindBlocksMerge).toBe(blocksMerge);
+    }
+  }),
+);
+
+it.effect("does not say whether the base blocks the merge when GitHub could not compare", () =>
+  Effect.gen(function* () {
+    const provider = yield* make.pipe(
+      Effect.provide(
+        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+          getPullRequestDetail: () =>
+            Effect.succeed({ ...openDetail, isCrossRepository: false, comparison: null }),
+          listRequiredCheckNames: () => Effect.succeed(null),
+        }),
+      ),
+    );
+    const detail = yield* provider.getChangeRequest({
+      cwd: "/w",
+      repository: "acme/web",
+      host: "github.com",
+      number: 7,
+    });
+    expect(detail.baseComparison).toBe("unknown");
+    expect(detail.behindBlocksMerge).toBeUndefined();
+  }),
+);
