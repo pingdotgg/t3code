@@ -128,8 +128,28 @@ describe("thread settings sheet state", () => {
         current: pending,
         pressed: modelOption("gpt-next"),
         pressedIsApplied: false,
+        restoreSelection: (selection) => ({
+          ...selection,
+          options: [{ id: "effort", value: "low" }],
+        }),
       }),
     ).toBe(pending);
+  });
+
+  it("stages a newly pressed model with the options Save would restore", () => {
+    const remembered = [
+      { id: "effort", value: "high" },
+      { id: "serviceTier", value: "fast" },
+    ];
+
+    expect(
+      pendingModelAfterPress({
+        current: modelOption("gpt-next"),
+        pressed: modelOption("gpt-other"),
+        pressedIsApplied: false,
+        restoreSelection: (selection) => ({ ...selection, options: remembered }),
+      })?.selection.options,
+    ).toEqual(remembered);
   });
 
   it("stages a different model", () => {

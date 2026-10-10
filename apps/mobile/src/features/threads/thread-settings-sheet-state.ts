@@ -1,5 +1,5 @@
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
-import type { ProviderInstanceId } from "@t3tools/contracts";
+import type { ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
 
 export type ModelFavorite = {
   readonly provider: ProviderInstanceId;
@@ -53,16 +53,25 @@ export function modelMatchesCatalogQuery(input: {
   ].some((value) => value.toLocaleLowerCase().includes(query));
 }
 
-/** Preserve staged provider options when the highlighted model is tapped again. */
+/**
+ * Stage a newly pressed model with the options Save would apply, and preserve
+ * staged provider options when the highlighted model is tapped again.
+ */
 export function pendingModelAfterPress(input: {
   readonly current: ModelOption | null;
   readonly pressed: ModelOption;
   readonly pressedIsApplied: boolean;
+  readonly restoreSelection?: (selection: ModelSelection) => ModelSelection;
 }): ModelOption | null {
   if (input.pressedIsApplied) {
     return null;
   }
-  return input.current?.key === input.pressed.key ? input.current : input.pressed;
+  if (input.current?.key === input.pressed.key) {
+    return input.current;
+  }
+  return input.restoreSelection
+    ? { ...input.pressed, selection: input.restoreSelection(input.pressed.selection) }
+    : input.pressed;
 }
 
 /** A model can disappear while the picker is open. */
