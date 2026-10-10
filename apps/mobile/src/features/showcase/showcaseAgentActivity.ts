@@ -108,14 +108,15 @@ export function showcaseAndroidActivityData(
   ).length;
   const hero = activity.activities[0];
   const alert = showcaseAgentAlert(activity);
+  const activeCount = activity.activeCount ?? 0;
   return {
     t3_kind: "agent_activity",
     updated_at: String(now),
-    active: String(activity.activeCount > 0),
+    active: String(activeCount > 0),
     activity_chip: attentionCount > 0 ? "Review" : "Active",
-    activity_title: `${activity.activeCount} active agents · ${attentionCount} need attention`,
+    activity_title: `${activeCount} active agents · ${attentionCount} need attention`,
     activity_phase: hero?.phase ?? "",
-    activity_active_count: String(activity.activeCount),
+    activity_active_count: String(activeCount),
     activity_attention_count: String(attentionCount),
     activity_body: hero ? `${hero.status}: ${hero.threadTitle} · ${hero.projectTitle}` : "",
     ...Object.fromEntries(

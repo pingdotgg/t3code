@@ -14,7 +14,15 @@ if (!majorVersion) {
 }
 
 module.exports = {
-  // Hash the pinned Screens fork's native source, rather than only its version.
+  // Hash the pinned Screens fork native source and widget refresh sources.
   nativeModuleSourceType: "files",
-  extraSources: [{ type: "contents", id: "appMajorVersion", contents: majorVersion }],
+  extraSources: [
+    { type: "contents", id: "appMajorVersion", contents: majorVersion },
+    ...[
+      "plugins/withAgentWidgetRefresh.cjs",
+      "plugins/widget/AgentWidgetTimelineProvider.swift",
+      "plugins/widget/AgentWidgetState.swift",
+      "modules/t3-native-controls/ios/AgentWidgetCredential.swift",
+    ].map((filePath) => ({ type: "file", filePath, reasons: ["agentWidgetRefresh"] })),
+  ],
 };

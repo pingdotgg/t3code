@@ -42,7 +42,8 @@ interface ApnsLiveActivityRequest {
 
 interface ApnsPushNotificationRequest {
   readonly token: string;
-  readonly priority: "10";
+  readonly priority: "5" | "10";
+  readonly pushType?: "widgets";
   readonly payload: unknown;
 }
 
@@ -309,8 +310,12 @@ export const make = Effect.gen(function* () {
         HttpClientRequest.setHeaders({
           authorization: `bearer ${jwt}`,
           "apns-priority": input.request.priority,
-          "apns-push-type": "alert",
-          "apns-topic": input.credentials.bundleId,
+          "apns-push-type": input.request.pushType ?? "alert",
+          "apns-topic":
+            input.request.pushType === "widgets"
+              ? `${input.credentials.bundleId}.push-type.widgets`
+              : input.credentials.bundleId,
+          ...(input.request.pushType === "widgets" ? { "apns-collapse-id": "agent-widget" } : {}),
         }),
         HttpClientRequest.bodyJson(input.request.payload),
         Effect.flatMap(httpClient.execute),
