@@ -84,6 +84,7 @@ function render(links: ReadonlyArray<ThreadPullRequestLink>, current: ThreadPull
         reference={current}
         status={null}
         project={null}
+        url={current.url}
         label={`#${current.number}`}
         openAriaLabel="Open pull request"
         onOpen={vi.fn()}

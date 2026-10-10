@@ -802,6 +802,7 @@ export function BranchToolbarBranchSelector({
             reference={currentLinkedPr}
             status={displayedPrStatus}
             project={activeProject}
+            url={prUrl}
             label={panelPrLabel}
             openAriaLabel={prUrl ?? "Open pull request"}
             onOpen={(event) => openPrLink(event, prUrl)}
