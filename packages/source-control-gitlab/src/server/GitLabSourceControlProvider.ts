@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
+import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
 
 import * as GitLabCli from "./GitLabCli.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
@@ -97,6 +98,34 @@ function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementIn
   } as const;
 }
 
+/**
+ * A self-hosted GitLab's remote URL does not name its host, so the identity stays `unknown`
+ * and clients cannot build its merge request URLs. A `glab` login for the host settles it.
+ */
+const refineRepositoryIdentity: NonNullable<
+  SourceControlProvider.SourceControlProvider["Service"]["refineRepositoryIdentity"]
+> = Effect.fn("GitLabSourceControlProvider.refineRepositoryIdentity")(function* ({
+  identity,
+  resolveContext,
+}) {
+  if ((identity.provider !== undefined && identity.provider !== "unknown") || !identity.rootPath)
+    return identity;
+  // `glab` logins are matched against the provider name, which is the host for an unknown one.
+  const detected = detectSourceControlProviderFromRemoteUrl(identity.locator.remoteUrl);
+  if (detected?.kind !== "unknown") return identity;
+  const context = yield* resolveContext({
+    cwd: identity.rootPath,
+    context: {
+      provider: detected,
+      remoteName: identity.locator.remoteName,
+      remoteUrl: identity.locator.remoteUrl,
+    },
+  });
+  return context?.provider.kind === "gitlab"
+    ? { ...identity, provider: SourceControlProviderKind.make("gitlab") }
+    : identity;
+});
+
 export const discovery = {
   type: "cli",
   kind: SourceControlProviderKind.make("gitlab"),
@@ -153,6 +182,7 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("gitlab"),
+    refineRepositoryIdentity,
     resolveLink: (input) => {
       // Automatic enrichment must not send ambient CLI credentials to a host from message text.
       if (input.url.host !== "gitlab.com") return undefined;
