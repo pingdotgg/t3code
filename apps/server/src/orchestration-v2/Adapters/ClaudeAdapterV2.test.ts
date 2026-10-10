@@ -9885,6 +9885,21 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* switchTurn("attempt-claude-model-change-running-subagent-c");
         assert.lengthOf(processQueues, 2);
 
+        // The replacement process ends the stopped subagent's card in the
+        // run that launched it, so it does not stay "running" forever.
+        const subagentUpdates = () =>
+          events.flatMap((event) =>
+            event.type === "subagent.updated" &&
+            event.subagent.nativeTaskRef?.nativeId === SUBAGENT_TASK_ID
+              ? [event.subagent]
+              : [],
+          );
+        yield* awaitUntil(
+          () => subagentUpdates().at(-1)?.status === "interrupted",
+          "stopped subagent interrupted",
+        );
+        assert.equal(subagentUpdates().at(-1)?.runId, subagentUpdates()[0]?.runId);
+
         // The stopped subagent never reports its end, so it must not block
         // later changes on the replacement process either.
         yield* Queue.offer(

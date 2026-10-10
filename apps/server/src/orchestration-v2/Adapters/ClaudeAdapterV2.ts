@@ -4254,7 +4254,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly result?: string;
           readonly status: Extract<
             OrchestrationV2ExecutionNode["status"],
-            "running" | "completed" | "failed" | "cancelled"
+            "running" | "completed" | "failed" | "cancelled" | "interrupted"
           >;
           readonly reopen?: boolean;
         }) {
@@ -7398,6 +7398,30 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return false;
         });
 
+        // Subagents an earlier, now closed process was running never report
+        // their end, so a new process interrupts them. One whose completion is
+        // already buffered finishes when the buffer drains.
+        const interruptSubagentsFromEarlierProcesses = Effect.fnUntraced(function* (
+          live: ClaudeLiveQueryContext,
+          context: ActiveClaudeTurnContext,
+        ) {
+          const buffered = (yield* Ref.get(wakeBuffers)).get(live.nativeThreadId)?.messages ?? [];
+          for (const [taskId, subagent] of yield* Ref.get(sessionSubagentsByTaskId)) {
+            if (
+              subagent.task.status === "running" &&
+              live.subagentsFromEarlierProcesses.has(subagent) &&
+              !buffered.some(
+                (message) =>
+                  message.type === "system" &&
+                  message.subtype === "task_notification" &&
+                  message.task_id === taskId,
+              )
+            ) {
+              yield* updateClaudeSubagentNode({ context, taskId, status: "interrupted" });
+            }
+          }
+        });
+
         const openQuery = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           nativeThreadId: string,
@@ -7726,6 +7750,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 completedAt: null,
               }),
             });
+            yield* interruptSubagentsFromEarlierProcesses(querySession, context);
             if (userMessage !== null) {
               // A user turn that races a wake leaves the buffer alone: the
               // continuation run the worker queued behind this run drains it
