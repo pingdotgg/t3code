@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  PluginActionId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  type PluginAction,
+} from "@t3tools/contracts";
 import type { Project, Thread } from "../types";
 import { makeThreadFixture } from "../test-fixtures";
 import {
@@ -9,6 +16,7 @@ import {
   buildProjectActionItems,
   buildThreadActionItems,
   buildLinkedThreadActionItems,
+  buildPluginActionItems,
   enumerateCommandPaletteItems,
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
@@ -892,5 +900,47 @@ describe("virtualized command palette rows", () => {
     expect(findHighlightedCommandPaletteItem(groups, "thread-b")?.value).toBe("thread-b");
     expect(findHighlightedCommandPaletteItem(groups, "offline")).toBeNull();
     expect(findHighlightedCommandPaletteItem(groups, null)).toBeNull();
+  });
+});
+
+describe("plugin actions in the palette", () => {
+  const environmentId = EnvironmentId.make("environment-plugins");
+  const threadId = ThreadId.make("thread-plugins");
+  const deploy: PluginAction = {
+    id: PluginActionId.make("plugin-deploy:deploy"),
+    pluginId: "plugin-deploy",
+    pluginName: "Deploy",
+    name: "deploy",
+    title: "Deploy this thread",
+    target: "thread",
+    placements: ["command-palette"],
+  };
+  const items = (canOperate: boolean, runAction = vi.fn(async () => {})) =>
+    buildPluginActionItems({
+      environmentId,
+      actions: [deploy],
+      canOperate,
+      threadId,
+      projectId: null,
+      icon: null,
+      runAction,
+    });
+
+  it("runs an offered action in the palette's environment on its target", async () => {
+    const runAction = vi.fn(async () => {});
+    const offered = items(true, runAction);
+    expect(offered.map((item) => item.title)).toEqual(["Deploy this thread"]);
+
+    await offered[0]?.run();
+
+    expect(runAction).toHaveBeenCalledWith({
+      environmentId,
+      action: deploy,
+      target: { _tag: "thread", threadId },
+    });
+  });
+
+  it("offers nothing to a connection that cannot operate the environment", () => {
+    expect(items(false)).toEqual([]);
   });
 });

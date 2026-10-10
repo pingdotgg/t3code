@@ -267,6 +267,9 @@ import {
   ComposerCommandMenu,
   composerSuggestionOptionId,
 } from "./ComposerCommandMenu";
+import { pluginActionsAt } from "@t3tools/client-runtime/state/pluginActions";
+import { canRunPluginActionsNow, runPluginAction } from "../../pluginActions";
+import { usePluginActions } from "../../state/pluginActions";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
@@ -2667,6 +2670,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }),
   );
 
+  const pluginActions = usePluginActions(environmentId);
+  // Slash entries run on the routed server thread; a draft has no thread yet.
+  const pluginActionThreadId = routeKind === "server" ? activeThreadId : null;
+  const pluginActionProjectId = activeThread?.projectId ?? pullRequestProjectId;
+
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
@@ -2747,8 +2755,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
         (item) => item.command.name !== "compact" || compactSlashCommandAvailable,
       );
+      // Running a plugin action needs `orchestration:operate`.
+      const pluginActionItems = (
+        canOperateThread
+          ? pluginActionsAt(pluginActions, "composer-slash", {
+              threadId: pluginActionThreadId,
+              projectId: pluginActionProjectId,
+            })
+          : []
+      ).map(({ action, target }) => ({
+        id: `plugin-action:${action.id}`,
+        type: "plugin-action" as const,
+        action,
+        target,
+        label: `/${action.name}`,
+        description: action.title,
+      }));
       const slashCommandItems = slashCommandItemsForPromptPosition(
-        [...builtInSlashCommandItems, ...visibleProviderSlashCommandItems, ...skillItems],
+        [
+          ...builtInSlashCommandItems,
+          ...visibleProviderSlashCommandItems,
+          ...skillItems,
+          ...pluginActionItems,
+        ],
         composerTrigger.rangeStart === 0,
       );
       return searchSlashCommandItems(slashCommandItems, query);
@@ -2823,9 +2852,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     compactSlashCommandAvailable,
     composerTrigger,
     environmentId,
+    canOperateThread,
     environmentThreadShells,
     exactPullRequestLookup.data,
     planModeUiEnabled,
+    pluginActionProjectId,
+    pluginActionThreadId,
+    pluginActions,
     pullRequestLookup.data,
     pullRequestProjectId,
     pullRequestRepository,
@@ -4041,6 +4074,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
         return;
       }
+      if (item.type === "plugin-action") {
+        // Keep the typed command when this connection may no longer run actions.
+        // The live grant is read because the menu may predate a permission change.
+        if (!canOperateThread || !canRunPluginActionsNow(environmentId)) return;
+        // Runs now, like the built-ins; nothing reaches the agent as prompt text.
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+        });
+        if (applied) {
+          setComposerHighlightedItemId(null);
+          void runPluginAction({ environmentId, action: item.action, target: item.target });
+        }
+        return;
+      }
       if (item.type === "provider-slash-command") {
         if (item.command.name === USAGE_LIMITS_COMMAND.name && onUsageLimitsCommand) {
           const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
@@ -4148,7 +4195,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       addComposerDraftReviewComment,
       addComposerDraftThreadContexts,
       applyPromptReplacement,
+      canOperateThread,
       composerDraftTarget,
+      environmentId,
       handleInteractionModeChange,
       planModeUiEnabled,
       onUsageLimitsCommand,

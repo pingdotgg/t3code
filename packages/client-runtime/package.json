@@ -175,9 +175,37 @@
       "types": "./src/state/presentation.ts",
       "default": "./src/state/presentation.ts"
     },
+    "./state/contribution-status": {
+      "types": "./src/state/contributionStatus.ts",
+      "default": "./src/state/contributionStatus.ts"
+    },
     "./state/device": {
       "types": "./src/state/device.ts",
       "default": "./src/state/device.ts"
+    },
+    "./state/plugins": {
+      "types": "./src/state/plugins.ts",
+      "default": "./src/state/plugins.ts"
+    },
+    "./state/pluginPresentation": {
+      "types": "./src/state/pluginPresentation.ts",
+      "default": "./src/state/pluginPresentation.ts"
+    },
+    "./state/pluginActions": {
+      "types": "./src/state/pluginActions.ts",
+      "default": "./src/state/pluginActions.ts"
+    },
+    "./state/pluginViews": {
+      "types": "./src/state/pluginViews.ts",
+      "default": "./src/state/pluginViews.ts"
+    },
+    "./plugin-views/document": {
+      "types": "./src/pluginViews/viewDocument.ts",
+      "default": "./src/pluginViews/viewDocument.ts"
+    },
+    "./plugin-views/bridge": {
+      "types": "./src/pluginViews/viewBridge.ts",
+      "default": "./src/pluginViews/viewBridge.ts"
     },
     "./state/deviceHubAccess": {
       "types": "./src/state/deviceHubAccess.ts",

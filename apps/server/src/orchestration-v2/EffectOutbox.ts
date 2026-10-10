@@ -214,6 +214,10 @@ export interface EffectOutboxV2Shape {
   readonly listByCommandId: (
     commandId: CommandId,
   ) => Effect.Effect<ReadonlyArray<OrchestrationEffectV2>, EffectOutboxError>;
+  /**
+   * Cancelling a checkpoint capture abandons its run's finalization. Do that
+   * through `EventSink.commitCommand`, which records the failure.
+   */
   readonly cancelUnsettled: (input: {
     readonly threadId: ThreadId;
     readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;

@@ -1,0 +1,18 @@
+{
+  "id": "test.views-board",
+  "name": "Board",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "entry": "main.mjs",
+  "capabilities": ["views"],
+  "proposedApi": true,
+  "views": [
+    {
+      "id": "board",
+      "title": "Board",
+      "placement": "side-panel",
+      "script": "views/board.js",
+      "style": "views/board.css"
+    }
+  ]
+}
