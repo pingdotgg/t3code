@@ -1451,7 +1451,9 @@ export default function ThreadTerminalDrawer({
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
-      if (!didResizeDuringDragRef.current) {
+      // A drag that ends where it started keeps the stored preference, which may
+      // be taller than the window-capped height the drag started from.
+      if (!didResizeDuringDragRef.current || drawerHeightRef.current === resizeState.startHeight) {
         return;
       }
       setDrawerHeight(drawerHeightRef.current);
