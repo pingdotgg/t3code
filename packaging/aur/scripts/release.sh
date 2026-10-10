@@ -17,16 +17,19 @@ fi
 
 version="${tag#v}"
 pkgver="${version//-/_}"
-asset_name="T3-Code-${version}-x86_64.AppImage"
 release_json="$(gh api "repos/$repo/releases/tags/$tag")"
-asset_digest="$(jq -r --arg name "$asset_name" \
-  '.assets[] | select(.name == $name) | .digest' <<<"$release_json")"
-appimage_sha256="${asset_digest#sha256:}"
+declare -A appimage_sha256
+for arch in x86_64 aarch64; do
+  asset_name="T3-Code-${version}-${arch/aarch64/arm64}.AppImage"
+  asset_digest="$(jq -r --arg name "$asset_name" \
+    '.assets[] | select(.name == $name) | .digest' <<<"$release_json")"
+  appimage_sha256[$arch]="${asset_digest#sha256:}"
 
-if [[ ! "$appimage_sha256" =~ ^[0-9a-f]{64}$ ]]; then
-  echo "Release $tag is missing $asset_name or its SHA-256 digest." >&2
-  exit 1
-fi
+  if [[ ! "${appimage_sha256[$arch]}" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "Release $tag is missing $asset_name or its SHA-256 digest." >&2
+    exit 1
+  fi
+done
 
 work_dir="$(mktemp -d)"
 trap 'rm -rf -- "$work_dir"' EXIT
@@ -39,7 +42,8 @@ cd "$package_dir"
 sed -Ei \
   -e "s/^pkgver=.*/pkgver=$pkgver/" \
   -e "s/^pkgrel=.*/pkgrel=$pkgrel/" \
-  -e "/# AppImage$/s/'[0-9a-f]{64}'/'$appimage_sha256'/" \
+  -e "/# x86_64 AppImage$/s/'[0-9a-f]{64}'/'${appimage_sha256[x86_64]}'/" \
+  -e "/# aarch64 AppImage$/s/'[0-9a-f]{64}'/'${appimage_sha256[aarch64]}'/" \
   -e "/# upstream license$/s/'[0-9a-f]{64}'/'$license_sha256'/" \
   PKGBUILD
 

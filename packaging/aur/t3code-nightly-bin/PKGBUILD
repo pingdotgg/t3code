@@ -1,10 +1,10 @@
 # Maintainer: maria-rcks <maria at kuuro dot net>
 
 pkgname=t3code-nightly-bin
-pkgver=0.0.34_nightly.20260814.1095
+pkgver=0.0.45_nightly.20261002.2595
 pkgrel=1
 pkgdesc='Nightly desktop control surface for local coding agents'
-arch=('x86_64')
+arch=('x86_64' 'aarch64')
 url='https://github.com/pingdotgg/t3code'
 license=('MIT')
 depends=(
@@ -44,20 +44,36 @@ conflicts=('t3code-nightly' 't3code')
 options=('!debug' '!strip')
 
 _upstream_version="${pkgver/_nightly./-nightly.}"
-_appimage="T3-Code-${_upstream_version}-x86_64.AppImage"
+_appimage_base="T3-Code-${_upstream_version}"
 source=(
-  "$_appimage::https://github.com/pingdotgg/t3code/releases/download/v${_upstream_version}/$_appimage"
   "${pkgname}-${pkgver}-LICENSE::https://raw.githubusercontent.com/pingdotgg/t3code/v${_upstream_version}/LICENSE"
 )
 sha256sums=(
-  'c4dea5bba9ed0b51b2f60f2d4a4867e61d62b57c50ea66f2792a73112e054566' # AppImage
   '935d8f2af0c703f9c39517ee57cc4930b19d02d533be930b63f0e82f93614b43' # upstream license
+)
+source_x86_64=(
+  "${_appimage_base}-x86_64.AppImage::https://github.com/pingdotgg/t3code/releases/download/v${_upstream_version}/${_appimage_base}-x86_64.AppImage"
+)
+sha256sums_x86_64=(
+  '764495c3983066ce919ec3cf4936154dc48c75139e9f54bae80edd230acc882c' # x86_64 AppImage
+)
+source_aarch64=(
+  "${_appimage_base}-arm64.AppImage::https://github.com/pingdotgg/t3code/releases/download/v${_upstream_version}/${_appimage_base}-arm64.AppImage"
+)
+sha256sums_aarch64=(
+  'a8d866846b2180560b2beac67dfbd71cdca11928b1aed2f4ac7458e3b7b4f865' # aarch64 AppImage
 )
 
 prepare() {
-  chmod +x "$srcdir/$_appimage"
+  if [[ "$CARCH" != "$(uname -m)" ]]; then
+    echo 'Cross-architecture builds are not supported.' >&2
+    return 1
+  fi
+
+  local appimage="${_appimage_base}-${CARCH/aarch64/arm64}.AppImage"
+  chmod +x "$srcdir/$appimage"
   rm -rf "$srcdir/squashfs-root"
-  "$srcdir/$_appimage" --appimage-extract >/dev/null
+  "$srcdir/$appimage" --appimage-extract >/dev/null
 
   if [[ ! -x "$srcdir/squashfs-root/AppRun" ||
         ! -f "$srcdir/squashfs-root/chrome-sandbox" ]]; then

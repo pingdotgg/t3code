@@ -1,10 +1,10 @@
 # Maintainer: maria-rcks <maria at kuuro dot net>
 
 pkgname=t3code-bin
-pkgver=0.0.33
+pkgver=0.0.45
 pkgrel=1
 pkgdesc='Desktop control surface for local coding agents'
-arch=('x86_64')
+arch=('x86_64' 'aarch64')
 url='https://github.com/pingdotgg/t3code'
 license=('MIT')
 depends=(
@@ -43,20 +43,36 @@ provides=("t3code=$pkgver")
 conflicts=('t3code')
 options=('!debug' '!strip')
 
-_appimage="T3-Code-${pkgver}-x86_64.AppImage"
+_appimage_base="T3-Code-${pkgver}"
 source=(
-  "$_appimage::https://github.com/pingdotgg/t3code/releases/download/v${pkgver}/$_appimage"
   "${pkgname}-${pkgver}-LICENSE::https://raw.githubusercontent.com/pingdotgg/t3code/v${pkgver}/LICENSE"
 )
 sha256sums=(
-  '415c8648f43c3d22d572f27f2c50fdc8c310ea7fcde9537b903e1e2f1c8775a1' # AppImage
   '935d8f2af0c703f9c39517ee57cc4930b19d02d533be930b63f0e82f93614b43' # upstream license
+)
+source_x86_64=(
+  "${_appimage_base}-x86_64.AppImage::https://github.com/pingdotgg/t3code/releases/download/v${pkgver}/${_appimage_base}-x86_64.AppImage"
+)
+sha256sums_x86_64=(
+  'ab7b0a86d1ea657ccc162b60b772c61f70bc7c8b9e259b46939d53bb38faa02a' # x86_64 AppImage
+)
+source_aarch64=(
+  "${_appimage_base}-arm64.AppImage::https://github.com/pingdotgg/t3code/releases/download/v${pkgver}/${_appimage_base}-arm64.AppImage"
+)
+sha256sums_aarch64=(
+  '03113566f52b07a4d503239c378540175691d9a057ed41e0e794897d6be054d5' # aarch64 AppImage
 )
 
 prepare() {
-  chmod +x "$srcdir/$_appimage"
+  if [[ "$CARCH" != "$(uname -m)" ]]; then
+    echo 'Cross-architecture builds are not supported.' >&2
+    return 1
+  fi
+
+  local appimage="${_appimage_base}-${CARCH/aarch64/arm64}.AppImage"
+  chmod +x "$srcdir/$appimage"
   rm -rf "$srcdir/squashfs-root"
-  "$srcdir/$_appimage" --appimage-extract >/dev/null
+  "$srcdir/$appimage" --appimage-extract >/dev/null
 
   if [[ ! -x "$srcdir/squashfs-root/AppRun" ||
         ! -f "$srcdir/squashfs-root/chrome-sandbox" ]]; then
