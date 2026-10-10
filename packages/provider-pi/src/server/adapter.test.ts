@@ -38,7 +38,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   makePiAdapterV2,
   PiAdapterV2Driver,
@@ -336,7 +336,7 @@ const makeAdapter = Effect.fnUntraced(function* (
       config: { enabled: true, binaryPath: "pi", launchArgs, customModels: [] },
     }).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      Effect.provideService(HostProcessEnvironment, {}),
+      Effect.provideService(HostProcess.Environment, {}),
       Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
         ...continuationRequests,
         take: Effect.never,

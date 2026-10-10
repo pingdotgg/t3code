@@ -1,6 +1,8 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import type * as Option from "effect/Option";
 import type {
+  RepositoryIdentity,
   ChangeRequest,
   ChangeRequestState,
   SourceControlProviderError,
@@ -92,10 +94,60 @@ export function sourceControlRefFromInput(input: {
   return input.source ?? parseSourceControlOwnerRef(input.headSelector);
 }
 
+/** The repository path a remote URL names (`owner/name`, or deeper for nested groups). */
+export function repositoryPathFromRemoteUrl(url: string | null): string | null {
+  const trimmed = url?.trim() ?? "";
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  const match =
+    /^(?:[^@/\s]+@[^:/\s]+:|(?:ssh|https?|git):\/\/[^/]+\/)((?:[^/\s]+\/)+[^/\s]+?)(?:\.git)?\/?$/iu.exec(
+      trimmed,
+    );
+  const path = match?.[1]?.trim() ?? "";
+  return path.length > 0 ? path : null;
+}
+
 export class SourceControlProvider extends Context.Service<
   SourceControlProvider,
   {
     readonly kind: SourceControlProviderKind;
+    /**
+     * How to look up a branch's change requests: which head selectors to ask about, and how many
+     * results to read per selector. The caller checks the owner against what comes back, so a
+     * host that cannot search `owner:branch` can drop those selectors without losing anything.
+     * Absent asks about every selector, reading 1 for the open lookup and 20 for any state.
+     */
+    readonly headBranchProbe?: (input: {
+      readonly headSelectors: ReadonlyArray<string>;
+      readonly state: "open" | "all";
+    }) => { readonly headSelectors: ReadonlyArray<string>; readonly limit: number };
+    /**
+     * The repository's change request template at `treeish`, for change request content
+     * generation to follow. Absent means the host has no template convention.
+     */
+    readonly readChangeRequestTemplate?: (input: {
+      readonly cwd: string;
+      readonly treeish: string;
+    }) => Effect.Effect<Option.Option<string>>;
+    /**
+     * The repository's `owner/name` from a remote URL, for a host whose remote paths can carry
+     * more than that (Forgejo's HTTP installation mount). Absent means the whole path.
+     */
+    readonly repositoryNameFromRemoteUrl?: (url: string) => string | null;
+    /**
+     * Fills in what a repository identity read from git cannot know, such as the browser URL of
+     * a host the remote URL does not name. `resolveContext` asks the registry which host (and
+     * base URL) serves a remote. Only consulted for identities this host may own.
+     */
+    readonly refineRepositoryIdentity?: (input: {
+      readonly identity: RepositoryIdentity;
+      readonly resolveContext: (input: {
+        readonly cwd: string;
+        readonly context: SourceControlProviderContext;
+      }) => Effect.Effect<SourceControlProviderContext | null, SourceControlProviderError>;
+    }) => Effect.Effect<RepositoryIdentity, SourceControlProviderError>;
     /** Optional capability for issue and change-request subjects. */
     readonly resolveLink?: ResolveSourceControlLink;
     readonly listChangeRequests: (input: {

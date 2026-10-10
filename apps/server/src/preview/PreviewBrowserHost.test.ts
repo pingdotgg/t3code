@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -67,7 +67,7 @@ const diagnose = (input: {
     setupCommand: "sudo t3 browser setup",
   }).pipe(
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    Effect.provideService(HostProcessPlatform, input.platform),
+    Effect.provideService(HostProcess.Platform, input.platform),
     Effect.map((error) => ({ error, commands })),
   );
 };

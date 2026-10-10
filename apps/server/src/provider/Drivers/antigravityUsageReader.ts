@@ -1,11 +1,14 @@
-// node:sqlite reads live conversation databases while Node fs discovers them.
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Effect's File.Info has no ctime, which the cache fingerprint needs.
 import * as NodeFSP from "node:fs/promises";
-import * as NodePath from "node:path";
-import * as NodeSqlite from "node:sqlite";
-import * as NodeTimersPromises from "node:timers/promises";
 
-import type { UsageRecord } from "./usageTranscripts.ts";
+import type { UsageRecord } from "@t3tools/provider-core/server/usage";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 
 type FieldValue = number | bigint | Uint8Array;
 type Fields = Map<number, FieldValue[]>;
@@ -158,103 +161,136 @@ interface UsageCandidate {
   timestampQuality: number;
 }
 
-async function readDatabase(path: string, fallbackTimestamp: number): Promise<UsageCandidate[]> {
-  const db = new NodeSqlite.DatabaseSync(path, { readOnly: true });
-  try {
-    db.exec("PRAGMA busy_timeout = 100; BEGIN");
+/** A conversation database whose usage tables are missing or undecodable. */
+class AntigravityDatabaseDecodeError extends Schema.TaggedError<AntigravityDatabaseDecodeError>()(
+  "AntigravityDatabaseDecodeError",
+  { path: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {
+  override get message(): string {
+    return `Antigravity usage could not be decoded from ${this.path}.`;
+  }
+}
+
+const readDatabase = Effect.fn("readDatabase")(function* (
+  path: string,
+  sessionId: string,
+  fallbackTimestamp: number,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const decode = <A>(evaluate: () => A) =>
+    Effect.try({
+      try: evaluate,
+      catch: (cause) => new AntigravityDatabaseDecodeError({ path, cause }),
+    });
+  yield* sql.unsafe("PRAGMA busy_timeout = 100");
+  return yield* Effect.gen(function* () {
     const tables = new Set(
-      db
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
-        .all()
-        .map((row) => row.name),
+      (yield* sql.unsafe<{ readonly name: unknown }>(
+        "SELECT name FROM sqlite_master WHERE type = 'table'",
+      )).map((row) => row.name),
     );
     if (!tables.has("gen_metadata") && !tables.has("steps")) {
-      throw new Error("Missing Antigravity usage tables");
+      return yield* new AntigravityDatabaseDecodeError({ path });
     }
-    const readMetadata = async (query: string, column: string, step: boolean) => {
+    const readMetadata = Effect.fnUntraced(function* (
+      query: string,
+      column: string,
+      step: boolean,
+    ) {
       const entries: Array<{ idx: number; entry: Metadata }> = [];
-      for (const row of db.prepare(query).iterate()) {
-        if (typeof row.idx !== "number") throw new Error("Invalid Antigravity metadata index");
-        entries.push({ idx: row.idx, entry: metadata(blob(row[column]), step) });
-        if (entries.length % 256 === 0) await NodeTimersPromises.setImmediate();
+      for (const row of yield* sql.unsafe<Record<string, unknown>>(query)) {
+        const idx = row.idx;
+        if (typeof idx !== "number") {
+          return yield* new AntigravityDatabaseDecodeError({ path });
+        }
+        entries.push({ idx, entry: yield* decode(() => metadata(blob(row[column]), step)) });
+        if (entries.length % 256 === 0) yield* Effect.yieldNow;
       }
       return entries;
-    };
+    });
     const generations = tables.has("gen_metadata")
-      ? await readMetadata("SELECT idx, data FROM gen_metadata ORDER BY idx", "data", false)
+      ? yield* readMetadata("SELECT idx, data FROM gen_metadata ORDER BY idx", "data", false)
       : [];
     let trajectoryTimestamp: number | null = null;
     if (tables.has("trajectory_metadata_blob")) {
-      for (const row of db.prepare("SELECT data FROM trajectory_metadata_blob").iterate()) {
-        trajectoryTimestamp ??= timestamp(nested(fields(blob(row.data)), 2));
+      for (const row of yield* sql.unsafe<{ readonly data: unknown }>(
+        "SELECT data FROM trajectory_metadata_blob",
+      )) {
+        trajectoryTimestamp ??= yield* decode(() => timestamp(nested(fields(blob(row.data)), 2)));
       }
     }
     const steps = tables.has("steps")
-      ? await readMetadata(
+      ? yield* readMetadata(
           "SELECT idx, metadata FROM steps WHERE metadata IS NOT NULL ORDER BY idx",
           "metadata",
           true,
         )
       : [];
-    const sessionId = NodePath.basename(path, ".db");
-    const records: UsageCandidate[] = [];
-    const generationModels = new Map(generations.map(({ idx, entry }) => [idx, entry.model]));
-    for (const [source, entries] of [
-      ["step", steps],
-      ["generation", generations],
-    ] as const) {
-      for (const [index, { idx, entry }] of entries.entries()) {
-        for (const [usageIndex, usage] of entry.usages.entries()) {
-          const outputTokens = Math.max(
-            numberAt(usage, 3),
-            numberAt(usage, 9) + numberAt(usage, 10),
-          );
-          const totals = {
-            uncachedInputTokens: numberAt(usage, 2),
-            cachedInputTokens: numberAt(usage, 5),
-            cacheCreationTokens: numberAt(usage, 4),
-            outputTokens,
-            reasoningTokens: Math.min(outputTokens, numberAt(usage, 9)),
-          };
-          if (
-            totals.uncachedInputTokens +
-              totals.cachedInputTokens +
-              totals.cacheCreationTokens +
-              outputTokens ===
-            0
-          )
-            continue;
-          const keys = ([11, 12, 7] as const).flatMap((key) => {
-            const id = textAt(usage, key);
-            return id ? [`antigravity:${key}:${id}`] : [];
-          });
-          const record: UsageRecord = {
-            provider: "antigravity",
-            sessionId,
-            timestampMs: entry.timestampMs ?? trajectoryTimestamp ?? fallbackTimestamp,
-            model:
-              MODEL_IDS[numberAt(usage, 1)] ||
-              entry.model ||
-              (source === "step" ? generationModels.get(idx) : "") ||
-              modelName("", numberAt(usage, 1)) ||
-              "antigravity-unknown",
-            totals,
-            reportedCostUsd: null,
-            speed: "standard",
-            dedupeKey: keys[0] ?? `antigravity:${sessionId}:${source}:${index}:${usageIndex}`,
-          };
-          records.push({
-            record,
-            keys,
-            timestampQuality: entry.timestampMs !== null ? 2 : trajectoryTimestamp !== null ? 1 : 0,
-          });
-        }
+    return yield* decode(() =>
+      usageCandidates(sessionId, generations, steps, trajectoryTimestamp, fallbackTimestamp),
+    );
+  }).pipe(sql.withTransaction);
+});
+
+function usageCandidates(
+  sessionId: string,
+  generations: ReadonlyArray<{ idx: number; entry: Metadata }>,
+  steps: ReadonlyArray<{ idx: number; entry: Metadata }>,
+  trajectoryTimestamp: number | null,
+  fallbackTimestamp: number,
+): UsageCandidate[] {
+  const records: UsageCandidate[] = [];
+  const generationModels = new Map(generations.map(({ idx, entry }) => [idx, entry.model]));
+  for (const [source, entries] of [
+    ["step", steps],
+    ["generation", generations],
+  ] as const) {
+    for (const [index, { idx, entry }] of entries.entries()) {
+      for (const [usageIndex, usage] of entry.usages.entries()) {
+        const outputTokens = Math.max(numberAt(usage, 3), numberAt(usage, 9) + numberAt(usage, 10));
+        const totals = {
+          uncachedInputTokens: numberAt(usage, 2),
+          cachedInputTokens: numberAt(usage, 5),
+          cacheCreationTokens: numberAt(usage, 4),
+          outputTokens,
+          reasoningTokens: Math.min(outputTokens, numberAt(usage, 9)),
+        };
+        if (
+          totals.uncachedInputTokens +
+            totals.cachedInputTokens +
+            totals.cacheCreationTokens +
+            outputTokens ===
+          0
+        )
+          continue;
+        const keys = ([11, 12, 7] as const).flatMap((key) => {
+          const id = textAt(usage, key);
+          return id ? [`antigravity:${key}:${id}`] : [];
+        });
+        const record: UsageRecord = {
+          provider: "antigravity",
+          sessionId,
+          timestampMs: entry.timestampMs ?? trajectoryTimestamp ?? fallbackTimestamp,
+          model:
+            MODEL_IDS[numberAt(usage, 1)] ||
+            entry.model ||
+            (source === "step" ? generationModels.get(idx) : "") ||
+            modelName("", numberAt(usage, 1)) ||
+            "antigravity-unknown",
+          totals,
+          reportedCostUsd: null,
+          speed: "standard",
+          dedupeKey: keys[0] ?? `antigravity:${sessionId}:${source}:${index}:${usageIndex}`,
+        };
+        records.push({
+          record,
+          keys,
+          timestampQuality: entry.timestampMs !== null ? 2 : trajectoryTimestamp !== null ? 1 : 0,
+        });
       }
     }
-    return records;
-  } finally {
-    db.close();
   }
+  return records;
 }
 
 interface CachedDatabase {
@@ -275,11 +311,13 @@ export const makeAntigravityUsageCache = () => new Map<string, CachedDatabase>()
  * filtering. With a cache, databases unchanged since the previous read are not
  * decoded again.
  */
-export async function readAntigravityUsage(
+export const readAntigravityUsage = Effect.fn("readAntigravityUsage")(function* (
   conversationsDirectories: string | readonly string[],
   sinceMs: number,
   cache?: Map<string, CachedDatabase>,
 ) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const pathService = yield* Path.Path;
   const roots =
     typeof conversationsDirectories === "string"
       ? [conversationsDirectories]
@@ -350,50 +388,69 @@ export async function readAntigravityUsage(
     }
   };
   const visited = new Set<string>();
-  const walk = async (directory: string, root: string): Promise<void> => {
-    let entries;
-    try {
-      entries = await NodeFSP.readdir(directory, { withFileTypes: true });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") errors.push(directory);
-      return;
-    }
-    entries.sort((a, b) => a.name.localeCompare(b.name));
-    for (const entry of entries) {
-      const path = NodePath.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        await walk(path, root);
-      } else if (entry.isFile() && entry.name.endsWith(".db")) {
-        try {
-          const canonical = await NodeFSP.realpath(path);
-          if (visited.has(canonical)) continue;
-          visited.add(canonical);
-          const stat = await NodeFSP.stat(path);
-          const wal = await NodeFSP.stat(`${path}-wal`).catch(() => null);
-          const fingerprint = [stat, wal]
-            .map((file) => (file ? `${file.size}:${file.mtimeMs}:${file.ctimeMs}` : "-"))
-            .join("/");
-          const cached = cache?.get(canonical);
-          let candidates: readonly UsageCandidate[];
-          if (cached?.fingerprint === fingerprint) {
-            candidates = cached.candidates;
-          } else {
-            candidates = await readDatabase(path, stat.mtimeMs);
-            cache?.set(canonical, { fingerprint, candidates });
-          }
+  const readFile = Effect.fn("readAntigravityUsage.readFile")(function* (path: string) {
+    const canonical = yield* fileSystem.realPath(path);
+    if (visited.has(canonical)) return null;
+    visited.add(canonical);
+    const fingerprintOf = (file: string) =>
+      Effect.tryPromise(() => NodeFSP.stat(file)).pipe(
+        Effect.map((stat) => ({ stat, part: `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}` })),
+      );
+    const { stat, part } = yield* fingerprintOf(path);
+    const wal = yield* fingerprintOf(`${path}-wal`).pipe(Effect.option);
+    const fingerprint = `${part}/${wal._tag === "Some" ? wal.value.part : "-"}`;
+    const cached = cache?.get(canonical);
+    if (cached?.fingerprint === fingerprint) return cached.candidates;
+    const candidates = yield* readDatabase(
+      path,
+      pathService.basename(path, ".db"),
+      stat.mtimeMs,
+    ).pipe(Effect.provide(NodeSqliteClient.layer({ filename: path, readonly: true })));
+    cache?.set(canonical, { fingerprint, candidates });
+    return candidates;
+  });
+  const walk = (directory: string, root: string): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      const names = yield* fileSystem.readDirectory(directory).pipe(
+        Effect.catchTags({
+          PlatformError: (cause) => {
+            if (cause.reason._tag !== "NotFound") errors.push(directory);
+            return Effect.succeed(null);
+          },
+        }),
+      );
+      if (names === null) return;
+      names.sort((a, b) => a.localeCompare(b));
+      for (const name of names) {
+        const path = pathService.join(directory, name);
+        // Like a directory listing's entry types: symlinks are neither files nor directories.
+        const isLink = Exit.isSuccess(yield* Effect.exit(fileSystem.readLink(path)));
+        const type = isLink
+          ? "SymbolicLink"
+          : yield* fileSystem.stat(path).pipe(
+              Effect.map((info) => info.type),
+              Effect.orElseSucceed(() => null),
+            );
+        if (type === "Directory") {
+          yield* walk(path, root);
+        } else if ((type === "File" || type === null) && name.endsWith(".db")) {
+          const candidates = yield* readFile(path).pipe(
+            Effect.catch(() => {
+              errors.push(path);
+              return Effect.succeed(null);
+            }),
+          );
+          if (candidates === null) continue;
           const fileIndex = files.length;
           files.push({ root, path, records: [] });
           for (const [index, candidate] of candidates.entries()) {
             append(candidate, fileIndex);
-            if (index % 256 === 255) await NodeTimersPromises.setImmediate();
+            if (index % 256 === 255) yield* Effect.yieldNow;
           }
-        } catch {
-          errors.push(path);
         }
       }
-    }
-  };
-  for (const root of roots) await walk(root, root);
+    });
+  for (const root of roots) yield* walk(root, root);
   if (cache !== undefined) {
     for (const key of cache.keys()) if (!visited.has(key)) cache.delete(key);
   }
@@ -403,4 +460,4 @@ export async function readAntigravityUsage(
     }
   }
   return { files, errors };
-}
+});

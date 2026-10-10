@@ -6,13 +6,12 @@ import * as Result from "effect/Result";
 import * as Clock from "effect/Clock";
 import * as FileSystem from "effect/FileSystem";
 import * as Semaphore from "effect/Semaphore";
-import * as NodeOS from "node:os";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - fj storage paths use explicit Windows and POSIX layouts, independently of this process's platform.
 import * as NodePath from "node:path";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import type { SourceControlProviderContext } from "@t3tools/source-control-core/server/SourceControlProvider";
@@ -249,8 +248,8 @@ export const make = Effect.gen(function* () {
 
   const readKeys = Effect.fn("ForgejoCli.readKeys")(function* (cwd: string) {
     for (const path of forgejoKeysPaths({
-      platform: yield* HostProcessPlatform,
-      home: NodeOS.homedir(),
+      platform: yield* HostProcess.Platform,
+      home: yield* HostProcess.HomeDirectory,
       ...(globalThis.process.env.XDG_DATA_HOME
         ? { dataHome: globalThis.process.env.XDG_DATA_HOME }
         : {}),

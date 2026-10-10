@@ -18,11 +18,12 @@ import {
   type SourceControlRepositoryCloneUrls,
 } from "@t3tools/contracts";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 
 import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubChangeRequestTemplate from "./gitHubChangeRequestTemplate.ts";
 import {
   decodeGitHubPullRequestEntries,
   type NormalizedGitHubPullRequestRecord,
@@ -192,7 +193,7 @@ export const makeDiscovery = Effect.gen(function* () {
   const api = yield* GitHubApi.GitHubApi;
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const process = sourceControlHost.process;
-  const environment = yield* HostProcessEnvironment;
+  const environment = yield* HostProcess.Environment;
 
   return {
     type: "managed-cli",
@@ -477,7 +478,7 @@ export const make = Effect.gen(function* () {
   const api = yield* GitHubApi.GitHubApi;
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const process = sourceControlHost.process;
-  const environment = yield* HostProcessEnvironment;
+  const environment = yield* HostProcess.Environment;
   const git = sourceControlHost.git;
   const fileSystem = yield* FileSystem.FileSystem;
 
@@ -939,6 +940,18 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: "github",
+    // `gh pr list --head` filters on the head ref name alone and accepts anything, so an
+    // `owner:branch` or `remote:branch` selector silently lists zero pull requests while
+    // spending a GraphQL call; the bare branch is always among the selectors. Without the owner,
+    // a bare branch also lists same-named branches on other forks (`main`, `patch-1`), so read a
+    // full page and let the owner check pick the right head. gh fetches up to 100 in one
+    // request, and GitHub prices a first:100 connection like first:1.
+    headBranchProbe: ({ headSelectors }) => ({
+      headSelectors: headSelectors.filter((selector) => !selector.includes(":")),
+      limit: 100,
+    }),
+    readChangeRequestTemplate: ({ cwd, treeish }) =>
+      GitHubChangeRequestTemplate.detect(cwd, treeish, git.execute),
     resolveLink: (input) => {
       // Automatic enrichment must not send ambient CLI credentials to a host from message text.
       if (input.url.host !== "github.com") return undefined;
@@ -950,7 +963,7 @@ export const make = Effect.gen(function* () {
     },
     listChangeRequests: (input) =>
       // An open lookup is a user waiting on a status; the rest may be a background sweep.
-      (input.state === "open" ? Effect.succeed(true) : GitHubApi.AllowGitHubReserve).pipe(
+      (input.state === "open" ? Effect.succeed(true) : SourceControlRateLimit.Interactive).pipe(
         Effect.flatMap((allowReserve) =>
           listByHead({
             cwd: input.cwd,

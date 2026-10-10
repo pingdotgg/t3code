@@ -15,6 +15,10 @@
       "types": "./src/server/gitHubAuthStatus.ts",
       "import": "./src/server/gitHubAuthStatus.ts"
     },
+    "./server/gitHubChangeRequestTemplate": {
+      "types": "./src/server/gitHubChangeRequestTemplate.ts",
+      "import": "./src/server/gitHubChangeRequestTemplate.ts"
+    },
     "./server/gitHubConditionalChecks": {
       "types": "./src/server/gitHubConditionalChecks.ts",
       "import": "./src/server/gitHubConditionalChecks.ts"
