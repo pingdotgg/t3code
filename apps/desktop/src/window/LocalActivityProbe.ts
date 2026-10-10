@@ -40,7 +40,9 @@ export const makeLocalActivityProbe = (input: LocalActivityProbeInput): Effect.E
     const configOption = yield* primary.currentConfig;
     if (Option.isNone(configOption)) return 0;
     const bearerToken = yield* input.auth.getBearerToken;
-    const response = yield* input.httpClient.get(
+    // filterStatusOk so a 4xx/5xx error body fails into catchCause (and its
+    // warning) instead of parsing as an empty snapshot.
+    const response = yield* HttpClient.filterStatusOk(input.httpClient).get(
       new URL("/api/orchestration/shell", configOption.value.httpBaseUrl),
       {
         headers: {
