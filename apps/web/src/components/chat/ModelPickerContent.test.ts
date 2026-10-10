@@ -9,10 +9,13 @@ import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
   adjacentModelPickerProvider,
+  groupOpenCodeModelsBySubProvider,
+  openCodeSectionHeadings,
   resolveModelPickerSelectedModel,
   shouldIncludeModelPickerOption,
   shouldOfferModelPickerSetup,
 } from "./ModelPickerContent";
+import { modelPickerModelKey } from "./modelPickerKeys";
 
 function entry(status: ServerProvider["status"], driver = "opencode") {
   return deriveProviderInstanceEntries([
@@ -283,5 +286,57 @@ describe("adjacentModelPickerProvider", () => {
         direction: -1,
       }),
     ).toBe(claude.instanceId);
+  });
+});
+
+describe("OpenCode upstream-provider sections", () => {
+  const instanceId = ProviderInstanceId.make("opencode");
+  const opencode = ProviderDriverKind.make("opencode");
+  const model = (slug: string, subProvider?: string, driverKind = opencode) => ({
+    slug,
+    instanceId,
+    driverKind,
+    ...(subProvider ? { subProvider } : {}),
+  });
+
+  it("splits OpenCode Zen and OpenCode Go models into sections, keeping their order", () => {
+    const models = [
+      model("opencode/deepseek-v4-flash", "OpenCode Zen"),
+      model("opencode-go/deepseek-v4-flash", "OpenCode Go"),
+      model("opencode/glm-5.2", "OpenCode Zen"),
+      model("opencode-go/kimi-k2.6", "OpenCode Go"),
+    ];
+    const grouped = groupOpenCodeModelsBySubProvider(models);
+
+    expect(grouped.map((item) => item.slug)).toEqual([
+      "opencode-go/deepseek-v4-flash",
+      "opencode-go/kimi-k2.6",
+      "opencode/deepseek-v4-flash",
+      "opencode/glm-5.2",
+    ]);
+    expect([...openCodeSectionHeadings(grouped)]).toEqual([
+      [modelPickerModelKey(instanceId, "opencode-go/deepseek-v4-flash"), "OpenCode Go"],
+      [modelPickerModelKey(instanceId, "opencode/deepseek-v4-flash"), "OpenCode Zen"],
+    ]);
+  });
+
+  it("leaves single-source OpenCode catalogs and other providers untouched", () => {
+    const zenOnly = [model("opencode/b", "OpenCode Zen"), model("opencode/a", "OpenCode Zen")];
+    expect(groupOpenCodeModelsBySubProvider(zenOnly)).toBe(zenOnly);
+    expect(openCodeSectionHeadings(zenOnly).size).toBe(0);
+
+    const copilot = ProviderDriverKind.make("copilot");
+    const otherDriver = [model("b", "GitHub", copilot), model("a", "Azure", copilot)];
+    expect(groupOpenCodeModelsBySubProvider(otherDriver)).toBe(otherDriver);
+    expect(openCodeSectionHeadings(otherDriver).size).toBe(0);
+  });
+
+  it("puts models without an upstream provider last", () => {
+    const grouped = groupOpenCodeModelsBySubProvider([
+      model("local/a"),
+      model("opencode-go/b", "OpenCode Go"),
+    ]);
+    expect(grouped.map((item) => item.slug)).toEqual(["opencode-go/b", "local/a"]);
+    expect([...openCodeSectionHeadings(grouped).values()]).toEqual(["OpenCode Go", "Other"]);
   });
 });

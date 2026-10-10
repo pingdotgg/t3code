@@ -145,6 +145,53 @@ export function adjacentModelPickerProvider(input: {
   ]!;
 }
 
+/**
+ * OpenCode serves models from several upstream providers through one instance
+ * (for example OpenCode Zen and an OpenCode Go subscription), often with the
+ * same model names. Groups an OpenCode instance's list by that upstream provider
+ * so each source gets its own section; order within a section is unchanged.
+ * Other drivers, and catalogs with a single source, are returned as-is.
+ */
+export function groupOpenCodeModelsBySubProvider<
+  T extends { readonly driverKind: ProviderDriverKind; readonly subProvider?: string | undefined },
+>(models: ReadonlyArray<T>): ReadonlyArray<T> {
+  if (models.some((model) => model.driverKind !== "opencode")) return models;
+  const sections = new Map<string, T[]>();
+  for (const model of models) {
+    const label = model.subProvider ?? "";
+    const section = sections.get(label);
+    if (section) section.push(model);
+    else sections.set(label, [model]);
+  }
+  if (sections.size < 2) return models;
+  return [...sections.keys()]
+    .toSorted((left, right) => (left === "" ? 1 : right === "" ? -1 : left.localeCompare(right)))
+    .flatMap((label) => sections.get(label)!);
+}
+
+/** Heading to show above each row that starts a new OpenCode upstream-provider section. */
+export function openCodeSectionHeadings<
+  T extends {
+    readonly driverKind: ProviderDriverKind;
+    readonly subProvider?: string | undefined;
+    readonly instanceId: ProviderInstanceId;
+    readonly slug: string;
+  },
+>(models: ReadonlyArray<T>): ReadonlyMap<string, string> {
+  const headings = new Map<string, string>();
+  if (models.some((model) => model.driverKind !== "opencode")) return headings;
+  if (new Set(models.map((model) => model.subProvider ?? "")).size < 2) return headings;
+  let previous: string | undefined;
+  for (const model of models) {
+    const label = model.subProvider ?? "Other";
+    if (label !== previous) {
+      headings.set(modelPickerModelKey(model.instanceId, model.slug), label);
+    }
+    previous = label;
+  }
+  return headings;
+}
+
 const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
 const MODEL_LIST_ESTIMATED_ITEM_SIZE = 52;
 
@@ -532,11 +579,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       result = result.filter((m) => m.instanceId === selectedInstanceId);
     }
 
-    return sortProviderModelItems(result, {
+    const sorted = sortProviderModelItems(result, {
       favoriteModelKeys: favoritesSet,
       groupFavorites: selectedInstanceId !== "favorites",
       instanceOrder: selectedInstanceId === "favorites" ? instanceOrder : [],
     });
+    return selectedInstanceId === "favorites" ? sorted : groupOpenCodeModelsBySubProvider(sorted);
   }, [
     favoritesSet,
     flatModels,
@@ -573,6 +621,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       ...(legacySection.isExpanded ? legacySection.legacyModels : []),
     ];
   }, [filteredModels, legacySection]);
+
+  const sectionHeadingByKey = useMemo(
+    () =>
+      isSearching || selectedInstanceId === "favorites"
+        ? new Map<string, string>()
+        : openCodeSectionHeadings(legacySection?.currentModels ?? visibleModels),
+    [isSearching, legacySection, selectedInstanceId, visibleModels],
+  );
 
   const selectedEntry =
     selectedInstanceId === "favorites" ? undefined : entryByInstanceId.get(selectedInstanceId);
@@ -766,8 +822,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     return mapping.size > 0 ? mapping : EMPTY_MODEL_JUMP_LABELS;
   }, [keybindings, modelJumpCommandByKey, modelJumpShortcutContext]);
   const modelListExtraData = useMemo(
-    () => ({ favoritesSet, modelJumpLabelByKey, activeModelKey, selectedModelKeySet }),
-    [favoritesSet, modelJumpLabelByKey, activeModelKey, selectedModelKeySet],
+    () => ({
+      favoritesSet,
+      modelJumpLabelByKey,
+      activeModelKey,
+      selectedModelKeySet,
+      sectionHeadingByKey,
+    }),
+    [favoritesSet, modelJumpLabelByKey, activeModelKey, selectedModelKeySet, sectionHeadingByKey],
   );
 
   useEffect(() => {
@@ -1022,7 +1084,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     }
                     const disabledReason =
                       getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
-                    return (
+                    const sectionHeading = sectionHeadingByKey.get(modelKey);
+                    const row = (
                       <ModelListRow
                         key={modelKey}
                         index={index}
@@ -1051,6 +1114,20 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         disabledReason={disabledReason}
                         onToggleFavorite={() => toggleFavorite(model.instanceId, model.slug)}
                       />
+                    );
+                    if (!sectionHeading) {
+                      return row;
+                    }
+                    return (
+                      <>
+                        <div
+                          role="presentation"
+                          className="truncate px-2 pt-2 pb-1 text-xs font-medium leading-snug text-muted-foreground"
+                        >
+                          {sectionHeading}
+                        </div>
+                        {row}
+                      </>
                     );
                   }}
                   estimatedItemSize={MODEL_LIST_ESTIMATED_ITEM_SIZE}
