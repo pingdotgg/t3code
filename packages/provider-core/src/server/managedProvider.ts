@@ -155,19 +155,41 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         const generation = input.enrichSnapshot
           ? state.enrichmentGeneration + 1
           : state.enrichmentGeneration;
+        // A failed read keeps the last good limits only for the same account,
+        // and they keep the workspace they were read for.
+        const previous = state.snapshot.auth;
+        const differs = (a: string | undefined, b: string | undefined) =>
+          a !== undefined && b !== undefined && a !== b;
+        // Limits read without a workspace cannot be attributed to a new one.
+        const switchedAccount =
+          differs(
+            probedSnapshot.auth.email?.trim().toLowerCase(),
+            previous.email?.trim().toLowerCase(),
+          ) ||
+          (probedSnapshot.auth.workspaceId !== undefined &&
+            probedSnapshot.auth.workspaceId !== previous.workspaceId);
+        const usageLimits = switchedAccount
+          ? probedSnapshot.usageLimits
+          : resolveUsageLimitsAfterProbe({
+              published:
+                previous.status === probedSnapshot.auth.status &&
+                previous.type === probedSnapshot.auth.type &&
+                previous.email?.trim().toLowerCase() ===
+                  probedSnapshot.auth.email?.trim().toLowerCase()
+                  ? state.snapshot.usageLimits
+                  : state.snapshot.usageLimits && {
+                      ...state.snapshot.usageLimits,
+                      credits: undefined,
+                    },
+              probed: probedSnapshot.usageLimits,
+            });
+        const workspaceId =
+          usageLimits === probedSnapshot.usageLimits ? undefined : state.snapshot.auth.workspaceId;
         const snapshot = withUsageLimits(
-          probedSnapshot,
-          resolveUsageLimitsAfterProbe({
-            // Failed reads may retain the last balance only for the same account.
-            published:
-              state.snapshot.auth.status === probedSnapshot.auth.status &&
-              state.snapshot.auth.type === probedSnapshot.auth.type &&
-              state.snapshot.auth.email?.trim().toLowerCase() ===
-                probedSnapshot.auth.email?.trim().toLowerCase()
-                ? state.snapshot.usageLimits
-                : undefined,
-            probed: probedSnapshot.usageLimits,
-          }),
+          workspaceId && !probedSnapshot.auth.workspaceId
+            ? { ...probedSnapshot, auth: { ...probedSnapshot.auth, workspaceId } }
+            : probedSnapshot,
+          usageLimits,
         );
         return [
           { snapshot, generation },

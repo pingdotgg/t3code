@@ -32,6 +32,7 @@ import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@t3
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { resolveProjectFileBackedSetting } from "@t3tools/shared/projectSettings";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
@@ -977,11 +978,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ...input.env,
           ...trace2Monitor.env,
         };
+        const spawnEnv = { ...env, ...windowsLongPathConfigEnv(hostPlatform, env) };
+        const resolved = yield* resolveSpawnCommand("git", [], { env: spawnEnv });
+        // A git.cmd wrapper would need cmd.exe, which cuts multi-line commit
+        // messages at the first newline; leave that case to Node's lookup.
+        const executable = resolved.shell ? "git" : resolved.command;
         const child = yield* commandSpawner
           .spawn(
-            ChildProcess.make("git", commandInput.args, {
+            ChildProcess.make(executable, commandInput.args, {
               cwd: commandInput.cwd,
-              env: { ...env, ...windowsLongPathConfigEnv(hostPlatform, env) },
+              env: spawnEnv,
             }),
           )
           .pipe(

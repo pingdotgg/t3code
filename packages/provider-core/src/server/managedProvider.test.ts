@@ -591,9 +591,16 @@ describe("makeManagedServerProvider", () => {
           checkProvider: Ref.updateAndGet(refreshCount, (count) => count + 1).pipe(
             Effect.map((count) =>
               count === 1
-                ? { ...refreshedSnapshot, usageLimits: probedLimits }
+                ? {
+                    ...refreshedSnapshot,
+                    auth: { ...refreshedSnapshot.auth, workspaceId: "ws-a" },
+                    usageLimits: probedLimits,
+                  }
                 : {
                     ...refreshedSnapshotSecond,
+                    ...(count === 3
+                      ? { auth: { ...refreshedSnapshotSecond.auth, workspaceId: "ws-b" } }
+                      : {}),
                     usageLimits: {
                       checkedAt: "2026-04-10T00:00:03.000Z",
                       windows: [],
@@ -640,6 +647,13 @@ describe("makeManagedServerProvider", () => {
         const refreshed = yield* provider.refresh;
         assert.strictEqual(refreshed.message, refreshedSnapshotSecond.message);
         assert.deepStrictEqual(refreshed.usageLimits?.windows, [liveWindow]);
+        // ...and the workspace they were read for.
+        assert.strictEqual(refreshed.auth.workspaceId, "ws-a");
+
+        // A failed read for another workspace does not inherit those windows.
+        const switched = yield* provider.refresh;
+        assert.strictEqual(switched.auth.workspaceId, "ws-b");
+        assert.strictEqual(switched.usageLimits?.unavailable?.reason, "probeFailed");
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
@@ -681,6 +695,14 @@ describe("makeManagedServerProvider", () => {
         });
         yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
         assert.strictEqual((yield* provider.getSnapshot).usageLimits?.credits?.balance, "42");
+        yield* Ref.set(next, { ...failed, auth: { status: "unknown" } });
+        assert.isUndefined((yield* provider.refresh).usageLimits?.credits);
+        yield* Ref.set(next, old);
+        yield* provider.refresh;
+        yield* Ref.set(next, { ...failed, auth: { ...auth, workspaceId: "different-workspace" } });
+        assert.isUndefined((yield* provider.refresh).usageLimits?.credits);
+        yield* Ref.set(next, old);
+        yield* provider.refresh;
         yield* Ref.set(next, { ...failed, auth: { ...auth, email: "second@example.com" } });
         const switched = yield* provider.refresh;
         assert.strictEqual(switched.auth.email, "second@example.com");

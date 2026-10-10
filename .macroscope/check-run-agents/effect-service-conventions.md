@@ -1,7 +1,7 @@
 ---
 title: Effect Service Conventions
-model: gpt-6-1-sol
-reasoning: max
+model: gpt-6-sol
+effort: max
 input: incremental
 tools:
   - browse_code
