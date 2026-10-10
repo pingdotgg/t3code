@@ -1110,6 +1110,40 @@ export function searchSidebarThreads<
   return [...titleMatches, ...contentMatches];
 }
 
+export function filterSidebarProjectScopeItems<TItem extends { readonly value: string }>(input: {
+  items: readonly TItem[];
+  query: string;
+  matches: (item: TItem, query: string) => boolean;
+}): readonly TItem[] {
+  const query = input.query.trim();
+  if (query.length === 0) return input.items;
+  return input.items.filter((item) => item.value !== "all" && input.matches(item, query));
+}
+
+export interface SidebarProjectScopeMenuState {
+  readonly open: boolean;
+  readonly query: string;
+}
+
+export type SidebarProjectScopeMenuAction =
+  | { readonly type: "query-changed"; readonly query: string }
+  | { readonly type: "open-changed"; readonly open: boolean }
+  | { readonly type: "project-settings-opened" };
+
+export function reduceSidebarProjectScopeMenuState(
+  state: SidebarProjectScopeMenuState,
+  action: SidebarProjectScopeMenuAction,
+): SidebarProjectScopeMenuState {
+  switch (action.type) {
+    case "query-changed":
+      return { ...state, query: action.query };
+    case "open-changed":
+      return { open: action.open, query: "" };
+    case "project-settings-opened":
+      return { open: false, query: "" };
+  }
+}
+
 /** The timestamp a working thread's elapsed label counts from: when its
     current work started (request time until adoption). Background wakes do
     not reset it. Malformed timestamps fall through to the next candidate. */
