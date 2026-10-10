@@ -10629,9 +10629,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       | undefined;
     switch (command.type) {
       case "stream-recovery.cancel": {
-        const projection = yield* projectionStore
-          .getThreadRecords(command.threadId, ["runs"])
-          .pipe(mapDispatchError(command));
+        const projection = yield* projectionStore.getThreadRecords(command.threadId, ["runs"]).pipe(
+          Effect.catchTags({
+            ProjectionStoreThreadNotFoundError: (error) =>
+              error.threadId === command.threadId ? Effect.succeed(null) : error,
+          }),
+          mapDispatchError(command),
+        );
+        // An absent thread leaves no source projection to cancel. Keep
+        // transient reads retryable rather than treating all projection failures alike.
+        if (projection === null) break;
         const run = projection.runs.find((candidate) => candidate.id === command.runId);
         if (run?.streamRecovery?.state === "pending")
           yield* emit(

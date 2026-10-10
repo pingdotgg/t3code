@@ -1,3 +1,4 @@
+import * as ProjectionStore from "./ProjectionStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -10,6 +11,7 @@ import {
   CommandId,
   EventId,
   RuntimeRequestId,
+  RunId,
   ServerSettingsError,
   MessageId,
   ProviderDriverKind,
@@ -409,6 +411,7 @@ const withReplay = Effect.fn("withStreamRecoveryReplay")(function* (
     readonly settings: ServerSettings.ServerSettingsService["Service"];
     readonly events: EventSink.EventSinkV2["Service"];
     readonly outbox: EffectOutbox.EffectOutboxV2["Service"];
+    readonly projections: ProjectionStore.ProjectionStoreV2["Service"];
     readonly threadId: ThreadId;
   }) => Effect.Effect<
     void,
@@ -447,6 +450,7 @@ const withReplay = Effect.fn("withStreamRecoveryReplay")(function* (
       const settings = yield* ServerSettings.ServerSettingsService;
       const events = yield* EventSink.EventSinkV2;
       const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
       for (const command of materialized.commands) yield* orchestrator.dispatch(command);
       const failed = yield* watchRun(
         orchestrator,
@@ -456,10 +460,10 @@ const withReplay = Effect.fn("withStreamRecoveryReplay")(function* (
       if (options.runEffectWorker === false) yield* worker.drain();
       assert.isTrue(Option.isSome(yield* Fiber.join(failed)));
       assert.isNull((yield* Ref.get(driver.state)).failure);
-      yield* verify({ orchestrator, worker, settings, events, outbox, threadId });
+      yield* verify({ orchestrator, worker, settings, events, outbox, projections, threadId });
     }).pipe(
       Effect.provide(
-        Layer.merge(
+        Layer.mergeAll(
           layerProviderReplay(
             {
               name: "stream-recovery",
@@ -475,6 +479,7 @@ const withReplay = Effect.fn("withStreamRecoveryReplay")(function* (
             },
           ),
           EffectOutbox.layer.pipe(Layer.provide(databaseLayer)),
+          ProjectionStore.layer.pipe(Layer.provide(databaseLayer)),
         ),
       ),
     ),
@@ -1166,6 +1171,126 @@ it.effect(
               (message) => message.id === MessageId.make(`message:stream-recovery:${runId}`),
             ),
           );
+        }),
+      { runEffectWorker: false },
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
+);
+
+it.effect("terminalizes cleanup when its exact source thread projection is absent", () =>
+  withReplay(
+    ["failed"],
+    ({ outbox, worker }) =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("thread:absent-cleanup-source");
+        const sourceRunId = RunId.make("run:absent-cleanup-source");
+        const effectId = `effect:stream-recovery:${sourceRunId}`;
+        yield* outbox.enqueue([
+          {
+            id: effectId,
+            commandId: CommandId.make("orphan-cleanup"),
+            threadId,
+            request: {
+              type: "provider-runtime.recover-stream",
+              sourceRunId,
+              generation: 0,
+              cleanupOnly: true,
+            },
+          },
+        ]);
+        const claimed = yield* outbox.claimNext({
+          workerId: "orphan-fixture",
+          leaseDurationMs: 30_000,
+        });
+        assert(claimed._tag === "Some");
+        assert.equal(claimed.value.id, effectId);
+        yield* outbox.retry({
+          effectId,
+          workerId: "orphan-fixture",
+          error: "Original recovery failure.",
+          delayMs: 0,
+          streamRecoveryCleanupOnly: true,
+        });
+        assert.equal(yield* worker.drain(1), 1);
+        const settled = yield* outbox.get(effectId);
+        assert(settled._tag === "Some");
+        assert.equal(settled.value.status, "failed");
+        assert.equal(settled.value.lastError, "Original recovery failure.");
+        // Stay before the unrelated fixture thread's recovery deadline.
+        yield* TestClock.adjust("1 second");
+        assert.equal(yield* worker.drain(1), 0);
+        const unchanged = yield* outbox.get(effectId);
+        assert(unchanged._tag === "Some");
+        assert.equal(unchanged.value.attemptCount, settled.value.attemptCount);
+      }),
+    { runEffectWorker: false },
+  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
+);
+
+it.effect.each(["transient-read", "wrong-thread-not-found"] as const)(
+  "keeps cleanup retryable for a non-terminal projection failure: %s",
+  (kind) =>
+    withReplay(
+      ["failed"],
+      ({ orchestrator, projections, outbox, worker, threadId }) =>
+        Effect.gen(function* () {
+          const sourceRunId = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!.id;
+          const effectId = `effect:stream-recovery:${sourceRunId}`;
+          yield* TestClock.adjust("30 seconds");
+          const claimed = yield* outbox.claimNext({
+            workerId: "read-fault-fixture",
+            leaseDurationMs: 30_000,
+          });
+          assert(claimed._tag === "Some");
+          yield* outbox.retry({
+            effectId,
+            workerId: "read-fault-fixture",
+            error: "Original recovery failure.",
+            delayMs: 0,
+            streamRecoveryCleanupOnly: true,
+          });
+          const fault =
+            kind === "transient-read"
+              ? new ProjectionStore.ProjectionStoreReadError({
+                  threadId,
+                  cause: new Error("Temporary fixture read failure."),
+                })
+              : new ProjectionStore.ProjectionStoreThreadNotFoundError({
+                  threadId: ThreadId.make("thread:different-missing-source"),
+                });
+          yield* Effect.acquireUseRelease(
+            Effect.sync(() => {
+              const previous = projections.getThreadRecords;
+              Object.assign(projections, {
+                getThreadRecords: (...args: Parameters<typeof previous>) =>
+                  args[0] === threadId && args[1].length === 1 && args[1][0] === "runs"
+                    ? Effect.fail(fault)
+                    : previous(...args),
+              });
+              return previous;
+            }),
+            () =>
+              worker
+                .drain(1)
+                .pipe(Effect.tap((count) => Effect.sync(() => assert.equal(count, 1)))),
+            (previous) =>
+              Effect.sync(() => Object.assign(projections, { getThreadRecords: previous })),
+          );
+          const pending = yield* outbox.get(effectId);
+          assert(pending._tag === "Some");
+          assert.equal(pending.value.status, "pending");
+          assert.equal(pending.value.lastError, "Original recovery failure.");
+          assert.equal(
+            (yield* orchestrator.getThreadProjection(threadId)).runs[0]?.streamRecovery?.state,
+            "pending",
+          );
+          yield* TestClock.adjust("200 millis");
+          assert.equal(yield* worker.drain(1), 1);
+          const settled = yield* outbox.get(effectId);
+          assert(settled._tag === "Some");
+          assert.equal(settled.value.status, "failed");
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(projection.runs[0]?.streamRecovery?.state, "cancelled");
+          assert.lengthOf(projection.runs, 1);
         }),
       { runEffectWorker: false },
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
