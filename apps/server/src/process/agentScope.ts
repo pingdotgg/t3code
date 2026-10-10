@@ -89,7 +89,7 @@ const STOPPING_POLL_ATTEMPTS = 20;
 // A stopping scope can wait out TimeoutStopSec (90 s by default) for a stuck process.
 const CLEAR_FAILED_INTERVAL = "1 second";
 const CLEAR_FAILED_ATTEMPTS = 120;
-const MAX_UNITS_PER_THREAD = 2;
+const MAX_TRACKED_THREADS = 500;
 
 const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
@@ -173,11 +173,9 @@ const make = Effect.gen(function* () {
     }),
   );
 
-  // Recent scope units per thread. A thread runs one agent at a time, plus a
-  // replacement during a restart, so older units have ended.
-  const unitsByThread = new Map<string, Set<string>>();
-  // Threads whose latest agent was OOM-killed, until they launch another.
-  const oomKilledThreads = new Set<string>();
+  // The newest scope per thread, oldest thread first. A thread runs one agent
+  // at a time, so only its latest scope can explain a failure.
+  const scopeByThread = new Map<string, { unit: string; oomKilled: boolean }>();
 
   const readCgroupFile = (controlGroup: string, file: string) =>
     fileSystem
@@ -222,39 +220,49 @@ const make = Effect.gen(function* () {
       }
     });
 
+  // Failed scopes stay loaded so we can read their result. Clear them once
+  // systemd finishes stopping them.
+  const forget = (systemctl: string, unit: string) =>
+    clearFailed(systemctl, unit).pipe(Effect.forkIn(layerScope), Effect.asVoid);
+
+  const track = (systemctl: string, threadId: string, unit: string) =>
+    Effect.gen(function* () {
+      const previous = scopeByThread.get(threadId);
+      scopeByThread.delete(threadId);
+      scopeByThread.set(threadId, { unit, oomKilled: false });
+      if (previous !== undefined) yield* forget(systemctl, previous.unit);
+      // Maps keep insertion order, so the first entry is the oldest thread.
+      for (const [oldThreadId, old] of scopeByThread) {
+        if (scopeByThread.size <= MAX_TRACKED_THREADS) break;
+        scopeByThread.delete(oldThreadId);
+        yield* forget(systemctl, old.unit);
+      }
+    });
+
   const oomKilled: AgentScopeShape["oomKilled"] = (threadId) =>
     Effect.gen(function* () {
-      if (oomKilledThreads.has(threadId)) return true;
-      const units = unitsByThread.get(threadId);
-      if (units === undefined) return false;
+      const tracked = scopeByThread.get(threadId);
+      if (tracked === undefined) return false;
+      if (tracked.oomKilled) return true;
       const scope = yield* systemd;
       if (scope === undefined) return false;
       for (let attempt = 0; attempt < STOPPING_POLL_ATTEMPTS; attempt++) {
-        let stopping = false;
-        for (const unit of units) {
-          const state = yield* readScope(scope.systemctl, unit);
-          if (state === undefined) continue;
-          const status = classifyScope(state);
-          if (status === "running") continue;
-          if (status === "stopping") {
-            stopping = true;
-            continue;
-          }
-          units.delete(unit);
-          // Failed scopes stay loaded so we can read their result. Clear them
-          // once systemd finishes stopping them.
-          if (state.activeState === "failed" || state.activeState === "deactivating") {
-            yield* clearFailed(scope.systemctl, unit).pipe(Effect.forkIn(layerScope));
-          }
-          if (status === "oom-killed") {
-            yield* Effect.logWarning("Agent scope was killed: out of memory", { threadId, unit });
-            oomKilledThreads.add(threadId);
-            return true;
-          }
+        const state = yield* readScope(scope.systemctl, tracked.unit);
+        if (state === undefined) return false;
+        const status = classifyScope(state);
+        if (status === "running") return false;
+        if (status === "stopping") {
+          yield* Effect.sleep(STOPPING_POLL_INTERVAL);
+          continue;
         }
-        if (units.size === 0) unitsByThread.delete(threadId);
-        if (!stopping) return false;
-        yield* Effect.sleep(STOPPING_POLL_INTERVAL);
+        yield* forget(scope.systemctl, tracked.unit);
+        if (status === "gone") return false;
+        yield* Effect.logWarning("Agent scope was killed: out of memory", {
+          threadId,
+          unit: tracked.unit,
+        });
+        tracked.oomKilled = true;
+        return true;
       }
       return false;
     });
@@ -267,17 +275,7 @@ const make = Effect.gen(function* () {
       const scope = yield* systemd;
       if (scope === undefined) return agentScopeCommand({ command: resolved.value, args });
       const unit = `t3code-${name}-${NodeCrypto.randomUUID().slice(0, 8)}.scope`;
-      if (threadId !== undefined) {
-        oomKilledThreads.delete(threadId);
-        const units = unitsByThread.get(threadId) ?? new Set<string>();
-        units.add(unit);
-        // Sets keep insertion order, so the first unit is the oldest.
-        for (const old of units) {
-          if (units.size <= MAX_UNITS_PER_THREAD) break;
-          units.delete(old);
-        }
-        unitsByThread.set(threadId, units);
-      }
+      if (threadId !== undefined) yield* track(scope.systemctl, threadId, unit);
       const systemdScope: AgentSystemdScope = {
         systemdRun: scope.systemdRun,
         runtimeDir: scope.runtimeDir,
