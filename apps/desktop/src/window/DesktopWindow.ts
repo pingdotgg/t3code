@@ -25,7 +25,9 @@ import {
   TRACKPAD_SCROLL_END_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
 } from "../ipc/channels.ts";
+import { PASSKEY_BRIDGE_ARGUMENT } from "../preview/GuestProtocol.ts";
 import * as PreviewManager from "../preview/Manager.ts";
+import * as PreviewPasskeys from "../preview/Passkeys.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -93,6 +95,7 @@ export type DesktopWindowError =
   | PreviewManager.PreviewManagerError;
 
 export type MainWindowZoomDirection = "in" | "out" | "reset";
+export type MainWindowContentsCommand = "reload" | "forceReload" | "toggleDevTools";
 
 export class DesktopWindow extends Context.Service<
   DesktopWindow,
@@ -137,6 +140,10 @@ export class DesktopWindow extends Context.Service<
     // guest page instead of the app UI. The menu routes here to always target
     // the main window.
     readonly zoomMain: (direction: MainWindowZoomDirection) => Effect.Effect<void>;
+    // Reload and DevTools for the main window's own webContents, for the same
+    // reason as zoomMain: the Electron roles act on the focused webContents,
+    // which is a preview guest whenever a browser page has focus.
+    readonly runMainContentsCommand: (command: MainWindowContentsCommand) => Effect.Effect<void>;
     readonly syncAppearance: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/window/DesktopWindow") {}
@@ -321,6 +328,7 @@ export const make = Effect.gen(function* () {
   const electronTheme = yield* ElectronTheme.ElectronTheme;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const previewManager = yield* PreviewManager.PreviewManager;
+  const previewPasskeys = yield* PreviewPasskeys.PreviewPasskeys;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   const electronApp = yield* ElectronApp.ElectronApp;
@@ -420,6 +428,10 @@ export const make = Effect.gen(function* () {
         nodeIntegration: false,
         sandbox: true,
         webviewTag: true,
+        // A preview guest's fullscreen request is mirrored onto this embedder,
+        // which would otherwise put the whole window into OS fullscreen. With
+        // both sides opted out the page fills its webview and the window stays.
+        disableHtmlFullscreenWindowResize: true,
       },
     });
 
@@ -527,6 +539,13 @@ export const make = Effect.gen(function* () {
       webPreferences.nodeIntegration = false;
       webPreferences.nodeIntegrationInSubFrames = false;
       webPreferences.contextIsolation = false;
+      webPreferences.disableHtmlFullscreenWindowResize = true;
+      if (previewPasskeys.bridgeEnabled) {
+        webPreferences.additionalArguments = [
+          ...(webPreferences.additionalArguments ?? []),
+          PASSKEY_BRIDGE_ARGUMENT,
+        ];
+      }
     });
 
     const contextMenuContents = new WeakSet<Electron.WebContents>();
@@ -1026,6 +1045,17 @@ export const make = Effect.gen(function* () {
       // the previewed page along with the app UI. The preview browser keeps its
       // own zoom, so put each guest back where the preview left it.
       yield* previewManager.reapplyZoom();
+    }),
+    runMainContentsCommand: Effect.fn("desktop.window.runMainContentsCommand")(function* (command) {
+      yield* Effect.annotateCurrentSpan({ command });
+      // The registered main window, never the focused one: with an OAuth popup
+      // focused, Reload would otherwise reload the popup mid sign-in.
+      const window = yield* electronWindow.main;
+      if (Option.isNone(window) || window.value.isDestroyed()) return;
+      const webContents = window.value.webContents;
+      if (command === "reload") webContents.reload();
+      else if (command === "forceReload") webContents.reloadIgnoringCache();
+      else webContents.toggleDevTools();
     }),
     syncAppearance: Effect.gen(function* () {
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;

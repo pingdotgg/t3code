@@ -54,6 +54,23 @@ const driver = ProviderDriverKind.make("codex");
 const providerInstanceId = modelSelection.instanceId;
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
+const traceSqlStatements = () => {
+  const statements: Array<string> = [];
+  const tracer = Tracer.make({
+    span(options) {
+      const span = new Tracer.NativeSpan(options);
+      const end = span.end.bind(span);
+      span.end = (endTime, exit) => {
+        end(endTime, exit);
+        const query = span.attributes.get("db.query.text");
+        if (typeof query === "string") statements.push(query);
+      };
+      return span;
+    },
+  });
+  return { statements, tracer };
+};
+
 const addRolledBackRecoveryCandidate = Effect.fn("addRolledBackRecoveryCandidate")(function* (
   suffix: string,
 ) {
@@ -332,6 +349,157 @@ it.effect("memory recovery selection includes unfinished items from missing runs
   }).pipe(Effect.provide(ProjectionStore.layerMemory)),
 );
 
+// Project A holds an active thread, an archived thread and a fork of a run in
+// an archived project B thread, so a project-scoped snapshot still has to load
+// a fork source that is outside the project and archived.
+const assertProjectScopedShells = Effect.fn("assertProjectScopedShells")(function* (
+  suffix: string,
+) {
+  const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+  const now = yield* DateTime.now;
+  const projectId = ProjectId.make(`project:${suffix}:a`);
+  const otherProjectId = ProjectId.make(`project:${suffix}:b`);
+  const activeThreadId = ThreadId.make(`thread:${suffix}:a-active`);
+  const archivedThreadId = ThreadId.make(`thread:${suffix}:a-archived`);
+  const forkThreadId = ThreadId.make(`thread:${suffix}:a-fork`);
+  const sourceThreadId = ThreadId.make(`thread:${suffix}:b-source`);
+  const otherThreadId = ThreadId.make(`thread:${suffix}:b-other`);
+  const sourceRunId = RunId.make(`run:${suffix}:b-source`);
+  const sourceNodeId = NodeId.make(`node:${suffix}:b-source`);
+  const createThread = (input: {
+    readonly threadId: ThreadId;
+    readonly projectId: ProjectId;
+    readonly archived?: boolean;
+    readonly forkedFromRunOf?: ThreadId;
+  }) =>
+    projectionStore.apply({
+      id: EventId.make(`event:${input.threadId}:created`),
+      type: "thread.created",
+      threadId: input.threadId,
+      occurredAt: now,
+      payload: {
+        createdBy: "user",
+        creationSource: "web",
+        id: input.threadId,
+        projectId: input.projectId,
+        title: input.threadId,
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage:
+          input.forkedFromRunOf === undefined
+            ? { parentThreadId: null, relationshipToParent: null, rootThreadId: input.threadId }
+            : {
+                parentThreadId: input.forkedFromRunOf,
+                relationshipToParent: "fork",
+                rootThreadId: input.forkedFromRunOf,
+              },
+        forkedFrom:
+          input.forkedFromRunOf === undefined
+            ? null
+            : { type: "run", threadId: input.forkedFromRunOf, runId: sourceRunId },
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: input.archived === true ? now : null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      },
+    });
+
+  yield* createThread({ threadId: sourceThreadId, projectId: otherProjectId, archived: true });
+  yield* createThread({ threadId: otherThreadId, projectId: otherProjectId });
+  yield* createThread({ threadId: activeThreadId, projectId });
+  yield* createThread({ threadId: archivedThreadId, projectId, archived: true });
+  yield* createThread({ threadId: forkThreadId, projectId, forkedFromRunOf: sourceThreadId });
+  yield* projectionStore.apply({
+    id: EventId.make(`event:${suffix}:source-run`),
+    type: "run.created",
+    threadId: sourceThreadId,
+    runId: sourceRunId,
+    nodeId: sourceNodeId,
+    driver,
+    occurredAt: now,
+    payload: {
+      id: sourceRunId,
+      threadId: sourceThreadId,
+      ordinal: 1,
+      providerInstanceId,
+      modelSelection,
+      providerThreadId: null,
+      userMessageId: MessageId.make(`message:${suffix}:source-user`),
+      rootNodeId: sourceNodeId,
+      activeAttemptId: null,
+      status: "completed",
+      requestedAt: now,
+      startedAt: now,
+      completedAt: now,
+      checkpointId: null,
+      contextHandoffId: null,
+    },
+  });
+  yield* projectionStore.apply({
+    id: EventId.make(`event:${suffix}:source-item`),
+    type: "turn-item.updated",
+    threadId: sourceThreadId,
+    runId: sourceRunId,
+    occurredAt: now,
+    payload: {
+      id: TurnItemId.make(`turn-item:${suffix}:source`),
+      threadId: sourceThreadId,
+      runId: sourceRunId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "completed",
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      type: "assistant_message",
+      messageId: MessageId.make(`message:${suffix}:source-assistant`),
+      text: "Source answer",
+      streaming: false,
+    },
+  });
+
+  const unscoped = yield* projectionStore.getShellSnapshot();
+  const inProject = (thread: { readonly projectId: ProjectId }) => thread.projectId === projectId;
+  const active = yield* projectionStore.getShellSnapshot({ projectId, location: "active" });
+  assert.deepEqual(active.threads, unscoped.threads.filter(inProject));
+  assert.deepEqual(active.archivedThreads, []);
+  assert.sameMembers(
+    active.threads.map((thread) => thread.id),
+    [activeThreadId, forkThreadId],
+  );
+  const fork = active.threads.find((thread) => thread.id === forkThreadId);
+  assert.isAbove(fork?.visibleItemCount ?? 0, 0);
+
+  const all = yield* projectionStore.getShellSnapshot({ projectId });
+  assert.deepEqual(all.threads, active.threads);
+  assert.deepEqual(all.archivedThreads, unscoped.archivedThreads.filter(inProject));
+  assert.sameMembers(
+    all.archivedThreads.map((thread) => thread.id),
+    [archivedThreadId],
+  );
+  return { projectId, activeThreadId, forkThreadId, otherThreadId };
+});
+
+it.effect("memory shell snapshots scope to one project", () =>
+  assertProjectScopedShells("memory-project-shell").pipe(
+    Effect.asVoid,
+    Effect.provide(ProjectionStore.layerMemory),
+  ),
+);
+
 it.layer(layerTest)("ProjectionStoreV2", (it) => {
   it.effect(
     "keeps restart-cancelled work through a stale run.updated",
@@ -590,19 +758,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         });
         yield* sql`INSERT INTO orchestration_v2_projection_turn_items ${sql.insert(rows)}`;
       }
-      const statements: Array<string> = [];
-      const tracer = Tracer.make({
-        span(options) {
-          const span = new Tracer.NativeSpan(options);
-          const end = span.end.bind(span);
-          span.end = (endTime, exit) => {
-            end(endTime, exit);
-            const query = span.attributes.get("db.query.text");
-            if (typeof query === "string") statements.push(query);
-          };
-          return span;
-        },
-      });
+      const { statements, tracer } = traceSqlStatements();
       const initial = yield* Effect.acquireUseRelease(
         Effect.sync(() => vi.spyOn(JSON, "parse")),
         (parse) =>
@@ -635,10 +791,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         /SEARCH item USING INDEX orchestration_v2_projection_turn_items_user_message_idx \(thread_id=\? AND ordinal<\?\)/,
       );
       const topLevel = windowPlan.filter((row) => row.parent === 0).map((row) => row.detail);
-      assert.include(
-        topLevel,
-        "SEARCH item USING INDEX sqlite_autoindex_orchestration_v2_projection_turn_items_1 (turn_item_id=?)",
-      );
+      assert.include(topLevel, "SEARCH item USING INTEGER PRIMARY KEY (rowid=?)");
       assert.notInclude(topLevel, "USE TEMP B-TREE FOR ORDER BY");
       const nodeStatement = statements.find((statement) =>
         statement.includes("WITH RECURSIVE retained"),
@@ -779,7 +932,12 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
               nativeItemRef: null,
               runtimeRequestId: null,
               checkpointScopeId: null,
-              startedAt: now,
+              startedAt:
+                index === 998
+                  ? null
+                  : index === 999
+                    ? DateTime.makeUnsafe("2020-01-01T00:00:00.000Z")
+                    : now,
               completedAt: index === -1 ? null : now,
             },
           });
@@ -838,7 +996,32 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             resolvedAt: null,
           },
         });
-        const snapshot = yield* projectionStore.getThreadSnapshotWindow(threadId, { rowLimit: 75 });
+        const { statements, tracer } = traceSqlStatements();
+        const snapshot = yield* projectionStore
+          .getThreadSnapshotWindow(threadId, { rowLimit: 75 })
+          .pipe(Effect.withTracer(tracer));
+        const nodeStatement = statements.find(
+          (statement) =>
+            statement.includes("payload_json") &&
+            statement.includes("orchestration_v2_projection_nodes") &&
+            !statement.includes("WITH RECURSIVE"),
+        );
+        assert.isDefined(nodeStatement);
+        const nodePlan = yield* (yield* SqlClient.SqlClient).unsafe<{ readonly detail: string }>(
+          `EXPLAIN QUERY PLAN ${nodeStatement}`,
+        );
+        const nodeLookups = nodePlan
+          .map((row) => row.detail)
+          .filter((detail) => detail.startsWith("SEARCH "));
+        // Cost must follow the retained cohort, even when the thread has
+        // thousands of completed nodes outside the requested window.
+        assert.deepEqual(nodeLookups, [
+          "SEARCH node USING INDEX sqlite_autoindex_orchestration_v2_projection_nodes_1 (node_id=?)",
+        ]);
+        assert.notInclude(
+          nodePlan.map((row) => row.detail),
+          "USE TEMP B-TREE FOR ORDER BY",
+        );
         assert.lengthOf(snapshot.projection.visibleTurnItems, 75);
         assert.lengthOf(snapshot.projection.nodes, 79);
         const retained = new Set(snapshot.projection.nodes.map((node) => node.id));
@@ -862,6 +1045,27 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         );
         const full = yield* projectionStore.getThreadSnapshot(threadId);
         assert.lengthOf(full.projection.nodes, 1003);
+        // Bounded reads keep the full read's payloads and ordering, including
+        // null start times and equal timestamps.
+        assert.deepEqual(
+          snapshot.projection.nodes,
+          full.projection.nodes.filter((node) => retained.has(node.id)),
+        );
+        const sql = yield* SqlClient.SqlClient;
+        const duplicateItemId = TurnItemId.make("item:bounded-node-history:duplicate");
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_turn_items
+          SELECT ${duplicateItemId}, thread_id, run_id, node_id, provider_thread_id,
+            provider_turn_id, parent_item_id, ordinal + 1, type, status, updated_at,
+            json_set(payload_json, '$.id', ${duplicateItemId}, '$.ordinal', ordinal + 1)
+          FROM orchestration_v2_projection_turn_items
+          WHERE turn_item_id = ${TurnItemId.make("item:bounded-node-history:999")}
+        `;
+        const sharedNodeSnapshot = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+          rowLimit: 76,
+        });
+        assert.lengthOf(sharedNodeSnapshot.projection.visibleTurnItems, 76);
+        assert.deepEqual(sharedNodeSnapshot.projection.nodes, snapshot.projection.nodes);
       }),
   );
 
@@ -1054,6 +1258,34 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         ),
         Array.from({ length: 1_000 }, (_, index) => `turn-item:bounded-sql-history:${index + 1}`),
       );
+
+      // Physical insertion order must not change the ordinal/ID timeline order.
+      const tiedIds = [
+        TurnItemId.make("turn-item:bounded-sql-history:tie:b"),
+        TurnItemId.make("turn-item:bounded-sql-history:tie:a"),
+      ];
+      for (const id of tiedIds) {
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_turn_items (
+            turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+            parent_item_id, ordinal, type, status, updated_at, payload_json
+          )
+          SELECT ${id}, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+            parent_item_id, 2000, type, status, updated_at,
+            json_set(payload_json, '$.id', ${id}, '$.ordinal', 2000)
+          FROM orchestration_v2_projection_turn_items
+          WHERE turn_item_id = ${itemId}
+        `;
+      }
+      const tied = yield* projectionStore.getThreadSnapshotWindow(threadId, { rowLimit: 3 });
+      assert.deepEqual(
+        tied.projection.turnItems.map((item) => item.id),
+        [TurnItemId.make("turn-item:bounded-sql-history:1000"), tiedIds[1], tiedIds[0]],
+      );
+      yield* sql`
+        DELETE FROM orchestration_v2_projection_turn_items
+        WHERE turn_item_id IN ${sql.in(tiedIds)}
+      `;
 
       const hiddenRunId = RunId.make("run:bounded-sql-history:hidden-suffix");
       yield* sql`
@@ -1800,6 +2032,35 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           Effect.ensuring(Effect.orDie(setPayload(stored!.payload_json))),
         );
       assert.strictEqual(failure._tag, "ProjectionStoreReadError");
+    }),
+  );
+
+  it.effect("reads only the requested project's threads into a scoped shell snapshot", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const { projectId, activeThreadId, forkThreadId, otherThreadId } =
+        yield* assertProjectScopedShells("sql-project-shell");
+
+      // A thread in another project that cannot decode fails the unscoped
+      // snapshot, so a scoped snapshot that succeeds never read it.
+      const [stored] = yield* sql<{ readonly payload_json: string }>`
+        SELECT payload_json FROM orchestration_v2_projection_threads
+        WHERE thread_id = ${otherThreadId}
+      `;
+      const setPayload = (payload: string) =>
+        sql`UPDATE orchestration_v2_projection_threads SET payload_json = ${payload}
+          WHERE thread_id = ${otherThreadId}`;
+      yield* setPayload("{}");
+      const [unscoped, scoped] = yield* Effect.all([
+        projectionStore.getShellSnapshot().pipe(Effect.flip),
+        projectionStore.getShellSnapshot({ projectId, location: "active" }),
+      ]).pipe(Effect.ensuring(Effect.orDie(setPayload(stored!.payload_json))));
+      assert.strictEqual(unscoped._tag, "ProjectionStoreReadError");
+      assert.sameMembers(
+        scoped.threads.map((thread) => thread.id),
+        [activeThreadId, forkThreadId],
+      );
     }),
   );
 
@@ -4056,9 +4317,20 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         `;
       }
 
-      const boundedFork = yield* projectionStore.getThreadSnapshotWindow(targetThreadId, {
-        rowLimit: 2,
-      });
+      const { statements, tracer } = traceSqlStatements();
+      const boundedFork = yield* projectionStore
+        .getThreadSnapshotWindow(targetThreadId, { rowLimit: 2 })
+        .pipe(Effect.withTracer(tracer));
+      // Only the target's control state is hydrated. Fork ancestors contribute
+      // timeline rows, runs and attempts, regardless of their own live work.
+      assert.lengthOf(
+        statements.filter((statement) => statement.includes("WITH RECURSIVE retained")),
+        1,
+      );
+      assert.lengthOf(
+        statements.filter((statement) => statement.includes("SELECT node.payload_json")),
+        1,
+      );
       assert.lengthOf(boundedFork.projection.turnItems, 0);
       assert.deepEqual(
         boundedFork.projection.visibleTurnItems.map((row) => [row.visibility, row.item.type]),

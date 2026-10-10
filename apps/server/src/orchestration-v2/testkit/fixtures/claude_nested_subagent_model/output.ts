@@ -12,9 +12,10 @@ import {
 
 const OUTER_TASK_ID = "a457ca677bc1ecd82";
 const NESTED_TASK_ID = "aac1d7a2af5371c7d";
-// The outer subagent's snapshots report this id; the nested one never streams
-// a snapshot of its own (the CLI's session storage shows it ran on the same).
-const SUBAGENT_MODEL = "claude-haiku-4-5-20251001";
+// The outer subagent's snapshots report claude-haiku-4-5-20251001, recorded as
+// the catalog slug; the nested one never streams a snapshot of its own (the
+// CLI's session storage shows it ran on the same).
+const SUBAGENT_MODEL = "claude-haiku-4-5";
 
 export function assertClaudeNestedSubagentModelOutput(
   result: OrchestratorV2ScenarioResult,
@@ -45,6 +46,10 @@ export function assertClaudeNestedSubagentModelOutput(
   // only that snapshot can say who launched it and on which model.
   assert.equal(nested.parentNodeId, outer.id, "a nested subagent hangs off its owner");
   assert.equal(nested.model, SUBAGENT_MODEL, "a nested subagent runs on its owner's model");
+  // The session's effort is not sent for claude-haiku-4-5, which offers none.
+  const subagentSelection = { instanceId: outer.providerInstanceId, model: SUBAGENT_MODEL };
+  assert.deepEqual(outer.modelSelection, subagentSelection);
+  assert.deepEqual(nested.modelSelection, subagentSelection);
   const nestedNode = projection.nodes.find((node) => node.id === nested.id);
   assert.isDefined(nestedNode);
   assert.equal(nestedNode.parentNodeId, outer.id);

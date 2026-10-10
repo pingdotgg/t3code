@@ -316,10 +316,41 @@ function createBox(color: string, fill: string): HTMLDivElement {
 }
 
 function positionBox(node: HTMLElement, rect: PreviewAnnotationRect): void {
+  if (rect.width <= 0 || rect.height <= 0) {
+    node.style.display = "none";
+    return;
+  }
   node.style.display = "block";
   node.style.transform = `translate(${rect.x}px, ${rect.y}px)`;
   node.style.width = `${rect.width}px`;
   node.style.height = `${rect.height}px`;
+}
+
+/** Clamps a box to the viewport and clipping ancestors, so its border is never painted off-screen. */
+function visibleElementRect(element: Element): PreviewAnnotationRect {
+  const rect = element.getBoundingClientRect();
+  let left = Math.max(0, rect.left);
+  let top = Math.max(0, rect.top);
+  let right = Math.min(document.documentElement.clientWidth, rect.right);
+  let bottom = Math.min(document.documentElement.clientHeight, rect.bottom);
+  if (getComputedStyle(element).position !== "fixed") {
+    for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      if (ancestor === document.body || ancestor === document.documentElement) break;
+      const style = getComputedStyle(ancestor);
+      const bounds = ancestor.getBoundingClientRect();
+      const clipLeft = bounds.left + ancestor.clientLeft;
+      const clipTop = bounds.top + ancestor.clientTop;
+      if (style.overflowX !== "visible") {
+        left = Math.max(left, clipLeft);
+        right = Math.min(right, clipLeft + ancestor.clientWidth);
+      }
+      if (style.overflowY !== "visible") {
+        top = Math.max(top, clipTop);
+        bottom = Math.min(bottom, clipTop + ancestor.clientHeight);
+      }
+    }
+  }
+  return { x: left, y: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
 }
 
 function createLabel(): HTMLDivElement {
@@ -343,11 +374,15 @@ function updateSelectedVisual(target: SelectedElement): void {
     target.label.style.display = "none";
     return;
   }
-  const rect = target.element.getBoundingClientRect();
-  positionBox(target.outline, rectFromDomRect(rect));
+  const rect = visibleElementRect(target.element);
+  positionBox(target.outline, rect);
+  if (rect.width === 0 || rect.height === 0) {
+    target.label.style.display = "none";
+    return;
+  }
   target.label.textContent = describeRawElement(target.element);
   target.label.style.display = "block";
-  target.label.style.transform = `translate(${Math.max(4, rect.left)}px, ${Math.max(4, rect.top - 22)}px)`;
+  target.label.style.transform = `translate(${Math.max(4, rect.x)}px, ${Math.max(4, rect.y - 22)}px)`;
 }
 
 function toStackFrame(frame: {
@@ -995,8 +1030,9 @@ function startAnnotation(sendEnabled: boolean): void {
   const getAnnotationBounds = (): PreviewAnnotationRect | null =>
     unionRects(
       [
-        ...Array.from(selected.values(), (target) =>
-          rectFromDomRect(target.element.getBoundingClientRect()),
+        // Follow the visible outline, so a clipped selection does not anchor the editor off-screen.
+        ...Array.from(selected.values(), (target) => visibleElementRect(target.element)).filter(
+          (rect) => rect.width > 0 && rect.height > 0,
         ),
         ...regions.map((region) => region.rect),
         ...strokes.map((stroke) => stroke.bounds),
@@ -1108,6 +1144,8 @@ function startAnnotation(sendEnabled: boolean): void {
     for (const target of selected.values()) updateSelectedVisual(target);
     queueEditorLayout();
   };
+  // A scrollbar appearing narrows the viewport without a window resize.
+  const rootResizeObserver = new ResizeObserver(repaint);
 
   const removeTargetAtPoint = (x: number, y: number): boolean => {
     for (const target of Array.from(selected.values()).toReversed()) {
@@ -1192,7 +1230,7 @@ function startAnnotation(sendEnabled: boolean): void {
     }
     if (tool === "select" && dragStart === null) {
       const target = pickFromPoint(event.clientX, event.clientY);
-      if (target) positionBox(hoverOutline, rectFromDomRect(target.getBoundingClientRect()));
+      if (target) positionBox(hoverOutline, visibleElementRect(target));
       else clearHoverOutline();
       return;
     }
@@ -1310,6 +1348,7 @@ function startAnnotation(sendEnabled: boolean): void {
   const teardown = (notifyMain: boolean): void => {
     if (finished) return;
     finished = true;
+    rootResizeObserver.disconnect();
     restoreStyles();
     window.removeEventListener("pointermove", onPointerMove, true);
     window.removeEventListener("pointerdown", onPointerDown, true);
@@ -1410,6 +1449,8 @@ function startAnnotation(sendEnabled: boolean): void {
           annotation,
           screenshotRect,
           submission === "send" && !sendEnabled ? "attach" : submission,
+          // Main crops a full-page capture, whose pixels are CSS px × this.
+          window.devicePixelRatio,
         );
       })
       .catch(() => {
@@ -1443,6 +1484,7 @@ function startAnnotation(sendEnabled: boolean): void {
   ipcRenderer.on(CANCEL_PICK_CHANNEL, onCancel);
   ipcRenderer.on(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
   document.documentElement.appendChild(host);
+  rootResizeObserver.observe(document.documentElement);
   refreshToolButtons();
   updateStatus();
   activeSession = {

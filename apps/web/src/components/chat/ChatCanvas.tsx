@@ -10,6 +10,7 @@ import {
 import { ChatCanvasContext } from "./ChatCanvasContext";
 import { resolveChatCanvasLayout, type ChatCanvasPreview } from "./chatCanvasLayout";
 import type { PreviewMiniPlayerObstacles } from "../preview/previewMiniPlayerLayout";
+import { observeResize } from "../../lib/observeResize";
 
 /**
  * Owns the available conversation space. Cards only report where they sit; the
@@ -41,7 +42,7 @@ export function ChatCanvas({
   const [measurements, setMeasurements] = useState({
     width: 0,
     height: 0,
-    padding: 20,
+    padding: 48,
     maxChatWidth: 768,
     minChatWidth: 640,
     composerHeight: 0,
@@ -90,12 +91,10 @@ export function ChatCanvas({
       );
     };
     measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    observer.observe(probe);
-    if (composerOverlayElement) observer.observe(composerOverlayElement);
-    if (timelineElement) observer.observe(timelineElement);
-    return () => observer.disconnect();
+    const observed: Element[] = [element, probe];
+    if (composerOverlayElement) observed.push(composerOverlayElement);
+    if (timelineElement) observed.push(timelineElement);
+    return observeResize(observed, measure);
   }, [composerOverlayElement, timelineElement]);
   const context = useMemo(() => {
     const container = { width: measurements.width, height: measurements.height };
@@ -139,7 +138,7 @@ export function ChatCanvas({
         <div
           ref={widthProbeRef}
           aria-hidden
-          className="pointer-events-none invisible absolute h-0 w-(--chat-content-max-width) min-w-[40rem] box-content ps-3 sm:ps-5"
+          className="pointer-events-none invisible absolute h-0 w-(--chat-content-max-width) min-w-[40rem] box-content ps-3 sm:ps-12"
         />
         {children}
       </div>

@@ -23,7 +23,9 @@ export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
 
 export const PI_T3_MCP_EXTENSION_SOURCE = `\
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { stripFrontmatter, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 import { Type } from "typebox";
 
 const URL_ENV = ${JSON.stringify(T3_MCP_URL_ENV)};
@@ -36,9 +38,11 @@ const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
 
 type RuntimeMode = "approval-required" | "auto-accept-edits" | "auto" | "full-access";
 
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+
 type JsonRpcResponse = {
   readonly id?: number | string;
-  readonly result?: unknown;
+  readonly result?: JsonValue;
   readonly error?: { readonly message?: string };
 };
 
@@ -46,6 +50,7 @@ type McpTool = {
   readonly name: string;
   readonly description?: string;
   readonly inputSchema?: Record<string, unknown>;
+  readonly outputSchema?: Record<string, unknown>;
 };
 
 function env(name: string): string | undefined {
@@ -94,28 +99,57 @@ function jsonSchemaToTypebox(schema: Record<string, unknown> | undefined) {
   return Type.Object({}, { additionalProperties: true });
 }
 
-function formatMcpContent(result: unknown): string {
-  if (result === null || result === undefined) return "";
-  if (typeof result !== "object") return String(result);
+type ModelContent =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string };
+
+function mcpModelContent(result: unknown): ModelContent[] {
+  if (result === null || result === undefined) return [];
+  if (typeof result !== "object") return [{ type: "text", text: String(result) }];
   const record = result as {
-    readonly content?: ReadonlyArray<{ readonly type?: string; readonly text?: string }>;
+    readonly content?: ReadonlyArray<{
+      readonly type?: string;
+      readonly text?: string;
+      readonly data?: string;
+      readonly mimeType?: string;
+    }>;
     readonly structuredContent?: unknown;
-    readonly isError?: boolean;
   };
-  const texts: string[] = [];
+  const content: ModelContent[] = [];
   if (Array.isArray(record.content)) {
     for (const part of record.content) {
-      if (part?.type === "text" && typeof part.text === "string") texts.push(part.text);
+      if (part?.type === "text" && typeof part.text === "string") {
+        content.push({ type: "text", text: part.text });
+      } else if (part?.type === "image" && typeof part.data === "string" && typeof part.mimeType === "string") {
+        content.push({ type: "image", data: part.data, mimeType: part.mimeType });
+      }
     }
   }
-  // Most T3 tools mirror structuredContent in a text block. Repeating it would
-  // leave T3's own output parsing two JSON documents instead of one.
-  if (record.structuredContent !== undefined) {
-    const structured = JSON.stringify(record.structuredContent);
-    if (!texts.includes(structured)) texts.push(structured);
+  // Structured output belongs to scripts. Only use it as model text when
+  // the server supplied no model-facing blocks, matching Pi's native MCP tools.
+  if (content.length === 0) {
+    content.push({ type: "text", text: JSON.stringify(record.structuredContent ?? result) });
   }
-  if (texts.length > 0) return texts.join("\\n");
-  return JSON.stringify(result);
+  return content;
+}
+
+function mcpScriptResult(result: JsonValue | undefined) {
+  if (typeof result !== "object" || result === null || Array.isArray(result)) return result;
+  const { _meta: _ignored, ...scriptResult } = result;
+  return scriptResult;
+}
+
+function mcpOutputSchema(tool: McpTool) {
+  return jsonSchemaToTypebox({
+    type: "object",
+    properties: {
+      content: { type: "array", items: { type: "object" } },
+      ...(tool.outputSchema === undefined ? {} : { structuredContent: tool.outputSchema }),
+      isError: { type: "boolean" },
+      _meta: { type: "object" },
+    },
+    required: ["content"],
+  });
 }
 
 function isMcpToolError(result: unknown): boolean {
@@ -210,6 +244,38 @@ function createMcpClient(endpoint: string, token: string) {
 }
 
 export default async function t3McpExtension(pi: ExtensionAPI) {
+  // Keep skill chips in the request. Pi expands only one leading /skill:
+  // command, so use its own frontmatter loader for every selected chip here.
+  pi.on("input", async (event, ctx) => {
+    if (!event.text.includes("$")) return;
+    const commands = pi.getCommands().filter((command) => command.source === "skill");
+    const nativeSkill = /^\\/skill:([^ ]+)(?: |$)/.exec(event.text)?.[1];
+    const seen = new Set<string>(nativeSkill === undefined ? [] : [nativeSkill]);
+    const blocks: string[] = [];
+    for (const match of event.text.matchAll(/(^|\\s)\\$([^\\s]+)(?=\\s|$)/g)) {
+      const name = match[2];
+      if (name === undefined || seen.has(name)) continue;
+      const command = commands.find((candidate) => candidate.name === "skill:" + name);
+      if (command === undefined) continue;
+      seen.add(name);
+      const path = command.sourceInfo.path;
+      try {
+        const body = stripFrontmatter(await NodeFSP.readFile(path, "utf8")).trim();
+        blocks.push(
+          \`<skill name="\${name}" location="\${path}">\\nReferences are relative to \${NodePath.dirname(path)}.\\n\\n\${body}\\n</skill>\`,
+        );
+      } catch {
+        ctx.ui.notify(\`Could not load skill \${name} from \${path}.\`, "error");
+      }
+    }
+    if (blocks.length === 0) return;
+    return {
+      action: "transform",
+      text: event.text + "\\n\\n" + blocks.join("\\n\\n"),
+      images: event.images,
+    };
+  });
+
   // Workaround for an upstream Pi context-budgeting bug: pi-ai reuses the
   // previous response's usage even when a fork's instructions/tools differ,
   // then reserves almost all remaining context for output. OpenRouter can
@@ -294,6 +360,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
           label: name,
           description: tool.description ?? name,
           parameters: jsonSchemaToTypebox(tool.inputSchema),
+          ...(supportsExposure ? { outputSchema: mcpOutputSchema(tool) } : {}),
           ...(supportsExposure ? { exposure } : {}),
           async execute(_toolCallId, params, signal) {
             const result = await client.callTool(
@@ -301,9 +368,13 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
               (params ?? {}) as Record<string, unknown>,
               signal,
             );
-            const text = formatMcpContent(result);
+            const content = mcpModelContent(result);
+            if (isMcpToolError(result) && !content.some((part) => part.type === "text" && part.text.length > 0)) {
+              content.push({ type: "text", text: "MCP tool t3-code/" + name + " returned an error" });
+            }
             return {
-              content: [{ type: "text", text }],
+              content,
+              structuredContent: mcpScriptResult(result),
               details: { server: "t3-code", tool: name },
               ...(isMcpToolError(result) ? { isError: true } : {}),
             };

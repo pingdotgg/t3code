@@ -20,7 +20,7 @@ import { type AcpError, AcpRequestError } from "effect-acp/errors";
 import type * as AcpSchema from "effect-acp/compat";
 import { expect } from "vite-plus/test";
 
-import type { AcpSessionRuntimeEvent } from "../provider/acp/AcpSessionRuntime.ts";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { removeAntigravitySessionFiles } from "../provider/acp/AntigravitySessionFiles.ts";
 
 import {
@@ -121,7 +121,7 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
 
   const makeRuntime: AntigravityTextGenerationOptions["makeRuntime"] = (cwd) =>
     Effect.gen(function* () {
-      const events = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
+      const events = yield* Queue.unbounded<AcpSessionRuntime.AcpSessionRuntimeEvent>();
       state.workspaces.push(cwd);
       expect(yield* fs.readDirectory(cwd).pipe(Effect.orDie)).toEqual([]);
       yield* Effect.addFinalizer(() =>

@@ -3,6 +3,7 @@ import { memo } from "react";
 import { CheckIcon, StarIcon } from "lucide-react";
 import {
   getDisplayModelName,
+  getProviderRowLabel,
   getTriggerDisplayModelLabel,
   type ModelEsque,
 } from "./providerIconUtils";
@@ -43,9 +44,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   disabledReason?: string | null;
   onToggleFavorite: () => void;
 }) {
-  const providerLabel = props.model.subProvider
-    ? `${props.providerDisplayName} · ${props.model.subProvider}`
-    : props.providerDisplayName;
+  const providerLabel = getProviderRowLabel(props.providerDisplayName, props.model.subProvider);
 
   const row = (
     <ComboboxItem

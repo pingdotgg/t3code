@@ -20,7 +20,7 @@ import type {
   UsageTokenTotals,
 } from "@t3tools/contracts";
 
-import { EMPTY_TOTALS, type UsageRecord } from "./usageTranscripts.ts";
+import { EMPTY_TOTALS, type UsageRecord } from "@t3tools/provider-core/server/usage";
 import { cacheSavingsUsd, priceUsage, type RateTable } from "./usagePricing.ts";
 
 /**

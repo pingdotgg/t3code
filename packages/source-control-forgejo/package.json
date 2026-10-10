@@ -1,0 +1,52 @@
+{
+  "name": "@t3tools/source-control-forgejo",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./client/definition": {
+      "types": "./src/client/definition.ts",
+      "import": "./src/client/definition.ts"
+    },
+    "./server/driver": {
+      "types": "./src/server/driver.ts",
+      "import": "./src/server/driver.ts"
+    },
+    "./server/ForgejoCli": {
+      "types": "./src/server/ForgejoCli.ts",
+      "import": "./src/server/ForgejoCli.ts"
+    },
+    "./server/forgejoPullRequestJson": {
+      "types": "./src/server/forgejoPullRequestJson.ts",
+      "import": "./src/server/forgejoPullRequestJson.ts"
+    },
+    "./server/ForgejoPullRequestProvider": {
+      "types": "./src/server/ForgejoPullRequestProvider.ts",
+      "import": "./src/server/ForgejoPullRequestProvider.ts"
+    },
+    "./server/forgejoPullRequests": {
+      "types": "./src/server/forgejoPullRequests.ts",
+      "import": "./src/server/forgejoPullRequests.ts"
+    },
+    "./server/ForgejoSourceControlProvider": {
+      "types": "./src/server/ForgejoSourceControlProvider.ts",
+      "import": "./src/server/ForgejoSourceControlProvider.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/provider-core": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "@t3tools/source-control-core": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@t3tools/source-control-testing": "workspace:*",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
