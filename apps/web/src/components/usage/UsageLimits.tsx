@@ -14,11 +14,12 @@ import {
   formatDuration,
   formatResetsIn,
   type LimitPace,
+  type LimitAccount,
   paceOf,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
-import { Fragment, type ReactNode, useState } from "react";
+import { Fragment, type ReactNode, useState, useRef, useSyncExternalStore } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { environmentPresentations } from "../../state/presentation";
@@ -203,36 +204,84 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
   alreadyRedeemed: "That credit was already redeemed.",
 };
 
-/** Everything a redeem needs: where to send it and what to say afterwards. */
-export function useResetCredit(
-  environmentId: EnvironmentId,
-  input: ProviderConsumeResetCreditInput,
-) {
-  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
+const pendingResets = new Map<string, { readonly ownerIdentity: string }>();
+const resetListeners = new Set<() => void>();
+const subscribeResets = (listener: () => void) => {
+  resetListeners.add(listener);
+  return () => {
+    resetListeners.delete(listener);
+  };
+};
+const notifyResets = () => resetListeners.forEach((listener) => listener());
+
+export function useResetCredit(identity: string, target: LimitAccount["redeem"]) {
+  const canManageProviders = useEnvironmentScope(
+    target?.environmentId ?? null,
+    AuthProvidersManageScope,
+  );
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, { reportFailure: false });
-  const [confirming, setConfirming] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
+  const targetKey = target ? JSON.stringify([target.environmentId, target.input]) : null;
+  const confirmationKey = JSON.stringify([identity, targetKey]);
+  const [confirmation, setConfirmation] = useState<string | null>(null);
+  const [status, setStatus] = useState<{
+    readonly ownerIdentity: string;
+    readonly text: string;
+  } | null>(null);
+  const activeTarget = useRef<string | null>(null);
+  const pending = useSyncExternalStore(subscribeResets, () =>
+    pendingResets.get(activeTarget.current ?? targetKey ?? ""),
+  );
+  if (confirmation !== null && confirmation !== confirmationKey) setConfirmation(null);
+  const setConfirming = (open: boolean) => setConfirmation(open && target ? confirmationKey : null);
 
   const redeem = async () => {
-    setConfirming(false);
-    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
-    setBusy(true);
-    setStatus(null);
-    const result = await consume({ environmentId, input });
-    setBusy(false);
-    if (result._tag === "Success") {
-      setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
+    setConfirmation(null);
+    if (
+      !target ||
+      !targetKey ||
+      confirmation !== confirmationKey ||
+      activeTarget.current !== null ||
+      pendingResets.has(targetKey) ||
+      !readEnvironmentScope(target.environmentId, AuthProvidersManageScope)
+    )
       return;
+    activeTarget.current = targetKey;
+    pendingResets.set(targetKey, { ownerIdentity: identity });
+    setStatus(null);
+    notifyResets();
+    try {
+      const result = await consume(target);
+      setStatus({
+        ownerIdentity: identity,
+        text:
+          result._tag === "Success"
+            ? (result.value.warning ?? OUTCOME_TEXT[result.value.outcome])
+            : "error" in result.cause && result.cause.error instanceof Error
+              ? result.cause.error.message
+              : "Could not use the reset credit.",
+      });
+    } catch (error) {
+      setStatus({
+        ownerIdentity: identity,
+        text: error instanceof Error ? error.message : "Could not use the reset credit.",
+      });
+    } finally {
+      pendingResets.delete(targetKey);
+      activeTarget.current = null;
+      notifyResets();
     }
-    setStatus(
-      "error" in result.cause && result.cause.error instanceof Error
-        ? result.cause.error.message
-        : "Could not use the reset credit.",
-    );
   };
 
-  return { canManageProviders, confirming, setConfirming, busy, status, redeem };
+  const using = pending?.ownerIdentity === identity;
+  return {
+    canManageProviders,
+    confirming: confirmation === confirmationKey,
+    setConfirming,
+    busy: pending !== undefined,
+    using,
+    status: using ? "Using reset credit…" : status?.ownerIdentity === identity ? status.text : null,
+    redeem,
+  };
 }
 
 /**
@@ -292,20 +341,20 @@ export function resetCreditsSummary(
 
 /** Banked reset credits with the redeem button and its confirm, self-contained. */
 export function ResetCredits({
+  identity,
   environmentId,
   input,
   credits,
   now,
 }: {
+  readonly identity: string;
   readonly environmentId: EnvironmentId;
   readonly input: ProviderConsumeResetCreditInput;
   readonly credits: ServerProviderResetCredits;
   readonly now: number;
 }) {
-  const { canManageProviders, confirming, setConfirming, busy, status, redeem } = useResetCredit(
-    environmentId,
-    input,
-  );
+  const { canManageProviders, confirming, setConfirming, busy, using, status, redeem } =
+    useResetCredit(identity, credits.availableCount > 0 ? { environmentId, input } : null);
   if (credits.availableCount === 0 && status === null) return null;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -319,15 +368,19 @@ export function ResetCredits({
             if (readEnvironmentScope(environmentId, AuthProvidersManageScope)) setConfirming(true);
           }}
         >
-          {busy ? "Using…" : "Use reset"}
+          {using ? "Using…" : "Use reset"}
         </Button>
       ) : null}
-      {status ? <span className="text-foreground">{status}</span> : null}
+      {status ? (
+        <span role="status" className="text-foreground">
+          {status}
+        </span>
+      ) : null}
       <ResetCreditDialog
         open={confirming}
         onOpenChange={setConfirming}
         onConfirm={() => void redeem()}
-        disabled={!canManageProviders}
+        disabled={busy || !canManageProviders}
       />
     </div>
   );
