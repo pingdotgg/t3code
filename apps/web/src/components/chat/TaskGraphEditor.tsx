@@ -84,10 +84,7 @@ import { TASK_GRAPH_PEER_STATUS_HINT, type TaskGraphLabels } from "./useTaskGrap
 type Selection =
   | { readonly kind: "none" }
   | { readonly kind: "node"; readonly key: string }
-  | { readonly kind: "edge"; readonly dependency: string; readonly dependent: string }
-  // `after` is the task selected when Add task was clicked; the new task branches off it.
-  // With nothing selected, the new task becomes the parent of the current top tasks.
-  | { readonly kind: "new"; readonly after: string | null };
+  | { readonly kind: "edge"; readonly dependency: string; readonly dependent: string };
 
 const NO_SELECTION: Selection = { kind: "none" };
 
@@ -183,8 +180,7 @@ export default function TaskGraphEditor(props: {
   const layout = graphLayout(graph.nodes);
   const selection = resolveSelection(selectionState, graph);
   const { nodes, edges } = taskGraphCanvasElements(graph.nodes, layout.positions, {
-    nodeKey:
-      selection.kind === "node" ? selection.key : selection.kind === "new" ? selection.after : null,
+    nodeKey: selection.kind === "node" ? selection.key : null,
     edgeId:
       selection.kind === "edge"
         ? taskGraphCanvasEdgeId(selection.dependency, selection.dependent)
@@ -208,6 +204,40 @@ export default function TaskGraphEditor(props: {
     ]);
   };
 
+  // Adds a placeholder task to the graph and selects it for editing: after the
+  // selected task, or with nothing selected, as the parent of the unstarted
+  // tasks at the start (a started task can no longer be made to wait).
+  const addTask = async () => {
+    const after = selection.kind === "node" ? selection.key : null;
+    const key = taskGraphNodeKeyFromTitle(
+      "New task",
+      graph.nodes.map((node) => node.key),
+    );
+    const children =
+      after === null
+        ? graph.nodes.filter(
+            (node) => node.dependsOn.length === 0 && isUnstartedTaskGraphNode(node),
+          )
+        : [];
+    const accepted = await commands.edit([
+      {
+        type: "add_node",
+        node: {
+          key,
+          title: "New task",
+          prompt: "Describe what this task should do.",
+          dependsOn: after === null ? [] : [after],
+        },
+      },
+      ...children.map((child) => ({
+        type: "update_node" as const,
+        key: child.key,
+        dependsOn: [key],
+      })),
+    ]);
+    if (accepted) setSelection({ kind: "node", key });
+  };
+
   return (
     <>
       <DialogHeader>
@@ -220,17 +250,7 @@ export default function TaskGraphEditor(props: {
             </DialogDescription>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!canEdit}
-              onClick={() =>
-                setSelection({
-                  kind: "new",
-                  after: selection.kind === "node" ? selection.key : null,
-                })
-              }
-            >
+            <Button size="sm" variant="outline" disabled={!canEdit} onClick={() => void addTask()}>
               <PlusIcon />
               Add task
             </Button>
@@ -275,6 +295,7 @@ export default function TaskGraphEditor(props: {
             deleteKeyCode={null}
             fitView
             fitViewOptions={{ maxZoom: 1 }}
+            proOptions={{ hideAttribution: true }}
             minZoom={0.2}
             isValidConnection={(connection) =>
               connection.source !== connection.target &&
@@ -320,11 +341,6 @@ function resolveSelection(selection: Selection, graph: TaskGraph): Selection {
     const dependent = graph.nodes.find((node) => node.key === selection.dependent);
     return dependent?.dependsOn.includes(selection.dependency) ? selection : NO_SELECTION;
   }
-  if (selection.kind === "new" && selection.after !== null) {
-    return graph.nodes.some((node) => node.key === selection.after)
-      ? selection
-      : { kind: "new", after: null };
-  }
   return selection;
 }
 
@@ -338,79 +354,6 @@ function SelectionPanel(props: {
 }) {
   const { graph, commands, selection } = props;
   const canEdit = commands.canEdit && !commands.busy;
-
-  if (selection.kind === "new") {
-    const after = graph.nodes.find((node) => node.key === selection.after) ?? null;
-    // Started tasks can no longer be made to wait, so only unstarted top tasks move under the parent.
-    const children =
-      after === null
-        ? graph.nodes.filter(
-            (node) => node.dependsOn.length === 0 && isUnstartedTaskGraphNode(node),
-          )
-        : [];
-    return (
-      <TaskNodeForm
-        key={`new:${after?.key ?? ""}`}
-        heading={
-          after !== null
-            ? `New task after ${after.title}`
-            : children.length > 0
-              ? "New parent task"
-              : "New task"
-        }
-        initial={{
-          title: "",
-          prompt: "",
-          pullRequest: null,
-          modelSelection: null,
-          environmentId: null,
-          workspace: "worktree",
-          startAt: null,
-        }}
-        placement={{ graph, labels: props.labels, dependency: after }}
-        opensByDefault={children.length === 0}
-        disabled={!canEdit}
-        submitLabel="Add task"
-        keyFor={(title) =>
-          taskGraphNodeKeyFromTitle(
-            title,
-            graph.nodes.map((node) => node.key),
-          )
-        }
-        onCancel={() => props.onSelect(NO_SELECTION)}
-        onSubmit={async (values) => {
-          const key = taskGraphNodeKeyFromTitle(
-            values.title,
-            graph.nodes.map((node) => node.key),
-          );
-          const accepted = await commands.edit([
-            {
-              type: "add_node",
-              node: {
-                key,
-                title: values.title,
-                prompt: values.prompt,
-                dependsOn: after === null ? [] : [after.key],
-                ...(values.pullRequest === null ? {} : { pullRequest: values.pullRequest }),
-                ...(values.modelSelection === null
-                  ? {}
-                  : { modelSelection: values.modelSelection }),
-                ...(values.environmentId === null ? {} : { environmentId: values.environmentId }),
-                ...(values.workspace === "worktree" ? {} : { workspace: values.workspace }),
-                ...(values.startAt === null ? {} : { startAt: values.startAt }),
-              },
-            },
-            ...children.map((child) => ({
-              type: "update_node" as const,
-              key: child.key,
-              dependsOn: [key],
-            })),
-          ]);
-          if (accepted) props.onSelect({ kind: "node", key });
-        }}
-      />
-    );
-  }
 
   if (selection.kind === "edge") {
     const dependent = graph.nodes.find((node) => node.key === selection.dependent);
@@ -708,9 +651,7 @@ function TaskNodeForm(props: {
   readonly opensByDefault: boolean;
   readonly disabled: boolean;
   readonly submitLabel: string;
-  readonly keyFor?: (title: string) => string;
   readonly onSubmit: (values: TaskNodeValues) => Promise<void>;
-  readonly onCancel?: () => void;
 }) {
   const id = useId();
   const [title, setTitle] = useState(props.initial.title);
@@ -762,11 +703,6 @@ function TaskNodeForm(props: {
           disabled={props.disabled}
           onChange={(event) => setTitle(event.target.value)}
         />
-        {props.keyFor && values.title.length > 0 ? (
-          <p className="text-xs text-muted-foreground">
-            Key <span className="font-mono">{props.keyFor(values.title)}</span>
-          </p>
-        ) : null}
       </div>
       <div className="space-y-1.5">
         <Label htmlFor={`${id}-prompt`}>Prompt</Label>
@@ -815,11 +751,6 @@ function TaskNodeForm(props: {
         onChange={setStart}
       />
       <div className="flex justify-end gap-2">
-        {props.onCancel ? (
-          <Button type="button" size="sm" variant="ghost" onClick={props.onCancel}>
-            Cancel
-          </Button>
-        ) : null}
         <Button type="submit" size="sm" disabled={props.disabled || !dirty || !valid}>
           {props.submitLabel}
         </Button>
