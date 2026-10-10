@@ -51,6 +51,7 @@ const makeControlledBackend = Effect.fnUntraced(function* () {
   }>();
   const backend: CloudBackend = {
     label: "Claude Code Cloud",
+    continuesSessions: true,
     run: (input) =>
       Effect.gen(function* () {
         const settle = yield* Deferred.make<CloudRunResult, CloudCliError>();
@@ -161,7 +162,7 @@ describe("cloud adapter", () => {
       assert.strictEqual(first.input.cwd, "/repo");
       assert.isUndefined(first.input.session);
       yield* first.input.onTask(TASK);
-      yield* Deferred.succeed(first.settle, { task: TASK, text: "Fixed it.", session: TASK.id });
+      yield* Deferred.succeed(first.settle, { task: TASK, text: "Fixed it." });
       const settled = yield* harness.settleTurn();
 
       assert.deepStrictEqual(settled.texts, [
@@ -213,6 +214,11 @@ describe("cloud adapter", () => {
       assert.strictEqual(settled.terminal.status, "interrupted");
       assert.include(settled.texts.at(-1), "keeps running in Claude Code Cloud");
       assert.include(settled.texts.at(-1), TASK.url);
+
+      // The stopped turn's session is still the thread's: the next message continues it.
+      yield* harness.runtime.startTurn(yield* turnInput(harness.providerThread, 2, "Keep going"));
+      const next = yield* Queue.take(runs);
+      assert.strictEqual(next.input.session, TASK.id);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 

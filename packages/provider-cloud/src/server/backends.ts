@@ -29,13 +29,13 @@ export interface CloudRunResult {
   readonly task: CloudTask;
   /** What the thread shows as the agent's reply. */
   readonly text: string;
-  /** The cloud session later turns continue, when the runtime keeps one. */
-  readonly session?: string;
 }
 
 export interface CloudBackend {
   /** Product name used in messages, such as "Codex Cloud". */
   readonly label: string;
+  /** Whether later turns continue the task `onTask` reported, rather than starting a new one. */
+  readonly continuesSessions: boolean;
   readonly run: (input: CloudRunInput) => Effect.Effect<CloudRunResult, CloudCliError>;
 }
 
@@ -103,14 +103,17 @@ export const makeCodexCloudBackend = (options: {
     );
   return {
     label: "Codex Cloud",
+    continuesSessions: false,
     run: Effect.fnUntraced(function* (input) {
       if (!options.environment)
         return yield* fail(
           "Set the Codex Cloud environment in this provider's settings. Run codex cloud to list yours.",
         );
+      // `-` reads the prompt from stdin, so no prompt text is ever parsed as an argument.
       const submitted = yield* cli({
-        args: ["cloud", "exec", "--env", options.environment, "--", input.prompt],
+        args: ["cloud", "exec", "--env", options.environment, "-"],
         cwd: input.cwd,
+        stdin: input.prompt,
       });
       const task = submitted.code === 0 ? parseCodexTask(submitted.stdout) : undefined;
       if (!task) return yield* failure("Codex Cloud did not accept the task.", submitted);
@@ -189,6 +192,7 @@ const claudeSessionUrl = (id: string) => `https://claude.ai/code/${id}`;
  */
 export const makeClaudeCloudBackend = (options: { readonly cli: CloudCli }): CloudBackend => ({
   label: "Claude Code Cloud",
+  continuesSessions: true,
   run: Effect.fnUntraced(function* (input) {
     let announced: CloudTask | undefined;
     const result = yield* options.cli({
@@ -215,7 +219,7 @@ export const makeClaudeCloudBackend = (options: { readonly cli: CloudCli }): Clo
       if (!announced) yield* input.onTask(task);
       if (parsed.is_error)
         return yield* fail(`${parsed.result || "The cloud session failed."} (${task.url})`);
-      return { task, session: task.id, text: parsed.result ?? "" };
+      return { task, text: parsed.result ?? "" };
     }
     if (!parsed.ok)
       return yield* fail(parsed.error ?? lastLine(result.stderr) ?? "Claude Code Cloud failed.");
@@ -223,7 +227,6 @@ export const makeClaudeCloudBackend = (options: { readonly cli: CloudCli }): Clo
     yield* input.onTask(task);
     return {
       task,
-      session: task.id,
       text: input.session
         ? `Sent to the Claude Code Cloud session. It replies there: ${task.url}`
         : `Started ${parsed.title ? `**${parsed.title}**` : "a session"} in Claude Code Cloud. Follow its progress there, and send follow-ups from here: ${task.url}`,

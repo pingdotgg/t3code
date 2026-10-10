@@ -273,7 +273,7 @@ export const makeCloudAdapterV2 = Effect.fn("makeCloudAdapterV2")(function* (
       const finish = Effect.fnUntraced(function* (
         run: ActiveRun,
         outcome:
-          | { readonly status: "completed"; readonly session?: string }
+          | { readonly status: "completed" }
           | { readonly status: "interrupted" }
           | { readonly status: "failed"; readonly detail: string },
       ) {
@@ -287,11 +287,12 @@ export const makeCloudAdapterV2 = Effect.fn("makeCloudAdapterV2")(function* (
           threadId: run.input.threadId,
           providerTurn: run.providerTurn,
         });
+        // A session the cloud created stays this thread's even when the turn failed or
+        // stopped, so the next message continues it instead of starting another.
+        const cloudSession = options.backend.continuesSessions ? run.task?.id : undefined;
         yield* updateThread({
           status: "idle",
-          ...(outcome.status === "completed" && outcome.session
-            ? { nativeConversationHeadRef: nativeRef(outcome.session) }
-            : {}),
+          ...(cloudSession ? { nativeConversationHeadRef: nativeRef(cloudSession) } : {}),
         });
         yield* updateSession("ready", outcome.status === "failed" ? outcome.detail : null);
         const terminal = {
@@ -348,10 +349,8 @@ export const makeCloudAdapterV2 = Effect.fn("makeCloudAdapterV2")(function* (
             },
           });
           yield* publishMessage(run, result.text, false);
-          yield* finish(run, {
-            status: "completed",
-            ...(result.session ? { session: result.session } : {}),
-          });
+          run.task = result.task;
+          yield* finish(run, { status: "completed" });
         }).pipe(
           Effect.catchCause((cause) => {
             if (Cause.hasInterruptsOnly(cause)) return Effect.void;

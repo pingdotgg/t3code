@@ -59,16 +59,16 @@ describe("Codex Cloud backend", () => {
       assert.deepStrictEqual(
         calls.map((call) => call.args),
         [
-          ["cloud", "exec", "--env", "my-env", "--", "--fix the flaky test"],
+          ["cloud", "exec", "--env", "my-env", "-"],
           ["cloud", "status", "task_e_123"],
           ["cloud", "status", "task_e_123"],
           ["cloud", "apply", "task_e_123"],
         ],
       );
+      assert.strictEqual(calls[0]?.stdin, "--fix the flaky test");
       assert.deepStrictEqual(tasks, [{ id: "task_e_123", url: TASK_URL }]);
       assert.include(result.text, "**Fix flaky test** finished in Codex Cloud");
       assert.include(result.text, "(+12/-3) are applied");
-      assert.isUndefined(result.session);
     }),
   );
 
@@ -154,7 +154,6 @@ describe("Claude Code Cloud backend", () => {
       assert.strictEqual(calls[0]?.stdin, "--fix the flaky test");
       assert.deepStrictEqual(tasks, [{ id: "session_01abc", url: SESSION_URL }]);
       assert.strictEqual(result.text, "Fixed the flaky test.");
-      assert.strictEqual(result.session, "session_01abc");
     }),
   );
 
@@ -176,7 +175,6 @@ describe("Claude Code Cloud backend", () => {
       ]);
       assert.deepStrictEqual(tasks, [{ id: "session_01abc", url: SESSION_URL }]);
       assert.include(result.text, SESSION_URL);
-      assert.strictEqual(result.session, "session_01abc");
     }),
   );
 
