@@ -304,4 +304,25 @@ describe("CursorAgentSdkRunner", () => {
       assert.equal(cursorSdkMock.runWait.mock.calls.length, 1);
     }).pipe(Effect.provide(layerTest)),
   );
+
+  it("names the SDK's reason, code and HTTP status in a runner error", () => {
+    const failed = (cause: unknown) =>
+      new CursorAgentSdk.CursorAgentSdkRunnerError({ method: "agent.create", cause }).message;
+    assert.equal(
+      failed(Object.assign(new Error("Too many requests"), { code: "rate_limited", status: 429 })),
+      "Cursor Agent SDK agent.create failed: Too many requests (rate_limited, HTTP 429)",
+    );
+    // Cursor's messages often start with the code already.
+    assert.equal(
+      failed(
+        Object.assign(new Error("[resource_exhausted] Error"), { code: "resource_exhausted" }),
+      ),
+      "Cursor Agent SDK agent.create failed: [resource_exhausted] Error",
+    );
+    assert.equal(
+      failed(Object.assign(new Error("Invalid User API Key"), { code: "error", status: 401 })),
+      "Cursor Agent SDK agent.create failed: Invalid User API Key (HTTP 401)",
+    );
+    assert.equal(failed(undefined), "Cursor Agent SDK agent.create failed.");
+  });
 });

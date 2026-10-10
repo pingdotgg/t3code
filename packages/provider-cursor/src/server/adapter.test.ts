@@ -207,6 +207,147 @@ describe("CursorAdapterV2", () => {
       ),
   );
 
+  it.effect.each([
+    {
+      reason: "the error Cursor's run ended with",
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        requestId: "native-request",
+        status: "error" as const,
+        error: {
+          message: "Model Blocked Please ask your admin to enable access to Claude Fable 5.",
+        },
+        model: { id: "claude-fable-5" },
+        durationMs: 1,
+      }),
+      failure: {
+        class: "provider_error",
+        message: "Model Blocked Please ask your admin to enable access to Claude Fable 5.",
+      },
+    },
+    {
+      reason: "the SDK error that broke the run",
+      wait: Effect.fail(
+        new CursorAgentSdk.CursorAgentSdkRunnerError({
+          method: "run.wait",
+          cause: Object.assign(new Error("Too many requests"), {
+            code: "resource_exhausted",
+            status: 429,
+          }),
+        }),
+      ),
+      failure: {
+        class: "transport_error",
+        message:
+          "Cursor Agent SDK run.wait failed: Too many requests (resource_exhausted, HTTP 429)",
+      },
+    },
+  ])("fails the turn with $reason", ({ wait, failure }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-failure-" });
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-failure-thread");
+      const modelSelection = { instanceId, model: "claude-fable-5" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const adapter = makeCursorAdapterV2({
+        instanceId,
+        settings: yield* decodeCursorSettings({}),
+        environment: { HOME: workspace },
+        fileSystem,
+        path,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        host: yield* ProviderHost.ProviderHost.pipe(
+          Effect.provide(layerTestProviderHost({ cwd: workspace })),
+        ),
+        runner: {
+          assertComplete: Effect.void,
+          open: () =>
+            Effect.succeed({
+              agentId: "native-cursor-failure",
+              listMessages: Effect.succeed([]),
+              close: Effect.void,
+              send: () =>
+                Effect.succeed({
+                  agentId: "native-cursor-failure",
+                  runId: "native-cursor-run",
+                  wait,
+                  cancel: Effect.void,
+                }),
+            }),
+        },
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-failure-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn({
+        threadId,
+        providerThread,
+        modelSelection,
+        runtimePolicy,
+        runId: RunId.make("cursor-failure-run"),
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: RunAttemptId.make("cursor-failure-attempt"),
+        rootNodeId: NodeId.make("cursor-failure-root"),
+        appThread: {
+          id: threadId,
+          projectId: ProjectId.make("cursor-failure-project"),
+          createdBy: "user",
+          creationSource: "web",
+          title: "Cursor failure",
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: providerThread.id,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        message: {
+          messageId: MessageId.make("cursor-failure-message"),
+          createdBy: "user",
+          creationSource: "web",
+          text: "hi",
+          attachments: [],
+        },
+      });
+      const terminal = yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      assert.isTrue(Option.isSome(terminal));
+      if (Option.isSome(terminal)) {
+        assert.equal(terminal.value.status, "failed");
+        assert.equal(terminal.value.failure?.class, failure.class);
+        assert.equal(terminal.value.failure?.message, failure.message);
+      }
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
+  );
+
   it.effect("fails standalone SDK transport diagnostics and sends compaction as /compress", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
