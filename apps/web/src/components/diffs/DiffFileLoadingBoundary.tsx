@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { DiffFileHeaderSkeleton } from "../DiffPanelShell";
+import { DiffFileHeaderSkeleton } from "./DiffLoadingState";
 
 /** Load the next batch before the reader reaches the end of the current files. */
 export function DiffFileLoadingBoundary({ load, count }: { load: () => void; count: number }) {
