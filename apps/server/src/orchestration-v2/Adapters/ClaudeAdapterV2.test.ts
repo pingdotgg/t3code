@@ -8848,6 +8848,48 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("keeps the transcript task notification frame itself in normal handling", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-transcript-still-routed"),
+            text: "Continue",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "user",
+            isSynthetic: true,
+            parent_tool_use_id: null,
+            session_id: WAKE_NATIVE_SESSION,
+            uuid: "00000000-0000-4000-8000-000000000993",
+            message: {
+              role: "user",
+              content:
+                "<task-notification><task-id>old-task</task-id><status>stopped</status><summary>Previous session ended</summary></task-notification>",
+            },
+          }),
+        );
+        // The raw frame still buffers as wake evidence; only the synthesized
+        // receipt is new handling, nothing on the source frame is dropped.
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("extracts text from direct content-block subagent results", () =>
     Effect.scoped(
       Effect.gen(function* () {

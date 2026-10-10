@@ -7037,8 +7037,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             yield* reconcileUntrackedTask(notification);
             yield* handleRoutedSdkMessage({ query: input.query, message: notification });
           }
-          if (transcriptNotifications.length > 0) return;
-          yield* reconcileUntrackedTask(message);
+          // A synthesized receipt never replaces its source frame: the
+          // original still takes the normal path for prompt echo, goals, and
+          // wake buffering.
+          if (transcriptNotifications.length === 0) yield* reconcileUntrackedTask(message);
           const context = yield* Ref.get(activeTurn);
           const liveQuery = yield* Ref.get(queryContext);
           if (
