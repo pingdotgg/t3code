@@ -1559,3 +1559,41 @@ it.effect("keeps the server's own browser and the agent's tab when an action tim
     }),
   ),
 );
+
+it.effect("keeps each thread's current tab when threads share a provider session", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const routed: Array<RoutedRequest> = [];
+      const requests = requestsFrom(yield* broker.connect(makeHost(), { preferred: true }));
+      yield* Stream.runForEach(requests, (request) => {
+        routed.push(request);
+        return broker.respond({
+          clientId: "client-1",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: { tabId: request.tabId ?? `tab-${request.threadId}` },
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      // Codex runs every thread of an instance in one provider session.
+      const otherThread = {
+        ...scope,
+        thread: { ...scope.thread, threadId: ThreadId.make("thread-2") },
+      };
+
+      yield* broker.invoke({ scope, operation: "open", input: {} });
+      yield* broker.invoke({ scope: otherThread, operation: "snapshot", input: {} });
+      yield* broker.invoke({ scope, operation: "snapshot", input: {} });
+
+      expect(routed.map(({ threadId, tabId }) => [threadId, tabId])).toEqual([
+        ["thread-1", undefined],
+        ["thread-2", undefined],
+        ["thread-1", "tab-thread-1"],
+      ]);
+      // Each thread's agent owns its own tabs and tab budget.
+      expect(routed[0]!.agentSessionId).not.toBe(routed[1]!.agentSessionId);
+    }),
+  ),
+);
