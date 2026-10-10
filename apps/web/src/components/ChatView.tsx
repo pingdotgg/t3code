@@ -166,6 +166,13 @@ import { flushSync } from "react-dom";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
 import { isMacPlatform } from "../lib/utils";
+import { RegisteredSidePanel } from "~/panels/bundledPanels";
+import {
+  PanelHostContext,
+  threadBoundAnnotationSender,
+  type PanelHost,
+  type ThreadAnnotationSender,
+} from "~/panels/panelHost";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -698,10 +705,6 @@ function useDraftHeroLayoutTransition(
   } as const;
 }
 
-const PreviewPanel = lazy(() =>
-  import("./preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
-);
-const DiffPanel = lazy(() => import("./DiffPanel"));
 const selectAutoShowFloatingPreview = (settings: { browserAutoShowFloatingPreview: boolean }) =>
   settings.browserAutoShowFloatingPreview;
 const DevicePanel = lazy(() =>
@@ -11003,25 +11006,56 @@ export default function ChatView(props: ChatViewProps) {
     pendingSidebarFileDrops,
   ]);
 
+  // Plain server threads share one ChatView, so the sender carries its thread
+  // and a host only forwards to a sender for the thread it was built for.
+  // Updated after commit so a discarded render cannot lend its `onSend`.
+  const annotationSenderRef = useRef<ThreadAnnotationSender | null>(null);
+  useLayoutEffect(() => {
+    annotationSenderRef.current = activeThreadKey
+      ? {
+          threadKey: activeThreadKey,
+          send: (annotation, image) => {
+            void onSend(undefined, "auto", "foreground", { annotation, image });
+          },
+        }
+      : null;
+  });
+  // Memoized so mounted panels re-render only when a host field changes.
+  const panelHost = useMemo<PanelHost | null>(
+    () =>
+      activeThreadRef
+        ? {
+            threadRef: activeThreadRef,
+            visible: rightPanelOpen,
+            composerDraftTarget,
+            workspaceMutationId,
+            sendAnnotation: threadBoundAnnotationSender(
+              () => annotationSenderRef.current,
+              scopedThreadKey(activeThreadRef),
+            ),
+          }
+        : null,
+    [
+      activeThreadRef,
+      annotationSenderRef,
+      composerDraftTarget,
+      rightPanelOpen,
+      workspaceMutationId,
+    ],
+  );
+
   // Empty state: no active thread
   if (!activeThread) {
     return <NoActiveThreadState />;
   }
 
-  const rightPanelContent = activeThreadRef ? (
+  const rightPanelSurfaceContent = activeThreadRef ? (
     renderedRightPanelSurface?.kind === "preview" ? (
-      <Suspense fallback={null}>
-        <PreviewPanel
-          mode="embedded"
-          threadRef={activeThreadRef}
-          tabId={renderedRightPanelSurface.resourceId}
-          configuredUrls={configuredPreviewUrls}
-          visible={rightPanelOpen}
-          onSendAnnotation={(annotation, image) => {
-            void onSend(undefined, "auto", "foreground", { annotation, image });
-          }}
-        />
-      </Suspense>
+      <RegisteredSidePanel
+        id="preview"
+        tabId={renderedRightPanelSurface.resourceId}
+        configuredUrls={configuredPreviewUrls}
+      />
     ) : renderedRightPanelSurface?.kind === "terminal" ? (
       <PersistentThreadTerminalPanel
         visible={rightPanelOpen}
@@ -11042,14 +11076,7 @@ export default function ChatView(props: ChatViewProps) {
         closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
       />
     ) : renderedRightPanelSurface?.kind === "diff" ? (
-      <Suspense fallback={null}>
-        <DiffPanel
-          key={activeThreadKey}
-          mode="embedded"
-          composerDraftTarget={composerDraftTarget}
-          workspaceMutationId={workspaceMutationId}
-        />
-      </Suspense>
+      <RegisteredSidePanel key={activeThreadKey} id="diff" />
     ) : renderedRightPanelSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
       <PullRequestDetailGhost />
     ) : renderedRightPanelSurface?.kind === "pull-request" && !supportsPullRequests ? (
@@ -11166,6 +11193,13 @@ export default function ChatView(props: ChatViewProps) {
       </Suspense>
     ) : null
   ) : null;
+  const rightPanelContent = (
+    <PanelHostContext value={panelHost}>{rightPanelSurfaceContent}</PanelHostContext>
+  );
+  const sidePanelLaunchers = {
+    preview: { available: canOperatePreview && browserAvailable, onOpen: createBrowserSurface },
+    diff: { available: isServerThread && isGitRepo, onOpen: addDiffSurface },
+  };
   const threadDetailsPanelProps: ThreadDetailsPanelProps = {
     anchor: threadPanelPopoverAnchorRef,
     handle: threadPanelPopoverHandle,
@@ -12000,17 +12034,14 @@ export default function ChatView(props: ChatViewProps) {
           onCloseAllSurfaces={closeAllRightPanelSurfaces}
           onMoveSurface={moveRightPanelSurface}
           onCopyFilePath={copyRightPanelFilePath}
-          onAddBrowser={() => createBrowserSurface()}
+          panels={sidePanelLaunchers}
           onAddBrowserInProfile={createBrowserSurface}
           onAddTerminal={addTerminalSurface}
-          onAddDiff={addDiffSurface}
           onAddFiles={addFilesSurface}
           onAddPullRequest={addPullRequestSurface}
           onAddPullRequests={addPullRequestsSurface}
           onAddDevice={addDeviceSurface}
-          browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
-          diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
@@ -12059,17 +12090,14 @@ export default function ChatView(props: ChatViewProps) {
             onCloseAllSurfaces={closeAllRightPanelSurfaces}
             onMoveSurface={moveRightPanelSurface}
             onCopyFilePath={copyRightPanelFilePath}
-            onAddBrowser={() => createBrowserSurface()}
+            panels={sidePanelLaunchers}
             onAddBrowserInProfile={createBrowserSurface}
             onAddTerminal={addTerminalSurface}
-            onAddDiff={addDiffSurface}
             onAddFiles={addFilesSurface}
             onAddPullRequest={addPullRequestSurface}
             onAddPullRequests={addPullRequestsSurface}
             onAddDevice={addDeviceSurface}
-            browserAvailable={canOperatePreview && browserAvailable}
             terminalAvailable={activeProject !== null && canOperateTerminal}
-            diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
             pullRequestAvailable={pullRequestSurfaceAvailable}
             pullRequestsAvailable={pullRequestsSurfaceAvailable}
