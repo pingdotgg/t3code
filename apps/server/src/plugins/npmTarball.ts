@@ -95,7 +95,12 @@ const readPax = (data: Uint8Array) => {
     const space = data.indexOf(0x20, offset);
     if (space === -1) throw unsafe("The tarball has a malformed extended header.");
     const length = Number.parseInt(decoder.decode(data.subarray(offset, space)), 10);
-    if (!Number.isSafeInteger(length) || length <= space - offset || offset + length > data.length)
+    if (
+      !Number.isSafeInteger(length) ||
+      length <= space - offset ||
+      offset + length > data.length ||
+      data[offset + length - 1] !== 0x0a
+    )
       throw unsafe("The tarball has a malformed extended header.");
     const record = data.subarray(space + 1, offset + length - 1);
     const equals = record.indexOf(0x3d);

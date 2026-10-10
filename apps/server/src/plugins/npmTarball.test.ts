@@ -95,6 +95,16 @@ describe("readNpmTarball", () => {
     }),
   );
 
+  it.effect("refuses an extended header record that does not end in a newline", () =>
+    Effect.gen(function* () {
+      // 20 bytes declared, so dropping the last one as the newline would read `package/foo`.
+      const pax: TarEntry = { path: "PaxHeader", type: "x", data: "20 path=package/fooX" };
+      const error = yield* refusal([manifest, pax, { path: "package/bar.js", data: "x" }]);
+      expect(error.reason).toBe("npm-archive-unsafe");
+      expect(error.message).toMatch(/malformed extended header/);
+    }),
+  );
+
   it.effect("refuses links, special files, and paths that leave the package", () =>
     Effect.gen(function* () {
       const cases: ReadonlyArray<readonly [ReadonlyArray<TarEntry>, RegExp]> = [
