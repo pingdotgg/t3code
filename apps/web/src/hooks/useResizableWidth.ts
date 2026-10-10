@@ -83,30 +83,18 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
 
   const clampedWidth = clamp(widthState.width);
   const latestOptions = useRef({ clamp, storageKey, width: clampedWidth });
-  // The panel being dragged and its live width, which React has not rendered yet.
-  const liveDrag = useRef<{ host: HTMLElement | null; width: number } | null>(null);
-  useLayoutEffect(() => {
-    latestOptions.current = { clamp, storageKey, width: clampedWidth };
-    // Bounds can shrink mid-drag (sidebar opens, window narrows) with the pointer still.
-    const live = liveDrag.current;
-    if (live && clamp(live.width) !== live.width) {
-      live.width = clamp(live.width);
-      live.host?.style.setProperty(RESIZABLE_WIDTH_PROPERTY, `${live.width}px`);
-    }
-  }, [clamp, clampedWidth, storageKey]);
 
-  const handlers = useResizeDrag<HTMLElement>((event) => {
+  const { refresh, ...handlers } = useResizeDrag<HTMLElement>((event) => {
     const host = event.currentTarget.parentElement;
-    // A collapsible host animates width; live drag writes must not.
-    host?.style.setProperty("transition-duration", "0ms");
-    liveDrag.current = { host: host ?? null, width: clampedWidth };
+    // A collapsible host animates width; live drag writes must not. The host
+    // renders its own transition-duration, so override a property it leaves alone.
+    host?.style.setProperty("transition-property", "none");
     return {
       width: clampedWidth,
       edge,
       resize(value) {
         const nextWidth = latestOptions.current.clamp(value);
         host?.style.setProperty(RESIZABLE_WIDTH_PROPERTY, `${nextWidth}px`);
-        if (liveDrag.current) liveDrag.current.width = nextWidth;
         return nextWidth;
       },
       finish(finalWidth) {
@@ -119,8 +107,7 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
         }
       },
       cleanup(committed) {
-        liveDrag.current = null;
-        host?.style.removeProperty("transition-duration");
+        host?.style.removeProperty("transition-property");
         // React skips the write when the rendered width did not change.
         if (!committed) {
           host?.style.setProperty(RESIZABLE_WIDTH_PROPERTY, `${latestOptions.current.width}px`);
@@ -128,6 +115,13 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
       },
     };
   }, storageKey);
+
+  useLayoutEffect(() => {
+    latestOptions.current = { clamp, storageKey, width: clampedWidth };
+    // Bounds can change mid-drag (sidebar opens, window narrows) and the render
+    // rewrites the committed width, so re-apply the live pointer position.
+    refresh();
+  }, [clamp, clampedWidth, storageKey]);
 
   return { width: clampedWidth, handlers };
 }
