@@ -30,6 +30,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -551,6 +552,53 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.deepEqual(yield* store.getTurnStartHistory(threadId, [runId]), history);
       assert.deepEqual(yield* store.getTurnStartHistory(threadId, []), []);
       assert.deepEqual(yield* store.getTurnStartHistory(threadId, [RunId.make("run:other")]), []);
+    }),
+  );
+  it.effect("answers empty record filters without reading the filtered tables", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = yield* addRolledBackRecoveryCandidate("empty-record-filters");
+      const runId = (yield* store.getThreadProjection(threadId)).runs[0]!.id;
+      const queries: Array<string> = [];
+      const recordQueries: Statement.Transformer = (statement) => {
+        queries.push(statement.compile()[0]);
+        return Effect.succeed(statement);
+      };
+      const read = (filter: ProjectionStore.ProjectionRecordFilter) =>
+        store
+          .getThreadRecords(threadId, ["runs", "messages", "turnItems"], filter)
+          .pipe(Effect.provideService(Statement.CurrentTransformer, recordQueries));
+
+      const emptyFilters = [
+        [{ turnItemTypes: [] }, "turnItems", "turn_items"],
+        [{ turnItemStatuses: [] }, "turnItems", "turn_items"],
+        [{ turnItemRunIds: [] }, "turnItems", "turn_items"],
+        [{ runIds: [] }, "runs", "runs"],
+        [{ messageIds: [] }, "messages", "messages"],
+        [{ messageRoles: [] }, "messages", "messages"],
+        [{ messageRunIds: [] }, "messages", "messages"],
+      ] as const;
+      for (const [filter, field, table] of emptyFilters) {
+        queries.length = 0;
+        assert.isEmpty((yield* read(filter))[field]);
+        assert.isFalse(
+          queries.some((query) =>
+            new RegExp(`FROM orchestration_v2_projection_${table}\\b`).test(query),
+          ),
+          `${JSON.stringify(filter)} read ${table}`,
+        );
+      }
+
+      const selected = yield* read({ turnItemTypes: ["command_execution"], runIds: [runId] });
+      assert.deepEqual(
+        selected.turnItems.map((item) => item.type),
+        ["command_execution"],
+      );
+      assert.deepEqual(
+        selected.runs.map((run) => run.id),
+        [runId],
+      );
+      assert.isEmpty((yield* read({ turnItemTypes: ["user_message"] })).turnItems);
     }),
   );
   it.effect("preserves stored provider usage when a terminal update omits it", () =>
