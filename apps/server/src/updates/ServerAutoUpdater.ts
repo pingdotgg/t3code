@@ -62,17 +62,16 @@ export const layer = Layer.effectDiscard(
     const updateBootService = Effect.gen(function* () {
       if (!(yield* automaticUpdatesEnabled)) return;
       const nowMs = yield* Clock.currentTimeMillis;
-      if (nowMs >= nextReleaseCheckAt) {
+      // One staged release at a time, so a closed window cannot pile up downloads.
+      if (nowMs >= nextReleaseCheckAt && pendingTarget === undefined) {
         nextReleaseCheckAt = nowMs + Duration.toMillis(RELEASE_CHECK_INTERVAL);
         const targetVersion = yield* resolveNewestVersion(cliReleaseChannelOf(currentVersion)).pipe(
           Effect.provideService(HttpClient.HttpClient, httpClient),
         );
         if (
           compareExactServiceVersions(targetVersion, currentVersion) > 0 &&
-          !skippedTargets.has(targetVersion) &&
-          targetVersion !== pendingTarget
+          !skippedTargets.has(targetVersion)
         ) {
-          // A newer release replaces the pending target only once it stages.
           yield* Effect.logInfo("Staging a background server update", { targetVersion });
           // A failed download is retried at the next release check; a release
           // this launcher cannot run waits for a manual service update.
@@ -109,12 +108,15 @@ export const layer = Layer.effectDiscard(
           skippedTargets.add(targetVersion);
           yield* Effect.logInfo("Installing a background server update", { targetVersion });
           yield* selfUpdate.update({ targetVersion }).pipe(
-            // Refused before the handoff (say, a manual update in progress): try again later.
+            // Refused before the handoff (say, a manual update in progress): the
+            // next hourly release check stages it again.
             Effect.tapError(() =>
-              Effect.sync(() => {
-                skippedTargets.delete(targetVersion);
-                pendingTarget ??= targetVersion;
-              }),
+              Clock.currentTimeMillis.pipe(
+                Effect.map((failedAtMs) => {
+                  skippedTargets.delete(targetVersion);
+                  nextReleaseCheckAt = failedAtMs + Duration.toMillis(RELEASE_CHECK_INTERVAL);
+                }),
+              ),
             ),
           );
           // The launcher stops us after accepting the handoff. Keep new provider
