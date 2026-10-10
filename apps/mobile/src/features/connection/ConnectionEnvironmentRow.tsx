@@ -82,7 +82,11 @@ export function ConnectionEnvironmentRow(props: {
         <Pressable
           className="min-w-0 flex-1 gap-0.5 active:opacity-70"
           accessibilityRole="button"
-          accessibilityLabel={`Manage ${props.environment.environmentLabel}`}
+          accessibilityLabel={
+            props.opensDetails
+              ? `Manage ${props.environment.environmentLabel}`
+              : `${props.expanded ? "Collapse" : "Expand"} details for ${props.environment.environmentLabel}`
+          }
           onPress={props.onToggle}
         >
           <View className="flex-row items-center gap-1.5">
@@ -138,9 +142,18 @@ export function ConnectionEnvironmentRow(props: {
         />
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Toggle environment details"
+          accessibilityLabel={
+            props.opensDetails
+              ? `Manage ${props.environment.environmentLabel}`
+              : `${props.expanded ? "Collapse" : "Expand"} details for ${props.environment.environmentLabel}`
+          }
           onPress={props.onToggle}
-          hitSlop={8}
+          style={{
+            minWidth: 44,
+            minHeight: 44,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
         >
           <SymbolView
             name={props.opensDetails ? "chevron.right" : "chevron.down"}

@@ -323,6 +323,8 @@ function CloudEnvironmentRowShell(props: {
   const errorCanExpand = props.connectionError !== null && errorLineCount > 1;
   const isErrorExpanded = errorCanExpand && props.errorExpanded;
   const StatusContainer = errorCanExpand ? Pressable : View;
+  const ContentContainer = props.onOpen || props.onRemove ? Pressable : View;
+  const ChevronContainer = props.onOpen || props.onRemove ? Pressable : View;
   const onMeasuredErrorTextLayout = useCallback(
     (event: TextLayoutEvent) => {
       if (!props.connectionError) {
@@ -340,11 +342,17 @@ function CloudEnvironmentRowShell(props: {
   );
   return (
     <View collapsable={false} className="flex-row items-center gap-3 bg-grouped-card px-4 py-3.5">
-      <Pressable
+      <ContentContainer
         className="min-w-0 flex-1 gap-0.5"
         accessibilityHint={props.onRemove ? "Long press to remove from this device" : undefined}
         accessibilityRole={props.onOpen ? "button" : undefined}
-        accessibilityLabel={props.onOpen ? `Manage ${props.label}` : undefined}
+        accessibilityLabel={
+          props.onOpen
+            ? `Manage ${props.label}`
+            : props.onRemove
+              ? `Remove ${props.label} from this device`
+              : undefined
+        }
         onPress={props.onOpen}
         onLongPress={props.onRemove}
       >
@@ -407,7 +415,7 @@ function CloudEnvironmentRowShell(props: {
             />
           ) : null}
         </StatusContainer>
-      </Pressable>
+      </ContentContainer>
       <ThemedSwitch
         accessibilityLabel={`Enable ${props.label}`}
         style={{ alignSelf: "center" }}
@@ -416,16 +424,28 @@ function CloudEnvironmentRowShell(props: {
         value={props.value}
       />
       {props.opensDetails || props.showChevron ? (
-        <Pressable
+        <ChevronContainer
           accessibilityRole={props.onOpen ? "button" : undefined}
-          accessibilityLabel={props.onOpen ? `Manage ${props.label}` : undefined}
+          accessibilityLabel={
+            props.onOpen
+              ? `Manage ${props.label}`
+              : props.onRemove
+                ? `Remove ${props.label} from this device`
+                : undefined
+          }
+          accessibilityHint={props.onRemove ? "Long press to remove from this device" : undefined}
           onPress={props.onOpen}
           onLongPress={props.onRemove}
-          hitSlop={8}
-          style={{ opacity: props.opensDetails ? 1 : 0.4 }}
+          style={{
+            opacity: props.opensDetails ? 1 : 0.4,
+            minWidth: 44,
+            minHeight: 44,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
         >
           <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-subtle" />
-        </Pressable>
+        </ChevronContainer>
       ) : null}
     </View>
   );
