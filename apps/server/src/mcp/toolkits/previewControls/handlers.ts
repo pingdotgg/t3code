@@ -33,9 +33,7 @@ export const layer = McpToolAccess.toLayer(PreviewControlsToolkit, {
         sessions.some((session) => session.tabId === input.tabId && session.runtime === "server")
       ) {
         const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
-        yield* broker
-          .invoke({ scope, operation: "close", input: {}, tabId: input.tabId })
-          .pipe(Effect.mapError(unavailable));
+        yield* broker.invoke({ scope, operation: "close", input: {}, tabId: input.tabId });
         return {};
       }
       yield* manager
