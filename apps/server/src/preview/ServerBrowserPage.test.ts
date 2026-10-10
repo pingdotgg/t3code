@@ -276,6 +276,18 @@ describe("server browser element refs", () => {
     ).rejects.toMatchObject({ tag: "PreviewAutomationTimeoutError" });
     expect(await ServerBrowserPage.evaluate(cdp, { expression: "1 + 1" }, 2_000)).toBe(2);
   });
+
+  it("tells the agent what blocks a click that times out", async () => {
+    await page.setContent(
+      `<button>Save</button><div class="overlay" style="position:fixed;inset:0"></div>`,
+    );
+    const failure = await ServerBrowserPage.click(page, {
+      selector: "button",
+      timeoutMs: 1_500,
+    }).then(() => undefined, ServerBrowserPage.toOperationError);
+    expect(failure).toMatchObject({ tag: "PreviewAutomationTimeoutError" });
+    expect(failure?.message).toMatch(/<div class="overlay".*intercepts pointer events/);
+  });
 });
 
 describe("server browser drag", () => {
