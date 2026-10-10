@@ -9,9 +9,11 @@ import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import LimitsWorkflowWorker from "./fixtures/workflow-limits/limits-worker.ts";
 import { STEP_LIMIT } from "./fixtures/workflow-limits/limits-workflow.ts";
+import ScheduledWorkflowWorker from "./fixtures/workflow-schedules/scheduled-worker.ts";
+import { YEARLY_CRON } from "./fixtures/workflow-schedules/scheduled-workflow.ts";
 import Stack from "./fixtures/workflow/stack.ts";
 import WorkflowTestWorker from "./fixtures/workflow/workflow-worker.ts";
 
@@ -147,7 +149,15 @@ test(
     // returns, the body dies on the first yield and `output` is undefined.
     expect(lastStatus.output?.envBindingCount).toBeGreaterThan(0);
   }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:worker",
+      "provider:cloudflare:workflow",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );
 
 test(
@@ -233,7 +243,15 @@ test(
     expect(lastStatus.output?.greeting).toBe("external-ok");
     expect(lastStatus.output?.instanceId).toBe(instanceId);
   }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:worker",
+      "provider:cloudflare:workflow",
+      "live",
+    ],
+    timeout: 180_000,
+  },
 );
 
 // Canonical `list()` test (account collection): deploy the worker+workflow
@@ -281,7 +299,15 @@ test.provider.skipIf(!process.env.CLOUDFLARE_TEST_WORKFLOW_LIST)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:worker",
+      "provider:cloudflare:workflow",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -346,5 +372,72 @@ test.provider(
 
       yield* scratch.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:worker",
+      "provider:cloudflare:workflow",
+      "live",
+    ],
+    timeout: 120_000,
+  },
+);
+
+// ---------------------------------------------------------------------------
+// #1473 regression: native Workflow schedules on the Effect-native form,
+// driven by the file-based `fixtures/workflow-schedules` worker. Deploy a
+// workflow declared with `schedules`, then read it back out-of-band from
+// getWorkflow (the read that surfaces `schedules`) to confirm it was
+// applied. The cron is yearly so the test does not wait for a fire.
+// ---------------------------------------------------------------------------
+
+const waitForAppliedSchedules = (workflowName: string, expected: string[]) =>
+  Effect.gen(function* () {
+    const { accountId } = yield* yield* CloudflareEnvironment;
+    const workflow = yield* workflows.getWorkflow({
+      accountId,
+      workflowName,
+    });
+    return (workflow.schedules ?? []).map((s) => s.cron);
+  }).pipe(
+    Effect.flatMap((crons) =>
+      crons.length === expected.length &&
+      crons.every((cron, index) => cron === expected[index])
+        ? Effect.succeed(crons)
+        : Effect.fail(
+            new Error(`schedules not applied yet: ${JSON.stringify(crons)}`),
+          ),
+    ),
+    Effect.retry({ schedule: Schedule.spaced("2 seconds"), times: 15 }),
+  );
+
+test.provider(
+  "effect-native workflow applies native cron schedules",
+  (scratch) =>
+    Effect.gen(function* () {
+      yield* scratch.destroy();
+
+      const deployed = yield* scratch.deploy(
+        Effect.gen(function* () {
+          return { worker: yield* ScheduledWorkflowWorker };
+        }),
+      );
+
+      const workflowName = yield* readWorkflowName(deployed.worker.workerName);
+      const applied = yield* waitForAppliedSchedules(workflowName, [
+        YEARLY_CRON,
+      ]);
+      expect(applied).toEqual([YEARLY_CRON]);
+
+      yield* scratch.destroy();
+    }).pipe(logLevel),
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:worker",
+      "provider:cloudflare:workflow",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );

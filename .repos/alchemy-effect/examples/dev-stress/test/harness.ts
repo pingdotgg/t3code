@@ -23,7 +23,7 @@ export const ALCHEMY_BIN = path.join(
   "node_modules",
   "alchemy",
   "bin",
-  "alchemy.ts",
+  "alchemy.js",
 );
 
 /** Entries never copied into a scratch project. */

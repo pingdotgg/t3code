@@ -11,10 +11,10 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
-import * as Reactivity from "effect/unstable/reactivity/Reactivity";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import type * as SqlConnection from "effect/unstable/sql/SqlConnection";
-import * as SqlError from "effect/unstable/sql/SqlError";
+import * as Reactivity from "effect/reactivity/Reactivity";
+import * as SqlClient from "effect/sql/SqlClient";
+import type * as SqlConnection from "effect/sql/SqlConnection";
+import * as SqlError from "effect/sql/SqlError";
 
 interface FakeQuery {
   text: string;
@@ -311,7 +311,7 @@ const sampleState = {
   output: { password: Redacted.make("s3cret") },
 } as never;
 
-describe("Postgres state store", () => {
+describe("Postgres state store", { tags: ["unit", "local"] }, () => {
   it.effect("requires exactly one of client or url", () => {
     const fake = makeFakePostgres();
     return Effect.gen(function* () {
@@ -335,10 +335,10 @@ describe("Postgres state store", () => {
 
   it.effect("reports an unresolvable url config as a state store error", () => {
     // `url` accepts any Effect of a Redacted string, so
-    // `Config.redacted(...)` can be passed straight through; a missing
+    // `Config.Redacted(...)` can be passed straight through; a missing
     // variable surfaces as a StateStoreError like any other failure.
     return withoutClient(
-      { url: Config.redacted("ALCHEMY_TEST_MISSING_STATE_DATABASE_URL") },
+      { url: Config.Redacted("ALCHEMY_TEST_MISSING_STATE_DATABASE_URL") },
       (store) => store.get(request),
     ).pipe(
       Effect.flip,

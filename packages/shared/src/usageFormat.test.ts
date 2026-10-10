@@ -5,9 +5,21 @@ import {
   enumerateHourStarts,
   formatDateTimeShort,
   formatHourShort,
+  formatPercent,
   formatRelativeHourShort,
   makeWindow,
 } from "./usageFormat.ts";
+
+describe("formatPercent", () => {
+  it("distinguishes a small positive share from zero", () => {
+    expect(formatPercent(0)).toBe("0.0%");
+    expect(formatPercent(0.0004)).toBe("<0.1%");
+    expect(formatPercent(0.0009)).toBe("<0.1%");
+    expect(formatPercent(0.001)).toBe("0.1%");
+    expect(formatPercent(0.023)).toBe("2.3%");
+    expect(formatPercent(0.00004, 2)).toBe("<0.01%");
+  });
+});
 
 describe("hourly usage formatting", () => {
   it("keeps requested zones separate when formatting repeated calls", () => {

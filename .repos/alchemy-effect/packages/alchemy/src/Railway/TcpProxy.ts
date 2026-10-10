@@ -1,8 +1,9 @@
-import type {
-  TcpProxiesResultItem,
-  TcpProxyCreateResponse,
-} from "@distilled.cloud/railway";
-import * as railway from "@distilled.cloud/railway";
+import {
+  waitUntilDeleted,
+  projectServices as fetchProjectServices,
+} from "./GraphQL.ts";
+import { Query, type UnwrapPlan } from "@distilled.cloud/core/query";
+import { Railway, type TCPProxy } from "@distilled.cloud/railway";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
@@ -12,6 +13,32 @@ import { Resource } from "../Resource.ts";
 import { matchesAlchemyPhysicalName } from "./Metadata.ts";
 import { ownedProjects, projectEnvironmentIds } from "./Project.ts";
 import type { Providers } from "./Providers.ts";
+
+const proxyFields = <E>(proxy: Query<TCPProxy, E>) => ({
+  id: proxy.id,
+  applicationPort: proxy.applicationPort,
+  deletedAt: proxy.deletedAt,
+  syncStatus: proxy.syncStatus,
+  domain: proxy.domain,
+  proxyPort: proxy.proxyPort,
+  serviceId: proxy.serviceId,
+  environmentId: proxy.environmentId,
+});
+type CloudProxy = UnwrapPlan<ReturnType<typeof proxyFields>>;
+
+const readTcpProxies = Query.fn((environmentId: string, serviceId: string) =>
+  Railway.tcpProxies({ environmentId, serviceId }).pipe(Query.map(proxyFields)),
+);
+
+const tcpProxyCreate = Query.fn(
+  (input: {
+    applicationPort: number;
+    environmentId: string;
+    serviceId: string;
+  }) => proxyFields(Railway.tcpProxyCreate({ input })),
+);
+
+const tcpProxyDelete = Query.fn((id: string) => Railway.tcpProxyDelete({ id }));
 
 /**
  * A resource-valued prop: the resource itself, or an Effect that produces
@@ -170,6 +197,7 @@ export type TcpProxy = Resource<
  * ```
  *
  * @resource
+ * @product Networking
  */
 export const TcpProxy = Resource<TcpProxy>("Railway.TcpProxy");
 
@@ -186,8 +214,6 @@ export class TcpProxyTargetMissing extends Data.TaggedError(
 )<{
   message: string;
 }> {}
-
-type CloudProxy = TcpProxiesResultItem | TcpProxyCreateResponse;
 
 const isGone = (proxy: CloudProxy | undefined) =>
   proxy === undefined ||
@@ -229,10 +255,10 @@ const targetOf = (
 ) => props.service ?? props.postgres ?? props.redis;
 
 const listProxies = (environmentId: string, serviceId: string) =>
-  railway.tcpProxies({ environmentId, serviceId }).pipe(
+  readTcpProxies(environmentId, serviceId).pipe(
     Effect.map((items) => items.filter((proxy) => !isGone(proxy))),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
-      Effect.succeed([] as TcpProxiesResultItem[]),
+    Effect.catchTag("RailwayNotFound", () =>
+      Effect.succeed([] as ReadonlyArray<CloudProxy>),
     ),
   );
 
@@ -277,13 +303,12 @@ const observe = Effect.fn(function* (input: {
 });
 
 const waitUntilGone = (environmentId: string, serviceId: string, id: string) =>
-  findById(environmentId, serviceId, id).pipe(
-    Effect.map((proxy) => proxy === undefined),
-    Effect.repeat({
-      schedule: Schedule.spaced("1 second"),
-      until: (gone) => gone,
-      times: 8,
-    }),
+  waitUntilDeleted(
+    "TcpProxy",
+    id,
+    findById(environmentId, serviceId, id).pipe(
+      Effect.map((proxy) => proxy === undefined),
+    ),
   );
 
 export const TcpProxyProvider = () =>
@@ -295,16 +320,17 @@ export const TcpProxyProvider = () =>
       const projects = yield* ownedProjects();
       const rows = yield* Effect.forEach(projects, (project) =>
         Effect.gen(function* () {
-          const live = yield* railway
-            .project({ id: project.projectId })
-            .pipe(
-              Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
-                Effect.succeed(undefined),
-              ),
-            );
-          const services = (
-            live?.services.edges.map((edge) => edge.node) ?? []
-          ).filter(
+          const live = yield* fetchProjectServices(
+            project.projectId,
+            (service) => ({
+              id: service.id,
+              name: service.name,
+              deletedAt: service.deletedAt,
+            }),
+          ).pipe(
+            Effect.catchTag("RailwayNotFound", () => Effect.succeed(undefined)),
+          );
+          const services = (live ?? []).filter(
             (service) =>
               service.deletedAt == null &&
               matchesAlchemyPhysicalName(service.name),
@@ -385,19 +411,15 @@ export const TcpProxyProvider = () =>
       });
 
       if (current === undefined) {
-        const created = yield* railway
-          .tcpProxyCreate({
-            input: {
-              applicationPort,
-              environmentId,
-              serviceId,
-            },
-          })
-          .pipe(
-            Effect.catchTag("RailwayValidationError", () =>
-              Effect.succeed(undefined),
-            ),
-          );
+        const created = yield* tcpProxyCreate({
+          applicationPort,
+          environmentId,
+          serviceId,
+        }).pipe(
+          Effect.catchTag("RailwayValidationError", () =>
+            Effect.succeed(undefined),
+          ),
+        );
         current =
           created !== undefined && !isGone(created)
             ? created
@@ -422,18 +444,16 @@ export const TcpProxyProvider = () =>
     delete: Effect.fn(function* ({ output }) {
       const id = output.id;
       if (id.length === 0) return;
-      yield* railway.tcpProxyDelete({ id }).pipe(
+      yield* tcpProxyDelete(id).pipe(
         // Railway serializes proxy mutations per environment: a delete
         // racing an in-flight deploy fails with "Cannot delete TCP proxy:
         // an operation is already in progress".
         Effect.retry({
-          while: (e) =>
-            e._tag === "RailwayInternalError" &&
-            e.message.includes("operation is already in progress"),
+          while: (e) => e._tag === "RailwayOperationInProgress",
           schedule: Schedule.spaced("3 seconds"),
-          times: 20,
+          times: 10,
         }),
-        Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.void),
+        Effect.catchTag("RailwayNotFound", () => Effect.void),
       );
       if (output.environmentId.length > 0 && output.serviceId.length > 0) {
         yield* waitUntilGone(output.environmentId, output.serviceId, id);

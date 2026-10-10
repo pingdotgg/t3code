@@ -7,7 +7,7 @@
  *
  * @since 4.0.0
  */
-import type { HttpServerRequest } from "effect/unstable/http/HttpServerRequest"
+import type { HttpServerRequest } from "effect/http/HttpServerRequest"
 import type * as Http from "node:http"
 
 /**

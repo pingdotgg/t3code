@@ -84,8 +84,18 @@ object AgentNotifications {
     cancelActivity(context)
     context.getSharedPreferences(STORE, Context.MODE_PRIVATE).edit().clear().apply()
     val manager = manager(context)
-    manager.activeNotifications.filter { it.tag == ACTIVITY_TAG || it.tag == ALERT_TAG }
+    manager.activeNotifications.filter {
+      it.tag == ACTIVITY_TAG || it.tag == ALERT_TAG ||
+        it.tag?.startsWith("$ALERT_TAG-summary:") == true
+    }
       .forEach { manager.cancel(it.tag, it.id) }
+  }
+
+  /** Records the thread route the app is showing, or null when none is open. */
+  @Volatile private var threadOnScreen: String? = null
+
+  fun setThreadOnScreen(path: String?) {
+    threadOnScreen = path
   }
 
   @Synchronized
@@ -135,26 +145,72 @@ object AgentNotifications {
     val seen = prefs.getString("seenAlertsOrdered", null)?.split('\n')
       ?: prefs.getStringSet("seenAlerts", emptySet()).orEmpty().toList()
     if (alertId != null && alertId !in seen) {
-      // Match iOS foreground presentation. Consume suppressed alerts as well,
-      // so a delivery retry cannot surface them after the app backgrounds.
-      if (!ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
-        val title = data["alert_title"].orEmpty().take(120)
-        // Grouped alerts list up to five 120-character thread titles.
-        val body = data["alert_body"].orEmpty().take(608)
-        val id = alertId.hashCode()
-        val notification = base(context, ALERT_CHANNEL)
-          .setContentTitle(title).setContentText(body)
-          .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-          .setAutoCancel(true)
-          .setContentIntent(contentIntent(context, scheme, data["alert_path"], id))
-          .build()
-        manager(context).notify(ALERT_TAG, id, notification)
+      // Consume suppressed alerts so retries cannot resurface them later.
+      val resumed = ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(
+        Lifecycle.State.RESUMED
+      )
+      val visibleThread = threadOnScreen
+      val onScreen = resumed && visibleThread != null && data["alert_path"] == visibleThread
+      if (!onScreen) {
+        postAlert(context, scheme, data, alertId)
       }
       prefs.edit().remove("seenAlerts").putString(
         "seenAlertsOrdered",
         (seen.takeLast(63) + alertId).joinToString("\n")
       ).apply()
     }
+  }
+
+  private fun postAlert(
+    context: Context,
+    scheme: String,
+    data: Map<String, String>,
+    alertId: String
+  ) {
+    val title = data["alert_title"].orEmpty().take(120)
+    // Grouped alerts list up to five 120-character thread titles.
+    val body = data["alert_body"].orEmpty().take(608)
+    val id = alertId.hashCode()
+    val group = data["alert_group"]?.takeIf { it.isNotBlank() } ?: ALERT_TAG
+    val notification = base(context, ALERT_CHANNEL)
+      .setContentTitle(title).setContentText(body)
+      .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+      .setAutoCancel(true)
+      .setGroup(group)
+      .setContentIntent(contentIntent(context, scheme, data["alert_path"], id))
+      .build()
+    manager(context).notify(ALERT_TAG, id, notification)
+    val children = manager(context).activeNotifications.filter {
+      it.tag == ALERT_TAG && it.notification.group == group
+    }
+    if (children.size > 1) {
+      val style = NotificationCompat.InboxStyle()
+      children.forEach {
+        style.addLine(it.notification.extras.getCharSequence(android.app.Notification.EXTRA_TEXT))
+      }
+      val summary = base(context, ALERT_CHANNEL)
+        .setContentTitle(title)
+        .setContentText(body)
+        .setStyle(style)
+        .setGroup(group)
+        .setGroupSummary(true)
+        .setSilent(true)
+        .setAutoCancel(true)
+        .setContentIntent(contentIntent(context, scheme, data["alert_path"], 0))
+        .build()
+      manager(context).notify("$ALERT_TAG-summary:$group", 0, summary)
+    }
+  }
+
+  /**
+   * Renders a relay-shaped payload without the registration, freshness and
+   * foreground checks, for the showcase capture's staged notifications.
+   */
+  @Synchronized
+  fun showcase(context: Context, scheme: String, data: Map<String, String>) {
+    channels(context)
+    data["alert_id"]?.let { postAlert(context, scheme, data, it) }
+    showActivity(context, scheme, data, data["active"] == "true", RUNNING_LIFETIME_MS)
   }
 
   private fun updateActivity(

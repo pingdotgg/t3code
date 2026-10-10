@@ -91,6 +91,16 @@ const imageProps = {
           <h2 class="platform-name">Linux</h2>
         </div>
         <div class="download-cards">
+          <a class="download-card" data-asset="amd64.deb" href={RELEASES_URL}>
+            <span class="card-icon">
+              <Image class="card-icon--stable" src={iconStable} width={28} height={28} loading="lazy" {...imageProps} />
+              <Image class="card-icon--nightly" src={iconNightly} width={28} height={28} loading="lazy" {...imageProps} />
+            </span>
+            <span class="card-text">
+              <span class="card-arch">Debian, Ubuntu</span>
+              <span class="card-format">.deb</span>
+            </span>
+          </a>
           <a class="download-card" data-asset="x86_64.AppImage" href={RELEASES_URL}>
             <span class="card-icon">
               <Image class="card-icon--stable" src={iconStable} width={28} height={28} loading="lazy" {...imageProps} />
@@ -102,6 +112,10 @@ const imageProps = {
             </span>
           </a>
         </div>
+        <p class="intel-note">
+          On ARM? Download the arm64 <a data-asset="arm64.deb" href={RELEASES_URL}>.deb</a> or
+          <a data-asset="arm64.AppImage" href={RELEASES_URL}>AppImage</a>.
+        </p>
       </section>
 
       <!-- Mobile. Stable only, there is no nightly mobile build. -->
@@ -131,10 +145,13 @@ const imageProps = {
           <svg class="platform-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7l5 5-5 5M12 17h7"/></svg>
           <h2 class="platform-name">Terminal</h2>
         </div>
-        <code class="cli-line">npx t3@nightly</code>
-        <p class="cli-note">No Node.js? The preview build installs as a single download:</p>
-        <code class="cli-line">curl -fsSL https://t3.codes/install.sh | sh</code>
-        <code class="cli-line">irm https://t3.codes/install.ps1 | iex</code>
+        <code class="cli-line cli-line--stable">curl -fsSL https://t3.codes/install.sh | sh</code>
+        <code class="cli-line cli-line--stable">irm https://t3.codes/install.ps1 | iex</code>
+        <code class="cli-line cli-line--nightly">curl -fsSL https://t3.codes/install.sh | T3CODE_CHANNEL=nightly sh</code>
+        <code class="cli-line cli-line--nightly">$env:T3CODE_CHANNEL="nightly"; irm https://t3.codes/install.ps1 | iex</code>
+        <p class="cli-note">Or try it once without installing:</p>
+        <code class="cli-line cli-line--stable">npx t3@latest</code>
+        <code class="cli-line cli-line--nightly">npx t3@nightly</code>
       </section>
     </div>
 
@@ -402,16 +419,18 @@ const imageProps = {
     gap: 0.75rem;
   }
 
-  .platform-section--cli {
-    display: none;
-  }
-
   .download-page[data-channel="nightly"] .platform-section--mobile {
     display: none;
   }
 
-  .download-page[data-channel="nightly"] .platform-section--cli {
-    display: flex;
+  /* The CLI ships on both trains; only the install command differs. */
+  .cli-line--nightly,
+  .download-page[data-channel="nightly"] .cli-line--stable {
+    display: none;
+  }
+
+  .download-page[data-channel="nightly"] .cli-line--nightly {
+    display: block;
   }
 
   .platform-header {

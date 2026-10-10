@@ -17,8 +17,12 @@ public final class T3KeyboardCommandsModule: Module {
 public final class T3KeyboardCommandsView: ExpoView {
   let onCommand = EventDispatcher()
   private var enabledCommands = Set<String>()
+  private let shortcutInputView = UIView(frame: .zero)
 
   public override var canBecomeFirstResponder: Bool { true }
+
+  // This responder handles hardware shortcuts, so reclaiming it must not show a software keyboard.
+  public override var inputView: UIView? { shortcutInputView }
 
   public override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
     if action == #selector(openCommandPalette) || action == #selector(paletteNext) || action == #selector(palettePrevious) || action == #selector(paletteDismiss),
@@ -52,6 +56,7 @@ public final class T3KeyboardCommandsView: ExpoView {
         title: "Copy PR Link or Thread ID"
       ),
       enabledCommand("toggleSidebar", input: "\\", modifiers: .command, action: #selector(handleToggleSidebar), title: "Toggle Sidebar"),
+      enabledCommand("cycleHost", input: "h", modifiers: [.command, .shift], action: #selector(cycleHost), title: "Next Machine"),
     ].compactMap { $0 }
     if isPad {
       commands += (1...9).compactMap { index in
@@ -88,6 +93,8 @@ public final class T3KeyboardCommandsView: ExpoView {
 
   public required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
+    inputAssistantItem.leadingBarButtonGroups = []
+    inputAssistantItem.trailingBarButtonGroups = []
     NotificationCenter.default.addObserver(
       self,
       selector: #selector(reclaimFirstResponderIfAvailable),
@@ -150,6 +157,7 @@ public final class T3KeyboardCommandsView: ExpoView {
   @objc private func openReview() { emit("review") }
   @objc private func copyThreadReference() { emit("copyThreadReference") }
   @objc private func handleToggleSidebar() { emit("toggleSidebar") }
+  @objc private func cycleHost() { emit("cycleHost") }
 
   private func emit(_ command: String) {
     onCommand(["command": command])

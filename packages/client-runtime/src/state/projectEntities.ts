@@ -1,11 +1,11 @@
 import type {
   EnvironmentId,
   OrchestrationProjectShell,
-  OrchestrationShellSnapshot,
+  OrchestrationV2ShellSnapshot,
   ProjectId,
   ScopedProjectRef,
 } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import type { EnvironmentProject } from "./models.ts";
 import { scopeProject } from "./models.ts";
@@ -19,7 +19,7 @@ export function createEnvironmentProjectAtoms(input: {
   readonly catalogValueAtom: Atom.Atom<EnvironmentCatalogState>;
   readonly snapshotAtom: (
     environmentId: EnvironmentId,
-  ) => Atom.Atom<OrchestrationShellSnapshot | null>;
+  ) => Atom.Atom<OrchestrationV2ShellSnapshot | null>;
 }) {
   const environmentProjectsAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make(

@@ -1,0 +1,145 @@
+---
+title: SvelteKit
+description: Deploy SvelteKit to Prisma Compute with Prisma.Website.SvelteKit — SSR and prerendered assets on Bun, with native Vite dev locally.
+sidebar:
+  order: 12
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks @vercel/nft";
+
+`Prisma.Website.SvelteKit` builds [SvelteKit](https://svelte.dev/docs/kit)
+with its Vite pipeline and an injected Node-target adapter. Client
+assets, prerendered pages, and the server handler are uploaded as a
+`tar.gz` artifact and served on **Bun in Prisma Compute**, not a Node
+container.
+
+## Install
+
+Install the build-time integration; the resource loads its `/sveltekit`
+and `/sveltekit/node` exports from your project:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun"><Code code={`bun add -d ${devDeps}`} lang="sh" /></TabItem>
+  <TabItem label="npm" icon="npm"><Code code={`npm install -D ${devDeps}`} lang="sh" /></TabItem>
+  <TabItem label="pnpm" icon="pnpm"><Code code={`pnpm add -D ${devDeps}`} lang="sh" /></TabItem>
+  <TabItem label="yarn" icon="seti:yarn"><Code code={`yarn add -D ${devDeps}`} lang="sh" /></TabItem>
+</Tabs>
+
+## Configure SvelteKit
+
+This integration follows Kit v3: Kit options live in the
+`sveltekit(...)` call in `vite.config.ts`, not `svelte.config.js`.
+Your config loads natively. Alchemy injects its adapter; don't set
+`kit.adapter`. An adapter declared in the native config is replaced
+with a warning.
+
+## Declare the Website
+
+```typescript
+// alchemy.run.ts
+import * as Prisma from "alchemy/Prisma";
+
+export const Website = Prisma.Website.SvelteKit("Website");
+```
+
+Use `rootDir` for an app outside `.`. Omit `project` to create a
+database-less Prisma project on live deploy, or pass an existing project.
+
+## Add it to the Stack
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MySvelteKitSite",
+  { providers: Prisma.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+Routes with `export const prerender = true` are generated at build
+time and served as files. Server routes and load functions run in the
+Kit handler on Compute. `site.url` is the deployed endpoint.
+
+## Add environment variables
+
+```diff lang="typescript"
+export const Website = Prisma.Website.SvelteKit("Website", {
++  env: {
++    GREETING: "Hello from Alchemy!",
++    API_BASE: "https://api.example.com",
++  },
+});
+```
+
+Values are applied before build and dev, and passed to Compute. These
+are process environment variables, not Worker bindings.
+
+## Read the environment in server code
+
+```typescript
+// src/routes/+page.server.ts
+export const load = () => ({
+  greeting: process.env.GREETING ?? "hello",
+});
+```
+
+The Bun process exposes `process.env`; Kit's `$env/dynamic/private`
+reads the server environment too. Keep secrets out of public env keys.
+
+## Kit options
+
+Keep Vite plugins and ordinary Kit config in your app:
+
+```typescript
+// vite.config.ts
+import { sveltekit } from "@sveltejs/kit/vite";
+import tailwindcss from "@tailwindcss/vite";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [tailwindcss(), sveltekit({ alias: { $lib: "src/lib" } })],
+});
+```
+
+The serializable `kit` bag overrides those options:
+
+```typescript
+export const Website = Prisma.Website.SvelteKit("Website", {
+  kit: { paths: { base: "/docs" } },
+});
+```
+
+Alchemy owns the adapter in both cases.
+
+## Local dev
+
+`bun alchemy dev` starts SvelteKit's own Vite server with HMR.
+`site.url` is local, and the Website creates no Prisma resources.
+`.pipe(Alchemy.remote())` opts into live deployment during dev.
+
+## Custom domain
+
+```typescript
+const site = yield* Prisma.Website.SvelteKit("Web", {
+  domain: "app.example.com",
+});
+```
+
+This creates `Prisma.CustomDomain`; the app must be on the project's
+current default branch. Configure its returned DNS records yourself
+and check status before cutover. See
+[Custom domains](/prisma/frontend/websites#custom-domains).
+
+## Where next
+
+- [SvelteKit API](/providers/prisma/website/sveltekit).
+- [SvelteKit example](https://github.com/alchemy-run/alchemy/tree/main/examples/prisma-website-sveltekit).
+- [Websites](/prisma/frontend/websites) and [Compute apps](/prisma/compute/apps).

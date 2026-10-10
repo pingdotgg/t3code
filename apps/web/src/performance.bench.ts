@@ -1,4 +1,4 @@
-import { EventId, ProjectId, TurnId, type OrchestrationThreadActivity } from "@t3tools/contracts";
+import { NodeId, PlanId, ProjectId, RunId } from "@t3tools/contracts";
 import {
   getLatestThreadForProject,
   sortActiveThreadsByOrderKey,
@@ -6,12 +6,13 @@ import {
   sortThreads,
 } from "@t3tools/client-runtime/state/thread-sort";
 import { formatHourShort, formatRelativeHourShort } from "@t3tools/shared/usageFormat";
-import { bench, describe } from "vite-plus/test";
+import { describe, test } from "vite-plus/test";
 
+import { makeThreadProjectionFixture } from "./test-fixtures";
 import { deriveActivePlanState } from "./session-logic";
 
 const projectId = ProjectId.make("benchmark-project");
-const turnId = TurnId.make("benchmark-turn");
+const runId = RunId.make("benchmark-run");
 const start = Date.parse("2026-08-11T00:00:00.000Z");
 const threads = Array.from({ length: 1_000 }, (_, index) => {
   const timestamp = new Date(start + ((index * 997) % 1_000) * 60_000).toISOString();
@@ -25,41 +26,56 @@ const threads = Array.from({ length: 1_000 }, (_, index) => {
     unsettledAt: null,
   };
 });
-const activities: OrchestrationThreadActivity[] = Array.from({ length: 500 }, (_, index) => ({
-  id: EventId.make(`activity-${index}`),
-  turnId,
-  sequence: index,
-  createdAt: new Date(start + index * 1_000).toISOString(),
-  kind: index % 100 === 0 ? "turn.plan.updated" : "tool.completed",
-  summary: "Benchmark activity",
-  tone: "info",
-  payload: index % 100 === 0 ? { plan: [{ step: "Run checks", status: "inProgress" }] } : {},
-}));
+const baseProjection = makeThreadProjectionFixture();
+const projection = {
+  ...baseProjection,
+  plans: Array.from({ length: 5 }, (_, index) => ({
+    id: PlanId.make(`plan-${index}`),
+    runId,
+    threadId: baseProjection.thread.id,
+    nodeId: NodeId.make("bench-node"),
+    status: "active" as const,
+    kind: "todo_list" as const,
+    steps: [{ id: "check", text: "Run checks", status: "running" as const }],
+  })),
+};
 const hours = Array.from({ length: 24 }, (_, index) =>
   new Date(start + index * 3_600_000).toISOString(),
 );
 const referenceTime = "2026-08-12T00:00:00.000Z";
 
 describe("client performance", () => {
-  bench("sort 1000 threads by recent activity", () => {
-    sortThreads(threads, "updated_at");
+  test("sort 1000 threads by recent activity", async ({ bench }) => {
+    await bench("sort", () => {
+      sortThreads(threads, "updated_at");
+    }).run();
   });
-  bench("sort 1000 active threads", () => {
-    sortActiveThreadsByOrderKey(threads);
+  test("sort 1000 active threads", async ({ bench }) => {
+    await bench("sort", () => {
+      sortActiveThreadsByOrderKey(threads);
+    }).run();
   });
-  bench("sort 1000 keyless pinned threads", () => {
-    sortPinnedThreadsByOrderKey(threads);
+  test("sort 1000 keyless pinned threads", async ({ bench }) => {
+    await bench("sort", () => {
+      sortPinnedThreadsByOrderKey(threads);
+    }).run();
   });
-  bench("select latest project thread from 1000 threads", () => {
-    getLatestThreadForProject(threads, projectId, "updated_at");
+  test("select latest project thread from 1000 threads", async ({ bench }) => {
+    await bench("select", () => {
+      getLatestThreadForProject(threads, projectId, "updated_at");
+    }).run();
   });
-  bench("derive plan from 500 activities with 5 plan updates", () => {
-    deriveActivePlanState(activities, turnId);
+  test("derive current plan from 5 normalized plans", async ({ bench }) => {
+    await bench("derive", () => {
+      deriveActivePlanState(projection, runId);
+    }).run();
   });
-  bench("format 24 hourly usage labels and tooltips", () => {
-    hours.map((hour) => [
-      formatHourShort(hour, "America/New_York"),
-      formatRelativeHourShort(hour, referenceTime, "America/New_York"),
-    ]);
+  test("format 24 hourly usage labels and tooltips", async ({ bench }) => {
+    await bench("format", () => {
+      hours.map((hour) => [
+        formatHourShort(hour, "America/New_York"),
+        formatRelativeHourShort(hour, referenceTime, "America/New_York"),
+      ]);
+    }).run();
   });
 });

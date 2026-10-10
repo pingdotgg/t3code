@@ -1,8 +1,8 @@
-import { CredentialsFromEnv } from "@distilled.cloud/fly-io";
 import * as sprites from "@distilled.cloud/fly-io/sprites";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import { CredentialsFromAmbientOrEnv } from "./Credentials.ts";
 import { Exec, type ExecRequest } from "./Exec.ts";
 import { makeHttpSpriteBinding } from "./SpriteHttp.ts";
 
@@ -21,6 +21,7 @@ import { makeHttpSpriteBinding } from "./SpriteHttp.ts";
  * ```
  *
  * @layer
+ * @product Sprite
  * @provides Fly.Exec
  */
 export const ExecHttp = Layer.effect(
@@ -43,4 +44,7 @@ export const ExecHttp = Layer.effect(
         }),
     }),
   ),
-).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(CredentialsFromEnv));
+).pipe(
+  Layer.provide(FetchHttpClient.layer),
+  Layer.provide(CredentialsFromAmbientOrEnv),
+);

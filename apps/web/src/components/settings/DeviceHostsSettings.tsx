@@ -1,10 +1,13 @@
+import { DeviceToolVersions } from "../device/DeviceToolVersions";
+import { AuthSettingsWriteScope } from "@t3tools/contracts";
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { AppleIcon, AndroidIcon } from "../Icons";
 import { Spinner } from "../ui/spinner";
 import type { EnvironmentId, SshDeviceHostConfig } from "@t3tools/contracts";
 import { randomUUID } from "../../lib/utils";
 import { useState } from "react";
-import { useDeviceState } from "../../state/device";
+import { deviceEnvironment, useDeviceState } from "../../state/device";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
@@ -21,6 +24,7 @@ import { deviceHostConnectionKey } from "./deviceHostConnectionChecks";
 
 export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null }) {
   const { scope, environments, connectedEnvironments } = useSettingsScope();
+  const canConfigure = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
   const projectScope = scope.kind === "project" || scope.kind === "checkout";
   const update = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   const [editing, setEditing] = useState<SshDeviceHostConfig | null>(null);
@@ -40,6 +44,9 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
         environments.map(async (environment) => {
           if (environment.connection.phase !== "connected" || !environment.serverConfig) {
             throw new Error("Environment disconnected");
+          }
+          if (!readEnvironmentScope(environment.environmentId, AuthSettingsWriteScope)) {
+            throw new Error("This connection cannot change device settings.");
           }
           return update({
             environmentId: environment.environmentId,
@@ -84,7 +91,9 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
         <Button
           size="sm"
           variant="outline"
-          disabled={projectScope || busy || !props.environmentId || editing !== null}
+          disabled={
+            !canConfigure || projectScope || busy || !props.environmentId || editing !== null
+          }
           onClick={() => {
             setOriginalHost(null);
             setEditing({ id: randomUUID(), label: "", target: "" });
@@ -109,9 +118,10 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
                   </p>
                 ) : null}
                 <DeviceHostList
+                  environmentLabel={environment.label}
                   environmentId={environment.environmentId}
                   hosts={environment.serverConfig?.settings.deviceHosts ?? []}
-                  busy={projectScope || busy}
+                  busy={!canConfigure || projectScope || busy}
                   checks={checks}
                   testConnection={async (host) => {
                     const results = await testConnection(host);
@@ -157,6 +167,7 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
 }
 
 function DeviceHostList({
+  environmentLabel,
   environmentId,
   hosts,
   busy,
@@ -165,6 +176,7 @@ function DeviceHostList({
   checks,
   testConnection,
 }: {
+  environmentLabel: string;
   environmentId: EnvironmentId;
   hosts: ReadonlyArray<SshDeviceHostConfig>;
   busy: boolean;
@@ -174,6 +186,8 @@ function DeviceHostList({
   testConnection: ReturnType<typeof useHostConnectionChecks>["testConnection"];
 }) {
   const { state } = useDeviceState(environmentId);
+  const retry = useAtomCommand(deviceEnvironment.list);
+  const [retrying, setRetrying] = useState<string | null>(null);
   return (
     <>
       {hosts.length === 0 ? (
@@ -224,7 +238,8 @@ function DeviceHostList({
                         }
                       >
                         {platform.platform === "ios" ? (
-                          <AppleIcon className="size-3.5" />
+                          // The Apple mark is bottom-heavy; lift it so it does not dip under the label.
+                          <AppleIcon className="size-3.5 -translate-y-px" />
                         ) : (
                           <AndroidIcon className="size-3.5" />
                         )}
@@ -236,6 +251,14 @@ function DeviceHostList({
                   ))}
               </div>
               <p className="truncate text-xs text-muted-foreground">{host.target}</p>
+              <DeviceToolVersions
+                owner={environmentLabel}
+                error={state.hosts.find((value) => value.id === host.id)?.toolInspectionError}
+                tools={
+                  state.hosts.find((value) => value.id === host.id)?.tools ??
+                  (check?.status === "connected" ? check.tools : undefined)
+                }
+              />
               {check?.status === "local" ? (
                 <p className="mt-1 text-xs text-muted-foreground">Already available locally</p>
               ) : null}
@@ -253,7 +276,7 @@ function DeviceHostList({
                 role="status"
                 className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
               >
-                <Spinner className="size-3" />
+                <Spinner size="xs" />
                 {progress}
               </span>
             ) : null}
@@ -283,14 +306,32 @@ function DeviceHostList({
                 </MenuItem>
               </MenuPopup>
             </Menu>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy || progress !== null}
-              onClick={() => void testConnection(host)}
-            >
-              Test connection
-            </Button>
+            {status?.status === "failed" &&
+            state.supportsHostRetry &&
+            state.hostStatus !== "disabled" ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy || retrying !== null}
+                onClick={() => {
+                  setRetrying(host.id);
+                  void retry({ environmentId, input: { retryHostId: host.id } }).finally(() =>
+                    setRetrying(null),
+                  );
+                }}
+              >
+                {retrying === host.id ? "Retrying…" : "Retry"}
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy || progress !== null}
+                onClick={() => void testConnection(host)}
+              >
+                Test connection
+              </Button>
+            )}
           </div>
         );
       })}

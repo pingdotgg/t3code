@@ -5,8 +5,9 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import * as pathe from "pathe";
+import type { Api } from "./fixtures/worker-entrypoint-binding/entrypoint-target-worker.ts";
 
 // `dev: true` runs local providers behind the RPC sidecar proxy by default,
 // matching the process topology of the real `alchemy dev` command.
@@ -67,7 +68,7 @@ test.provider(
               "fixtures/worker-entrypoint-binding/entrypoint-caller-worker.ts",
             ),
             env: {
-              API: Cloudflare.WorkerEntrypoint(target, {
+              API: Cloudflare.WorkerEntrypoint<Api>(target, {
                 entrypoint: "Api",
                 props: { tenant: "acme" },
               }),
@@ -92,5 +93,8 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:worker", "local"],
+    timeout: 120_000,
+  },
 );

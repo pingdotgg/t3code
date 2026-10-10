@@ -100,7 +100,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
 ```
 
 `Cloudflare.AI.QueryGatewayBinding` is the runtime side of the
-binding. Provide it once at the bottom of the Init layer chain and
+binding. Provide it once at the bottom of the constructor's layer chain and
 every `QueryGateway(...)` further up will resolve.
 
 ## Build a `LanguageModel` layer
@@ -127,7 +127,7 @@ that satisfies Effect's standard AI service.
 ```
 
 `parameters` is the per-call default; any individual call can still
-override it. The Init phase is the right place to build this layer —
+override it. The Construction phase is the right place to build this layer —
 construction is pure and the binding factory only exists here.
 
 ## Generate text on `/generate`
@@ -138,9 +138,9 @@ the `languageModel` layer to the handler and call it like any other
 Effect.
 
 ```diff lang="typescript"
-+import { LanguageModel } from "effect/unstable/ai";
- import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
- import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
++import { LanguageModel } from "effect/ai";
+ import { HttpServerRequest } from "effect/http/HttpServerRequest";
+ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
    return {
      fetch: Effect.gen(function* () {
@@ -202,7 +202,7 @@ flushes through the Worker → edge → client without buffering.
 
 ```diff lang="typescript"
 +import * as Stream from "effect/Stream";
-+import * as Sse from "effect/unstable/encoding/Sse";
++import * as Sse from "effect/encoding/Sse";
 
 +      if (url.pathname === "/stream" && request.method === "POST") {
 +        const body = (yield* request.json) as { prompt?: string };

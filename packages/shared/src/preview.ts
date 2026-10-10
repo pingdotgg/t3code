@@ -57,6 +57,74 @@ function previewUrlProtocol(rawUrl: string): string | undefined {
   return /^([A-Za-z][A-Za-z\d+.-]*):/.exec(rawUrl)?.[1]?.toLowerCase().concat(":");
 }
 
+const SEARCH_URL = "https://duckduckgo.com/?q=";
+/** A bare host that is always an address: localhost, an IPv4 literal, or a bracketed IPv6 one. */
+const ADDRESS_HOST_PATTERN = /^(?:localhost|\d{1,3}(?:\.\d{1,3}){3}|\[[\da-f:.]+\])$/i;
+const BARE_HOST_PORT_PATTERN = /^[^/?#:@]+:\d+(?:[/?#]|$)/;
+/**
+ * Registered schemes that are never a bare host, so `ftp:21` or `tel:5551234`
+ * is rejected rather than read as host and port.
+ */
+const KNOWN_NON_WEB_SCHEMES: ReadonlySet<string> = new Set([
+  "about:",
+  "blob:",
+  "chrome:",
+  "data:",
+  "file:",
+  "ftp:",
+  "javascript:",
+  "mailto:",
+  "sms:",
+  "ssh:",
+  "tel:",
+  "view-source:",
+  "ws:",
+  "wss:",
+]);
+
+/**
+ * Turns what a user typed in an address bar into the URL to open: an address
+ * as `normalizePreviewUrl` reads it, or else a web search for the text. Text
+ * is an address when it has a scheme, or no spaces and a host that has a dot,
+ * a port, or is localhost or an IP. Throws only for empty input or an
+ * explicit unsupported scheme (`ftp://`, `mailto:`, `data:`).
+ */
+export function resolveAddressBarInput(rawInput: string): string {
+  const trimmed = rawInput.trim();
+  if (/^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) || trimmed.length === 0)
+    return normalizePreviewUrl(trimmed);
+  if (!/\s/.test(trimmed)) {
+    // `mailto:x` or `data:...` is an explicit scheme; `example.com:8080` or
+    // `devbox:8080` is a bare host and port. `normalizePreviewUrl` would read
+    // `mailto:alice@example.com` as credentials on a bare host, so reject here.
+    const protocol = previewUrlProtocol(trimmed);
+    if (
+      protocol !== undefined &&
+      (KNOWN_NON_WEB_SCHEMES.has(protocol) || !BARE_HOST_PORT_PATTERN.test(trimmed))
+    ) {
+      if (protocol !== "http:" && protocol !== "https:") {
+        throw new PreviewUrlNormalizationError({
+          inputLength: rawInput.length,
+          reason: "unsupported-protocol",
+          protocol,
+        });
+      }
+      return normalizePreviewUrl(trimmed);
+    }
+    const authority = trimmed.split(/[/?#]/, 1)[0] ?? "";
+    const host = authority.replace(/^[^@]*@/, "").replace(/:\d+$/, "");
+    const hasPort = host.length < authority.replace(/^[^@]*@/, "").length;
+    if (hasPort || ADDRESS_HOST_PATTERN.test(host) || /^[^.]+(?:\.[^.]+)+\.?$/.test(host)) {
+      try {
+        return normalizePreviewUrl(trimmed);
+      } catch {
+        // Not a usable address after all; search for it.
+      }
+    }
+  }
+  return `${SEARCH_URL}${encodeURIComponent(trimmed)}`;
+}
+
 /**
  * Normalise a free-form URL string into a fully-qualified `http(s)://` URL.
  *

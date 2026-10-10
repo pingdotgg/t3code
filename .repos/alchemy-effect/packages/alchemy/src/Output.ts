@@ -492,14 +492,26 @@ export type FilterTuple<
 export const interpolate = <Args extends any[]>(
   template: TemplateStringsArray,
   ...args: Args
-): All<Args> extends Output<any, infer Req> ? Output<string, Req> : never =>
-  all(...args.map((arg) => (isOutput(arg) ? arg : literal(arg)))).pipe(
+): All<Args> extends Output<any, infer Req> ? Output<string, Req> : never => {
+  const outs = args.map((arg) => (isOutput(arg) ? arg : literal(arg)));
+  const expr = all(...outs).pipe(
     map((args) =>
       template
         .map((str, i) => str + (args[i] == null ? "" : String(args[i])))
         .join(""),
     ),
-  ) as any;
+  );
+  // The binding id of a mapped Output embeds the mapper's source, which the
+  // runtime bundler reprints differently from the deploying process, so the
+  // two sides would derive different keys. Name it from the template and its
+  // arguments instead, which are identical on both sides.
+  const name = template
+    .map((str, i) =>
+      i < outs.length ? `${str}\${${(outs[i] as any)[inspect]()}}` : str,
+    )
+    .join("");
+  return named(expr as Output<string, any>, `interpolate(${name})`) as any;
+};
 
 function proxy(self: any): any {
   const target = Object.assign(() => {}, self);
@@ -620,7 +632,7 @@ export const evaluate: <A, Req = never>(
     if (isResource(expr)) {
       const srcId = expr.FQN;
       const src = upstream[srcId as keyof typeof upstream];
-      if (!src) {
+      if (!Object.hasOwn(upstream, srcId)) {
         // type-safety should prevent this but let the caller decide how to handle it
         return yield* new MissingSourceError({
           message: `Source ${srcId} not found`,
@@ -632,7 +644,7 @@ export const evaluate: <A, Req = never>(
       if (isResourceExpr(expr)) {
         const srcId = expr.src.FQN;
         const src = upstream[srcId as keyof typeof upstream];
-        if (!src) {
+        if (!Object.hasOwn(upstream, srcId)) {
           // type-safety should prevent this but let the caller decide how to handle it
           return yield* new MissingSourceError({
             message: `Source ${srcId} not found`,
@@ -703,7 +715,7 @@ export const evaluate: <A, Req = never>(
     }
     if (Config.isConfig(expr)) {
       // Resolve Config against the deploy environment — see resolveInput in
-      // Plan.ts for rationale. `Config.redacted` resolves to a `Redacted`,
+      // Plan.ts for rationale. `Config.Redacted` resolves to a `Redacted`,
       // which stays opaque via the leaf fallthrough below.
       return yield* evaluate(yield* expr, upstream, ancestors);
     } else if (isPlainData(expr)) {

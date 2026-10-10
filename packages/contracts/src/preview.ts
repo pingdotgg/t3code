@@ -10,7 +10,7 @@
  */
 import { Schema } from "effect";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { BrowserProfileId } from "./browserProfile.ts";
+import { BROWSER_PROFILE_MAX_COUNT, BrowserProfile, BrowserProfileId } from "./browserProfile.ts";
 
 export const PREVIEW_URL_MAX_LENGTH = 2_048;
 export const CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS = 32;
@@ -143,6 +143,9 @@ export type PreviewAppearancePreference = typeof PreviewAppearancePreference.Typ
 
 export const DEFAULT_PREVIEW_APPEARANCE: PreviewAppearancePreference = "system";
 
+/** A file a server tab downloaded, served by the tab's download route by this id. */
+const PreviewFileDownload = Schema.Struct({ id: Schema.String, fileName: Schema.String });
+
 export const PreviewNavStatus = Schema.Union([
   Schema.TaggedStruct("Idle", {}),
   Schema.TaggedStruct("Loading", {
@@ -158,9 +161,38 @@ export const PreviewNavStatus = Schema.Union([
     title: Title,
     code: Schema.Int,
     description: Schema.String,
+    /**
+     * Set when the address was a file the browser downloaded instead of a page
+     * it could show (a PDF in a server tab). The server tab's download route
+     * serves it by this id.
+     */
+    download: Schema.optional(PreviewFileDownload),
   }),
 ]);
 export type PreviewNavStatus = typeof PreviewNavStatus.Type;
+
+/**
+ * Where a tab's page runs. `desktop` is an Electron <webview> owned by one
+ * desktop client; `server` is headless Chromium owned by the environment
+ * server, viewed by any client through `/api/preview-stream` and driven by
+ * agents with no client attached. Absent means `desktop`.
+ */
+export const PreviewRuntime = Schema.Literals(["desktop", "server"]);
+export type PreviewRuntime = typeof PreviewRuntime.Type;
+
+/**
+ * Host setup the server's browser is missing, sent as JSON in the reason when
+ * the preview stream closes with code 4503. Fixing it needs the host's
+ * operator, so viewers stop retrying and show `command`, the one line that
+ * fixes it. Close reasons are capped at 123 bytes, which this fits.
+ */
+export const PreviewStreamHostSetup = Schema.Struct({
+  need: Schema.Literals(["sandbox", "libraries"]),
+  /** For example `sudo npx t3 browser setup`, matching how the server was launched. */
+  command: Schema.String,
+});
+export type PreviewStreamHostSetup = typeof PreviewStreamHostSetup.Type;
+export const PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE = 4503;
 
 export const PreviewSessionSnapshot = Schema.Struct({
   threadId: TrimmedNonEmptyString,
@@ -170,12 +202,23 @@ export const PreviewSessionSnapshot = Schema.Struct({
   canGoForward: Schema.Boolean,
   /** Missing snapshots from older servers are treated as fill-panel mode. */
   viewport: Schema.optional(PreviewViewportSetting),
+  /** Server tabs only; the desktop keeps its own tabs' appearance. Absent means `system`. */
+  colorScheme: Schema.optional(PreviewAppearancePreference),
+  /** Server tabs only. Absent means 1. */
+  zoomFactor: Schema.optional(PreviewZoomFactor),
   /**
    * Browser profile the tab's Chromium partition is derived from. Fixed at
    * open: Electron only honours a `<webview>`'s partition before attach, so
    * switching would require tearing the guest down and losing page state.
    */
   profileId: Schema.optional(BrowserProfileId),
+  runtime: Schema.optional(PreviewRuntime),
+  /** Authenticated provider session owning an isolated server tab. */
+  automationOwner: Schema.optional(Schema.String),
+  /** An agent opened this tab and asked to show it, so viewers float it. */
+  reveal: Schema.optional(Schema.Boolean),
+  /** A fresh presentation request, including whether it overrides automatic-floating settings. */
+  revealRequest: Schema.optional(Schema.Struct({ id: Schema.String, force: Schema.Boolean })),
   updatedAt: Schema.String,
 });
 export type PreviewSessionSnapshot = typeof PreviewSessionSnapshot.Type;
@@ -193,6 +236,10 @@ export const PreviewOpenInput = Schema.Struct({
   viewport: Schema.optional(PreviewViewportSetting),
   /** Omit to open under the client's configured default profile. */
   profileId: Schema.optional(BrowserProfileId),
+  /** Omit for a desktop tab. `server` requires the `serverBrowser` capability. */
+  runtime: Schema.optional(PreviewRuntime),
+  /** Set by agent opens that should float for viewers; see the snapshot field. */
+  reveal: Schema.optional(Schema.Boolean),
 });
 export type PreviewOpenInput = typeof PreviewOpenInput.Type;
 
@@ -226,11 +273,40 @@ export const PreviewResizeInput = Schema.Struct({
 });
 export type PreviewResizeInput = typeof PreviewResizeInput.Type;
 
+/**
+ * Changes how a server tab renders, or clears its profile's site data, for any
+ * client. Unlike page input, these need no control of the tab.
+ */
+export const PreviewAdjustInput = Schema.Struct({
+  threadId: ThreadId,
+  tabId: PreviewTabId,
+  colorScheme: Schema.optional(PreviewAppearancePreference),
+  zoomFactor: Schema.optional(PreviewZoomFactor),
+  /** Reloads the page past its cache, as Chrome's Shift+Reload does. */
+  hardReload: Schema.optional(Schema.Boolean),
+  /** Clears the tab's profile's cookies or HTTP cache; its other storage stays. */
+  clear: Schema.optional(Schema.Literals(["cookies", "cache"])),
+});
+export type PreviewAdjustInput = typeof PreviewAdjustInput.Type;
+
 export const PreviewCloseInput = Schema.Struct({
   threadId: ThreadId,
   tabId: Schema.optional(PreviewTabId),
 });
 export type PreviewCloseInput = typeof PreviewCloseInput.Type;
+
+/** A client's browser profiles, which agents choose from when they open a tab. */
+export const PreviewReportProfilesInput = Schema.Struct({
+  /** The user's own profiles; the server adds the built-ins. */
+  profiles: Schema.Array(BrowserProfile).check(Schema.isMaxLength(BROWSER_PROFILE_MAX_COUNT)),
+  defaultProfileId: BrowserProfileId,
+});
+export type PreviewReportProfilesInput = typeof PreviewReportProfilesInput.Type;
+
+export const PreviewClearProfileInput = Schema.Struct({
+  profileId: BrowserProfileId,
+});
+export type PreviewClearProfileInput = typeof PreviewClearProfileInput.Type;
 
 export const PreviewListInput = Schema.Struct({
   threadId: ThreadId,
@@ -272,6 +348,13 @@ const PreviewResizedEvent = Schema.Struct({
   ...PreviewEventBaseSchema.fields,
   type: Schema.Literal("resized"),
   snapshot: PreviewSessionSnapshot,
+  /** A one-off action for the server's browser, such as a hard reload. */
+  request: Schema.optional(
+    Schema.Struct({
+      hardReload: Schema.optional(Schema.Boolean),
+      clear: Schema.optional(Schema.Literals(["cookies", "cache"])),
+    }),
+  ),
 });
 
 const PreviewFailedEvent = Schema.Struct({
@@ -281,6 +364,7 @@ const PreviewFailedEvent = Schema.Struct({
   title: Title,
   code: Schema.Int,
   description: Schema.String,
+  download: Schema.optional(PreviewFileDownload),
 });
 
 const PreviewClosedEvent = Schema.Struct({
@@ -350,5 +434,27 @@ export class PreviewInvalidUrlError extends Schema.TaggedError<PreviewInvalidUrl
   }
 }
 
-export const PreviewError = Schema.Union([PreviewSessionLookupError, PreviewInvalidUrlError]);
+export class PreviewControlRequiredError extends Schema.TaggedError<PreviewControlRequiredError>()(
+  "PreviewControlRequiredError",
+  { tabId: Schema.String },
+) {
+  override get message() {
+    return "Take control of the server browser and use its viewer controls.";
+  }
+}
+
+export class PreviewClearProfileError extends Schema.TaggedError<PreviewClearProfileError>()(
+  "PreviewClearProfileError",
+  { profileId: Schema.String, cause: Schema.Defect() },
+) {
+  override get message() {
+    return "The environment could not delete this browser profile's data.";
+  }
+}
+
+export const PreviewError = Schema.Union([
+  PreviewSessionLookupError,
+  PreviewInvalidUrlError,
+  PreviewControlRequiredError,
+]);
 export type PreviewError = typeof PreviewError.Type;

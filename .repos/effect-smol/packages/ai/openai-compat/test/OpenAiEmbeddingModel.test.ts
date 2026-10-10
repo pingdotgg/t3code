@@ -1,8 +1,8 @@
 import { OpenAiClient, OpenAiEmbeddingModel } from "@effect/ai-openai-compat"
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Layer, Redacted } from "effect"
-import { EmbeddingModel } from "effect/unstable/ai"
-import { HttpClient, type HttpClientError, type HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
+import { EmbeddingModel } from "effect/ai"
+import { HttpClient, type HttpClientError, type HttpClientRequest, HttpClientResponse } from "effect/http"
 
 describe("OpenAiEmbeddingModel", () => {
   it.effect("model provides dimensions service", () =>

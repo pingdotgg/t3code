@@ -1,16 +1,24 @@
 import {
   EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   UsageDay,
   USAGE_CONTRACT_VERSION,
+  type ServerProvider,
   type UsageSummary,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { EnvironmentPresentation } from "../connection/presentation.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
-import { refreshUsage } from "./usage.ts";
+import {
+  cursorKeychainAccessEnvironments,
+  needsCursorKeychainAccess,
+  refreshUsage,
+  refreshUsageLimits,
+} from "./usage.ts";
 
 const input = {
   sinceDay: UsageDay.make("2026-09-05"),
@@ -67,6 +75,8 @@ function harness(ids = ["a"]) {
         get(environmentId).query,
       refreshUsageRates: {
         label: "test:rates",
+        requiredScopes: () => [],
+        permissionAtom: () => Atom.make(true),
         run: (
           _registry: AtomRegistry.AtomRegistry,
           { environmentId }: { environmentId: EnvironmentId },
@@ -180,5 +190,136 @@ describe("manual usage refresh", () => {
     await refreshing;
     expect(reads).toBe(2);
     unmount();
+  });
+});
+
+describe("limits refresh cooldown", () => {
+  it("runs a fresh check after an in-flight check when settings change", async () => {
+    const id = EnvironmentId.make("limits-after-enable");
+    const oldCheck = Promise.withResolvers<string>();
+    const first = refreshUsageLimits(id, () => oldCheck.promise, true);
+    const newCheck = vi.fn(async () => "new limits");
+    const afterEnable = refreshUsageLimits(id, newCheck, false, true);
+    expect(newCheck).not.toHaveBeenCalled();
+    oldCheck.resolve("old limits");
+    expect(await first).toBe("old limits");
+    expect(await afterEnable).toBe("new limits");
+    expect(newCheck).toHaveBeenCalledTimes(1);
+  });
+
+  it("joins manual calls and gates automatic refreshes after success or failure", async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    try {
+      for (const fails of [false, true]) {
+        const id = EnvironmentId.make(`limits-${fails}`);
+        const pending = Promise.withResolvers<string>();
+        const refresh = vi.fn(() => pending.promise);
+        const first = refreshUsageLimits(id, refresh, true);
+        await refreshUsageLimits(id, refresh, true);
+        const manual = refreshUsageLimits(id, refresh);
+        const settled = vi.fn();
+        void manual.then(settled, settled);
+        expect(settled).not.toHaveBeenCalled();
+        expect(refresh).toHaveBeenCalledTimes(1);
+        if (fails) {
+          const firstFailure = expect(first).rejects.toThrow("unavailable");
+          const manualFailure = expect(manual).rejects.toThrow("unavailable");
+          pending.reject(new Error("unavailable"));
+          await Promise.all([firstFailure, manualFailure]);
+        } else {
+          pending.resolve("quota");
+          expect(await first).toBe("quota");
+          expect(await manual).toBe("quota");
+        }
+        expect(settled).toHaveBeenCalledTimes(1);
+        const next = vi.fn(async () => undefined);
+        clock.mockReturnValue(300_999);
+        await refreshUsageLimits(id, next, true);
+        expect(next).not.toHaveBeenCalled();
+        clock.mockReturnValue(301_000);
+        await refreshUsageLimits(id, next, true);
+        expect(next).toHaveBeenCalledTimes(1);
+        await refreshUsageLimits(id, next);
+        expect(next).toHaveBeenCalledTimes(2);
+        clock.mockReturnValue(1_000);
+      }
+    } finally {
+      clock.mockRestore();
+    }
+  });
+});
+
+describe("needsCursorKeychainAccess", () => {
+  const cursorPrompt: UsageSummary = {
+    ...summary,
+    sources: [
+      {
+        fingerprint: {
+          hostId: "host",
+          provider: "cursor",
+          resolvedHomePath: "/Users/me/.cursor/auth.json",
+          volumeId: "volume",
+        },
+        status: "ok",
+        scannedFiles: 0,
+        skippedFiles: 0,
+        malformedRecords: 0,
+        distinctSessions: 0,
+        message: "Cursor account usage is off on this environment.",
+        action: "enableCursorKeychain",
+      },
+    ],
+  };
+  const cursor = (status: ServerProvider["status"]): ServerProvider => ({
+    instanceId: ProviderInstanceId.make("cursor"),
+    driver: ProviderDriverKind.make("cursor"),
+    enabled: status !== "disabled",
+    installed: status === "ready",
+    version: null,
+    status,
+    auth: { status: "unknown" },
+    checkedAt: "2026-09-05T12:00:00.000Z",
+    models: [],
+    slashCommands: [],
+    skills: [],
+  });
+
+  it("offers access only when Cursor is ready on that environment", () => {
+    expect(needsCursorKeychainAccess(cursorPrompt, [cursor("ready")])).toBe(true);
+    expect(needsCursorKeychainAccess(cursorPrompt, [cursor("error")])).toBe(false);
+    expect(needsCursorKeychainAccess(cursorPrompt, [cursor("disabled")])).toBe(false);
+    expect(needsCursorKeychainAccess(cursorPrompt, [])).toBe(false);
+    expect(needsCursorKeychainAccess(cursorPrompt, null)).toBe(false);
+    expect(needsCursorKeychainAccess(summary, [cursor("ready")])).toBe(false);
+  });
+
+  it("stops offering access once any environment reads the Cursor account", () => {
+    const off = { summary: cursorPrompt, needsCursorKeychainAccess: true };
+    const account: UsageSummary = {
+      ...summary,
+      sources: [
+        {
+          fingerprint: {
+            hostId: "cursor.com",
+            provider: "cursor",
+            resolvedHomePath: "cursor-account:abc",
+            volumeId: "abc",
+          },
+          status: "ok",
+          scannedFiles: 1,
+          skippedFiles: 0,
+          malformedRecords: 0,
+          distinctSessions: 1,
+          message: null,
+        },
+      ],
+    };
+    expect(cursorKeychainAccessEnvironments([off, off])).toEqual([off, off]);
+    expect(
+      cursorKeychainAccessEnvironments([
+        off,
+        { summary: account, needsCursorKeychainAccess: false },
+      ]),
+    ).toEqual([]);
   });
 });

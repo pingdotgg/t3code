@@ -93,7 +93,15 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: [
+      "provider:cloudflare",
+      "provider:cloudflare:pageshield",
+      "provider:cloudflare:zone",
+      "live",
+    ],
+    timeout: 120_000,
+  },
 );
 
 test.provider(
@@ -138,7 +146,10 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 180_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:pageshield", "live"],
+    timeout: 180_000,
+  },
 );
 
 // Requires the Enterprise Page Shield CSP entitlement — unentitled zones have a zero
@@ -209,5 +220,8 @@ test.provider.skipIf(!entitledZoneId)(
       const gone = yield* findPolicyByDescription(zoneId, description);
       expect(gone).toBeUndefined();
     }).pipe(logLevel),
-  { timeout: 120_000 },
+  {
+    tags: ["provider:cloudflare", "provider:cloudflare:pageshield", "live"],
+    timeout: 120_000,
+  },
 );

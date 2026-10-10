@@ -205,6 +205,7 @@ export interface Environment extends Resource<
  * ```
  *
  * @resource
+ * @product Actions
  */
 export const Environment = Resource<Environment>("GitHub.Environment");
 

@@ -4,8 +4,8 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { ConfigError, SystemError } from "../RuntimeError.shared.ts";
 
 export class Access extends Context.Service<
@@ -75,7 +75,7 @@ export const layer = Layer.effect(
       );
 
     const getEnv = (name: string) =>
-      Config.string(name).pipe(
+      Config.String(name).pipe(
         Effect.catchTag("ConfigError", () => Effect.succeed(undefined)),
       );
 

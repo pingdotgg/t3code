@@ -36,6 +36,8 @@ function quoteProviderBinary(
 export function getOnboardingProviderState(provider: ServerProvider | undefined) {
   if (provider === undefined) return "checking";
   if (!provider.enabled || provider.status === "disabled") return "disabled";
+  if (!provider.installed && provider.status === "warning" && provider.auth.status === "unknown")
+    return "checking";
   if (!provider.installed) return "install";
   if (provider.auth.status === "unauthenticated") return "signIn";
   if (provider.status === "ready") return "ready";
@@ -110,17 +112,13 @@ export function resolveOnboardingProviderLoginCommand(
   const instance = settings.providerInstances[provider.instanceId];
 
   if (provider.driver === "claudeAgent") {
-    const config = decodeClaudeSettings(
-      instance ? (instance.config ?? {}) : settings.providers.claudeAgent,
-    );
+    const config = decodeClaudeSettings(instance?.config ?? {});
     const binaryPath = Option.isSome(config) ? config.value.binaryPath : "claude";
     return `${quoteProviderBinary(binaryPath, "claude", platform)} auth login`;
   }
 
   if (provider.driver === "codex") {
-    const config = decodeCodexSettings(
-      instance ? (instance.config ?? {}) : settings.providers.codex,
-    );
+    const config = decodeCodexSettings(instance?.config ?? {});
     const binaryPath = Option.isSome(config) ? config.value.binaryPath : "codex";
     return `${quoteProviderBinary(binaryPath, "codex", platform)} login`;
   }

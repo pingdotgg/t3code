@@ -1,7 +1,8 @@
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
+// Alchemy modifications: uses Array<T> syntax for non-tuple array types to match the repository convention.
 import { DurableObject } from "cloudflare:workers";
-import { Context } from "./context.ts";
+import { Context, REDACTED_STEP_OUTPUT } from "./context.ts";
 import {
   INSTANCE_METADATA,
   InstanceEvent,
@@ -31,20 +32,44 @@ import {
   storeRestartFromStep,
   wipeRestartState,
 } from "./lib/restart.ts";
-import { clearRollbackRegistry, executeRollbacks } from "./lib/rollback.ts";
+import {
+  clearRollbackRegistry,
+  disposeRollbackStub,
+  executeRollbacks,
+  registerRollbackFn,
+  ROLLBACK_CACHE_KEY_PREFIX,
+} from "./lib/rollback.ts";
+import { normalizeForStorage } from "./lib/serialization.ts";
 import {
   createReplayReadableStream,
   getInvalidStoredStreamOutputError,
   getStoredStreamOutputPreview,
+  getStreamOutputMetaKey,
   StreamOutputState,
 } from "./lib/streams.ts";
 import { TimePriorityQueue } from "./lib/timePriorityQueue.ts";
 import { MODIFIER_KEYS, WorkflowInstanceModifier } from "./modifier.ts";
-import type { RestartFromStep } from "./binding.ts";
+import {
+  isTerminalEvent,
+  parseResolvedStepConfig,
+  WorkflowSubscriptionTarget,
+} from "./subscription.ts";
+import type {
+  RestartFromStep,
+  WorkflowInstanceTerminateOptions,
+} from "./binding.ts";
 import type { Event } from "./context.ts";
 import type { InstanceMetadata, RawInstanceLog } from "./instance.ts";
-import type { RollbackRegistryEntry } from "./lib/rollback.ts";
+import type {
+  RollbackRegistration,
+  RollbackRegistryEntry,
+} from "./lib/rollback.ts";
 import type { StreamOutputMeta } from "./lib/streams.ts";
+import type {
+  WorkflowSubscriptionEvent,
+  WorkflowSubscriptionOptions,
+  WorkflowSubscriptionState,
+} from "./subscription.ts";
 import type {
   WorkflowEntrypoint,
   WorkflowEvent,
@@ -54,6 +79,8 @@ import type {
 interface Env {
   ENGINE: DurableObjectNamespace<Engine>;
   USER_WORKFLOW: WorkflowEntrypoint;
+  MINIFLARE_LOOPBACK?: Fetcher;
+  WORKFLOW_NAME?: string;
   STEP_LIMIT?: string; // JSON-encoded number from miniflare binding
 }
 
@@ -103,12 +130,15 @@ export type EngineLogs = {
 };
 
 const ENGINE_STATUS_KEY = "ENGINE_STATUS";
+const WORKFLOW_OUTPUT_KEY = "WORKFLOW_OUTPUT";
 
 const EVENT_MAP_PREFIX = "EVENT_MAP";
 
 export const DEFAULT_STEP_LIMIT = 10_000;
 
 const PAUSE_DATETIME = "PAUSE_DATETIME";
+
+export type RollbackPhase = "replay" | "rollback";
 
 /**
  * JSON.stringify replacer that converts TypedArrays and ArrayBuffers to a
@@ -119,6 +149,9 @@ const PAUSE_DATETIME = "PAUSE_DATETIME";
  * inside objects or arrays are also handled.
  */
 function binaryReplacer(_key: string, value: unknown): unknown {
+  if (typeof value === "bigint") {
+    return `[BigInt(${value})]`;
+  }
   if (value instanceof ArrayBuffer) {
     return `[ArrayBuffer(${value.byteLength} bytes)]`;
   }
@@ -135,6 +168,271 @@ function isStepSuccessEvent(event: InstanceEvent): boolean {
   );
 }
 
+type EngineWorkflowSubscriptionEvent =
+  | WorkflowSubscriptionEvent
+  | (Pick<WorkflowSubscriptionEvent, "instanceId" | "eventId" | "timestamp"> & {
+      type: "internal";
+    });
+
+async function readStepConfig(
+  storage: DurableObjectStorage,
+  groupKey: string | null,
+) {
+  if (groupKey === null) {
+    return undefined;
+  }
+  return parseResolvedStepConfig(await storage.get(`${groupKey}-config`));
+}
+
+async function readStepCompletedOutput(
+  storage: DurableObjectStorage,
+  groupKey: string | null,
+) {
+  if (groupKey === null) {
+    return undefined;
+  }
+
+  const valueKey = `${groupKey}-value`;
+  const streamMetaKey = getStreamOutputMetaKey(groupKey);
+  const configKey = `${groupKey}-config`;
+  const stored = await storage.get([valueKey, streamMetaKey, configKey]);
+  const config = parseResolvedStepConfig(stored.get(configKey));
+  if (config === undefined) {
+    return undefined;
+  }
+  if (config.sensitive === "output") {
+    return REDACTED_STEP_OUTPUT;
+  }
+
+  const streamMeta = stored.get(streamMetaKey) as StreamOutputMeta | undefined;
+  if (streamMeta?.state === StreamOutputState.Complete) {
+    const integrityError = getInvalidStoredStreamOutputError(
+      storage,
+      groupKey,
+      streamMeta,
+    );
+    if (integrityError !== undefined) {
+      throw createWorkflowError(
+        "Step has completed but its stored stream output is corrupt or incomplete",
+        "instance.step_output_corrupt",
+      );
+    }
+    return createReplayReadableStream({
+      storage,
+      cacheKey: groupKey,
+      meta: streamMeta,
+    });
+  }
+
+  return (stored.get(valueKey) as { value: unknown } | undefined)?.value;
+}
+
+async function buildWorkflowSubscriptionEvent(
+  storage: DurableObjectStorage,
+  log: RawInstanceLog,
+  instanceId: string,
+  params: unknown,
+): Promise<EngineWorkflowSubscriptionEvent> {
+  const common = {
+    instanceId,
+    eventId: log.id,
+    timestamp: new Date(log.timestamp).valueOf(),
+  };
+  const parseMetadata = () =>
+    JSON.parse(log.metadata) as {
+      result?: unknown;
+      error: { name: string; message: string };
+      attempt: number;
+      retryDelayMs?: number;
+      durationMs: number;
+      event: string;
+    };
+  const stepEvent = (
+    createEvent: (
+      stepName: string,
+    ) => Extract<WorkflowSubscriptionEvent, { stepName: string }>,
+  ): EngineWorkflowSubscriptionEvent =>
+    log.target === null
+      ? { ...common, type: "internal" }
+      : createEvent(log.target);
+
+  switch (log.event) {
+    case InstanceEvent.WORKFLOW_QUEUED:
+      return { ...common, type: "workflow_queued" };
+    case InstanceEvent.WORKFLOW_START:
+      return { ...common, type: "workflow_started", params };
+    case InstanceEvent.WORKFLOW_RUNNING:
+      return { ...common, type: "workflow_running" };
+    case InstanceEvent.WORKFLOW_PAUSED:
+      return { ...common, type: "workflow_paused" };
+    case InstanceEvent.WORKFLOW_WAITING_FOR_PAUSE:
+      return { ...common, type: "workflow_waiting_for_pause" };
+    case InstanceEvent.WORKFLOW_WAITING:
+      return { ...common, type: "workflow_waiting" };
+    case InstanceEvent.WORKFLOW_SUCCESS: {
+      const storedOutput = await storage.get<{ value: unknown }>(
+        WORKFLOW_OUTPUT_KEY,
+      );
+      return {
+        ...common,
+        type: "workflow_completed",
+        output:
+          storedOutput === undefined
+            ? parseMetadata().result
+            : storedOutput.value,
+      };
+    }
+    case InstanceEvent.WORKFLOW_FAILURE:
+      return {
+        ...common,
+        type: "workflow_errored",
+        error: parseMetadata().error,
+      };
+    case InstanceEvent.WORKFLOW_TERMINATED:
+      return { ...common, type: "workflow_terminated" };
+    case InstanceEvent.STEP_START: {
+      const config = await readStepConfig(storage, log.groupKey);
+      return stepEvent((stepName) => ({
+        ...common,
+        type: "step_started",
+        stepName,
+        ...(config === undefined ? {} : { config }),
+      }));
+    }
+    case InstanceEvent.STEP_SUCCESS: {
+      const output = await readStepCompletedOutput(storage, log.groupKey);
+      return stepEvent((stepName) => ({
+        ...common,
+        type: "step_completed",
+        stepName,
+        ...(output === undefined ? {} : { output }),
+      }));
+    }
+    case InstanceEvent.STEP_FAILURE:
+      return stepEvent((stepName) => ({
+        ...common,
+        type: "step_errored",
+        stepName,
+      }));
+    case InstanceEvent.ATTEMPT_START:
+      return stepEvent((stepName) => ({
+        ...common,
+        type: "attempt_started",
+        stepName,
+        attempt: parseMetadata().attempt,
+      }));
+    case InstanceEvent.ATTEMPT_SUCCESS:
+      return stepEvent((stepName) => ({
+        ...common,
+        type: "attempt_completed",
+        stepName,
+        attempt: parseMetadata().attempt,
+      }));
+    case InstanceEvent.ATTEMPT_FAILURE: {
+      const metadata = parseMetadata();
+      return stepEvent((stepName) => ({
+        ...common,
+        type: "attempt_errored",
+        stepName,
+        attempt: metadata.attempt,
+        error: metadata.error,
+        ...(metadata.retryDelayMs === undefined
+          ? {}
+          : { retryDelayMs: metadata.retryDelayMs }),
+      }));
+    }
+    case InstanceEvent.SLEEP_START:
+      return stepEvent((stepName) => ({
+        ...common,
+        type: "sleep_started",
+        stepName,
+        durationMs: parseMetadata().durationMs,
+      }));
+    case InstanceEvent.SLEEP_COMPLETE:
+      return stepEvent((stepName) => ({
+        ...common,
+        type: "sleep_completed",
+        stepName,
+      }));
+    case InstanceEvent.WAIT_START:
+      return stepEvent((stepName) => ({
+        ...common,
+        type: "wait_started",
+        stepName,
+        eventType: parseMetadata().event,
+      }));
+    case InstanceEvent.WAIT_COMPLETE:
+      return stepEvent((stepName) => ({
+        ...common,
+        type: "wait_completed",
+        stepName,
+      }));
+    case InstanceEvent.WAIT_TIMED_OUT:
+      return stepEvent((stepName) => ({
+        ...common,
+        type: "wait_timed_out",
+        stepName,
+      }));
+    case InstanceEvent.ROLLBACK_START:
+      return { ...common, type: "rollback_started" };
+    case InstanceEvent.ROLLBACK_STEP_START: {
+      const config = await readStepConfig(storage, log.groupKey);
+      return stepEvent((stepName) => ({
+        ...common,
+        type: "rollback_step_started",
+        stepName,
+        ...(config === undefined ? {} : { config }),
+      }));
+    }
+    case InstanceEvent.ROLLBACK_STEP_SUCCESS:
+      return stepEvent((stepName) => ({
+        ...common,
+        type: "rollback_step_completed",
+        stepName,
+      }));
+    case InstanceEvent.ROLLBACK_STEP_FAILURE:
+      return stepEvent((stepName) => ({
+        ...common,
+        type: "rollback_step_errored",
+        stepName,
+        error: parseMetadata().error,
+      }));
+    case InstanceEvent.ROLLBACK_ATTEMPT_START:
+      return stepEvent((stepName) => ({
+        ...common,
+        type: "rollback_attempt_started",
+        stepName,
+        attempt: parseMetadata().attempt,
+      }));
+    case InstanceEvent.ROLLBACK_ATTEMPT_SUCCESS:
+      return stepEvent((stepName) => ({
+        ...common,
+        type: "rollback_attempt_completed",
+        stepName,
+        attempt: parseMetadata().attempt,
+      }));
+    case InstanceEvent.ROLLBACK_ATTEMPT_FAILURE: {
+      const metadata = parseMetadata();
+      return stepEvent((stepName) => ({
+        ...common,
+        type: "rollback_attempt_errored",
+        stepName,
+        attempt: metadata.attempt,
+        error: metadata.error,
+        ...(metadata.retryDelayMs === undefined
+          ? {}
+          : { retryDelayMs: metadata.retryDelayMs }),
+      }));
+    }
+    case InstanceEvent.ROLLBACK_COMPLETE:
+      return { ...common, type: "rollback_completed" };
+    case InstanceEvent.ROLLBACK_FAILED:
+      return { ...common, type: "rollback_errored" };
+    case InstanceEvent.__INTERNAL_PROD:
+      return { ...common, type: "internal" };
+  }
+}
+
 export class Engine extends DurableObject<Env> {
   logs: Array<unknown> = [];
 
@@ -147,6 +445,8 @@ export class Engine extends DurableObject<Env> {
   stepLimit: number;
   engineAbortController: AbortController = new AbortController();
   pauseController: AbortController = new AbortController();
+  rollbackPhase: RollbackPhase | undefined = undefined;
+  rollbackEligibleCacheKeys: Set<string> | undefined = undefined;
 
   waiters: Map<
     string,
@@ -158,6 +458,8 @@ export class Engine extends DurableObject<Env> {
 
   // Not persisted: rollback fns are RPC stubs, dead across DO restarts.
   rollbackRegistry: Map<string, RollbackRegistryEntry> = new Map();
+
+  subscribers = new Set<WorkflowSubscriptionState>();
 
   constructor(state: DurableObjectState, env: Env) {
     super(state, env);
@@ -223,20 +525,112 @@ export class Engine extends DurableObject<Env> {
       JSON.stringify(metadata, binaryReplacer),
     );
 
+    for (const subscriber of this.subscribers) {
+      const waiter = subscriber.waiter;
+      if (waiter !== undefined) {
+        subscriber.waiter = undefined;
+        waiter.resolve();
+      }
+    }
+
     // Wake any waiters if this is a terminal step event
     if (group) {
       this.handleStepResultWaiter(group, event, metadata);
     }
   }
 
-  readStepStartGroupKeysDesc(): Array<string> {
+  readEligibleRollbackStepsDesc(
+    limit?: number,
+  ): Array<{ cacheKey: string; target: string }> {
+    const rollbackTerminalGroups = new Set<string>();
+    const rollbackEligibleGroups = new Set<string>();
+    const stepStartsDesc: Array<{ groupKey: string; target: string | null }> =
+      [];
     const rows = [
-      ...this.ctx.storage.sql.exec<{ groupKey: string }>(
-        "SELECT groupKey FROM states WHERE event = ? AND groupKey IS NOT NULL ORDER BY id DESC",
-        InstanceEvent.STEP_START,
+      ...this.ctx.storage.sql.exec<{
+        event: InstanceEvent;
+        groupKey: string;
+        target: string | null;
+        metadata: string;
+      }>(
+        "SELECT event, groupKey, target, metadata FROM states WHERE groupKey IS NOT NULL ORDER BY id DESC",
       ),
     ];
-    return rows.map(({ groupKey }) => groupKey);
+
+    for (const row of rows) {
+      if (row.event === InstanceEvent.STEP_START) {
+        stepStartsDesc.push({ groupKey: row.groupKey, target: row.target });
+      }
+
+      if (
+        row.event === InstanceEvent.ROLLBACK_STEP_SUCCESS ||
+        row.event === InstanceEvent.ROLLBACK_STEP_FAILURE
+      ) {
+        rollbackTerminalGroups.add(
+          row.groupKey.startsWith(ROLLBACK_CACHE_KEY_PREFIX)
+            ? row.groupKey.slice(ROLLBACK_CACHE_KEY_PREFIX.length)
+            : row.groupKey,
+        );
+        continue;
+      }
+
+      if (
+        row.event !== InstanceEvent.STEP_START &&
+        row.event !== InstanceEvent.STEP_SUCCESS &&
+        row.event !== InstanceEvent.STEP_FAILURE
+      ) {
+        continue;
+      }
+
+      try {
+        if (
+          (JSON.parse(row.metadata) as { hasRollback?: boolean })
+            .hasRollback === true
+        ) {
+          rollbackEligibleGroups.add(row.groupKey);
+        }
+      } catch {
+        // Ignore malformed metadata in local persisted logs.
+      }
+    }
+
+    const eligible: Array<{ cacheKey: string; target: string }> = [];
+    for (const { groupKey, target } of stepStartsDesc) {
+      if (
+        rollbackEligibleGroups.has(groupKey) &&
+        !rollbackTerminalGroups.has(groupKey)
+      ) {
+        eligible.push({ cacheKey: groupKey, target: target ?? groupKey });
+        if (limit !== undefined && eligible.length >= limit) {
+          break;
+        }
+      }
+    }
+
+    return eligible;
+  }
+
+  private getEligibleRollbackSteps(limit?: number): Array<string> {
+    return this.readEligibleRollbackStepsDesc(limit).map(
+      ({ cacheKey }) => cacheKey,
+    );
+  }
+
+  registerRollbackFn(registration: RollbackRegistration): void {
+    if (
+      this.rollbackPhase === "replay" &&
+      this.rollbackEligibleCacheKeys !== undefined &&
+      !this.rollbackEligibleCacheKeys.has(registration.cacheKey)
+    ) {
+      disposeRollbackStub(registration.fn);
+      return;
+    }
+
+    registerRollbackFn(this.rollbackRegistry, registration);
+  }
+
+  setRollbackPhase(phase: RollbackPhase | undefined): void {
+    this.rollbackPhase = phase;
   }
 
   // Lives here for access to the protected DurableObject `ctx`.
@@ -246,6 +640,94 @@ export class Engine extends DurableObject<Env> {
 
   readLogsFromStep(_cacheKey: string): Array<RawInstanceLog> {
     return [];
+  }
+
+  async subscribe(
+    options?: WorkflowSubscriptionOptions,
+  ): Promise<WorkflowSubscriptionTarget> {
+    const { cursor, filter } = options ?? {};
+    const metadata =
+      await this.ctx.storage.get<InstanceMetadata>(INSTANCE_METADATA);
+    if (metadata === undefined) {
+      throw createWorkflowError(
+        "Instance does not exist",
+        "instance.not_found",
+      );
+    }
+
+    const state: WorkflowSubscriptionState = {
+      instanceId: metadata.instance.id,
+      params: metadata.event.payload,
+      lastEventId: cursor ?? -1,
+      filter: filter === undefined ? undefined : new Set(filter),
+      waiter: undefined,
+      closed: false,
+    };
+    const subscription = new WorkflowSubscriptionTarget(
+      () => this.nextWorkflowEvent(state),
+      () => {
+        state.closed = true;
+        this.subscribers.delete(state);
+        state.waiter?.resolve();
+        state.waiter = undefined;
+      },
+    );
+    this.subscribers.add(state);
+    return subscription;
+  }
+
+  private async nextWorkflowEvent(
+    state: WorkflowSubscriptionState,
+  ): Promise<IteratorResult<WorkflowSubscriptionEvent, undefined>> {
+    while (!state.closed) {
+      const row = this.ctx.storage.sql
+        .exec<RawInstanceLog>(
+          "SELECT id, timestamp, event, groupKey, target, metadata FROM states WHERE id > ? ORDER BY id ASC LIMIT 1",
+          state.lastEventId,
+        )
+        .toArray()[0];
+
+      if (row === undefined) {
+        const hasTerminalEvent =
+          this.ctx.storage.sql
+            .exec<{ id: number }>(
+              "SELECT id FROM states WHERE id <= ? AND event IN (?, ?, ?) LIMIT 1",
+              state.lastEventId,
+              InstanceEvent.WORKFLOW_SUCCESS,
+              InstanceEvent.WORKFLOW_FAILURE,
+              InstanceEvent.WORKFLOW_TERMINATED,
+            )
+            .toArray()[0] !== undefined;
+        if (hasTerminalEvent) {
+          state.closed = true;
+          return { done: true, value: undefined };
+        }
+
+        await new Promise<void>((resolve) => {
+          state.waiter = { resolve };
+        });
+        continue;
+      }
+
+      state.lastEventId = row.id;
+      const event = await buildWorkflowSubscriptionEvent(
+        this.ctx.storage,
+        row,
+        state.instanceId,
+        state.params,
+      );
+      if (event.type === "internal") {
+        continue;
+      }
+      if (state.filter === undefined || state.filter.has(event.type)) {
+        return { done: false, value: event };
+      }
+      if (isTerminalEvent(event)) {
+        return { done: true, value: undefined };
+      }
+    }
+
+    return { done: true, value: undefined };
   }
 
   readLogs(): EngineLogs {
@@ -457,7 +939,45 @@ export class Engine extends DurableObject<Env> {
     instanceId: string,
     status: InstanceStatus,
   ): Promise<void> {
+    const previousStatus =
+      await this.ctx.storage.get<InstanceStatus>(ENGINE_STATUS_KEY);
     await this.ctx.storage.put(ENGINE_STATUS_KEY, status);
+
+    if (previousStatus !== status) {
+      switch (status) {
+        case InstanceStatus.Queued: {
+          // Creation writes WORKFLOW_QUEUED before the first status is stored.
+          const hasQueuedEvent =
+            this.ctx.storage.sql
+              .exec<{ id: number }>(
+                "SELECT id FROM states WHERE event = ? LIMIT 1",
+                InstanceEvent.WORKFLOW_QUEUED,
+              )
+              .toArray()[0] !== undefined;
+          if (!(previousStatus === undefined && hasQueuedEvent)) {
+            this.writeLog(InstanceEvent.WORKFLOW_QUEUED, null, null, {});
+          }
+          break;
+        }
+        case InstanceStatus.Running:
+          this.writeLog(InstanceEvent.WORKFLOW_RUNNING, null, null, {});
+          break;
+        case InstanceStatus.Paused:
+          this.writeLog(InstanceEvent.WORKFLOW_PAUSED, null, null, {});
+          break;
+        case InstanceStatus.WaitingForPause:
+          this.writeLog(
+            InstanceEvent.WORKFLOW_WAITING_FOR_PAUSE,
+            null,
+            null,
+            {},
+          );
+          break;
+        case InstanceStatus.Waiting:
+          this.writeLog(InstanceEvent.WORKFLOW_WAITING, null, null, {});
+          break;
+      }
+    }
 
     // check if anyone is waiting for this status
     this.handleStatusWaiter(status);
@@ -699,7 +1219,7 @@ export class Engine extends DurableObject<Env> {
   }
 
   // Called by the dispose function when introspecting the instance in tests
-  // TODO: Ideally this abort should be done by `abortAllDurableObjects` from worked called by vitest-pool-workers
+  // TODO: Ideally this abort should be done by `abortAllDurableObjects` from worked called by vitest-plugin
   async unsafeAbort(reason?: string) {
     await this.ctx.storage.sync();
     await this.ctx.storage.deleteAll();
@@ -807,7 +1327,8 @@ export class Engine extends DurableObject<Env> {
   async changeInstanceStatus(
     newStatus: "resume" | "pause" | "terminate" | "restart",
     from?: RestartFromStep,
-  ) {
+    terminateOptions?: WorkflowInstanceTerminateOptions,
+  ): Promise<void> {
     const metadata =
       await this.ctx.storage.get<InstanceMetadata>(INSTANCE_METADATA);
 
@@ -851,7 +1372,7 @@ export class Engine extends DurableObject<Env> {
             "instance.cannot_terminate",
           );
         }
-        await this.userTriggeredTerminate();
+        await this.userTriggeredTerminate(terminateOptions);
         break;
       }
       case "restart":
@@ -866,7 +1387,37 @@ export class Engine extends DurableObject<Env> {
     }
   }
 
-  async userTriggeredTerminate() {
+  private async replayRollbackRegistry(
+    metadata: InstanceMetadata,
+  ): Promise<void> {
+    if (this.rollbackRegistry.size > 0) {
+      return;
+    }
+
+    const eligible = this.getEligibleRollbackSteps();
+    if (eligible.length === 0) {
+      return;
+    }
+
+    this.rollbackEligibleCacheKeys = new Set(eligible);
+    const stubStep = this.createRollbackContext();
+    this.setRollbackPhase("replay");
+    try {
+      await this.env.USER_WORKFLOW.run(
+        metadata.event,
+        stubStep as unknown as WorkflowStep,
+      );
+    } catch (replayErr) {
+      // Match the production engine: replay may stop on normal workflow control
+      // flow; rollback execution uses whatever handlers replay registered.
+      console.debug("Rollback replay stopped:", replayErr);
+    } finally {
+      this.setRollbackPhase(undefined);
+      this.rollbackEligibleCacheKeys = undefined;
+    }
+  }
+
+  async userTriggeredTerminate(options?: WorkflowInstanceTerminateOptions) {
     const metadata =
       await this.ctx.storage.get<InstanceMetadata>(INSTANCE_METADATA);
 
@@ -875,6 +1426,22 @@ export class Engine extends DurableObject<Env> {
         "Instance does not exist",
         "instance.not_found",
       );
+    }
+
+    if (options?.rollback === true) {
+      this.priorityQueue ??= new TimePriorityQueue(this.ctx, metadata);
+      await this.replayRollbackRegistry(metadata);
+
+      const error = new Error("Instance terminated during rollback");
+      error.name = "Terminated";
+      this.setRollbackPhase("rollback");
+      try {
+        await executeRollbacks(this, error);
+      } catch (rollbackErr) {
+        console.error("Rollback execution failed:", rollbackErr);
+      } finally {
+        this.setRollbackPhase(undefined);
+      }
     }
 
     this.writeLog(InstanceEvent.WORKFLOW_TERMINATED, null, null, {
@@ -890,6 +1457,37 @@ export class Engine extends DurableObject<Env> {
     );
 
     await this.abort(ABORT_REASONS.USER_TERMINATE);
+  }
+
+  /** Deletes all instance state and aborts its current execution. */
+  async deleteInstance(): Promise<void> {
+    if ((await this.ctx.storage.get(INSTANCE_METADATA)) === undefined) {
+      throw createWorkflowError(
+        "Instance does not exist",
+        "instance.not_found",
+      );
+    }
+
+    await this.ctx.storage.deleteAll();
+
+    if (
+      this.env.MINIFLARE_LOOPBACK !== undefined &&
+      this.env.WORKFLOW_NAME !== undefined
+    ) {
+      try {
+        const response = await this.env.MINIFLARE_LOOPBACK.fetch(
+          `http://localhost/core/workflow-storage/${encodeURIComponent(this.env.WORKFLOW_NAME)}/${this.ctx.id.toString()}?defer=1`,
+          { method: "DELETE" },
+        );
+        if (!response.ok && response.status !== 404) {
+          console.error("Failed to delete persisted workflow instance");
+        }
+      } catch (error) {
+        console.error("Failed to delete persisted workflow instance", error);
+      }
+    }
+
+    await this.abort(ABORT_REASONS.USER_DELETE);
   }
 
   async userTriggeredPause() {
@@ -1136,6 +1734,9 @@ export class Engine extends DurableObject<Env> {
         event,
         stubStep as unknown as WorkflowStep,
       );
+      await this.ctx.storage.put(WORKFLOW_OUTPUT_KEY, {
+        value: normalizeForStorage(result),
+      });
       this.writeLog(InstanceEvent.WORKFLOW_SUCCESS, null, null, {
         result,
       });

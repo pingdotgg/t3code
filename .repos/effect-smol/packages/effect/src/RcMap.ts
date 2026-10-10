@@ -274,7 +274,7 @@ export const make: {
         self.state = { _tag: "Closed" }
         return Effect.forEach(
           map,
-          ([, entry]) => Effect.exit(Scope.close(entry.scope, Exit.void))
+          ([, entry]) => Effect.exit(closeEntry(entry))
         ).pipe(
           Effect.tap(() =>
             Effect.sync(() => {
@@ -370,10 +370,16 @@ export const get: {
           context.set(key, value)
         })
         context.set(Scope.Scope.key, entry.scope)
-        self.lookup(key).pipe(
-          Effect.runForkWith(Context.makeUnsafe(context)),
+        const lookupContext: Context.Context<Scope.Scope> = Context.makeUnsafe(context)
+        Effect.suspend(() => self.lookup(key)).pipe(
+          Effect.runForkWith(lookupContext),
           Fiber.runIn(entry.scope)
-        ).addObserver((exit) => Deferred.doneUnsafe(entry.deferred, exit))
+        ).addObserver((exit) => {
+          // Interruption is abandonment, so the entry is dropped and the next
+          // get starts a fresh lookup.
+          if (Exit.hasInterrupts(exit)) removeInterrupted(self, key, entry, lookupContext)
+          Deferred.doneUnsafe(entry.deferred, exit)
+        })
       }
       const scope = Context.getUnsafe(parent.context, Scope.Scope)
       return Scope.addFinalizer(scope, entry.finalizer).pipe(
@@ -449,20 +455,44 @@ export const getOption: {
     })
 )
 
+const removeInterrupted = <K, A, E>(
+  self: RcMap<K, A, E>,
+  key: K,
+  entry: State.Entry<A, E>,
+  context: Context.Context<Scope.Scope>
+) => {
+  if (self.state._tag === "Closed") return
+  const o = MutableHashMap.get(self.state.map, key)
+  if (o._tag === "None" || o.value !== entry) return
+  MutableHashMap.remove(self.state.map, key)
+  // Borrowers close the entry on release; an idle entry has none left.
+  if (entry.refCount > 0) return
+  closeEntry(entry).pipe(
+    Effect.runForkWith(context),
+    Fiber.runIn(self.scope)
+  )
+}
+
+const closeEntry = <A, E>(entry: State.Entry<A, E>) =>
+  entry.fiber
+    ? Fiber.interrupt(entry.fiber).pipe(Effect.andThen(Scope.close(entry.scope, Exit.void)))
+    : Scope.close(entry.scope, Exit.void)
+
 const release = <K, A, E>(self: RcMap<K, A, E>, key: K, entry: State.Entry<A, E>) =>
   Effect.withFiber((fiber) => {
     entry.refCount--
     if (entry.refCount > 0) {
       return Effect.void
-    } else if (
-      self.state._tag === "Closed"
-      || !MutableHashMap.has(self.state.map, key)
-      || Duration.isZero(entry.idleTimeToLive)
-    ) {
-      if (self.state._tag === "Open") {
-        MutableHashMap.remove(self.state.map, key)
-      }
-      return Scope.close(entry.scope, Exit.void)
+    } else if (self.state._tag === "Closed") {
+      return closeEntry(entry)
+    }
+
+    const o = MutableHashMap.get(self.state.map, key)
+    if (o._tag === "None" || o.value !== entry) {
+      return closeEntry(entry)
+    } else if (Duration.isZero(entry.idleTimeToLive)) {
+      MutableHashMap.remove(self.state.map, key)
+      return closeEntry(entry)
     } else if (!Duration.isFinite(entry.idleTimeToLive)) {
       return Effect.void
     }
@@ -471,15 +501,17 @@ const release = <K, A, E>(self: RcMap<K, A, E>, key: K, entry: State.Entry<A, E>
     entry.expiresAt = clock.currentTimeMillisUnsafe() + Duration.toMillis(entry.idleTimeToLive)
     if (entry.fiber) return Effect.void
 
-    entry.fiber = Effect.interruptibleMask(function loop(restore): Effect.Effect<void> {
+    entry.fiber = Effect.uninterruptibleMask(function loop(restore): Effect.Effect<void> {
       const now = clock.currentTimeMillisUnsafe()
       const remaining = entry.expiresAt - now
       if (remaining <= 0) {
         if (self.state._tag === "Closed" || entry.refCount > 0) return Effect.void
+        const o = MutableHashMap.get(self.state.map, key)
+        if (o._tag === "None" || o.value !== entry) return Effect.void
         MutableHashMap.remove(self.state.map, key)
-        return restore(Scope.close(entry.scope, Exit.void))
+        return Scope.close(entry.scope, Exit.void)
       }
-      return Effect.flatMap(clock.sleep(Duration.millis(remaining)), () => loop(restore))
+      return Effect.flatMap(restore(clock.sleep(Duration.millis(remaining))), () => loop(restore))
     }).pipe(
       Effect.ensuring(Effect.sync(() => {
         entry.fiber = undefined
@@ -592,8 +624,7 @@ export const invalidate: {
     const entry = o.value
     MutableHashMap.remove(self.state.map, key)
     if (entry.refCount > 0) return
-    if (entry.fiber) yield* Fiber.interrupt(entry.fiber)
-    yield* Scope.close(entry.scope, Exit.void)
+    yield* closeEntry(entry)
   }, Effect.uninterruptible)
 )
 

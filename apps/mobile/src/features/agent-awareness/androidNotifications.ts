@@ -5,7 +5,9 @@ import { Linking, Platform } from "react-native";
 interface AndroidAgentNotifications {
   configure(deviceId: string, userId: string, scheme: string, ongoingEnabled: boolean): void;
   clear(): void;
+  setThreadOnScreen?(path: string | null): void;
   openLiveUpdateSettings?(): boolean;
+  showShowcaseActivity?(scheme: string, data: Record<string, string>): void;
 }
 
 const native =
@@ -17,22 +19,33 @@ export function supportsAndroidAgentNotifications(): boolean {
   return typeof native?.configure === "function" && typeof native?.clear === "function";
 }
 
+function appScheme(): string {
+  const scheme = Constants.expoConfig?.scheme;
+  return (Array.isArray(scheme) ? scheme[0] : scheme) ?? "t3code";
+}
+
 export function configureAndroidAgentNotifications(
   deviceId: string,
   userId: string,
   ongoingEnabled: boolean,
 ): void {
-  const scheme = Constants.expoConfig?.scheme;
-  native?.configure?.(
-    deviceId,
-    userId,
-    (Array.isArray(scheme) ? scheme[0] : scheme) ?? "t3code",
-    ongoingEnabled,
-  );
+  native?.configure?.(deviceId, userId, appScheme(), ongoingEnabled);
+}
+
+/** Posts a staged relay payload for the showcase capture; false when unsupported. */
+export function showAndroidShowcaseAgentActivity(data: Record<string, string>): boolean {
+  if (!native?.showShowcaseActivity) return false;
+  native.showShowcaseActivity(appScheme(), data);
+  return true;
 }
 
 export function clearAndroidAgentNotifications(): void {
   native?.clear?.();
+}
+
+/** Tells the FCM handler which thread route is on screen so its alerts stay quiet. */
+export function setAndroidThreadOnScreen(path: string | null): void {
+  native?.setThreadOnScreen?.(path);
 }
 
 export function supportsAndroidLiveUpdateSettings(): boolean {

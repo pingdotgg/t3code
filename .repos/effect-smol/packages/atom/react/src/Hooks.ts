@@ -11,10 +11,10 @@
 import * as Cause from "effect/Cause"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
-import type * as AsyncResult from "effect/unstable/reactivity/AsyncResult"
-import * as Atom from "effect/unstable/reactivity/Atom"
-import type * as AtomRef from "effect/unstable/reactivity/AtomRef"
-import * as AtomRegistry from "effect/unstable/reactivity/AtomRegistry"
+import type * as AsyncResult from "effect/reactivity/AsyncResult"
+import * as Atom from "effect/reactivity/Atom"
+import type * as AtomRef from "effect/reactivity/AtomRef"
+import * as AtomRegistry from "effect/reactivity/AtomRegistry"
 import * as React from "react"
 import { RegistryContext } from "./RegistryContext.ts"
 
@@ -435,8 +435,8 @@ export const useAtomSubscribe = <A>(
  * @since 4.0.0
  */
 export const useAtomRef = <A>(ref: AtomRef.ReadonlyRef<A>): A => {
-  const [, setValue] = React.useState(ref.value)
-  React.useEffect(() => ref.subscribe(setValue), [ref])
+  const [, forceUpdate] = React.useReducer((n) => n + 1, 0)
+  React.useEffect(() => ref.subscribe(forceUpdate), [ref])
   return ref.value
 }
 

@@ -10,7 +10,9 @@ import * as Stream from "effect/Stream";
 import type WebSocket from "ws";
 import type { RawData } from "ws";
 import type { LogLine } from "../Provider.ts";
-import type { PrismaManagementClient } from "./Client.ts";
+import type { Config as CredentialsConfig } from "@distilled.cloud/prisma";
+import { Credentials } from "./Credentials.ts";
+import { getDeploymentLogsRequest } from "./Internal/LogsClient.ts";
 import type { DeploymentLogsQuery } from "./Types.ts";
 
 export class PrismaLogStreamError extends Data.TaggedError(
@@ -121,7 +123,28 @@ export const parseDeploymentLogRecord = (
 };
 
 export const tailDeploymentLogs = (
-  client: PrismaManagementClient,
+  deploymentId: string,
+  query?: DeploymentLogsQuery,
+) =>
+  Stream.unwrap(
+    Effect.gen(function* () {
+      // Resolve the credentials on the caller's fiber once; the reconnect
+      // loop below forks with `Effect.runFork`, which cannot carry context.
+      const credentials = yield* Credentials;
+      return tailDeploymentLogsWith(yield* credentials, deploymentId, query);
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PrismaLogStreamError({
+            message: "Failed to resolve Prisma credentials for log tailing",
+            cause,
+          }),
+      ),
+    ),
+  );
+
+const tailDeploymentLogsWith = (
+  credentials: CredentialsConfig,
   deploymentId: string,
   query?: DeploymentLogsQuery,
 ) =>
@@ -157,20 +180,19 @@ export const tailDeploymentLogs = (
         ): Effect.Effect<void, PrismaLogStreamError> =>
           Effect.gen(function* () {
             if (stopped) return;
-            const request = yield* client
-              .getDeploymentLogsRequest(
-                deploymentId,
-                cursor === undefined ? query : { ...query, cursor },
-              )
-              .pipe(
-                Effect.mapError(
-                  () =>
-                    new PrismaLogStreamError({
-                      message:
-                        "Failed to prepare the Prisma deployment log stream request",
-                    }),
-                ),
-              );
+            const request = yield* getDeploymentLogsRequest(
+              deploymentId,
+              cursor === undefined ? query : { ...query, cursor },
+            ).pipe(
+              Effect.provideService(Credentials, Effect.succeed(credentials)),
+              Effect.mapError(
+                () =>
+                  new PrismaLogStreamError({
+                    message:
+                      "Failed to prepare the Prisma deployment log stream request",
+                  }),
+              ),
+            );
             const auth = Redacted.value(request.headers.Authorization);
             const socket = yield* Effect.try({
               try: () =>

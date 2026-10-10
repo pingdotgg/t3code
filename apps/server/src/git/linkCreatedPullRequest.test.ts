@@ -4,23 +4,23 @@ import {
   ProviderInstanceId,
   ThreadId,
   type GitRunStackedActionResult,
-  type OrchestrationCommand,
+  type OrchestrationV2ServerCommand as OrchestrationCommand,
   type OrchestrationProjectShell,
-  type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import * as Stream from "effect/Stream";
 
-import { OrchestrationCommandInvariantError } from "../orchestration/Errors.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import {
-  OrchestrationEngineService,
-  type OrchestrationEngineShape,
-} from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+  type PullRequestTestThread,
+  v2PullRequestThread,
+} from "../orchestration-v2/testkit/pullRequestFixtures.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import { refreshPushedPullRequests } from "./refreshPushedPullRequests.ts";
+import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { createdPullRequestKey, linkCreatedPullRequest } from "./linkCreatedPullRequest.ts";
 
 const PROJECT_ID = ProjectId.make("project-1");
@@ -49,7 +49,7 @@ const project: OrchestrationProjectShell = {
   updatedAt: "2026-08-01T00:00:00.000Z",
 };
 
-const thread: OrchestrationThreadShell = {
+const thread: PullRequestTestThread = {
   id: THREAD_ID,
   projectId: PROJECT_ID,
   title: "Thread",
@@ -59,44 +59,38 @@ const thread: OrchestrationThreadShell = {
   branch: null,
   worktreePath: null,
   pullRequests: [],
-  latestTurn: null,
   createdAt: "2026-08-01T00:00:00.000Z",
   updatedAt: "2026-08-20T00:00:00.000Z",
   archivedAt: null,
   settledOverride: null,
   settledAt: null,
-  session: null,
   latestUserMessageAt: "2026-08-20T00:00:00.000Z",
-  hasPendingApprovals: false,
-  hasPendingUserInput: false,
-  hasActionableProposedPlan: false,
 };
 
 function prResult(pr: GitRunStackedActionResult["pr"]): Pick<GitRunStackedActionResult, "pr"> {
   return { pr };
 }
 
-const makeDependencies = (
-  dispatch: OrchestrationEngineShape["dispatch"],
-  threadShell: OrchestrationThreadShell | null = thread,
+const layerDependenciesFor = (
+  dispatch: Orchestrator.OrchestratorV2Shape["dispatch"],
+  threadShell: PullRequestTestThread | null = thread,
 ) =>
   Layer.mergeAll(
-    Layer.mock(ProjectionSnapshotQuery)({
-      getThreadShellById: () => Effect.succeed(Option.fromNullishOr(threadShell)),
-      getProjectShellById: () => Effect.succeed(Option.some(project)),
+    Layer.mock(ProjectService.ProjectService)({
+      getShell: () => Effect.succeedSome(project),
     }),
-    Layer.mock(OrchestrationEngineService)({
-      readEvents: () => Stream.empty,
+    Layer.mock(Orchestrator.OrchestratorV2)({
+      getThreadShell: () => Effect.succeed(threadShell ? v2PullRequestThread(threadShell) : null),
       dispatch,
-      streamDomainEvents: Stream.empty,
-      latestSequence: Effect.succeed(0),
     }),
   );
 
 const recordingDispatch = Effect.fn("recordingDispatch")(function* () {
   const commands = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
-  const dispatch: OrchestrationEngineShape["dispatch"] = (command) =>
-    Ref.update(commands, (recorded) => [...recorded, command]).pipe(Effect.as({ sequence: 1 }));
+  const dispatch: Orchestrator.OrchestratorV2Shape["dispatch"] = (command) =>
+    Ref.update(commands, (recorded) => [...recorded, command]).pipe(
+      Effect.as({ sequence: 1, storedEvents: [] }),
+    );
   return { commands, dispatch };
 });
 
@@ -165,7 +159,7 @@ describe("linkCreatedPullRequest", () => {
           url: "https://github.com/t3tools/t3code/pull/42",
         }),
         commandId,
-      }).pipe(Effect.provide(makeDependencies(dispatch)));
+      }).pipe(Effect.provide(layerDependenciesFor(dispatch)));
 
       expect(yield* Ref.get(commands)).toEqual([
         {
@@ -185,17 +179,17 @@ describe("linkCreatedPullRequest", () => {
   it.effect("dispatches nothing when the action produced no pull request", () =>
     Effect.gen(function* () {
       const { commands, dispatch } = yield* recordingDispatch();
-      const dependencies = makeDependencies(dispatch);
+      const layerDependencies = layerDependenciesFor(dispatch);
       yield* linkCreatedPullRequest({
         threadId: THREAD_ID,
         result: prResult({ status: "skipped_not_requested" }),
         commandId,
-      }).pipe(Effect.provide(dependencies));
+      }).pipe(Effect.provide(layerDependencies));
       yield* linkCreatedPullRequest({
         threadId: THREAD_ID,
         result: prResult({ status: "created", url: "https://github.com/t3tools/t3code/pull/42" }),
         commandId,
-      }).pipe(Effect.provide(dependencies));
+      }).pipe(Effect.provide(layerDependencies));
 
       expect(yield* Ref.get(commands)).toEqual([]);
     }),
@@ -203,11 +197,12 @@ describe("linkCreatedPullRequest", () => {
 
   it.effect("swallows an already-linked rejection and other dispatch failures", () =>
     Effect.gen(function* () {
-      const rejecting: OrchestrationEngineShape["dispatch"] = (command) =>
+      const rejecting: Orchestrator.OrchestratorV2Shape["dispatch"] = (command) =>
         Effect.fail(
-          new OrchestrationCommandInvariantError({
+          new Orchestrator.OrchestratorDispatchError({
+            commandId: command.commandId,
             commandType: command.type,
-            detail: "already linked",
+            cause: "already linked",
           }),
         );
       const result = prResult({
@@ -216,15 +211,57 @@ describe("linkCreatedPullRequest", () => {
         url: "https://github.com/t3tools/t3code/pull/7",
       });
       yield* linkCreatedPullRequest({ threadId: THREAD_ID, result, commandId }).pipe(
-        Effect.provide(makeDependencies(rejecting)),
+        Effect.provide(layerDependenciesFor(rejecting)),
       );
       yield* linkCreatedPullRequest({ threadId: THREAD_ID, result, commandId }).pipe(
-        Effect.provide(makeDependencies(() => Effect.die(new Error("engine down")))),
+        Effect.provide(layerDependenciesFor(() => Effect.die(new Error("engine down")))),
       );
       // A thread that vanished between the action and the link is not an error either.
       yield* linkCreatedPullRequest({ threadId: THREAD_ID, result, commandId }).pipe(
-        Effect.provide(makeDependencies(() => Effect.die(new Error("unreachable")), null)),
+        Effect.provide(layerDependenciesFor(() => Effect.die(new Error("unreachable")), null)),
       );
     }),
   );
 });
+
+it.effect(
+  "refreshes PR readers after a push from a thread or project, but not a local commit",
+  () =>
+    Effect.gen(function* () {
+      const refreshed: string[] = [];
+      const layerDependencies = Layer.mergeAll(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadShell: () => Effect.succeed(v2PullRequestThread(thread)),
+        }),
+        Layer.mock(ProjectStore.ProjectStoreV2)({
+          listShells: () => Effect.succeed([project]),
+        }),
+        Layer.mock(PullRequestService.PullRequestService)({
+          refreshAfterTurn: (id) =>
+            Effect.sync(() => {
+              refreshed.push(id);
+            }),
+        }),
+      );
+      yield* refreshPushedPullRequests(
+        { cwd: "/worktree", threadId: THREAD_ID },
+        { push: { status: "pushed" } },
+      ).pipe(Effect.provide(layerDependencies));
+      yield* refreshPushedPullRequests(
+        { cwd: project.workspaceRoot },
+        { push: { status: "pushed" } },
+      ).pipe(Effect.provide(layerDependencies));
+      yield* refreshPushedPullRequests({ cwd: "/unrelated" }, { push: { status: "pushed" } }).pipe(
+        Effect.provide(layerDependencies),
+      );
+      yield* refreshPushedPullRequests(
+        { cwd: project.workspaceRoot, threadId: THREAD_ID },
+        { push: { status: "skipped_not_requested" } },
+      ).pipe(Effect.provide(layerDependencies));
+      yield* refreshPushedPullRequests(
+        { cwd: "/draft-worktree", projectId: PROJECT_ID },
+        { push: { status: "pushed" } },
+      ).pipe(Effect.provide(layerDependencies));
+      expect(refreshed).toEqual([PROJECT_ID, PROJECT_ID, PROJECT_ID]);
+    }),
+);

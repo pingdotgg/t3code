@@ -52,12 +52,40 @@ export const makeDataApiDialect = (
 ): Effect.Effect<import("kysely").Dialect> =>
   Effect.promise(async () => {
     const {
-      CompiledQuery,
+      CastNode,
+      DataTypeNode,
+      OperationNodeTransformer,
       PostgresAdapter,
       PostgresIntrospector,
       PostgresQueryCompiler,
+      ReferenceNode,
     } = await import("kysely");
-    void CompiledQuery;
+
+    class DataApiIntrospectionTransformer extends OperationNodeTransformer {
+      protected override transformAlias(node: import("kysely").AliasNode) {
+        const alias = super.transformAlias(node);
+        const reference = alias.node;
+        if (
+          ReferenceNode.is(reference) &&
+          reference.column.kind === "ColumnNode" &&
+          reference.column.column.name === "relkind"
+        ) {
+          // The Data API cannot return PostgreSQL's internal "char" type.
+          return {
+            ...alias,
+            node: CastNode.create(reference, DataTypeNode.create("text")),
+          };
+        }
+        return alias;
+      }
+    }
+
+    const introspectionTransformer = new DataApiIntrospectionTransformer();
+    const introspectionPlugin: import("kysely").KyselyPlugin = {
+      transformQuery: ({ node }) =>
+        introspectionTransformer.transformNode(node),
+      transformResult: async ({ result }) => result,
+    };
 
     class DataApiQueryCompiler extends PostgresQueryCompiler {
       protected override getCurrentParameterPlaceholder(): string {
@@ -122,7 +150,8 @@ export const makeDataApiDialect = (
       createAdapter: () => new PostgresAdapter(),
       createDriver: () => new DataApiDriver(),
       createQueryCompiler: () => new DataApiQueryCompiler(),
-      createIntrospector: (db: never) => new PostgresIntrospector(db),
+      createIntrospector: (db: import("kysely").Kysely<unknown>) =>
+        new PostgresIntrospector(db.withPlugin(introspectionPlugin)),
     } as unknown as import("kysely").Dialect;
   });
 

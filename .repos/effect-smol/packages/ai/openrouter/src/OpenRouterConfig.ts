@@ -1,24 +1,15 @@
 /**
- * The `OpenRouterConfig` module lets a workflow temporarily customize the HTTP
- * client used by generated OpenRouter request methods. `OpenRouterClient` reads
- * this scoped transform when generated client operations execute, so callers can
- * add middleware or instrumentation without rebuilding the client layer.
+ * Scoped HTTP client customization for OpenRouter requests.
  *
  * @since 4.0.0
  */
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import { dual } from "effect/Function"
-import type { HttpClient } from "effect/unstable/http/HttpClient"
+import type { HttpClient } from "effect/http/HttpClient"
 
 /**
- * Context service for scoped OpenRouter provider configuration used by client
- * operations.
- *
- * **When to use**
- *
- * Use as the context service tag when manually providing or reading scoped
- * OpenRouter provider configuration in an Effect context.
+ * Scoped configuration read when executing OpenRouter requests.
  *
  * @see {@link withClientTransform} for scoping an HTTP client transformation
  *
@@ -47,8 +38,7 @@ export class OpenRouterConfig extends Context.Service<
  */
 export declare namespace OpenRouterConfig {
   /**
-   * Configuration values read by OpenRouter provider operations when resolving
-   * the generated HTTP client.
+   * HTTP client configuration for generated methods and alpha Decisions requests.
    *
    * @category services
    * @since 4.0.0
@@ -59,26 +49,9 @@ export declare namespace OpenRouterConfig {
 }
 
 /**
- * Provides a scoped transform for the OpenRouter HTTP client used by provider
- * operations.
- *
- * **When to use**
- *
- * Use when you need temporary OpenRouter HTTP client customization for a
- * single effect or workflow without rebuilding the client layer.
- *
- * **Details**
- *
- * Supports both data-first and data-last forms. The transform is stored in the
- * scoped `OpenRouterConfig` service and read by generated OpenRouter request
- * operations while running the supplied effect.
- *
- * **Gotchas**
- *
- * If a transform is already present in the scoped config, this helper replaces
- * it. Compose transforms manually when both should apply. Streaming chat
- * completion requests are sent directly by `OpenRouterClient.make` and do not
- * read this scoped transform.
+ * Transforms the HTTP client for generated methods and alpha Decisions requests
+ * made by the supplied effect. Streaming chat completions ignore this transform.
+ * Replaces any existing scoped transform; compose them manually to apply both.
  *
  * @category configuration
  * @since 4.0.0

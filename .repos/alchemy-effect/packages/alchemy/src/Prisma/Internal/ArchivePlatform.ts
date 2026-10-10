@@ -196,7 +196,7 @@ async function* tarChunks(
 ): AsyncGenerator<Uint8Array> {
   for (const entry of entries) {
     if (entry.type === "symlink") {
-      yield createHeader({
+      yield* createEntryHeaders({
         name: entry.name,
         mode: entry.mode,
         size: 0,
@@ -206,7 +206,7 @@ async function* tarChunks(
       continue;
     }
 
-    yield createHeader({
+    yield* createEntryHeaders({
       name: entry.name,
       mode: entry.mode,
       size: entry.file.size,
@@ -238,15 +238,52 @@ async function* tarChunks(
   yield new Uint8Array(1024);
 }
 
-const createHeader = (entry: {
+interface TarHeader {
   readonly name: string;
   readonly mode: number;
   readonly size: number;
-  readonly type: "file" | "symlink";
+  readonly type: "file" | "symlink" | "pax";
   readonly linkname?: string;
-}) => {
+}
+
+const paxRecord = (key: string, value: string) => {
+  const body = ` ${key}=${value}\n`;
+  let length = byteLength(body) + 1;
+  while (byteLength(String(length)) + byteLength(body) !== length) {
+    length = byteLength(String(length)) + byteLength(body);
+  }
+  return `${length}${body}`;
+};
+
+function* createEntryHeaders(entry: TarHeader): Generator<Uint8Array> {
+  const longPath = splitTarName(entry.name) === undefined;
+  const longLink =
+    entry.linkname !== undefined && byteLength(entry.linkname) > 100;
+  if (longPath || longLink) {
+    const data = new TextEncoder().encode(
+      (longPath ? paxRecord("path", entry.name) : "") +
+        (longLink ? paxRecord("linkpath", entry.linkname!) : ""),
+    );
+    yield createHeader({
+      name: "PaxHeaders/entry",
+      mode: 0o644,
+      size: data.byteLength,
+      type: "pax",
+    });
+    yield data;
+    const padding = paddingLength(data.byteLength);
+    if (padding > 0) yield new Uint8Array(padding);
+  }
+  yield createHeader({
+    ...entry,
+    name: longPath ? "PaxEntry" : entry.name,
+    linkname: longLink ? "PaxLink" : entry.linkname,
+  });
+}
+
+const createHeader = (entry: TarHeader) => {
   const header = new Uint8Array(512);
-  const { name, prefix } = splitTarName(entry.name);
+  const { name, prefix } = splitTarName(entry.name)!;
   if (entry.linkname && byteLength(entry.linkname) > 100) {
     throw new Error(
       `Archive symlink target is too long for tar header: ${entry.linkname}`,
@@ -260,7 +297,12 @@ const createHeader = (entry: {
   writeOctal(header, 124, 12, entry.size);
   writeOctal(header, 136, 12, 0);
   header.fill(0x20, 148, 156);
-  writeString(header, 156, 1, entry.type === "symlink" ? "2" : "0");
+  writeString(
+    header,
+    156,
+    1,
+    entry.type === "pax" ? "x" : entry.type === "symlink" ? "2" : "0",
+  );
   if (entry.linkname) writeString(header, 157, 100, entry.linkname);
   writeString(header, 257, 6, "ustar");
   writeString(header, 263, 2, "00");
@@ -273,7 +315,9 @@ const createHeader = (entry: {
   return header;
 };
 
-const splitTarName = (name: string): { name: string; prefix?: string } => {
+const splitTarName = (
+  name: string,
+): { name: string; prefix?: string } | undefined => {
   if (byteLength(name) <= 100) return { name };
   const slashIndexes = Array.from(name.matchAll(/\//g), (match) => match.index);
   for (const index of slashIndexes.reverse()) {
@@ -284,7 +328,7 @@ const splitTarName = (name: string): { name: string; prefix?: string } => {
       return { name: suffix, prefix };
     }
   }
-  throw new Error(`Archive path is too long for tar header: ${name}`);
+  return undefined;
 };
 
 const byteLength = (value: string) => new TextEncoder().encode(value).length;
