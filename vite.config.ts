@@ -75,6 +75,11 @@ export default defineConfig({
       NodeURL.fileURLToPath(
         new URL("./packages/shared/src/testing/longTempDir.ts", import.meta.url),
       ),
+      // Server git fixtures must ignore the developer's signing and branch
+      // config however the suite is launched; apps/server inherits this list.
+      NodeURL.fileURLToPath(
+        new URL("./apps/server/src/testUtils/gitConfig.setup.ts", import.meta.url),
+      ),
     ],
   },
   staged: {
