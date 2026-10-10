@@ -132,6 +132,11 @@ export const GitRunStackedActionInput = Schema.Struct({
   filePaths: Schema.optional(
     Schema.Array(TrimmedNonEmptyStringSchema).check(Schema.isMinLength(1)),
   ),
+  /**
+   * Branch a newly created pull request targets, instead of the one recorded
+   * for the branch or the repository default. Task graphs use it to stack PRs.
+   */
+  baseBranch: Schema.optional(TrimmedNonEmptyStringSchema),
   /** The thread the action runs beside; a pull request it creates is linked to it. */
   threadId: Schema.optional(ThreadId),
   projectId: Schema.optional(ProjectId),

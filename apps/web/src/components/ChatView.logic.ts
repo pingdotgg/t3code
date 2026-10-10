@@ -1104,6 +1104,19 @@ export async function waitForStartedServerThread(
   });
 }
 
+/** Resolves true once a thread created by this client shows up in its shell list. */
+export async function waitForServerThreadShell(
+  threadRef: ScopedThreadRef,
+  timeoutMs = 5_000,
+): Promise<boolean> {
+  return waitForAtomValue({
+    registry: appAtomRegistry,
+    atom: environmentThreadShells.threadShellAtom(threadRef),
+    predicate: (thread) => thread != null,
+    timeoutMs,
+  });
+}
+
 /**
  * Runs `revert` (the rollback command `requestId`) and resolves once the
  * message's run is rolled back. Rejects with the server's reason as soon as

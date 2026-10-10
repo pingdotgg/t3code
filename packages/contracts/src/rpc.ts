@@ -343,6 +343,21 @@ import {
   ScheduledTaskUpsertInput,
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
+import {
+  TaskGraphCreateInput,
+  TaskGraphEditInput,
+  TaskGraphError,
+  TaskGraphListResult,
+  TaskGraphPeerAddInput,
+  TaskGraphPeerGrant,
+  TaskGraphPeerGrantInput,
+  TaskGraphPeerListResult,
+  TaskGraphPeerSetWeightInput,
+  TaskGraphPeerTargetInput,
+  TaskGraphResult,
+  TaskGraphSubscribeInput,
+  TaskGraphTargetInput,
+} from "./taskGraph.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
 import {
   ProjectCloneActionInput,
@@ -517,6 +532,18 @@ export const WS_METHODS = {
   secretsAnswerRequest: "secrets.answerRequest",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
+
+  // Task graphs
+  taskGraphsSubscribe: "taskGraphs.subscribe",
+  taskGraphsCreate: "taskGraphs.create",
+  taskGraphsEdit: "taskGraphs.edit",
+  taskGraphsRun: "taskGraphs.run",
+  taskGraphsCancel: "taskGraphs.cancel",
+  taskGraphPeersSubscribe: "taskGraphPeers.subscribe",
+  taskGraphPeersAdd: "taskGraphPeers.add",
+  taskGraphPeersRemove: "taskGraphPeers.remove",
+  taskGraphPeersSetWeight: "taskGraphPeers.setWeight",
+  taskGraphPeersIssueGrant: "taskGraphPeers.issueGrant",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -1790,6 +1817,69 @@ const WsScheduledTasksRotateWebhookTokenRpc = Rpc.make(
   },
 );
 
+/** Streams a thread's task graphs: one snapshot on subscribe, then a fresh list after every change. */
+const WsTaskGraphsSubscribeRpc = Rpc.make(WS_METHODS.taskGraphsSubscribe, {
+  payload: TaskGraphSubscribeInput,
+  success: TaskGraphListResult,
+  error: Schema.Union([TaskGraphError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsTaskGraphsCreateRpc = Rpc.make(WS_METHODS.taskGraphsCreate, {
+  payload: TaskGraphCreateInput,
+  success: TaskGraphResult,
+  error: Schema.Union([TaskGraphError, EnvironmentAuthorizationError]),
+});
+
+const WsTaskGraphsEditRpc = Rpc.make(WS_METHODS.taskGraphsEdit, {
+  payload: TaskGraphEditInput,
+  success: TaskGraphResult,
+  error: Schema.Union([TaskGraphError, EnvironmentAuthorizationError]),
+});
+
+const WsTaskGraphsRunRpc = Rpc.make(WS_METHODS.taskGraphsRun, {
+  payload: TaskGraphTargetInput,
+  success: TaskGraphResult,
+  error: Schema.Union([TaskGraphError, EnvironmentAuthorizationError]),
+});
+
+const WsTaskGraphsCancelRpc = Rpc.make(WS_METHODS.taskGraphsCancel, {
+  payload: TaskGraphTargetInput,
+  success: TaskGraphResult,
+  error: Schema.Union([TaskGraphError, EnvironmentAuthorizationError]),
+});
+
+const WsTaskGraphPeersSubscribeRpc = Rpc.make(WS_METHODS.taskGraphPeersSubscribe, {
+  payload: Schema.Struct({}),
+  success: TaskGraphPeerListResult,
+  error: Schema.Union([TaskGraphError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsTaskGraphPeersAddRpc = Rpc.make(WS_METHODS.taskGraphPeersAdd, {
+  payload: TaskGraphPeerAddInput,
+  success: TaskGraphPeerListResult,
+  error: Schema.Union([TaskGraphError, EnvironmentAuthorizationError]),
+});
+
+const WsTaskGraphPeersRemoveRpc = Rpc.make(WS_METHODS.taskGraphPeersRemove, {
+  payload: TaskGraphPeerTargetInput,
+  success: TaskGraphPeerListResult,
+  error: Schema.Union([TaskGraphError, EnvironmentAuthorizationError]),
+});
+
+const WsTaskGraphPeersSetWeightRpc = Rpc.make(WS_METHODS.taskGraphPeersSetWeight, {
+  payload: TaskGraphPeerSetWeightInput,
+  success: TaskGraphPeerListResult,
+  error: Schema.Union([TaskGraphError, EnvironmentAuthorizationError]),
+});
+
+const WsTaskGraphPeersIssueGrantRpc = Rpc.make(WS_METHODS.taskGraphPeersIssueGrant, {
+  payload: TaskGraphPeerGrantInput,
+  success: TaskGraphPeerGrant,
+  error: Schema.Union([TaskGraphError, EnvironmentAuthorizationError]),
+});
+
 const WsSecretsAnswerRequestRpc = Rpc.make(WS_METHODS.secretsAnswerRequest, {
   payload: SecretRequestAnswerInput,
   error: Schema.Union([SecretRequestError, EnvironmentAuthorizationError]),
@@ -1895,6 +1985,16 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRefreshUsageRatesRpc,
   WsServerSignalProcessRpc,
   WsScheduledTasksListRpc,
+  WsTaskGraphsSubscribeRpc,
+  WsTaskGraphsCreateRpc,
+  WsTaskGraphsEditRpc,
+  WsTaskGraphsRunRpc,
+  WsTaskGraphsCancelRpc,
+  WsTaskGraphPeersSubscribeRpc,
+  WsTaskGraphPeersAddRpc,
+  WsTaskGraphPeersRemoveRpc,
+  WsTaskGraphPeersSetWeightRpc,
+  WsTaskGraphPeersIssueGrantRpc,
   WsScheduledTasksSubscribeRpc,
   WsScheduledTasksUpsertRpc,
   WsScheduledTasksSetEnabledRpc,

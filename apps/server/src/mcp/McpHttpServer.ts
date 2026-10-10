@@ -47,6 +47,8 @@ import {
 } from "./toolkits/preview/tools.ts";
 import * as WorktreeHandlers from "./toolkits/worktree/handlers.ts";
 import { WorktreeToolkit } from "./toolkits/worktree/tools.ts";
+import * as TaskGraphHandlers from "./toolkits/taskGraph/handlers.ts";
+import { TaskGraphToolkit } from "./toolkits/taskGraph/tools.ts";
 import * as WorktreeMcpService from "./WorktreeMcpService.ts";
 import * as PullRequestsHandlers from "./toolkits/pullRequests/handlers.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
@@ -816,6 +818,8 @@ export const layerOrchestratorToolkit = toolkitRegistration(
 
 export const layerThreadToolkit = toolkitRegistration(ThreadToolkit, ThreadHandlers.layer);
 
+export const layerTaskGraphToolkit = toolkitRegistration(TaskGraphToolkit, TaskGraphHandlers.layer);
+
 const layerWorktreeToolkitRegistration = toolkitRegistration(
   WorktreeToolkit,
   WorktreeHandlers.layer,
@@ -870,6 +874,7 @@ export const layer = Layer.mergeAll(
   layerPreviewToolkit,
   layerOrchestratorToolkit,
   layerThreadToolkit,
+  layerTaskGraphToolkit,
   layerAttachmentToolkit,
   layerProjectRegistration,
   layerEnvironmentToolkit,

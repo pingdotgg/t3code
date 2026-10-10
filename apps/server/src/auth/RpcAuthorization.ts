@@ -13,6 +13,7 @@ import {
   AuthSettingsWriteScope,
   AuthProvidersManageScope,
   AuthEnvironmentMaintainScope,
+  TASK_GRAPH_PEER_SCOPES,
   AuthFilesystemReadScope,
   AuthFilesystemWriteScope,
   AuthDiagnosticsReadScope,
@@ -114,6 +115,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverGetBackgroundPolicy]: AuthOrchestrationReadScope,
   [WS_METHODS.scheduledTasksList]: AuthOrchestrationReadScope,
   [WS_METHODS.scheduledTasksSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.taskGraphsSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.taskGraphPeersSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.secretsAnswerRequest]: AuthOrchestrationOperateScope,
   // Delivery logs hold request bodies, so they need the same scope as the URL.
   [WS_METHODS.scheduledTasksListWebhookDeliveries]: AuthOrchestrationOperateScope,
@@ -263,6 +266,10 @@ const requiredScopesForRpcCall = (
         ? AuthFilesystemReadScope
         : AuthOrchestrationReadScope,
     ];
+  }
+  if (method === WS_METHODS.taskGraphPeersIssueGrant) {
+    // A grant carries these scopes, so never hand out more than the caller holds itself.
+    return [AuthEnvironmentMaintainScope, ...TASK_GRAPH_PEER_SCOPES];
   }
   if (method === WS_METHODS.serverUpdateSettings) return requiredScopesForSettingsUpdate(payload);
   if (method === WS_METHODS.projectsMutate) {

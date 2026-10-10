@@ -1,0 +1,13 @@
+/*
+ * xyflow draws edges, handles, the connection line and the dot grid itself,
+ * so its theme variables map to ours here instead of in classes on elements
+ * we render. Loaded with the editor chunk only.
+ */
+.react-flow[data-task-graph-canvas] {
+  --xy-edge-stroke: var(--muted-foreground);
+  --xy-edge-stroke-selected: var(--ring);
+  --xy-edge-stroke-width: 1.5;
+  --xy-connectionline-stroke: var(--ring);
+  --xy-handle-background-color: var(--muted-foreground);
+  --xy-background-pattern-dots-color: var(--border);
+}

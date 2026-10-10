@@ -144,6 +144,8 @@ import {
 import { ComposerPopoverHost } from "./ComposerPopoverHost";
 import { ThreadFeed, type ThreadFeedHistoryControls } from "./ThreadFeed";
 import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
+import { useThreadTaskGraphs } from "./TaskGraphSheet";
+import { resolveTaskGraphSegment } from "./task-graph-presentation";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
@@ -414,6 +416,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     threadId: props.selectedThread.id,
   });
   const agentsSegment = resolveSubagentPillSegment(turnSubagents);
+  const taskGraphSegment = resolveTaskGraphSegment(
+    useThreadTaskGraphs({ environmentId: props.environmentId, threadId: props.selectedThread.id }),
+  );
   const composerEditorRef = useRef<ComposerEditorHandle>(null);
   // A provider-native subagent shows status instead of a composer.
   const isProviderSubagent = isProviderNativeSubagentThread(props.selectedThread.source);
@@ -562,6 +567,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     showWorkingControl ||
     queuedCount > 0 ||
     agentsSegment !== null ||
+    taskGraphSegment !== null ||
     devicePreviews.length > 0 ||
     browserTabs.tabs.length > 0 ||
     props.connectionStateLabel !== "connected" ||
@@ -1256,6 +1262,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   onOpenAgents={() => {
                     Keyboard.dismiss();
                     navigation.navigate("ThreadAgents", {
+                      environmentId: props.environmentId,
+                      threadId: props.selectedThread.id,
+                    });
+                  }}
+                  taskGraph={taskGraphSegment}
+                  onOpenTaskGraph={() => {
+                    Keyboard.dismiss();
+                    navigation.navigate("ThreadTaskGraphs", {
                       environmentId: props.environmentId,
                       threadId: props.selectedThread.id,
                     });

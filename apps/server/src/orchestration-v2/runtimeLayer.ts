@@ -50,6 +50,8 @@ import * as ThreadLifecycleService from "./ThreadLifecycleService.ts";
 import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as TaskGraphPeers from "../taskGraph/TaskGraphPeers.ts";
+import * as TaskGraphService from "../taskGraph/TaskGraphService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 
 /** The shared application event log and its command receipts. */
@@ -275,6 +277,18 @@ const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
     ),
   ),
 );
+const layerTaskGraphPeersProvided = TaskGraphPeers.layer.pipe(Layer.provide(layerProjectService));
+const layerTaskGraphProvided = TaskGraphService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerTaskGraphPeersProvided,
+      layerThreadLaunchProvided,
+      layerThreadManagementProvided,
+      layerOrchestratorProvided,
+      layerProjectService,
+    ),
+  ),
+);
 const layerProviderContinuationWorkerProvided = ProviderContinuationService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -348,6 +362,8 @@ export const layerProduction = Layer.mergeAll(
   layerThreadLaunchProvided,
   layerThreadLifecycleProvided,
   layerScheduledTaskProvided,
+  layerTaskGraphProvided,
+  layerTaskGraphPeersProvided,
   layerSecretRequestsProvided,
   UsageLimitRecoveryWorker.layer.pipe(
     Layer.provide(Layer.mergeAll(ProjectionStore.layer, layerThreadManagementProvided)),

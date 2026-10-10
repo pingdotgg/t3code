@@ -1,0 +1,118 @@
+# Task graphs
+
+A task graph splits one request into agent tasks that run in parallel. Ask an
+agent something like "audit auth, billing and uploads for security issues and
+fix what you find", and it can plan a graph: one node per area, then a node
+that combines their work. Each node runs as its own thread in its own git
+worktree, and starts as soon as the nodes it depends on have succeeded.
+
+You can also start one yourself: choose the task graph button next to the
+attach button in the composer. It opens the editor on a draft, where you add
+tasks and choose **Run**. On a new chat, nothing is created until you choose
+**Run**, which creates the chat and the graph together.
+
+The graph appears above the composer of the thread that planned it. Open a
+node to watch its thread, or open the editor to change the plan.
+
+## Running or reviewing first
+
+By default a graph starts as soon as the agent proposes it. To review plans
+first, turn off **Settings → General → Run task graphs automatically**; graphs
+then wait as drafts until you choose **Run**. Your wording wins over the
+setting in either direction: "show me the plan first" gets a draft, and "just
+do it" runs straight away.
+
+**Task graph nodes at once** in the same section limits how many nodes run on
+this machine at the same time. Nodes also wait while the machine is nearly out
+of CPU or memory.
+
+## Waiting for a time or a usage reset
+
+Give a task a **Start at** time in the editor, or ask the agent to start it
+later, and it waits until then.
+
+Tasks never start into a used-up usage limit: a task whose model is out of
+usage on this machine waits for the reset instead. If a task's run stops
+because it hits a usage limit, the task waits rather than failing, and
+continues on its own thread when the limit resets. The graph shows when each
+waiting task will go again. Cancel the branch to stop waiting.
+
+## Changing a graph
+
+Hover a task to see its prompt, model, machine and workspace. Double-click it
+to open the editor with that task selected.
+
+In the editor, **Add task** adds a task after the selected one, continuing its
+worktree. With nothing selected, the new task goes first and the tasks at the
+start wait for it. You can edit or delete tasks that have not started,
+and drag between tasks to add a dependency. For each task that has not
+started you can also choose its model, the machine it runs on, and its
+workspace. While the graph runs:
+
+- **Cancel branch** stops a task and everything that depends on it.
+- **Retry** reruns a task that failed or was cancelled, along with the tasks
+  that were skipped because of it.
+- **Cancel graph** stops everything that is still running.
+
+You can also ask the agent to change the graph in chat, such as "drop the
+billing branch" or "add a docs task after the merge". Mobile shows the graph
+and offers Run, Cancel, Cancel branch and Retry.
+
+If you continue a failed task in its own thread, the graph follows that run
+and picks up again from there when it finishes.
+
+## Branches and pull requests
+
+Each task has a workspace:
+
+- **New worktree**, the default. A task with no dependencies branches from
+  the thread's branch; otherwise it branches from its first dependency's
+  branch.
+- **Continue a dependency's worktree**. The task works on in its first
+  dependency's worktree and branch, on the same machine, so several tasks can
+  build one branch in turn.
+- **Project folder**. No worktree, branch, commit or pull request. Use it for
+  read-only work such as reviews.
+
+A task with several dependencies starts from the first one's branch and merges
+the others; its agent resolves any merge conflicts. When those branches are on
+different machines, the editor offers **Bring branches together on**: pick a
+dependency's machine to continue its worktree there, and the other branches
+come in through your remote. Agents only add such a
+combining task when you ask for the work to be reconciled or the pieces cannot
+work apart. Otherwise each branch stays separate and ends in its own pull
+request.
+
+When a task succeeds, its work is committed. Tasks that nothing depends on
+also push and open a pull request against the graph's base branch. Ask for
+stacked pull requests, or turn on pull requests for tasks in the middle of the
+graph, and each pull request targets the nearest earlier task with its own
+pull request instead, so the graph produces a stack. When the whole graph
+finishes, the thread that planned it gets a summary with each task's result
+and pull request.
+
+## Running tasks on other machines
+
+A graph can spread its tasks across your other T3 Code machines. Open
+**Settings → Connections → Task graph machines** on the machine that runs the
+graph. Machines this app is already connected to, over T3 Connect or directly,
+are listed there: choose **Add**. The other machine needs this version of T3
+Code for that. You can also paste a pairing link from the other machine (see
+[Remote access](./remote-access.md)). Both machines need the project open from
+the same repository.
+
+A machine added over T3 Connect is reached at its T3 Connect address. If that
+address changes, for example after you unlink and relink the machine, it shows
+as unreachable; remove it and add it again.
+
+This machine only gets permission to start, watch and stop threads and push
+branches there. It cannot read files, open terminals or change settings. To
+unpair, remove the machine here, then revoke the session from the other
+machine's connected clients.
+
+Tasks go to the machine you pick for them in the editor. Tasks left on
+**Auto** go to whichever machine has the most free CPU and memory, adjusted by
+each machine's preference (**Prefer**, **Normal**, **Less often** or **Manual
+only**). With a machine paired, task branches are pushed to your remote so the
+other machines can build on them. Tasks on another machine run in the same
+permission mode as the thread that planned the graph.
