@@ -812,8 +812,7 @@ export const WINDOWS_SERVER_ASAR_RESOURCE = "server.asar";
 // dlopen/spawn need real files, so native modules, shared libraries, and
 // helper executables live in the server.asar.unpacked sibling (the standard
 // asar redirect convention). Everything else stays packed.
-export const WINDOWS_SERVER_ASAR_UNPACK_GLOB =
-  "{**/*.node,**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib}";
+export const WINDOWS_SERVER_ASAR_UNPACK_GLOB = "{**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib}";
 // Mirrors DESKTOP_FILE_EXCLUSIONS for the hand-packed sidecar: the Claude SDK
 // platform packages are dead weight (see above), and node_modules/.bin shims
 // are never spawned at runtime (and are symlinks on POSIX build hosts, which
@@ -2310,11 +2309,27 @@ export const packWindowsServerAsar = Effect.fn("packWindowsServerAsar")(function
   readonly arch: typeof BuildArch.Type;
 }) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  // Native addons are unpacked only when they are Windows PE ("MZ") binaries.
+  // Signed builds Authenticode-sign every unpacked .node file, which fails on
+  // the ELF addons installed for the WSL backend, so those stay packed; WSL
+  // extraction reads them through Electron's asar-aware fs.
+  const windowsAddonGlobs: string[] = [];
+  for (const entry of yield* fs.readDirectory(input.sourceDir, { recursive: true })) {
+    if (!entry.endsWith(".node")) continue;
+    const addonPath = path.join(input.sourceDir, entry);
+    if ((yield* fs.stat(addonPath)).type !== "File") continue;
+    const bytes = yield* fs.readFile(addonPath);
+    if (bytes[0] === 0x4d && bytes[1] === 0x5a) {
+      const posixPath = entry.split(path.sep).join("/");
+      windowsAddonGlobs.push(`**/${posixPath.replace(/[\\*?[\]{}()!+@,]/g, "\\$&")}`);
+    }
+  }
   yield* Effect.tryPromise({
     try: () =>
       createPackageWithOptions(input.sourceDir, input.asarPath, {
         dot: true,
-        unpack: WINDOWS_SERVER_ASAR_UNPACK_GLOB,
+        unpack: `{${[WINDOWS_SERVER_ASAR_UNPACK_GLOB, ...windowsAddonGlobs].join(",")}}`,
         globOptions: { ignore: resolveWindowsServerAsarIgnoreGlobs(input.arch) },
       }),
     catch: (cause) => new WindowsServerSidecarPackError({ asarPath: input.asarPath, cause }),

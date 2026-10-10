@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { extractFile } from "@electron/asar";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as FileSystem from "effect/FileSystem";
@@ -119,7 +120,7 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
   yield* fs.makeDirectory(path.dirname(serverEntryPath), { recursive: true });
   yield* fs.makeDirectory(path.dirname(nativePath), { recursive: true });
   yield* fs.writeFileString(serverEntryPath, input.serverEntrySource ?? "console.log('server');\n");
-  yield* fs.writeFileString(nativePath, "native-binary");
+  yield* fs.writeFileString(nativePath, "MZ native-binary");
 
   const generatedAsarPath = path.join(tempDir, WINDOWS_SERVER_ASAR_RESOURCE);
   yield* packWindowsServerAsar({ sourceDir, asarPath: generatedAsarPath, arch: "x64" });
@@ -500,7 +501,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       // and .bin shims never ship.
       assert.equal(
         WINDOWS_SERVER_ASAR_UNPACK_GLOB,
-        "{**/*.node,**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib}",
+        "{**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib}",
       );
       assert.deepStrictEqual(WINDOWS_SERVER_ASAR_IGNORE_GLOBS, [
         "**/node_modules/@anthropic-ai/claude-agent-sdk-*",
@@ -588,7 +589,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   });
 
   it.effect(
-    "keeps target and WSL native files while excluding the other Windows architecture",
+    "unpacks target Windows natives, packs WSL addons, and excludes the other architecture",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -601,6 +602,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           const nativeFiles = [
             "node_modules/node-pty/prebuilds/win32-x64/conpty/OpenConsole.exe",
             "node_modules/node-pty/prebuilds/win32-arm64/conpty/OpenConsole.exe",
+            "node_modules/node-pty/prebuilds/win32-x64/pty.node",
             "node_modules/node-pty/prebuilds/linux-x64/pty.node",
             "node_modules/node-pty/third_party/conpty/1.0.0/win10-x64/OpenConsole.exe",
             "node_modules/node-pty/third_party/conpty/1.0.0/win10-arm64/OpenConsole.exe",
@@ -609,7 +611,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           for (const nativeFile of nativeFiles) {
             const nativePath = path.join(sourceDir, nativeFile);
             yield* fs.makeDirectory(path.dirname(nativePath), { recursive: true });
-            yield* fs.writeFileString(nativePath, "native");
+            yield* fs.writeFileString(nativePath, nativeFile.includes("linux") ? "\x7fELF" : "MZ");
           }
 
           const asarPath = path.join(tempDir, "server.asar");
@@ -626,8 +628,21 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           );
           assert.isTrue(
             yield* fs.exists(
+              path.join(unpackedRoot, "node_modules/node-pty/prebuilds/win32-x64/pty.node"),
+            ),
+          );
+          // Signed builds sign every unpacked .node, so the ELF addon stays packed.
+          assert.isFalse(
+            yield* fs.exists(
               path.join(unpackedRoot, "node_modules/node-pty/prebuilds/linux-x64/pty.node"),
             ),
+          );
+          assert.equal(
+            extractFile(
+              asarPath,
+              path.join("node_modules", "node-pty", "prebuilds", "linux-x64", "pty.node"),
+            ).toString(),
+            "\x7fELF",
           );
           assert.isFalse(
             yield* fs.exists(
