@@ -115,6 +115,47 @@ describe("extractTerminalLinks", () => {
       { kind: "path", text, start, end: start + text.length },
     ]);
   });
+
+  it.each([
+    " GET /api/trpc/post.list,user.me?batch=1&input=%7B%220%22%3A%7B%22json%22%3Anull%7D%7D 200 in 35ms",
+    "GET /api/users?id=42 200",
+    "GET /api/users?=42 200",
+    "GET /api/search?&q=term 200",
+    "proxying api/trpc/post.list?batch=1 to the backend",
+  ])("skips request routes carrying a query string in %s", (line) => {
+    expect(extractTerminalLinks(line)).toEqual([]);
+  });
+
+  it("keeps a URL with a query string as a URL link", () => {
+    const line = "open https://example.com/api/trpc/post.list?batch=1";
+    expect(extractTerminalLinks(line)).toEqual([
+      { kind: "url", text: "https://example.com/api/trpc/post.list?batch=1", start: 5, end: 51 },
+    ]);
+  });
+
+  it("still treats a bare route without a query string as a path", () => {
+    // Without a query string a route is indistinguishable from a file such as `post.list`.
+    expect(extractTerminalLinks("GET /api/trpc/post.list 200")).toEqual([
+      { kind: "path", text: "/api/trpc/post.list", start: 4, end: 23 },
+    ]);
+  });
+
+  it.each([
+    ["src/main.ts:12", "src/main.ts:12"],
+    ["/Users/me/project/file.ts", "/Users/me/project/file.ts"],
+    ["~/project/file", "~/project/file"],
+    ["./a/b", "./a/b"],
+    ["C:\\repo\\file.ts", "C:\\repo\\file.ts"],
+    ["tail -f /tmp/foo.log", "/tmp/foo.log"],
+    ["see /var/log/x", "/var/log/x"],
+    ["/app/bin/server:3:7", "/app/bin/server:3:7"],
+    ["did you mean src/main.ts?", "src/main.ts"],
+  ])("keeps detecting the real path in %s", (line, text) => {
+    const start = line.indexOf(text);
+    expect(extractTerminalLinks(line)).toEqual([
+      { kind: "path", text, start, end: start + text.length },
+    ]);
+  });
 });
 
 describe("collectWrappedTerminalLinkLine", () => {
