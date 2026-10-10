@@ -111,7 +111,10 @@ import {
   artifactTemplateFromHastProperties,
   renderCodexFileCitationsAsMarkdown,
 } from "@t3tools/shared/codexMarkdownDirectives";
-import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
+import {
+  renderLinkedSkillMention,
+  renderSkillInlineMarkdownChildren,
+} from "./chat/SkillInlineText";
 import {
   resolveMarkdownMediaPreview,
   type ExpandedImagePreview,
@@ -2914,6 +2917,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       fileLinkChip,
       renderContextReference,
       text,
+      skills,
     } = use(ChatMarkdownRendererContext);
     const citation = href ? parseAssistantCitationHref(href) : null;
     if (citation) return <AssistantCitationChip citation={citation} />;
@@ -2927,6 +2931,13 @@ const CHAT_MARKDOWN_COMPONENTS = {
         <span>{label}</span>
       );
     }
+    const linkStart = node?.position?.start.offset;
+    const linkEnd = node?.position?.end.offset;
+    const linkedSkill =
+      linkStart !== undefined && linkEnd !== undefined && text.startsWith("[$", linkStart)
+        ? renderLinkedSkillMention(text.slice(linkStart, linkEnd), skills)
+        : null;
+    if (linkedSkill) return linkedSkill;
     const contextReference = href ? parseComposerContextHref(href) : null;
     if (contextReference) {
       const label = hastPlainTextDeep(node) || contextReference.contextId;

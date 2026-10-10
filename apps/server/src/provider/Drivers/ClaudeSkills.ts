@@ -3,10 +3,9 @@
  *
  * Claude Code loads skills from `<config dir>/skills` (user scope) and
  * `<cwd>/.claude/skills` (project scope), one directory per skill with a
- * `SKILL.md` carrying YAML frontmatter. The user root wins on name collisions,
- * matching the CLI. `.agents/skills` is a Codex location: verified against the
- * CLI, a skill that lives only there is answered with `Unknown command`, so it
- * is not scanned here.
+ * `SKILL.md` carrying YAML frontmatter. `.agents/skills` is a Codex location:
+ * verified against the CLI, a skill that lives only there is answered with
+ * `Unknown command`, so it is not scanned here.
  * The Agent SDK init handshake surfaces skills only as slash commands without
  * their filesystem paths, so the provider snapshot scans the same locations
  * directly, mirroring how the Codex app-server reports its skills.
@@ -316,11 +315,9 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
  * Enumerate Claude Code skills from the user config dir and the workspace
  * `.claude/skills`. Discovery is best-effort: unreadable roots and malformed
  * skill entries are skipped so a broken skill never degrades the provider
- * snapshot. Roots are listed highest precedence first and the first hit for a
- * name wins, matching Claude Code: verified against the CLI with the same
- * skill name in both scopes, the user copy is the one that runs. Reporting the
- * project copy instead would attach its invocation metadata to a command
- * Claude Code resolves elsewhere.
+ * snapshot. A name in both scopes yields one skill per file: Claude Code runs
+ * only the user copy for `/name`, so the composer binds a pick to its file
+ * with a linked mention instead (see orchestration-v2/linkedSkillMentions.ts).
  */
 export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* (
   config: Pick<ClaudeSettings, "homePath">,
@@ -337,7 +334,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
     ...(cwd ? [{ directory: path.join(cwd, ".claude", "skills"), scope: "project" as const }] : []),
   ];
 
-  const skillsByName = new Map<string, ServerProviderSkill>();
+  const skillsByPath = new Map<string, ServerProviderSkill>();
   for (const root of roots) {
     const entries = yield* fileSystem
       .readDirectory(root.directory)
@@ -371,9 +368,8 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         continue;
       }
 
-      // First root wins, so a later root never displaces a higher-precedence
-      // skill of the same name.
-      if (skillsByName.has(name)) {
+      // Both roots are the same directory when the workspace is the home dir.
+      if (skillsByPath.has(skillPath)) {
         continue;
       }
 
@@ -381,7 +377,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
       const userInvocationOnly =
         (frontmatter.kind === "parsed" && frontmatter.userInvocationOnly === true) ||
         override?.userInvocationOnly === true;
-      skillsByName.set(name, {
+      skillsByPath.set(skillPath, {
         name,
         path: skillPath,
         enabled: override?.enabled ?? true,
@@ -397,5 +393,5 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
     }
   }
 
-  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+  return [...skillsByPath.values()].sort((left, right) => left.name.localeCompare(right.name));
 });

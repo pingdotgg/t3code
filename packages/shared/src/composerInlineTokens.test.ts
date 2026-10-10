@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { collectComposerInlineTokens } from "./composerInlineTokens.ts";
+import { collectComposerInlineTokens, formatLinkedSkillMention } from "./composerInlineTokens.ts";
 
 describe("collectComposerInlineTokens", () => {
   it("collects file links, mentions, and skills with source ranges", () => {
@@ -30,6 +30,27 @@ describe("collectComposerInlineTokens", () => {
       },
     ]);
   });
+
+  it("collects a skill mention linked to its SKILL.md, decoding its destination", () => {
+    const source = "[$review](C:\\Users\\Jane%20Doe\\.codex\\skills\\review\\SKILL.md)";
+    expect(collectComposerInlineTokens(`Run ${source} now`)).toEqual([
+      {
+        type: "skill",
+        value: "review",
+        path: "C:\\Users\\Jane Doe\\.codex\\skills\\review\\SKILL.md",
+        source,
+        start: 4,
+        end: 4 + source.length,
+      },
+    ]);
+  });
+
+  it.each(["https://example.com/review", "https://example.com/review/SKILL.md"])(
+    "leaves a $-labelled link to %s as an ordinary link",
+    (target) => {
+      expect(collectComposerInlineTokens(`See [$review](${target}) now`)).toEqual([]);
+    },
+  );
 
   it.each(["$", "€", "£", "¥", "₹", "₩", "₿", "𑿝"])(
     "collects %s skill names that begin with a digit",
@@ -189,5 +210,41 @@ describe("collectComposerInlineTokens", () => {
     const started = performance.now();
     expect(collectComposerInlineTokens(" [[".repeat(40_000))).toEqual([]);
     expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
+  it("scans unclosed linked skill mentions in linear time", () => {
+    const started = performance.now();
+    expect(collectComposerInlineTokens(" [$a](".repeat(20_000))).toEqual([]);
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+});
+
+describe("formatLinkedSkillMention", () => {
+  it("links the mention to its SKILL.md", () => {
+    expect(
+      formatLinkedSkillMention({
+        name: "review",
+        path: "/Users/me/.agents/skills/review/SKILL.md",
+      }),
+    ).toBe("[$review](/Users/me/.agents/skills/review/SKILL.md)");
+  });
+
+  it.each([
+    "C:\\Users\\Jane Doe\\skills (old)\\review\\SKILL.md",
+    "/Users/me/50% <draft>/review/skill.md",
+  ])("round-trips %s through its encoded destination", (path) => {
+    const source = formatLinkedSkillMention({ name: "review", path });
+    expect(source).not.toContain(" ");
+    expect(collectComposerInlineTokens(`${source} `)[0]).toMatchObject({ value: "review", path });
+  });
+
+  it("links a path of any length", () => {
+    const path = `/skills/${"deep dir/".repeat(1_000)}review/SKILL.md`;
+    const source = formatLinkedSkillMention({ name: "review", path });
+    expect(collectComposerInlineTokens(`${source} `)[0]).toMatchObject({ path });
+  });
+
+  it("gives up on a path that is not a SKILL.md", () => {
+    expect(formatLinkedSkillMention({ name: "review", path: "pi:skill:review" })).toBeUndefined();
   });
 });

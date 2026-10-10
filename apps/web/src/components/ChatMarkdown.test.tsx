@@ -1195,6 +1195,12 @@ it.each([
   { text: '```ts title="src/needle.ts"\nconst a = 1;\n```', query: "needle", count: 0 },
   { text: "```weirdlang\nconst a = 1;\n```", query: "weirdlang", count: 0 },
   { text: "Use $test-t3-app now", query: "T3 App Testing", count: 1 },
+  {
+    text: "Use [$test-t3-app](/repo/skills/test-t3-app/SKILL.md) now",
+    query: "T3 App Testing",
+    count: 1,
+    user: true,
+  },
   { text: "`/tmp/file.ts:42`", query: "file.ts · L42", count: 1, user: true, lineBreaks: true },
   { text: "> [!NOTE]\n> Searchable alert", query: "Searchable alert", count: 1 },
   {

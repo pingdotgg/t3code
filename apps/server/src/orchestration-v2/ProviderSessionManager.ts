@@ -7,6 +7,7 @@ import {
   OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   OrchestrationV2RuntimeRequest,
+  ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
   ThreadId,
@@ -48,9 +49,16 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import {
+  collectLinkedSkillMentions,
+  expandLinkedSkillMentions,
+  findUnavailableSkillMention,
+} from "./linkedSkillMentions.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
+const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
 const RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 * 1000;
@@ -355,6 +363,9 @@ export const layerWithOptions = (
        */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
+      // Optional for the same reason; production always provides it. It holds
+      // the skills a linked skill mention is checked against.
+      const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
       const eventSink = yield* EventSink.EventSinkV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
@@ -1684,8 +1695,59 @@ export const layerWithOptions = (
               modelFamily: normalizeModelMetricLabel(model),
             },
           });
+        // Steers carry no workspace, so they reuse the one their thread's turn started in.
+        const turnCwds = new Map<ProviderThreadId, string | null>();
+        // A linked skill mention must name a skill this provider reported for the
+        // workspace. The Codex adapter sends it as a structured skill input; every
+        // other driver invokes skills by name and gets the picked file spelled out.
+        const withProviderSkillMentions = <
+          Input extends { readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage },
+        >(
+          input: Input,
+          cwd: string | null,
+        ) =>
+          Effect.gen(function* () {
+            const mentions = collectLinkedSkillMentions(input.message.text);
+            if (mentions.length === 0) return input;
+            if (Option.isSome(providerRegistry)) {
+              const providers = cwd
+                ? yield* providerRegistry.value.refreshWorkspaceSnapshot({
+                    instanceId: runtime.instanceId,
+                    cwd,
+                  })
+                : yield* providerRegistry.value.getProviders;
+              const provider = providers.find(
+                (candidate) => candidate.instanceId === runtime.instanceId,
+              );
+              const unavailable = findUnavailableSkillMention(
+                mentions,
+                provider?.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd)?.skills ??
+                  provider?.skills ??
+                  [],
+              );
+              if (unavailable !== undefined) return yield* unavailable;
+            }
+            if (runtime.driver === CODEX_DRIVER) return input;
+            return {
+              ...input,
+              message: {
+                ...input.message,
+                text: expandLinkedSkillMentions(input.message.text, mentions),
+              },
+            };
+          });
+        const unloadThread = runtime.unloadThread;
         return {
           ...runtime,
+          // A shared runtime outlives the threads it unloads, so drop their workspaces too.
+          ...(unloadThread === undefined
+            ? {}
+            : {
+                unloadThread: (input) =>
+                  Effect.sync(() => turnCwds.delete(input.providerThread.id)).pipe(
+                    Effect.andThen(unloadThread(input)),
+                  ),
+              }),
           subscribeEvents,
           events: Stream.unwrap(
             subscribeEvents.pipe(Effect.map((subscription) => subscription.events)),
@@ -1818,8 +1880,23 @@ export const layerWithOptions = (
                       busyTurnKey(input.providerThread.id, input.runOrdinal),
                     ),
                   ),
-                  () =>
-                    runtime.startTurn(input).pipe(turnMetrics("send", input.modelSelection.model)),
+                  () => {
+                    turnCwds.set(input.providerThread.id, input.runtimePolicy.cwd);
+                    return withProviderSkillMentions(input, input.runtimePolicy.cwd).pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new ProviderAdapter.ProviderAdapterTurnStartError({
+                            driver: runtime.driver,
+                            threadId: input.threadId,
+                            providerThreadId: input.providerThread.id,
+                            runId: input.runId,
+                            cause,
+                          }),
+                      ),
+                      Effect.flatMap(runtime.startTurn),
+                      turnMetrics("send", input.modelSelection.model),
+                    );
+                  },
                   (_, exit) =>
                     Exit.isFailure(exit)
                       ? observeActivity(
@@ -1832,7 +1909,24 @@ export const layerWithOptions = (
             ),
           steerTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
-              Effect.andThen(runtime.steerTurn(input).pipe(turnMetrics("steer"))),
+              Effect.andThen(
+                withProviderSkillMentions(
+                  input,
+                  turnCwds.get(input.providerThread.id) ?? runtime.providerSession.cwd,
+                ).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderAdapter.ProviderAdapterSteerRunError({
+                        driver: runtime.driver,
+                        providerThreadId: input.providerThread.id,
+                        providerTurnId: input.providerTurnId,
+                        cause,
+                      }),
+                  ),
+                  Effect.flatMap(runtime.steerTurn),
+                  turnMetrics("steer"),
+                ),
+              ),
             ),
           interruptTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(

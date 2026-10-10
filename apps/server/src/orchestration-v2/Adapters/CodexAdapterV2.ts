@@ -124,6 +124,7 @@ import {
 } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { backgroundWorkNotification } from "@t3tools/provider-core/server/notification";
+import { collectLinkedSkillMentions, replaceLinkedSkillMentions } from "../linkedSkillMentions.ts";
 import {
   makeProviderFailure,
   makeProviderFailureTurnItem,
@@ -411,6 +412,36 @@ function codexItemStatus(status: "inProgress" | "completed" | "failed" | "declin
  */
 export function codexSkillMentionText(text: string): string {
   return text.replace(SKILL_MENTION_PATTERN, "$1$$$2");
+}
+
+/**
+ * A skill picked from a shared name arrives as a link to its SKILL.md. Codex
+ * gets it as a structured skill input, which binds that exact file whatever
+ * its path holds; the link in the text becomes `$name`, which Codex does not
+ * resolve again once a structured input selected that name.
+ */
+export function codexSkillInputs(text: string): {
+  readonly text: string;
+  readonly skills: ReadonlyArray<{
+    readonly type: "skill";
+    readonly name: string;
+    readonly path: string;
+  }>;
+} {
+  const mentions = collectLinkedSkillMentions(text);
+  return {
+    text: codexSkillMentionText(
+      replaceLinkedSkillMentions(text, mentions, (mention) => "$" + mention.name),
+    ),
+    skills: [
+      ...new Map(
+        mentions.map((mention) => [
+          mention.path,
+          { type: "skill" as const, name: mention.name, path: mention.path },
+        ]),
+      ).values(),
+    ],
+  };
 }
 
 const BACKGROUND_COMMAND_DETAIL_COMMAND_MAX_LENGTH = 200;
@@ -3155,8 +3186,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         ) =>
           Effect.gen(function* () {
             const inputItems: Array<CodexSchema.V2TurnStartParams__UserInput> = [];
+            const skillInputs = codexSkillInputs(turnInput.message.text);
             const text = providerMessageTextWithAttachmentPaths({
-              text: codexSkillMentionText(turnInput.message.text),
+              text: skillInputs.text,
               attachments: turnInput.message.attachments,
               resolveAttachmentPath: (attachment) =>
                 resolveAttachmentPath({ attachmentsDir: serverConfig.attachmentsDir, attachment }),
@@ -3167,6 +3199,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 text,
               });
             }
+            inputItems.push(...skillInputs.skills);
             const attachmentItems = yield* Effect.forEach(
               turnInput.message.attachments.filter(isProviderNativeImageAttachment),
               resolveCodexAttachment,

@@ -118,7 +118,7 @@ export function nativeMarkdownContextCopyRanges(
     const source = reference
       ? formatComposerContextReference({ ...reference, label: run.text })
       : run.skillName
-        ? `$${run.skillName}`
+        ? (run.sourceText ?? `$${run.skillName}`)
         : run.sourceText !== undefined
           ? run.sourceText
           : run.fileIcon && run.href
@@ -354,17 +354,35 @@ function formatSkillLabel(skill: SelectableMarkdownSkill): string {
     .join(" ");
 }
 
+/** The linked skill mention `source` is exactly, if it is one. */
+function linkedSkillMention(source: string) {
+  const token = collectComposerInlineTokens(`${source} `)[0];
+  return token?.type === "skill" &&
+    token.path !== undefined &&
+    token.start === 0 &&
+    token.end === source.length
+    ? { name: token.value, path: token.path, source }
+    : undefined;
+}
+
 function decorateSkillRuns(
   runs: ReadonlyArray<NativeMarkdownTextRun>,
   skills: ReadonlyArray<SelectableMarkdownSkill>,
 ): ReadonlyArray<NativeMarkdownTextRun> {
-  if (skills.length === 0) {
+  if (skills.length === 0 && !runs.some((run) => run.sourceText !== undefined)) {
     return runs;
   }
   const skillByName = new Map(skills.map((skill) => [skill.name, skill]));
   const decorated: NativeMarkdownTextRun[] = [];
 
   for (const run of runs) {
+    const linked = run.sourceText === undefined ? undefined : linkedSkillMention(run.sourceText);
+    if (linked !== undefined) {
+      const skill = skills.find((candidate) => candidate.path === linked.path) ??
+        skillByName.get(linked.name) ?? { name: linked.name };
+      decorated.push({ ...run, skillName: linked.name, skillLabel: formatSkillLabel(skill) });
+      continue;
+    }
     if (run.code || run.href || run.fileIcon || run.role === "code-block") {
       decorated.push(run);
       continue;
@@ -527,6 +545,16 @@ function appendNode(
             reference.kind === "image" ? "image" : reference.kind === "terminal" ? "bash" : "text",
         });
         runs.push(...referenceRuns);
+        return runs;
+      }
+      // A linked skill mention, `[$name](…/SKILL.md)`, keeps its source so
+      // decorateSkillRuns chips the linked skill and a copy keeps the link.
+      const label = nodeTextContent(node);
+      const linkedSkill = linkedSkillMention(`[${label}](${node.href ?? ""})`);
+      if (linkedSkill !== undefined) {
+        const linkedRuns: NativeMarkdownTextRun[] = [];
+        appendRun(linkedRuns, label, context);
+        runs.push(...linkedRuns.map((run) => ({ ...run, sourceText: linkedSkill.source })));
         return runs;
       }
       const presentation = resolveMarkdownLinkPresentation(node.href ?? "");

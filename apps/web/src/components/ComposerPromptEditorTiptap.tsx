@@ -70,6 +70,7 @@ import {
   serializeSelection,
   splitOrLiftListItem,
   stepCaretAcrossStyledEdge,
+  type SkillLabelFor,
   type SkillMeta,
 } from "~/composer-rich-text-doc";
 import {
@@ -294,6 +295,7 @@ const ComposerSkillExtension = Node.create({
   addAttributes() {
     return {
       skillName: { default: "" },
+      skillPath: { default: null },
       skillLabel: { default: "" },
       skillDescription: { default: null },
     };
@@ -313,9 +315,10 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
   const actions = use(ComposerContextActionsContext);
   const skills = use(RichComposerSkillsContext);
   const skillName = (node.attrs.skillName as string) ?? "";
+  const skillPath = (node.attrs.skillPath as string | null) ?? null;
   const skillLabel = (node.attrs.skillLabel as string) || skillName;
   const skillDescription = (node.attrs.skillDescription as string | null) ?? null;
-  const skill = skills.find((candidate) => candidate.name === skillName);
+  const skill = findComposerSkill(skills, skillName, skillPath);
   return (
     <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
       <ContextChipPopover
@@ -331,8 +334,12 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
               skillDescription ??
               "No description is available for this skill."}
           </p>
-          {skill?.path ? (
-            <Button variant="outline" size="sm" onClick={() => actions.openMention(skill.path)}>
+          {(skillPath ?? skill?.path) ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => actions.openMention(skillPath ?? skill?.path ?? "")}
+            >
               View instructions
             </Button>
           ) : null}
@@ -340,6 +347,17 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
       </ContextChipPopover>
     </NodeViewWrapper>
   );
+}
+
+/** A linked mention names its SKILL.md; a plain `$name` takes the first skill with that name. */
+function findComposerSkill(
+  skills: ReadonlyArray<ServerProviderSkill>,
+  name: string,
+  path: string | null | undefined,
+): ServerProviderSkill | undefined {
+  return path
+    ? skills.find((candidate) => candidate.path === path)
+    : skills.find((candidate) => candidate.name === name);
 }
 
 const ComposerCitationExtension = Node.create({
@@ -885,9 +903,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     latestValueRef.current = value;
   }, [value]);
 
-  const skillLabelFor = useCallback((name: string): SkillMeta => {
+  const skillLabelFor = useCallback<SkillLabelFor>((name, path): SkillMeta => {
     const normalized = name.startsWith("$") ? name.slice(1) : name;
-    const skill = skillsRef.current.find((candidate) => candidate.name === normalized);
+    const skill = findComposerSkill(skillsRef.current, normalized, path);
     if (!skill) {
       return { label: formatProviderSkillDisplayName({ name: normalized }), description: null };
     }
@@ -1133,9 +1151,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       ],
       content: buildDocJson(
         value,
-        (name) => {
+        (name, path) => {
           const normalized = name.startsWith("$") ? name.slice(1) : name;
-          const found = skills.find((candidate) => candidate.name === normalized);
+          const found = findComposerSkill(skills, normalized, path);
           if (!found) {
             return {
               label: formatProviderSkillDisplayName({ name: normalized }),
@@ -1814,7 +1832,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
  */
 function insertMarkdownParagraphs(
   value: string,
-  skillLabelFor: (name: string) => SkillMeta,
+  skillLabelFor: SkillLabelFor,
   options: { styling: boolean; blocks?: boolean; literalText?: boolean },
   insertContent: (content: JSONContent[] | JSONContent) => void,
 ): void {

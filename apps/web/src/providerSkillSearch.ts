@@ -1,7 +1,7 @@
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import {
-  dedupeProviderSkillsByName,
+  dedupeProviderSkillsByPath,
   isProviderSkillUserInvocable,
 } from "@t3tools/client-runtime/providerSkills";
 import {
@@ -74,7 +74,7 @@ export function searchProviderSkills(
   query: string,
   limit = Number.POSITIVE_INFINITY,
 ): ServerProviderSkill[] {
-  const enabledSkills = dedupeProviderSkillsByName(skills.filter(isProviderSkillUserInvocable));
+  const enabledSkills = dedupeProviderSkillsByPath(skills.filter(isProviderSkillUserInvocable));
   const normalizedQuery = normalizeSearchQuery(query, { trimLeadingPattern: /^\p{Sc}+/u });
 
   if (!normalizedQuery) {
@@ -98,7 +98,7 @@ export function searchProviderSkills(
       {
         item: skill,
         score,
-        tieBreaker: `${formatProviderSkillDisplayName(skill).toLowerCase()}\u0000${skill.name}`,
+        tieBreaker: `${formatProviderSkillDisplayName(skill).toLowerCase()}\u0000${skill.name}\u0000${skill.path}`,
       },
       limit,
     );

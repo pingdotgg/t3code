@@ -138,6 +138,24 @@ it("indexes skill labels in prose but leaves links and code literal", () => {
   ).toEqual(["Use T3 App Testing now.", "$test-t3-app", "$test-t3-app"]);
 });
 
+it("indexes a linked skill mention as the label of the skill it links", () => {
+  const skills = [
+    { name: "review", displayName: "Repo Review", path: "/repo/.agents/skills/review/SKILL.md" },
+    { name: "review", displayName: "App Review", path: "/repo/app/.agents/skills/review/SKILL.md" },
+  ];
+  expect(
+    searchableMessageSegments(
+      {
+        role: "user",
+        streaming: false,
+        text: "Run [$review](/repo/app/.agents/skills/review/SKILL.md) and [$gone](/old/gone/SKILL.md) now",
+      },
+      undefined,
+      skills,
+    ),
+  ).toEqual(["Run App Review and Gone now"]);
+});
+
 it("indexes the citation chip label instead of its link text", () => {
   const citation = {
     version: 1 as const,

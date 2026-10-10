@@ -61,6 +61,7 @@ describe("mobile slash commands", () => {
           draftMessage: "/pl",
           trigger: { rangeStart: 0, rangeEnd: 3 },
           item,
+          skills: [],
           allowInteractionMode,
         }),
       ).toEqual({ text: "/plan ", cursor: 6, interactionMode: null });
@@ -97,6 +98,7 @@ describe("mobile slash commands", () => {
         draftMessage: "/plan",
         trigger: { rangeStart: 0, rangeEnd: 5 },
         item,
+        skills: [],
         allowInteractionMode: true,
       }),
     ).toEqual({ text: "", cursor: 0, interactionMode: "plan" });
@@ -107,6 +109,7 @@ describe("mobile slash commands", () => {
         draftMessage: "/plan",
         trigger: { rangeStart: 0, rangeEnd: 5 },
         item,
+        skills: [],
         allowInteractionMode: false,
       }),
     ).toEqual({ text: "/plan ", cursor: 6, interactionMode: null });

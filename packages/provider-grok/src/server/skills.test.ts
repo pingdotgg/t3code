@@ -126,6 +126,32 @@ describe("discoverGrokSkills", () => {
     ),
   );
 
+  it.effect("keeps every file when skills share a name", () =>
+    Effect.gen(function* () {
+      const skills = yield* discoverGrokSkills({ binaryPath: "grok" }, {});
+      expect(skills.map((skill) => skill.path)).toEqual([
+        "/home/dev/.grok/skills/review/SKILL.md",
+        "/repo/.grok/skills/review/SKILL.md",
+      ]);
+    }).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        makeInspectSpawner(
+          inspectPayload([
+            {
+              name: "review",
+              source: { type: "user", path: "/home/dev/.grok/skills/review/SKILL.md" },
+            },
+            {
+              name: "review",
+              source: { type: "project", path: "/repo/.grok/skills/review/SKILL.md" },
+            },
+          ]),
+        ),
+      ),
+    ),
+  );
+
   it.effect("rejects malformed or unexpected output as a decode failure", () =>
     Effect.gen(function* () {
       for (const stdout of ["not json", "null", '{"skills":"nope"}', "{}"]) {

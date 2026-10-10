@@ -1,6 +1,7 @@
 import {
   matchInlineSkills,
   formatProviderSkillDisplayName,
+  resolveLinkedInlineSkill,
   type InlineSkill,
 } from "./inlineSkills.ts";
 import {
@@ -100,6 +101,12 @@ interface TextTree {
     readonly dataInlineCode?: unknown;
   };
   readonly children?: ReadonlyArray<TextTree>;
+  readonly position?:
+    | {
+        readonly start: { readonly offset?: number | undefined };
+        readonly end: { readonly offset?: number | undefined };
+      }
+    | undefined;
 }
 
 /** Uses the renderer's Markdown transforms, without mounting folded/virtualized rows. */
@@ -141,6 +148,17 @@ function markdownThreadFindText(
     if (citation) {
       // Matches the citation chip, which shows its label instead of the link text.
       text += assistantCitationLabel(citation);
+      return;
+    }
+    const linkStart = node.tagName === "a" ? node.position?.start.offset : undefined;
+    const linkEnd = node.position?.end.offset;
+    const linkedSkill =
+      linkStart !== undefined && linkEnd !== undefined && markdown.startsWith("[$", linkStart)
+        ? resolveLinkedInlineSkill(markdown.slice(linkStart, linkEnd), skills)
+        : null;
+    if (linkedSkill) {
+      // Matches the linked skill chip, which shows the skill instead of the link.
+      text += formatProviderSkillDisplayName(linkedSkill);
       return;
     }
     {

@@ -317,10 +317,16 @@ function useServerResults(
   skills: readonly InlineSkill[],
   progressive: boolean,
 ) {
-  const skillLabels = useMemo(
-    () => skills.map(({ name, displayName }) => ({ name, displayName })),
-    [skills],
-  );
+  const skillLabels = useMemo(() => {
+    const names = new Set<string>();
+    const sharedNames = new Set<string>();
+    for (const { name } of skills) (names.has(name) ? sharedNames : names).add(name);
+    return skills.map(({ name, displayName, path }) =>
+      path !== undefined && sharedNames.has(name)
+        ? { name, displayName, path }
+        : { name, displayName },
+    );
+  }, [skills]);
   const normalizedQuery = query.trim();
   const debouncedQuery = useDebouncedValue(normalizedQuery, 100);
   const environmentId = thread?.environmentId;

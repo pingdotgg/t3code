@@ -48,6 +48,8 @@ export interface MarkdownCodeHighlighter {
 export interface SelectableMarkdownSkill {
   readonly name: string;
   readonly displayName?: string | null;
+  /** Tells same-name skills apart when a message links one by its SKILL.md. */
+  readonly path?: string;
 }
 
 export interface MarkdownImageRequest {

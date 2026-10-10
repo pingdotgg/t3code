@@ -8,7 +8,9 @@ import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  dedupeProviderSkillsByName,
+  dedupeProviderSkillsByPath,
+  formatProviderSkillMenuDescription,
+  formatProviderSkillMention,
   getProviderSlashCommandsForSlashMenu,
   getProviderSkillsForSlashMenu,
   hasCompleteProviderWorkspaceSnapshot,
@@ -59,28 +61,85 @@ describe("formatProviderSkillDisplayName", () => {
   });
 });
 
-describe("dedupeProviderSkillsByName", () => {
-  it("keeps the first resolved skill and preserves unrelated skill order", () => {
-    const firstSkill = {
-      name: "branch-audit",
-      path: "/Users/matt/.codex/skills/branch-audit/SKILL.md",
-      enabled: true,
-    };
-    const otherSkill = {
-      name: "browser",
-      path: "/Users/matt/.agents/skills/browser/SKILL.md",
-      enabled: true,
-    };
-    const duplicateSkill = {
-      name: "Branch-Audit",
-      path: "/Users/matt/.agents/skills/branch-audit/SKILL.md",
-      enabled: true,
-    };
+const personalReview = {
+  name: "code-review",
+  path: "/Users/matt/.agents/skills/code-review/SKILL.md",
+  scope: "user",
+  enabled: true,
+  shortDescription: "Standards and spec review",
+};
+const pluginReview = {
+  name: "code-review",
+  path: "/Users/matt/.codex/plugins/cache/review/skills/code-review/SKILL.md",
+  enabled: true,
+};
+const browser = {
+  name: "browser",
+  path: "/Users/matt/.agents/skills/browser/SKILL.md",
+  enabled: true,
+};
 
-    expect(dedupeProviderSkillsByName([firstSkill, otherSkill, duplicateSkill])).toEqual([
-      firstSkill,
-      otherSkill,
+describe("dedupeProviderSkillsByPath", () => {
+  it("keeps same-name skills from different files and drops repeats of one file", () => {
+    const repeated = { ...personalReview, path: personalReview.path.replaceAll("/", "\\") };
+    expect(dedupeProviderSkillsByPath([personalReview, browser, pluginReview, repeated])).toEqual([
+      personalReview,
+      browser,
+      pluginReview,
     ]);
+  });
+});
+
+describe("formatProviderSkillMention", () => {
+  it("keeps the plain mention when the name is unique", () => {
+    expect(formatProviderSkillMention(browser, [personalReview, browser])).toBe("$browser");
+  });
+
+  it("links the mention to the picked file when another skill shares the name", () => {
+    const skills = [personalReview, pluginReview, browser];
+    expect(formatProviderSkillMention(personalReview, skills)).toBe(
+      `[$code-review](${personalReview.path})`,
+    );
+    expect(formatProviderSkillMention(pluginReview, skills)).toBe(
+      `[$code-review](${pluginReview.path})`,
+    );
+  });
+
+  it("links any SKILL.md path, encoding what Markdown cannot hold", () => {
+    const parenthesized = { ...personalReview, path: "/Users/matt/skills (old)/review/SKILL.md" };
+    expect(formatProviderSkillMention(parenthesized, [parenthesized, pluginReview])).toBe(
+      "[$code-review](/Users/matt/skills%20%28old%29/review/SKILL.md)",
+    );
+  });
+
+  it("refuses a shared name when the skill has no SKILL.md to link", () => {
+    const synthetic = { ...personalReview, path: "pi:skill:code-review" };
+    const skills = [synthetic, pluginReview];
+    expect(formatProviderSkillMention(synthetic, skills)).toBeNull();
+    expect(formatProviderSkillMenuDescription(synthetic, skills)).toContain("Can't be picked");
+  });
+
+  it("ignores a same-name skill that cannot be picked", () => {
+    expect(
+      formatProviderSkillMention(personalReview, [
+        personalReview,
+        { ...pluginReview, enabled: false },
+      ]),
+    ).toBe("$code-review");
+  });
+});
+
+describe("formatProviderSkillMenuDescription", () => {
+  it("leads with the file path only when the name alone is ambiguous", () => {
+    expect(formatProviderSkillMenuDescription(personalReview, [personalReview, browser])).toBe(
+      "Standards and spec review",
+    );
+    expect(formatProviderSkillMenuDescription(personalReview, [personalReview, pluginReview])).toBe(
+      `${personalReview.path} · Standards and spec review`,
+    );
+    expect(formatProviderSkillMenuDescription(pluginReview, [personalReview, pluginReview])).toBe(
+      pluginReview.path,
+    );
   });
 });
 
@@ -96,7 +155,7 @@ describe("getProviderSkillsForSlashMenu", () => {
     ]);
   });
 
-  it("shows one row when enabled skills share a name", () => {
+  it("shows a row per file when enabled skills share a name", () => {
     const skills = [
       {
         name: "babysit-pr",
@@ -115,9 +174,10 @@ describe("getProviderSkillsForSlashMenu", () => {
       },
     ];
 
-    expect(getProviderSkillsForSlashMenu(skills, true).map((skill) => skill.name)).toEqual([
-      "babysit-pr",
-      "browser",
+    expect(getProviderSkillsForSlashMenu(skills, true).map((skill) => skill.path)).toEqual([
+      "/Users/matt/.codex/skills/babysit-pr/SKILL.md",
+      "/Users/matt/.agents/skills/browser/SKILL.md",
+      "/Users/matt/.agents/skills/babysit-pr/SKILL.md",
     ]);
   });
 

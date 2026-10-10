@@ -1423,6 +1423,15 @@ describe("CodexAdapterV2 skill mentions", () => {
       assert.equal(CodexAdapterV2.codexSkillMentionText(text), expected, text);
     }
   });
+
+  it("sends a linked skill as a structured input for its exact file", () => {
+    const path = String.raw`C:\Users\Jane Doe\skills (old)\review\SKILL.md`;
+    const link = String.raw`[$review](C:\Users\Jane%20Doe\skills%20%28old%29\review\SKILL.md)`;
+    assert.deepEqual(CodexAdapterV2.codexSkillInputs(`Run ${link} then ${link} and €lint`), {
+      text: "Run $review then $review and $lint",
+      skills: [{ type: "skill", name: "review", path }],
+    });
+  });
 });
 
 describe("CodexAdapterV2 background command detail", () => {

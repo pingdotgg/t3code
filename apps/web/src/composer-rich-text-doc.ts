@@ -16,6 +16,7 @@ import {
   TextSelection,
   type Transaction,
 } from "@tiptap/pm/state";
+import { formatLinkedSkillMention } from "@t3tools/shared/composerInlineTokens";
 
 import { splitPromptIntoComposerSegments } from "~/composer-editor-mentions";
 import { nextOrderedMarkerText } from "~/composer-list-continuation";
@@ -40,6 +41,8 @@ import { collectInlineContextIds } from "~/lib/composerContextReferences";
  */
 
 export type SkillMeta = { label: string; description: string | null };
+/** Chip metadata for a skill token; `path` is set when the mention is linked to its SKILL.md. */
+export type SkillLabelFor = (name: string, path?: string) => SkillMeta;
 
 /** Outermost mark first, so closers mirror openers when nested. */
 const MARK_NESTING_ORDER: RichTextMark[] = ["strike", "bold", "italic", "code"];
@@ -440,7 +443,7 @@ interface DocLine {
 
 function atomJsonForSegment(
   segment: Exclude<ReturnType<typeof splitPromptIntoComposerSegments>[number], { type: "text" }>,
-  skillLabelFor: (name: string) => SkillMeta,
+  skillLabelFor: SkillLabelFor,
 ): InlineJson {
   if (segment.type === "mention") {
     return {
@@ -449,11 +452,12 @@ function atomJsonForSegment(
     };
   }
   if (segment.type === "skill") {
-    const meta = skillLabelFor(segment.name);
+    const meta = skillLabelFor(segment.name, segment.path);
     return {
       type: "composer-skill",
       attrs: {
         skillName: segment.name,
+        skillPath: segment.path ?? null,
         skillLabel: meta.label,
         skillDescription: meta.description,
       },
@@ -536,7 +540,7 @@ function textJsonForSpan(text: string, marks: RichTextMark[]): Record<string, un
 
 export function buildTiptapContent(
   value: string,
-  skillLabelFor: (name: string) => SkillMeta,
+  skillLabelFor: SkillLabelFor,
   options?: { styling?: boolean; blocks?: boolean; literalText?: boolean },
 ): Record<string, unknown>[] {
   // Editor answers are verbatim text, including Markdown and context-token sources.
@@ -765,7 +769,7 @@ export function buildTiptapContent(
 
 export function buildDocJson(
   value: string,
-  skillLabelFor: (name: string) => SkillMeta,
+  skillLabelFor: SkillLabelFor,
   options?: { styling?: boolean; literalText?: boolean },
 ) {
   const content = buildTiptapContent(value, skillLabelFor, options);
@@ -809,7 +813,9 @@ function readAtomSource(node: ProseMirrorNode): string {
       return typeof attrs.source === "string" ? attrs.source : "";
     case "composer-skill": {
       const name = typeof attrs.skillName === "string" ? attrs.skillName : "";
-      return name ? `$${name}` : "";
+      if (!name) return "";
+      const path = typeof attrs.skillPath === "string" ? attrs.skillPath : "";
+      return (path ? formatLinkedSkillMention({ name, path }) : undefined) ?? `$${name}`;
     }
     default:
       return "";

@@ -3515,6 +3515,8 @@ export const OrchestrationV2SearchThreadInput = Schema.Struct({
       Schema.Struct({
         name: Schema.String.check(Schema.isMaxLength(200)),
         displayName: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
+        // Sent only for a name several skills share, to label a mention linked to its SKILL.md.
+        path: Schema.optional(Schema.String.check(Schema.isMaxLength(4_096))),
       }),
     ).check(Schema.isMaxLength(1_000)),
   ),

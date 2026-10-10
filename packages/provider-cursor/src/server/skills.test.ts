@@ -19,7 +19,7 @@ const runNode = <A, E>(
 ) => effect.pipe(Effect.scoped, Effect.provide(NodeServices.layer), Effect.runPromise);
 
 describe("Cursor skills", () => {
-  it("discovers recursive project skills with project precedence", async () =>
+  it("discovers recursive project skills ahead of user skills that share a name", async () =>
     await runNode(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -93,6 +93,13 @@ describe("Cursor skills", () => {
             description: "project review",
             path: path.join(workspace, ".agents", "skills", "nested", "review", "SKILL.md"),
             scope: "project",
+            enabled: true,
+          },
+          {
+            name: "review",
+            description: "user review",
+            path: path.join(userHome, ".cursor", "skills", "review", "SKILL.md"),
+            scope: "user",
             enabled: true,
           },
         ]);

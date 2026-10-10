@@ -1,6 +1,11 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
 
-export type InlineSkill = Pick<ServerProviderSkill, "name" | "displayName">;
+import { collectComposerInlineTokens } from "./composerInlineTokens.ts";
+
+/** `path` tells same-name skills apart when a message links one by its SKILL.md. */
+export type InlineSkill = Pick<ServerProviderSkill, "name" | "displayName"> & {
+  readonly path?: string | undefined;
+};
 
 function titleCaseWords(value: string): string {
   const words: string[] = [];
@@ -32,4 +37,23 @@ export function* matchInlineSkills(text: string, skills: readonly InlineSkill[])
     const start = match.index + (match[1]?.length ?? 0);
     yield { start, end: match.index + match[0].length, skill, rawText: `$${name}` };
   }
+}
+
+/**
+ * Markdown parses a linked skill mention, `[$name](…/SKILL.md)`, as a link.
+ * Given that link's source, returns the skill its chip shows, or null for any other link.
+ */
+export function resolveLinkedInlineSkill(
+  source: string,
+  skills: readonly InlineSkill[],
+): InlineSkill | null {
+  if (!source.startsWith("[$")) return null;
+  const token = collectComposerInlineTokens(`${source} `)[0];
+  if (token?.type !== "skill" || token.path === undefined || token.end !== source.length) {
+    return null;
+  }
+  return (
+    skills.find((candidate) => candidate.path === token.path) ??
+    skills.find((candidate) => candidate.name === token.value) ?? { name: token.value }
+  );
 }

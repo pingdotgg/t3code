@@ -56,6 +56,7 @@ const schema = getSchemaByResolvedExtensions(
     stubAtom("composer-mention", { path: { default: "" }, source: { default: "" } }),
     stubAtom("composer-skill", {
       skillName: { default: "" },
+      skillPath: { default: null },
       skillLabel: { default: "" },
       skillDescription: { default: null },
     }),
@@ -109,6 +110,7 @@ const plainSchema = getSchemaByResolvedExtensions(
     stubAtom("composer-mention", { path: { default: "" }, source: { default: "" } }),
     stubAtom("composer-skill", {
       skillName: { default: "" },
+      skillPath: { default: null },
       skillLabel: { default: "" },
       skillDescription: { default: null },
     }),
@@ -233,6 +235,8 @@ describe("composer rich text document model", () => {
     "snake_case stays literal",
     "unmatched ** stays literal",
     "**bold** then @README.md then *italic*",
+    "run [$review](/Users/me/.agents/skills/review/SKILL.md) on **this**",
+    "[$review](C:\\Users\\Jane%20Doe\\skills%20%28old%29\\review\\SKILL.md) and $review",
   ])("round-trips %s through a real ProseMirror document", (value) => {
     expect(roundTrip(value).value).toBe(value);
   });

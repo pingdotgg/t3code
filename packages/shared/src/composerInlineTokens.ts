@@ -9,6 +9,8 @@ export type ComposerInlineToken =
   | {
       readonly type: "skill";
       readonly value: string;
+      /** The exact SKILL.md, present when the mention is linked: `[$name](path)`. */
+      readonly path?: string;
       readonly source: string;
       readonly start: number;
       readonly end: number;
@@ -37,6 +39,16 @@ const SKILL_TOKEN_REGEX = new RegExp(`${SKILL_MENTION_SOURCE}(?=\\s)`, "gu");
  * global, so use it with `matchAll` or `replace`, not `test` or `exec`.
  */
 export const SKILL_MENTION_PATTERN = new RegExp(`${SKILL_MENTION_SOURCE}(?=\\s|$)`, "gu");
+/**
+ * A skill mention linked to the SKILL.md that must run even when another skill
+ * shares the name. The destination is percent-encoded where Markdown needs it
+ * (see formatLinkedSkillMention), so it holds no whitespace or parentheses and
+ * every scan stops at the next space.
+ */
+const LINKED_SKILL_TOKEN_REGEX = /(^|\s)\[\$([a-zA-Z0-9][a-zA-Z0-9:_-]*)\]\(([^()\s]+)\)(?=\s)/gu;
+const SKILL_FILE_REGEX = /[\\/]SKILL\.md$/i;
+/** Characters a Markdown link destination cannot hold as written, plus `%` itself. */
+const LINK_DESTINATION_ESCAPES = /[%()<>\s]/gu;
 const MENTION_TOKEN_REGEX = /(^|\s)@(?:"((?:\\.|[^"\\])*)"|([^\s@"]+))(?=\s)/g;
 /**
  * The label body is bounded rather than `*`. Unbounded, every whitespace in
@@ -112,11 +124,58 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
   return matches;
 }
 
+/**
+ * Serialize a skill pick bound to its SKILL.md, percent-encoding what a
+ * Markdown link destination cannot hold. `undefined` when the name or path
+ * cannot form a linked mention at all, such as a path that is not a SKILL.md.
+ */
+export function formatLinkedSkillMention(skill: {
+  readonly name: string;
+  readonly path: string;
+}): string | undefined {
+  // encodeURIComponent leaves parentheses as they are.
+  const destination = skill.path.replace(LINK_DESTINATION_ESCAPES, (character) =>
+    character === "(" ? "%28" : character === ")" ? "%29" : encodeURIComponent(character),
+  );
+  const source = `[$${skill.name}](${destination})`;
+  const token = collectComposerInlineTokens(`${source} `)[0];
+  return token?.type === "skill" && token.path === skill.path && token.end === source.length
+    ? source
+    : undefined;
+}
+
 export function collectComposerInlineTokens(
   text: string,
   options: CollectComposerInlineTokensOptions = {},
 ): ReadonlyArray<ComposerInlineToken> {
   const matches = collectMentionTokens(text);
+
+  for (const match of text.matchAll(LINKED_SKILL_TOKEN_REGEX)) {
+    let path: string;
+    try {
+      path = decodeURIComponent(match[3] ?? "");
+    } catch {
+      continue;
+    }
+    // A URL to a SKILL.md is an ordinary link, not a local skill.
+    if (
+      !SKILL_FILE_REGEX.test(path) ||
+      (URI_SCHEME_REGEX.test(path) && !WINDOWS_DRIVE_PATH_REGEX.test(path))
+    ) {
+      continue;
+    }
+    const prefix = match[1] ?? "";
+    const start = (match.index ?? 0) + prefix.length;
+    const end = (match.index ?? 0) + match[0].length;
+    matches.push({
+      type: "skill",
+      value: match[2] ?? "",
+      path,
+      source: text.slice(start, end),
+      start,
+      end,
+    });
+  }
 
   for (const match of text.matchAll(SKILL_TOKEN_REGEX)) {
     const fullMatch = match[0];
