@@ -486,6 +486,7 @@ import {
   type EditQueuedRunRequest,
 } from "./chat/QueuedRunsControl";
 import { TaskGraphCards } from "./chat/TaskGraphCard";
+import { useNewTaskGraph } from "./chat/useTaskGraphCommands";
 import { useLinkedThreadPullRequest } from "./ThreadStatusIndicators";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { ThreadStatusLine } from "./chat/ThreadStatusLine";
@@ -552,6 +553,7 @@ import {
   startNewThreadForProject,
   codexArtifactTemplatePromptToAppend,
   waitForStartedServerThread,
+  waitForServerThreadShell,
   shouldRefocusComposerOnWindowFocus,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -10678,6 +10680,72 @@ export default function ChatView(props: ChatViewProps) {
     composerRef,
   ]);
 
+  const newTaskGraph = useNewTaskGraph(environmentId);
+  // A graph hangs off a server thread. On a new chat there is none yet, so
+  // this creates an empty thread for the graph and opens it.
+  const onNewTaskGraph = useCallback(async () => {
+    if (!activeThread) return;
+    if (isServerThread) {
+      const error = await newTaskGraph.start(activeThread.id);
+      if (error !== null) {
+        toastManager.add({
+          type: "error",
+          title: "Could not start a task graph",
+          description: error,
+        });
+      }
+      return;
+    }
+    const modelSelection = composerRef.current?.getSendContext()?.selectedModelSelection;
+    if (!activeProject || !modelSelection) return;
+    const nextThreadId = newThreadId();
+    const createResult = await createThread({
+      environmentId,
+      input: {
+        threadId: nextThreadId,
+        projectId: activeProject.id,
+        title: "New task graph",
+        modelSelection,
+        runtimeMode,
+        interactionMode: "default",
+        branch: activeThreadBranch,
+        worktreePath: activeThread.worktreePath,
+        createdAt: new Date().toISOString(),
+      },
+    });
+    let error: string | null = null;
+    if (createResult._tag === "Failure") {
+      const failure = squashAtomCommandFailure(createResult);
+      error = failure instanceof Error ? failure.message : "Could not create the thread.";
+    } else {
+      const threadRef = scopeThreadRef(environmentId, nextThreadId);
+      error =
+        (await newTaskGraph.start(nextThreadId)) ??
+        ((await waitForServerThreadShell(threadRef)) ? null : "The new thread did not load.");
+      if (error === null) {
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: { environmentId, threadId: nextThreadId },
+        });
+        return;
+      }
+      await deleteThread({ environmentId, input: { threadId: nextThreadId } });
+    }
+    toastManager.add({ type: "error", title: "Could not start a task graph", description: error });
+  }, [
+    activeProject,
+    activeThread,
+    activeThreadBranch,
+    composerRef,
+    createThread,
+    deleteThread,
+    environmentId,
+    isServerThread,
+    navigate,
+    newTaskGraph,
+    runtimeMode,
+  ]);
+
   const getModelDisabledReason = useCallback(
     (instanceId: ProviderInstanceId, model: string): string | null => {
       if (!activeThread) {
@@ -11606,6 +11674,11 @@ export default function ChatView(props: ChatViewProps) {
                               promptHistoryMessages={timelineMessages}
                               isServerThread={isServerThread}
                               isLocalDraftThread={isLocalDraftThread}
+                              onNewTaskGraph={
+                                newTaskGraph.canCreate && canOperateThread
+                                  ? () => void onNewTaskGraph()
+                                  : null
+                              }
                               forceExpandedOnMobile={
                                 forceExpandedMobileComposer && isDraftHeroState
                               }

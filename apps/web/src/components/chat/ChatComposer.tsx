@@ -1080,7 +1080,6 @@ import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
-import { useNewTaskGraph } from "./useTaskGraphCommands";
 import {
   FileIcon,
   BotIcon,
@@ -1543,6 +1542,8 @@ export interface ChatComposerProps {
   promptHistoryMessages: ReadonlyArray<ChatMessage>;
   isServerThread: boolean;
   isLocalDraftThread: boolean;
+  /** Starts a task graph on this thread, creating the thread first on a new chat. */
+  onNewTaskGraph: (() => void) | null;
   forceExpandedOnMobile: boolean;
   projectSelectionRequired: boolean;
 
@@ -1728,8 +1729,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadEnvironmentId: _activeThreadEnvironmentId,
     activeThread,
     promptHistoryMessages,
-    isServerThread,
+    isServerThread: _isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
+    onNewTaskGraph,
     forceExpandedOnMobile,
     projectSelectionRequired,
     phase,
@@ -1813,7 +1815,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onRemoveEditingQueuedAttachment,
   } = props;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const newTaskGraph = useNewTaskGraph(environmentId);
   const composerDraftTargetKey = composerTargetKey(composerDraftTarget);
   const {
     heldRequestIds,
@@ -7664,8 +7665,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       </Tooltip>
                     </>
                   ) : null}
-                  {/* A graph belongs to a thread on the server; a new draft has none until it is sent. */}
-                  {isServerThread && activeThread && newTaskGraph.canCreate ? (
+                  {onNewTaskGraph ? (
                     <Tooltip>
                       <TooltipTrigger
                         render={
@@ -7674,17 +7674,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             variant="ghost"
                             size="icon-sm"
                             onPointerDown={(event) => event.preventDefault()}
-                            onClick={() => {
-                              void newTaskGraph.start(activeThread.id).then((error) => {
-                                if (error !== null) {
-                                  toastManager.add({
-                                    type: "error",
-                                    title: "Could not start a task graph",
-                                    description: error,
-                                  });
-                                }
-                              });
-                            }}
+                            onClick={onNewTaskGraph}
                             aria-label="New task graph"
                           />
                         }
