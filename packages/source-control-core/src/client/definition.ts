@@ -11,7 +11,13 @@
  *
  * @module source-control-core/client/definition
  */
-import { type PullRequestReviewVerdict, SourceControlProviderKind } from "@t3tools/contracts";
+import {
+  pullRequestHostOf,
+  type PullRequestReviewVerdict,
+  type RepositoryIdentity,
+  SourceControlProviderKind,
+} from "@t3tools/contracts";
+import type { ChangeRequestLink } from "@t3tools/shared/changeRequestUrl";
 
 /** What a host calls a change request, e.g. `MR` and `merge request` on GitLab. */
 export interface ChangeRequestTerminology {
@@ -31,6 +37,12 @@ export interface ChangeRequestUrlInput {
   /** The repository's browser URL, when the server resolved one from a hosting account. */
   readonly webUrl?: string | undefined;
 }
+
+/** A project's repository, as a change request link is matched against it. */
+export type ChangeRequestProjectIdentity = Pick<
+  RepositoryIdentity,
+  "canonicalKey" | "locator" | "webUrl" | "displayName" | "owner" | "name"
+>;
 
 /** The change request a checkout command is built for. */
 export interface ChangeRequestCheckoutInput {
@@ -76,6 +88,43 @@ export interface SourceControlClientDefinition {
   readonly referenceAutolinkRepositoryUrl: (repositoryUrl: string) => string | null;
   /** Whether a review with this verdict must carry a summary, beyond what every host asks. */
   readonly reviewSummaryRequired: (verdict: PullRequestReviewVerdict) => boolean;
+  /**
+   * The change request a pasted command names, such as `gh pr checkout 42`: its argument, which
+   * is a number or a URL. Null for anything that is not this host's checkout command.
+   */
+  readonly checkoutCommandArgument: (input: string) => string | null;
+  /**
+   * Whether a pasted URL is one of this host's change request URLs. Stricter than
+   * `isChangeRequestUrl`, which only tells hosts apart, because this decides what a reference
+   * field accepts.
+   */
+  readonly isChangeRequestReference: (url: string) => boolean;
+  /**
+   * Whether a change request link names this project's own repository. The link's host is where
+   * the repository is addressed, `link.authority` the web host and port where they differ.
+   */
+  readonly isChangeRequestInRepository: (
+    identity: ChangeRequestProjectIdentity,
+    link: ChangeRequestLink,
+  ) => boolean;
+  /**
+   * Whether this project can read a change request on the link's host on the link's behalf, for a
+   * repository nobody has checked out. False where the host's reads are scoped to the checkout.
+   */
+  readonly canReadChangeRequestOnHost: (
+    identity: ChangeRequestProjectIdentity,
+    link: ChangeRequestLink,
+  ) => boolean;
+  /**
+   * The host a change request URL addresses its repository below, as a `PullRequestRef.host`
+   * names it: the hostname, or the host and port for servers addressed by both.
+   */
+  readonly changeRequestUrlHost: (url: URL) => string;
+  /**
+   * The host a reference with none names, read from the checkout alone, or null where only the
+   * server can tell, such as when an SSH remote resolves to a different web host.
+   */
+  readonly checkoutChangeRequestHost: (identity: ChangeRequestProjectIdentity) => string | null;
   /** Whether a change request URL has this host's path shape, e.g. GitLab's `/-/merge_requests/`. */
   readonly isChangeRequestUrl: (url: string) => boolean;
 }
@@ -100,6 +149,63 @@ export function defineSourceControlClient<const Definition extends SourceControl
   return definition;
 }
 
+/**
+ * Whether a project's HTTP remote names the link's web authority. A link carries one only where
+ * the host and port differ from where the repository is addressed, as on a Forgejo server with a
+ * port; an SSH remote says nothing about ports, so it does not rule the link out.
+ */
+export function isChangeRequestAuthorityOfProject(
+  identity: ChangeRequestProjectIdentity,
+  link: ChangeRequestLink,
+): boolean {
+  if (link.authority === undefined) return true;
+  try {
+    const remote = new URL(identity.locator.remoteUrl);
+    if (remote.protocol === "http:" || remote.protocol === "https:") {
+      return remote.host.toLowerCase() === link.authority;
+    }
+  } catch {
+    // SSH remotes do not specify the server's HTTP port.
+  }
+  return true;
+}
+
+/** Whether a project lives on the link's host, as `pullRequestHostOf` reads it from the checkout. */
+export function isChangeRequestOnProjectHost(
+  kind: SourceControlProviderKind,
+  identity: ChangeRequestProjectIdentity,
+  link: ChangeRequestLink,
+): boolean {
+  if (!isChangeRequestAuthorityOfProject(identity, link)) return false;
+  const host = pullRequestHostOf(identity, kind);
+  return host === link.host.toLowerCase() || host === link.authority;
+}
+
+/** The repository path a project's identity names below its host. */
+function projectRepositoryPath(identity: ChangeRequestProjectIdentity): string | null {
+  return (
+    identity.displayName ??
+    (identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null)
+  );
+}
+
+/**
+ * `isChangeRequestInRepository` for hosts that address a repository by its full path below the
+ * host, which is what nested GitLab groups need.
+ */
+export function isChangeRequestInProjectRepository(
+  kind: SourceControlProviderKind,
+  identity: ChangeRequestProjectIdentity,
+  link: ChangeRequestLink,
+): boolean {
+  const repository = projectRepositoryPath(identity);
+  return (
+    repository !== null &&
+    repository.toLowerCase() === link.repository.toLowerCase() &&
+    isChangeRequestOnProjectHost(kind, identity, link)
+  );
+}
+
 /** What clients show for a host they ship no definition for, including `unknown`. */
 export const UNKNOWN_SOURCE_CONTROL_CLIENT: SourceControlClientDefinition = {
   kind: SourceControlProviderKind.make("unknown"),
@@ -117,6 +223,14 @@ export const UNKNOWN_SOURCE_CONTROL_CLIENT: SourceControlClientDefinition = {
   authorProfileUrl: () => null,
   referenceAutolinkRepositoryUrl: () => null,
   reviewSummaryRequired: () => false,
+  checkoutCommandArgument: () => null,
+  isChangeRequestReference: () => false,
+  changeRequestUrlHost: (url) => url.hostname,
+  checkoutChangeRequestHost: () => null,
+  isChangeRequestInRepository: (identity, link) =>
+    isChangeRequestInProjectRepository(SourceControlProviderKind.make("unknown"), identity, link),
+  canReadChangeRequestOnHost: (identity, link) =>
+    isChangeRequestOnProjectHost(SourceControlProviderKind.make("unknown"), identity, link),
   isChangeRequestUrl: () => false,
 };
 

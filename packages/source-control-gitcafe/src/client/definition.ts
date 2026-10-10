@@ -6,14 +6,18 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import {
   defineSourceControlClient,
+  isChangeRequestInProjectRepository,
+  isChangeRequestOnProjectHost,
   isChangeRequestPath,
 } from "@t3tools/source-control-core/client/definition";
 
 /** GitCafe has no self-hosted installs: production and staging are its only hosts. */
 const GITCAFE_HOSTS = new Set(["git.cafe", "staging.git.cafe"]);
 
+const KIND = SourceControlProviderKind.make("gitcafe");
+
 export const definition = defineSourceControlClient({
-  kind: SourceControlProviderKind.make("gitcafe"),
+  kind: KIND,
   label: "GitCafe",
   pickerLabel: "GitCafe",
   icon: "gitcafe",
@@ -32,6 +36,15 @@ export const definition = defineSourceControlClient({
   referenceAutolinkRepositoryUrl: () => null,
   reviewSummaryRequired: () => false,
   // `/pulls/` is Forgejo's shape too, so only GitCafe's own hosts claim it.
+  // `cafe pr checkout` and git.cafe URLs were never accepted in reference fields.
+  checkoutCommandArgument: () => null,
+  isChangeRequestReference: () => false,
+  changeRequestUrlHost: (url) => url.hostname,
+  checkoutChangeRequestHost: () => null,
+  isChangeRequestInRepository: (identity, link) =>
+    isChangeRequestInProjectRepository(KIND, identity, link),
+  canReadChangeRequestOnHost: (identity, link) =>
+    isChangeRequestOnProjectHost(KIND, identity, link),
   isChangeRequestUrl: (url) => {
     try {
       return (
