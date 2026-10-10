@@ -31,6 +31,7 @@ const delegatedMessageId = MessageId.make("message-provider-continuation-delegat
 const projection = {
   thread: { archivedAt: null, deletedAt: null },
   messages: [],
+  providerThreads: [],
 } as unknown as OrchestrationV2ThreadProjection;
 
 const request = (
@@ -783,6 +784,46 @@ describe("ProviderContinuationService", () => {
         ),
         Effect.scoped,
       );
+    });
+  });
+
+  it.effect("drops a buffered wake once the thread runs another provider instance", () => {
+    return Effect.gen(function* () {
+      const onProvider = (instanceId: string) =>
+        ({
+          ...projection,
+          thread: { ...projection.thread, modelSelection: { instanceId } },
+          providerThreads: [{ id: providerThreadId, providerInstanceId: "claude-work" }],
+        }) as unknown as OrchestrationV2ThreadProjection;
+      for (const [instanceId, dispatches] of [
+        ["codex", false],
+        // Another account of the same driver cannot replay this buffer either.
+        ["claude-personal", false],
+        ["claude-work", true],
+      ] as const) {
+        const dispatched = yield* Queue.unbounded<unknown>();
+        const cleared = yield* Deferred.make<void>();
+        yield* Effect.gen(function* () {
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          yield* requests.offer({
+            ...request(),
+            clearIfCurrent: () => Deferred.succeed(cleared, undefined),
+          });
+          const outcome = yield* Effect.raceFirst(
+            Queue.take(dispatched).pipe(Effect.as("dispatched")),
+            Deferred.await(cleared).pipe(Effect.as("dropped")),
+          );
+          assert.equal(outcome, dispatches ? "dispatched" : "dropped", instanceId);
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              dispatched,
+              getThreadRecords: () => Effect.succeed(onProvider(instanceId)),
+            }),
+          ),
+          Effect.scoped,
+        );
+      }
     });
   });
 

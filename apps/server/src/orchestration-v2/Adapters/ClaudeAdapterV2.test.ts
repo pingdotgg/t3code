@@ -9339,6 +9339,99 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("ends buffered subagents when the worker drops their wake continuation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const subagentFrames = (name: string, ordinal: number) => ({
+          started: claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: `task-dropped-wake-${name}`,
+            tool_use_id: `toolu-dropped-wake-${name}`,
+            description: `Background research ${name}`,
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "Investigate the flaky test.",
+            uuid: `00000000-0000-4000-8000-00000000d1${ordinal}0`,
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          failed: claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: `task-dropped-wake-${name}`,
+            tool_use_id: `toolu-dropped-wake-${name}`,
+            status: "failed",
+            output_file: `/tmp/task-dropped-wake-${name}.output`,
+            summary: "You've hit your limit.",
+            uuid: `00000000-0000-4000-8000-00000000d1${ordinal}1`,
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        });
+        const first = subagentFrames("first", 1);
+        const second = subagentFrames("second", 2);
+
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const lastStatus = (taskId: string) =>
+          harness.events.findLast(
+            (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+              event.type === "subagent.updated" &&
+              event.subagent.nativeTaskRef?.nativeId === taskId,
+          )?.subagent.status;
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-dropped-wake"),
+            text: "Spawn two background subagents and stop.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, first.started);
+        yield* Queue.offer(harness.sdkMessages, second.started);
+        yield* awaitUntil(
+          () => lastStatus("task-dropped-wake-second") === "running",
+          "subagents running",
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-00000000d100",
+            result: "Spawned two subagents in the background.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
+
+        // The thread moved to another provider, so the worker drops this wake
+        // instead of starting a Claude continuation.
+        yield* Queue.offer(harness.sdkMessages, first.failed);
+        yield* awaitUntil(() => harness.continuationRequests.length === 1, "first wake");
+        const firstDrop = harness.continuationRequests[0]?.clearIfCurrent;
+        assert.isDefined(firstDrop);
+        yield* firstDrop!();
+        yield* awaitUntil(
+          () => lastStatus("task-dropped-wake-first") === "failed",
+          "first subagent failed",
+        );
+
+        // The sticky offer is gone, so the next wake asks again; a failed
+        // dispatch drops it the same way.
+        yield* Queue.offer(harness.sdkMessages, second.failed);
+        yield* awaitUntil(() => harness.continuationRequests.length === 2, "second wake");
+        const secondDispatch = harness.continuationRequests[1]?.dispatchIfCurrent;
+        assert.isDefined(secondDispatch);
+        yield* Effect.exit(secondDispatch!(Effect.fail("dispatch failed")));
+        yield* awaitUntil(
+          () => lastStatus("task-dropped-wake-second") === "failed",
+          "second subagent failed",
+        );
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
   it.effect("re-opens a resumed subagent whose task_started races past settle", () =>
     Effect.scoped(
       Effect.gen(function* () {
