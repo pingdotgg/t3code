@@ -747,43 +747,67 @@ describe("instance-scoped model selection", () => {
     ).toEqual(saved);
   });
 
-  it("keeps a custom-instance draft model while dropping unsupported options", () => {
-    const instanceId = ProviderInstanceId.make("claude_openrouter");
-    const driver = ProviderDriverKind.make("claudeAgent");
-    const providers = [
-      provider({ provider: driver, instanceId: "claudeAgent", models: ["claude-opus-5"] }),
-      provider({ provider: driver, instanceId, models: ["claude-opus-5"] }),
-    ];
-    const threadSelection = createModelSelection(instanceId, "claude-opus-5", [
-      { id: "effort", value: "high" },
-    ]);
-    const draftSelection = createModelSelection(instanceId, "openai/gpt-5.5", [
-      { id: "effort", value: "max" },
-    ]);
-    const state = deriveEffectiveComposerModelState({
-      draft: {
-        activeProvider: instanceId,
-        modelSelectionByProvider: { [instanceId]: draftSelection },
-      },
-      providers,
-      selectedProvider: driver,
-      selectedInstanceId: instanceId,
-      threadModelSelection: threadSelection,
-      projectModelSelection: null,
-      settings: settingsWithProviderInstances(),
-    });
-    const dispatch = getComposerProviderState({
-      provider: driver,
-      model: state.selectedModel,
-      models: providers[1]!.models,
-      modelOptions: state.modelOptions?.[instanceId],
-      planModeEnabled: false,
-    });
+  it.each([undefined, []])(
+    "does not inherit project options when a saved thread uses defaults: %s",
+    (options) => {
+      const instanceId = ProviderInstanceId.make("codex");
+      const state = deriveEffectiveComposerModelState({
+        draft: null,
+        providers: [provider({ instanceId, models: ["gpt-5.4"] })],
+        selectedProvider: ProviderDriverKind.make("codex"),
+        selectedInstanceId: instanceId,
+        threadModelSelection: { instanceId, model: "gpt-5.4", ...(options ? { options } : {}) },
+        projectModelSelection: createModelSelection(instanceId, "gpt-5.4", [
+          { id: "reasoningEffort", value: "high" },
+        ]),
+        settings: settingsWithProviderInstances(),
+      });
+      expect(state.modelOptions).toBeNull();
+    },
+  );
 
-    expect(
-      createModelSelection(instanceId, state.selectedModel, dispatch.modelOptionsForDispatch),
-    ).toEqual(createModelSelection(instanceId, "openai/gpt-5.5"));
-  });
+  it.each([true, false])(
+    "prefers a saved thread selection over a stale custom-instance draft: %s",
+    (serverThread) => {
+      const instanceId = ProviderInstanceId.make("claude_openrouter");
+      const driver = ProviderDriverKind.make("claudeAgent");
+      const providers = [
+        provider({ provider: driver, instanceId: "claudeAgent", models: ["claude-opus-5"] }),
+        provider({ provider: driver, instanceId, models: ["claude-opus-5"] }),
+      ];
+      const threadSelection = createModelSelection(instanceId, "claude-opus-5", [
+        { id: "effort", value: "high" },
+      ]);
+      const draftSelection = createModelSelection(instanceId, "openai/gpt-5.5", [
+        { id: "effort", value: "max" },
+      ]);
+      const state = deriveEffectiveComposerModelState({
+        draft: {
+          activeProvider: instanceId,
+          modelSelectionByProvider: { [instanceId]: draftSelection },
+        },
+        providers,
+        selectedProvider: driver,
+        selectedInstanceId: instanceId,
+        threadModelSelection: serverThread ? threadSelection : null,
+        projectModelSelection: null,
+        settings: settingsWithProviderInstances(),
+      });
+      const dispatch = getComposerProviderState({
+        provider: driver,
+        model: state.selectedModel,
+        models: providers[1]!.models,
+        modelOptions: state.modelOptions?.[instanceId],
+        planModeEnabled: false,
+      });
+
+      expect(
+        createModelSelection(instanceId, state.selectedModel, dispatch.modelOptionsForDispatch),
+      ).toEqual(
+        createModelSelection(instanceId, serverThread ? "claude-opus-5" : "openai/gpt-5.5"),
+      );
+    },
+  );
 
   it("preserves custom provider instances in settings model selection", () => {
     const providers = [

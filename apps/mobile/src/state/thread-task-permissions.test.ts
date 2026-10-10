@@ -10,6 +10,8 @@ const state = vi.hoisted(() => ({
   draft: { text: "Keep my draft", attachments: [] as DraftComposerImageAttachment[] },
   pendingRequests: { approvals: [], userInputs: [] } as PendingThreadRequests,
   enqueue: vi.fn(async () => undefined),
+  waitForModelSelection: vi.fn(),
+  saveModelSelection: vi.fn(),
   clearDraft: vi.fn(),
   approve: vi.fn(),
   answer: vi.fn(),
@@ -91,6 +93,9 @@ vi.mock("./threads", async () => {
       respondToApproval: state.approve,
       respondToUserInput: state.answer,
       uploadFeedback: state.feedback,
+      waitForModelSelection: state.waitForModelSelection,
+      setModelSelection: state.saveModelSelection,
+      snapshotAtom: () => Atom.make({ threads: [state.thread] }),
     },
   };
 });
@@ -167,9 +172,29 @@ beforeEach(() => {
   state.approve.mockResolvedValue(AsyncResult.success(undefined));
   state.answer.mockResolvedValue(AsyncResult.success(undefined));
   state.feedback.mockResolvedValue(AsyncResult.success({ feedbackId: "feedback" }));
+  state.waitForModelSelection.mockResolvedValue(AsyncResult.success(undefined));
 });
 
 describe("mobile task permissions", () => {
+  it("leaves model selection to the server when the phone shell may be stale", async () => {
+    state.grantedEnvironments.add("secondary");
+    const composer = useThreadComposerState();
+    expect(await composer.onSendMessage()).toBe("message");
+    expect(state.enqueue).toHaveBeenCalledWith(
+      expect.not.objectContaining({ modelSelection: expect.anything() }),
+    );
+    expect(state.clearDraft).toHaveBeenCalled();
+  });
+
+  it("keeps the draft when a model change has failed to sync", async () => {
+    state.grantedEnvironments.add("secondary");
+    state.waitForModelSelection.mockResolvedValue({ _tag: "Failure" });
+    const composer = useThreadComposerState();
+    expect(await composer.onSendMessage()).toBeNull();
+    expect(state.enqueue).not.toHaveBeenCalled();
+    expect(state.clearDraft).not.toHaveBeenCalled();
+  });
+
   it("keeps a connected read-only task's draft instead of queueing it with another environment's grant", async () => {
     const composer = useThreadComposerState();
     expect(await composer.onSendMessage()).toBeNull();

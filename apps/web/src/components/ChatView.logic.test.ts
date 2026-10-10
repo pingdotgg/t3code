@@ -1487,6 +1487,20 @@ describe("resolveComposerProviderSelection", () => {
     ).toEqual({ enabled: false, interactionMode: "default" });
   });
 
+  it("keeps an unavailable saved thread instance instead of using another account", () => {
+    const disabled = entry("codex", "codex_work", { enabled: false });
+    const available = entry("codex");
+    const selection = resolveComposerProviderSelection({
+      entries: [disabled, available],
+      threadInstanceId: disabled.instanceId,
+      candidateInstanceIds: [disabled.instanceId, available.instanceId],
+      lockedProvider: null,
+      lockedInstanceId: null,
+    });
+    expect(selection.selectedProviderEntry).toBeUndefined();
+    expect(selection.unavailableProviderInstanceId).toBe(disabled.instanceId);
+  });
+
   it("uses the fallback provider's plan capability after the draft's instance is disabled", () => {
     const disabledEntry = entry("antigravity", "antigravity", {
       enabled: false,

@@ -1,6 +1,7 @@
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { threadEnvironment } from "../../state/threads";
 import { useAtomValue } from "@effect/atom-react";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { pastedTextDisposition, replaceTextSelection } from "@t3tools/client-runtime/text-paste";
@@ -703,6 +704,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       threadProviderGroups,
     ],
   );
+  const canSelectThreadModel = useAtomValue(
+    threadEnvironment.setModelSelection.permissionAtom(props.environmentId),
+  );
   const openSettings = useCallback(() => {
     settingsRoutePresentation.present(settingsRouteSession);
     settingsSheetPresentation.open();
@@ -807,7 +811,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           </Text>
         ) : null}
         {modelUnavailable ? (
-          <Pressable accessibilityRole="button" className="px-3 py-2" onPress={openSettings}>
+          <Pressable
+            accessibilityRole="button"
+            className="px-3 py-2"
+            disabled={!canSelectThreadModel}
+            onPress={openSettings}
+          >
             <Text className="text-xs text-foreground">Model unavailable. Open model settings.</Text>
           </Pressable>
         ) : null}
@@ -1125,6 +1134,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     <View className="min-w-0 shrink">
                       <ComposerInlineControl
                         accessibilityLabel="Model and reasoning settings"
+                        disabled={!canSelectThreadModel}
                         emphasized
                         renderIcon={(size) => (
                           <ProviderIcon

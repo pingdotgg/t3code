@@ -2127,7 +2127,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ),
     [providerStatuses, settings],
   );
-  const selectedProviderByThreadId = composerDraft.activeProvider ?? null;
+  const selectedProviderByThreadId =
+    routeKind === "server"
+      ? (activeThreadModelSelection?.instanceId ?? null)
+      : (composerDraft.activeProvider ?? null);
   const {
     selectedProviderEntry,
     requestedDriverKind,
@@ -2137,6 +2140,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () =>
       resolveComposerProviderSelection({
         entries: providerInstanceEntries,
+        threadInstanceId:
+          routeKind === "server" ? activeThreadModelSelection?.instanceId : undefined,
         candidateInstanceIds: [
           selectedProviderByThreadId,
           activeThread?.runtime?.providerInstanceId,
@@ -2154,6 +2159,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedProviderByThreadId,
       lockedProvider,
       providerInstanceEntries,
+      routeKind,
     ],
   );
   const selectedInstanceId =
@@ -2194,12 +2200,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     : (compatibleRuntimeModeOptions[0]?.mode ?? runtimeMode);
 
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
-    threadRef: composerDraftTarget,
+    ...(routeKind === "server" ? { threadRef: routeThreadRef } : draftId ? { draftId } : {}),
     providers: providerStatuses,
     selectedProvider,
     selectedInstanceId,
-    threadModelSelection: activeThreadModelSelection,
-    projectModelSelection: activeProjectDefaultModelSelection,
+    threadModelSelection: routeKind === "server" ? activeThreadModelSelection : null,
+    projectModelSelection:
+      routeKind === "draft"
+        ? (activeThreadModelSelection ?? activeProjectDefaultModelSelection)
+        : activeProjectDefaultModelSelection,
     settings,
   });
   const providerSendBlockReason = getAntigravitySendBlockReason(

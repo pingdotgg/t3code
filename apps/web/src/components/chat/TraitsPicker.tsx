@@ -16,6 +16,9 @@ import {
   isClaudeUltrathinkPrompt,
   normalizeModelSlug,
 } from "@t3tools/shared/model";
+import { useAtomValue } from "@effect/atom-react";
+import { threadEnvironment } from "../../state/threads";
+import { useThreadModelSelection } from "../../state/use-thread-model-selection";
 import { memo, useCallback } from "react";
 import { BrainIcon } from "lucide-react";
 import {
@@ -296,16 +299,30 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   planModeEnabled,
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
+  const canSelectThreadModel = useAtomValue(
+    threadEnvironment.setModelSelection.permissionAtom(
+      persistence.threadRef?.environmentId ?? null,
+    ),
+  );
+  const readOnly = persistence.threadRef !== undefined && !canSelectThreadModel;
+  const saveThreadModelSelection = useThreadModelSelection();
   const modelSelection =
     instanceId && model ? { instanceId, model, options: modelOptions ?? [] } : null;
   const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
+  const setStickyModelSelection = useComposerDraftStore((store) => store.setStickyModelSelection);
   const updateModelOptions = useCallback(
     (nextOptions: ProviderOptions | undefined) => {
       if ("onModelOptionsChange" in persistence) {
         persistence.onModelOptionsChange(nextOptions);
         return;
       }
-      const threadTarget = persistence.threadRef ?? persistence.draftId;
+      if (persistence.threadRef && instanceId && model) {
+        const selection = { instanceId, model, options: nextOptions ?? [] };
+        setStickyModelSelection(selection);
+        void saveThreadModelSelection(persistence.threadRef, selection);
+        return;
+      }
+      const threadTarget = persistence.draftId;
       if (!threadTarget) {
         return;
       }
@@ -315,7 +332,15 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
         persistSticky: true,
       });
     },
-    [instanceId, model, persistence, provider, setProviderModelOptions],
+    [
+      instanceId,
+      model,
+      persistence,
+      provider,
+      setProviderModelOptions,
+      setStickyModelSelection,
+      saveThreadModelSelection,
+    ],
   );
   const {
     descriptors,
@@ -423,7 +448,10 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                     // Base UI keeps radio menus open by default. Close on pick so
                     // the traits menu behaves like the model picker.
                     closeOnClick
-                    disabled={ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id}
+                    disabled={
+                      readOnly ||
+                      (ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id)
+                    }
                   >
                     <span className="flex w-full min-w-0 flex-col">
                       <span className="flex w-full min-w-0 items-center justify-between gap-3">
@@ -469,7 +497,13 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                 }}
               >
                 {(["on", "off"] as const).map((value) => (
-                  <MenuRadioItem key={value} value={value} hideIndicator closeOnClick>
+                  <MenuRadioItem
+                    key={value}
+                    value={value}
+                    disabled={readOnly}
+                    hideIndicator
+                    closeOnClick
+                  >
                     <span className="flex w-full min-w-0 items-center justify-between gap-3">
                       <span>{value === "on" ? "On" : "Off"}</span>
                     </span>

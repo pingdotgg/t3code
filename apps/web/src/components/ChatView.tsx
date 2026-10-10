@@ -571,6 +571,7 @@ import { fileAttachmentCapabilityBlockReason } from "./chat/composerAttachmentFi
 import { assetEnvironment } from "../state/assets";
 import { readEnvironmentScope, readPreparedConnection } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
+import { useThreadModelSelection } from "../state/use-thread-model-selection";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { Button, InlineButton } from "./ui/button";
@@ -1612,6 +1613,10 @@ export default function ChatView(props: ChatViewProps) {
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
+  const canSelectThreadModel = useAtomValue(
+    threadEnvironment.setModelSelection.permissionAtom(environmentId),
+  );
+  const saveThreadModelSelection = useThreadModelSelection();
   const createThread = useOrchestrationCommand(threadEnvironment.create, { reportFailure: false });
   const deleteThread = useOrchestrationCommand(threadEnvironment.delete, { reportFailure: false });
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
@@ -3005,7 +3010,11 @@ export default function ChatView(props: ChatViewProps) {
     ? (activeEnvironment?.serverConfig ?? null)
     : (primaryEnvironment?.serverConfig ?? null);
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
-  const selectedProviderByThreadId = composerActiveProvider ?? null;
+  const selectedProviderByThreadId = isServerThread
+    ? (activeThreadShell?.modelSelection.instanceId ??
+      activeThread?.modelSelection.instanceId ??
+      null)
+    : (composerActiveProvider ?? null);
   const threadProvider =
     activeThread?.modelSelection.instanceId ??
     activeProjectDefaultModelSelection?.instanceId ??
@@ -3256,6 +3265,7 @@ export default function ChatView(props: ChatViewProps) {
     () =>
       resolveComposerProviderSelection({
         entries: providerInstanceEntries,
+        threadInstanceId: isServerThread ? (selectedProviderByThreadId ?? undefined) : undefined,
         candidateInstanceIds: [
           selectedProviderByThreadId,
           activeRuntime?.providerInstanceId,
@@ -3273,6 +3283,7 @@ export default function ChatView(props: ChatViewProps) {
       lockedProvider,
       providerInstanceEntries,
       selectedProviderByThreadId,
+      isServerThread,
     ],
   );
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
@@ -7498,7 +7509,6 @@ export default function ChatView(props: ChatViewProps) {
                 input: {
                   threadId,
                   message: { messageId, role: "user", text, attachments: [] },
-                  modelSelection: context.selectedModelSelection,
                   runtimeMode,
                   interactionMode: context.interactionMode,
                   createdAt,
@@ -9903,7 +9913,7 @@ export default function ChatView(props: ChatViewProps) {
         input: {
           threadId: threadIdForSend,
           message: { messageId: newMessageId(), role: "user", text: "/compact", attachments: [] },
-          modelSelection: ctxSelectedModelSelection,
+          ...(isLocalDraftThread ? { modelSelection: ctxSelectedModelSelection } : {}),
           runtimeMode,
           interactionMode: sendInteractionMode,
         },
@@ -9986,7 +9996,7 @@ export default function ChatView(props: ChatViewProps) {
               return { context };
             })(),
           },
-          modelSelection: ctxSelectedModelSelection,
+          ...(isLocalDraftThread ? { modelSelection: ctxSelectedModelSelection } : {}),
           titleSeed: title,
           runtimeMode,
           interactionMode: sendInteractionMode,
@@ -10446,7 +10456,6 @@ export default function ChatView(props: ChatViewProps) {
       selectedModel: ctxSelectedModel,
       selectedProviderModels: ctxSelectedProviderModels,
       selectedPromptEffort: ctxSelectedPromptEffort,
-      selectedModelSelection: ctxSelectedModelSelection,
     } = sendCtx;
 
     const threadIdForSend = activeThread.id;
@@ -10521,7 +10530,6 @@ export default function ChatView(props: ChatViewProps) {
             ...(context ? { context } : {}),
             attachments: [],
           },
-          modelSelection: ctxSelectedModelSelection,
           titleSeed: activeThread.title,
           runtimeMode,
           interactionMode: nextInteractionMode,
@@ -10720,6 +10728,8 @@ export default function ChatView(props: ChatViewProps) {
 
   const getModelDisabledReason = useCallback(
     (instanceId: ProviderInstanceId, model: string): string | null => {
+      if (isServerThread && !canSelectThreadModel)
+        return "This connection cannot change the thread model.";
       if (!activeThread) {
         return null;
       }
@@ -10733,7 +10743,14 @@ export default function ChatView(props: ChatViewProps) {
       });
       return reason ? `${reason.description} Start a new thread to use this model.` : null;
     },
-    [activeRuntime, activeThread, providerStatuses, supportsProviderSwitchingViaHandoff],
+    [
+      activeRuntime,
+      activeThread,
+      providerStatuses,
+      supportsProviderSwitchingViaHandoff,
+      isServerThread,
+      canSelectThreadModel,
+    ],
   );
 
   const onProviderModelSelect = useCallback(
@@ -10807,18 +10824,25 @@ export default function ChatView(props: ChatViewProps) {
         if (options?.focusComposer !== false) scheduleComposerFocus();
         return;
       }
-      setComposerDraftModelSelection(
-        scopeThreadRef(activeThread.environmentId, activeThread.id),
-        nextModelSelection,
-        // A complete snapshot: an absent options field means "start from the
-        // model default", not "keep the previous model's options".
-        { explicit: true, replaceOptions: true },
-      );
+      if (isServerThread) {
+        void saveThreadModelSelection(
+          scopeThreadRef(activeThread.environmentId, activeThread.id),
+          nextModelSelection,
+        );
+      } else {
+        setComposerDraftModelSelection(composerDraftTarget, nextModelSelection, {
+          explicit: true,
+          replaceOptions: true,
+        });
+      }
       setStickyComposerModelSelection(nextModelSelection);
       if (options?.focusComposer !== false) scheduleComposerFocus();
     },
     [
       activeThread,
+      isServerThread,
+      saveThreadModelSelection,
+      composerDraftTarget,
       activeRuntime,
       lockedProvider,
       supportsProviderSwitchingViaHandoff,
@@ -11733,7 +11757,12 @@ export default function ChatView(props: ChatViewProps) {
                               activeProjectDefaultModelSelection={
                                 activeProjectDefaultModelSelection
                               }
-                              activeThreadModelSelection={activeThread?.modelSelection}
+                              activeThreadModelSelection={
+                                isServerThread
+                                  ? (activeThreadShell?.modelSelection ??
+                                    activeThread?.modelSelection)
+                                  : activeThread?.modelSelection
+                              }
                               activeContextWindow={activeContextWindow}
                               activeTasksProgress={activeComposerTasksProgress}
                               activeTaskSteps={activeComposerTaskSteps}
