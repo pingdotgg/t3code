@@ -194,12 +194,18 @@ describe("thread list environment projection", () => {
     const h = harness();
     try {
       expect(h.read().machineByEnvironmentId.get(ID)).toBe("laptop");
-      h.write({ ...config, settings: { ...config.settings, environmentIcon: "server" } });
+      h.write({
+        ...config,
+        settings: { ...config.settings, environmentIcon: { kind: "icon", name: "server" } },
+      });
       expect(h.read().machineByEnvironmentId.get(ID)).toBe("server");
       h.write(config);
       expect(h.read().machineByEnvironmentId.get(ID)).toBe("laptop");
       const detected = h.read();
-      h.write({ ...config, settings: { ...config.settings, environmentIcon: "laptop" } });
+      h.write({
+        ...config,
+        settings: { ...config.settings, environmentIcon: { kind: "icon", name: "laptop" } },
+      });
       expect(h.read()).toBe(detected);
     } finally {
       h.registry.dispose();

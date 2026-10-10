@@ -253,6 +253,12 @@ function translateLegacyProjectOverridePatch(
   } as ServerSettingsPatch;
 }
 
+/**
+ * Applies a client patch to the current settings. Most keys deep-merge so a
+ * client can send one field of a nested object; the keys destructured below
+ * are carved out because merging would keep values the client meant to
+ * clear, fuse two shapes of the same field, or double-apply a translation.
+ */
 export function applyServerSettingsPatch(
   current: ServerSettings,
   rawPatch: ServerSettingsPatch,
@@ -271,6 +277,9 @@ export function applyServerSettingsPatch(
     usageModelAliases: usageModelAliasesPatch,
     // Entry replacement: deepMerge would keep keys the client meant to clear.
     projectSettingsOverrides: projectSettingsOverridesPatch,
+    // Whole-value replacement: the variants have different keys, and deepMerge
+    // would fuse an emoji pick onto the named icon it replaces.
+    environmentIcon: environmentIconPatch,
     // Already translated into `projectSettingsOverrides` above; the legacy
     // maps are derived views and must never be merged directly.
     projectAgentBrowserAccessOverrides: _legacyBrowserAccess,
@@ -413,6 +422,7 @@ export function applyServerSettingsPatch(
     ...(patch.sourceControlWriterModelSelection !== undefined
       ? { sourceControlWriterModelSelection: patch.sourceControlWriterModelSelection }
       : {}),
+    ...(environmentIconPatch !== undefined ? { environmentIcon: environmentIconPatch } : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
     ...(providerHealthRefreshInterval !== undefined ? { providerHealthRefreshInterval } : {}),
   };

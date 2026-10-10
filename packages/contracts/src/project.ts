@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
+import { IconColor, IconEmoji, LucideIconName, MonogramText } from "./icon.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
   CommandId,
@@ -45,49 +46,20 @@ export const ProjectScript = Schema.Struct({
 });
 export type ProjectScript = typeof ProjectScript.Type;
 
-export const ProjectIconColor = Schema.Literals([
-  "gray",
-  "red",
-  "orange",
-  "amber",
-  "yellow",
-  "lime",
-  "green",
-  "emerald",
-  "teal",
-  "cyan",
-  "sky",
-  "blue",
-  "indigo",
-  "violet",
-  "purple",
-  "fuchsia",
-  "pink",
-  "rose",
-]);
-export type ProjectIconColor = typeof ProjectIconColor.Type;
+// One definition of a color and a monogram, shared with environment icons.
+export const ProjectIconColor = IconColor;
+export type ProjectIconColor = IconColor;
 
-const ProjectLucideIconName = TrimmedNonEmptyString.check(
-  Schema.isMaxLength(64),
-  Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
-);
-
-const ProjectEmoji = TrimmedNonEmptyString.check(Schema.isMaxLength(32));
-
-// Grapheme-count validation belongs to the server command boundary, not snapshot decoding.
-export const ProjectMonogramText = TrimmedNonEmptyString.check(
-  Schema.isMaxLength(32),
-  Schema.isPattern(/^[\p{L}\p{N}][\p{L}\p{N}\p{M}\u200c\u200d]*$/u),
-);
+export const ProjectMonogramText = MonogramText;
 
 const ProjectLucideIcon = Schema.Struct({
   kind: Schema.Literal("lucide"),
-  name: ProjectLucideIconName,
+  name: LucideIconName,
   color: ProjectIconColor,
 });
 const ProjectEmojiIcon = Schema.Struct({
   kind: Schema.Literal("emoji"),
-  emoji: ProjectEmoji,
+  emoji: IconEmoji,
 });
 const ProjectMonogramIcon = Schema.Struct({
   kind: Schema.Literal("monogram"),

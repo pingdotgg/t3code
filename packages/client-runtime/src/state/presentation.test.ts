@@ -147,7 +147,7 @@ describe("environment summary subscriptions", () => {
       expect(h.registry.get(h.machineByIdAtom).get(FIRST)).toBe("desktop");
       h.registry.set(h.configs(FIRST), {
         ...config(),
-        settings: { environmentIcon: "laptop" },
+        settings: { environmentIcon: { kind: "icon", name: "laptop" } },
       } as ServerConfig);
       expect(h.registry.get(h.machineByIdAtom).get(FIRST)).toBe("laptop");
       h.registry.set(h.catalog, {
