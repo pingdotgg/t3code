@@ -290,10 +290,15 @@ export function windowsNpmPrefixFromPackagePath(
   if (packageIndex <= 0 || normalized.slice(0, packageIndex).includes("/node_modules/")) {
     return null;
   }
+  const head = normalized.slice(0, packageIndex);
+  // As in `npmGlobalPrefixFromCommandPath`, a mise tool version is not npm's.
+  const miseTool = /\/mise\/installs\/([^/]+)\/[^/]+$/.exec(head)?.[1];
+  if (miseTool && miseTool !== "node") {
+    return null;
+  }
   // Roots keep their separator, as `path.dirname` of a shim there does, so both
   // proofs give the same lock key. npm also reads a bare `C:` as the drive's
   // current directory rather than its root.
-  const head = normalized.slice(0, packageIndex);
   const isRoot = /^[a-z]:$/.test(head) || /^\/\/[^/]+\/[^/]+$/.test(head);
   return commandPath.slice(0, isRoot ? packageIndex + 1 : packageIndex);
 }
@@ -637,25 +642,28 @@ const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (
   if (hasManifest) {
     return shimDir;
   }
-  // Prefer the path as configured, like the shim proof above, so a prefix behind
-  // a junction (nvm-windows' `C:\nvm4w\nodejs`) gets one lock key either way.
-  const commandPath = [context.resolvedCommandPath, context.realCommandPath].find(
-    (candidate) => windowsNpmPrefixFromPackagePath(candidate, packageName) !== null,
-  );
-  const prefix = commandPath && windowsNpmPrefixFromPackagePath(commandPath, packageName);
-  if (!commandPath || !prefix) {
-    return null;
-  }
-  // npm's shim runs `"%dp0%\node_modules\<pkg>\…"` (`%~dp0\…` in older npm).
-  // Requiring that target, not just a same-named `.cmd`, keeps a project's own
-  // script from passing.
-  const command = path.basename(commandPath, path.extname(commandPath));
-  const shim = yield* fileSystem
-    .readFileString(path.join(prefix, `${command}.cmd`))
-    .pipe(Effect.orElseSucceed(() => ""));
-  const shimText = shim.toLowerCase();
+  // The path as configured goes first, like the shim proof above, so a prefix
+  // behind a junction (nvm-windows' `C:\nvm4w\nodejs`) gets one lock key either
+  // way. The real path covers a configured link into the package.
   const target = `\\node_modules\\${packageName.toLowerCase().replaceAll("/", "\\")}\\`;
-  return shimText.includes(`%dp0%${target}`) || shimText.includes(`%~dp0${target}`) ? prefix : null;
+  for (const commandPath of [context.resolvedCommandPath, context.realCommandPath]) {
+    const prefix = windowsNpmPrefixFromPackagePath(commandPath, packageName);
+    if (!prefix) {
+      continue;
+    }
+    // npm's shim runs `"%dp0%\node_modules\<pkg>\…"` (`%~dp0\…` in older npm).
+    // Requiring that target, not just a same-named `.cmd`, keeps a project's own
+    // script from passing.
+    const command = path.basename(commandPath, path.extname(commandPath));
+    const shim = yield* fileSystem
+      .readFileString(path.join(prefix, `${command}.cmd`))
+      .pipe(Effect.orElseSucceed(() => ""));
+    const shimText = shim.toLowerCase();
+    if (shimText.includes(`%dp0%${target}`) || shimText.includes(`%~dp0${target}`)) {
+      return prefix;
+    }
+  }
+  return null;
 });
 
 export function makePackageManagedProviderMaintenanceResolver(

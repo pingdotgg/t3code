@@ -340,6 +340,20 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         "@anthropic-ai/claude-code",
       ),
     ).toBeNull();
+    // Mise's npm backend lays a tool version out like a prefix; Node's own globals stay npm's.
+    const miseInstalls = "C:\\Users\\Theo\\AppData\\Local\\mise\\installs";
+    expect(
+      windowsNpmPrefixFromPackagePath(
+        `${miseInstalls}\\npm-anthropic-ai-claude-code\\2.1.0\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe`,
+        "@anthropic-ai/claude-code",
+      ),
+    ).toBeNull();
+    expect(
+      windowsNpmPrefixFromPackagePath(
+        `${miseInstalls}\\node\\22.0.0\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe`,
+        "@anthropic-ai/claude-code",
+      ),
+    ).toBe(`${miseInstalls}\\node\\22.0.0`);
   });
 
   // The Codex Windows installer exposes `%LOCALAPPDATA%\\Programs\\OpenAI\\Codex\\bin`
@@ -465,31 +479,41 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         args: ["install", "-g", "--prefix", olderPrefix, expect.any(String), expect.any(String)],
       });
 
+      const resolveLinked = (resolvedCommandPath: string, realCommandPath: string) =>
+        resolvePackageManagedProviderMaintenance(
+          {
+            provider: driver("packageTool"),
+            npmPackageName: "@example/package-tool",
+            nativeUpdate: null,
+          },
+          {
+            binaryPath: resolvedCommandPath,
+            resolvedCommandPath,
+            realCommandPath,
+            env: {},
+            platform: "win32",
+          },
+        ).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+        );
+
       // Behind a junction (nvm-windows' `C:\nvm4w\nodejs`) the configured path
       // names the prefix, as it does for a shim, so both share one lock key.
       const visiblePrefix = yield* makeTempDir("t3-npm-windows-junction");
       const visibleExe = writePackageExe(visiblePrefix);
       NodeFS.writeFileSync(NodePath.join(visiblePrefix, "package-tool.cmd"), npmShim);
-      const behindJunction = yield* resolvePackageManagedProviderMaintenance(
-        {
-          provider: driver("packageTool"),
-          npmPackageName: "@example/package-tool",
-          nativeUpdate: null,
-        },
-        {
-          binaryPath: visibleExe,
-          resolvedCommandPath: visibleExe,
-          realCommandPath: globalExe,
-          env: {},
-          platform: "win32",
-        },
-      ).pipe(
-        Effect.provideService(HostProcess.Platform, "win32"),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
-      );
-      expect(behindJunction.update).toMatchObject({
+      expect((yield* resolveLinked(visibleExe, globalExe)).update).toMatchObject({
         args: ["install", "-g", "--prefix", visiblePrefix, expect.any(String), expect.any(String)],
         lockKey: `npm-global:${normalizeCommandPath(visiblePrefix)}`,
+      });
+
+      // When the configured path only links into the global package (a project's
+      // `npm link`), the real path still proves the prefix.
+      const linkingProject = yield* makeTempDir("t3-npm-windows-linked");
+      const linkedExe = writePackageExe(linkingProject);
+      expect((yield* resolveLinked(linkedExe, globalExe)).update).toMatchObject({
+        args: ["install", "-g", "--prefix", prefix, expect.any(String), expect.any(String)],
       });
 
       // A project dependency keeps npm's shim in `node_modules\.bin`, and a
