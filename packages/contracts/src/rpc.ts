@@ -336,6 +336,7 @@ import {
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
 import {
+  TaskGraphCreateInput,
   TaskGraphEditInput,
   TaskGraphError,
   TaskGraphListResult,
@@ -521,6 +522,7 @@ export const WS_METHODS = {
 
   // Task graphs
   taskGraphsSubscribe: "taskGraphs.subscribe",
+  taskGraphsCreate: "taskGraphs.create",
   taskGraphsEdit: "taskGraphs.edit",
   taskGraphsRun: "taskGraphs.run",
   taskGraphsCancel: "taskGraphs.cancel",
@@ -1784,6 +1786,12 @@ const WsTaskGraphsSubscribeRpc = Rpc.make(WS_METHODS.taskGraphsSubscribe, {
   stream: true,
 });
 
+const WsTaskGraphsCreateRpc = Rpc.make(WS_METHODS.taskGraphsCreate, {
+  payload: TaskGraphCreateInput,
+  success: TaskGraphResult,
+  error: Schema.Union([TaskGraphError, EnvironmentAuthorizationError]),
+});
+
 const WsTaskGraphsEditRpc = Rpc.make(WS_METHODS.taskGraphsEdit, {
   payload: TaskGraphEditInput,
   success: TaskGraphResult,
@@ -1931,6 +1939,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerSignalProcessRpc,
   WsScheduledTasksListRpc,
   WsTaskGraphsSubscribeRpc,
+  WsTaskGraphsCreateRpc,
   WsTaskGraphsEditRpc,
   WsTaskGraphsRunRpc,
   WsTaskGraphsCancelRpc,

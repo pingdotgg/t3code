@@ -1349,6 +1349,10 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    createTaskGraph: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:task-graph:create",
+      tag: WS_METHODS.taskGraphsCreate,
+    }),
     // One lane per graph so edits from the editor apply in the order they were made.
     editTaskGraph: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:task-graph:edit",

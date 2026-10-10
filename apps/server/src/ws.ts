@@ -2046,6 +2046,8 @@ const layerWsRpc = (
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),
         [WS_METHODS.taskGraphsSubscribe]: (input) => taskGraphs.subscribeThread(input.threadId),
+        [WS_METHODS.taskGraphsCreate]: (input) =>
+          taskGraphs.create(input).pipe(Effect.map((graph) => ({ graph }))),
         [WS_METHODS.taskGraphsEdit]: (input) =>
           taskGraphs.edit(input.graphId, input.edits).pipe(Effect.map((graph) => ({ graph }))),
         [WS_METHODS.taskGraphsRun]: (input) =>

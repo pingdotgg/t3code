@@ -21,7 +21,7 @@ import {
   taskGraphPullRequestLinks,
   taskGraphResourcesLabel,
 } from "./taskGraphView";
-import { useTaskGraphCommands } from "./useTaskGraphCommands";
+import { useTaskGraphCommands, useTaskGraphEditorRequest } from "./useTaskGraphCommands";
 import { useTaskGraphLabels } from "./useTaskGraphLabels";
 
 // The canvas, dagre and xyflow load only when someone opens the editor.
@@ -82,7 +82,13 @@ function TaskGraphCard(props: {
   const finished = isTaskGraphFinished(graph.status);
   // Expanded by default, finished or not: a graph that ran on its own should still show its shape.
   const [expanded, setExpanded] = useState(true);
-  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorOpenLocally, setEditorOpen] = useState(false);
+  // A graph just started from the composer opens straight into its editor.
+  const requestedNodeKey = useTaskGraphEditorRequest((state) =>
+    state.graphId === graph.id ? state.nodeKey : null,
+  );
+  const clearEditorRequest = useTaskGraphEditorRequest((state) => state.clear);
+  const editorOpen = editorOpenLocally || requestedNodeKey !== null;
   const [editorNodeKey, setEditorNodeKey] = useState<string | null>(null);
   const openEditor = (nodeKey: string | null) => {
     setEditorNodeKey(nodeKey);
@@ -216,7 +222,13 @@ function TaskGraphCard(props: {
           ) : null}
         </ComposerBanner.Scroll>
       </ComposerBanner.Root>
-      <Dialog open={editorOpen} onOpenChange={setEditorOpen}>
+      <Dialog
+        open={editorOpen}
+        onOpenChange={(open) => {
+          setEditorOpen(open);
+          if (!open && requestedNodeKey !== null) clearEditorRequest();
+        }}
+      >
         <DialogPopup className="h-[min(85vh,52rem)] max-w-6xl overflow-hidden">
           {editorOpen ? (
             <Suspense
@@ -231,7 +243,7 @@ function TaskGraphCard(props: {
                 graph={graph}
                 commands={commands}
                 labels={labels}
-                initialNodeKey={editorNodeKey}
+                initialNodeKey={requestedNodeKey ?? editorNodeKey}
               />
             </Suspense>
           ) : null}

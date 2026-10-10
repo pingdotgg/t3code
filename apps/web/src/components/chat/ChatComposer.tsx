@@ -1080,6 +1080,7 @@ import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
+import { useNewTaskGraph } from "./useTaskGraphCommands";
 import {
   FileIcon,
   BotIcon,
@@ -1088,6 +1089,7 @@ import {
   PencilRulerIcon,
   PlayIcon,
   ShieldIcon,
+  WorkflowIcon,
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "@t3tools/shared/proposedPlanText";
@@ -1811,6 +1813,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onRemoveEditingQueuedAttachment,
   } = props;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const newTaskGraph = useNewTaskGraph(environmentId);
   const composerDraftTargetKey = composerTargetKey(composerDraftTarget);
   const {
     heldRequestIds,
@@ -7660,6 +7663,35 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         <TooltipPopup>Attach files</TooltipPopup>
                       </Tooltip>
                     </>
+                  ) : null}
+                  {activeThread && newTaskGraph.canCreate ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            onPointerDown={(event) => event.preventDefault()}
+                            onClick={() => {
+                              void newTaskGraph.start(activeThread.id).then((error) => {
+                                if (error !== null) {
+                                  toastManager.add({
+                                    type: "error",
+                                    title: "Could not start a task graph",
+                                    description: error,
+                                  });
+                                }
+                              });
+                            }}
+                            aria-label="New task graph"
+                          />
+                        }
+                      >
+                        <WorkflowIcon />
+                      </TooltipTrigger>
+                      <TooltipPopup>New task graph</TooltipPopup>
+                    </Tooltip>
                   ) : null}
                   <ComposerFooterPrimaryActions
                     compact={isComposerResting || isComposerPrimaryActionsCompact}

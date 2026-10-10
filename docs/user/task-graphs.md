@@ -6,6 +6,10 @@ fix what you find", and it can plan a graph: one node per area, then a node
 that combines their work. Each node runs as its own thread in its own git
 worktree, and starts as soon as the nodes it depends on have succeeded.
 
+You can also start one yourself: in a thread that has messages, choose the
+task graph button next to the attach button in the composer. It opens the
+editor on an empty draft, where you add tasks and choose **Run**.
+
 The graph appears above the composer of the thread that planned it. Open a
 node to watch its thread, or open the editor to change the plan.
 

@@ -81,6 +81,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverReportHostPowerState]: "server",
   [WS_METHODS.serverGetBackgroundPolicy]: "server",
   [WS_METHODS.taskGraphsSubscribe]: "taskGraphs",
+  [WS_METHODS.taskGraphsCreate]: "taskGraphs",
   [WS_METHODS.taskGraphsEdit]: "taskGraphs",
   [WS_METHODS.taskGraphsRun]: "taskGraphs",
   [WS_METHODS.taskGraphsCancel]: "taskGraphs",
