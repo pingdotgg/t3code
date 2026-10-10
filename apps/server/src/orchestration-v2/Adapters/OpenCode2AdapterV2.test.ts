@@ -1011,7 +1011,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     });
   /** The subagent rows by title, the thread's background roster and the child's turns, as emitted. */
   const watchCalls = (
-    runtime: ProviderAdapterV2SessionRuntime,
+    runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
     thread: OrchestrationV2ProviderThread,
   ) =>
     Effect.gen(function* () {
