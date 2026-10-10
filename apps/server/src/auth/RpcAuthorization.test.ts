@@ -2,6 +2,7 @@ import {
   AuthEnvironmentMaintainScope,
   AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
+  AuthFilesystemWriteScope,
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
@@ -57,6 +58,27 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.scheduledTasksRotateWebhookToken,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    }
+  });
+
+  it("reads skill folders, SKILL.md text and git tracking under the filesystem read scope", () => {
+    for (const method of [
+      WS_METHODS.serverListSkills,
+      WS_METHODS.serverGetSkill,
+      WS_METHODS.serverSkillsTracked,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthFilesystemReadScope);
+    }
+  });
+
+  it("changes skills, which writes links, settings files and folders, under filesystem write", () => {
+    for (const method of [
+      WS_METHODS.serverEnableSkills,
+      WS_METHODS.serverDisableSkills,
+      WS_METHODS.serverPlaceSkills,
+      WS_METHODS.serverDeleteSkills,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthFilesystemWriteScope);
     }
   });
 

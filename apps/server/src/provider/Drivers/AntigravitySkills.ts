@@ -1,4 +1,4 @@
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import { ProviderDriverKind, type ServerProviderSkill } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -6,6 +6,13 @@ import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { parse as parseYamlDocument } from "yaml";
+
+import {
+  ANTIGRAVITY_USER_SKILL_SUBFOLDERS,
+  skillRootsFor,
+} from "@t3tools/provider-core/server/AgentSkillFolders";
+
+const ANTIGRAVITY_DRIVER = ProviderDriverKind.make("antigravity");
 
 /**
  * The home directory the agent expands `~` against, matching Python's
@@ -41,10 +48,8 @@ export function antigravityUserSkillDirectories(
   path: Path.Path,
   geminiHome: string,
 ): readonly [configSkills: string, cliSkills: string] {
-  return [
-    path.join(geminiHome, "config", "skills"),
-    path.join(geminiHome, "antigravity-cli", "skills"),
-  ];
+  const [configSkills, cliSkills] = ANTIGRAVITY_USER_SKILL_SUBFOLDERS;
+  return [path.join(geminiHome, configSkills), path.join(geminiHome, cliSkills)];
 }
 
 const MAX_SKILL_BYTES = 1_000_000;
@@ -166,17 +171,11 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
 > {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const [configSkills, cliSkills] = antigravityUserSkillDirectories(
-    path,
-    path.join(input.userHome, ".gemini"),
+  const roots = skillRootsFor(ANTIGRAVITY_DRIVER).map((root) =>
+    root.scope === "global"
+      ? { directory: path.join(input.userHome, root.folder), scope: "user" }
+      : { directory: path.resolve(input.cwd, root.folder), scope: "project" },
   );
-  const roots = [
-    { directory: configSkills, scope: "user" },
-    { directory: path.resolve(input.cwd, ".gemini", "skills"), scope: "project" },
-    { directory: cliSkills, scope: "user" },
-    { directory: path.resolve(input.cwd, ".agents", "skills"), scope: "project" },
-    { directory: path.resolve(input.cwd, ".agent", "skills"), scope: "project" },
-  ];
   const budget: ScanBudget = {
     remainingBytes: MAX_SCAN_BYTES,
     remainingEntries: MAX_SCAN_ENTRIES,

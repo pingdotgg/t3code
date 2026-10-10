@@ -24,6 +24,8 @@ import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { ChildProcessSpawner } from "effect/process";
 import { expect } from "vite-plus/test";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import type {
   ChangeRequest,
   GitActionProgressEvent,
@@ -287,6 +289,39 @@ function createBareRemote(): Effect.Effect<
     const remoteDir = yield* makeTempDir("t3code-git-remote-");
     yield* runGit(remoteDir, ["init", "--bare"]);
     return remoteDir;
+  });
+}
+
+/**
+ * A repository whose project uses `db-migrations` from the skill library under `home` and `solo`
+ * from a folder of its own, linked into `.agents/skills` and, for the library skill, also into
+ * `.claude/skills`. The project is the repository's `subfolder` when given, else the repository
+ * itself. The links are untracked, so a worktree has the same files but none of them.
+ */
+function repoWithLibrarySkill(subfolder = "") {
+  return Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const home = yield* makeTempDir("t3code-skill-home-");
+    const root = yield* makeTempDir("t3code-git-manager-");
+    yield* initRepo(root);
+    const cwd = NodePath.join(root, subfolder);
+    yield* fileSystem.makeDirectory(cwd, { recursive: true });
+    const entry = NodePath.join(home, ".agents/skill-library/db-migrations");
+    yield* fileSystem.makeDirectory(entry, { recursive: true });
+    yield* fileSystem.writeFileString(
+      NodePath.join(entry, "SKILL.md"),
+      "---\nname: db-migrations\n---\n",
+    );
+    yield* fileSystem.makeDirectory(NodePath.join(cwd, "elsewhere/solo"), { recursive: true });
+    for (const folder of [".agents/skills", ".claude/skills"]) {
+      yield* fileSystem.makeDirectory(NodePath.join(cwd, folder), { recursive: true });
+      yield* fileSystem.symlink(entry, NodePath.join(cwd, folder, "db-migrations"));
+    }
+    yield* fileSystem.symlink(
+      NodePath.join(cwd, "elsewhere/solo"),
+      NodePath.join(cwd, ".agents/skills/solo"),
+    );
+    return { home, root, cwd, entry };
   });
 }
 
@@ -4910,6 +4945,156 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         expect(
           (yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "@{upstream}"])).stdout.trim(),
         ).toBe("origin/feature/pr-local-no-head-repo");
+      }),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "links a project's library skills into a new worktree, and leaves its other links behind",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const { home, cwd, entry } = yield* repoWithLibrarySkill();
+        const { manager } = yield* makeManager();
+        const worktree = NodePath.join(yield* makeTempDir("t3code-git-worktrees-"), "feature");
+
+        const created = yield* manager
+          .createWorktree({
+            cwd,
+            path: worktree,
+            refName: "main",
+            newRefName: "feature/library-links",
+          })
+          .pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+
+        expect(created.worktree.path).toBe(worktree);
+        for (const folder of [".agents/skills", ".claude/skills"]) {
+          expect(yield* fileSystem.readLink(NodePath.join(worktree, folder, "db-migrations"))).toBe(
+            entry,
+          );
+        }
+        // A link to something other than the library is the project's own business.
+        expect(yield* fileSystem.exists(NodePath.join(worktree, ".agents/skills/solo"))).toBe(
+          false,
+        );
+      }),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "links a project's library skills at its own folder of the worktree when it is a folder in its repository",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const { home, cwd, entry } = yield* repoWithLibrarySkill("apps/site");
+        const { manager } = yield* makeManager();
+        const worktree = NodePath.join(yield* makeTempDir("t3code-git-worktrees-"), "feature");
+
+        yield* manager
+          .createWorktree({
+            cwd,
+            path: worktree,
+            refName: "main",
+            newRefName: "feature/site-links",
+          })
+          .pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+
+        expect(
+          yield* fileSystem.readLink(
+            NodePath.join(worktree, "apps/site/.agents/skills/db-migrations"),
+          ),
+        ).toBe(entry);
+        // The worktree's root is not the project, so nothing lands there.
+        expect(yield* fileSystem.exists(NodePath.join(worktree, ".agents"))).toBe(false);
+      }),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "links a project's library skills into the worktree of a pull request thread",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const { home, cwd, entry } = yield* repoWithLibrarySkill();
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(cwd, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(cwd, ["push", "-u", "origin", "main"]);
+        yield* runGit(cwd, ["checkout", "-b", "feature/pr-links"]);
+        yield* fileSystem.writeFileString(NodePath.join(cwd, "pr.txt"), "pr\n");
+        yield* runGit(cwd, ["add", "pr.txt"]);
+        yield* runGit(cwd, ["commit", "-m", "PR branch"]);
+        yield* runGit(cwd, ["push", "-u", "origin", "feature/pr-links"]);
+        yield* runGit(cwd, ["push", "origin", "HEAD:refs/pull/78/head"]);
+        yield* runGit(cwd, ["checkout", "main"]);
+        const { manager } = yield* makeManager({
+          ghScenario: {
+            pullRequest: {
+              number: 78,
+              title: "Library links PR",
+              url: "https://github.com/pingdotgg/codething-mvp/pull/78",
+              baseRefName: "main",
+              headRefName: "feature/pr-links",
+              state: "open",
+            },
+          },
+        });
+
+        const result = yield* preparePullRequestThread(manager, {
+          cwd,
+          reference: "78",
+          mode: "worktree",
+        }).pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+
+        expect(result.worktreePath).not.toBeNull();
+        expect(
+          yield* fileSystem.readLink(
+            NodePath.join(result.worktreePath as string, ".agents/skills/db-migrations"),
+          ),
+        ).toBe(entry);
+      }),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "makes the worktree all the same when the library links can't be made",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const { home, cwd } = yield* repoWithLibrarySkill();
+        // On this branch `.agents` is a file, so no folder can be made under it.
+        yield* runGit(cwd, ["checkout", "-q", "-b", "agents-file"]);
+        yield* fileSystem.remove(NodePath.join(cwd, ".agents"), { recursive: true });
+        yield* fileSystem.writeFileString(NodePath.join(cwd, ".agents"), "not a folder\n");
+        yield* runGit(cwd, ["add", "-A"]);
+        yield* runGit(cwd, ["commit", "-q", "-m", "agents is a file"]);
+        yield* runGit(cwd, ["checkout", "-q", "main"]);
+        yield* fileSystem.makeDirectory(NodePath.join(cwd, ".agents/skills"), { recursive: true });
+        yield* fileSystem.symlink(
+          NodePath.join(home, ".agents/skill-library/db-migrations"),
+          NodePath.join(cwd, ".agents/skills/db-migrations"),
+        );
+        const { manager } = yield* makeManager();
+        const worktree = NodePath.join(yield* makeTempDir("t3code-git-worktrees-"), "feature");
+        const warnings: string[] = [];
+        const logger = Logger.make<unknown, void>(({ message }) => {
+          warnings.push(String(message));
+        });
+
+        const created = yield* manager
+          .createWorktree({
+            cwd,
+            path: worktree,
+            refName: "agents-file",
+            newRefName: "feature/no-links",
+          })
+          .pipe(
+            Effect.provideService(HostProcess.HomeDirectory, home),
+            Effect.provideService(Logger.CurrentLoggers, new Set([logger])),
+          );
+
+        expect(created.worktree.path).toBe(worktree);
+        expect(
+          warnings.filter((line) => line.includes("could not link library skills")).length,
+        ).toBe(1);
+        expect(yield* fileSystem.readFileString(NodePath.join(worktree, ".agents"))).toBe(
+          "not a folder\n",
+        );
       }),
   );
 

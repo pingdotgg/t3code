@@ -675,6 +675,9 @@ importers:
       jose:
         specifier: 'catalog:'
         version: 6.2.2
+      jsonc-parser:
+        specifier: 3.3.1
+        version: 3.3.1
       node-pty:
         specifier: ^1.2.0-beta.15
         version: 1.2.0-beta.15(patch_hash=f2fe901c61cde17986240002d05c172d5d0272d83ffaab8d0ebeb922763be414)
@@ -684,6 +687,9 @@ importers:
       proper-lockfile:
         specifier: 4.1.2
         version: 4.1.2
+      smol-toml:
+        specifier: 1.8.0
+        version: 1.8.0
       stream-chain:
         specifier: ^4.2.5
         version: 4.2.5

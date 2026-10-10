@@ -41,6 +41,7 @@ import {
 } from "@t3tools/provider-core/server/snapshotProbe";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
+import type { SkillSettingsChange } from "@t3tools/provider-core/server/driver";
 import {
   codexRateLimitsFailureMessage,
   codexRateLimitsToLimits,
@@ -497,6 +498,17 @@ export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(functi
   const { client } = yield* withCodexAppServerClient(input);
   const skillsResponse = yield* client.request("skills/list", { cwds: [input.cwd] });
   return parseCodexSkillsListResponse(skillsResponse, input.cwd);
+});
+
+/**
+ * Opens a short-lived `codex app-server` for the caller's scope and returns the way to write
+ * Codex's per-skill settings through it (`skills/config/write`).
+ */
+export const openCodexSkillSettingsWriter = Effect.fn("openCodexSkillSettingsWriter")(function* (
+  input: Parameters<typeof withCodexAppServerClient>[0],
+) {
+  const { client } = yield* withCodexAppServerClient(input);
+  return (change: SkillSettingsChange) => client.request("skills/config/write", change);
 });
 
 const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] =>

@@ -543,10 +543,13 @@ export function SettingsPageContainer({
   children,
   className,
   width = "readable",
+  hideScopeOnPhone = false,
 }: {
   children: ReactNode;
   className?: string;
   width?: WorkspacePageWidth;
+  /** A phone-sized subpage gets the whole screen under its Back row. */
+  hideScopeOnPhone?: boolean;
 }) {
   const navigate = useNavigate();
   const hash = useLocation({ select: (location) => location.hash });
@@ -575,7 +578,13 @@ export function SettingsPageContainer({
         data-settings-page-scroll
       >
         <WorkspacePageContainer width={width} className={cn("gap-8", className)}>
-          <SettingsScopeSentence />
+          {hideScopeOnPhone ? (
+            <div className="hidden sm:block">
+              <SettingsScopeSentence />
+            </div>
+          ) : (
+            <SettingsScopeSentence />
+          )}
           {children}
         </WorkspacePageContainer>
       </div>

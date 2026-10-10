@@ -67,6 +67,23 @@ export interface ProviderDriverMetadata {
   readonly hasDefaultInstance?: boolean;
 }
 
+/**
+ * One change to an agent's own per-skill setting: the skill by `path` (its SKILL.md) or by `name`,
+ * and whether it is on. Turning a skill on takes away the entry that turned it off.
+ */
+export type SkillSettingsChange = ({ readonly path: string } | { readonly name: string }) & {
+  readonly enabled: boolean;
+};
+
+/**
+ * Makes one change. `effectiveEnabled` is what the agent now decides for the selector, which
+ * differs from the request when a layer the agent's own file doesn't hold (a managed policy)
+ * decides it.
+ */
+export type SkillSettingsWriter = (
+  change: SkillSettingsChange,
+) => Effect.Effect<{ readonly effectiveEnabled: boolean }, ProviderDriverError>;
+
 export type ProviderWorkspaceSnapshot = ServerProvider &
   Pick<ServerProviderWorkspaceSnapshot, "slashCommandsPending">;
 
@@ -101,6 +118,17 @@ export interface ProviderInstance {
   readonly consumeResetCredit?: () => Effect.Effect<
     ProviderConsumeResetCreditOutcome,
     ProviderDriverError
+  >;
+  /**
+   * Opens a way to switch skills on and off in the agent's own settings, for an agent whose
+   * settings only the agent writes (Codex, through the app-server's `skills/config/write`). The
+   * agent stays open until the scope closes, so one request makes many changes with one process.
+   * Agents whose settings are plain files T3 Code edits itself don't have it.
+   */
+  readonly openSkillSettingsWriter?: Effect.Effect<
+    SkillSettingsWriter,
+    ProviderDriverError,
+    Scope.Scope
   >;
   readonly orchestrationAdapter: ProviderAdapter.ProviderAdapterV2["Service"];
   readonly textGeneration: ProviderTextGeneration;
