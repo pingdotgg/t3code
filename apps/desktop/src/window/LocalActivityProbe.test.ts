@@ -33,9 +33,18 @@ const makeInput = (httpClient: HttpClient.HttpClient) => ({
 describe("makeLocalActivityProbe", () => {
   it.effect("counts threads with a live activity from a 2xx snapshot", () =>
     Effect.gen(function* () {
-      const body = JSON.stringify({ threads: [{ activityRunStatus: "running" }, {}, null] });
+      const body = JSON.stringify({
+        threads: [
+          { activityRunStatus: "preparing" },
+          { activityRunStatus: "starting" },
+          { activityRunStatus: "running" },
+          { activityRunStatus: "waiting" },
+          {},
+          null,
+        ],
+      });
       const count = yield* makeLocalActivityProbe(makeInput(makeHttpClient(200, body)));
-      assert.equal(count, 1);
+      assert.equal(count, 4);
     }),
   );
 
