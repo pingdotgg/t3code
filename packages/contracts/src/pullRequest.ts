@@ -634,6 +634,11 @@ export const PullRequestProviderSummary = Schema.Struct({
   kind: SourceControlProviderKind,
   /** False where a search has to be applied to the rows after they arrive. */
   searchesOnHost: Schema.Boolean,
+  /**
+   * The actions this host can carry out, so a row can offer them before its detail is read.
+   * Absent from servers older than this field; clients then offer what they always did.
+   */
+  actions: Schema.optional(Schema.Array(PullRequestAction)),
   projectCount: PositiveInt,
   /** False when the provider's CLI or credentials are missing, with `detail` saying which. */
   configured: Schema.Boolean,

@@ -33,12 +33,13 @@ import {
   forgejoChecks,
   forgejoReactions,
 } from "./forgejoPullRequestJson.ts";
+import { definition } from "../client/definition.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
   viewedFiles: "environment",
   comment: true,
-  actions: ["merge", "close", "reopen", "update-branch"],
+  actions: [...definition.changeRequestActions],
   mergeMethods: ["merge", "squash", "rebase"],
   updateMethods: ["merge", "rebase"],
   search: false,

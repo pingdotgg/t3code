@@ -63,6 +63,7 @@ export const definition = defineSourceControlClient({
     }
     return `https://${host}/${repository}/pulls/${number}`;
   },
+  changeRequestActions: new Set(["merge", "close", "reopen", "update-branch"] as const),
   // Neither `fj` nor `tea` checks out by number, so fetch the pull ref from the repository itself.
   checkoutCommand: ({ number, repositoryUrl }) =>
     repositoryUrl

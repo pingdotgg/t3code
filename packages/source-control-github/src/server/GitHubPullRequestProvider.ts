@@ -20,22 +20,12 @@ import {
   type ProviderRepositoryRef,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import type { GitHubViewerAccess, GitHubWorkflowRunApproval } from "./gitHubPullRequestJson.ts";
+import { definition } from "../client/definition.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
   comment: true,
-  actions: [
-    "merge",
-    "ready",
-    "draft",
-    "close",
-    "reopen",
-    "update-branch",
-    "enable-auto-merge",
-    "disable-auto-merge",
-    "revert",
-    "approve-workflows",
-  ],
+  actions: [...definition.changeRequestActions],
   mergeMethods: ["merge", "squash", "rebase"],
   updateMethods: ["merge", "rebase"],
   search: true,

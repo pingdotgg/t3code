@@ -31,6 +31,14 @@ export const definition = defineSourceControlClient({
   defaultCloneTransport: "ssh",
   changeRequestUrl: ({ host, repository, number }) =>
     `https://${host}/${repository}/pulls/${number}`,
+  changeRequestActions: new Set([
+    "ready",
+    "draft",
+    "close",
+    "reopen",
+    "merge",
+    "update-branch",
+  ] as const),
   checkoutCommand: ({ number }) => `cafe pr checkout ${number}`,
   authorProfileUrl: () => null,
   referenceAutolinkRepositoryUrl: () => null,
