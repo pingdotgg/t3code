@@ -16,6 +16,7 @@ import { effectiveShortcutsForCommand, resolveShortcutCommand } from "../keybind
 import { isEditableFocused } from "../lib/editableFocus";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
+import { isEffortPickerOpen } from "../effortPickerVisibility";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import {
   planNextReopen,
@@ -162,6 +163,7 @@ export function ReopenClosedViewShortcut() {
           previewOpen,
           editableFocus: isEditableFocused(event.target),
           modelPickerOpen: isModelPickerOpen(),
+          effortPickerOpen: isEffortPickerOpen(),
         },
       });
       if (command !== "view.reopenClosed") return;

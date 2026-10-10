@@ -118,6 +118,7 @@ import {
 } from "../keybindings";
 import { useShortcutModifierState } from "../shortcutModifierState";
 import { isTerminalFocused } from "../lib/terminalFocus";
+import { isEffortPickerOpen } from "../effortPickerVisibility";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { isMacPlatform } from "~/lib/utils";
@@ -4876,6 +4877,7 @@ export default function Sidebar() {
           terminalFocus: isTerminalFocused(),
           terminalOpen: routeTerminalOpen,
           modelPickerOpen: isModelPickerOpen(),
+          effortPickerOpen: isEffortPickerOpen(),
           isWeb: !isElectron,
           isDesktop: isElectron,
         },
@@ -4929,6 +4931,7 @@ export default function Sidebar() {
         terminalFocus: terminalFocused,
         terminalOpen: routeTerminalOpen,
         modelPickerOpen: isModelPickerOpen(),
+        effortPickerOpen: isEffortPickerOpen(),
         isWeb: !isElectron,
         isDesktop: isElectron,
       },

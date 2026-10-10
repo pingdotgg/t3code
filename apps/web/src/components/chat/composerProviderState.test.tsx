@@ -484,9 +484,10 @@ describe("provider traits render guards", () => {
       prompt: "",
       onPromptChange: () => {},
       planModeEnabled: true,
+      keybindings: [],
     };
 
     expect(renderProviderTraitsPicker(args)).toBeNull();
-    expect(renderProviderTraitsMenuContent(args)).toBeNull();
+    expect(renderProviderTraitsMenuContent(args, () => {})).toBeNull();
   });
 });

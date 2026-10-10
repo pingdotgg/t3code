@@ -13,6 +13,8 @@ import {
 } from "@t3tools/contracts";
 import {
   effectiveShortcutsForCommand,
+  effortPickerJumpCommandForIndex,
+  effortPickerJumpIndexFromCommand,
   formatShortcutLabel,
   isDiffToggleShortcut,
   isRichTextBoldShortcut,
@@ -676,6 +678,57 @@ describe("model picker navigation helpers", () => {
         context: { isDesktop: true, modelPickerOpen: false },
       }),
       "thread.jump.3",
+    );
+  });
+});
+
+describe("effort picker navigation helpers", () => {
+  it("maps jump commands to effort option indices", () => {
+    assert.strictEqual(effortPickerJumpCommandForIndex(0), "effortPicker.jump.1");
+    assert.strictEqual(effortPickerJumpCommandForIndex(3), "effortPicker.jump.4");
+    assert.isNull(effortPickerJumpCommandForIndex(9));
+    assert.strictEqual(effortPickerJumpIndexFromCommand("effortPicker.jump.1"), 0);
+    assert.strictEqual(effortPickerJumpIndexFromCommand("effortPicker.jump.4"), 3);
+    assert.isNull(effortPickerJumpIndexFromCommand("modelPicker.jump.1"));
+  });
+
+  it("claims numbered jumps on desktop only while the effort menu is open", () => {
+    const input = event({ key: "2", metaKey: true });
+    assert.isNull(
+      resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { isDesktop: false, effortPickerOpen: true },
+      }),
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { isDesktop: true, effortPickerOpen: true },
+      }),
+      "effortPicker.jump.2",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { isDesktop: true, effortPickerOpen: false },
+      }),
+      "thread.jump.2",
+    );
+  });
+
+  it("hides thread jump hints while the effort menu owns the numbered jumps", () => {
+    const modifiers = event({ metaKey: true });
+    assert.isFalse(
+      shouldShowThreadJumpHintsForModifiers(modifiers, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { isDesktop: true, effortPickerOpen: true },
+      }),
+    );
+    assert.isTrue(
+      shouldShowThreadJumpHintsForModifiers(modifiers, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { isDesktop: true, effortPickerOpen: false },
+      }),
     );
   });
 });

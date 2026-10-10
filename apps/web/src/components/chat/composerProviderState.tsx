@@ -4,6 +4,7 @@ import {
   type ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderOptionSelection,
+  type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type ServerProviderModel,
 } from "@t3tools/contracts";
@@ -57,6 +58,8 @@ type TraitsRenderInput = {
   hidden?: boolean;
   triggerClassName?: string;
   isComposerOwned?: boolean;
+  keybindings: ResolvedKeybindingsConfig;
+  terminalOpen?: boolean;
 };
 
 export function getComposerPromptInjectionState(prompt: string): ComposerPromptInjectionState {
@@ -163,6 +166,7 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
 function renderTraitsControl(
   Component: typeof TraitsMenuContent | typeof TraitsPicker,
   input: TraitsRenderInput,
+  onRequestClose?: () => void,
 ): ReactNode {
   const {
     provider,
@@ -180,6 +184,8 @@ function renderTraitsControl(
     hidden,
     triggerClassName,
     isComposerOwned,
+    keybindings,
+    terminalOpen,
   } = input;
   const hasTarget = threadRef !== undefined || draftId !== undefined;
   const { selections: resolvedModelOptions } = resolveComposerOptionSelections(
@@ -219,12 +225,19 @@ function renderTraitsControl(
       {...(hidden !== undefined ? { hidden } : {})}
       {...(triggerClassName !== undefined ? { triggerClassName } : {})}
       {...(isComposerOwned ? { isComposerOwned } : {})}
+      keybindings={keybindings}
+      terminalOpen={terminalOpen}
+      {...(onRequestClose ? { onRequestClose } : {})}
     />
   );
 }
 
-export function renderProviderTraitsMenuContent(input: TraitsRenderInput): ReactNode {
-  return renderTraitsControl(TraitsMenuContent, input);
+/** Traits for a menu the caller owns, such as the compact composer's overflow menu. */
+export function renderProviderTraitsMenuContent(
+  input: TraitsRenderInput,
+  onRequestClose: () => void,
+): ReactNode {
+  return renderTraitsControl(TraitsMenuContent, input, onRequestClose);
 }
 
 export function renderProviderTraitsPicker(input: TraitsRenderInput): ReactNode {

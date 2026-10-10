@@ -1,4 +1,5 @@
 import {
+  EFFORT_PICKER_JUMP_KEYBINDING_COMMANDS,
   type KeybindingRule,
   type KeybindingShortcut,
   type KeybindingWhenNode,
@@ -199,6 +200,11 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
     key: `mod+${index + 1}`,
     command,
     when: "modelPickerOpen && isDesktop",
+  })),
+  ...EFFORT_PICKER_JUMP_KEYBINDING_COMMANDS.map((command, index) => ({
+    key: `mod+${index + 1}`,
+    command,
+    when: "effortPickerOpen && isDesktop",
   })),
   { key: "c", command: "usage.cost", when: "usagePageOpen" },
   { key: "t", command: "usage.tokens", when: "usagePageOpen" },

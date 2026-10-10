@@ -238,6 +238,7 @@ import {
 import { useTheme } from "../hooks/useTheme";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
+import { isEffortPickerOpen } from "../effortPickerVisibility";
 import { subscribeSnapShotComposerFocus } from "../lib/desktopSnapShot";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
@@ -7983,6 +7984,7 @@ export default function ChatView(props: ChatViewProps) {
       previewOpen: previewPanelOpen,
       editableFocus: isEditableFocused(eventTarget),
       modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
+      effortPickerOpen: isEffortPickerOpen(),
       composerFocus: document.activeElement?.getAttribute("data-testid") === "composer-editor",
       draftThreadRoute: routeKind === "draft",
       turnRunning: phase === "running",

@@ -34,6 +34,20 @@ export const MODEL_PICKER_JUMP_KEYBINDING_COMMANDS = [
 export type ModelPickerJumpKeybindingCommand =
   (typeof MODEL_PICKER_JUMP_KEYBINDING_COMMANDS)[number];
 
+export const EFFORT_PICKER_JUMP_KEYBINDING_COMMANDS = [
+  "effortPicker.jump.1",
+  "effortPicker.jump.2",
+  "effortPicker.jump.3",
+  "effortPicker.jump.4",
+  "effortPicker.jump.5",
+  "effortPicker.jump.6",
+  "effortPicker.jump.7",
+  "effortPicker.jump.8",
+  "effortPicker.jump.9",
+] as const;
+export type EffortPickerJumpKeybindingCommand =
+  (typeof EFFORT_PICKER_JUMP_KEYBINDING_COMMANDS)[number];
+
 const THREAD_KEYBINDING_COMMANDS = [
   "thread.stop",
   "thread.steerQueuedMessage",
@@ -110,6 +124,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "usage.period.month",
   "usage.period.quarter",
   ...MODEL_PICKER_KEYBINDING_COMMANDS,
+  ...EFFORT_PICKER_JUMP_KEYBINDING_COMMANDS,
   ...THREAD_KEYBINDING_COMMANDS,
 ] as const;
 

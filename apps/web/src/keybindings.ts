@@ -1,4 +1,6 @@
 import {
+  EFFORT_PICKER_JUMP_KEYBINDING_COMMANDS,
+  type EffortPickerJumpKeybindingCommand,
   type KeybindingCommand,
   type KeybindingShortcut,
   type KeybindingWhenNode,
@@ -292,6 +294,19 @@ export function modelPickerJumpCommandForIndex(
 export function modelPickerJumpIndexFromCommand(command: string): number | null {
   const index = MODEL_PICKER_JUMP_KEYBINDING_COMMANDS.indexOf(
     command as ModelPickerJumpKeybindingCommand,
+  );
+  return index === -1 ? null : index;
+}
+
+export function effortPickerJumpCommandForIndex(
+  index: number,
+): EffortPickerJumpKeybindingCommand | null {
+  return EFFORT_PICKER_JUMP_KEYBINDING_COMMANDS[index] ?? null;
+}
+
+export function effortPickerJumpIndexFromCommand(command: string): number | null {
+  const index = EFFORT_PICKER_JUMP_KEYBINDING_COMMANDS.indexOf(
+    command as EffortPickerJumpKeybindingCommand,
   );
   return index === -1 ? null : index;
 }

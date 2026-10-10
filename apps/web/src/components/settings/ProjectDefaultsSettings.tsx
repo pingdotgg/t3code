@@ -7,6 +7,7 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
+import { useAtomValue } from "@effect/atom-react";
 
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
@@ -16,7 +17,7 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { useEnvironments } from "../../state/environments";
-import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
+import { EMPTY_SERVER_PROVIDERS, primaryServerKeybindingsAtom } from "../../state/server";
 import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
@@ -56,6 +57,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { environments } = useEnvironments();
   const representative = target
     ? environments.find((environment) => environment.environmentId === target.environmentId)
@@ -187,6 +189,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                 modelOptions={selection.options ?? []}
                 allowPromptInjectedEffort={false}
                 planModeEnabled={settings.planModeEnabled}
+                keybindings={keybindings}
                 triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                 onModelOptionsChange={(options) =>
                   setModel(createModelSelection(selection.instanceId, selection.model, options))

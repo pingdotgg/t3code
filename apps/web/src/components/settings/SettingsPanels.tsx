@@ -5,6 +5,7 @@ import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { ArchiveIcon, ArchiveX, CheckIcon, ChevronRightIcon, SettingsIcon } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
+import { useAtomValue } from "@effect/atom-react";
 import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -101,7 +102,7 @@ import {
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { isMacPlatform } from "../../lib/utils";
-import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
+import { EMPTY_SERVER_PROVIDERS, primaryServerKeybindingsAtom } from "../../state/server";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
@@ -2183,6 +2184,7 @@ export function GeneralSettingsPanel() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { scope, environment, connectedEnvironments } = useSettingsScope();
   // The representative environment supplies the provider list for pickers;
   // a fanned-out model choice is validated against every target before it
@@ -3316,6 +3318,7 @@ export function GeneralSettingsPanel() {
                     planModeEnabled={
                       settings.planModeEnabled || selectsPlanAgent(textGenModelOptions)
                     }
+                    keybindings={keybindings}
                     triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                     onModelOptionsChange={(nextOptions) => {
                       updateSettings({

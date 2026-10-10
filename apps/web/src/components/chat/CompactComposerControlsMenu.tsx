@@ -21,7 +21,8 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
     readonly label: string;
   }>;
   showInteractionModeToggle: boolean;
-  traitsMenuContent?: ReactNode;
+  /** Renders the traits section. `onRequestClose` closes this menu after an effort jump. */
+  renderTraitsMenuContent?: ((onRequestClose: () => void) => ReactNode) | undefined;
   size?: "sm" | "xs";
   /**
    * The resting strip keeps this menu mounted out of flow while every block
@@ -35,6 +36,7 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   const composerFloatingLayerProps = useComposerMenuProps();
   const size = props.size ?? "sm";
   const [open, setOpen] = useComposerMenuState(props.hidden);
+  const traitsMenuContent = props.renderTraitsMenuContent?.(() => setOpen(false));
 
   return (
     <Menu open={open} onOpenChange={setOpen}>
@@ -45,7 +47,7 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
             className="shrink-0"
             aria-label="More composer controls"
             data-composer-shortcut={
-              props.traitsMenuContent ? "composer.mode composer.effort" : "composer.mode"
+              traitsMenuContent ? "composer.mode composer.effort" : "composer.mode"
             }
           />
         }
@@ -53,9 +55,9 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
         <ComposerControlIcon icon={EllipsisIcon} size={size} />
       </MenuTrigger>
       <MenuPopup align="start" {...composerFloatingLayerProps}>
-        {props.traitsMenuContent ? (
+        {traitsMenuContent ? (
           <>
-            {props.traitsMenuContent}
+            {traitsMenuContent}
             <MenuDivider />
           </>
         ) : null}

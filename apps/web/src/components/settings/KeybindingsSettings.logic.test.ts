@@ -72,7 +72,7 @@ describe("KeybindingsSettings.logic", () => {
     ]);
     const composer = groups.find((group) => group.id === "composer");
     expect(composer?.rows.map((row) => row.command)).toEqual(
-      expect.arrayContaining(["composer.host", "modelPicker.toggle"]),
+      expect.arrayContaining(["composer.host", "modelPicker.toggle", "effortPicker.jump.1"]),
     );
     expect(groupKeybindingRows(buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "split"))).toEqual(
       [expect.objectContaining({ id: "terminal" })],
