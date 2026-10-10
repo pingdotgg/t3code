@@ -50,7 +50,7 @@ const AGENT_CURSOR_SVG =
 interface Viewer {
   readonly stop: () => void;
   readonly command: (input: PreviewStreamInput) => void;
-  readonly togglePictureInPicture: () => Promise<void>;
+  readonly togglePictureInPicture: () => void;
 }
 
 let activeViewer: Viewer | null = null;
@@ -66,7 +66,7 @@ export function command(input: PreviewStreamInput) {
 }
 
 export function pictureInPicture() {
-  void activeViewer?.togglePictureInPicture();
+  activeViewer?.togglePictureInPicture();
 }
 
 export function start(configuration: PreviewStreamConfiguration) {
@@ -147,6 +147,7 @@ export function start(configuration: PreviewStreamConfiguration) {
   };
   const painter = createPreviewFramePainter(canvas, () => {
     if (!streaming && !stopped) reportStatus("streaming");
+    sendPictureInPictureFrame();
   });
   const send = (message: PreviewStreamInput) => client?.send(message) ?? false;
   const clearInput = () => {
@@ -620,10 +621,16 @@ export function start(configuration: PreviewStreamConfiguration) {
   const pictureInPictureSupported =
     interactive &&
     typeof canvas.captureStream === "function" &&
+    typeof CanvasCaptureMediaStreamTrack === "function" &&
     ((document.pictureInPictureEnabled === true &&
       typeof videoPrototype.requestPictureInPicture === "function") ||
       typeof videoPrototype.webkitSetPresentationMode === "function");
+  // Since the iOS 17 SDK, WebKit revokes the activation it grants an injected script when
+  // the script returns, so the native button's request must start before any await. The
+  // video is ready ahead of the tap: paused, and fed a frame only when it has none or
+  // floats, so the inline view captures nothing.
   let video: PresentationVideo | null = null;
+  let track: CanvasCaptureMediaStreamTrack | null = null;
   const pictureInPictureActive = () =>
     video !== null &&
     (document.pictureInPictureElement === video ||
@@ -635,16 +642,20 @@ export function start(configuration: PreviewStreamConfiguration) {
       active: pictureInPictureActive(),
       ...(detail ? { detail } : {}),
     });
-  const ensureVideo = () => {
-    if (video) return video;
+  // Called after each paint. A frame drawn before the player attached is lost, so retry.
+  const sendPictureInPictureFrame = () => {
+    if (video && (video.readyState === HTMLMediaElement.HAVE_NOTHING || pictureInPictureActive())) {
+      track?.requestFrame();
+    }
+  };
+  if (pictureInPictureSupported) {
+    const stream = canvas.captureStream(0);
+    const [captured] = stream.getVideoTracks();
     const element: PresentationVideo = document.createElement("video");
     element.muted = true;
     element.playsInline = true;
-    element.autoplay = true;
     // Under the canvas at full size: WebKit pauses muted video it considers off screen.
-    element.srcObject = canvas.captureStream();
-    // A static page sends no new frames; repaint once so the stream has one.
-    if (canvas.width > 0 && canvas.height > 0) canvas.getContext("2d")?.drawImage(canvas, 0, 0);
+    element.srcObject = stream;
     for (const name of [
       "enterpictureinpicture",
       "leavepictureinpicture",
@@ -656,25 +667,38 @@ export function start(configuration: PreviewStreamConfiguration) {
       });
     }
     container.prepend(element);
+    // Covers the letterbox, where a stale frame of another shape would show through.
+    canvas.style.background = configuration.background;
     video = element;
-    return element;
-  };
-  const togglePictureInPicture = async () => {
-    if (!pictureInPictureSupported) return;
-    try {
-      if (pictureInPictureActive()) {
-        if (document.pictureInPictureElement) await document.exitPictureInPicture();
-        else video?.webkitSetPresentationMode?.("inline");
-        return;
-      }
-      const element = ensureVideo();
-      await element.play();
-      if (document.pictureInPictureEnabled) await element.requestPictureInPicture();
-      else element.webkitSetPresentationMode?.("picture-in-picture");
-    } catch (error) {
+    track = captured instanceof CanvasCaptureMediaStreamTrack ? captured : null;
+  }
+  const togglePictureInPicture = () => {
+    const element = video;
+    if (!element) return;
+    if (pictureInPictureActive()) {
+      if (document.pictureInPictureElement) void document.exitPictureInPicture().catch(() => {});
+      else element.webkitSetPresentationMode?.("inline");
+      return;
+    }
+    if (element.readyState === HTMLMediaElement.HAVE_NOTHING) {
+      reportPictureInPicture("The page has not shown yet. Try again in a moment.");
+      return;
+    }
+    // The page may have changed since the video's last frame. WebKit captures only on a draw.
+    track?.requestFrame();
+    canvas.getContext("2d")?.drawImage(canvas, 0, 0);
+    const fail = (error: unknown) => {
+      element.pause();
       reportPictureInPicture(
         error instanceof Error ? error.message : "Picture in picture is unavailable.",
       );
+    };
+    if (document.pictureInPictureEnabled) {
+      const entering = element.requestPictureInPicture();
+      void Promise.all([entering, element.play()]).catch(fail);
+    } else {
+      element.webkitSetPresentationMode?.("picture-in-picture");
+      void element.play().catch(fail);
     }
   };
 
@@ -691,14 +715,8 @@ export function start(configuration: PreviewStreamConfiguration) {
       painter.stop();
       client?.stop();
       client = null;
-      if (video) {
-        for (const track of video.srcObject instanceof MediaStream
-          ? video.srcObject.getTracks()
-          : []) {
-          track.stop();
-        }
-        video.srcObject = null;
-      }
+      track?.stop();
+      if (video) video.srcObject = null;
     },
     command: (message) => {
       send(message);
