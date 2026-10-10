@@ -199,6 +199,16 @@ export class OrchestratorSubagentThreadReadOnlyError extends Schema.TaggedError<
   }
 }
 
+/** Archive detaches the thread's provider sessions, which would fail a turn in flight. */
+export class OrchestratorThreadTurnRunningError extends Schema.TaggedError<OrchestratorThreadTurnRunningError>()(
+  "OrchestratorThreadTurnRunningError",
+  { commandId: CommandId, threadId: ThreadId },
+) {
+  override get message(): string {
+    return "This thread cannot be archived while a turn is running. Archive it after the turn ends.";
+  }
+}
+
 /** The command's thread runs above the modes its sender may touch (see `DispatchModeLimit`). */
 export class OrchestratorThreadAboveModeLimitError extends Schema.TaggedError<OrchestratorThreadAboveModeLimitError>()(
   "OrchestratorThreadAboveModeLimitError",
@@ -264,6 +274,7 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorCommandPreviouslyRejectedError,
   OrchestratorCommandIdConflictError,
   OrchestratorSubagentThreadReadOnlyError,
+  OrchestratorThreadTurnRunningError,
   OrchestratorThreadAboveModeLimitError,
 ]);
 export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;
@@ -2507,6 +2518,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} is already archived.`,
       });
     }
+    if (command.type === "thread.archive") {
+      // Archive detaches every provider session below, which would fail a turn
+      // in flight. Queued runs are cancelled by the archive itself.
+      const { runs } = yield* loadProjectionForCommand(command, ["runs"]);
+      if (
+        runs.some(
+          (run) =>
+            run.status === "preparing" || run.status === "starting" || run.status === "running",
+        )
+      ) {
+        return yield* new OrchestratorThreadTurnRunningError({
+          commandId: command.commandId,
+          threadId: command.threadId,
+        });
+      }
+    }
     if (command.type === "thread.unarchive" && thread.archivedAt === null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
@@ -3330,10 +3357,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // Settle joins archive here: both mean "done with this
     // thread", so a live provider session must not keep running background
     // work (PR monitors, dev servers, subagent fleets) after any of them
-    // lands. The settle guard above already rejects active or blocked runs,
-    // so for settle this only ever stops an idle session; commands are
-    // decided serially against the projection, so a turn start that
-    // re-engages the thread cannot race this detach.
+    // lands. The guards above reject a preparing, starting or running run
+    // (and settle also rejects any other active or blocked run), so this
+    // never detaches a provider mid-turn; commands are decided serially
+    // against the projection, so a turn start that re-engages the thread
+    // cannot race this detach.
     const detachSessionIds = new Set(
       command.type === "thread.archive" || command.type === "thread.settle"
         ? (providerContext?.providerSessions ?? []).map((session) => session.id)
