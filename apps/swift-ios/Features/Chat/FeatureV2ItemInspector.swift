@@ -153,19 +153,20 @@ struct FeatureV2ItemInspector: View {
     }
 
     private var expanded: Bool { state.expandedIDs.contains(item.id) }
-    private var failure: Bool { FeatureV2ItemDetail.indicatesFailure(item.raw) }
+    private var failure: Bool { item.indicatesFailure }
     private var warning: Bool { failure && item.raw["failure"]?["class"]?.stringValue == "usage_limit" }
     private var color: Color { warning ? T3Colors.warning : failure ? T3Colors.danger : T3Colors.textSecondary }
 
     var body: some View {
+        let presentation = ToolActivityPresentation(payload: item.raw)
         VStack(alignment: .leading, spacing: 6) {
             Button { state.toggle(item.id) } label: {
                 HStack(alignment: .top, spacing: 8) {
                     if failure { Image(systemName: "exclamationmark.triangle") }
-                    else { FeatureToolActivityIcon(presentation: ToolActivityPresentation(payload: item.raw), context: imageContext) }
+                    else { FeatureToolActivityIcon(presentation: presentation, context: imageContext) }
                     VStack(alignment: .leading, spacing: 4) {
                         Text(label).lineLimit(expanded || failure ? nil : 2)
-                        if let source = ToolActivityPresentation(payload: item.raw)?.sourceName { Text(source) }
+                        if let source = presentation?.sourceName { Text(source) }
                         if ["approval_request", "user_input_request"].contains(item.source.itemType) {
                             Text((item.raw["requestStatus"]?.stringValue ?? item.source.status).capitalized)
                             if let decision = item.raw["decision"]?.stringValue { Text(decision.capitalized) }

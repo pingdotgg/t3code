@@ -32,7 +32,6 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     let onPin: (FeatureThread, Bool) -> Void
     let onArrange: () -> Void
     let onDelete: (FeatureThread) -> Void
-    let onPullRequestChange: (String, String, HomeThreadPullRequestPresentation?) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -392,12 +391,6 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         ) {
             guard let item = itemsByID[identifier] else { return }
             cell.contentView.isHidden = false
-            let pullRequestObservationIdentity: String?
-            if case let .thread(thread, _, _, _, _, _) = item {
-                pullRequestObservationIdentity = thread.pullRequestObservationIdentity
-            } else {
-                pullRequestObservationIdentity = nil
-            }
             cell.contentConfiguration = UIHostingConfiguration {
                 HomeCollectionCellContent(
                     item: item,
@@ -415,13 +408,6 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                             threadID: threadID,
                             cell: cell
                         )
-                        if let observationIdentity = pullRequestObservationIdentity {
-                            self.parent.onPullRequestChange(
-                                threadID,
-                                observationIdentity,
-                                pullRequest
-                            )
-                        }
                     }
                 )
             }
@@ -849,8 +835,9 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         /// second for the lifetime of the sidebar.
         private func startTimer() {
             let interval: TimeInterval = itemsByID.values.contains {
+                // The state check skips the completion date parse in `homeStatus` for settled rows.
                 if case let .thread(thread, _, _, _, _, _) = $0 {
-                    return thread.homeStatus == .working
+                    return (thread.state == .working || thread.state == .queued) && thread.homeStatus == .working
                 }
                 return false
             } ? 1 : 60
@@ -878,7 +865,8 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             for indexPath in collectionView.indexPathsForVisibleItems {
                 guard let identifier = dataSource.itemIdentifier(for: indexPath),
                       case let .thread(thread, _, _, _, _, _) = itemsByID[identifier],
-                      refreshRelativeAges || thread.homeStatus == .working,
+                      refreshRelativeAges
+                          || ((thread.state == .working || thread.state == .queued) && thread.homeStatus == .working),
                       let cell = collectionView.cellForItem(at: indexPath) as? HomeCollectionCell else {
                     continue
                 }

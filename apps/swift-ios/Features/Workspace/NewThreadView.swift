@@ -54,6 +54,7 @@ public struct NewThreadView: View {
     @State private var submittedSuccessfully = false
     @State private var restoresPromptAfterPickerDismissal = false
     @State private var unreachableRetry = NewTaskRetryState()
+    @State private var projectGroupCache = NewTaskProjectGroupCache()
     // Plain state, not `FocusState`; see the note on `composerFocused` in
     // ThreadDetailView.
     @State private var promptFocused = false
@@ -590,7 +591,11 @@ public struct NewThreadView: View {
             recoveryRequested: initialRecoveryID != nil,
             recoveryProjectID: recoverySource?.projectID,
             requestedProjectID: initialProjectID,
-            fallbackProjectID: DailyUXCreationContext.initialProject(in: model.snapshot, requestedProjectID: nil)?.id
+            // The fallback sorts every thread. Skip it once a project is chosen,
+            // or after the clone reset deliberately cleared the selection.
+            fallbackProjectID: projectID.isEmpty && !projectSelectionIsExplicit
+                ? DailyUXCreationContext.initialProject(in: model.snapshot, requestedProjectID: nil)?.id
+                : nil
         )
     }
 
@@ -735,7 +740,7 @@ public struct NewThreadView: View {
     }
 
     private var creationProjectGroups: [DailyUXProjectGroup] {
-        DailyUXCreationContext.projectGroups(in: model.snapshot)
+        projectGroupCache.groups(in: model.snapshot)
     }
 
     private var recentProjectGroupIDs: [String] {
@@ -2188,5 +2193,31 @@ private struct NewTaskBranchPicker: View {
         return branches.filter {
             $0.name.localizedCaseInsensitiveContains(trimmed)
         }
+    }
+}
+
+/// The New Task body runs on every prompt keystroke and reads the project
+/// groups several times, so retain the last grouping by its real inputs.
+@MainActor
+private final class NewTaskProjectGroupCache {
+    private struct Key: Equatable {
+        let projects: [FeatureProject]
+        let environments: [FeatureEnvironment]
+        let preferencesByEnvironment: [String: FeatureEnvironmentPreferences]?
+    }
+
+    private var key: Key?
+    private var value: [DailyUXProjectGroup] = []
+
+    func groups(in snapshot: FeatureSnapshot) -> [DailyUXProjectGroup] {
+        let key = Key(
+            projects: snapshot.projects,
+            environments: snapshot.environments,
+            preferencesByEnvironment: snapshot.preferencesByEnvironment
+        )
+        if self.key == key { return value }
+        value = DailyUXCreationContext.projectGroups(in: snapshot)
+        self.key = key
+        return value
     }
 }

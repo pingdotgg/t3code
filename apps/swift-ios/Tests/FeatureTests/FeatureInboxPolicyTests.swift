@@ -126,14 +126,14 @@ struct FeatureInboxPolicyTests {
             threads: [inbox, settled, snoozed, legacy, busy, pinned],
             settings: .init(workingShelfEnabled: true)
         )
-        let enabled = DailyUXSidebarIndex(snapshot: snapshot, query: "", now: now)
+        let enabled = DailyUXSidebarIndex(snapshot: snapshot, now: now)
         #expect(enabled.pinned.map(\.id) == [pinned.id])
         #expect(enabled.snoozed.map(\.id) == [snoozed.id])
         #expect(enabled.settled.map(\.id) == [settled.id])
         #expect(enabled.active.map(\.id) == [inbox.id])
         #expect(Set(enabled.working.map(\.id)) == [busy.id, legacy.id])
         snapshot.settings.workingShelfEnabled = false
-        let disabled = DailyUXSidebarIndex(snapshot: snapshot, query: "", now: now)
+        let disabled = DailyUXSidebarIndex(snapshot: snapshot, now: now)
         #expect(disabled.working.isEmpty)
         #expect(disabled.active.map(\.id) == [busy.id, inbox.id, legacy.id])
         #expect(disabled.active.map(\.activeOrderKey) == ["b", "m", "t"])
@@ -235,7 +235,7 @@ struct FeatureInboxPolicyTests {
         func presentation(query: String = "", rowRevision: UInt64 = 1) -> HomePresentation {
             cache.presentation(
                 snapshot: snapshot, revision: 1, rowRevision: rowRevision, query: query,
-                projectID: nil, now: now, inboxReturns: returns, pullRequestsByThreadID: [:]
+                projectID: nil, now: now, inboxReturns: returns
             )
         }
         #expect(presentation().working.isEmpty)

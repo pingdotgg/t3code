@@ -3,18 +3,24 @@ import Testing
 @testable import T3Code
 
 struct TerminalBufferTests {
-    private static let limit = 512 * 1024
+    private static let limit = NativeFeatureClient.terminalBufferLimit
 
-    /// Mirrors the client's cap: keep the last `limit` bytes, then drop up to
-    /// and including the next newline so the head is a whole line.
     private static func capped(_ buffer: String) -> String {
-        let utf8 = buffer.utf8
-        guard utf8.count > limit else { return buffer }
-        var tail = Data(utf8.suffix(limit))
-        if let newline = tail.firstIndex(of: UInt8(ascii: "\n")) {
-            tail = tail[tail.index(after: newline)...]
+        NativeFeatureClient.cappedTerminalBuffer(buffer)
+    }
+
+    /// A buffer just over the cap, built from whole lines.
+    private static func overLimitBuffer() -> String {
+        var lines = [String]()
+        var size = 0
+        var index = 0
+        while size <= limit {
+            let line = "line \(index) " + String(repeating: "x", count: 60) + "\n"
+            lines.append(line)
+            size += line.utf8.count
+            index += 1
         }
-        return String(decoding: tail, as: UTF8.self)
+        return lines.joined()
     }
 
     private static func applied(_ buffer: String) -> TerminalBufferDelta.Applied {
@@ -50,29 +56,25 @@ struct TerminalBufferTests {
         #expect(delta == .append(Data("wörld 🚀\r\n".utf8)))
     }
 
-    @Test func headTrimmedBufferReplacesWithoutGuessingAnOverlap() {
-        // A buffer already at the cap. The next output event pushes it over,
-        // and the client trims the head instead of growing.
-        var lines = [String]()
-        var size = 0
-        var index = 0
-        while size <= Self.limit {
-            let line = "line \(index) " + String(repeating: "x", count: 60) + "\n"
-            lines.append(line)
-            size += line.utf8.count
-            index += 1
-        }
-        let previous = Self.capped(lines.joined())
-        #expect(previous.utf8.count <= Self.limit)
+    @Test func trimLeavesRoomForLaterOutputToAppend() {
+        let previous = Self.capped(Self.overLimitBuffer())
+        #expect(previous.utf8.count <= NativeFeatureClient.terminalBufferTrimTarget)
+        #expect(previous.hasPrefix("line "))
 
-        // Larger than the slack the line trim left, so this event forces a trim.
-        let output = String(repeating: "fresh output after the trim\n", count: 10)
+        // Output after a trim grows the buffer without trimming the head again,
+        // so the view gets a cheap append instead of a full reset.
+        let output = String(repeating: "fresh output after the trim\n", count: 40)
         let next = Self.capped(previous + output)
-        #expect(previous.utf8.count + output.utf8.count > Self.limit)
-        #expect(!next.hasPrefix(previous))
-
         let delta = TerminalBufferDelta.compute(previous: Self.applied(previous), next: next)
-        #expect(delta == .replace(Data(next.utf8)))
+        #expect(delta == .append(Data(output.utf8)))
+    }
+
+    @Test func trimSnapsToCharacterAndLineBoundaries() {
+        let buffer = String(repeating: "héllo 🔧 wörld\n", count: Self.limit / 10)
+        let capped = Self.capped(buffer)
+        #expect(capped.utf8.count <= NativeFeatureClient.terminalBufferTrimTarget)
+        #expect(capped.hasPrefix("héllo 🔧 wörld\n"))
+        #expect(buffer.hasSuffix(capped))
     }
 
     @Test func repeatedOutputAfterTrimmingDoesNotDuplicateHistory() {

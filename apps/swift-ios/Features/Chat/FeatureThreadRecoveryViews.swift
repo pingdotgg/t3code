@@ -53,36 +53,6 @@ struct FeatureUsageLimitRecoveryView: View {
     }
 }
 
-/// Mount only beside a local failed workspace error accepted by the recovery predicate.
-struct FeatureWorkspacePreparationRetryButton: View {
-    let runID: String
-    let controlsAvailable: Bool
-    let performAction: @MainActor (FeatureThreadRecoveryAction) async throws -> Void
-    @State private var isUpdating = false
-    @State private var error: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button(isUpdating ? "Retrying setup…" : "Retry") {
-                guard !isUpdating else { return }
-                isUpdating = true
-                error = nil
-                Task {
-                    defer { isUpdating = false }
-                    do { try await performAction(.retryWorkspacePreparation(runID: runID)) }
-                    catch { self.error = error.localizedDescription }
-                }
-            }
-            .frame(minHeight: T3Metrics.minimumTapTarget)
-            .disabled(!controlsAvailable || isUpdating)
-            .accessibilityLabel("Retry workspace preparation")
-            if let error { Text(error).foregroundStyle(T3Colors.danger) }
-        }
-        .font(T3Typography.supporting)
-        .buttonStyle(.plain)
-    }
-}
-
 /// Existing files remain server-owned. New files use the composer's ordinary attachment controls.
 struct FeatureQueuedRunEditBanner: View {
     @Binding var edit: FeatureQueuedRunEdit

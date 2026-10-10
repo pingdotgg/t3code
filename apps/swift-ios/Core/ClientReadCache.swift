@@ -161,20 +161,20 @@ actor ClientReadCache {
     }
 
     func record(history: OrchestrationThreadDetailSnapshot, lease: Lease, expanded: Bool = false) {
+        // A running turn must keep the last readable copy, without encoding its
+        // streaming output. Only an explicit deletion invalidates that copy.
         guard isCurrent(lease), !expanded,
+              history.thread.deletedAt != nil || Self.isEligible(history),
               var document = documents[lease.scope.environmentID], let shell = document.shell,
               (history.orchestrationProtocolVersion ?? 1) == (shell.orchestrationProtocolVersion ?? 1),
               shell.threads.contains(where: { $0.id == history.thread.id && $0.projectId == history.thread.projectId })
         else { return }
-        // A running turn must keep the last readable copy, without encoding its
-        // streaming output. Only an explicit deletion invalidates that copy.
         if history.thread.deletedAt != nil {
             guard document.histories.removeValue(forKey: history.thread.id) != nil else { return }
             documents[lease.scope.environmentID] = document
             schedule(lease)
             return
         }
-        guard Self.isEligible(history) else { return }
         guard let data = try? JSONEncoder.t3.encode(history), data.count <= Self.maximumHistoryBytes else {
             guard document.histories.removeValue(forKey: history.thread.id) != nil else { return }
             documents[lease.scope.environmentID] = document

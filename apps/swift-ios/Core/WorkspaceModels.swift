@@ -31,10 +31,6 @@ public struct ProjectReadFileResult: Codable, Equatable, Sendable {
     public let truncated: Bool
 }
 
-public struct ProjectWriteFileResult: Codable, Equatable, Sendable {
-    public let relativePath: String
-}
-
 public struct ThreadWorktreePreparation: Equatable, Sendable {
     public let projectCwd: String
     public let baseBranch: String

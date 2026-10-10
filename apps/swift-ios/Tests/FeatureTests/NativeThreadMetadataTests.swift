@@ -5,6 +5,23 @@ import Testing
 @MainActor
 @Suite("Native thread metadata")
 struct NativeThreadMetadataTests {
+    @Test func previewTextMatchesSplitAndJoinWithoutReadingTheWholeReply() {
+        func reference(_ text: String?) -> String? {
+            guard let text else { return nil }
+            let compact = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            guard !compact.isEmpty else { return nil }
+            return compact.count > 160 ? "\(compact.prefix(157))..." : compact
+        }
+        let inputs: [String?] = [
+            nil, "", " \n\t ", "  hello \n\t world  ",
+            String(repeating: "a", count: 160), String(repeating: "a", count: 161),
+            String(repeating: "word ", count: 10_000), " " + String(repeating: "é👍🏽 ", count: 60),
+        ]
+        for input in inputs {
+            #expect(NativeFeatureClient.previewText(input) == reference(input))
+        }
+    }
+
     @Test func autoSettleOptOutSurvivesSettlementAndCanBeEnabledAgain() throws {
         let disabled = NativeThreadDetailReducer.apply(event(type: "thread.auto-settle-set",
             payload: ["autoSettleDisabledAt": .string("2026-09-30T20:00:00Z")]), to: thread())

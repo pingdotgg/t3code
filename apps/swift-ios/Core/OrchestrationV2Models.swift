@@ -1152,9 +1152,6 @@ public struct OrchestrationV2ThreadProjection: Codable, Equatable, Sendable {
             return left == right ? $0.ordinal < $1.ordinal : left < right
         }
     }
-    public var pendingRequests: [OrchestrationV2RuntimeRequest] {
-        runtimeRequests.filter { $0.status == "pending" }
-    }
 }
 
 public struct OrchestrationV2ThreadShell: OrchestrationV2Record, Identifiable {

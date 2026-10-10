@@ -12,15 +12,6 @@ extension FeatureInputAnswer {
     }
 }
 
-private struct T3ConnectManagedCleanupError: LocalizedError {
-    let failureCount: Int
-
-    var errorDescription: String? {
-        "Couldn’t remove \(failureCount) managed T3 Connect "
-            + (failureCount == 1 ? "environment." : "environments.")
-    }
-}
-
 /// Composes the transport-focused Core layer with the UI-focused Features layer.
 @MainActor
 final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
@@ -539,27 +530,21 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         guard try await route.client.orchestrationVersion() == .v2 else {
             throw FeatureCapabilityUnavailable("Queue controls")
         }
-        var command: [String: JSONValue] = [
-            "commandId": .string(UUID().uuidString), "threadId": .string(route.wireID),
-        ]
+        let threadID = route.wireID
+        let command: JSONValue
         switch action {
         case let .cancel(runID):
-            command["type"] = .string("queued-run.cancel")
-            command["runId"] = .string(runID)
+            command = OrchestrationV2Commands.cancelQueuedRun(threadID: threadID, runID: runID)
         case let .reorder(runID, beforeRunID):
-            command["type"] = .string("queued-run.reorder")
-            command["runId"] = .string(runID)
-            command["beforeRunId"] = beforeRunID.map(JSONValue.string) ?? .null
+            command = OrchestrationV2Commands.reorderQueuedRun(threadID: threadID, runID: runID, beforeRunID: beforeRunID)
         case let .promoteToSteer(queuedRunID, targetRunID):
-            command["type"] = .string("queued-message.promote-to-steer")
-            command["queuedRunId"] = .string(queuedRunID)
-            command["targetRunId"] = .string(targetRunID)
+            command = OrchestrationV2Commands.promoteQueuedRun(
+                threadID: threadID, queuedRunID: queuedRunID, targetRunID: targetRunID
+            )
         case .resume:
-            command["type"] = .string("queue.resume")
+            command = OrchestrationV2Commands.resumeQueue(threadID: threadID)
         case let .edit(runID, text):
-            command["type"] = .string("queued-run.edit")
-            command["runId"] = .string(runID)
-            command["text"] = .string(text)
+            command = OrchestrationV2Commands.editQueuedRun(threadID: threadID, runID: runID, text: text)
         case let .replace(edit):
             let before = try await route.client.threadSnapshot(id: route.wireID)
             try Self.validateQueuedEdit(edit, control: before.thread.orchestrationV2Control)
@@ -583,18 +568,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             let current = try await route.client.threadSnapshot(id: route.wireID)
             try Self.validateQueuedEdit(edit, control: current.thread.orchestrationV2Control)
             let payload = try edit.replacementPayload(uploads: uploads, preparedAttachments: prepared)
-            command["type"] = .string("queued-run.edit")
-            command["runId"] = .string(edit.runID)
-            command["messageId"] = .string(edit.messageID)
-            command["text"] = .string(payload.text)
-            command["attachments"] = .array(payload.attachments)
-            command["context"] = payload.context
+            command = OrchestrationV2Commands.editQueuedRun(
+                threadID: threadID, runID: edit.runID, text: payload.text, messageID: edit.messageID,
+                attachments: payload.attachments, context: payload.context
+            )
         case let .interrupt(runID, holdQueue):
-            command["type"] = .string("run.interrupt")
-            command["runId"] = .string(runID)
-            command["holdQueue"] = .bool(holdQueue)
+            command = OrchestrationV2Commands.interruptRun(threadID: threadID, runID: runID, holdQueue: holdQueue)
         }
-        _ = try await route.client.dispatch(.object(command))
+        _ = try await route.client.dispatch(command)
         await refreshThreadUnlessLive(id: route.uiID, client: route.client)
     }
 
@@ -664,14 +645,6 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     func disconnect() async {
         await clearActiveEnvironment()
-    }
-
-    func usageSummaries(_ input: UsageSummaryInput, refreshPricing: Bool) async throws -> [FeatureEnvironmentUsage] {
-        var result: [FeatureEnvironmentUsage] = []
-        for try await update in usageSummaryUpdates(input, refreshPricing: refreshPricing) {
-            result = update
-        }
-        return result
     }
 
     func usageSummaryUpdates(
@@ -1808,7 +1781,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             environmentName: environment.label,
             title: threadTitle,
             providerID: model.instanceId,
-            providerName: providerDisplayName(model.instanceId),
+            providerName: UsageLimitsPresentation.providerLabel(driver: model.instanceId),
             modelID: model.model
         )
     }
@@ -2004,7 +1977,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             branch: workspaceMode == .worktree ? pending.worktreeBranchName : branch,
             worktreePath: worktreePath,
             providerID: model.instanceId,
-            providerName: providerDisplayName(model.instanceId),
+            providerName: UsageLimitsPresentation.providerLabel(driver: model.instanceId),
             modelID: model.model,
             modelOptions: mapOptionSelections(model.options),
             runtimeMode: runtimeMode,
@@ -4625,7 +4598,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             return snapshot
         }
 
-        var snapshot = terminalSnapshots[key]
+        // Take the snapshot out of the dictionary so the dictionary does not
+        // hold a second reference to the buffer during the append. Every path
+        // stores it back before returning.
+        var snapshot = terminalSnapshots.removeValue(forKey: key)
             ?? FeatureTerminalSnapshot(threadID: threadID, terminalID: terminalID)
         switch event.type {
         case "started", "restarted":
@@ -4683,15 +4659,20 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     /// A verbose command can stream megabytes; the viewer only ever shows the
     /// tail, so cap retained history to keep layout and memory bounded.
-    private static let terminalBufferLimit = 512 * 1024
+    nonisolated static let terminalBufferLimit = 512 * 1024
 
-    private static func cappedTerminalBuffer(_ buffer: String) -> String {
+    /// Bytes kept after a trim. Trimming well below the limit leaves room for
+    /// later output to grow the buffer as a plain append, so the terminal view
+    /// does not reset and replay the whole buffer on every chunk at the cap.
+    nonisolated static let terminalBufferTrimTarget = terminalBufferLimit * 3 / 4
+
+    nonisolated static func cappedTerminalBuffer(_ buffer: String) -> String {
         let utf8 = buffer.utf8
         guard utf8.count > terminalBufferLimit else { return buffer }
         // Slice in UTF-8 bytes (the unit the limit is defined in), then snap
         // forward to a character boundary so multibyte output cannot blow
         // past the cap or tear a scalar.
-        let byteStart = utf8.index(utf8.endIndex, offsetBy: -terminalBufferLimit)
+        let byteStart = utf8.index(utf8.endIndex, offsetBy: -terminalBufferTrimTarget)
         var start = byteStart.samePosition(in: buffer)
         if start == nil {
             var probe = byteStart
@@ -6476,7 +6457,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
         if restoredDetailIDs.remove(threadID) != nil { latestDetails[threadID] = nil }
         let next = latestDetails[threadID].map { current in
-            mergedDetail(current: current, incoming: detail)
+            current.mergingChangedSuffix(from: detail)
         } ?? detail
         guard latestDetails[threadID] != next else { return }
         latestDetails[threadID] = next
@@ -6539,39 +6520,6 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             changedMessages: changedMessages,
             appendedMessageIDs: appendedMessageIDs
         )
-    }
-
-    private func mergedDetail(
-        current: FeatureThreadDetail,
-        incoming: FeatureThreadDetail
-    ) -> FeatureThreadDetail {
-        FeatureThreadDetail(
-            thread: incoming.thread,
-            messages: replacingChangedSuffix(current.messages, with: incoming.messages),
-            approvals: replacingChangedSuffix(current.approvals, with: incoming.approvals),
-            userInputs: replacingChangedSuffix(current.userInputs, with: incoming.userInputs),
-            page: incoming.page,
-            activeSubagentCount: incoming.activeSubagentCount,
-            backgroundWorkIsActive: incoming.backgroundWorkIsActive,
-            isCompacting: incoming.isCompacting == true,
-            execution: incoming.execution,
-            workflows: incoming.workflows,
-            allowsProviderSwitch: incoming.allowsProviderSwitch,
-            recovery: incoming.recovery
-        )
-    }
-
-    private func replacingChangedSuffix<Element: Equatable>(
-        _ current: [Element],
-        with incoming: [Element]
-    ) -> [Element] {
-        guard current != incoming else { return current }
-        let prefixCount = zip(current, incoming).prefix { pair in
-            pair.0 == pair.1
-        }.count
-        var result = current
-        result.replaceSubrange(prefixCount..., with: incoming.dropFirst(prefixCount))
-        return result
     }
 
     private func disconnectedSnapshot(
@@ -6637,7 +6585,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     // Match threadProviderName's first matching instance.
                     if names[provider.instanceId] == nil {
                         names[provider.instanceId] = provider.displayName
-                            ?? providerDisplayName(provider.driver)
+                            ?? UsageLimitsPresentation.providerLabel(driver: provider.driver)
                     }
                 }
             let live = projection.mapThreads(
@@ -6705,9 +6653,13 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 mapped.supportsProjectSettingsOverrides = supportsProjectSettings
                 return mapped
             }
+            // These are server paths. `isDirectory` skips a useless local file system check.
+            let scratchRoot = projectConfig?.scratchWorkspaceRoot.map {
+                URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL.path
+            }
             for var project in mappedProjects {
-                project.isScratch = projectConfig?.scratchWorkspaceRoot.map {
-                    URL(fileURLWithPath: $0).standardizedFileURL.path == URL(fileURLWithPath: project.path).standardizedFileURL.path
+                project.isScratch = scratchRoot.map {
+                    $0 == URL(fileURLWithPath: project.path, isDirectory: true).standardizedFileURL.path
                 } ?? false
                 if project.isScratch == true { project.defaultWorkspaceMode = .local }
                 project.threadCount = threadCountByProjectID[project.id, default: 0]
@@ -6940,17 +6892,33 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         _ thread: OrchestrationThread,
         environment: Environment
     ) -> FeatureThread {
+        mapThread(
+            thread,
+            environment: environment,
+            shell: shellsByEnvironmentID[environment.id]?.threads.first { $0.id == thread.id },
+            controlLifecycle: thread.orchestrationV2Control.flatMap {
+                try? $0["lifecycle"]?.decode(OrchestrationV2ThreadLifecycle.self)
+            }
+        )
+    }
+
+    /// mapDetail passes its own shell lookup and lifecycle decode so each detail
+    /// flush does them once.
+    private func mapThread(
+        _ thread: OrchestrationThread,
+        environment: Environment,
+        shell: OrchestrationThreadShell?,
+        controlLifecycle: OrchestrationV2ThreadLifecycle?
+    ) -> FeatureThread {
         let backgroundLiveness = backgroundLiveness(
             threadID: thread.id,
-            environmentID: environment.id
+            environmentID: environment.id,
+            shellThread: shell
         )
         let backgroundWorkIsActive = backgroundLiveness == .working
         let capabilities = threadCapabilities(for: environment)
-        let shell = shellsByEnvironmentID[environment.id]?.threads.first { $0.id == thread.id }
         // mapDetail applies shell authority only after comparing snapshot sequences.
-        let lifecycle = thread.orchestrationV2Control.flatMap {
-            try? $0["lifecycle"]?.decode(OrchestrationV2ThreadLifecycle.self)
-        } ?? shell?.v2Lifecycle
+        let lifecycle = controlLifecycle ?? shell?.v2Lifecycle
         return FeatureThread(
             id: FeatureScopedID.thread(environmentID: environment.id, wireID: thread.id),
             wireID: thread.id,
@@ -6962,7 +6930,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             environmentID: environment.id,
             environmentName: environment.label,
             title: thread.title,
-            preview: previewText(thread.messages.last?.text),
+            preview: Self.previewText(thread.messages.last?.text),
             branch: thread.branch,
             worktreePath: thread.worktreePath,
             linkedPullRequest: thread.linkedPullRequest,
@@ -7137,10 +7105,22 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             assertionFailure("Initialized detail caches require an incremental mutation")
         }
 
-        var mappedThread = mapThread(thread, environment: environment)
+        let shell = shellsByEnvironmentID[environment.id]
+        let shellThread = shell?.threads.first { $0.id == thread.id }
+        // Thread state uses the control lifecycle only; mapThread adds the shell fallback.
+        let controlLifecycle = thread.orchestrationV2Control.flatMap {
+            try? $0["lifecycle"]?.decode(OrchestrationV2ThreadLifecycle.self)
+        }
+        var mappedThread = mapThread(
+            thread,
+            environment: environment,
+            shell: shellThread,
+            controlLifecycle: controlLifecycle
+        )
         let backgroundLiveness = backgroundLiveness(
             threadID: thread.id,
-            environmentID: environment.id
+            environmentID: environment.id,
+            shellThread: shellThread
         )
         let backgroundWorkIsActive = backgroundLiveness == .working
         let sessionIsLive = thread.session?.status == "starting"
@@ -7159,18 +7139,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             hasApprovals: !cache.approvals.isEmpty || mappedThread.settlementFacts?.hasPendingApprovals == true,
             hasUserInput: !cache.userInputs.isEmpty || mappedThread.settlementFacts?.hasPendingUserInput == true,
             backgroundLiveness: backgroundLiveness,
-            v2Lifecycle: thread.orchestrationV2Control.flatMap {
-                try? $0["lifecycle"]?.decode(OrchestrationV2ThreadLifecycle.self)
-            }
+            v2Lifecycle: controlLifecycle
         )
         if var facts = mappedThread.settlementFacts {
             facts.hasPendingApprovals = !cache.approvals.isEmpty || facts.hasPendingApprovals
             facts.hasPendingUserInput = !cache.userInputs.isEmpty || facts.hasPendingUserInput
             mappedThread.settlementFacts = facts
         }
-        if let shell = shellsByEnvironmentID[environment.id],
-           let shellThread = shell.threads.first(where: { $0.id == thread.id }),
-           shell.snapshotSequence >= sourceSequence {
+        if let shell, let shellThread, shell.snapshotSequence >= sourceSequence {
             applyShellMetadataAuthority(from: shellThread, to: &mappedThread)
         }
         return FeatureThreadDetail(
@@ -7199,12 +7175,21 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         threadID: String,
         environmentID: String
     ) -> OrchestrationBackgroundLiveness? {
-        if let live = shellsByEnvironmentID[environmentID]?.threads
-            .first(where: { $0.id == threadID })?.backgroundLiveness {
-            return live
-        }
-        return archivedShellThreadsByEnvironmentID[environmentID]?[threadID]?
-            .backgroundLiveness
+        backgroundLiveness(
+            threadID: threadID,
+            environmentID: environmentID,
+            shellThread: shellsByEnvironmentID[environmentID]?.threads.first { $0.id == threadID }
+        )
+    }
+
+    /// Use when the caller already looked up the live shell thread.
+    private func backgroundLiveness(
+        threadID: String,
+        environmentID: String,
+        shellThread: OrchestrationThreadShell?
+    ) -> OrchestrationBackgroundLiveness? {
+        shellThread?.backgroundLiveness
+            ?? archivedShellThreadsByEnvironmentID[environmentID]?[threadID]?.backgroundLiveness
     }
 
     private func markThreadCacheRecentlyUsed(_ threadID: String) {
@@ -7452,7 +7437,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         var accumulator = cache.workLogsByGroupID[groupID] ?? NativeWorkLogAccumulator()
         accumulator.append(
             activity,
-            preview: previewText(activity.payload["detail"]?.stringValue),
+            preview: Self.previewText(activity.payload["detail"]?.stringValue),
             createdAt: parseDate(activity.createdAt)
         )
         cache.workLogsByGroupID[groupID] = accumulator
@@ -7498,7 +7483,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             var accumulator = cache.workLogsByGroupID[groupID] ?? NativeWorkLogAccumulator()
             accumulator.append(
                 activity,
-                preview: previewText(activity.payload["detail"]?.stringValue),
+                preview: Self.previewText(activity.payload["detail"]?.stringValue),
                 createdAt: parseDate(activity.createdAt)
             )
             cache.workLogsByGroupID[groupID] = accumulator
@@ -7654,7 +7639,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             for activity in group {
                 accumulator.append(
                     activity,
-                    preview: previewText(activity.payload["detail"]?.stringValue),
+                    preview: Self.previewText(activity.payload["detail"]?.stringValue),
                     createdAt: parseDate(activity.createdAt)
                 )
             }
@@ -8132,7 +8117,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         return modelsByProvider.keys.sorted().map { providerID in
             FeatureProvider(
                 id: providerID,
-                name: providerDisplayName(providerID),
+                name: UsageLimitsPresentation.providerLabel(driver: providerID),
                 driver: providerID,
                 models: (modelsByProvider[providerID] ?? []).sorted().map {
                     FeatureModel(id: $0, name: $0)
@@ -8347,18 +8332,6 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
     }
 
-    private func providerDisplayName(_ id: String) -> String {
-        switch id {
-        case "codex": "Codex"
-        case "claudeAgent", "claude": "Claude"
-        case "cursor": "Cursor"
-        case "grok": "Grok"
-        case "opencode": "OpenCode"
-        case "antigravity": "Antigravity"
-        default: id
-        }
-    }
-
     private func threadProviderName(
         session: OrchestrationSession?,
         modelSelection: ModelSelection,
@@ -8372,9 +8345,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         if let provider = serverConfigsByEnvironmentID[environmentID]?.providers.first(where: {
             $0.instanceId == providerID
         }) {
-            return provider.displayName ?? providerDisplayName(provider.driver)
+            return provider.displayName ?? UsageLimitsPresentation.providerLabel(driver: provider.driver)
         }
-        return providerDisplayName(providerID)
+        return UsageLimitsPresentation.providerLabel(driver: providerID)
     }
 
     private func cachedAttachmentURL(
@@ -8623,11 +8596,29 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         return "t3code/\(suffix.prefix(8).lowercased())"
     }
 
-    private func previewText(_ text: String?) -> String? {
+    /// Collapses whitespace runs and caps the result at 160 characters. It stops
+    /// reading early, so a long streaming reply costs the same as a short one.
+    nonisolated static func previewText(_ text: String?) -> String? {
         guard let text else { return nil }
-        let compact = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        guard !compact.isEmpty else { return nil }
-        return compact.count > 160 ? "\(compact.prefix(157))..." : compact
+        var compact = ""
+        var count = 0
+        var needsSpace = false
+        for character in text {
+            if character.isWhitespace {
+                needsSpace = count > 0
+                continue
+            }
+            if needsSpace {
+                compact.append(" ")
+                count += 1
+                needsSpace = false
+            }
+            compact.append(character)
+            count += 1
+            if count > 160 { break }
+        }
+        guard count > 0 else { return nil }
+        return count > 160 ? "\(compact.prefix(157))..." : compact
     }
 
     /// Decoded once per process and on every `saveSettings`. `makeSnapshot`
@@ -9866,7 +9857,6 @@ private enum NativeFeatureClientError: LocalizedError {
     case branchRequired
     case deviceSessionNotFound
     case currentDeviceUnknown
-    case missingScope(String)
     case tooManyAttachments
     case invalidAutomaticSettlementDays
     case remoteStatusUnavailable
@@ -9888,7 +9878,6 @@ private enum NativeFeatureClientError: LocalizedError {
         case .branchRequired: "Choose a base branch for the new worktree."
         case .deviceSessionNotFound: "That device session is no longer active."
         case .currentDeviceUnknown: "This installation has not registered for device access yet."
-        case .missingScope: "This connection does not have permission to manage devices."
         case .tooManyAttachments: "You can attach up to 100 files per message."
         case .invalidAutomaticSettlementDays: "Choose a value from 1 to 90 days."
         case .remoteStatusUnavailable:
@@ -10057,7 +10046,10 @@ extension NativeFeatureClient {
     private func saveReadHistory(
         _ snapshot: OrchestrationThreadDetailSnapshot, environmentID: String, lease: ClientReadCache.Lease?
     ) {
-        guard let lease, readCacheLeases[environmentID] == lease else { return }
+        // The cache drops running threads anyway. Check here so streaming
+        // updates do not queue a write task per item.
+        guard let lease, readCacheLeases[environmentID] == lease,
+              snapshot.thread.deletedAt != nil || ClientReadCache.isEligible(snapshot) else { return }
         let threadID = FeatureScopedID.thread(environmentID: environmentID, wireID: snapshot.thread.id)
         let expanded = expandedHistoryIDs.contains(threadID)
         let previous = cacheWriteTask

@@ -797,12 +797,12 @@ final class TransportReliabilityTests: XCTestCase {
         XCTAssertEqual(loose.host, "https://192.168.1.7:18773")
         XCTAssertEqual(loose.pairingCode, "N735KQXJ5SJW")
 
-        let wrapped = try PairingURL.pairingURL(
-            fromQRCode: "t3code://pair?pairingUrl=https%3A%2F%2Fstudio.example"
+        let wrapped = try PairingURL.parseFields(
+            "t3code://pair?pairingUrl=https%3A%2F%2Fstudio.example"
                 + "%2Fpair%23token%3DQR-CODE"
         )
-        XCTAssertEqual(wrapped, "https://studio.example/pair#token=QR-CODE")
-        XCTAssertEqual(try PairingURL.parseFields(wrapped).pairingCode, "QR-CODE")
+        XCTAssertEqual(wrapped.host, "https://studio.example")
+        XCTAssertEqual(wrapped.pairingCode, "QR-CODE")
     }
 
     func testSplitPairingFieldsAcceptCompleteURLInHostField() throws {

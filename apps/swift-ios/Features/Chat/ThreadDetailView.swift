@@ -49,6 +49,7 @@ public struct ThreadDetailView: View {
     @State private var sendFailed = false
     @State private var feedbackMessages: [FeatureMessage] = []
     @State private var feedbackRevision: UInt64 = 0
+    @State private var timelineMessagesCache = FeatureTimelineMessagesCache()
     @State private var feedbackAlertMessage: String?
     @State private var feedbackIdentifier: String?
     @State private var didRestoreDraft = false
@@ -305,7 +306,8 @@ public struct ThreadDetailView: View {
     private var observedThreadContent: AnyView {
         let content = loadedThreadContent
         .onChange(of: thread.id) { v2TimelineState.reset() }
-        .onChange(of: draft) { scheduleDraftSave() }
+        // A child observes the text so keystrokes do not re-run this body.
+        .background(FeatureDraftTextObserver(text: $draft, onChange: scheduleDraftSave))
         .onChange(of: selection) { scheduleDraftSave() }
         .onChange(of: draftRuntimeMode) { scheduleDraftSave() }
         .onChange(of: draftInteractionMode) { scheduleDraftSave() }
@@ -931,7 +933,7 @@ public struct ThreadDetailView: View {
                         set: { enabled in Task { await model.setAutoSettle(thread.id, enabled: enabled) } }
                     ))
                 }
-                let isSettled = model.isEffectivelySettled(currentThread)
+                let isSettled = currentThread.isEffectivelySettled()
                 if (isSettled || currentThread.canSettleNow()), !currentThread.isArchived {
                     Button {
                         Task { await model.setSettled(thread.id, settled: !isSettled) }
@@ -1054,52 +1056,16 @@ public struct ThreadDetailView: View {
         currentThread.pullRequestObservationIdentity
     }
 
+    /// Follows the branch pull request for a thread with no linked one.
+    /// Linked pull requests resolve from the thread itself.
     @MainActor
     private func observeThreadPullRequest() async {
         branchPullRequest = nil
-        guard let observationIdentity = pullRequestObservationID else {
-            branchPullRequest = nil
+        guard pullRequestObservationID != nil,
+              currentThread.pullRequests?.isEmpty ?? true else {
             return
         }
-
-        if let links = currentThread.pullRequests, !links.isEmpty {
-            model.updatePullRequest(
-                HomeThreadPullRequestPresentation.resolve(links: links),
-                threadID: currentThread.id, observationIdentity: observationIdentity
-            )
-            return
-        }
-
-        if let linked = currentThread.effectivePullRequest,
-           let environmentID = currentThread.environmentID {
-            let target = FeaturePullRequestTarget(
-                environmentID: environmentID,
-                environmentName: currentThread.environmentName ?? environmentID,
-                reference: PullRequestRef(
-                    projectId: linked.projectId,
-                    repository: linked.repository,
-                    number: linked.number,
-                    host: ThreadPullRequests.authority(of: linked.url)
-                )
-            )
-            while !Task.isCancelled {
-                if let detail = try? await model.client.pullRequestDetail(target),
-                   let presentation = HomeThreadPullRequestPresentation.resolve(
-                       linkedPullRequest: linked,
-                       detail: detail
-                   ) {
-                    model.updatePullRequest(
-                        presentation,
-                        threadID: currentThread.id,
-                        observationIdentity: observationIdentity
-                    )
-                }
-                do {
-                    try await Task.sleep(for: .seconds(30))
-                } catch {
-                    return
-                }
-            }
+        if currentThread.effectivePullRequest != nil, currentThread.environmentID != nil {
             return
         }
 
@@ -1109,11 +1075,6 @@ public struct ThreadDetailView: View {
             if next != branchPullRequest {
                 branchPullRequest = next
             }
-            model.updatePullRequest(
-                HomeThreadPullRequestPresentation.resolve(thread: currentThread, status: status),
-                threadID: currentThread.id,
-                observationIdentity: observationIdentity
-            )
         }
     }
 
@@ -1608,7 +1569,26 @@ public struct ThreadDetailView: View {
         return Set(v2TimelineState.expandedIDs.filter { $0.hasPrefix("v2-fold:") })
     }
 
+    /// Body runs for many reasons that do not change the transcript, so reuse
+    /// the last result until the detail revision, folds, or feedback change.
     private func timelineMessages(_ messages: [FeatureMessage]) -> [FeatureMessage] {
+        let key = FeatureTimelineMessagesCache.Key(
+            threadID: thread.id,
+            detailRevision: model.detailRevisions[thread.id] ?? 0,
+            expandedTurnFoldIDs: expandedTurnFoldIDs,
+            feedbackRevision: feedbackRevision
+        )
+        if timelineMessagesCache.key == key { return timelineMessagesCache.messages }
+        let result = uncachedTimelineMessages(messages, expandedTurnFoldIDs: key.expandedTurnFoldIDs)
+        timelineMessagesCache.key = key
+        timelineMessagesCache.messages = result
+        return result
+    }
+
+    private func uncachedTimelineMessages(
+        _ messages: [FeatureMessage],
+        expandedTurnFoldIDs: Set<String>?
+    ) -> [FeatureMessage] {
         if let expandedTurnFoldIDs {
             // Folds are display-only. The model retains source order and original action targets.
             return FeatureV2TurnFolding.messages(messages, expandedIDs: expandedTurnFoldIDs) + feedbackMessages
@@ -2542,6 +2522,32 @@ enum ThreadRefreshPresentation: Equatable {
     }
 }
 
+/// Last `timelineMessages` result. A plain class, so filling it during body
+/// does not invalidate the view.
+@MainActor
+private final class FeatureTimelineMessagesCache {
+    struct Key: Equatable {
+        let threadID: String
+        let detailRevision: UInt64
+        let expandedTurnFoldIDs: Set<String>?
+        let feedbackRevision: UInt64
+    }
+
+    var key: Key?
+    var messages: [FeatureMessage] = []
+}
+
+/// Runs `onChange` when the draft text changes. Only this view depends on
+/// the text, so typing does not re-evaluate the whole thread view.
+private struct FeatureDraftTextObserver: View {
+    @Binding var text: String
+    let onChange: () -> Void
+
+    var body: some View {
+        Color.clear.onChange(of: text) { onChange() }
+    }
+}
+
 private struct FeatureThreadOpeningView: View {
     var body: some View {
         VStack(spacing: 12) {
@@ -2839,9 +2845,8 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         context.coordinator.onEditMessage = onEditMessage
         context.coordinator.canEditPendingMessage = canEditPendingMessage
         context.coordinator.onEditPendingMessage = onEditPendingMessage
-        context.coordinator.inspectionChanged = context.coordinator.currentV2Inspection?.retryableRunIDs != v2Inspection?.retryableRunIDs
+        let inspectionChanged = context.coordinator.currentV2Inspection?.retryableRunIDs != v2Inspection?.retryableRunIDs
             || context.coordinator.currentV2Inspection?.providers != v2Inspection?.providers
-        context.coordinator.inspectionChanged = context.coordinator.inspectionChanged
             || context.coordinator.currentEmbeddedContext?.canEnterFullscreen != embeddedContext?.canEnterFullscreen
             || context.coordinator.currentSecretContext?.canAnswer != secretContext?.canAnswer
         context.coordinator.currentV2Inspection = v2Inspection
@@ -2852,6 +2857,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         context.coordinator.update(
             threadID: threadID,
             environmentID: environmentID,
+            inspectionChanged: inspectionChanged,
             messages: messages,
             imageContext: imageContext,
             attachmentContext: attachmentContext,
@@ -2921,7 +2927,6 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         var currentV2Inspection: FeatureV2ItemInspectionContext?
         var currentSecretContext: FeatureSecretRequestContext?
         var currentEmbeddedContext: FeatureEmbeddedContentContext?
-        var inspectionChanged = false
         var onFork: ((FeatureThreadWorkflowSource) -> Void)?
         var onOpenThread: ((String) -> Void)?
         private var currentWorkflows: FeatureThreadWorkflows = .unavailable
@@ -3060,6 +3065,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         func update(
             threadID: String,
             environmentID: String?,
+            inspectionChanged: Bool,
             messages: [FeatureMessage],
             imageContext: MarkdownImageContext?,
             attachmentContext: FeatureAttachmentContext?,
@@ -3090,12 +3096,19 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             let imageContextChanged = currentImageContext != imageContext
                 || currentAttachmentContext != attachmentContext
             let skillsChanged = currentSkills != skills
-            let inspectionContextChanged = currentEnvironmentID != environmentID || inspectionChanged
-            inspectionChanged = false
-            let workflowChangedIDs = workflowState.update(
-                messages: messages, workflows: workflows,
-                environmentID: environmentID, isWorkflowBusy: isWorkflowBusy
-            )
+            let environmentChanged = currentEnvironmentID != environmentID
+            let inspectionContextChanged = environmentChanged || inspectionChanged
+            let revisionChanged = currentDetailRevision != renderUpdate?.revision
+            let turnFoldsChanged = currentExpandedTurnFoldIDs != expandedTurnFoldIDs
+            // The scan walks every row, so run it only when one of its inputs changed.
+            let workflowInputsChanged = threadChanged || revisionChanged || turnFoldsChanged || environmentChanged
+                || currentWorkflows != workflows || currentIsWorkflowBusy != isWorkflowBusy
+            let workflowChangedIDs = workflowInputsChanged
+                ? workflowState.update(
+                    messages: messages, workflows: workflows,
+                    environmentID: environmentID, isWorkflowBusy: isWorkflowBusy
+                )
+                : []
             // Keep future cell configurations current even when no displayed row changed.
             currentWorkflows = workflows
             currentIsWorkflowBusy = isWorkflowBusy
@@ -3103,8 +3116,6 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             currentPresentationDismissal = presentationDismissal
             let typeSizeChanged = currentDynamicTypeSize != dynamicTypeSize
                 || currentCodeSizeSteps != codeSizeSteps
-            let revisionChanged = currentDetailRevision != renderUpdate?.revision
-            let turnFoldsChanged = currentExpandedTurnFoldIDs != expandedTurnFoldIDs
             let workingChanged = currentIsWorking != isWorking
             let workingDetailChanged = currentIsCompacting != isCompacting
                 || currentActiveSubagentCount != activeSubagentCount
@@ -4335,7 +4346,7 @@ struct FeatureMessageView: View {
                item.source.itemType == "secret_request" {
                 FeatureSecretRequestCard(item: item, context: secretContext).id(item.id)
             } else if let items = message.v2WorkItems, items.count == 1, let item = items.first,
-                      FeatureEmbeddedContent.reference(raw: item.raw) != nil, let embeddedContext {
+                      item.hasEmbeddedContent, let embeddedContext {
                 FeatureEmbeddedContentView(item: item, context: embeddedContext).id(item.id)
             } else if let agent = transcriptAgent, let onOpenThread {
                 FeatureThreadAgentRow(agent: agent, onOpenThread: onOpenThread)

@@ -852,9 +852,8 @@ struct FeatureComposerTextSelectionRequest: Equatable {
 /// Keeping this value outside Observation avoids synchronous SwiftUI state
 /// writes while the representable is updating.
 @MainActor
-@Observable
 final class FeatureComposerTextObservation {
-    @ObservationIgnored var selection = NSRange(location: 0, length: 0)
+    var selection = NSRange(location: 0, length: 0)
 }
 
 enum FeatureComposerTextSelectionPolicy {

@@ -68,8 +68,7 @@ struct FeatureThreadContentSearchTests {
         func present(_ matches: [FeatureThreadContentMatch], environments: [String], projectID: String? = nil) -> HomePresentation {
             cache.presentation(
                 snapshot: snapshot, revision: 1, rowRevision: 1, query: "needle", projectID: projectID,
-                now: .distantPast, contentMatches: matches, searchEnvironmentIDs: environments,
-                pullRequestsByThreadID: [:]
+                now: .distantPast, contentMatches: matches, searchEnvironmentIDs: environments
             )
         }
         #expect(present([], environments: ["a", "b"]).searchResults.isEmpty)

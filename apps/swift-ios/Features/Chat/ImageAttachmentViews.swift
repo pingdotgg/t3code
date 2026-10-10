@@ -371,14 +371,6 @@ struct FeatureImageAttachmentPicker: View {
         )
     }
 
-    private func appendImage(_ data: Data, ordinal: Int? = nil) async throws {
-        let ordinal = ordinal ?? attachments.count + 1
-        let attachment = try await Task.detached(priority: .userInitiated) {
-            try FeatureImageProcessor.attachment(from: data, ordinal: ordinal)
-        }.value
-        attachments.append(attachment)
-    }
-
     private func discardOwnedFile(for attachment: FeatureDraftAttachment) {
         guard let fileName = attachment.ownedFile?.fileName else { return }
         try? ManagedAttachmentFileStore().removeOwnedFile(fileName: fileName)

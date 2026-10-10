@@ -100,10 +100,14 @@ enum FeatureThreadLifecyclePolicy {
         return completedAt > visitedAt
     }
 
+    // Row renders call `date` through `homeStatus` many times, so build the styles once.
+    private static let fractionalStyle = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
+    private static let wholeSecondStyle = Date.ISO8601FormatStyle()
+
     static func date(_ value: String?) -> Date? {
         guard let value else { return nil }
-        guard let parsed = (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(value))
-            ?? (try? Date.ISO8601FormatStyle().parse(value)) else { return nil }
+        guard let parsed = (try? fractionalStyle.parse(value))
+            ?? (try? wholeSecondStyle.parse(value)) else { return nil }
         // Match NativeTimestampParser's millisecond values for shell/run timestamps.
         return Date(timeIntervalSince1970: (parsed.timeIntervalSince1970 * 1_000).rounded() / 1_000)
     }

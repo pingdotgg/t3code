@@ -99,9 +99,9 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         XCTAssertTrue(mapped.isSubagent)
         let restored = try JSONDecoder.t3.decode(FeatureSnapshot.self, from: JSONEncoder.t3.encode(snapshot))
         XCTAssertTrue(try XCTUnwrap(restored.threads.first { $0.id == mapped.id }).isSubagent)
-        let inbox = DailyUXSidebarIndex(snapshot: restored, query: "Review")
+        let inbox = DailyUXSidebarIndex(snapshot: restored)
         XCTAssertFalse(inbox.active.contains { $0.id == mapped.id })
-        XCTAssertTrue(inbox.searchResults.isEmpty)
+        XCTAssertTrue(HomePresentation(snapshot: restored, query: "Review", projectID: nil, now: .now).searchResults.isEmpty)
         // Older persisted snapshots and V1 threads have no lineage.
         var oldFields = try JSONValue.encode(mapped).v2Object
         oldFields.removeValue(forKey: "relationshipToParent")

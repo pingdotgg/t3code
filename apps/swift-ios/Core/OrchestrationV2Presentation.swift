@@ -23,7 +23,10 @@ public enum OrchestrationV2Presentation {
     }
 
     public static func shellSnapshot(_ json: JSONValue) throws -> OrchestrationShellSnapshot {
-        let snapshot = try json.decode(OrchestrationV2ShellSnapshot.self)
+        try shellSnapshot(json.decode(OrchestrationV2ShellSnapshot.self))
+    }
+
+    public static func shellSnapshot(_ snapshot: OrchestrationV2ShellSnapshot) throws -> OrchestrationShellSnapshot {
         guard snapshot.snapshotSequence >= 0, snapshot.schemaVersion > 0 else {
             throw OrchestrationV2StateError.invalidPayload("shell sequence")
         }
@@ -157,11 +160,16 @@ public enum OrchestrationV2Presentation {
                 messageID: row.message?.id, activityIDs: row.activities.map(\.id))
         }
         appendControlActivities(p, to: &activities)
+        // One pass so per-checkpoint lookups stay O(1); later messages win, like `.last`.
+        var lastAssistantIDByTurn: [String: String] = [:]
+        for message in messages where message.role == "assistant" {
+            if let turnID = message.turnId { lastAssistantIDByTurn[turnID] = message.id }
+        }
         let latestTurn = displayRun.map { run in
             OrchestrationLatestTurn(
                 turnId: run.id, state: turnState(run.status), requestedAt: run.requestedAt,
                 startedAt: run.workStartedAt ?? run.startedAt, completedAt: run.completedAt,
-                assistantMessageId: messages.last { $0.turnId == run.id && $0.role == "assistant" }?.id
+                assistantMessageId: lastAssistantIDByTurn[run.id]
             )
         } ?? providerSubagent.map { node in
             // This is a display identity only. The controls retain no app run,
@@ -172,11 +180,11 @@ public enum OrchestrationV2Presentation {
         }
         let checkpoints = p.checkpoints.compactMap { checkpoint -> CheckpointSummary? in
             guard let runID = checkpoint.runId, let ordinal = checkpoint.appRunOrdinal,
-                  p.runs.first(where: { $0.id == runID })?.status != "rolled_back" else { return nil }
+                  runs[runID]?.status != "rolled_back" else { return nil }
             return CheckpointSummary(
                 turnId: runID, checkpointTurnCount: ordinal, checkpointRef: checkpoint.ref,
                 status: checkpoint.status, files: checkpoint.files,
-                assistantMessageId: messages.last { $0.turnId == runID && $0.role == "assistant" }?.id,
+                assistantMessageId: lastAssistantIDByTurn[runID],
                 completedAt: checkpoint.capturedAt
             )
         }.sorted { $0.checkpointTurnCount < $1.checkpointTurnCount }

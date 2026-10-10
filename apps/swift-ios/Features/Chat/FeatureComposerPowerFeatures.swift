@@ -286,18 +286,6 @@ enum FeatureComposerFileLinkSerializer {
         URL(string: encodeDestination(path.replacingOccurrences(of: "\\", with: "/")))
     }
 
-    static func markdownLink(for path: String) -> String {
-        let normalized = path.replacingOccurrences(of: "\\", with: "/")
-        let basename = normalized.split(separator: "/", omittingEmptySubsequences: true)
-            .last
-            .map(String.init) ?? path
-        let label = basename
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "[", with: "\\[")
-            .replacingOccurrences(of: "]", with: "\\]")
-        return "[\(label)](\(encodeDestination(path)))"
-    }
-
     private static func encodeDestination(_ path: String) -> String {
         let unescaped = Set(
             "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789;,/:@&=+$-_.!~*'"

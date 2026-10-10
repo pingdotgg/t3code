@@ -128,7 +128,6 @@ struct PlatformDeepLinkTests {
 
         mailbox.put(route)
 
-        #expect(mailbox.peek() == route)
         #expect(mailbox.take() == route)
         #expect(mailbox.take() == nil)
     }

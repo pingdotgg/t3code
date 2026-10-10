@@ -97,10 +97,23 @@ private struct ThreadArrangementCollection: UIViewRepresentable {
         UICollectionViewDragDelegate, UICollectionViewDropDelegate {
         typealias Row = ThreadArrangementRow
 
+        /// Inputs every cell reads beyond its own thread.
+        private struct CellContext: Equatable {
+            let busy: Bool
+            let workingShelfEnabled: Bool
+            let now: Date
+            let environments: [FeatureEnvironment]
+            let expanded: Set<ThreadArrangementSection>
+        }
+
         var parent: ThreadArrangementCollection
         private weak var view: UICollectionView?
         private var dataSource: UICollectionViewDiffableDataSource<Int, String>?
-        private var rows: [Row] = []
+        private var rows: [Row] = [] {
+            didSet { rowsByID = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }) }
+        }
+        private var rowsByID: [String: Row] = [:]
+        private var cellContext: CellContext?
         private var expanded = Set<ThreadArrangementSection>()
         private var draggedID: String?
         private var pendingRows: [Row]?
@@ -120,12 +133,15 @@ private struct ThreadArrangementCollection: UIViewRepresentable {
             update()
         }
 
+        /// Runs on every snapshot change. Applies a snapshot only when the order
+        /// or a row's inputs changed, and reconfigures only the changed rows.
         func update(completion: (() -> Void)? = nil) {
             guard draggedID == nil || pendingRows != nil else { return }
+            let previousRowsByID = rowsByID
             if let pendingRows {
                 rows = pendingRows
             } else {
-                let index = DailyUXSidebarIndex(snapshot: parent.model.snapshot, query: "", now: parent.now)
+                let index = DailyUXSidebarIndex(snapshot: parent.model.snapshot, now: parent.now)
                 rows = ThreadArrangementSection.allCases.flatMap { section -> [Row] in
                     let threads: [FeatureThread]
                     switch section {
@@ -145,18 +161,41 @@ private struct ThreadArrangementCollection: UIViewRepresentable {
                     return [Row(section: section)] + (visible ? threads.map { Row(section: section, thread: $0) } : [])
                 }
             }
+            let ids = rows.map(\.id)
+            let existing = dataSource?.snapshot().itemIdentifiers ?? []
+            let context = CellContext(
+                busy: parent.busy,
+                workingShelfEnabled: parent.workingShelfEnabled,
+                now: parent.now,
+                environments: parent.model.snapshot.environments,
+                expanded: expanded
+            )
+            let orderChanged = ids != existing
+            let reconfigured: [String]
+            if orderChanged || context != cellContext {
+                let previousIDs = Set(existing)
+                reconfigured = ids.filter { previousIDs.contains($0) }
+            } else {
+                // Same order and context: only rows whose thread changed need new cells.
+                reconfigured = rows.compactMap { row in
+                    previousRowsByID[row.id]?.thread == row.thread ? nil : row.id
+                }
+                if reconfigured.isEmpty, completion == nil { return }
+            }
+            cellContext = context
             var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
             snapshot.appendSections([0])
-            snapshot.appendItems(rows.map(\.id))
-            if let existing = dataSource?.snapshot().itemIdentifiers {
-                let previousIDs = Set(existing)
-                snapshot.reconfigureItems(rows.map(\.id).filter { previousIDs.contains($0) })
-            }
-            dataSource?.apply(snapshot, animatingDifferences: !UIAccessibility.isReduceMotionEnabled, completion: completion)
+            snapshot.appendItems(ids)
+            snapshot.reconfigureItems(reconfigured)
+            dataSource?.apply(
+                snapshot,
+                animatingDifferences: orderChanged && !UIAccessibility.isReduceMotionEnabled,
+                completion: completion
+            )
         }
 
         private func configure(_ cell: UICollectionViewListCell, id: String) {
-            guard let row = rows.first(where: { $0.id == id }) else { return }
+            guard let row = rowsByID[id] else { return }
             cell.backgroundConfiguration = .clear()
             cell.accessories = []
             if let thread = row.thread {

@@ -25,7 +25,10 @@ public struct OrchestrationV2ThreadState: Sendable {
     private var displayRows: [String: OrchestrationV2DisplayRow] = [:]
 
     public init(snapshot: JSONValue) throws {
-        let decoded = try snapshot.decode(OrchestrationV2ThreadSnapshot.self)
+        try self.init(decoded: snapshot.decode(OrchestrationV2ThreadSnapshot.self))
+    }
+
+    public init(decoded: OrchestrationV2ThreadSnapshot) throws {
         guard decoded.snapshotSequence >= 0,
               decoded.hasMoreHistory != true || decoded.historyCursor != nil else {
             throw OrchestrationV2StateError.invalidPayload("snapshot cursor")
@@ -132,7 +135,12 @@ public struct OrchestrationV2ThreadState: Sendable {
     @discardableResult
     public mutating func appendHistory(_ json: JSONValue, beforeCursor: String) throws -> Bool {
         guard beforeCursor == historyCursor else { return false }
-        let page = try json.decode(OrchestrationV2ThreadHistoryPage.self)
+        return try appendHistory(json.decode(OrchestrationV2ThreadHistoryPage.self), beforeCursor: beforeCursor)
+    }
+
+    @discardableResult
+    public mutating func appendHistory(_ page: OrchestrationV2ThreadHistoryPage, beforeCursor: String) throws -> Bool {
+        guard beforeCursor == historyCursor else { return false }
         guard page.snapshotSequence >= 0,
               !page.hasMoreHistory || (page.nextCursor != nil && page.nextCursor != beforeCursor) else {
             throw OrchestrationV2StateError.invalidHistoryPage

@@ -223,12 +223,15 @@ public actor EnvironmentAPI {
 
     /// V2 keeps HTTP reads on the same authenticated transport as pairing and
     /// other environment requests, including relay credential refresh.
-    public func orchestrationV2Snapshot(
+    /// Decode straight to the typed snapshot when possible; a JSONValue result
+    /// costs another encode and parse to reach a typed model.
+    public func orchestrationV2Snapshot<Result: Decodable & Sendable>(
         path: String,
         environment: Environment,
         queryItems: [URLQueryItem] = [],
-        timeoutInterval: TimeInterval? = nil
-    ) async throws -> JSONValue {
+        timeoutInterval: TimeInterval? = nil,
+        as type: Result.Type
+    ) async throws -> Result {
         try await authorized(
             environment: environment,
             path: path,
@@ -236,7 +239,7 @@ public actor EnvironmentAPI {
             method: "GET",
             headers: ["x-t3-orchestration-protocol": "2"],
             timeoutInterval: timeoutInterval,
-            as: JSONValue.self
+            as: type
         )
     }
 

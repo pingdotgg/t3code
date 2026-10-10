@@ -62,14 +62,15 @@ public struct OrchestrationV2ThreadLifecycle: Codable, Equatable, Sendable {
     /// this small record in native controls before discarding the full projection.
     public init(projection p: OrchestrationV2ThreadProjection) {
         goal = p.providerThreads.first { $0.id == p.thread.activeProviderThreadId }?.goal
-        let session = p.providerSessions.filter { $0.providerInstanceId == p.thread.providerInstanceId }
-            .max { Self.timestamp($0.updatedAt) < Self.timestamp($1.updatedAt) }
-        let executed = p.runs.filter { $0.status != "queued" && !($0.status == "cancelled" && $0.startedAt == nil) }
-            .max {
-                let leftEnd = $0.completedAt.map(Self.timestamp) ?? .infinity
-                let rightEnd = $1.completedAt.map(Self.timestamp) ?? .infinity
-                return leftEnd == rightEnd ? $0.ordinal < $1.ordinal : leftEnd < rightEnd
-            }
+        let session = Self.latest(p.providerSessions.filter { $0.providerInstanceId == p.thread.providerInstanceId },
+                                  at: \.updatedAt)
+        let executedRuns = p.runs.filter { $0.status != "queued" && !($0.status == "cancelled" && $0.startedAt == nil) }
+        let executedEnds: [(end: TimeInterval, run: OrchestrationV2Run)] = executedRuns.map { run in
+            (run.completedAt.map(Self.timestamp) ?? .infinity, run)
+        }
+        let executed = executedEnds.max { left, right in
+            left.end == right.end ? left.run.ordinal < right.run.ordinal : left.end < right.end
+        }?.run
         let executedFailure = Self.rootFailure(executed, in: p)
         let limitOwnsLatest = executedFailure?.class == "usage_limit"
             && (session?.lastError == nil || session?.lastError == executedFailure?.message)
@@ -99,12 +100,10 @@ public struct OrchestrationV2ThreadLifecycle: Codable, Equatable, Sendable {
         lastVisitedAt = p.thread.lastVisitedAt
         lastVisitedAtIsPresent = p.thread.raw["lastVisitedAt"] != nil
         let userMessages = p.messages.filter { $0.role == "user" }
-        latestUserMessageAt = userMessages.max { Self.timestamp($0.updatedAt) < Self.timestamp($1.updatedAt) }?.updatedAt
-        latestUserAuthoredMessageAt = userMessages.filter { $0.createdBy == "user" }
-            .max { Self.timestamp($0.updatedAt) < Self.timestamp($1.updatedAt) }?.updatedAt
+        latestUserMessageAt = Self.latest(userMessages, at: \.updatedAt)?.updatedAt
+        latestUserAuthoredMessageAt = Self.latest(userMessages.filter { $0.createdBy == "user" }, at: \.updatedAt)?.updatedAt
         latestUserAuthoredMessageAtIsPresent = true
-        let request = p.runtimeRequests.filter { $0.status == "pending" }
-            .max { Self.timestamp($0.createdAt) < Self.timestamp($1.createdAt) }
+        let request = Self.latest(p.runtimeRequests.filter { $0.status == "pending" }, at: \.createdAt)
         hasPendingUserInput = request?.kind == "user_input"
         hasPendingApprovals = request.map { !["user_input", "auth_refresh", "dynamic_tool_call"].contains($0.kind) } ?? false
         hasActionableProposedPlan = p.plans.contains { $0.kind == "proposed_plan" && $0.status == "active" }
@@ -116,11 +115,10 @@ public struct OrchestrationV2ThreadLifecycle: Codable, Equatable, Sendable {
         guard let run, run.status == "failed" else { return nil }
         let item = projection.turnItems.filter {
             $0.type == "error" && $0.status == "failed" && $0.runId == run.id && $0.nodeId == run.rootNodeId
-        }.max {
-            let leftTime = timestamp($0.updatedAt), rightTime = timestamp($1.updatedAt)
-            if leftTime != rightTime { return leftTime < rightTime }
-            return $0.ordinal == $1.ordinal ? $0.id < $1.id : $0.ordinal < $1.ordinal
-        }
+        }.map { (time: timestamp($0.updatedAt), item: $0) }.max { left, right in
+            if left.time != right.time { return left.time < right.time }
+            return left.item.ordinal == right.item.ordinal ? left.item.id < right.item.id : left.item.ordinal < right.item.ordinal
+        }?.item
         guard let item, case let .failure(failure) = item.content else { return nil }
         return failure
     }
@@ -153,6 +151,12 @@ public struct OrchestrationV2ThreadLifecycle: Codable, Equatable, Sendable {
             if holdsByTaskID[id] == nil { holdsByTaskID[id] = item.type != "command_execution" }
         }
         return holdsByTaskID.values.contains(true)
+    }
+
+    /// `max(by:)` on parsed timestamps that parses each value once. Ties keep
+    /// the earlier element, like `max(by:)`.
+    private static func latest<Element>(_ values: [Element], at time: (Element) -> String) -> Element? {
+        values.map { (timestamp(time($0)), $0) }.max { $0.0 < $1.0 }?.1
     }
 
     private static func timestamp(_ value: String) -> TimeInterval {

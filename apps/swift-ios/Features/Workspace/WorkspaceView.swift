@@ -356,8 +356,7 @@ public struct WorkspaceView: View {
             now: sidebarBoundaryNow,
             inboxReturns: model.inboxReturns,
             contentMatches: contentSearch.matches(for: searchRequest),
-            searchEnvironmentIDs: searchRequest.environmentIDs,
-            pullRequestsByThreadID: model.pullRequestsByThreadID
+            searchEnvironmentIDs: searchRequest.environmentIDs
         )
 
     }
@@ -422,13 +421,6 @@ public struct WorkspaceView: View {
                 onArrange: { showingThreadArrangement = true },
                 onDelete: { thread in
                     deletingThread = thread
-                },
-                onPullRequestChange: { threadID, observationIdentity, pullRequest in
-                    model.updatePullRequest(
-                        pullRequest,
-                        threadID: threadID,
-                        observationIdentity: observationIdentity
-                    )
                 }
             )
         }
@@ -742,7 +734,7 @@ public struct WorkspaceView: View {
     private var keyboardContext: FeatureKeyboardContext {
         var enabled: Set<FeatureKeyboardCommand> = [.commandPalette, .newTask, .focusSearch, .toggleSidebar]
         if selectedThreadID != nil || isSearching { enabled.insert(.back) }
-        for number in 1...min(9, max(1, renderedThreads.count)) where number <= renderedThreads.count {
+        for number in stride(from: 1, through: min(9, renderedThreads.count), by: 1) {
             enabled.insert(.threadJump(number))
         }
         // Thread and tool scopes provide their actions through this same dispatcher.
@@ -1070,7 +1062,7 @@ struct HomePresentation {
     /// instead of the grouping and sorting passes in `init(snapshot:)`.
     func refreshingRows(from snapshot: FeatureSnapshot) -> HomePresentation {
         let byID = snapshot.threads.reduce(into: [String: FeatureThread]()) { $0[$1.id] = $1 }
-        let contextChanged = (pinned + active + working + snoozed + settled + archived).contains { previous in
+        let contextChanged = [pinned, active, working, snoozed, settled, archived].joined().contains { previous in
             guard let next = byID[previous.id] else { return false }
             return previous.providerID != next.providerID
                 || previous.sessionProviderID != next.sessionProviderID
@@ -1100,16 +1092,13 @@ struct HomePresentation {
         now: Date,
         inboxReturns: FeatureInboxReturnTracker = .init(),
         contentMatches: [FeatureThreadContentMatch] = [],
-        searchEnvironmentIDs: [String]? = nil,
-        pullRequestsByThreadID: [String: HomeThreadPullRequestPresentation] = [:]
+        searchEnvironmentIDs: [String]? = nil
     ) {
         let index = DailyUXSidebarIndex(
             snapshot: snapshot,
-            query: "",
             projectID: projectID,
             now: now,
-            inboxReturns: inboxReturns,
-            pullRequestsByThreadID: pullRequestsByThreadID
+            inboxReturns: inboxReturns
         )
         let archived = snapshot.threads
             .filter { thread in
@@ -1186,8 +1175,7 @@ final class HomePresentationCache {
         now: Date,
         inboxReturns: FeatureInboxReturnTracker = .init(),
         contentMatches: [FeatureThreadContentMatch] = [],
-        searchEnvironmentIDs: [String]? = nil,
-        pullRequestsByThreadID: [String: HomeThreadPullRequestPresentation]
+        searchEnvironmentIDs: [String]? = nil
     ) -> HomePresentation {
         let key = Key(
             revision: revision,
@@ -1219,8 +1207,7 @@ final class HomePresentationCache {
             now: max(now, .now),
             inboxReturns: inboxReturns,
             contentMatches: contentMatches,
-            searchEnvironmentIDs: searchEnvironmentIDs,
-            pullRequestsByThreadID: pullRequestsByThreadID
+            searchEnvironmentIDs: searchEnvironmentIDs
         )
         cachedKey = key
         cachedRowRevision = rowRevision
@@ -1383,7 +1370,6 @@ struct HomeThreadPullRequestPresentation: Equatable {
 
     let number: Int
     let state: State
-    let updatedAt: Date?
     var count = 1
     var isStack = false
 
@@ -1401,8 +1387,7 @@ struct HomeThreadPullRequestPresentation: Equatable {
         let state: State = visible.allSatisfy { $0.snapshot?.state == .open && $0.snapshot?.isDraft == true }
             ? .draft : visible.contains(where: \.isOpen) ? .open
             : visible.allSatisfy { $0.snapshot?.state == .merged } ? .merged : .closed
-        return Self(number: current.number, state: state,
-                    updatedAt: parseDate(current.snapshot?.updatedAt), count: visible.count,
+        return Self(number: current.number, state: state, count: visible.count,
                     isStack: visible.count > 1 && ThreadPullRequests.chains(visible).count == 1)
     }
 
@@ -1418,11 +1403,7 @@ struct HomeThreadPullRequestPresentation: Equatable {
               let state = State(rawValue: pullRequest.state.lowercased()) else {
             return nil
         }
-        return Self(
-            number: pullRequest.number,
-            state: state,
-            updatedAt: parseDate(pullRequest.updatedAt)
-        )
+        return Self(number: pullRequest.number, state: state)
     }
 
     static func resolve(
@@ -1436,18 +1417,7 @@ struct HomeThreadPullRequestPresentation: Equatable {
               let state = State(rawValue: detail.state.rawValue) else {
             return nil
         }
-        return Self(
-            number: detail.number,
-            state: state,
-            updatedAt: parseDate(detail.updatedAt)
-        )
-    }
-
-    private static func parseDate(_ value: String?) -> Date? {
-        guard let value else { return nil }
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+        return Self(number: detail.number, state: state)
     }
 }
 
@@ -1514,13 +1484,8 @@ struct FeatureThreadRow: View {
     }
 
     var body: some View {
+        // HomeCollectionCell hides this row from accessibility and provides its own element.
         row(at: now)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(thread.title)
-            .accessibilityValue(accessibilityValue(at: now))
-            .accessibilityHint("Opens task")
-            .accessibilityIdentifier("thread-\(thread.id)")
-            .accessibilityAddTraits(isSelected ? .isSelected : [])
             .task(id: pullRequestObservationID) {
                 await observePullRequest()
             }
@@ -1710,12 +1675,6 @@ struct FeatureThreadRow: View {
         }
     }
 
-    private var isConnectionStale: Bool {
-        context.connectionState == .connecting
-            || context.connectionState == .reconnecting
-            || context.connectionState == .disconnected
-    }
-
     private var branchLabel: String {
         if let branch = thread.branch?.trimmingCharacters(in: .whitespacesAndNewlines),
            !branch.isEmpty {
@@ -1723,7 +1682,7 @@ struct FeatureThreadRow: View {
         }
         if let worktreePath = thread.worktreePath,
            !worktreePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return URL(fileURLWithPath: worktreePath).lastPathComponent
+            return (worktreePath as NSString).lastPathComponent
         }
         return "workspace"
     }
@@ -1838,29 +1797,6 @@ struct FeatureThreadRow: View {
         )
     }
 
-    private func accessibilityValue(at now: Date) -> String {
-        let status = thread.homeRowAccessibilityStatus(rich: style == .rich, at: now)
-        var values = [status, "Project \(context.projectName)"]
-        values.append("Harness \(context.providerName)")
-        if let duration = thread.homeWorkingDuration(at: now) {
-            values.append("for \(duration)")
-        }
-        values.append("Branch \(branchLabel)")
-        if let pullRequest {
-            values.append(pullRequest.accessibilityLabel)
-        }
-        if let environmentLabel {
-            values.append("on \(environmentLabel)")
-        }
-        if isConnectionStale {
-            values.append("last known state")
-        }
-        if thread.isRegeneratingTitle {
-            values.append("Regenerating title")
-        }
-        return values.joined(separator: ". ")
-    }
-
 }
 
 private struct ProjectBadge: View {
@@ -1870,6 +1806,8 @@ private struct ProjectBadge: View {
     let environmentID: String?
     let workspaceRoot: String?
     let client: (any FeatureClient)?
+    /// In-memory image cache and `.task` key. The disk store normalizes paths on its own.
+    private let faviconKey: String?
     @State private var favicon: UIImage?
 
     init(
@@ -1886,15 +1824,11 @@ private struct ProjectBadge: View {
         self.environmentID = environmentID
         self.workspaceRoot = workspaceRoot
         self.client = client
-        let initialKey = environmentID.flatMap { environmentID in
-            workspaceRoot.map { workspaceRoot in
-                FeatureProjectFaviconCacheKey(
-                    environmentID: environmentID,
-                    workspaceRoot: workspaceRoot
-                ).fingerprint
-            }
+        let faviconKey = environmentID.flatMap { environmentID in
+            workspaceRoot.map { "\(environmentID)\u{0}\($0)" }
         }
-        _favicon = State(initialValue: initialKey.flatMap {
+        self.faviconKey = faviconKey
+        _favicon = State(initialValue: faviconKey.flatMap {
             FeatureProjectFaviconImageCache.shared.image(for: $0)
         })
     }
@@ -1931,14 +1865,6 @@ private struct ProjectBadge: View {
             .task(id: [faviconKey, revision]) {
                 await loadFavicon()
             }
-    }
-
-    private var faviconKey: String? {
-        guard let environmentID, let workspaceRoot else { return nil }
-        return FeatureProjectFaviconCacheKey(
-            environmentID: environmentID,
-            workspaceRoot: workspaceRoot
-        ).fingerprint
     }
 
     private func loadFavicon() async {

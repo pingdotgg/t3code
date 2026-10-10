@@ -54,6 +54,18 @@ final class FeatureV2ItemDetailTests: XCTestCase {
         XCTAssertFalse(FeatureV2ItemDetail.indicatesFailure(.object(["type": .string("error"), "status": .string("completed")])))
     }
 
+    func testDerivedFailureFlagSurvivesCodableRoundTripWithoutChangingTheFormat() throws {
+        let base = try workItem(status: "completed", updatedAt: V2Fixture.now)
+        let item = FeatureV2WorkItem(source: base.source, raw: V2Fixture.patch(base.raw, ["exitCode": .number(2)]))
+        XCTAssertTrue(item.indicatesFailure)
+        let data = try JSONEncoder().encode(item)
+        let keys = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any]).keys
+        XCTAssertEqual(Set(keys), ["source", "raw"])
+        let decoded = try JSONDecoder().decode(FeatureV2WorkItem.self, from: data)
+        XCTAssertTrue(decoded.indicatesFailure)
+        XCTAssertEqual(decoded, item)
+    }
+
     func testDetailFetchUsesInheritedSourceAndStableLiveRevisionThenRefetchesCompletion() async throws {
         let projected = try workItem(status: "running", updatedAt: V2Fixture.now)
         let client = InspectionClient()

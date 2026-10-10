@@ -436,13 +436,6 @@ final class PlatformRouteMailbox: @unchecked Sendable {
             return try? JSONDecoder().decode(PlatformRoute.self, from: data)
         }
     }
-
-    func peek() -> PlatformRoute? {
-        lock.withLock {
-            guard let data = defaults.data(forKey: key) else { return nil }
-            return try? JSONDecoder().decode(PlatformRoute.self, from: data)
-        }
-    }
 }
 
 private extension FeatureThreadDestination {

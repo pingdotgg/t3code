@@ -980,6 +980,30 @@ public struct FeatureThreadDetail: Sendable, Equatable, Codable {
         self.allowsProviderSwitch = allowsProviderSwitch
         self.recovery = recovery
     }
+
+    /// Takes every value from `incoming`, but keeps this detail's array storage
+    /// for the unchanged leading messages, approvals and user inputs.
+    func mergingChangedSuffix(from incoming: FeatureThreadDetail) -> FeatureThreadDetail {
+        var result = incoming
+        result.messages = Self.replacingChangedSuffix(messages, with: incoming.messages)
+        result.approvals = Self.replacingChangedSuffix(approvals, with: incoming.approvals)
+        result.userInputs = Self.replacingChangedSuffix(userInputs, with: incoming.userInputs)
+        result.isCompacting = incoming.isCompacting == true
+        return result
+    }
+
+    private static func replacingChangedSuffix<Element: Equatable>(
+        _ current: [Element],
+        with incoming: [Element]
+    ) -> [Element] {
+        guard current != incoming else { return current }
+        let prefixCount = zip(current, incoming).prefix { pair in
+            pair.0 == pair.1
+        }.count
+        var result = current
+        result.replaceSubrange(prefixCount..., with: incoming.dropFirst(prefixCount))
+        return result
+    }
 }
 
 public struct FeatureThreadPage: Sendable, Equatable, Codable {

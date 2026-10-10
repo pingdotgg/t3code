@@ -351,10 +351,6 @@ public enum OrchestrationV2Commands {
         runCommand("prepared-run.retry", threadID: threadID, runID: runID, commandID: commandID)
     }
 
-    public static func releasePreparedRun(threadID: String, runID: String, commandID: String = UUID().uuidString) -> JSONValue {
-        runCommand("prepared-run.release", threadID: threadID, runID: runID, commandID: commandID)
-    }
-
     public static func rollback(
         threadID: String, scopeID: String, checkpointID: String, restoreFiles: Bool,
         commandID: String = UUID().uuidString

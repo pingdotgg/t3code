@@ -280,33 +280,6 @@ struct DailyUXModelPickerTests {
     }
 
     @Test
-    func compactReasoningSummaryIgnoresOtherModelOptions() {
-        let model = FeatureModel(
-            id: "gpt-5",
-            name: "A model name long enough to truncate",
-            options: [
-                .init(
-                    id: "reasoningEffort",
-                    label: "Reasoning",
-                    kind: .select,
-                    choices: [.init(id: "xhigh", label: "Extra high")]
-                ),
-                .init(id: "fast", label: "Fast mode", kind: .boolean),
-            ]
-        )
-
-        let summary = DailyUXModelOptions.reasoningSummary(
-            for: model,
-            selections: [
-                .init(id: "reasoningEffort", value: .string("xhigh")),
-                .init(id: "fast", value: .boolean(true)),
-            ]
-        )
-
-        #expect(summary == "Extra high")
-    }
-
-    @Test
     func preferredSelectionFindsDefaultAcrossProvidersAndIncludesDefaults() {
         let providers = [
             FeatureProvider(
@@ -1005,10 +978,6 @@ struct DailyUXModelPickerTests {
                 for: model,
                 selections: saved
             ).map(\.id) == ["providerFlag"]
-        )
-        #expect(
-            DailyUXModelOptions.reasoningSummary(for: model, selections: saved)
-                == "environment-custom"
         )
     }
 

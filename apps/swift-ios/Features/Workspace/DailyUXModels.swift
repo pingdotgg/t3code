@@ -807,15 +807,12 @@ struct DailyUXSidebarIndex {
     let working: [FeatureThread]
     let snoozed: [FeatureThread]
     let settled: [FeatureThread]
-    let searchResults: [FeatureThread]
 
     init(
         snapshot: FeatureSnapshot,
-        query: String,
         projectID: String? = nil,
         now: Date = .now,
-        inboxReturns: FeatureInboxReturnTracker = .init(),
-        pullRequestsByThreadID: [String: HomeThreadPullRequestPresentation] = [:]
+        inboxReturns: FeatureInboxReturnTracker = .init()
     ) {
         // Delegate children remain addressable through their parent, but do not
         // become independent inbox tasks (the same rule as the web sidebar).
@@ -860,12 +857,6 @@ struct DailyUXSidebarIndex {
                 }
                 return lhs.id < rhs.id
             }
-
-        searchResults = Self.matchingThreads(
-            pinned + active + working + snoozed + settled,
-            snapshot: snapshot,
-            query: query
-        )
     }
 
     /// The pinned or active list in display order, independent of project
@@ -1076,20 +1067,16 @@ enum DailyUXSidebarRefresh {
         for threads: [FeatureThread],
         after now: Date
     ) -> Date? {
-        threads.reduce(nil as Date?) { earliest, thread in
-            let snoozeBoundary = thread.isEffectivelySnoozed(at: now)
-                ? thread.snoozedUntil
-                : nil
-            let queuedBoundary = thread.isArchived
-                ? nil
-                : thread.queuedSettlementBoundary(after: now)
-            let threadBoundary = [snoozeBoundary, queuedBoundary]
-                .compactMap { $0 }
-                .min()
-
-            guard let threadBoundary else { return earliest }
-            return min(earliest ?? threadBoundary, threadBoundary)
+        var earliest: Date?
+        for thread in threads {
+            if thread.isEffectivelySnoozed(at: now), let until = thread.snoozedUntil {
+                earliest = min(earliest ?? until, until)
+            }
+            if !thread.isArchived, let queued = thread.queuedSettlementBoundary(after: now) {
+                earliest = min(earliest ?? queued, queued)
+            }
         }
+        return earliest
     }
 }
 
@@ -1345,26 +1332,6 @@ extension FeatureThread {
         return environmentName
     }
 
-    func homeProviderLabel(in snapshot: FeatureSnapshot) -> String? {
-        if let providerName = providerName?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !providerName.isEmpty {
-            return providerName
-        }
-        guard let providerID else { return nil }
-        let projectEnvironmentID = snapshot.projects
-            .first(where: { $0.id == projectID })?
-            .environmentID
-        let resolvedEnvironmentID = environmentID ?? projectEnvironmentID
-        let providers = resolvedEnvironmentID.flatMap {
-            snapshot.providersByEnvironment?[$0]
-        } ?? []
-        return providers.first(where: { $0.id == providerID })?.name ?? providerID
-    }
-
-    var needsAttention: Bool {
-        state == .waitingForApproval || state == .waitingForInput || state == .failed
-    }
-
     func isEffectivelySettled() -> Bool {
         FeatureThreadLifecyclePolicy.isSettled(self)
     }
@@ -1378,10 +1345,6 @@ extension FeatureThread {
         if keepsActive { return .active }
         if isSettled { return .settled }
         return nil
-    }
-
-    func hasSettlementActivityBlock(at now: Date) -> Bool {
-        FeatureThreadLifecyclePolicy.hasSettlementActivityBlock(self, at: now)
     }
 
     var hasHardSettlementActivityBlock: Bool {
@@ -1602,26 +1565,6 @@ enum DailyUXModelOptions {
             }
         }
         return labels.isEmpty ? nil : labels.joined(separator: " · ")
-    }
-
-    /// The compact composer gives reasoning its own non-compressible label so
-    /// a long model name cannot hide the setting users change most often.
-    static func reasoningSummary(
-        for model: FeatureModel,
-        selections: [FeatureModelOptionSelection]
-    ) -> String? {
-        guard let descriptor = reasoningDescriptor(for: model),
-              let value = value(for: descriptor, in: selections) else {
-            return nil
-        }
-
-        switch value {
-        case let .string(choiceID):
-            return descriptor.choices.first(where: { $0.id == choiceID })?.label
-                ?? choiceID
-        case let .boolean(isEnabled):
-            return isEnabled ? descriptor.label : nil
-        }
     }
 
     private static func isReasoningDescriptor(

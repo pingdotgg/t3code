@@ -25,7 +25,7 @@ struct HomePresentationCacheTests {
     ) -> HomePresentation {
         cache.presentation(
             snapshot: snapshot, revision: 1, rowRevision: rowRevision, query: query,
-            projectID: nil, now: .distantPast, pullRequestsByThreadID: [:]
+            projectID: nil, now: .distantPast
         )
     }
 

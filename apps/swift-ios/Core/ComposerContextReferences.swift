@@ -53,8 +53,10 @@ public enum ComposerContextReferences {
     }
 
     public static func replace(_ text: String, with replacement: (Reference) -> String) -> String {
+        let references = collect(text)
+        guard !references.isEmpty else { return text }
         let result = NSMutableString(string: text)
-        for reference in collect(text).reversed() {
+        for reference in references.reversed() {
             result.replaceCharacters(in: reference.range, with: replacement(reference))
         }
         return result as String

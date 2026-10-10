@@ -443,22 +443,6 @@ public actor T3Client {
         try await rpc.request(RPCMethod.pullRequestsComment.rawValue, payload: .object(payload))
     }
 
-    public func updatePullRequestComment(
-        _ reference: PullRequestRef,
-        commentID: String,
-        kind: PullRequestCommentKind,
-        body: String
-    ) async throws {
-        var payload = try reference.jsonObject
-        payload["commentId"] = .string(commentID)
-        payload["kind"] = .string(kind.rawValue)
-        payload["body"] = .string(body)
-        try await rpc.request(
-            RPCMethod.pullRequestsUpdateComment.rawValue,
-            payload: .object(payload)
-        )
-    }
-
     public func submitPullRequestReview(
         _ reference: PullRequestRef,
         verdict: PullRequestReviewVerdict,
@@ -1214,22 +1198,6 @@ public actor T3Client {
         )
     }
 
-    public func writeProjectFile(
-        cwd: String,
-        relativePath: String,
-        contents: String
-    ) async throws -> ProjectWriteFileResult {
-        try await rpc.request(
-            RPCMethod.projectsWriteFile.rawValue,
-            payload: .object([
-                "cwd": .string(cwd),
-                "relativePath": .string(relativePath),
-                "contents": .string(contents),
-            ]),
-            as: ProjectWriteFileResult.self
-        )
-    }
-
     public func browseFilesystem(
         partialPath: String,
         cwd: String? = nil
@@ -1589,12 +1557,6 @@ public actor T3Client {
         )
     }
 
-    public func initializeVCS(cwd: String, kind: String? = nil) async throws {
-        var payload: [String: JSONValue] = ["cwd": .string(cwd)]
-        if let kind { payload["kind"] = .string(kind) }
-        try await rpc.request(RPCMethod.vcsInitialize.rawValue, payload: .object(payload))
-    }
-
     public func runGitAction(
         cwd: String,
         action: GitStackedAction,
@@ -1877,31 +1839,6 @@ public actor T3Client {
         try await rpc.request(
             RPCMethod.terminalClear.rawValue,
             payload: terminalIdentity(threadID: threadID, terminalID: terminalID)
-        )
-    }
-
-    public func restartTerminal(
-        threadID: String,
-        terminalID: String,
-        cwd: String,
-        worktreePath: String? = nil,
-        columns: Int,
-        rows: Int,
-        environmentVariables: [String: String]? = nil
-    ) async throws -> TerminalSessionSnapshot {
-        let payload = try terminalPayload(
-            threadID: threadID,
-            terminalID: terminalID,
-            cwd: cwd,
-            worktreePath: worktreePath,
-            columns: columns,
-            rows: rows,
-            environmentVariables: environmentVariables
-        )
-        return try await rpc.request(
-            RPCMethod.terminalRestart.rawValue,
-            payload: payload,
-            as: TerminalSessionSnapshot.self
         )
     }
 
@@ -2235,17 +2172,6 @@ public actor EnvironmentRuntime {
         }
     }
 
-    /// Revokes local access before best-effort catalog cleanup. Account
-    /// sign-out uses this so a failed file write cannot leave a managed DPoP
-    /// credential usable.
-    public func revokeCredential(id: String) async throws {
-        invalidateRouteResolution(id: id)
-        try await credentialStore.removeCredential(for: id)
-        if let client = clients.removeValue(forKey: id) {
-            await client.disconnect()
-        }
-    }
-
     /// Returns the cached client for a saved environment without changing the
     /// environment used for new projects and threads.
     public func client(for environment: Environment) async -> T3Client {
@@ -2446,7 +2372,6 @@ public actor EnvironmentRuntime {
 
 public enum RPCMethod: String, Sendable {
     case secretsAnswerRequest = "secrets.answerRequest"
-    case serverProbe = "server.probe"
     case serverGetConfig = "server.getConfig"
     case serverRefreshProviders = "server.refreshProviders"
     case serverUpdateSettings = "server.updateSettings"
@@ -2459,7 +2384,6 @@ public enum RPCMethod: String, Sendable {
     case pullRequestsRunAction = "pullRequests.runAction"
     case pullRequestsUpdate = "pullRequests.update"
     case pullRequestsComment = "pullRequests.comment"
-    case pullRequestsUpdateComment = "pullRequests.updateComment"
     case pullRequestsSubmitReview = "pullRequests.submitReview"
     case pullRequestsReplyToThread = "pullRequests.replyToThread"
     case pullRequestsSetThreadResolution = "pullRequests.setThreadResolution"
@@ -2474,7 +2398,6 @@ public enum RPCMethod: String, Sendable {
     case projectsListEntries = "projects.listEntries"
     case projectsSearchEntries = "projects.searchEntries"
     case projectsReadFile = "projects.readFile"
-    case projectsWriteFile = "projects.writeFile"
     case filesystemBrowse = "filesystem.browse"
     case assetsCreateURL = "assets.createUrl"
     case attachmentsCreateUploadURL = "attachments.createUploadUrl"
@@ -2491,7 +2414,6 @@ public enum RPCMethod: String, Sendable {
     case vcsSwitchRef = "vcs.switchRef"
     case vcsCreateWorktree = "vcs.createWorktree"
     case vcsRemoveWorktree = "vcs.removeWorktree"
-    case vcsInitialize = "vcs.init"
     case gitRunStackedAction = "git.runStackedAction"
     case sourceControlLookup = "sourceControl.lookupRepository"
     case sourceControlClone = "sourceControl.cloneRepository"
@@ -2503,7 +2425,6 @@ public enum RPCMethod: String, Sendable {
     case terminalWrite = "terminal.write"
     case terminalResize = "terminal.resize"
     case terminalClear = "terminal.clear"
-    case terminalRestart = "terminal.restart"
     case terminalClose = "terminal.close"
     case subscribeTerminalEvents
     case subscribeTerminalMetadata

@@ -10,10 +10,10 @@ struct FeatureToolRecoveryTests {
     }
 
     private func failedState(
-        _ operation: FeatureSourceControlOperation = .action(.push, message: nil),
+        _ operation: FeatureGitOperation = .action(.init(action: .push, message: nil)),
         message: String = "remote rejected: non-fast-forward"
-    ) -> FeatureToolFailureState<FeatureSourceControlOperation> {
-        var state = FeatureToolFailureState<FeatureSourceControlOperation>()
+    ) -> FeatureToolFailureState<FeatureGitOperation> {
+        var state = FeatureToolFailureState<FeatureGitOperation>()
         state.begin(operation)
         state.recordFailure(operation, error: StubError(message: message))
         return state
@@ -26,7 +26,7 @@ struct FeatureToolRecoveryTests {
         #expect(state.failure?.title == "Push failed")
         #expect(state.failure?.message == "remote rejected: non-fast-forward")
         #expect(state.failure?.isRetrying == false)
-        #expect(state.retryOperation == .action(.push, message: nil))
+        #expect(state.retryOperation == .action(.init(action: .push, message: nil)))
         #expect(state.focusTarget == .failure)
     }
 
@@ -34,7 +34,7 @@ struct FeatureToolRecoveryTests {
     func retryKeepsFailureContentVisibleWhileItRuns() {
         var state = failedState()
 
-        state.begin(.action(.push, message: nil))
+        state.begin(.action(.init(action: .push, message: nil)))
 
         #expect(state.failure?.message == "remote rejected: non-fast-forward")
         #expect(state.failure?.isRetrying == true)
@@ -60,7 +60,7 @@ struct FeatureToolRecoveryTests {
         state.recordSuccess(.load)
 
         #expect(state.failure?.message == "remote rejected: non-fast-forward")
-        #expect(state.retryOperation == .action(.push, message: nil))
+        #expect(state.retryOperation == .action(.init(action: .push, message: nil)))
         #expect(state.recoveryAnnouncement == nil)
     }
 
@@ -69,9 +69,9 @@ struct FeatureToolRecoveryTests {
         var state = failedState()
         let firstID = state.failure?.id
 
-        state.begin(.action(.push, message: nil))
+        state.begin(.action(.init(action: .push, message: nil)))
         state.recordFailure(
-            .action(.push, message: nil),
+            .action(.init(action: .push, message: nil)),
             error: StubError(message: "remote rejected: still behind")
         )
 
@@ -82,7 +82,7 @@ struct FeatureToolRecoveryTests {
 
     @Test
     func cancellationNeverCreatesAFailure() {
-        var state = FeatureToolFailureState<FeatureSourceControlOperation>()
+        var state = FeatureToolFailureState<FeatureGitOperation>()
         state.begin(.load)
 
         state.recordFailure(.load, error: CancellationError())
@@ -95,21 +95,21 @@ struct FeatureToolRecoveryTests {
     @Test
     func cancellingARetryPreservesTheOriginalFailureContent() {
         var state = failedState()
-        state.begin(.action(.push, message: nil))
+        state.begin(.action(.init(action: .push, message: nil)))
 
         state.recordFailure(
-            .action(.push, message: nil),
+            .action(.init(action: .push, message: nil)),
             error: URLError(.cancelled)
         )
 
         #expect(state.failure?.message == "remote rejected: non-fast-forward")
         #expect(state.failure?.isRetrying == false)
-        #expect(state.retryOperation == .action(.push, message: nil))
+        #expect(state.retryOperation == .action(.init(action: .push, message: nil)))
     }
 
     @Test
     func cancellationIsRecognizedAcrossTheErrorsAThreadDismissalProduces() {
-        typealias State = FeatureToolFailureState<FeatureSourceControlOperation>
+        typealias State = FeatureToolFailureState<FeatureGitOperation>
 
         #expect(State.isCancellation(CancellationError()))
         #expect(State.isCancellation(URLError(.cancelled)))
@@ -122,19 +122,19 @@ struct FeatureToolRecoveryTests {
     func recoveryClearsTheFailureAndAnnouncesItOnce() {
         var state = failedState()
 
-        state.begin(.action(.push, message: nil))
-        state.recordSuccess(.action(.push, message: nil))
+        state.begin(.action(.init(action: .push, message: nil)))
+        state.recordSuccess(.action(.init(action: .push, message: nil)))
 
         #expect(state.failure == nil)
         #expect(state.retryOperation == nil)
         #expect(state.focusTarget == .recoveredContent)
-        #expect(state.takeRecoveryAnnouncement() == "Push succeeded. Repository status updated.")
+        #expect(state.takeRecoveryAnnouncement() == "Push succeeded.")
         #expect(state.takeRecoveryAnnouncement() == nil)
     }
 
     @Test
     func successWithoutAPriorFailureAnnouncesNothing() {
-        var state = FeatureToolFailureState<FeatureSourceControlOperation>()
+        var state = FeatureToolFailureState<FeatureGitOperation>()
 
         state.begin(.load)
         state.recordSuccess(.load)
@@ -148,15 +148,15 @@ struct FeatureToolRecoveryTests {
         var state = failedState(.load)
         state.recordSuccess(.load)
 
-        state.begin(.action(.pull, message: nil))
+        state.begin(.action(.init(action: .pull, message: nil)))
 
         #expect(state.recoveryAnnouncement == nil)
     }
 
     @Test
     func retryReplaysTheExactFailedOperationIncludingItsCommitMessage() {
-        let operation = FeatureSourceControlOperation.action(.commit, message: "fix: retry me")
-        var state = FeatureToolFailureState<FeatureSourceControlOperation>()
+        let operation = FeatureGitOperation.action(.init(action: .commit, message: "fix: retry me"))
+        var state = FeatureToolFailureState<FeatureGitOperation>()
 
         state.begin(operation)
         state.recordFailure(operation, error: StubError(message: "pre-commit hook failed"))
@@ -167,11 +167,8 @@ struct FeatureToolRecoveryTests {
 
     @Test("A post-action refresh failure retries only the refresh", .bug(id: 3801994206))
     func postActionRefreshFailureCannotRepeatTheCompletedAction() {
-        let completedAction = FeatureSourceControlOperation.action(
-            .commit,
-            message: "fix: do not run twice"
-        )
-        var state = FeatureToolFailureState<FeatureSourceControlOperation>()
+        let completedAction = FeatureGitOperation.action(.init(action: .commit, message: "fix: do not run twice"))
+        var state = FeatureToolFailureState<FeatureGitOperation>()
 
         state.begin(completedAction)
         state.recordFollowUpFailure(
@@ -180,14 +177,14 @@ struct FeatureToolRecoveryTests {
             error: StubError(message: "connection lost during refresh")
         )
 
-        #expect(state.failure?.title == "Repository status failed to load")
+        #expect(state.failure?.title == "Repository status failed")
         #expect(state.retryOperation == .load)
         #expect(state.retryOperation != completedAction)
     }
 
     @Test("A successful action refresh consumes a retained load failure", .bug(id: 3826749394))
     func actionRefreshSuccessRecoversAnEarlierLoadFailure() {
-        let action = FeatureSourceControlOperation.action(.push, message: nil)
+        let action = FeatureGitOperation.action(.init(action: .push, message: nil))
         var state = failedState(.load)
 
         state.begin(action)
@@ -195,12 +192,12 @@ struct FeatureToolRecoveryTests {
 
         #expect(state.failure == nil)
         #expect(state.retryOperation == nil)
-        #expect(state.takeRecoveryAnnouncement() == "Repository status loaded.")
+        #expect(state.takeRecoveryAnnouncement() == "Repository status succeeded.")
     }
 
     @Test("A cancelled post-action refresh cannot leave the action retryable")
     func cancelledPostActionRefreshDropsTheCompletedActionFailure() {
-        let completedAction = FeatureSourceControlOperation.action(.push, message: nil)
+        let completedAction = FeatureGitOperation.action(.init(action: .push, message: nil))
         var state = failedState(completedAction)
 
         state.begin(completedAction)
@@ -220,8 +217,8 @@ struct FeatureToolRecoveryTests {
         var state = failedState()
         let firstLabel = state.failure?.retryAccessibilityLabel
 
-        state.begin(.action(.push, message: nil))
-        state.recordFailure(.action(.push, message: nil), error: StubError(message: "again"))
+        state.begin(.action(.init(action: .push, message: nil)))
+        state.recordFailure(.action(.init(action: .push, message: nil)), error: StubError(message: "again"))
 
         #expect(firstLabel == "Retry push")
         #expect(state.failure?.retryAccessibilityLabel == firstLabel)
@@ -229,8 +226,8 @@ struct FeatureToolRecoveryTests {
 
     @Test
     func everySourceControlOperationHasDistinctFailureAndRetryWording() {
-        let operations: [FeatureSourceControlOperation] = [.load]
-            + FeatureSourceControlAction.allCases.map { .action($0, message: nil) }
+        let operations: [FeatureGitOperation] = [.load]
+            + FeatureSourceControlAction.allCases.map { .action(.init(action: $0)) }
 
         let failureTitles = operations.map(\.failureTitle)
         let retryLabels = operations.map(\.retryAccessibilityLabel)
@@ -238,13 +235,13 @@ struct FeatureToolRecoveryTests {
         #expect(Set(failureTitles).count == operations.count)
         #expect(Set(retryLabels).count == operations.count)
         #expect(retryLabels.allSatisfy { $0.hasPrefix("Retry ") })
-        #expect(failureTitles.contains("Repository status failed to load"))
-        #expect(retryLabels.contains("Retry loading repository status"))
+        #expect(failureTitles.contains("Repository status failed"))
+        #expect(retryLabels.contains("Retry repository status"))
     }
 
     @Test
     func emptyErrorTextStillLeavesReadableFailureContent() {
-        var state = FeatureToolFailureState<FeatureSourceControlOperation>()
+        var state = FeatureToolFailureState<FeatureGitOperation>()
 
         state.recordFailure(.load, error: StubError(message: "   "))
 
@@ -254,14 +251,14 @@ struct FeatureToolRecoveryTests {
 
     @Test
     func loadOperationIsDistinguishedFromActions() {
-        #expect(FeatureSourceControlOperation.load.isLoad)
-        #expect(FeatureSourceControlOperation.action(.pull, message: nil).isLoad == false)
+        #expect(FeatureGitOperation.load.isLoad)
+        #expect(FeatureGitOperation.action(.init(action: .pull, message: nil)).isLoad == false)
     }
 
     @Test("Only one source-control request can own the recovery state", .bug(id: 3802036872))
     func runStateRejectsOverlappingOperations() {
-        var state = FeatureToolRunState<FeatureSourceControlOperation>()
-        let action = FeatureSourceControlOperation.action(.push, message: nil)
+        var state = FeatureToolRunState<FeatureGitOperation>()
+        let action = FeatureGitOperation.action(.init(action: .push, message: nil))
 
         let actionDidBegin = state.begin(action)
         let overlappingLoadDidBegin = state.begin(.load)

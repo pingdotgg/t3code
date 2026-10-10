@@ -39,12 +39,12 @@ actor OrchestrationV2Client {
 
     func shellSnapshot(timeoutInterval: TimeInterval? = nil) async throws -> OrchestrationShellSnapshot {
         let epoch = generation
-        let json = try await api.orchestrationV2Snapshot(
+        let snapshot = try await api.orchestrationV2Snapshot(
             path: "/api/orchestration/shell", environment: environment,
-            timeoutInterval: timeoutInterval
+            timeoutInterval: timeoutInterval, as: OrchestrationV2ShellSnapshot.self
         )
         guard generation == epoch else { throw RPCError.disconnected }
-        return try OrchestrationV2Presentation.shellSnapshot(json)
+        return try OrchestrationV2Presentation.shellSnapshot(snapshot)
     }
 
     func archivedShellSnapshot() async throws -> OrchestrationShellSnapshot {
@@ -92,18 +92,19 @@ actor OrchestrationV2Client {
             let page = try await api.orchestrationV2Snapshot(
                 path: path + "/history", environment: environment,
                 queryItems: [URLQueryItem(name: "cursor", value: beforeCursor)],
-                timeoutInterval: timeoutInterval
+                timeoutInterval: timeoutInterval, as: OrchestrationV2ThreadHistoryPage.self
             )
             guard generation == epoch, var current = states[id] else { throw RPCError.disconnected }
             _ = try current.appendHistory(page, beforeCursor: beforeCursor)
             retain(current, id: id)
             return displaySnapshot(current)
         }
-        let json = try await api.orchestrationV2Snapshot(
-            path: path + "/bounded", environment: environment, timeoutInterval: timeoutInterval
+        let snapshot = try await api.orchestrationV2Snapshot(
+            path: path + "/bounded", environment: environment, timeoutInterval: timeoutInterval,
+            as: OrchestrationV2ThreadSnapshot.self
         )
         guard generation == epoch else { throw RPCError.disconnected }
-        let state = try OrchestrationV2ThreadState(snapshot: json)
+        let state = try OrchestrationV2ThreadState(decoded: snapshot)
         guard state.projection.thread.id == id else { throw OrchestrationV2StateError.wrongThread }
         if let current = states[id], current.snapshotSequence > state.snapshotSequence {
             return displaySnapshot(current)
@@ -118,11 +119,12 @@ actor OrchestrationV2Client {
         id: String, timeoutInterval: TimeInterval? = nil
     ) async throws -> OrchestrationThreadDetailSnapshot {
         let epoch = generation
-        let json = try await api.orchestrationV2Snapshot(
-            path: try threadPath(id), environment: environment, timeoutInterval: timeoutInterval
+        let full = try await api.orchestrationV2Snapshot(
+            path: try threadPath(id), environment: environment, timeoutInterval: timeoutInterval,
+            as: OrchestrationV2ThreadSnapshot.self
         )
         guard generation == epoch else { throw RPCError.disconnected }
-        let state = try OrchestrationV2ThreadState(snapshot: json)
+        let state = try OrchestrationV2ThreadState(decoded: full)
         guard state.projection.thread.id == id else { throw OrchestrationV2StateError.wrongThread }
         let normalized = state.normalizedSnapshot()
         var thread = normalized.thread
@@ -284,7 +286,8 @@ actor OrchestrationV2Client {
             let rollback = ["thread.conversation.revert", "thread.checkpoint.revert", "checkpoint.rollback"]
                 .contains(prepared["type"]?.stringValue ?? "")
             let json = try await api.orchestrationV2Snapshot(
-                path: try threadPath(threadID) + (rollback ? "" : "/bounded"), environment: environment
+                path: try threadPath(threadID) + (rollback ? "" : "/bounded"), environment: environment,
+                as: JSONValue.self
             )
             projection = json["projection"]
         } else {

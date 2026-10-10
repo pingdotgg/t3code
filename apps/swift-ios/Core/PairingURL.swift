@@ -19,8 +19,6 @@ public enum PairingURLError: LocalizedError, Equatable {
     case unsupportedScheme
     case missingToken
     case missingHost
-    case emptyQRCode
-    case invalidQRCode
 
     public var errorDescription: String? {
         switch self {
@@ -29,8 +27,6 @@ public enum PairingURLError: LocalizedError, Equatable {
         case .unsupportedScheme: "Pairing URL uses an unsupported scheme."
         case .missingToken: "Pairing URL is missing its token."
         case .missingHost: "Pairing URL is missing its environment host."
-        case .emptyQRCode: "Scanned QR code did not contain a pairing URL."
-        case .invalidQRCode: "Scanned QR code is not a T3 pairing link."
         }
     }
 }
@@ -41,7 +37,7 @@ public enum PairingURL {
     /// Resolves a complete pairing link from a clipboard, universal link, or
     /// QR scanner. `t3code://pair?pairingUrl=...` wrappers are unwrapped.
     public static func resolve(_ rawValue: String) throws -> PairingTarget {
-        let extracted = try extractPairingURL(from: rawValue, qrInput: false)
+        let extracted = try extractPairingURL(from: rawValue)
         let fields = try parseFields(extracted)
         return try directTarget(host: fields.host, credential: requireToken(fields.pairingCode))
     }
@@ -59,7 +55,7 @@ public enum PairingURL {
     /// Splits a complete URL or loose `host code` connection string into the
     /// two fields shown by onboarding.
     public static func parseFields(_ rawValue: String) throws -> PairingInputFields {
-        let extracted = try extractPairingURL(from: rawValue, qrInput: false)
+        let extracted = try extractPairingURL(from: rawValue)
 
         if let loose = looseHostAndCode(extracted) {
             let normalized = try normalizedBaseURL(loose.host)
@@ -115,12 +111,6 @@ public enum PairingURL {
         )
     }
 
-    /// Extracts a pairing URL from a QR payload. Native deep links generated
-    /// by the React Native client are accepted alongside ordinary URLs.
-    public static func pairingURL(fromQRCode payload: String) throws -> String {
-        try extractPairingURL(from: payload, qrInput: true)
-    }
-
     public static func build(host: String, pairingCode: String) throws -> String {
         let base = try normalizedBaseURL(host)
         var components = URLComponents(url: base, resolvingAgainstBaseURL: false)!
@@ -140,13 +130,10 @@ public enum PairingURL {
         try httpBaseURL(from: normalizedBaseURL(rawValue))
     }
 
-    private static func extractPairingURL(
-        from rawValue: String,
-        qrInput: Bool
-    ) throws -> String {
+    private static func extractPairingURL(from rawValue: String) throws -> String {
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            throw qrInput ? PairingURLError.emptyQRCode : PairingURLError.emptyInput
+            throw PairingURLError.emptyInput
         }
 
         guard let components = URLComponents(string: trimmed),
@@ -159,7 +146,7 @@ public enum PairingURL {
             .value?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !wrapped.isEmpty else {
-            throw qrInput ? PairingURLError.invalidQRCode : PairingURLError.invalidURL
+            throw PairingURLError.invalidURL
         }
         return wrapped
     }

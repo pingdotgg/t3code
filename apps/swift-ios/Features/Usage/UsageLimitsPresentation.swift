@@ -120,7 +120,7 @@ enum UsageLimitsPresentation {
     static func providerLabel(driver: String) -> String {
         switch driver {
         case "codex": "Codex"
-        case "claudeAgent": "Claude"
+        case "claudeAgent", "claude": "Claude"
         case "grok": "Grok"
         case "cursor": "Cursor"
         case "opencode": "OpenCode"

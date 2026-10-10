@@ -50,8 +50,6 @@ public final class FeatureRootModel {
     @ObservationIgnored private(set) var inboxReturns = FeatureInboxReturnTracker()
     /// Why the last `startTask` returned nil, for the sheet that made the request.
     public private(set) var lastTaskStartError: String?
-    private(set) var pullRequestsByThreadID: [String: HomeThreadPullRequestPresentation] = [:]
-    private var pullRequestObservationIdentities: [String: String] = [:]
     public private(set) var details: [String: FeatureThreadDetail] = [:]
     private(set) var detailLoadStates: [String: FeatureThreadLoadState] = [:]
     private(set) var threadSyncStates: [String: FeatureThreadSyncState] = [:]
@@ -723,34 +721,6 @@ public final class FeatureRootModel {
         }
     }
 
-    func updatePullRequest(
-        _ pullRequest: HomeThreadPullRequestPresentation?,
-        threadID: String,
-        observationIdentity: String
-    ) {
-        guard snapshot.threads.first(where: { $0.id == threadID })?
-            .pullRequestObservationIdentity == observationIdentity else {
-            return
-        }
-        if pullRequest == nil, pullRequestsByThreadID[threadID] == nil { return }
-        if pullRequestsByThreadID[threadID] == pullRequest,
-           pullRequestObservationIdentities[threadID] == observationIdentity {
-            return
-        }
-        if let pullRequest {
-            pullRequestsByThreadID[threadID] = pullRequest
-            pullRequestObservationIdentities[threadID] = observationIdentity
-        } else {
-            pullRequestsByThreadID.removeValue(forKey: threadID)
-            pullRequestObservationIdentities.removeValue(forKey: threadID)
-        }
-        homePresentationRevision &+= 1
-    }
-
-    func isEffectivelySettled(_ thread: FeatureThread) -> Bool {
-        thread.isEffectivelySettled()
-    }
-
     public func setRuntimeMode(_ id: String, mode: FeatureRuntimeMode) async {
         guard let environmentID = snapshot.threads.first(where: { $0.id == id })?.environmentID else {
             return
@@ -1308,11 +1278,6 @@ public final class FeatureRootModel {
     }
 
     @discardableResult
-    public func saveAppearance(_ appearance: FeatureAppearance) async -> Bool {
-        await savePreference(\.appearance, value: appearance)
-    }
-
-    @discardableResult
     public func saveTextSizes(
         textSize: FeatureTextSizeAdjustment,
         codeSize: FeatureTextSizeAdjustment
@@ -1477,7 +1442,6 @@ public final class FeatureRootModel {
 
     private func upsert(_ thread: FeatureThread) {
         let thread = applyingLocalMessageVisibility(retainingPendingSettlement(in: thread))
-        discardStalePullRequest(for: thread)
         var metadataChanged = false
         var orderChanged = false
         if let index = snapshot.threads.firstIndex(where: { $0.id == thread.id }) {
@@ -1521,8 +1485,6 @@ public final class FeatureRootModel {
         let projectID = snapshot.threads[index].projectID
         snapshot.threads.remove(at: index)
         observeInboxReturns()
-        pullRequestsByThreadID.removeValue(forKey: id)
-        pullRequestObservationIdentities.removeValue(forKey: id)
         adjustProjectCount(id: projectID, by: -1)
         threadRowRevision &+= 1
         homePresentationRevision &+= 1
@@ -1567,13 +1529,6 @@ public final class FeatureRootModel {
         }
         let nextThreads = value.threads.reduce(into: [String: FeatureThread]()) {
             $0[$1.id] = $1
-        }
-        for thread in value.threads {
-            discardStalePullRequest(for: thread)
-        }
-        for id in Array(pullRequestsByThreadID.keys) where nextThreads[id] == nil {
-            pullRequestsByThreadID.removeValue(forKey: id)
-            pullRequestObservationIdentities.removeValue(forKey: id)
         }
         for id in previousThreads.keys where nextThreads[id] == nil {
             removeDetail(id: id)
@@ -1622,15 +1577,6 @@ public final class FeatureRootModel {
         }
     }
 
-    private func discardStalePullRequest(for thread: FeatureThread) {
-        guard let cachedIdentity = pullRequestObservationIdentities[thread.id],
-              cachedIdentity != thread.pullRequestObservationIdentity else {
-            return
-        }
-        pullRequestsByThreadID.removeValue(forKey: thread.id)
-        pullRequestObservationIdentities.removeValue(forKey: thread.id)
-    }
-
     private func mutateThread(
         id: String,
         _ mutation: (inout FeatureThread) -> Void
@@ -1667,22 +1613,7 @@ public final class FeatureRootModel {
         let id = incoming.thread.id
         acknowledgeDeliveredMessages(incoming)
         let prepared = addingPendingMessages(to: incoming)
-        let next = details[id].map { current in
-            FeatureThreadDetail(
-                thread: prepared.thread,
-                messages: replacingChangedSuffix(current.messages, with: prepared.messages),
-                approvals: replacingChangedSuffix(current.approvals, with: prepared.approvals),
-                userInputs: replacingChangedSuffix(current.userInputs, with: prepared.userInputs),
-                page: prepared.page,
-                activeSubagentCount: prepared.activeSubagentCount,
-                backgroundWorkIsActive: prepared.backgroundWorkIsActive,
-                isCompacting: prepared.isCompacting == true,
-                execution: prepared.execution,
-                workflows: prepared.workflows,
-                allowsProviderSwitch: prepared.allowsProviderSwitch,
-                recovery: prepared.recovery
-            )
-        } ?? prepared
+        let next = details[id].map { $0.mergingChangedSuffix(from: prepared) } ?? prepared
         guard details[id] != next else { return }
         details[id] = next
         markDetailRecentlyUsed(id)
@@ -1800,19 +1731,6 @@ public final class FeatureRootModel {
             revision: detailRevision,
             change: change
         )
-    }
-
-    private func replacingChangedSuffix<Element: Equatable>(
-        _ current: [Element],
-        with incoming: [Element]
-    ) -> [Element] {
-        guard current != incoming else { return current }
-        let prefixCount = zip(current, incoming).prefix { pair in
-            pair.0 == pair.1
-        }.count
-        var result = current
-        result.replaceSubrange(prefixCount..., with: incoming.dropFirst(prefixCount))
-        return result
     }
 
     private func restoreOutbox() async {

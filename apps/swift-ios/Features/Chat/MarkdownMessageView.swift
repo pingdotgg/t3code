@@ -705,7 +705,7 @@ private struct CodexArtifactTemplateView: View {
 }
 
 @MainActor
-private enum MarkdownImageLoader {
+enum MarkdownImageLoader {
     private final class CachedImage {
         let decoded: MarkdownDecodedImage
         init(_ decoded: MarkdownDecodedImage) { self.decoded = decoded }

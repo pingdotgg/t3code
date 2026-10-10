@@ -2,8 +2,27 @@ import Foundation
 
 public struct FeatureV2WorkItem: Identifiable, Codable, Equatable, Hashable, Sendable {
     public var source: OrchestrationV2TimelineMetadata
-    public var raw: JSONValue
+    public let raw: JSONValue
+    /// Derived from `raw` once, because both checks parse JSON and run regexes
+    /// and render paths ask for them many times. Not encoded.
+    let indicatesFailure: Bool
+    let hasEmbeddedContent: Bool
     public var id: String { source.projectedID }
+
+    init(source: OrchestrationV2TimelineMetadata, raw: JSONValue) {
+        self.source = source
+        self.raw = raw
+        indicatesFailure = FeatureV2ItemDetail.indicatesFailure(raw)
+        hasEmbeddedContent = FeatureEmbeddedContent.reference(raw: raw) != nil
+    }
+
+    private enum CodingKeys: String, CodingKey { case source, raw }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(source: try container.decode(OrchestrationV2TimelineMetadata.self, forKey: .source),
+                  raw: try container.decode(JSONValue.self, forKey: .raw))
+    }
 
     public var title: String {
         raw["title"]?.stringValue ?? raw["toolName"]?.stringValue
@@ -26,12 +45,12 @@ public struct FeatureV2WorkItem: Identifiable, Codable, Equatable, Hashable, Sen
     }
 
     var isStandaloneContent: Bool {
-        source.itemType == "secret_request" || FeatureEmbeddedContent.reference(raw: raw) != nil
+        source.itemType == "secret_request" || hasEmbeddedContent
     }
 
     var groupingKey: GroupingKey? {
         guard ["command_execution", "dynamic_tool", "file_change", "file_search", "web_search", "reasoning"].contains(source.itemType),
-              !isStandaloneContent, !FeatureV2ItemDetail.indicatesFailure(raw) else { return nil }
+              !isStandaloneContent, !indicatesFailure else { return nil }
         return GroupingKey(sourceThreadID: source.sourceThreadID, visibility: source.visibility,
                            runID: source.runID, providerTurnID: source.providerTurnID, attemptID: source.attemptID)
     }

@@ -76,9 +76,7 @@ enum T3Typography {
 
     static let threadBody = Font.system(.body, design: .default)
     static let threadHeading1 = Font.system(.title2, design: .default, weight: .bold)
-    static let threadHeading2 = Font.system(.title3, design: .default, weight: .bold)
     static let threadHeading3 = Font.system(.headline, design: .default, weight: .bold)
-    static let threadHeading4 = Font.system(.body, design: .default, weight: .semibold)
     static let code = Font.system(.callout, design: .monospaced)
     static let tool = Font.system(.footnote, design: .monospaced)
 

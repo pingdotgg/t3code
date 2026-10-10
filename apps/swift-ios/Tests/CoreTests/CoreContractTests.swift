@@ -15,6 +15,26 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(try JSONEncoder.t3.encode(unsigned), unsignedData)
     }
 
+    func testJSONValueDecodesEveryTokenTypeToItsExactCase() throws {
+        let data = Data(#"{"a":"s","b":1,"c":1.5,"d":true,"e":null,"f":[1,"x"],"g":{"h":18446744073709551615,"i":9007199254740993,"j":"1"}}"#.utf8)
+        let value = try JSONDecoder.t3.decode(JSONValue.self, from: data)
+        XCTAssertEqual(value, .object([
+            "a": .string("s"),
+            "b": .number(1),
+            "c": .number(1.5),
+            "d": .bool(true),
+            "e": .null,
+            "f": .array([.number(1), .string("x")]),
+            "g": .object([
+                "h": .unsignedInteger(UInt64.max),
+                "i": .integer(9_007_199_254_740_993),
+                "j": .string("1"),
+            ]),
+        ]))
+        XCTAssertEqual(try value.decode(JSONValue.self), value)
+        XCTAssertNil(try JSONValue.null.decode(JSONValue?.self))
+    }
+
     func testDirectAndHostedPairingURLsResolveLikeExistingClients() throws {
         let direct = try PairingURL.resolve("https://studio.example/pair#token=secret")
         XCTAssertEqual(direct.credential, "secret")

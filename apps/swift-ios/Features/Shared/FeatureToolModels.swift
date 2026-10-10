@@ -643,13 +643,6 @@ public struct FeatureReviewCommentDraft: Sendable, Equatable, Hashable {
         """
     }
 
-    public func submissionText(contextRecord: ComposerContextRecord) -> String {
-        let reference = ComposerContextReferences.format(contextRecord)
-        return body.utf16.count > 16_000
-            ? prompt + "\n\n" + reference
-            : "Address this review comment: " + reference
-    }
-
     public func contextRecord(lines: [FeatureDiffLine]) -> ComposerContextRecord {
         let range = line?.label ?? "File"
         let selectedIndices = lines.indices.filter { index in
@@ -1010,6 +1003,19 @@ public enum FeatureSourceControlAction: String, CaseIterable, Sendable, Codable 
     case createPullRequest
     case commitAndPush
     case commitPushAndCreatePullRequest
+}
+
+public extension FeatureSourceControlAction {
+    var title: String {
+        switch self {
+        case .commit: "Commit changes"
+        case .push: "Push"
+        case .pull: "Pull latest"
+        case .createPullRequest: "Create pull request"
+        case .commitAndPush: "Commit and push"
+        case .commitPushAndCreatePullRequest: "Commit, push, and create PR"
+        }
+    }
 }
 
 public struct FeatureSourceControlStatus: Sendable, Equatable, Codable {

@@ -726,26 +726,6 @@ struct FeatureComposerPowerTests {
     }
 
     @Test
-    func fileLinksMatchTheSharedComposerFormat() {
-        #expect(
-            FeatureComposerFileLinkSerializer.markdownLink(for: "path/to/package.json")
-                == "[package.json](path/to/package.json)"
-        )
-        #expect(
-            FeatureComposerFileLinkSerializer.markdownLink(for: "docs/My File (draft).md")
-                == "[My File (draft).md](docs/My%20File%20%28draft%29.md)"
-        )
-        #expect(
-            FeatureComposerFileLinkSerializer.markdownLink(for: "C:\\repo\\src\\index.ts")
-                == "[index.ts](C:%5Crepo%5Csrc%5Cindex.ts)"
-        )
-        #expect(
-            FeatureComposerFileLinkSerializer.markdownLink(for: "@scope/package.json")
-                == "[package.json](@scope/package.json)"
-        )
-    }
-
-    @Test
     func commandMenuKeepsProviderNativePlanCommandsWhenLegacyModeIsDisabled() throws {
         let trigger = try #require(FeatureComposerTriggerParser.detect(in: "/"))
         let powerFeatures = FeatureComposerPowerFeatures(
@@ -1374,15 +1354,5 @@ struct FeatureComposerPowerTests {
             currentQuestionIDs: ["one"]
         )
         #expect(reconciled == ["one": kept])
-    }
-
-    @Test
-    func onlyTheExplicitComposerButtonCanSend() {
-        #expect(
-            FeatureComposerSubmissionPolicy.allowsSend(for: .explicitButton)
-        )
-        #expect(
-            !FeatureComposerSubmissionPolicy.allowsSend(for: .returnKey)
-        )
     }
 }

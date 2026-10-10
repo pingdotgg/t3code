@@ -384,7 +384,22 @@ private struct FeatureDiffView: View {
                 .background(T3Colors.surface)
             }
             if isCommenting {
-                commentComposer
+                FeatureDiffCommentComposer(
+                    comment: $comment,
+                    isFocused: $isCommentFocused,
+                    location: commentLocation,
+                    isAppending: isAppending,
+                    error: commentError
+                ) {
+                    isCommenting = false
+                    selectedLine = nil
+                    isCommentFocused = false
+                    commentError = nil
+                } copyPrompt: {
+                    UIPasteboard.general.string = reviewDraft.prompt
+                } submit: {
+                    appendComment()
+                }
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -398,104 +413,6 @@ private struct FeatureDiffView: View {
             }
         }
         .task(id: file.id) { await hydrate() }
-    }
-
-    private var commentComposer: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("REVIEW COMMENT")
-                        .font(T3Typography.eyebrow)
-                        .foregroundStyle(T3Colors.textTertiary)
-                    Text(commentLocation)
-                        .font(T3Typography.supporting)
-                        .foregroundStyle(T3Colors.textSecondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 8)
-                Button {
-                    isCommenting = false
-                    selectedLine = nil
-                    isCommentFocused = false
-                    commentError = nil
-                } label: {
-                    Image(systemName: "xmark")
-                        .frame(width: T3Metrics.minimumTapTarget, height: T3Metrics.minimumTapTarget)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(T3Colors.textSecondary)
-                .accessibilityLabel("Close review comment")
-                .disabled(isAppending)
-            }
-
-            TextField(
-                "What should change?",
-                text: $comment,
-                axis: .vertical
-            )
-            .font(T3Typography.composer)
-            .lineLimit(2 ... 6)
-            .focused($isCommentFocused)
-            .disabled(isAppending)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(T3Colors.input)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(T3Colors.border, lineWidth: 1)
-            }
-
-            if let commentError {
-                Text(commentError)
-                    .font(T3Typography.supporting)
-                    .foregroundStyle(T3Colors.danger)
-            }
-
-            HStack(spacing: 10) {
-                Button {
-                    UIPasteboard.general.string = reviewDraft.prompt
-                } label: {
-                    Label("Copy prompt", systemImage: "doc.on.doc")
-                        .frame(maxWidth: .infinity, minHeight: 42)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(T3Colors.textSecondary)
-                .background(T3Colors.surfaceRaised)
-                .clipShape(RoundedRectangle(cornerRadius: 9))
-                .disabled(trimmedComment.isEmpty)
-
-                Button {
-                    appendComment()
-                } label: {
-                    HStack(spacing: 7) {
-                        if isAppending {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Image(systemName: "plus")
-                        }
-                        Text("Add to draft")
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 42)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white)
-                .background(T3Colors.accent)
-                .clipShape(RoundedRectangle(cornerRadius: 9))
-                .disabled(trimmedComment.isEmpty || isAppending)
-            }
-            .font(T3Typography.control)
-        }
-        .padding(.horizontal, 14)
-        .padding(.top, 10)
-        .padding(.bottom, 8)
-        .background(T3Colors.surface)
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(T3Colors.separator)
-                .frame(height: 1)
-        }
     }
 
     private var trimmedComment: String {
@@ -574,6 +491,112 @@ private struct FeatureDiffView: View {
                 commentError = error.localizedDescription
             }
         }
+    }
+}
+
+/// The review comment field. It owns the reads of the draft text so typing
+/// only re-renders this composer, not the diff lines above it.
+private struct FeatureDiffCommentComposer: View {
+    @Binding var comment: String
+    var isFocused: FocusState<Bool>.Binding
+    let location: String
+    let isAppending: Bool
+    let error: String?
+    let close: () -> Void
+    let copyPrompt: () -> Void
+    let submit: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("REVIEW COMMENT")
+                        .font(T3Typography.eyebrow)
+                        .foregroundStyle(T3Colors.textTertiary)
+                    Text(location)
+                        .font(T3Typography.supporting)
+                        .foregroundStyle(T3Colors.textSecondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Button(action: close) {
+                    Image(systemName: "xmark")
+                        .frame(width: T3Metrics.minimumTapTarget, height: T3Metrics.minimumTapTarget)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(T3Colors.textSecondary)
+                .accessibilityLabel("Close review comment")
+                .disabled(isAppending)
+            }
+
+            TextField(
+                "What should change?",
+                text: $comment,
+                axis: .vertical
+            )
+            .font(T3Typography.composer)
+            .lineLimit(2 ... 6)
+            .focused(isFocused)
+            .disabled(isAppending)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(T3Colors.input)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(T3Colors.border, lineWidth: 1)
+            }
+
+            if let error {
+                Text(error)
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.danger)
+            }
+
+            HStack(spacing: 10) {
+                Button(action: copyPrompt) {
+                    Label("Copy prompt", systemImage: "doc.on.doc")
+                        .frame(maxWidth: .infinity, minHeight: 42)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(T3Colors.textSecondary)
+                .background(T3Colors.surfaceRaised)
+                .clipShape(RoundedRectangle(cornerRadius: 9))
+                .disabled(trimmedComment.isEmpty)
+
+                Button(action: submit) {
+                    HStack(spacing: 7) {
+                        if isAppending {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "plus")
+                        }
+                        Text("Add to draft")
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 42)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white)
+                .background(T3Colors.accent)
+                .clipShape(RoundedRectangle(cornerRadius: 9))
+                .disabled(trimmedComment.isEmpty || isAppending)
+            }
+            .font(T3Typography.control)
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .background(T3Colors.surface)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(T3Colors.separator)
+                .frame(height: 1)
+        }
+    }
+
+    private var trimmedComment: String {
+        comment.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

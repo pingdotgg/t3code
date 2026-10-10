@@ -17,7 +17,7 @@ enum FeatureV2TurnFolding {
             guard let key = runKey(message) else { continue }
             if message.state == .streaming || message.v2Timeline?.runStatus != "completed"
                 || message.v2Timeline?.itemType == "run_interrupt_result"
-                || message.v2WorkItems?.contains(where: { FeatureV2ItemDetail.indicatesFailure($0.raw) || $0.source.itemType == "run_interrupt_result" }) == true {
+                || message.v2WorkItems?.contains(where: { $0.indicatesFailure || $0.source.itemType == "run_interrupt_result" }) == true {
                 blockedRuns.insert(key)
             }
             if message.role == .assistant {

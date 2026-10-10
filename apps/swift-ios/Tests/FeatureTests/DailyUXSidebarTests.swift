@@ -18,9 +18,11 @@ struct DailyUXSidebarTests {
             children.append(child)
         }
         let threads = [ordinary, fork] + children
-        let index = DailyUXSidebarIndex(snapshot: FeatureSnapshot(threads: threads), query: "Task", now: now)
+        let snapshot = FeatureSnapshot(threads: threads)
+        let index = DailyUXSidebarIndex(snapshot: snapshot, now: now)
+        let search = HomePresentation(snapshot: snapshot, query: "Task", projectID: nil, now: now)
         #expect(Set(index.active.map(\.id)) == ["ordinary", "fork"])
-        #expect(Set(index.searchResults.map(\.id)) == ["ordinary", "fork"])
+        #expect(Set(search.searchResults.map(\.id)) == ["ordinary", "fork"])
         #expect(DailyUXSidebarIndex.orderedSection(threads, section: .active, now: now).count == 2)
         children[0].pinnedAt = now
         children[1].isSettled = true
@@ -242,18 +244,11 @@ struct DailyUXSidebarTests {
     }
 
     @Test
-    func mergedPullRequestsAndAgeCannotHideUnsettledThreads() {
+    func ageCannotHideUnsettledThreads() {
         let oldThread = thread(id: "old", created: -400_000, updated: -300_000)
-        let merged = HomeThreadPullRequestPresentation(
-            number: 42,
-            state: .merged,
-            updatedAt: now.addingTimeInterval(-400)
-        )
         let index = DailyUXSidebarIndex(
             snapshot: FeatureSnapshot(threads: [oldThread]),
-            query: "",
-            now: now,
-            pullRequestsByThreadID: [oldThread.id: merged]
+            now: now
         )
 
         #expect(!oldThread.isEffectivelySettled())
@@ -347,7 +342,6 @@ struct DailyUXSidebarTests {
         #expect(makeIndex([thread]).snoozed.map(\.id) == ["timed"])
         let expired = DailyUXSidebarIndex(
             snapshot: FeatureSnapshot(threads: [thread]),
-            query: "",
             now: now.addingTimeInterval(31)
         )
         #expect(expired.active.map(\.id) == ["timed"])
@@ -432,8 +426,8 @@ struct DailyUXSidebarTests {
         let server = thread(id: "server", projectID: "p2", title: "Compression", created: -20, updated: -5)
         let snapshot = FeatureSnapshot(projects: projects, threads: [mobile, server])
 
-        let filtered = DailyUXSidebarIndex(snapshot: snapshot, query: "", projectID: "p1", now: now)
-        let searched = DailyUXSidebarIndex(snapshot: snapshot, query: "server", now: now)
+        let filtered = DailyUXSidebarIndex(snapshot: snapshot, projectID: "p1", now: now)
+        let searched = HomePresentation(snapshot: snapshot, query: "server", projectID: nil, now: now)
 
         #expect(filtered.active.map(\.id) == ["mobile"])
         #expect(searched.searchResults.map(\.id) == ["server"])
@@ -482,7 +476,7 @@ struct DailyUXSidebarTests {
         let scoped = FeatureSnapshot(projects: projects, threads: [local, remote])
 
         #expect(
-            DailyUXSidebarIndex(snapshot: scoped, query: "server", now: now)
+            HomePresentation(snapshot: scoped, query: "server", projectID: nil, now: now)
                 .searchResults.map(\.id) == ["remote-thread"]
         )
 
@@ -506,7 +500,7 @@ struct DailyUXSidebarTests {
             ]
         )
         #expect(
-            DailyUXSidebarIndex(snapshot: legacyDuplicates, query: "server", now: now)
+            HomePresentation(snapshot: legacyDuplicates, query: "server", projectID: nil, now: now)
                 .searchResults.map(\.id) == ["legacy"]
         )
     }
@@ -543,7 +537,7 @@ struct DailyUXSidebarTests {
         )
 
         let snapshot = FeatureSnapshot(threads: [approval, input, failed, working])
-        let index = DailyUXSidebarIndex(snapshot: snapshot, query: "", now: now)
+        let index = DailyUXSidebarIndex(snapshot: snapshot, now: now)
 
         #expect(index.active.map(\.id) == ["approval", "input", "failed", "working"])
         #expect(
@@ -605,7 +599,6 @@ struct DailyUXSidebarTests {
     private func makeIndex(_ threads: [FeatureThread]) -> DailyUXSidebarIndex {
         DailyUXSidebarIndex(
             snapshot: FeatureSnapshot(threads: threads),
-            query: "",
             now: now
         )
     }
