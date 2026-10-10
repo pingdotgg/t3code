@@ -31,6 +31,9 @@ The v2 checks pin these invariants:
   the wire boundary, including small outputs. Explicit failure flags and bounded result IDs
   preserve status and grouped action counts without shipping those bodies. Persisted events
   remain complete; the existing diff endpoints still provide file content when requested.
+  Explicit cross-environment transcript exports preserve full tool bodies so the destination
+  agent can read the context. The export rejects timeline JSON above the file attachment limit
+  before sending it; the client still applies its attachment limit to the complete file.
 - The initial shell contains active navigation rows only. Archived rows use the dedicated archive
   query, and transcript message bodies stay in thread detail regardless of message size.
 - Shell resume sends deltas plus compact repository-enrichment metadata, not another full project

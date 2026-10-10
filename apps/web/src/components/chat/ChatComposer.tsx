@@ -40,6 +40,7 @@ import type {
   SnapShotSource,
 } from "@t3tools/contracts";
 import {
+  EnvironmentRequestInvalidError,
   AuthOrchestrationOperateScope,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -49,6 +50,8 @@ import {
   PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import * as Schema from "effect/Schema";
 import {
   isPasteAsTextShortcut,
   nextPastedTextFileName,
@@ -65,6 +68,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useEffectEvent,
   useId,
   useImperativeHandle,
   useLayoutEffect,
@@ -253,6 +257,8 @@ import { resolveAssetUrl } from "~/assets/assetUrls";
 import { assetEnvironment } from "~/state/assets";
 import { readPreparedConnection } from "~/state/session";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
+import { orchestrationEnvironment } from "~/state/orchestration";
+import { threadContextAttachment } from "~/lib/threadContextAttachment";
 import {
   pullRequestEnvironment,
   usePullRequestList,
@@ -331,6 +337,10 @@ import {
 import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { pendingDraftWork } from "./pendingDraftWork";
+import {
+  importComposerThreadAttachment,
+  remainingComposerAttachmentSlots,
+} from "./composerThreadImport";
 import { isTimelineScrollTarget } from "./timelineScrollTarget";
 import {
   createComposerScrollGestureState,
@@ -412,6 +422,7 @@ function SnapShotAttachmentFrame({
 }
 
 const COMPOSER_PULL_REQUEST_LIST_LIMIT = 99;
+const isEnvironmentRequestInvalidError = Schema.is(EnvironmentRequestInvalidError);
 const COMPOSER_PULL_REQUEST_RESULT_LIMIT = 12;
 const EMPTY_PULL_REQUEST_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>> =
   [];
@@ -2513,6 +2524,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    * the next draft.
    */
   const pendingImageCompressionsRef = useRef<Map<string, number>>(new Map());
+  const pendingThreadImportsRef = useRef<Map<string, number>>(new Map());
   const isRevertingCheckpointRef = useRef(isRevertingCheckpoint);
   isRevertingCheckpointRef.current = isRevertingCheckpoint;
 
@@ -3194,6 +3206,41 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ],
   );
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
+  const loadThreadTranscript = useAtomCommand(orchestrationEnvironment.threadTranscript, {
+    reportFailure: false,
+  });
+  const countReservedAttachments = useCallback(() => {
+    const questionRequest = pendingUserInputs[0];
+    const otherQuestionKeys =
+      questionAttachmentTarget && questionRequest && activeThreadId
+        ? questionRequest.questions
+            .map((question) =>
+              questionAttachmentDraftId(
+                environmentId,
+                activeThreadId,
+                questionRequest.requestId,
+                question.id,
+              ),
+            )
+            .filter((key) => key !== questionAttachmentTarget)
+        : [];
+    const draft = getComposerDraft(attachmentDraftTarget);
+    return (
+      (draft?.images.length ?? 0) +
+      (draft?.files.length ?? 0) +
+      (pendingImageCompressionsRef.current.get(attachmentTargetKey) ?? 0) +
+      (pendingThreadImportsRef.current.get(attachmentTargetKey) ?? 0) +
+      countQuestionAttachments(otherQuestionKeys)
+    );
+  }, [
+    activeThreadId,
+    attachmentDraftTarget,
+    attachmentTargetKey,
+    environmentId,
+    getComposerDraft,
+    pendingUserInputs,
+    questionAttachmentTarget,
+  ]);
   /**
    * Bytes for a pasted image or file come back through the source environment's asset URL
    * (the client is the only party that can reach both) and re-enter this draft as a normal
@@ -3244,6 +3291,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       // The draft these bytes belong to may have been sent or switched away from while they
       // downloaded. Dropping them here keeps them out of whatever draft is open now.
       if (attachmentTargetKeyRef.current !== importTargetKey) return;
+      const replacesFileMarker =
+        record.kind === "file" &&
+        composerFilesRef.current.some(
+          (candidate) =>
+            composerFileNeedsReattach(candidate) &&
+            composerFileMatchesReattachMarker(candidate, {
+              name: record.name,
+              mimeType: file.type,
+              sizeBytes: file.size,
+            }),
+        );
+      if (
+        !replacesFileMarker &&
+        (pendingThreadImportsRef.current.get(importTargetKey) ?? 0) > 0 &&
+        countReservedAttachments() >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS
+      ) {
+        fail("The attachment limit has been reached.");
+        return;
+      }
       if (record.kind === "image") {
         const accepted = addComposerImage({
           type: "image",
@@ -3271,7 +3337,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           fail("The draft rejected this attachment (duplicate or attachment limit reached).");
       }
     },
-    [addComposerFilesToDraft, addComposerImage, attachmentTargetKey, createAssetUrl],
+    [
+      addComposerFilesToDraft,
+      addComposerImage,
+      composerFilesRef,
+      countReservedAttachments,
+      createAssetUrl,
+    ],
   );
   const importAttachmentRecord = useCallback(
     async (
@@ -4269,7 +4341,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         event?.preventDefault();
         toastManager.add({
           type: "info",
-          title: "Still bringing a pasted attachment into this message.",
+          title: "Still bringing attached context into this message.",
           description: "Send again once its chip resolves.",
         });
         return;
@@ -4747,11 +4819,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           }
           appendedFiles.push(restored);
         }
-        const capacity = Math.max(
-          0,
-          PROVIDER_SEND_TURN_MAX_ATTACHMENTS -
-            composerImagesRef.current.length -
-            composerFilesNow.length,
+        const capacity = remainingComposerAttachmentSlots(
+          composerImagesRef.current.length + composerFilesNow.length,
+          pendingThreadImportsRef.current.get(composerTargetKey(composerDraftTarget)) ?? 0,
         );
         // Marker replacements reuse their marker's slot; only appended files
         // consume capacity.
@@ -4806,12 +4876,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             (image) => `${image.mimeType}\0${image.sizeBytes}\0${image.name}`,
           ),
         );
-        const capacity = Math.max(
-          0,
-          PROVIDER_SEND_TURN_MAX_ATTACHMENTS -
-            composerImagesRef.current.length -
-            composerFilesRef.current.length -
-            restoredFileCount,
+        const capacity = remainingComposerAttachmentSlots(
+          composerImagesRef.current.length + composerFilesRef.current.length + restoredFileCount,
+          pendingThreadImportsRef.current.get(composerTargetKey(composerDraftTarget)) ?? 0,
         );
         const pending = entry.attachments.filter(
           (attachment) =>
@@ -4928,7 +4995,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (pendingDraftWork.has(attachmentTargetKeyRef.current)) {
       toastManager.add({
         type: "info",
-        title: "Still bringing a pasted attachment into this message.",
+        title: "Still bringing attached context into this message.",
         description: "Stash again once its chip resolves.",
       });
       return;
@@ -5763,28 +5830,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Callbacks: attachments
   // ------------------------------------------------------------------
-  const countReservedAttachments = () => {
-    const questionRequest = pendingUserInputs[0];
-    const otherQuestionKeys =
-      questionAttachmentTarget && questionRequest && activeThreadId
-        ? questionRequest.questions
-            .map((question) =>
-              questionAttachmentDraftId(
-                environmentId,
-                activeThreadId,
-                questionRequest.requestId,
-                question.id,
-              ),
-            )
-            .filter((key) => key !== questionAttachmentTarget)
-        : [];
-    return (
-      composerImagesRef.current.length +
-      composerFilesRef.current.length +
-      (pendingImageCompressionsRef.current.get(attachmentTargetKey) ?? 0) +
-      countQuestionAttachments(otherQuestionKeys)
-    );
-  };
   /** Resolves true when at least one chip was inserted for the accepted attachments. */
   const addComposerAttachments = async (
     files: File[],
@@ -6269,29 +6314,87 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
   });
 
-  // Sidebar thread drops arrive as a DOM event on the form (see threadContextDrag.ts).
+  const attachDroppedThreadFile = useEffectEvent((file: File) => addComposerAttachments([file]));
+  const importDroppedThread = useEffectEvent(
+    async (ref: ScopedThreadRef, isActive: () => boolean) => {
+      const targetKey = attachmentTargetKey;
+      pendingDraftWork.begin(targetKey);
+      const loadingToast = toastManager.add({
+        type: "loading",
+        title: "Loading thread context…",
+        timeout: 0,
+        data: { threadRef: routeThreadRef, hideCopyButton: true },
+      });
+      try {
+        await importComposerThreadAttachment({
+          targetKey,
+          pendingImports: pendingThreadImportsRef.current,
+          countReservedAttachments,
+          load: async () => {
+            const result = await loadThreadTranscript({
+              environmentId: ref.environmentId,
+              input: { threadId: ref.threadId },
+            });
+            if (result._tag !== "Success") {
+              throw squashAtomCommandFailure(result);
+            }
+            return threadContextAttachment(ref.environmentId, result.value);
+          },
+          isActive,
+          attach: attachDroppedThreadFile,
+          onLimitReached: () => {
+            if (activeThreadId) {
+              setThreadError(
+                activeThreadId,
+                `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
+              );
+            }
+          },
+        });
+      } catch (error) {
+        if (!isActive()) return;
+        toastManager.add({
+          type: "error",
+          title: "Unable to read the dropped thread",
+          description:
+            isEnvironmentRequestInvalidError(error) &&
+            error.reason === "thread_transcript_too_large"
+              ? "This thread exceeds the attachment size limit. Try a shorter thread."
+              : "Check that its environment is connected and up to date, then try again.",
+        });
+      } finally {
+        toastManager.close(loadingToast);
+        pendingDraftWork.end(targetKey);
+      }
+    },
+  );
+
   useEffect(() => {
     const form = composerFormRef.current;
     if (!form) return;
+    let active = true;
+    const targetKey = attachmentTargetKey;
     const onThreadDrop = (event: Event) => {
       const refs = (event as CustomEvent<ReadonlyArray<ScopedThreadRef>>).detail;
-      if (refs.some((ref) => ref.environmentId !== environmentId)) {
-        toastManager.add({
-          type: "error",
-          title: "Use threads from this environment",
-          description: "The agent can only read threads on its own server.",
-        });
-        return;
-      }
       const records = refs.flatMap((ref) => {
+        if (ref.environmentId !== environmentId) {
+          void importDroppedThread(
+            ref,
+            () => active && attachmentTargetKeyRef.current === targetKey,
+          );
+          return [];
+        }
         const shell = readThreadShell(ref);
         return shell ? [threadContextRecord(ref, shell.title)] : [];
       });
       if (records.length > 0) addComposerDraftThreadContexts(composerDraftTarget, records);
     };
     form.addEventListener(THREAD_CONTEXT_DROP_EVENT, onThreadDrop);
-    return () => form.removeEventListener(THREAD_CONTEXT_DROP_EVENT, onThreadDrop);
-  }, [addComposerDraftThreadContexts, composerDraftTarget, environmentId]);
+    return () => {
+      active = false;
+      form.removeEventListener(THREAD_CONTEXT_DROP_EVENT, onThreadDrop);
+    };
+  }, [addComposerDraftThreadContexts, attachmentTargetKey, composerDraftTarget, environmentId]);
 
   const onComposerMentionDragLeaveCapture = (event: React.DragEvent<HTMLFormElement>) => {
     if (!dataTransferHasComposerMention(event.dataTransfer.types)) return;
@@ -6440,7 +6543,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         focusComposer();
       },
       hasPendingAttachments: () =>
-        (pendingImageCompressionsRef.current.get(attachmentTargetKey) ?? 0) > 0,
+        (pendingImageCompressionsRef.current.get(attachmentTargetKey) ?? 0) > 0 ||
+        pendingDraftWork.has(attachmentTargetKey),
       insertTextAtEnd: insertComposerTextAtEnd,
       pasteTextAtEnd: (text: string, options) => {
         const bypassAutoAttachment =
