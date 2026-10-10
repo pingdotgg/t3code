@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 
 import { EnvironmentId, type AuthEnvironmentScope } from "@t3tools/contracts";
+import { createRoot } from "react-dom/client";
+import { useThreadFindHighlights } from "./chat/threadFindHighlights";
+import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
+import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
+
+import { MarkdownFindContext } from "./chat/markdownFindContext";
 import { act, type ComponentProps, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -12,6 +18,10 @@ import { Button } from "./ui/button";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
+vi.mock("./chat/MermaidDiagram", () => ({
+  // Real Mermaid needs layout APIs jsdom lacks; a rendered diagram is an SVG.
+  MermaidDiagram: () => <svg aria-label="Diagram" />,
+}));
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
 vi.mock("../hooks/useSettings", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../hooks/useSettings")>();
@@ -861,15 +871,15 @@ describe("ChatMarkdown heading levels", () => {
       />,
     );
 
-    expect(html).toContain('<h1 aria-level="4">Top</h1>');
-    expect(html).toContain('<h2 aria-level="5">Section</h2>');
-    expect(html).toContain('<h6 aria-level="6">Fine print</h6>');
+    expect(html).toContain('<h1 id="user-content-top" aria-level="4">Top</h1>');
+    expect(html).toContain('<h2 id="user-content-section" aria-level="5">Section</h2>');
+    expect(html).toContain('<h6 id="user-content-fine-print" aria-level="6">Fine print</h6>');
   });
 
   it("leaves heading levels alone when the markdown is not nested", () => {
     const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text="# Top" />);
 
-    expect(html).toContain("<h1>Top</h1>");
+    expect(html).toContain('<h1 id="user-content-top">Top</h1>');
   });
 });
 
@@ -1033,4 +1043,306 @@ describe("ChatMarkdown Windows file links", () => {
     expect(html).not.toContain("d:alert");
     expect(html).not.toContain("chat-markdown-file-link");
   });
+});
+
+it("opens a disclosure only when find selects a match inside it", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal(
+    "Highlight",
+    class extends Set<Range> {
+      constructor(...ranges: Range[]) {
+        super(ranges);
+      }
+    },
+  );
+  const highlights = new Map<string, Set<Range>>();
+  vi.stubGlobal("CSS", { highlights, escape: (value: string) => value });
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const openStates = () =>
+    [...container.querySelectorAll("[data-markdown-details-open]")].map((node) =>
+      node.getAttribute("data-markdown-details-open"),
+    );
+  function Probe({
+    activeOccurrence,
+    searching = true,
+  }: {
+    activeOccurrence: number;
+    searching?: boolean;
+  }) {
+    useThreadFindHighlights({
+      container,
+      query: searching ? "needle" : "",
+      activeRowId: "row",
+      activeOccurrence,
+      onActiveRange: () => {},
+    });
+    return (
+      <div data-timeline-row-id="row">
+        <div data-thread-find-text>
+          <MarkdownFindContext value={searching}>
+            <ChatMarkdown
+              cwd={undefined}
+              text={[
+                "Visible needle.",
+                "<details><summary>Unrelated</summary><p>nothing here</p></details>",
+                "<details><summary>Outer</summary><details><summary>Inner</summary><p>needle</p></details></details>",
+              ].join("\n\n")}
+            />
+          </MarkdownFindContext>
+        </div>
+      </div>
+    );
+  }
+  const frame = () =>
+    act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  try {
+    // Closed panels are unmounted until find starts, as in the app.
+    await act(() => root.render(<Probe activeOccurrence={0} searching={false} />));
+    expect(container.textContent).not.toContain("nothing here");
+    await act(() => root.render(<Probe activeOccurrence={0} />));
+    await frame();
+    // Selecting the visible match opens nothing; the folded one is counted but not painted.
+    expect(openStates()).toEqual(["false", "false", "false"]);
+    expect(container.textContent).toContain("nothing here");
+    expect(
+      [...(highlights.get("t3-thread-find-active") ?? [])].map((range) => range.toString()),
+    ).toEqual(["needle"]);
+    expect(highlights.get("t3-thread-find")?.size).toBe(0);
+
+    await act(() => root.render(<Probe activeOccurrence={1} />));
+    await frame();
+    await frame();
+    // Stepping to the folded match opens its two ancestors, not the unrelated one.
+    expect(openStates()).toEqual(["false", "true", "true"]);
+    expect(highlights.get("t3-thread-find-active")?.size).toBe(1);
+  } finally {
+    await act(() => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
+  }
+});
+
+it("keeps Mermaid diagrams rendered until find selects a match in their source", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal(
+    "Highlight",
+    class extends Set<Range> {
+      constructor(...ranges: Range[]) {
+        super(ranges);
+      }
+    },
+  );
+  const highlights = new Map<string, Set<Range>>();
+  vi.stubGlobal("CSS", { highlights, escape: (value: string) => value });
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const diagram = "```mermaid\ngraph TD; Alpha-->Beta\n```";
+  function Probe({ query }: { query: string }) {
+    useThreadFindHighlights({
+      container,
+      query,
+      activeRowId: "row",
+      activeOccurrence: 0,
+      onActiveRange: () => {},
+    });
+    return (
+      <div data-timeline-row-id="row">
+        <div data-thread-find-text>
+          <MarkdownFindContext value={true}>
+            <ChatMarkdown cwd={undefined} text={`Needle first.\n\n${diagram}\n\n${diagram}`} />
+          </MarkdownFindContext>
+        </div>
+      </div>
+    );
+  }
+  const frame = () =>
+    act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  const diagrams = () => container.querySelectorAll('svg[aria-label="Diagram"]').length;
+  try {
+    await act(() => root.render(<Probe query="Needle" />));
+    await frame();
+    expect(diagrams()).toBe(2);
+    await act(() => root.render(<Probe query="Alpha" />));
+    await frame();
+    await frame();
+    // Only the diagram holding the selected match switches to source.
+    expect(diagrams()).toBe(1);
+    expect(
+      [...(highlights.get("t3-thread-find-active") ?? [])].map((range) => range.toString()),
+    ).toEqual(["Alpha"]);
+  } finally {
+    await act(() => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
+  }
+});
+
+it.each([
+  {
+    text: "```mermaid\ngraph TD; SearchSourceAlpha-->B\n```",
+    query: "SearchSourceAlpha",
+    count: 1,
+  },
+  {
+    text: "★ Insight ─────\nfirst line\nsecond line",
+    query: "first line second",
+    count: 0,
+    lineBreaks: true,
+  },
+  { text: '```ts title="src/needle.ts"\nconst a = 1;\n```', query: "needle", count: 0 },
+  { text: "```weirdlang\nconst a = 1;\n```", query: "weirdlang", count: 0 },
+  { text: "Use $test-t3-app now", query: "T3 App Testing", count: 1 },
+  { text: "`/tmp/file.ts:42`", query: "file.ts · L42", count: 1, user: true, lineBreaks: true },
+  { text: "> [!NOTE]\n> Searchable alert", query: "Searchable alert", count: 1 },
+  {
+    text: "<details><summary>Folded</summary><p>Hidden needle</p></details>",
+    query: "Hidden needle",
+    count: 1,
+  },
+  { text: ARTIFACT_TEMPLATE_DIRECTIVE, query: "Hello World", count: 1, useTemplate: true },
+  { text: ARTIFACT_TEMPLATE_DIRECTIVE, query: "Document template", count: 1, useTemplate: true },
+  { text: ARTIFACT_TEMPLATE_DIRECTIVE, query: "World Document", count: 0, useTemplate: true },
+  { text: ARTIFACT_TEMPLATE_DIRECTIVE, query: "Use template", count: 0, useTemplate: true },
+])(
+  "highlights the indexed occurrences of $query in $text",
+  async ({ text, query, count, lineBreaks, user, useTemplate }) => {
+    const skills = [{ name: "test-t3-app", displayName: "T3 App Testing" }];
+    const highlights = new Map<string, Set<Range>>();
+    vi.stubGlobal(
+      "Highlight",
+      class extends Set<Range> {
+        constructor(...ranges: Range[]) {
+          super(ranges);
+        }
+      },
+    );
+    vi.stubGlobal("CSS", { highlights, escape: (value: string) => value });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    function Probe() {
+      useThreadFindHighlights({
+        container,
+        query,
+        activeRowId: "row",
+        activeOccurrence: 0,
+        onActiveRange: () => {},
+      });
+      return (
+        <div data-timeline-row-id="row">
+          <div data-thread-find-text>
+            <MarkdownFindContext value={true}>
+              <ChatMarkdown
+                text={text}
+                cwd={undefined}
+                skills={skills}
+                lineBreaks={lineBreaks ?? false}
+                parseRawHtml={!user}
+                onUseArtifactTemplate={useTemplate ? () => undefined : undefined}
+              />
+            </MarkdownFindContext>
+          </div>
+        </div>
+      );
+    }
+    try {
+      await act(() => root.render(<Probe />));
+      await act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+      const ranges = [...highlights.values()].flatMap((value) => [...value]);
+      expect(ranges.map((range) => range.toString())).toEqual(
+        Array.from({ length: count }, () => query),
+      );
+      const segments =
+        searchableMessageSegments(
+          { role: user ? "user" : "assistant", text, streaming: false },
+          undefined,
+          skills,
+        ) ?? [];
+      expect(
+        segments.reduce((sum, segment) => sum + countThreadSearchOccurrences(segment, query), 0),
+      ).toBe(count);
+    } finally {
+      await act(() => root.unmount());
+      container.remove();
+      vi.unstubAllGlobals();
+    }
+  },
+);
+
+describe("ChatMarkdown heading ids", () => {
+  it("never gives two headings the same id, even when a suffix matches another heading", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        parseRawHtml
+        text={
+          '## Setup\n\n## Setup\n\n## Setup-1\n\n<h2 id="install-1">Pinned</h2>\n\n## Install\n\n## Install'
+        }
+      />,
+    );
+    const ids = [...html.matchAll(/<h2 id="([^"]+)"/g)].map((match) => match[1]);
+    expect(ids).toEqual([
+      "user-content-setup",
+      "user-content-setup-1",
+      "user-content-setup-1-1",
+      "user-content-install-1",
+      "user-content-install",
+      "user-content-install-2",
+    ]);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe("ChatMarkdown in-page links", () => {
+  it.each([true, false])(
+    "scrolls a table-of-contents link to its heading without touching the URL (parseRawHtml=%s)",
+    async (parseRawHtml) => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const { createRoot } = await import("react-dom/client");
+      const container = document.createElement("div");
+      document.body.append(container);
+      const root = createRoot(container);
+      window.history.replaceState(null, "", "/#/env/thread");
+      const scrollIntoView = vi.fn();
+      HTMLElement.prototype.scrollIntoView = scrollIntoView;
+      try {
+        await act(async () => {
+          root.render(
+            <ChatMarkdown
+              cwd="/tmp/project"
+              parseRawHtml={parseRawHtml}
+              text={
+                "- [Operating model](#1-operating-model)\n- [Missing](#nowhere)\n\n## 1. Operating model\n\n## 1. Operating model"
+              }
+            />,
+          );
+        });
+        const headings = [...container.querySelectorAll("h2")];
+        expect(headings.map((heading) => heading.id)).toEqual([
+          "user-content-1-operating-model",
+          "user-content-1-operating-model-1",
+        ]);
+
+        const [tocLink, missingLink] = [...container.querySelectorAll("a")];
+        const click = () => new MouseEvent("click", { bubbles: true, cancelable: true });
+        const tocClick = click();
+        tocLink!.dispatchEvent(tocClick);
+        expect(tocClick.defaultPrevented).toBe(true);
+        expect(scrollIntoView.mock.contexts).toEqual([headings[0]]);
+
+        const missingClick = click();
+        missingLink!.dispatchEvent(missingClick);
+        expect(missingClick.defaultPrevented).toBe(true);
+        expect(scrollIntoView).toHaveBeenCalledTimes(1);
+        expect(window.location.hash).toBe("#/env/thread");
+      } finally {
+        await act(async () => root.unmount());
+        container.remove();
+      }
+    },
+  );
 });

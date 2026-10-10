@@ -18,7 +18,7 @@ import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import { deriveProviderInstanceConfigMap } from "./ProviderInstanceRegistryHydration.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
-import { mergeProviderInstanceEnvironment } from "./ProviderInstanceEnvironment.ts";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 
 const ANTIGRAVITY = ProviderDriverKind.make("antigravity");
 const hasBinaryPath = Schema.is(Schema.Struct({ binaryPath: Schema.String }));
@@ -134,18 +134,21 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
       true,
     );
     const entries = yield* readEntries(input.instanceId, "remove-install");
-    const protectedPaths = yield* Effect.forEach(Object.values(entries), (entry) => {
-      if (!hasBinaryPath(entry.config) || !entry.config.binaryPath.trim()) {
-        return Effect.succeed([]);
-      }
-      const binaryPath = entry.config.binaryPath.trim();
-      return resolveCommandPath(binaryPath, {
-        env: mergeProviderInstanceEnvironment(entry.environment),
-      }).pipe(
-        Effect.map((resolved) => [binaryPath, resolved]),
-        Effect.orElseSucceed(() => [binaryPath]),
-      );
-    });
+    const protectedPaths = yield* Effect.forEach(
+      Object.values(entries),
+      Effect.fnUntraced(function* (entry) {
+        if (!hasBinaryPath(entry.config) || !entry.config.binaryPath.trim()) {
+          return [];
+        }
+        const binaryPath = entry.config.binaryPath.trim();
+        return yield* resolveCommandPath(binaryPath, {
+          env: yield* mergeProviderInstanceEnvironment(entry.environment),
+        }).pipe(
+          Effect.map((resolved) => [binaryPath, resolved]),
+          Effect.orElseSucceed(() => [binaryPath]),
+        );
+      }),
+    );
     yield* installation
       .remove(protectedPaths.flat())
       .pipe(Effect.mapError(failure(input.instanceId)));

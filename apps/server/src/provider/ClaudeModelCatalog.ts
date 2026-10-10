@@ -4,6 +4,7 @@ import {
   type ModelSelection,
   ProviderDriverKind,
   type ServerProviderModel,
+  type ServerProviderUpdateRequiredModel,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import {
@@ -20,11 +21,8 @@ import {
   decodeClaudeModelAdapter,
   decodeClaudeProfileAdapter,
 } from "./ClaudeModelManifest.ts";
-import {
-  BUNDLED_MODEL_MANIFEST,
-  type ModelManifestData,
-  resolveProviderCatalog,
-} from "./ModelManifest.ts";
+import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
+import { BUNDLED_MODEL_MANIFEST, resolveProviderCatalog } from "./ModelManifest.ts";
 
 const CLAUDE = ProviderDriverKind.make("claudeAgent");
 const EMPTY_CAPABILITIES: ModelCapabilities = { optionDescriptors: [] };
@@ -39,8 +37,9 @@ export interface ClaudeModelCatalog {
   readonly models: ReadonlyArray<ClaudeCatalogModel>;
 }
 
-function tryResolveClaudeModelCatalog(manifest: ModelManifestData): ClaudeModelCatalog | null {
-  const resolved = resolveProviderCatalog(manifest, CLAUDE);
+function tryResolveClaudeModelCatalog(
+  resolved: ModelCatalog.ProviderCatalog | undefined,
+): ClaudeModelCatalog | null {
   if (!resolved) return null;
 
   const models: Array<ClaudeCatalogModel> = [];
@@ -49,7 +48,7 @@ function tryResolveClaudeModelCatalog(manifest: ModelManifestData): ClaudeModelC
     const adapter = decodeClaudeModelAdapter(entry.adapter ?? {});
     if (Option.isNone(profile) || Option.isNone(adapter)) return null;
     models.push({
-      model: entry.model,
+      model: ModelCatalog.catalogServerModel(resolved, entry),
       runtime: profile.value.claudeCode ?? {},
       compatibility: adapter.value.claudeCode ?? {},
     });
@@ -60,16 +59,27 @@ function tryResolveClaudeModelCatalog(manifest: ModelManifestData): ClaudeModelC
   };
 }
 
-export function resolveClaudeModelCatalog(manifest: ModelManifestData): ClaudeModelCatalog {
+const BUNDLED_CLAUDE_PROVIDER_CATALOG =
+  resolveProviderCatalog(BUNDLED_MODEL_MANIFEST, CLAUDE) ?? undefined;
+
+/**
+ * Claude's built-in catalog from its manifest entry, falling back to the
+ * bundled entry when the current one is missing or has invalid adapters.
+ */
+export function resolveClaudeModelCatalog(
+  catalog: ModelCatalog.ProviderCatalog | undefined,
+): ClaudeModelCatalog {
   return (
-    tryResolveClaudeModelCatalog(manifest) ??
-    tryResolveClaudeModelCatalog(BUNDLED_MODEL_MANIFEST) ?? {
+    tryResolveClaudeModelCatalog(catalog) ??
+    tryResolveClaudeModelCatalog(BUNDLED_CLAUDE_PROVIDER_CATALOG) ?? {
       models: [],
     }
   );
 }
 
-export const BUNDLED_CLAUDE_MODEL_CATALOG = resolveClaudeModelCatalog(BUNDLED_MODEL_MANIFEST);
+export const BUNDLED_CLAUDE_MODEL_CATALOG = resolveClaudeModelCatalog(
+  BUNDLED_CLAUDE_PROVIDER_CATALOG,
+);
 
 /**
  * Scope the catalog to one instance's settings: custom model slugs stay opaque
@@ -165,6 +175,31 @@ export function resolveClaudeModelsForVersion(
   return catalog.models
     .filter((entry) => isVersionSupported(entry.compatibility, version))
     .map((entry) => entry.model);
+}
+
+/**
+ * Current catalog models the installed Claude Code is too old to run, so the
+ * picker can show them as "update to use" instead of hiding them.
+ */
+export function resolveClaudeUpdateRequiredModels(
+  catalog: ClaudeModelCatalog,
+  version: string | null | undefined,
+): ReadonlyArray<ServerProviderUpdateRequiredModel> {
+  if (!version) return [];
+  return catalog.models.flatMap(({ model, compatibility }) => {
+    const minVersion = compatibility.minVersion;
+    if (model.isLegacy || !minVersion || compareSemverVersions(version, minVersion) >= 0) {
+      return [];
+    }
+    return [
+      {
+        slug: model.slug,
+        name: model.name,
+        ...(model.badge ? { badge: model.badge } : {}),
+        minVersion,
+      },
+    ];
+  });
 }
 
 export function formatClaudeVersionUpgradeMessage(

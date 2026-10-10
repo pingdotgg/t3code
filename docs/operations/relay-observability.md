@@ -30,7 +30,7 @@ For example:
 
 ```apl
 ['t3-code-relay-traces-prod']
-| where name startswith 'http.server'
+| where kind == 'server'
 | extend endpoint = column_ifexists('attributes.http.route', ''),
     customAttributes = column_ifexists('attributes.custom', dynamic({}))
 | project _time, name, trace_id, duration,

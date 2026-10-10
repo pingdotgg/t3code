@@ -1,4 +1,3 @@
-import * as NodeOS from "node:os";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -8,8 +7,9 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
-import { writeFileStringAtomically } from "../atomicWrite.ts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerConfig from "../config.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 /**
  * Codex writes `tokens` only for ChatGPT logins and omits the key for API-key,
@@ -311,6 +311,7 @@ export const getTelemetryIdentifierForHome = Effect.fn("getTelemetryIdentifierFo
   Effect.orElseSucceed(() => null),
 );
 
-export const getTelemetryIdentifier = Effect.suspend(() =>
-  getTelemetryIdentifierForHome(NodeOS.homedir()),
+export const getTelemetryIdentifier = Effect.flatMap(
+  HostProcess.HomeDirectory,
+  getTelemetryIdentifierForHome,
 );
