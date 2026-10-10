@@ -5,7 +5,12 @@ import {
   ThreadId,
   type ClientSettings,
   type DesktopPreviewBridge,
+  type PreviewEvent,
+  type PreviewListResult,
 } from "@t3tools/contracts";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { Effect } from "effect";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -30,6 +35,25 @@ vi.mock("~/components/preview/previewBridge", () => ({
     closeTab: mocks.closeTab,
     registerWebview: mocks.registerWebview,
     getPreviewConfig: mocks.getPreviewConfig,
+    setColorScheme: async () => undefined,
+    setZoomFactor: async () => undefined,
+  },
+}));
+
+vi.mock("~/env", () => ({ isElectron: true }));
+vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "light" }) }));
+vi.mock("~/state/primaryEnvironment", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { primaryEnvironmentIdAtom: Atom.make("desktop-primary") };
+});
+vi.mock("~/state/preview", () => ({
+  previewEnvironment: {
+    events: ({ environmentId }: { environmentId: string }) => previewEventsFor(environmentId),
+    list: ({ environmentId, input }: { environmentId: string; input: { threadId?: string } }) => {
+      if (input.threadId === undefined) return previewList;
+      const ref = scopeThreadRef(EnvironmentId.make(environmentId), ThreadId.make(input.threadId));
+      return threadListQueries.get(scopedThreadKey(ref)) ?? threadListValues(scopedThreadKey(ref));
+    },
   },
 }));
 
@@ -49,6 +73,29 @@ import {
 import { useBrowserSurfaceStore } from "./browserSurfaceStore";
 import * as desktopTabLifetime from "./desktopTabLifetime";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
+import { ElectronBrowserHost } from "./ElectronBrowserHost";
+import { previewRuntimeTabId } from "./previewRuntimeTabId";
+import { previewStateAtom, resetPreviewStateForTests } from "~/previewStateStore";
+import { usePreviewSession } from "~/components/preview/usePreviewSession";
+import { AppAtomRegistryProvider, appAtomRegistry } from "~/rpc/atomRegistry";
+
+const previewEvents = new Map<
+  string,
+  Atom.Writable<AsyncResult.AsyncResult<PreviewEvent>, AsyncResult.AsyncResult<PreviewEvent>>
+>();
+const previewList = Atom.make<AsyncResult.AsyncResult<PreviewListResult>>(AsyncResult.initial());
+const threadListValues = Atom.family((_threadKey: string) =>
+  Atom.make<AsyncResult.AsyncResult<PreviewListResult>>(AsyncResult.initial()),
+);
+const threadListQueries = new Map<string, Atom.Atom<AsyncResult.AsyncResult<PreviewListResult>>>();
+function previewEventsFor(environmentId: string) {
+  let atom = previewEvents.get(environmentId);
+  if (!atom) {
+    atom = Atom.make<AsyncResult.AsyncResult<PreviewEvent>>(AsyncResult.initial());
+    previewEvents.set(environmentId, atom);
+  }
+  return atom;
+}
 
 let renderer: ReactTestRenderer | undefined;
 
@@ -63,6 +110,10 @@ function deferred<A>() {
 }
 
 beforeEach(() => {
+  resetPreviewStateForTests();
+  threadListQueries.clear();
+  appAtomRegistry.set(previewList, AsyncResult.initial());
+  for (const atom of previewEvents.values()) appAtomRegistry.set(atom, AsyncResult.initial());
   __resetClientSettingsPersistenceForTests();
   useBrowserSurfaceStore.setState({ activityByTabId: {}, byTabId: {} });
   mocks.getClientSettings.mockReset();
@@ -83,7 +134,364 @@ beforeEach(() => {
     vi.fn(() => 0),
   );
   vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  vi.stubGlobal("document", { documentElement: {}, head: {} });
+  vi.stubGlobal(
+    "MutationObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
   vi.spyOn(console, "error").mockImplementation(() => undefined);
+});
+
+describe("Electron browser hosting outside the selected thread", () => {
+  it("applies primary events once and ignores retired lists while remote epochs advance", async () => {
+    const local = {
+      environmentId: EnvironmentId.make("desktop-primary"),
+      threadId: ThreadId.make("selected-thread"),
+    };
+    const remote = { ...local, environmentId: EnvironmentId.make("remote-server") };
+    function ChatSync() {
+      usePreviewSession(local);
+      usePreviewSession(remote);
+      return null;
+    }
+    mocks.getClientSettings.mockResolvedValue(DEFAULT_CLIENT_SETTINGS);
+    await act(async () => {
+      await ensureClientSettingsHydrated();
+      renderer = create(
+        <AppAtomRegistryProvider>
+          <ElectronBrowserHost />
+          <ChatSync />
+        </AppAtomRegistryProvider>,
+        {
+          createNodeMock: (element) =>
+            element.type === "webview"
+              ? Object.assign(new EventTarget(), { getWebContentsId: () => 44 })
+              : { scrollLeft: 0, scrollTop: 0, scrollTo: () => undefined },
+        },
+      );
+    });
+    const applied = vi.fn();
+    const stop = appAtomRegistry.subscribe(previewStateAtom(scopedThreadKey(local)), (state) => {
+      if (state.sessions["selected-tab"]) applied();
+    });
+    const opened: PreviewEvent = {
+      type: "opened",
+      threadId: local.threadId,
+      tabId: "selected-tab",
+      serverEpoch: "server",
+      revision: 1,
+      createdAt: "2026-10-07T00:00:00.000Z",
+      snapshot: {
+        threadId: local.threadId,
+        tabId: "selected-tab",
+        runtime: "server",
+        navStatus: { _tag: "Idle" },
+        canGoBack: false,
+        canGoForward: false,
+        updatedAt: "2026-10-07T00:00:00.000Z",
+      },
+    };
+    try {
+      await act(() => {
+        appAtomRegistry.set(previewEventsFor(local.environmentId), AsyncResult.success(opened));
+        appAtomRegistry.set(previewEventsFor(remote.environmentId), AsyncResult.success(opened));
+      });
+      expect(applied).toHaveBeenCalledOnce();
+      expect(appAtomRegistry.get(previewStateAtom(scopedThreadKey(remote))).sessions).toEqual({
+        "selected-tab": opened.snapshot,
+      });
+      expect(mocks.createTab).toHaveBeenCalledOnce();
+
+      await act(() => {
+        appAtomRegistry.set(
+          threadListValues(scopedThreadKey(local)),
+          AsyncResult.success({
+            serverEpoch: "retired-server",
+            revision: 100,
+            sessions: [{ ...opened.snapshot, tabId: "retired-tab" }],
+          }),
+        );
+      });
+      expect(appAtomRegistry.get(previewStateAtom(scopedThreadKey(local)))).toMatchObject({
+        serverEpoch: opened.serverEpoch,
+        sessions: { "selected-tab": opened.snapshot },
+      });
+      expect(applied).toHaveBeenCalledOnce();
+      expect(mocks.createTab).toHaveBeenCalledOnce();
+
+      const remoteSnapshot = { ...opened.snapshot, tabId: "remote-restarted-tab" };
+      await act(() => {
+        appAtomRegistry.set(
+          threadListValues(scopedThreadKey(remote)),
+          AsyncResult.success({
+            serverEpoch: "restarted-remote-server",
+            revision: 1,
+            sessions: [remoteSnapshot],
+          }),
+        );
+      });
+      expect(appAtomRegistry.get(previewStateAtom(scopedThreadKey(remote)))).toMatchObject({
+        serverEpoch: "restarted-remote-server",
+        sessions: { "remote-restarted-tab": remoteSnapshot },
+      });
+    } finally {
+      stop();
+    }
+  });
+
+  it("refreshes the mounted chat's separate query when the host list adopts a new epoch", async () => {
+    const threadRef = scopeThreadRef(
+      EnvironmentId.make("desktop-primary"),
+      ThreadId.make("epoch-refresh-thread"),
+    );
+    const oldRead = deferred<PreviewListResult>();
+    const freshRead = deferred<PreviewListResult>();
+    let restarted = false;
+    threadListQueries.set(
+      scopedThreadKey(threadRef),
+      Atom.make(() => Effect.promise(() => (restarted ? freshRead.promise : oldRead.promise))),
+    );
+    function ChatSync() {
+      usePreviewSession(threadRef);
+      return null;
+    }
+    mocks.getClientSettings.mockResolvedValue(DEFAULT_CLIENT_SETTINGS);
+    await act(async () => {
+      await ensureClientSettingsHydrated();
+      renderer = create(
+        <AppAtomRegistryProvider>
+          <ElectronBrowserHost />
+          <ChatSync />
+        </AppAtomRegistryProvider>,
+        {
+          createNodeMock: (element) =>
+            element.type === "webview"
+              ? Object.assign(new EventTarget(), { getWebContentsId: () => 45 })
+              : { scrollLeft: 0, scrollTop: 0, scrollTo: () => undefined },
+        },
+      );
+    });
+    const oldSnapshot: PreviewListResult["sessions"][number] = {
+      threadId: threadRef.threadId,
+      tabId: "before-restart",
+      runtime: "server",
+      navStatus: { _tag: "Idle" },
+      canGoBack: false,
+      canGoForward: false,
+      updatedAt: "2026-10-07T00:00:00.000Z",
+    };
+    await act(async () => {
+      oldRead.resolve({ serverEpoch: "server-before", revision: 5, sessions: [oldSnapshot] });
+      await oldRead.promise;
+    });
+    expect(mocks.createTab).toHaveBeenCalledOnce();
+    restarted = true;
+    await act(() => {
+      appAtomRegistry.set(
+        previewList,
+        AsyncResult.success({ serverEpoch: "server-after", revision: 1, sessions: [] }),
+      );
+    });
+    const freshSnapshot = { ...oldSnapshot, tabId: "after-restart" };
+    await act(async () => {
+      freshRead.resolve({ serverEpoch: "server-after", revision: 2, sessions: [freshSnapshot] });
+      await freshRead.promise;
+    });
+    expect(appAtomRegistry.get(previewStateAtom(scopedThreadKey(threadRef)))).toMatchObject({
+      serverEpoch: "server-after",
+      sessions: { "after-restart": freshSnapshot },
+      listLoaded: true,
+    });
+    expect(mocks.createTab).toHaveBeenLastCalledWith(
+      previewRuntimeTabId(threadRef, "server-after", freshSnapshot.tabId),
+      expect.objectContaining({
+        serverTab: { threadId: threadRef.threadId, tabId: freshSnapshot.tabId },
+      }),
+    );
+  });
+
+  it("attaches existing tabs from the initial list and reconciles a reconnect without events", async () => {
+    mocks.getClientSettings.mockResolvedValue(DEFAULT_CLIENT_SETTINGS);
+    await act(async () => {
+      await ensureClientSettingsHydrated();
+      renderer = create(
+        <AppAtomRegistryProvider>
+          <ElectronBrowserHost />
+        </AppAtomRegistryProvider>,
+        {
+          createNodeMock: (element) =>
+            element.type === "webview"
+              ? Object.assign(new EventTarget(), { getWebContentsId: () => 43 })
+              : { scrollLeft: 0, scrollTop: 0, scrollTo: () => undefined },
+        },
+      );
+    });
+    const threadRef = {
+      environmentId: EnvironmentId.make("desktop-primary"),
+      threadId: ThreadId.make("already-open"),
+    };
+    const initialList: PreviewListResult = {
+      serverEpoch: "existing-server",
+      revision: 1,
+      sessions: [
+        {
+          threadId: threadRef.threadId,
+          tabId: "existing-tab",
+          runtime: "server",
+          navStatus: { _tag: "Idle" },
+          canGoBack: false,
+          canGoForward: false,
+          updatedAt: "2026-10-06T00:00:00.000Z",
+        },
+      ],
+    };
+    await act(() => {
+      appAtomRegistry.set(previewList, AsyncResult.success(initialList));
+    });
+    const runtimeTabId = previewRuntimeTabId(threadRef, initialList.serverEpoch, "existing-tab");
+    expect(mocks.createTab).toHaveBeenCalledExactlyOnceWith(
+      runtimeTabId,
+      expect.objectContaining({
+        serverTab: { threadId: threadRef.threadId, tabId: "existing-tab" },
+      }),
+    );
+    expect(mocks.registerWebview).toHaveBeenCalledExactlyOnceWith(runtimeTabId, 43);
+
+    vi.useFakeTimers();
+    await act(() => {
+      appAtomRegistry.set(previewList, AsyncResult.success(initialList, { waiting: true }));
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+    await act(() => {
+      appAtomRegistry.set(
+        previewList,
+        AsyncResult.success({ ...initialList, revision: 2, sessions: [] }),
+      );
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mocks.closeTab).toHaveBeenCalledExactlyOnceWith(runtimeTabId);
+  });
+
+  it("attaches a primary-server tab without a chat view and releases it when closed", async () => {
+    mocks.getClientSettings.mockResolvedValue(DEFAULT_CLIENT_SETTINGS);
+    await act(async () => {
+      await ensureClientSettingsHydrated();
+      renderer = create(
+        <AppAtomRegistryProvider>
+          <ElectronBrowserHost />
+        </AppAtomRegistryProvider>,
+        {
+          createNodeMock: (element) =>
+            element.type === "webview"
+              ? Object.assign(new EventTarget(), { getWebContentsId: () => 42 })
+              : { scrollLeft: 0, scrollTop: 0, scrollTo: () => undefined },
+        },
+      );
+    });
+    const threadRef = {
+      environmentId: EnvironmentId.make("desktop-primary"),
+      threadId: ThreadId.make("background-agent"),
+    };
+    const opened: PreviewEvent = {
+      type: "opened",
+      threadId: threadRef.threadId,
+      tabId: "background-tab",
+      serverEpoch: "primary-server",
+      revision: 1,
+      createdAt: "2026-10-06T00:00:00.000Z",
+      snapshot: {
+        threadId: threadRef.threadId,
+        tabId: "background-tab",
+        runtime: "server",
+        navStatus: { _tag: "Idle" },
+        canGoBack: false,
+        canGoForward: false,
+        updatedAt: "2026-10-06T00:00:00.000Z",
+      },
+    };
+    await act(() => {
+      appAtomRegistry.set(
+        previewEventsFor(threadRef.environmentId),
+        AsyncResult.success(opened, { waiting: true }),
+      );
+    });
+    const runtimeTabId = previewRuntimeTabId(threadRef, opened.serverEpoch, opened.tabId);
+    expect(mocks.createTab).toHaveBeenCalledExactlyOnceWith(runtimeTabId, {
+      zoomFactor: DEFAULT_CLIENT_SETTINGS.browserDefaultZoomFactor,
+      colorScheme: DEFAULT_CLIENT_SETTINGS.browserDefaultAppearance,
+      serverTab: { threadId: threadRef.threadId, tabId: opened.tabId },
+    });
+    expect(mocks.registerWebview).toHaveBeenCalledExactlyOnceWith(runtimeTabId, 42);
+
+    // Separate threads can open tabs before React paints again. The stream
+    // subscriber must retain both, and must not subscribe to remote environments.
+    await act(() => {
+      for (const suffix of ["b", "c"]) {
+        const threadId = `background-${suffix}`;
+        const tabId = `tab-${suffix}`;
+        appAtomRegistry.set(
+          previewEventsFor(threadRef.environmentId),
+          AsyncResult.success(
+            {
+              ...opened,
+              threadId,
+              tabId,
+              revision: suffix === "b" ? 2 : 3,
+              snapshot: { ...opened.snapshot, threadId, tabId },
+            },
+            { waiting: true },
+          ),
+        );
+      }
+      appAtomRegistry.set(previewEventsFor("remote-server"), AsyncResult.success(opened));
+    });
+    expect(mocks.createTab).toHaveBeenCalledTimes(3);
+    expect(mocks.registerWebview).toHaveBeenCalledTimes(3);
+
+    vi.useFakeTimers();
+    await act(() => {
+      appAtomRegistry.set(
+        previewEventsFor(threadRef.environmentId),
+        AsyncResult.success({ ...opened, type: "closed", revision: 4 }, { waiting: true }),
+      );
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mocks.closeTab).toHaveBeenCalledExactlyOnceWith(runtimeTabId);
+
+    await act(() => {
+      appAtomRegistry.set(
+        previewEventsFor(threadRef.environmentId),
+        AsyncResult.success(
+          {
+            ...opened,
+            serverEpoch: "restarted-primary-server",
+            revision: 1,
+          },
+          { waiting: true },
+        ),
+      );
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mocks.closeTab).toHaveBeenCalledTimes(3);
+    for (const suffix of ["b", "c"]) {
+      expect(mocks.closeTab).toHaveBeenCalledWith(
+        previewRuntimeTabId(
+          { ...threadRef, threadId: ThreadId.make(`background-${suffix}`) },
+          opened.serverEpoch,
+          `tab-${suffix}`,
+        ),
+      );
+    }
+    expect(mocks.createTab).toHaveBeenLastCalledWith(
+      previewRuntimeTabId(threadRef, "restarted-primary-server", opened.tabId),
+      expect.objectContaining({ serverTab: { threadId: threadRef.threadId, tabId: opened.tabId } }),
+    );
+    expect(mocks.registerWebview).toHaveBeenCalledTimes(4);
+  });
 });
 
 afterEach(async () => {

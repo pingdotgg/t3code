@@ -458,7 +458,10 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     function* (input) {
       return yield* SynchronizedRef.get(stateRef).pipe(
         Effect.map((state): PreviewListResult => ({
-          sessions: sessionsForThread(state, input.threadId)
+          sessions: (input.threadId === undefined
+            ? Array.from(state.sessions.values())
+            : sessionsForThread(state, input.threadId)
+          )
             .map((s) => s.snapshot)
             .toSorted((a, b) => a.updatedAt.localeCompare(b.updatedAt)),
           serverEpoch,

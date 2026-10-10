@@ -47,6 +47,27 @@ const layer = PreviewManager.layer.pipe(
 );
 
 it.layer(layer)("PreviewManager", (it) => {
+  it.effect("lists all environment tabs when the thread filter is omitted", () =>
+    Effect.gen(function* () {
+      const manager = yield* PreviewManager.PreviewManager;
+      const firstThread = freshThreadId();
+      const secondThread = freshThreadId();
+      const first = yield* manager.open({ threadId: firstThread, runtime: "server" });
+      const second = yield* manager.open({ threadId: secondThread, runtime: "server" });
+      const all = yield* manager.list({});
+      expect(all.sessions).toEqual(expect.arrayContaining([first, second]));
+      const filtered = yield* manager.list({ threadId: firstThread });
+      expect(filtered.sessions).toEqual([first]);
+      expect(filtered.serverEpoch).toBe(all.serverEpoch);
+      expect(filtered.revision).toBe(all.revision);
+      yield* manager.close({ threadId: firstThread, tabId: first.tabId });
+      const refreshed = yield* manager.list({});
+      expect(refreshed.sessions.some((tab) => tab.tabId === first.tabId)).toBe(false);
+      expect(refreshed.sessions).toContainEqual(second);
+      expect(refreshed.revision).toBeGreaterThan(all.revision);
+    }),
+  );
+
   it.effect("opens a session and emits opened with normalized URL", () =>
     Effect.gen(function* () {
       const threadId = freshThreadId();

@@ -6,14 +6,20 @@
  * is the one place that must enumerate every live preview tab.
  */
 import { useAtomValue } from "@effect/atom-react";
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import {
+  parseScopedThreadKey,
+  scopeThreadRef,
+  scopedThreadKey,
+} from "@t3tools/client-runtime/environment";
 import {
   type DesktopPreviewColorScheme,
   type DesktopPreviewFavicon,
+  type EnvironmentId,
   type PreviewEvent,
   type PreviewListResult,
   type PreviewSessionSnapshot,
   type ScopedThreadRef,
+  ThreadId,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
@@ -176,6 +182,27 @@ export function readThreadPreviewState(ref: ScopedThreadRef): ThreadPreviewState
   return appAtomRegistry.get(previewStateAtom(scopedThreadKey(ref)));
 }
 
+/** A restarted primary server no longer owns the desktop pages from its previous epoch. */
+export function resetPreviewServerEpoch(
+  environmentId: EnvironmentId,
+  serverEpoch: string,
+): ScopedThreadRef[] {
+  const reset: ScopedThreadRef[] = [];
+  for (const threadKey of changedPreviewThreadKeys) {
+    const ref = parseScopedThreadKey(threadKey);
+    if (!ref || ref.environmentId !== environmentId) continue;
+    const current = readThreadPreviewState(ref);
+    if (current.serverEpoch === null || current.serverEpoch === serverEpoch) continue;
+    updateThreadPreviewState(ref, () => ({
+      ...EMPTY_THREAD_PREVIEW_STATE,
+      serverEpoch,
+      recentlySeenUrls: current.recentlySeenUrls,
+    }));
+    reset.push(ref);
+  }
+  return reset;
+}
+
 export function applyPreviewServerEvent(ref: ScopedThreadRef, event: PreviewEvent): void {
   updateThreadPreviewState(ref, (current) => {
     if (current.serverEpoch !== null && event.serverEpoch !== current.serverEpoch) return current;
@@ -302,6 +329,34 @@ export function updatePreviewServerSnapshot(
       recentlySeenUrls: rememberSnapshotUrl(current.recentlySeenUrls, snapshot),
     };
   });
+}
+
+/** Reconcile one environment; return false if an event overtook its first authoritative list. */
+export function reconcilePreviewEnvironmentSessions(
+  environmentId: EnvironmentId,
+  result: PreviewListResult,
+): boolean {
+  const sessionsByThread = new Map<ThreadId, PreviewSessionSnapshot[]>();
+  for (const threadKey of changedPreviewThreadKeys) {
+    const ref = parseScopedThreadKey(threadKey);
+    if (ref?.environmentId === environmentId) sessionsByThread.set(ref.threadId, []);
+  }
+  for (const snapshot of result.sessions) {
+    const threadId = ThreadId.make(snapshot.threadId);
+    const sessions = sessionsByThread.get(threadId) ?? [];
+    sessions.push(snapshot);
+    sessionsByThread.set(threadId, sessions);
+  }
+  let listLoaded = true;
+  for (const [threadId, sessions] of sessionsByThread) {
+    const ref = scopeThreadRef(environmentId, threadId);
+    reconcilePreviewServerSessions(ref, {
+      ...result,
+      sessions,
+    });
+    if (!readThreadPreviewState(ref).listLoaded) listLoaded = false;
+  }
+  return listLoaded;
 }
 
 /**
