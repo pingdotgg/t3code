@@ -9495,7 +9495,14 @@ export default function ChatView(props: ChatViewProps) {
         promptRef.current = "";
         clearComposerDraftContent(composerDraftTarget);
         composerRef.current?.resetCursorState();
-        if (draftId) setDraftThreadName(draftId, "");
+        // Remove the name rather than empty it, so a restore can tell this apart from a user clear.
+        if (draftId) {
+          setThreadNamesByDraftId((names) => {
+            const next = { ...names };
+            delete next[draftId];
+            return next;
+          });
+        }
         clearedDraft = true;
         const clearedDraftSnapshot = useComposerDraftStore
           .getState()
@@ -9663,10 +9670,12 @@ export default function ChatView(props: ChatViewProps) {
         const restoreFailedDraft = () => {
           setMultipleModelSelections(failedSelections);
           if (clearedDraft) {
-            // A name typed while the batch was sending wins over the one it sent.
+            // A name typed or cleared while the batch was sending wins over the one it sent.
             if (draftId && draftThreadNameInput) {
               setThreadNamesByDraftId((names) =>
-                names[draftId] ? names : { ...names, [draftId]: draftThreadNameInput },
+                names[draftId] !== undefined
+                  ? names
+                  : { ...names, [draftId]: draftThreadNameInput },
               );
             }
             setComposerDraftPrompt(composerDraftTarget, messageTextForSend);
