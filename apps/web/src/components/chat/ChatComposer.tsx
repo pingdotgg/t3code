@@ -261,7 +261,6 @@ import {
 import { useEnvironmentQuery } from "~/state/query";
 import { useDebouncedValue } from "~/state/queries";
 import { ProviderModelPicker } from "./ProviderModelPicker";
-import { FallbackModelPicker } from "./FallbackModelPicker";
 import { type OrchestrationV2FallbackSelection } from "@t3tools/contracts";
 import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import {
@@ -5608,33 +5607,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           : {})}
         onOpenChange={setIsComposerModelPickerOpen}
         getModelDisabledReason={getModelDisabledReason}
-        onInstanceModelChange={(instanceId, model) => {
-          setMultipleModelSelections(null);
-          onProviderModelSelect(instanceId, model);
-        }}
-        onOpenProviderSetup={onOpenProviderSetup}
-      />
-
-      <FallbackModelPicker
         fallbackSelection={
           activeThreadShell
             ? (activeThreadShell.fallbackModelSelection ?? null)
             : draftFallbackSelection
         }
-        activeInstanceId={
-          providerCatalogPending
-            ? (activeThreadModelSelection?.instanceId ?? selectedInstanceId)
-            : selectedInstanceId
-        }
-        activeModel={
-          providerCatalogPending
-            ? (activeThreadModelSelection?.model ?? selectedModelForPickerWithCustomFallback)
-            : selectedModelForPickerWithCustomFallback
-        }
-        instanceEntries={providerInstanceEntries}
-        modelOptionsByInstance={modelOptionsByInstance}
-        size={composerControlsCollapsed ? "xs" : "sm"}
-        disabled={providerCatalogPending || isSendBusy}
         onFallbackSelect={async (selection) => {
           const previous = draftFallbackSelection;
           setDraftFallbackSelection(selection);
@@ -5644,6 +5621,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             setDraftFallbackSelection(previous);
           }
         }}
+        onInstanceModelChange={(instanceId, model) => {
+          setMultipleModelSelections(null);
+          onProviderModelSelect(instanceId, model);
+        }}
+        onOpenProviderSetup={onOpenProviderSetup}
       />
 
       <>

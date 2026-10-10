@@ -1,10 +1,12 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
+  type OrchestrationV2FallbackSelection,
   type ProviderInstanceId,
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { memo, useEffect, useMemo, useState } from "react";
+import { ShieldAlertIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -57,6 +59,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
+  fallbackSelection?: OrchestrationV2FallbackSelection | null | undefined;
+  onFallbackSelect?: ((selection: OrchestrationV2FallbackSelection | null) => void) | undefined;
 }) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
@@ -187,9 +191,22 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const allModelNames = selectedEntries
     ? selectedEntries.map((selection) => selection.label).join(", ") || "Choose models"
     : undefined;
-  const triggerTooltipContent = shortcutLabel
-    ? `${props.triggerLabel ?? allModelNames ?? triggerLabel} · ${shortcutLabel}`
-    : (props.triggerLabel ?? allModelNames ?? triggerLabel);
+  const fallbackModelName = useMemo(() => {
+    if (!props.fallbackSelection) return null;
+    if (props.fallbackSelection.mode === "auto") return "Auto";
+    const { instanceId, model } = props.fallbackSelection.modelSelection;
+    const options = props.modelOptionsByInstance.get(instanceId) ?? [];
+    const found = options.find((opt) => opt.slug === model);
+    return found ? found.name : model;
+  }, [props.fallbackSelection, props.modelOptionsByInstance]);
+  const fallbackSummary = fallbackModelName ? `Fallback: ${fallbackModelName}` : null;
+  const triggerTooltipContent = [
+    props.triggerLabel ?? allModelNames ?? triggerLabel,
+    fallbackSummary,
+    shortcutLabel,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <Popover
@@ -274,6 +291,21 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             </TooltipTrigger>
             <TooltipPopup side="top">{triggerTooltipContent}</TooltipPopup>
           </Tooltip>
+          {props.fallbackSelection ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span
+                    className="flex shrink-0 items-center text-warning"
+                    aria-label={`Fallback: ${fallbackModelName}`}
+                  >
+                    <ShieldAlertIcon className="size-3" />
+                  </span>
+                }
+              />
+              <TooltipPopup side="top">{`Rate limit fallback: ${fallbackModelName}`}</TooltipPopup>
+            </Tooltip>
+          ) : null}
           {selectedModel?.isUnavailable && !selectedEntries && props.triggerLabel === undefined ? (
             <Badge variant="outline" size="sm">
               Unavailable
@@ -313,6 +345,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             ? { getModelDisabledReason: props.getModelDisabledReason }
             : {})}
           onInstanceModelChange={handleInstanceModelChange}
+          fallbackSelection={props.fallbackSelection}
+          onFallbackSelect={props.onFallbackSelect}
         />
         {props.selectedModels === undefined ? (
           <ChatGptSharingControl provider={activeEntry?.snapshot ?? null} />

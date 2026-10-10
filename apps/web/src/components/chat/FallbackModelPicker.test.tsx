@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import { deriveProviderInstanceEntries } from "../../providerInstances";
-import { FallbackModelPicker } from "./FallbackModelPicker";
+import { FallbackModelPicker, ModelPickerFallbackFooter } from "./FallbackModelPicker";
 
 function providerEntry(instanceId: string, driver: string) {
   const provider: ServerProvider = {
@@ -70,5 +70,49 @@ describe("FallbackModelPicker", () => {
       />,
     );
     expect(markup).toContain("Fallback: GPT-6.1-Sol");
+  });
+
+  describe("ModelPickerFallbackFooter", () => {
+    it("renders fallback footer with Off status", () => {
+      const markup = renderToStaticMarkup(
+        <ModelPickerFallbackFooter
+          fallbackSelection={null}
+          instanceEntries={[entry]}
+          modelOptionsByInstance={modelOptions}
+          onFallbackSelect={() => {}}
+        />,
+      );
+      expect(markup).toContain("Fallback model:");
+      expect(markup).toContain("Off");
+    });
+
+    it("renders fallback footer with Auto status", () => {
+      const markup = renderToStaticMarkup(
+        <ModelPickerFallbackFooter
+          fallbackSelection={{ mode: "auto" }}
+          instanceEntries={[entry]}
+          modelOptionsByInstance={modelOptions}
+          onFallbackSelect={() => {}}
+        />,
+      );
+      expect(markup).toContain("Fallback model:");
+      expect(markup).toContain("Auto");
+    });
+
+    it("renders fallback footer with specific model like GPT-6.1-Sol", () => {
+      const markup = renderToStaticMarkup(
+        <ModelPickerFallbackFooter
+          fallbackSelection={{
+            mode: "specific",
+            modelSelection: { instanceId: codexInstance, model: "gpt-6.1-sol" },
+          }}
+          instanceEntries={[entry]}
+          modelOptionsByInstance={modelOptions}
+          onFallbackSelect={() => {}}
+        />,
+      );
+      expect(markup).toContain("Fallback model:");
+      expect(markup).toContain("GPT-6.1-Sol");
+    });
   });
 });

@@ -173,4 +173,55 @@ describe("ProviderModelPicker", () => {
 
     expect(markup).toContain(">CP</span>");
   });
+
+  it("renders with fallback indicator and tooltip when fallback is auto", () => {
+    const instanceId = ProviderInstanceId.make("codex");
+    const entry = providerEntry("codex", "codex");
+    const markup = renderToStaticMarkup(
+      <ProviderModelPicker
+        activeInstanceId={instanceId}
+        model="gpt-6-astra"
+        lockedProvider={null}
+        instanceEntries={[entry]}
+        modelOptionsByInstance={
+          new Map([[instanceId, [{ slug: "gpt-6-astra", name: "GPT-6-Astra" }]]])
+        }
+        fallbackSelection={{ mode: "auto" }}
+        onInstanceModelChange={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("Fallback: Auto");
+  });
+
+  it("renders with fallback indicator and tooltip when fallback is specific model like GPT-6.1-Sol", () => {
+    const instanceId = ProviderInstanceId.make("codex");
+    const entry = providerEntry("codex", "codex");
+    const markup = renderToStaticMarkup(
+      <ProviderModelPicker
+        activeInstanceId={instanceId}
+        model="gpt-6-astra"
+        lockedProvider={null}
+        instanceEntries={[entry]}
+        modelOptionsByInstance={
+          new Map([
+            [
+              instanceId,
+              [
+                { slug: "gpt-6-astra", name: "GPT-6-Astra" },
+                { slug: "gpt-6.1-sol", name: "GPT-6.1-Sol" },
+              ],
+            ],
+          ])
+        }
+        fallbackSelection={{
+          mode: "specific",
+          modelSelection: { instanceId, model: "gpt-6.1-sol" },
+        }}
+        onInstanceModelChange={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("Fallback: GPT-6.1-Sol");
+  });
 });

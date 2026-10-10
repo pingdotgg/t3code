@@ -1,6 +1,6 @@
 import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
 import { memo } from "react";
-import { CheckIcon, StarIcon } from "lucide-react";
+import { CheckIcon, ShieldAlertIcon, StarIcon } from "lucide-react";
 import {
   getDisplayModelName,
   getProviderRowLabel,
@@ -34,6 +34,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   acpRegistryIconUrl?: string | undefined;
   isFavorite: boolean;
   isSelected: boolean;
+  isFallback?: boolean;
   showSelection?: boolean;
   showProvider: boolean;
   preferShortName?: boolean;
@@ -43,6 +44,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   jumpLabel?: string | null;
   disabledReason?: string | null;
   onToggleFavorite: () => void;
+  onToggleFallback?: (() => void) | undefined;
 }) {
   const providerLabel = getProviderRowLabel(props.providerDisplayName, props.model.subProvider);
 
@@ -76,6 +78,14 @@ export const ModelListRow = memo(function ModelListRow(props: {
               New
             </span>
           ) : null}
+          {props.isFallback ? (
+            <span
+              className="shrink-0 rounded border border-warning/35 bg-warning/15 px-1 py-px text-3xs font-semibold leading-none text-warning"
+              aria-label="Active fallback model"
+            >
+              Fallback
+            </span>
+          ) : null}
           {props.unavailable ? (
             <Badge variant="outline" size="sm">
               Unavailable
@@ -104,6 +114,42 @@ export const ModelListRow = memo(function ModelListRow(props: {
           <CheckIcon className="size-3.5" aria-hidden="true" />
         ) : null}
         {props.jumpLabel ? <Kbd>{props.jumpLabel}</Kbd> : null}
+        {props.onToggleFallback ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon-xs"
+                  variant="ghost-muted"
+                  className="shrink-0"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    props.onToggleFallback?.();
+                  }}
+                  onKeyDown={(event) => {
+                    event.stopPropagation();
+                  }}
+                  disabled={Boolean(props.disabledReason)}
+                  aria-label={
+                    props.isFallback ? "Remove as fallback model" : "Set as rate-limit fallback"
+                  }
+                >
+                  <ShieldAlertIcon
+                    className={cn(
+                      "size-3.5 sm:size-3",
+                      props.isFallback
+                        ? "fill-current text-warning"
+                        : "text-muted-foreground/60 hover:text-foreground",
+                    )}
+                  />
+                </Button>
+              }
+            />
+            <TooltipPopup side="top" align="center">
+              {props.isFallback ? "Remove as fallback model" : "Set as rate-limit fallback"}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
         <Tooltip>
           <TooltipTrigger
             render={
