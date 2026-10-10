@@ -2,11 +2,12 @@ import { EnvironmentId, type ThreadPullRequestLink } from "@t3tools/contracts";
 import type { DesktopPreviewFavicon, PreviewSessionSnapshot } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   RightPanelTabs,
   resolvePullRequestTabLink,
+  rightPanelSurfaceActions,
   shouldOpenDefaultBrowserProfileFromMenuClick,
   surfaceShortcutActionForKey,
   surfaceShortcutTargetsTypingContext,
@@ -18,6 +19,42 @@ describe("browser profile submenu", () => {
     expect(shouldOpenDefaultBrowserProfileFromMenuClick("touch")).toBe(false);
     expect(shouldOpenDefaultBrowserProfileFromMenuClick("mouse")).toBe(true);
     expect(shouldOpenDefaultBrowserProfileFromMenuClick(undefined)).toBe(true);
+  });
+});
+
+describe("right panel surface actions", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const inputs = () => ({
+    panels: {
+      preview: { available: true, onOpen: () => undefined },
+      diff: { available: true, onOpen: () => undefined },
+      terminal: { available: true, onOpen: () => undefined },
+      device: { available: true, onOpen: () => undefined },
+      "pull-request": { available: true, onOpen: () => undefined },
+      "pull-requests": { available: true, onOpen: () => undefined },
+    },
+    onAddFiles: () => undefined,
+    filesAvailable: true,
+  });
+
+  it("keeps launcher order, letters and copy for registered and local surfaces", () => {
+    const actions = rightPanelSurfaceActions(inputs());
+    expect(actions.map((action) => [action.shortcut, action.label])).toEqual([
+      ["B", "Browser"],
+      ["T", "Terminal"],
+      ["F", "Files"],
+      ["D", "Diff"],
+      ["P", "Pull request"],
+      ["L", "Linked pull requests"],
+      ["M", "Device"],
+    ]);
+    expect(actions.find((action) => action.id === "diff")).toMatchObject({
+      unavailableHint: "Available for Git repositories.",
+      unavailableReason: "Diff is only available for server threads in Git repositories.",
+    });
   });
 });
 
@@ -125,21 +162,17 @@ function renderTabs(
       onCloseSurfacesToRight={() => undefined}
       onCloseAllSurfaces={() => undefined}
       onCopyFilePath={() => undefined}
-      onAddBrowser={() => undefined}
+      panels={{
+        preview: { available: true, onOpen: () => undefined },
+        diff: { available: false, onOpen: () => undefined },
+        terminal: { available: false, onOpen: () => undefined },
+        device: { available: false, onOpen: () => undefined },
+        "pull-request": { available: false, onOpen: () => undefined },
+        "pull-requests": { available: false, onOpen: () => undefined },
+      }}
       onAddBrowserInProfile={() => undefined}
-      onAddTerminal={() => undefined}
-      onAddPullRequest={() => undefined}
-      onAddPullRequests={() => undefined}
-      onAddDiff={() => undefined}
       onAddFiles={() => undefined}
-      onAddDevice={() => undefined}
-      browserAvailable
-      terminalAvailable={false}
-      diffAvailable={false}
       filesAvailable={false}
-      pullRequestAvailable={false}
-      pullRequestsAvailable={false}
-      deviceAvailable={false}
     >
       <div>content</div>
     </RightPanelTabs>,
