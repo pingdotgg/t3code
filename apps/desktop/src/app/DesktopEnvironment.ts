@@ -171,9 +171,16 @@ const make = Effect.fn("desktop.environment.make")(function* (
   });
   const rootDir = path.resolve(input.dirname, "../../..");
   const appRoot = input.isPackaged ? input.appPath : rootDir;
+  // Electron places the resources directory next to its own executable.
+  // Distribution packages that run the app on a shared Electron keep the
+  // app's resources elsewhere and point here instead.
+  const resourcesPath = Option.match(config.resourcesPathOverride, {
+    onNone: () => input.resourcesPath,
+    onSome: (override) => path.resolve(override),
+  });
   const serverRoot =
     input.isPackaged && input.platform === "win32"
-      ? path.join(input.resourcesPath, "server.asar")
+      ? path.join(resourcesPath, "server.asar")
       : appRoot;
   const branding = resolveDesktopAppBranding({
     isDevelopment,
@@ -190,8 +197,6 @@ const make = Effect.fn("desktop.environment.make")(function* (
     Option.getOrElse(config.xdgDataHome, () => path.join(homeDirectory, ".local", "share")),
     "applications",
   );
-  const resourcesPath = input.resourcesPath;
-
   return DesktopEnvironment.of({
     path,
     dirname: input.dirname,
