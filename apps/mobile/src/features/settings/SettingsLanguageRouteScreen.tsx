@@ -9,30 +9,31 @@ import {
 } from "@t3tools/client-runtime/i18n";
 
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
+import { useTranslate } from "../../i18n";
+import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { SettingsChoiceRow } from "./components/SettingsChoiceRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 
-/** `system` follows the device locale; i18next falls back to English per key. */
-const LANGUAGE_OPTIONS: ReadonlyArray<{
-  readonly preference: LanguagePreference;
-  readonly label: string;
-  readonly description: string;
-}> = [
-  {
-    preference: "system",
-    label: "System default",
-    description: "Follow the device language.",
-  },
-  ...SUPPORTED_LANGUAGES.map((language) => ({
-    preference: language satisfies LanguagePreference,
-    label: LANGUAGE_LABELS[language],
-    description: "",
-  })),
-];
-
 export function SettingsLanguageRouteScreen() {
+  const t = useTranslate();
+  const languageOptions: ReadonlyArray<{
+    readonly preference: LanguagePreference;
+    readonly label: string;
+    readonly description: string;
+  }> = [
+    {
+      preference: "system",
+      label: t("settings.language.system"),
+      description: t("settings.language.deviceDescription"),
+    },
+    ...SUPPORTED_LANGUAGES.map((language) => ({
+      preference: language,
+      label: LANGUAGE_LABELS[language],
+      description: "",
+    })),
+  ];
   const insets = useSafeAreaInsets();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
@@ -42,7 +43,8 @@ export function SettingsLanguageRouteScreen() {
     : null;
 
   return (
-    <SettingsScreen title="Language">
+    <SettingsScreen title={t("settings.language.title")}>
+      <NativeStackScreenOptions options={{ title: t("settings.language.title") }} />
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -50,8 +52,8 @@ export function SettingsLanguageRouteScreen() {
         contentContainerClassName="gap-3 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        <SettingsSection title="Language">
-          {LANGUAGE_OPTIONS.map((option, index) => (
+        <SettingsSection title={t("settings.language.title")}>
+          {languageOptions.map((option, index) => (
             <SettingsChoiceRow
               key={option.preference}
               label={option.label}

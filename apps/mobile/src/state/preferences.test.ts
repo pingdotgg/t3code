@@ -61,6 +61,32 @@ function makePreferencesState(
 }
 
 describe("mobile preferences state", () => {
+  it.effect("restores the saved language after a failed optimistic preference write", () =>
+    Effect.gen(function* () {
+      const state = makePreferencesState({
+        load: Effect.succeed({ languagePreference: "en", baseFontSize: 19 }),
+        savePatch: () =>
+          Effect.fail(
+            new MobilePreferences.MobilePreferencesSaveError({ cause: new Error("write failed") }),
+          ),
+      });
+      const registry = AtomRegistry.make();
+      const unmountPreferences = registry.mount(state.preferencesAtom);
+      const unmountUpdate = registry.mount(state.updatePreferencesAtom);
+      yield* AtomRegistry.getResult(registry, state.preferencesAtom, { suspendOnWaiting: true });
+      registry.set(state.updatePreferencesAtom, { languagePreference: "zh" });
+      const result = yield* Effect.result(
+        AtomRegistry.getResult(registry, state.updatePreferencesAtom, { suspendOnWaiting: true }),
+      );
+      expect(result._tag).toBe("Failure");
+      expect(
+        yield* AtomRegistry.getResult(registry, state.preferencesAtom, { suspendOnWaiting: true }),
+      ).toEqual({ languagePreference: "en", baseFontSize: 19 });
+      unmountUpdate();
+      unmountPreferences();
+      registry.dispose();
+    }),
+  );
   it.effect("shares one preference load across consumers", () =>
     Effect.gen(function* () {
       const load = vi.fn(() =>
