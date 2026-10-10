@@ -1,0 +1,691 @@
+import Foundation
+import Testing
+@testable import T3Code
+
+@Suite("Thread tool state")
+struct FeatureToolStateTests {
+    @MainActor
+    @Test("A failed source-control action stops progress before recovery")
+    func failedSourceControlActionStopsProgressBeforeRecovery() async {
+        var phases: [String] = []
+
+        let result: Result<Void, Error> = await runFeatureSourceControlAction(
+            setRunning: { phases.append($0 ? "running" : "stopped") }
+        ) {
+            throw FeatureCapabilityUnavailable("Source control")
+        }
+
+        if case .failure = result {
+            phases.append("recovery")
+        }
+
+        #expect(phases == ["running", "stopped", "recovery"])
+    }
+
+    private static func vcsLocal(
+        isRepo: Bool = true,
+        hasPrimaryRemote: Bool = true,
+        refName: String? = "feature/cached",
+        files: [String] = []
+    ) -> VCSLocalStatus {
+        VCSLocalStatus(
+            isRepo: isRepo,
+            sourceControlProvider: nil,
+            hasPrimaryRemote: hasPrimaryRemote,
+            isDefaultRef: false,
+            refName: refName,
+            hasWorkingTreeChanges: files.isEmpty == false,
+            workingTree: VCSWorkingTree(
+                files: files.map {
+                    VCSWorkingTreeFile(path: $0, insertions: 1, deletions: 0)
+                },
+                insertions: files.count,
+                deletions: 0
+            )
+        )
+    }
+
+    private static func vcsRemote(
+        aheadCount: Int,
+        behindCount: Int = 0,
+        pullRequest: VCSChangeRequest? = nil
+    ) -> VCSRemoteStatus {
+        VCSRemoteStatus(
+            hasUpstream: true,
+            aheadCount: aheadCount,
+            behindCount: behindCount,
+            aheadOfDefaultCount: nil,
+            pr: pullRequest
+        )
+    }
+
+    @Test("Cached local status is available before remote status")
+    func cachedLocalStatusArrivesFirst() throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+
+        let consumedLocal = accumulator.consume(
+            .snapshot(
+                local: Self.vcsLocal(files: ["App/NativeFeatureClient.swift"]),
+                remote: nil
+            )
+        )
+        let localOnly = try #require(consumedLocal)
+
+        #expect(localOnly.branch == "feature/cached")
+        #expect(localOnly.files.map(\.path) == ["App/NativeFeatureClient.swift"])
+        #expect(localOnly.aheadCount == 0)
+        #expect(localOnly.pullRequest == nil)
+        #expect(accumulator.isComplete == false)
+        // Ahead/behind are unknown rather than zero, so remote-dependent
+        // actions stay withheld until the remote half lands.
+        #expect(localOnly.isRemoteKnown == false)
+        #expect(localOnly.availableActions.contains(.createPullRequest) == false)
+        #expect(localOnly.availableActions.contains(.commitPushAndCreatePullRequest) == false)
+        #expect(localOnly.availableActions.contains(.commit))
+    }
+
+    @Test("Remote status combines with the latest local status")
+    func remoteStatusUsesLatestLocalState() throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+        _ = accumulator.consume(
+            .snapshot(local: Self.vcsLocal(refName: "feature/old"), remote: nil)
+        )
+        _ = accumulator.consume(
+            .localUpdated(Self.vcsLocal(refName: "feature/new", files: ["new.swift"]))
+        )
+        let pullRequest = VCSChangeRequest(
+            number: 42,
+            title: "Cached status",
+            url: "https://example.com/pull/42",
+            baseRef: "main",
+            headRef: "feature/new",
+            state: "OPEN"
+        )
+
+        let consumedRemote = accumulator.consume(
+            .remoteUpdated(
+                Self.vcsRemote(
+                    aheadCount: 2,
+                    behindCount: 1,
+                    pullRequest: pullRequest
+                )
+            )
+        )
+        let combined = try #require(consumedRemote)
+
+        #expect(combined.branch == "feature/new")
+        #expect(combined.files.map(\.path) == ["new.swift"])
+        #expect(combined.aheadCount == 2)
+        #expect(combined.behindCount == 1)
+        #expect(combined.pullRequest?.number == 42)
+        #expect(combined.isRemoteKnown)
+        #expect(accumulator.isComplete)
+    }
+
+    @Test("Remote status is retained across a later local-only update")
+    func localUpdateKeepsKnownRemoteStatus() throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+        _ = accumulator.consume(
+            .snapshot(
+                local: Self.vcsLocal(refName: "feature/one"),
+                remote: Self.vcsRemote(aheadCount: 4, behindCount: 2)
+            )
+        )
+        #expect(accumulator.isComplete)
+
+        let consumed = accumulator.consume(
+            .localUpdated(Self.vcsLocal(refName: "feature/one", files: ["later.swift"]))
+        )
+        let updated = try #require(consumed)
+
+        #expect(updated.files.map(\.path) == ["later.swift"])
+        #expect(updated.aheadCount == 4)
+        #expect(updated.behindCount == 2)
+        #expect(updated.isRemoteKnown)
+        // Completion latches: a local-only update must not reopen the stream.
+        #expect(accumulator.isComplete)
+    }
+
+    @Test("Remote-before-local ordering retains the remote status")
+    func remoteBeforeLocalIsRetained() throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+
+        let remoteBeforeLocal = accumulator.consume(
+            .remoteUpdated(Self.vcsRemote(aheadCount: 9))
+        )
+        #expect(remoteBeforeLocal == nil)
+        #expect(accumulator.isComplete == false)
+
+        let consumedLocal = accumulator.consume(
+            .localUpdated(Self.vcsLocal(refName: "feature/local"))
+        )
+        let withRetainedRemote = try #require(consumedLocal)
+        let consumedRemote = accumulator.consume(
+            .remoteUpdated(Self.vcsRemote(aheadCount: 3))
+        )
+        let combined = try #require(consumedRemote)
+
+        #expect(withRetainedRemote.aheadCount == 9)
+        #expect(withRetainedRemote.isRemoteKnown)
+        #expect(combined.branch == "feature/local")
+        #expect(combined.aheadCount == 3)
+        #expect(accumulator.isComplete)
+    }
+
+    @Test(
+        "Terminal local states do not wait for remote status",
+        arguments: [
+            Self.vcsLocal(isRepo: false, hasPrimaryRemote: false, refName: nil),
+            Self.vcsLocal(hasPrimaryRemote: false, refName: "local-only"),
+        ]
+    )
+    func terminalLocalStatesAreExplicit(local: VCSLocalStatus) throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+
+        let consumed = accumulator.consume(.snapshot(local: local, remote: nil))
+        let status = try #require(consumed)
+
+        #expect(status.isRepository == local.isRepo)
+        #expect(status.branch == local.refName)
+        #expect(status.pullRequest == nil)
+        // No remote will ever arrive, so nothing is left pending.
+        #expect(status.isRemoteKnown)
+        #expect(accumulator.isComplete)
+    }
+
+    @Test("A stream ending after only a cached local status is a protocol error")
+    func prematureStreamEndIsExplicit() throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+        _ = accumulator.consume(
+            .snapshot(local: Self.vcsLocal(files: ["pending.swift"]), remote: nil)
+        )
+        #expect(accumulator.isComplete == false)
+
+        #expect(throws: RPCError.self) { try accumulator.validateEnd() }
+    }
+
+    @Test("An absent remote half resolves the status instead of leaving it pending")
+    func nilRemotePayloadResolvesTheRemoteHalf() throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+        _ = accumulator.consume(.snapshot(local: Self.vcsLocal(), remote: nil))
+        #expect(accumulator.isComplete == false)
+
+        let consumed = accumulator.consume(.remoteUpdated(nil))
+        let resolved = try #require(consumed)
+
+        // "Known to be absent" is not "still pending": the stream is finished
+        // and the screen must stop claiming it is checking.
+        #expect(resolved.isRemoteKnown)
+        #expect(resolved.aheadCount == 0)
+        #expect(resolved.behindCount == 0)
+        #expect(resolved.pullRequest == nil)
+        #expect(accumulator.isComplete)
+    }
+
+    @Test("A later snapshot replaces the remote half rather than merging into it")
+    func snapshotReplacesKnownRemoteStatus() throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+        _ = accumulator.consume(
+            .snapshot(
+                local: Self.vcsLocal(refName: "feature/one"),
+                remote: Self.vcsRemote(aheadCount: 7)
+            )
+        )
+
+        // Resubscribe after a reconnect: the server prepends a fresh snapshot
+        // carrying whatever its cache holds, so a stale ahead count must not
+        // survive and must not be reported as known.
+        let consumed = accumulator.consume(
+            .snapshot(local: Self.vcsLocal(refName: "feature/one"), remote: nil)
+        )
+        let replaced = try #require(consumed)
+
+        #expect(replaced.aheadCount == 0)
+        #expect(replaced.isRemoteKnown == false)
+        #expect(accumulator.isComplete == false)
+    }
+
+    @Test("A fresh snapshot can return a reused monitor to pending")
+    func completionTracksTheCurrentSequence() {
+        var accumulator = NativeSourceControlStatusAccumulator()
+        let events: [VCSStatusEvent] = [
+            .snapshot(local: Self.vcsLocal(refName: "feature/seq"), remote: nil),
+            .localUpdated(Self.vcsLocal(refName: "feature/seq", files: ["a.swift"])),
+            .remoteUpdated(Self.vcsRemote(aheadCount: 1)),
+            .localUpdated(Self.vcsLocal(refName: "feature/seq", files: ["a.swift", "b.swift"])),
+            .remoteUpdated(nil),
+            // A reused monitor can begin a fresh cached-local-first sequence.
+            .snapshot(local: Self.vcsLocal(refName: "feature/seq"), remote: nil),
+            .localUpdated(Self.vcsLocal(refName: "feature/seq")),
+        ]
+
+        var completionStates: [Bool] = []
+        for event in events {
+            _ = accumulator.consume(event)
+            completionStates.append(accumulator.isComplete)
+        }
+
+        #expect(completionStates == [false, false, true, true, true, false, false])
+    }
+
+    @Test("Changing branches discards the prior branch remote status")
+    func branchChangeReturnsRemoteStatusToPending() throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+        _ = accumulator.consume(
+            .snapshot(
+                local: Self.vcsLocal(refName: "feature/one"),
+                remote: Self.vcsRemote(aheadCount: 4)
+            )
+        )
+
+        let consumed = accumulator.consume(
+            .localUpdated(Self.vcsLocal(refName: "feature/two"))
+        )
+        let changedBranch = try #require(consumed)
+
+        #expect(changedBranch.branch == "feature/two")
+        #expect(changedBranch.aheadCount == 0)
+        #expect(changedBranch.pullRequest == nil)
+        #expect(changedBranch.isRemoteKnown == false)
+        #expect(accumulator.isComplete == false)
+    }
+
+    @Test("A completed stream ends without error")
+    func completedStreamEndIsAccepted() throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+        _ = accumulator.consume(
+            .snapshot(
+                local: Self.vcsLocal(),
+                remote: Self.vcsRemote(aheadCount: 1)
+            )
+        )
+
+        try accumulator.validateEnd()
+    }
+
+    @Test
+    func fileFilteringKeepsDirectoriesFirstAndHonorsHiddenFiles() {
+        let entries = [
+            FeatureFileEntry(path: "z.swift", name: "z.swift", kind: .file),
+            FeatureFileEntry(path: ".env", name: ".env", kind: .file, isHidden: true),
+            FeatureFileEntry(path: "Sources", name: "Sources", kind: .directory),
+            FeatureFileEntry(path: "a.swift", name: "a.swift", kind: .file),
+        ]
+
+        #expect(entries.featureFiltered(by: "", includesHidden: false).map(\.name) == [
+            "Sources", "a.swift", "z.swift",
+        ])
+        #expect(entries.featureFiltered(by: "env", includesHidden: true).map(\.name) == [".env"])
+    }
+
+    @Test
+    func filePreviewKindUsesImageMarkdownAndSourceSemantics() {
+        #expect(FeatureFilePreviewKind.infer(path: "art/hero.webp") == .image)
+        #expect(FeatureFilePreviewKind.infer(path: "docs/spec.pdf") == .pdf)
+        #expect(FeatureFilePreviewKind.infer(path: "demo.mov") == .video)
+        #expect(FeatureFilePreviewKind.infer(path: "brief.docx") == .document)
+        #expect(FeatureFilePreviewKind.infer(path: "README.md") == .markdown)
+        #expect(FeatureFilePreviewKind.infer(path: "Package.swift") == .source)
+        #expect(FeatureFilePreviewKind.infer(path: "LICENSE") == .plainText)
+        #expect(FeatureFilePreviewKind.infer(path: "template", language: "html") == .source)
+    }
+
+    @Test
+    func previewFileNamesDropPathsAndRejectEmptyNames() throws {
+        #expect(try FeatureMediaPreviewFiles.safeFileName("reports/final.pdf") == "final.pdf")
+        #expect(try FeatureMediaPreviewFiles.safeFileName("clip:one.mov") == "clip_one.mov")
+        #expect(throws: FeatureMediaPreviewError.invalidFileName) {
+            try FeatureMediaPreviewFiles.safeFileName("  ")
+        }
+    }
+
+    @Test
+    func previewDirectoriesHaveUniqueOwnership() throws {
+        let first = try FeatureMediaPreviewFiles.ownedDirectory()
+        let second = try FeatureMediaPreviewFiles.ownedDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: first)
+            try? FileManager.default.removeItem(at: second)
+        }
+        #expect(first != second)
+        #expect(FileManager.default.fileExists(atPath: first.path))
+        #expect(FileManager.default.fileExists(atPath: second.path))
+    }
+
+    @Test
+    func remotePreviewNeverSharesItsSignedSourceURL() {
+        let signedURL = URL(string: "https://example.com/file.pdf?token=secret")!
+        let downloadedURL = URL(fileURLWithPath: "/tmp/owned/file.pdf")
+        #expect(
+            FeatureMediaPreviewFiles.shareURL(
+                for: .remote(signedURL),
+                downloadedURL: nil
+            ) == nil
+        )
+        #expect(
+            FeatureMediaPreviewFiles.shareURL(
+                for: .remote(signedURL),
+                downloadedURL: downloadedURL
+            ) == downloadedURL
+        )
+    }
+
+    @Test
+    func typedMediaPreviewRouteKeepsHostPathAndKind() {
+        var components = URLComponents()
+        components.scheme = "t3code"
+        components.host = "media-preview"
+        components.path = "/open"
+        components.queryItems = [
+            URLQueryItem(name: "path", value: "/tmp/output/final image.png"),
+            URLQueryItem(name: "kind", value: "image"),
+        ]
+        #expect(
+            FeatureTypedMediaPreviewRoute.parse(components.url!)
+                == FeatureTypedMediaPreviewRoute(
+                    path: "/tmp/output/final image.png",
+                    kind: .image
+                )
+        )
+        #expect(
+            FeatureTypedMediaPreviewRoute.parse(
+                URL(string: "t3code://media-preview/open?path=/tmp/a.pdf&kind=pdf")!
+            ) == FeatureTypedMediaPreviewRoute(path: "/tmp/a.pdf", kind: .pdf)
+        )
+    }
+
+    @Test
+    func previewGenerationRejectsCompletionAfterDismissal() {
+        var generation = FeatureMediaPreviewGeneration()
+        let downloadGeneration = generation.begin()
+        #expect(generation.isCurrent(downloadGeneration))
+        generation.invalidate()
+        #expect(!generation.isCurrent(downloadGeneration))
+    }
+
+    @Test
+    func sourceHighlighterPreservesTextAndClassifiesStableSpans() {
+        let source = """
+        let count = 42 // total
+        /* first
+           second */ return "done"
+        """
+        let lines = FeatureSourceHighlighter.lines(text: source, language: "swift")
+
+        #expect(lines.map(\.text).joined(separator: "\n") == source)
+        #expect(lines[0].spans.contains { $0.text == "let" && $0.kind == .keyword })
+        #expect(lines[0].spans.contains { $0.text == "42" && $0.kind == .number })
+        #expect(lines[0].spans.last?.kind == .comment)
+        #expect(lines[1].spans.allSatisfy { $0.kind == .comment })
+        #expect(lines[2].spans.first?.kind == .comment)
+        #expect(lines[2].spans.contains { $0.text.contains("return") && $0.kind == .keyword })
+        #expect(lines[2].spans.last?.kind == .literal)
+    }
+
+    @Test
+    func sourceHighlighterRecognizesJSONProperties() {
+        let line = FeatureSourceHighlighter.lines(
+            text: #"{"enabled": true, "count": 3}"#,
+            language: "json"
+        )[0]
+
+        #expect(line.spans.contains { $0.text == #""enabled""# && $0.kind == .property })
+        #expect(line.spans.contains { $0.text == "true" && $0.kind == .literal })
+        #expect(line.spans.contains { $0.text == "3" && $0.kind == .number })
+    }
+
+    @Test
+    func sourceHighlighterBoundsWorkForLargeMinifiedLines() {
+        let source = String(repeating: #"{"value":42}"#, count: 3_000)
+        let line = FeatureSourceHighlighter.lines(text: source, language: "json")[0]
+
+        #expect(line.text == source)
+        #expect(line.spans == [FeatureSourceSpan(text: source, kind: .plain)])
+    }
+
+    @Test
+    func reviewTotalsAggregateAcrossFiles() {
+        let review = FeatureReview(files: [
+            FeatureReviewFile(path: "a.swift", change: .modified, additions: 4, deletions: 1),
+            FeatureReviewFile(path: "b.swift", change: .added, additions: 8, deletions: 0),
+        ])
+
+        #expect(review.additions == 12)
+        #expect(review.deletions == 1)
+    }
+
+    @Test
+    func wordDiffHighlightsOnlyChangedTokens() {
+        let result = FeatureDiffWordHighlighter.spans(
+            old: "let color = blue",
+            new: "let color = green"
+        )
+
+        #expect(result.old.map(\.text).joined() == "let color = blue")
+        #expect(result.new.map(\.text).joined() == "let color = green")
+        #expect(result.old.filter { $0.kind == .changed }.map(\.text) == ["blue"])
+        #expect(result.new.filter { $0.kind == .changed }.map(\.text) == ["green"])
+    }
+
+    @Test
+    func workspaceReviewMapperPairsReplacementLinesAndCarriesBaseReference() {
+        let preview = ReviewDiffPreview(
+            cwd: "/tmp/project",
+            generatedAt: "2026-08-01T00:00:00Z",
+            sources: [
+                ReviewDiffSource(
+                    id: "working-tree",
+                    kind: "working-tree",
+                    title: "Working tree",
+                    baseRef: "main",
+                    headRef: nil,
+                    diff: """
+                    diff --git a/App.swift b/App.swift
+                    --- a/App.swift
+                    +++ b/App.swift
+                    @@ -1,1 +1,1 @@
+                    -let color = blue
+                    +let color = green
+                    """,
+                    diffHash: "hash",
+                    truncated: false
+                ),
+            ]
+        )
+
+        let review = NativeWorkspaceMapper.review(preview)
+        let deletion = review.files[0].lines.first { $0.kind == .deletion }
+        let addition = review.files[0].lines.first { $0.kind == .addition }
+
+        #expect(review.baseReference == "main")
+        #expect(review.files[0].sourceKind == "working-tree")
+        #expect(review.files[0].sourceBaseReference == "main")
+        #expect(deletion?.spans?.filter { $0.kind == .changed }.map(\.text) == ["blue"])
+        #expect(addition?.spans?.filter { $0.kind == .changed }.map(\.text) == ["green"])
+    }
+
+    @Test
+    func fullDiffHydrationRestoresUnchangedRegionsWithoutLosingPatchRows() {
+        let file = FeatureReviewFile(
+            path: "App.swift",
+            change: .modified,
+            additions: 1,
+            deletions: 1,
+            lines: [
+                .init(id: "hunk", kind: .hunk, text: "@@ -2,2 +2,2 @@"),
+                .init(id: "old", kind: .deletion, oldLine: 2, text: "let color = blue"),
+                .init(id: "new", kind: .addition, newLine: 2, text: "let color = green"),
+                .init(id: "after", kind: .context, oldLine: 3, newLine: 3, text: "render()"),
+            ]
+        )
+
+        let lines = FeatureFullDiffHydrator.lines(
+            for: file,
+            contents: FeatureReviewFileContents(
+                oldContents: "import SwiftUI\nlet color = blue\nrender()\nfinish()\n",
+                newContents: "import SwiftUI\nlet color = green\nrender()\nfinish()\n"
+            )
+        )
+
+        #expect(lines.map(\.kind) == [.context, .deletion, .addition, .context, .context])
+        #expect(lines.map(\.text) == [
+            "import SwiftUI",
+            "let color = blue",
+            "let color = green",
+            "render()",
+            "finish()",
+        ])
+        #expect(lines.last?.oldLine == 4)
+        #expect(lines.last?.newLine == 4)
+    }
+
+    @Test
+    func fullDiffHydrationHandlesWholeAddedAndDeletedFiles() {
+        let added = FeatureFullDiffHydrator.lines(
+            for: FeatureReviewFile(
+                path: "Added.swift",
+                change: .added,
+                additions: 2,
+                deletions: 0
+            ),
+            contents: FeatureReviewFileContents(
+                oldContents: "",
+                newContents: "one\ntwo\n"
+            )
+        )
+        let deleted = FeatureFullDiffHydrator.lines(
+            for: FeatureReviewFile(
+                path: "Deleted.swift",
+                change: .deleted,
+                additions: 0,
+                deletions: 1
+            ),
+            contents: FeatureReviewFileContents(
+                oldContents: "gone\n",
+                newContents: ""
+            )
+        )
+
+        #expect(added.map(\.kind) == [.addition, .addition])
+        #expect(added.map(\.newLine) == [1, 2])
+        #expect(deleted.map(\.kind) == [.deletion])
+        #expect(deleted.map(\.oldLine) == [1])
+    }
+
+    @Test
+    func fullDiffHydrationKeepsDeletionAtItsPreviousAnchor() {
+        let file = FeatureReviewFile(
+            path: "App.swift",
+            change: .modified,
+            additions: 1,
+            deletions: 1,
+            lines: [
+                .init(id: "anchor", kind: .context, oldLine: 2, newLine: 2, text: "two"),
+                .init(id: "deleted", kind: .deletion, oldLine: 3, text: "three"),
+                .init(id: "later", kind: .addition, newLine: 7, text: "added later"),
+            ]
+        )
+
+        let lines = FeatureFullDiffHydrator.lines(
+            for: file,
+            contents: FeatureReviewFileContents(
+                oldContents: "one\ntwo\nthree\nfour\nfive\nsix\nseven\n",
+                newContents: "one\ntwo\nfour\nfive\nsix\nseven\nadded later\n"
+            )
+        )
+
+        #expect(lines.firstIndex { $0.id == "deleted" } == 2)
+        #expect(lines.prefix(3).map(\.text) == ["one", "two", "three"])
+    }
+
+    @Test
+    func reviewCommentPromptIncludesActionableFileAndLineContext() {
+        let draft = FeatureReviewCommentDraft(
+            filePath: "Sources/App.swift",
+            line: FeatureReviewLineSelection(side: .new, line: 42),
+            body: "  Handle the nil case.  "
+        )
+
+        #expect(draft.prompt.contains("`Sources/App.swift` at new line 42"))
+        #expect(draft.prompt.contains("Handle the nil case."))
+        #expect(!draft.prompt.contains("  Handle the nil case.  "))
+    }
+
+    @Test
+    func sourceControlActionsReflectRepositoryState() {
+        let clean = FeatureSourceControlStatus(branch: "main")
+        #expect(clean.availableActions == [.createPullRequest])
+
+        let changed = FeatureSourceControlStatus(
+            branch: "feature/native",
+            aheadCount: 2,
+            behindCount: 1,
+            files: [.init(path: "App.swift", state: .modified, isStaged: false)]
+        )
+        #expect(changed.availableActions.contains(.commit))
+        #expect(changed.availableActions.contains(.push))
+        #expect(changed.availableActions.contains(.pull))
+        #expect(changed.availableActions.contains(.commitPushAndCreatePullRequest))
+
+        var busy = changed
+        busy.isBusy = true
+        #expect(busy.availableActions.isEmpty)
+    }
+
+    @Test
+    func terminalPlainTextDropsControlSequences() {
+        let prompt = "\u{1B}]0;workspace\u{7}\u{1B}[38;5;221mx\u{8}repo\u{1B}[39m ❯ "
+        #expect(TerminalText.plainText(from: prompt) == "repo ❯ ")
+    }
+
+    @Test
+    func terminalSessionSelectionPrefersAndAllocatesStableIDs() {
+        let sessions = [
+            FeatureTerminalSnapshot(
+                threadID: "thread",
+                terminalID: "term-2",
+                state: .running,
+                title: "Tests"
+            ),
+            FeatureTerminalSnapshot(
+                threadID: "thread",
+                terminalID: "default",
+                state: .running
+            ),
+            FeatureTerminalSnapshot(
+                threadID: "thread",
+                terminalID: "term-3",
+                state: .exited
+            ),
+        ]
+
+        #expect(TerminalSessionList.initialID(in: sessions) == "default")
+        #expect(TerminalSessionList.nextID(occupiedIDs: ["default", "term-2", "term-4"]) == "term-3")
+        #expect(TerminalSessionList.displayTitle(for: sessions[0]) == "Terminal 2 · Tests")
+        #expect(TerminalSessionList.displayTitle(for: sessions[1]) == "Terminal 1")
+        #expect(
+            TerminalSessionList.fallbackID(in: sessions, excluding: "default") == "term-2"
+        )
+    }
+
+    @Test
+    func terminalSnapshotPreservesVTDataForGhostty() {
+        let history = "\u{1B}[31mred\u{1B}[0m\r\n"
+        let snapshot = TerminalSessionSnapshot(
+            threadId: "thread",
+            terminalId: "default",
+            cwd: "/repo",
+            worktreePath: nil,
+            status: .running,
+            pid: 123,
+            history: history,
+            exitCode: nil,
+            exitSignal: nil,
+            label: "Terminal",
+            updatedAt: "2026-08-07T00:00:00Z",
+            sequence: 1
+        )
+
+        #expect(NativeWorkspaceMapper.terminal(snapshot).buffer == history)
+    }
+}

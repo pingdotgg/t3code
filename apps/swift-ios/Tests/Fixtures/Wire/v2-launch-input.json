@@ -1,0 +1,43 @@
+{
+  "commandId": "command-v2-launch",
+  "creationSource": "mobile",
+  "threadId": "thread-v2-new",
+  "projectId": "project-v2",
+  "title": "New native thread",
+  "generateTitle": true,
+  "modelSelection": {
+    "instanceId": "codex",
+    "model": "gpt-5.4"
+  },
+  "runtimeMode": "approval-required",
+  "interactionMode": "default",
+  "workspaceStrategy": {
+    "type": "worktree",
+    "baseRef": "main",
+    "branch": "native-fixture",
+    "startFromOrigin": true
+  },
+  "initialMessage": {
+    "messageId": "message-v2-launch",
+    "text": "Verify the native wire contract with these attachments.",
+    "attachments": [
+      {
+        "type": "image",
+        "id": "attachment-v2-image",
+        "name": "screenshot.png",
+        "mimeType": "image/png",
+        "sizeBytes": 128
+      },
+      {
+        "type": "file",
+        "id": "attachment-v2-file",
+        "name": "requirements.txt",
+        "mimeType": "text/plain",
+        "sizeBytes": 256,
+        "source": {
+          "_tag": "pasted-text"
+        }
+      }
+    ]
+  }
+}

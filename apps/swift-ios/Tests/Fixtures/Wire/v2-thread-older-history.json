@@ -1,0 +1,186 @@
+{
+  "snapshotSequence": 100,
+  "items": [
+    {
+      "position": 0,
+      "visibility": "local",
+      "sourceThreadId": "thread-v2",
+      "sourceItemId": "item-v2-history-user",
+      "item": {
+        "id": "item-v2-history-user",
+        "threadId": "thread-v2",
+        "runId": "run-v2-history",
+        "nodeId": null,
+        "providerThreadId": "provider-thread-v2",
+        "providerTurnId": null,
+        "nativeItemRef": null,
+        "parentItemId": null,
+        "ordinal": 0,
+        "status": "completed",
+        "title": null,
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": "2026-08-07T12:00:00.000Z",
+        "updatedAt": "2026-08-07T12:00:00.000Z",
+        "createdBy": "user",
+        "creationSource": "mobile",
+        "type": "user_message",
+        "messageId": "message-v2-history-user",
+        "inputIntent": "turn_start",
+        "text": "Check the initial contract.",
+        "attachments": []
+      }
+    },
+    {
+      "position": 1,
+      "visibility": "local",
+      "sourceThreadId": "thread-v2",
+      "sourceItemId": "item-v2-history-assistant",
+      "item": {
+        "id": "item-v2-history-assistant",
+        "threadId": "thread-v2",
+        "runId": "run-v2-history",
+        "nodeId": "node-v2-history",
+        "providerThreadId": "provider-thread-v2",
+        "providerTurnId": null,
+        "nativeItemRef": null,
+        "parentItemId": null,
+        "ordinal": 1,
+        "status": "completed",
+        "title": null,
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": "2026-08-07T12:00:00.000Z",
+        "updatedAt": "2026-08-07T12:00:00.000Z",
+        "type": "assistant_message",
+        "messageId": "message-v2-history-assistant",
+        "text": "The initial contract is valid.",
+        "streaming": false
+      }
+    },
+    {
+      "position": 2,
+      "visibility": "local",
+      "sourceThreadId": "thread-v2",
+      "sourceItemId": "item-v2-user",
+      "item": {
+        "id": "item-v2-user",
+        "threadId": "thread-v2",
+        "runId": "run-v2-active",
+        "nodeId": null,
+        "providerThreadId": "provider-thread-v2",
+        "providerTurnId": "provider-turn-v2",
+        "nativeItemRef": null,
+        "parentItemId": null,
+        "ordinal": 10,
+        "status": "completed",
+        "title": null,
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": "2026-08-07T12:00:00.000Z",
+        "updatedAt": "2026-08-07T12:00:00.000Z",
+        "createdBy": "user",
+        "creationSource": "mobile",
+        "type": "user_message",
+        "messageId": "message-v2-user",
+        "inputIntent": "turn_start",
+        "text": "Verify the native wire contract with these attachments.",
+        "attachments": [
+          {
+            "type": "image",
+            "id": "attachment-v2-image",
+            "name": "screenshot.png",
+            "mimeType": "image/png",
+            "sizeBytes": 128
+          },
+          {
+            "type": "file",
+            "id": "attachment-v2-file",
+            "name": "requirements.txt",
+            "mimeType": "text/plain",
+            "sizeBytes": 256,
+            "source": {
+              "_tag": "pasted-text"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "position": 3,
+      "visibility": "local",
+      "sourceThreadId": "thread-v2",
+      "sourceItemId": "item-v2-reasoning",
+      "item": {
+        "id": "item-v2-reasoning",
+        "threadId": "thread-v2",
+        "runId": "run-v2-active",
+        "nodeId": "node-v2-root",
+        "providerThreadId": "provider-thread-v2",
+        "providerTurnId": "provider-turn-v2",
+        "nativeItemRef": null,
+        "parentItemId": null,
+        "ordinal": 11,
+        "status": "completed",
+        "title": null,
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": "2026-08-07T12:00:00.000Z",
+        "updatedAt": "2026-08-07T12:00:00.000Z",
+        "type": "reasoning",
+        "text": "Check the snapshot, then apply incremental events.",
+        "streaming": false
+      }
+    },
+    {
+      "position": 4,
+      "visibility": "local",
+      "sourceThreadId": "thread-v2",
+      "sourceItemId": "item-v2-tool",
+      "item": {
+        "id": "item-v2-tool",
+        "threadId": "thread-v2",
+        "runId": "run-v2-active",
+        "nodeId": "node-v2-root",
+        "providerThreadId": "provider-thread-v2",
+        "providerTurnId": "provider-turn-v2",
+        "nativeItemRef": null,
+        "parentItemId": null,
+        "ordinal": 12,
+        "status": "completed",
+        "title": "Read contracts",
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": "2026-08-07T12:00:00.000Z",
+        "updatedAt": "2026-08-07T12:00:00.000Z",
+        "type": "command_execution",
+        "input": "cat packages/contracts/src/orchestrationV2.ts",
+        "output": "export const OrchestrationV2ThreadProjection = Schema.Struct({...});",
+        "exitCode": 0
+      }
+    },
+    {
+      "position": 5,
+      "visibility": "local",
+      "sourceThreadId": "thread-v2",
+      "sourceItemId": "item-v2-assistant",
+      "item": {
+        "id": "item-v2-assistant",
+        "threadId": "thread-v2",
+        "runId": "run-v2-active",
+        "nodeId": "node-v2-root",
+        "providerThreadId": "provider-thread-v2",
+        "providerTurnId": "provider-turn-v2",
+        "nativeItemRef": null,
+        "parentItemId": null,
+        "ordinal": 13,
+        "status": "running",
+        "title": null,
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": null,
+        "updatedAt": "2026-08-07T12:00:00.000Z",
+        "type": "assistant_message",
+        "messageId": "message-v2-assistant",
+        "text": "I checked the contracts.",
+        "streaming": true
+      }
+    }
+  ],
+  "nextCursor": null,
+  "hasMoreHistory": false
+}

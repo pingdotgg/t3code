@@ -97,6 +97,8 @@ export default defineConfig({
       "apps/mobile/android/**",
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",
+      // Wire fixtures have generator-owned formatting and frozen V1 checksums.
+      "apps/swift-ios/Tests/Fixtures/Wire/**",
       "*.icon/**",
     ],
     sortPackageJson: {},

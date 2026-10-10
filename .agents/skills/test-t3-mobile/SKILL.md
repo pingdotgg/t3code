@@ -5,6 +5,8 @@ description: Test T3 Code's native iOS and Android app through its Device panel 
 
 # Test T3 Mobile
 
+Select the client before building. `apps/mobile` is React Native for iOS and Android. `apps/swift-ios` is the separate native SwiftUI iOS app. They have separate builds, identities, and pairing routes.
+
 ## Open the device
 
 Call `device_list`, then `device_open` with the selected host and device IDs.
@@ -26,7 +28,11 @@ Test with meaningful project and thread data. Read the shared
 [SQLite fixture reference](../test-t3-app/references/sqlite-fixtures.md) only
 when inspecting or seeding SQLite. Stop the test server before fixture writes.
 
-## Launch T3 Code Dev
+## Launch the selected client
+
+For SwiftUI, build `apps/swift-ios/T3Code.xcodeproj`, scheme `T3Code`, configuration `Debug`, for the selected iOS simulator. Install and launch `com.t3tools.t3code.swiftui.dev` with the returned AgentDevice command and target arguments. Pair through its native connection screen with a credential from the isolated backend. Do not start Metro or run the Expo helper for SwiftUI.
+
+### React Native T3 Code Dev
 
 From the checkout being tested on the selected device host, run:
 
@@ -47,7 +53,7 @@ applies these preferences before the app loads.
 
 ## Pair and verify
 
-Use the helper from the repository root, with the returned executable and target
+For React Native, use the helper from the repository root, with the returned executable and target
 arguments stored in `agent_device_command` and the Bash array
 `agent_device_target_args`:
 

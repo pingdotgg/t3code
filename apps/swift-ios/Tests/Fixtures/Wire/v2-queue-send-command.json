@@ -1,0 +1,36 @@
+{
+  "type": "message.dispatch",
+  "createdBy": "user",
+  "creationSource": "mobile",
+  "commandId": "command-v2-queue-send",
+  "threadId": "thread-v2",
+  "messageId": "message-v2-queued",
+  "text": "Also verify the history page.",
+  "attachments": [
+    {
+      "type": "image",
+      "id": "attachment-v2-image",
+      "name": "screenshot.png",
+      "mimeType": "image/png",
+      "sizeBytes": 128
+    },
+    {
+      "type": "file",
+      "id": "attachment-v2-file",
+      "name": "requirements.txt",
+      "mimeType": "text/plain",
+      "sizeBytes": 256,
+      "source": {
+        "_tag": "pasted-text"
+      }
+    }
+  ],
+  "modelSelection": {
+    "instanceId": "codex",
+    "model": "gpt-5.4"
+  },
+  "deliveryIntent": "auto",
+  "dispatchMode": {
+    "type": "queue_after_active"
+  }
+}

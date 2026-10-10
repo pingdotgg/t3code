@@ -1,0 +1,12 @@
+{
+  "baseline": "swift-ios/v1-before-dual-orchestrator",
+  "sha256": {
+    "auto-settle-command.json": "4c0cfa9b9f403cadda842ea26b82f0dce846a313b117e6c48d7b77d6a5db1c7e",
+    "question-attachment-command.json": "ff2d3f5e8c323bcea881aa8c661ed41c4b1702b87d3c1d2fd98badadfa2c4c14",
+    "question-dismiss-command.json": "eeec408461433b263ec5913f8bd060118213ad29531394787fa71eb0fb297095",
+    "shell-snapshot.json": "c14053c1c125895ed2bc3b7054e1b6a89cc469bfdb825bad0df4e04528166327",
+    "shell-stream-snapshot.json": "8b31e53f29d1a449f8194bb057521ce5ff0b3cb72489028be6309420cb2d6ef2",
+    "thread-detail-snapshot.json": "ca4a0935aff579d4bb5579fb74996ea6946263bb3826a0a2b019b90ccc9e6253",
+    "thread-stream-snapshot.json": "bf611b4b733f847ab0f95ee7b2b59ad3f863c7a00b2e48d123e687c0f164744a"
+  }
+}

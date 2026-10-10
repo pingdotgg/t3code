@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "snapshotSequence": 100,
+  "threads": [
+    {
+      "createdBy": "user",
+      "creationSource": "mobile",
+      "id": "thread-v2",
+      "projectId": "project-v2",
+      "title": "Verify native V2 support",
+      "providerInstanceId": "codex",
+      "modelSelection": {
+        "instanceId": "codex",
+        "model": "gpt-5.4"
+      },
+      "runtimeMode": "approval-required",
+      "interactionMode": "default",
+      "branch": "main",
+      "worktreePath": null,
+      "lineage": {
+        "parentThreadId": null,
+        "relationshipToParent": null,
+        "rootThreadId": "thread-v2"
+      },
+      "forkedFrom": null,
+      "activeProviderThreadId": "provider-thread-v2",
+      "latestRunId": "run-v2-queued",
+      "latestRunRequestedAt": "2026-08-07T12:00:00.000Z",
+      "latestRunStartedAt": null,
+      "latestRunCompletedAt": null,
+      "activeRunId": "run-v2-active",
+      "activityRunStartedAt": "2026-08-07T12:00:00.000Z",
+      "activityRunStatus": "waiting",
+      "status": "waiting",
+      "pendingRuntimeRequest": {
+        "id": "request-v2-approval",
+        "kind": "command",
+        "createdAt": "2026-08-07T12:00:00.000Z"
+      },
+      "latestVisibleMessage": {
+        "id": "message-v2-queued",
+        "role": "user",
+        "text": "Also verify the history page.",
+        "updatedAt": "2026-08-07T12:00:00.000Z"
+      },
+      "latestUserMessageAt": "2026-08-07T12:00:00.000Z",
+      "hasActionableProposedPlan": false,
+      "pendingBackgroundTasks": [],
+      "providerInstanceHistory": [
+        "codex"
+      ],
+      "itemCount": 10,
+      "visibleItemCount": 10,
+      "createdAt": "2026-08-07T12:00:00.000Z",
+      "updatedAt": "2026-08-07T12:00:00.000Z",
+      "archivedAt": null,
+      "settledOverride": null,
+      "settledAt": null,
+      "autoSettleDisabledAt": "2026-08-07T12:00:00.000Z",
+      "activeOrderKey": "nm",
+      "lastVisitedAt": null,
+      "deletedAt": null
+    }
+  ],
+  "archivedThreads": [],
+  "projects": [
+    {
+      "id": "project-v2",
+      "title": "Native wire fixtures",
+      "workspaceRoot": "/workspace/fixture",
+      "repositoryIdentity": null,
+      "defaultModelSelection": {
+        "instanceId": "codex",
+        "model": "gpt-5.4"
+      },
+      "scripts": [],
+      "createdAt": "2026-08-07T12:00:00.000Z",
+      "updatedAt": "2026-08-07T12:00:00.000Z"
+    }
+  ]
+}

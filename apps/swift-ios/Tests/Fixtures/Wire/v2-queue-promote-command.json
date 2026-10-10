@@ -1,0 +1,7 @@
+{
+  "type": "queued-message.promote-to-steer",
+  "commandId": "command-v2-queue-promote",
+  "threadId": "thread-v2",
+  "queuedRunId": "run-v2-queued",
+  "targetRunId": "run-v2-active"
+}

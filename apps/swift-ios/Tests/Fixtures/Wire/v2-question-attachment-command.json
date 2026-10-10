@@ -1,0 +1,30 @@
+{
+  "type": "runtime-request.respond",
+  "commandId": "command-v2-question-attachment",
+  "threadId": "thread-v2",
+  "requestId": "request-v2-input",
+  "answers": {
+    "scope": "SwiftUI mobile"
+  },
+  "attachmentsByQuestionId": {
+    "scope": [
+      {
+        "type": "image",
+        "id": "attachment-v2-image",
+        "name": "screenshot.png",
+        "mimeType": "image/png",
+        "sizeBytes": 128
+      },
+      {
+        "type": "file",
+        "id": "attachment-v2-file",
+        "name": "requirements.txt",
+        "mimeType": "text/plain",
+        "sizeBytes": 256,
+        "source": {
+          "_tag": "pasted-text"
+        }
+      }
+    ]
+  }
+}
