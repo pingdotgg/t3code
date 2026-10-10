@@ -24,9 +24,24 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
   const now = Date.now();
   // The 4x3 default cell fits two quotas per provider with their reset text.
   const limit = 2;
-  const colors = getMaterialColors({
-    scheme: environment.colorScheme === "dark" ? "dark" : "light",
-  });
+  const appearance =
+    props.theme?.mode === "system" || !props.theme
+      ? environment.colorScheme === "dark"
+        ? "dark"
+        : "light"
+      : props.theme.mode;
+  const palette = props.theme?.[appearance];
+  const material = getMaterialColors({ scheme: appearance });
+  const colors = palette
+    ? {
+        surface: palette.background,
+        onSurface: palette.foreground,
+        onSurfaceVariant: palette.secondary,
+        surfaceVariant: palette.track,
+        primary: palette.accent,
+        error: palette.danger,
+      }
+    : material;
   const muted = colors.onSurfaceVariant;
   const providers = props.providers ?? [
     { name: "Codex", detail: "Open T3 to connect", windows: [], expiresAt: 0, totalWindows: 0 },
