@@ -426,6 +426,80 @@ describe("environment grouping", () => {
     });
   });
 
+  it("offers every checkout while an offline remote is selected", () => {
+    const primary = makeProject({ repositoryIdentity });
+    const worktree = makeProject({
+      id: ProjectId.make("local-worktree"),
+      workspaceRoot: "/tmp/shared-repo-feature",
+      repositoryIdentity,
+    });
+    const remote = makeProject({
+      id: ProjectId.make("remote-copy"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+    const groups = buildSidebarProjectSnapshots({
+      projects: [remote, primary, worktree],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+    const entries = buildSidebarProjectPickerEntries({
+      groups,
+      preferredProjectRef: { environmentId: remoteEnvironmentId, projectId: remote.id },
+      expandCheckouts: true,
+      isEnvironmentReachable: (environmentId) => environmentId === primaryEnvironmentId,
+    });
+
+    expect(groups).toHaveLength(1);
+    expect(entries.map(({ targetProject }) => targetProject.id)).toEqual([
+      primary.id,
+      worktree.id,
+      remote.id,
+    ]);
+    expect(entries[2]?.isPreferred).toBe(true);
+    expect(entries.map(({ group }) => group.projectKey)).toEqual([
+      repositoryIdentity.canonicalKey,
+      repositoryIdentity.canonicalKey,
+      repositoryIdentity.canonicalKey,
+    ]);
+  });
+
+  it("prefers the exact connected worktree while keeping other copies available", () => {
+    const primary = makeProject({ repositoryIdentity });
+    const worktree = makeProject({
+      id: ProjectId.make("local-worktree"),
+      workspaceRoot: "/tmp/shared-repo-feature",
+      repositoryIdentity,
+    });
+    const remote = makeProject({
+      id: ProjectId.make("remote-copy"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+    const groups = buildSidebarProjectSnapshots({
+      projects: [primary, worktree, remote],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+    const entries = buildSidebarProjectPickerEntries({
+      groups,
+      preferredProjectRef: { environmentId: primaryEnvironmentId, projectId: worktree.id },
+      expandCheckouts: true,
+      isEnvironmentReachable: () => true,
+    });
+
+    expect(entries.map(({ targetProject }) => targetProject.id)).toEqual([
+      worktree.id,
+      primary.id,
+      remote.id,
+    ]);
+    expect(
+      entries.filter((entry) => entry.isPreferred).map(({ targetProject }) => targetProject.id),
+    ).toEqual([worktree.id]);
+  });
+
   it("keeps manual project order when building grouped sidebar entries", () => {
     const primary = makeProject({ repositoryIdentity });
     const remote = makeProject({

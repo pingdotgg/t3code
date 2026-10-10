@@ -4942,12 +4942,16 @@ export default function Sidebar() {
   // falling back to the top project) — same resolution the command palette
   // uses. The command palette already offers a "New thread in..." submenu
   // for multi-project setups.
+  const projectChoiceCount = projectGroups.reduce(
+    (count, group) => count + group.memberProjects.length,
+    0,
+  );
   const handleNewThreadClick = useCallback(
     (event?: ReactMouseEvent) => {
-      // One project: nothing to pick, create immediately. Shift+click creates
+      // One checkout: nothing to pick, create immediately. Shift+click creates
       // directly in the current project even with several projects, skipping
       // the palette picker.
-      if (shouldCreateNewThreadInCurrentProject(event?.shiftKey ?? false, projectGroups.length)) {
+      if (shouldCreateNewThreadInCurrentProject(event?.shiftKey ?? false, projectChoiceCount)) {
         if (isMobile) setOpenMobile(false);
         void startNewThreadFromContext({
           activeDraftThread: newThreadContext.activeDraftThread,
@@ -4960,7 +4964,7 @@ export default function Sidebar() {
       if (isMobile) setOpenMobile(false);
       openCommandPalette({ open: "new-thread-in" });
     },
-    [isMobile, newThreadContext, projectGroups.length, setOpenMobile],
+    [isMobile, newThreadContext, projectChoiceCount, setOpenMobile],
   );
 
   // The button mirrors chat.new: in multi-project setups both route through
@@ -4973,7 +4977,7 @@ export default function Sidebar() {
   // shift+click and its keyboard twin chat.newLocal for direct create.
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.new") ??
-    (projectGroups.length <= 1 ? shortcutLabelForCommand(keybindings, "chat.newLocal") : undefined);
+    (projectChoiceCount <= 1 ? shortcutLabelForCommand(keybindings, "chat.newLocal") : undefined);
   const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
   return (
     <>
@@ -5125,7 +5129,7 @@ export default function Sidebar() {
               newThreadDisabled={projects.length === 0}
               newThreadShortcutLabel={newThreadShortcutLabel}
               newThreadInProjectShortcutLabel={newThreadInProjectShortcutLabel}
-              showNewThreadInProjectHint={projectGroups.length > 1}
+              showNewThreadInProjectHint={projectChoiceCount > 1}
               searchInputRef={threadSearchInputRef}
               searchQuery={threadSearchQuery}
               onSearchQueryChange={(value) => {

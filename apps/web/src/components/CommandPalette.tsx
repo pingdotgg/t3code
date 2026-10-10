@@ -15,7 +15,7 @@ import {
   getNewProjectPathPreview,
   normalizePastedCloneUrl,
 } from "@t3tools/client-runtime/operations/projects";
-import { connectionStatusText } from "@t3tools/client-runtime/connection";
+import { connectionStatusText, connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
 import {
@@ -994,6 +994,28 @@ function OpenCommandPaletteDialog(props: {
       }),
     [contextualProjectRef, projectGroups],
   );
+  const isEnvironmentReachable = useCallback(
+    (environmentId: EnvironmentId) =>
+      environments.some(
+        (environment) =>
+          environment.environmentId === environmentId &&
+          canCreateProjectInEnvironment(environment.connection.phase),
+      ),
+    [environments],
+  );
+  const threadPickerProjects = useMemo(
+    () =>
+      buildSidebarProjectPickerEntries({
+        groups: projectGroups,
+        preferredProjectRef: contextualProjectRef,
+        expandCheckouts: true,
+        isEnvironmentReachable,
+      }).map(({ group, targetProject }) => ({
+        ...targetProject,
+        displayName: group.displayName,
+      })),
+    [contextualProjectRef, isEnvironmentReachable, projectGroups],
+  );
   const pickerProjects = useMemo(
     () =>
       projectPickerEntries.map(({ group, targetProject }) => ({
@@ -1350,18 +1372,17 @@ function OpenCommandPaletteDialog(props: {
     const projectItems = enumerateCommandPaletteItems(
       buildProjectActionItems({
         // The no-project home shows once, as the "No project" item below.
-        projects: pickerProjects.filter((project) => !isScratch(project)),
+        projects: threadPickerProjects.filter((project) => !isScratch(project)),
         valuePrefix: "new-thread-in",
-        searchTerms: (project) => {
-          const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
-          const location = projectEnvironmentLocationById.get(project.environmentId);
-          return [
-            ...(group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ??
-              []),
-            ...(location ? [location.label] : []),
-          ];
-        },
+        disabled: (project) => !isEnvironmentReachable(project.environmentId),
+        searchTerms: (project) => [
+          project.workspaceRoot,
+          projectEnvironmentLocationById.get(project.environmentId)?.label ?? "Remote",
+        ],
         renderDescription: (project) => {
+          const environment = environments.find(
+            (candidate) => candidate.environmentId === project.environmentId,
+          );
           const location = projectEnvironmentLocationById.get(project.environmentId) ?? {
             kind: "remote",
             label: "Remote",
@@ -1381,24 +1402,23 @@ function OpenCommandPaletteDialog(props: {
               </span>
               <CommandPaletteMetaDot />
               <span className="truncate">{project.workspaceRoot}</span>
+              {isEnvironmentReachable(project.environmentId) ? null : (
+                <>
+                  <CommandPaletteMetaDot />
+                  <span className="shrink-0">
+                    {environment ? connectionStatusTitle(environment.connection) : "Unavailable"}
+                  </span>
+                </>
+              )}
             </span>
           );
         },
         icon: projectFaviconIcon,
+        // Each row is one checkout, so pin it instead of letting load balancing move the draft.
         runProject: async (project) => {
-          const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
-          const contextualRefBelongsToGroup =
-            contextualProjectRef !== null &&
-            group?.memberProjectRefs.some(
-              (projectRef) =>
-                projectRef.environmentId === contextualProjectRef.environmentId &&
-                projectRef.projectId === contextualProjectRef.projectId,
-            );
-          await handleNewThread(
-            contextualRefBelongsToGroup
-              ? contextualProjectRef
-              : scopeProjectRef(project.environmentId, project.id),
-          );
+          await handleNewThread(scopeProjectRef(project.environmentId, project.id), {
+            environmentSelection: "manual",
+          });
         },
       }),
     );
@@ -1408,7 +1428,8 @@ function OpenCommandPaletteDialog(props: {
     // scrolling past every project, while Enter still starts in the current
     // one. When the current thread has no project, it is the current entry and
     // goes first. It keeps its own shortcut, so the projects' mod+1..9 hold.
-    const noProjectIndex = pickerProjects[0] !== undefined && isScratch(pickerProjects[0]) ? 0 : 1;
+    const noProjectIndex =
+      threadPickerProjects[0] !== undefined && isScratch(threadPickerProjects[0]) ? 0 : 1;
     return [
       ...projectItems.slice(0, noProjectIndex),
       {
@@ -1423,14 +1444,14 @@ function OpenCommandPaletteDialog(props: {
       ...projectItems.slice(noProjectIndex),
     ];
   }, [
-    contextualProjectRef,
+    environments,
     handleNewThread,
-    pickerProjects,
+    isEnvironmentReachable,
     projectEnvironmentLocationById,
-    projectGroupByTargetKey,
     scratchTargetEnvironmentId,
     scratchWorkspaceRootFor,
     startScratchThread,
+    threadPickerProjects,
   ]);
 
   const allThreadItems = useMemo(
