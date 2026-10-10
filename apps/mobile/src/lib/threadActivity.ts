@@ -1049,6 +1049,31 @@ export function failedFeedRunIds(
 }
 
 /**
+ * The assistant messages that end a stretch of output and so carry metadata:
+ * each run's last one, plus the last one before a later user message in the
+ * same run (a steer). Forking from one in `midRunIds` must cut inside its run.
+ */
+export function terminalFeedAssistantMessageIds(feed: ReadonlyArray<ThreadFeedEntry>) {
+  const lastIdBySegment = new Map<string, string>();
+  const lastIdByRun = new Map<RunId, string>();
+  const segmentByRun = new Map<RunId, number>();
+  for (const entry of feed) {
+    if (entry.type !== "message" || !entry.message.runId) continue;
+    const runId = entry.message.runId;
+    if (entry.message.role === "user") {
+      segmentByRun.set(runId, (segmentByRun.get(runId) ?? 0) + 1);
+      continue;
+    }
+    lastIdByRun.set(runId, entry.message.id);
+    lastIdBySegment.set(`${runId}:${segmentByRun.get(runId) ?? 0}`, entry.message.id);
+  }
+  const terminalIds = new Set(lastIdBySegment.values());
+  const runEndIds = new Set(lastIdByRun.values());
+  const midRunIds = new Set([...terminalIds].filter((id) => !runEndIds.has(id)));
+  return { terminalIds, midRunIds };
+}
+
+/**
  * A prompt without a run (a provider-native subagent, or a turn imported from
  * V1) folds its response like a run. `runlessWorkActive` keeps the latest
  * runless response open; V2 work must not reopen imported turns.

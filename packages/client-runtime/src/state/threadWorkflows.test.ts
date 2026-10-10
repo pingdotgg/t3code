@@ -385,6 +385,28 @@ describe("thread workflows", () => {
     ).toBe(false);
   });
 
+  it("forks from a reply that was stopped mid-stream, but not from a failed one", () => {
+    const withStatus = (status: string) =>
+      ({ item: { type: "assistant_message", runId: "run", status } }) as never;
+
+    expect(canForkProjectedAssistantItem({ projectedItem: withStatus("interrupted") })).toBe(true);
+    expect(
+      canForkProjectedAssistantItem({
+        projectedItem: withStatus("interrupted"),
+        capabilities: capabilities({ portableFork: true }),
+      }),
+    ).toBe(true);
+    expect(
+      canForkProjectedAssistantItem({
+        projectedItem: withStatus("interrupted"),
+        capabilities: capabilities(),
+      }),
+    ).toBe(false);
+    for (const status of ["failed", "cancelled", "pending", "waiting", "idle"]) {
+      expect(canForkProjectedAssistantItem({ projectedItem: withStatus(status) })).toBe(false);
+    }
+  });
+
   it("merges the newest provider-finished run while checkpoint capture is pending", () => {
     const projection = {
       runs: [

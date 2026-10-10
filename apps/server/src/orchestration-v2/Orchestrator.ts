@@ -628,6 +628,7 @@ function runForSourcePoint(
     case "latest_stable":
       return latestStableRun(projection);
     case "run":
+    case "turn_item":
       return projection.runs.find((run) => run.id === sourcePoint.runId) ?? null;
     case "checkpoint": {
       const checkpoint = projection.checkpoints.find(
@@ -686,6 +687,38 @@ function contextSourcePointForRun(
       ? {}
       : { providerTurnRef: providerTurn.nativeTurnRef }),
   };
+}
+
+/**
+ * Drops the source run's items after the response a fork ends at, such as a
+ * steer and the reply to it. Without a cut item the whole run is kept.
+ */
+function itemsThroughForkCut(
+  items: ReadonlyArray<OrchestrationV2TurnItem>,
+  sourceRunId: RunId,
+  throughTurnItemId: TurnItemId | undefined,
+): ReadonlyArray<OrchestrationV2TurnItem> {
+  if (throughTurnItemId === undefined) return items;
+  const cutOrdinal = items.find((item) => item.id === throughTurnItemId)?.ordinal;
+  return items.filter(
+    (item) =>
+      item.runId !== sourceRunId || (cutOrdinal !== undefined && item.ordinal <= cutOrdinal),
+  );
+}
+
+/**
+ * A response a fork may end at: a finished assistant message of the source run.
+ * Stopping mid-reply leaves it interrupted, which still ends the conversation.
+ */
+function isForkableResponseItem(
+  item: OrchestrationV2TurnItem | null,
+  run: OrchestrationV2Run,
+): boolean {
+  return (
+    item?.type === "assistant_message" &&
+    item.runId === run.id &&
+    (item.status === "completed" || item.status === "interrupted")
+  );
 }
 
 function pendingForkTransferForThread(
@@ -3543,6 +3576,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: forkableSourceRunStatusError(sourceRun),
       });
     }
+    const throughTurnItemId =
+      command.sourcePoint.type === "turn_item" ? command.sourcePoint.turnItemId : undefined;
+    if (throughTurnItemId !== undefined) {
+      const throughItem = yield* projectionStore
+        .getTurnItem({ threadId: command.sourceThreadId, itemId: throughTurnItemId })
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.sourceThreadId, cause }),
+          ),
+        );
+      if (!isForkableResponseItem(throughItem, sourceRun)) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Fork source item ${throughTurnItemId} is not a finished assistant response of run ${sourceRun.id}.`,
+        });
+      }
+    }
     const sourceProviderThread = providerThreadForRun(sourceProjection, sourceRun);
     const now = command.createdAt ?? (yield* DateTime.now);
     const emitEvent = emit(events, command);
@@ -3558,7 +3609,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         sourceProjection,
         sourceRun,
         sourceProviderThread,
-        canonicalSourcePoint: contextSourcePointForRun(sourceProjection, sourceRun),
+        canonicalSourcePoint: {
+          ...contextSourcePointForRun(sourceProjection, sourceRun),
+          ...(throughTurnItemId === undefined ? {} : { turnItemId: throughTurnItemId }),
+        },
         transferId,
         targetThreadId: command.targetThreadId,
         ...(command.title === undefined ? {} : { title: command.title }),
@@ -3640,6 +3694,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
 
+    if (command.sourcePoint.type === "turn_item") {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Merge-back takes a run or checkpoint, not a single response.",
+      });
+    }
     const sourceRun = runForSourcePoint(sourceProjection, command.sourcePoint);
     if (sourceRun === null) {
       return yield* new OrchestratorDispatchError({
@@ -5662,6 +5723,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 hasStrongNativeSource: sourceProviderThread?.nativeThreadRef?.strength === "strong",
                 sourceRunStatus: sourceRun.status,
                 fromSpecificTurn: sourceRun !== null,
+                fromSpecificItem: pendingForkTransfer.sourcePoint.turnItemId !== undefined,
               }),
             );
       const canResolveForkNatively = forkExecution === "native_fork";
@@ -5675,6 +5737,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             providerInstanceId: modelSelection.instanceId,
             capabilities,
             fromSpecificTurn: sourceRun !== null,
+            fromSpecificItem: pendingForkTransfer?.sourcePoint.turnItemId !== undefined,
           }),
         );
       }
@@ -5718,12 +5781,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const portableForkItems =
         !requiresPortableFork || sourceProjection === null || sourceRun === null
           ? []
-          : yield* readHandoffItems(sourceProjection.thread.id, [
-              ...sourceProjection.runs
-                .filter((run) => run.ordinal <= sourceRun.ordinal)
-                .map((run) => run.id),
-              ...(sourceProjection.thread.historyOrigin === "v1_import" ? [null] : []),
-            ]);
+          : itemsThroughForkCut(
+              yield* readHandoffItems(sourceProjection.thread.id, [
+                ...sourceProjection.runs
+                  .filter((run) => run.ordinal <= sourceRun.ordinal)
+                  .map((run) => run.id),
+                ...(sourceProjection.thread.historyOrigin === "v1_import" ? [null] : []),
+              ]),
+              sourceRun.id,
+              pendingForkTransfer?.sourcePoint.turnItemId,
+            );
       const portableForkHandoff =
         !requiresPortableFork ||
         pendingForkTransfer === undefined ||

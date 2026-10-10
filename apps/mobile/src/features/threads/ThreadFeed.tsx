@@ -161,6 +161,7 @@ import {
 } from "@t3tools/mobile-markdown-text/links";
 import {
   failedFeedRunIds,
+  terminalFeedAssistantMessageIds,
   deriveThreadFeedPresentation,
   threadFeedRunIsUnsettled,
   isContextCompactionActivityGroup,
@@ -321,6 +322,8 @@ function AssistantForkButton(props: {
   readonly environmentId: EnvironmentId;
   readonly iconColor: ColorValue;
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
+  /** A later response in the run follows, so the fork cuts at this item. */
+  readonly midRun: boolean;
   readonly sourceTitle: string;
 }) {
   const support = useV2ItemSupport({
@@ -354,6 +357,7 @@ function AssistantForkButton(props: {
             sourceThreadId: props.projectedItem.sourceThreadId,
             targetThreadId,
             runId,
+            ...(props.midRun ? { turnItemId: props.projectedItem.item.id } : {}),
             title: `${props.sourceTitle} fork`,
             creationSource: "mobile",
           },
@@ -1525,7 +1529,7 @@ function renderFeedEntry(
     readonly expandedWorkRows: Record<string, boolean>;
     readonly workRowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
     readonly workGroupScrollPositions: Map<string, ThreadWorkGroupScrollPosition>;
-    readonly terminalAssistantMessageIds: ReadonlySet<string>;
+    readonly terminalAssistantMessageIds: ReturnType<typeof terminalFeedAssistantMessageIds>;
     readonly unsettledTurnId: RunId | null;
     readonly failedRunIds: ReadonlySet<RunId>;
     readonly onCopyWorkRow: (rowId: string, value: string) => void;
@@ -1694,7 +1698,7 @@ function renderFeedEntry(
       message.runId === props.unsettledTurnId;
     const showAssistantMeta =
       message.role === "assistant" &&
-      props.terminalAssistantMessageIds.has(message.id) &&
+      props.terminalAssistantMessageIds.terminalIds.has(message.id) &&
       !assistantTurnStillInProgress &&
       !message.streaming;
 
@@ -1966,6 +1970,7 @@ function renderFeedEntry(
                 environmentId={props.environmentId}
                 iconColor={iconSubtleColor}
                 projectedItem={message.projectedItem}
+                midRun={props.terminalAssistantMessageIds.midRunIds.has(message.id)}
                 sourceTitle={props.threadTitle}
               />
             ) : null}
@@ -2761,15 +2766,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     () => failedFeedRunIds(props.feed, props.latestRun),
     [props.feed, props.latestRun],
   );
-  const terminalAssistantMessageIds = useMemo(() => {
-    const terminalIdsByTurn = new Map<RunId, string>();
-    for (const entry of props.feed) {
-      if (entry.type === "message" && entry.message.role === "assistant" && entry.message.runId) {
-        terminalIdsByTurn.set(entry.message.runId, entry.message.id);
-      }
-    }
-    return new Set(terminalIdsByTurn.values());
-  }, [props.feed]);
+  const terminalAssistantMessageIds = useMemo(
+    () => terminalFeedAssistantMessageIds(props.feed),
+    [props.feed],
+  );
   useEffect(() => {
     const previous = previousLatestTurnRef.current;
     previousLatestTurnRef.current = props.latestRun;

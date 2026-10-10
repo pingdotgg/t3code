@@ -961,6 +961,7 @@ type ShellThreadRow = {
   readonly thread_id: string;
   readonly payload_json: string;
   readonly forked_from_run_source_thread_id: string | null;
+  readonly forked_from_items_after_cut: number;
   readonly latest_run_id: string | null;
   readonly latest_run_status: string | null;
   readonly latest_run_requested_at: string | null;
@@ -1283,14 +1284,43 @@ export function isTurnItemAtOrBeforeRun(input: {
   return ordinal !== undefined && ordinal <= input.sourceRunOrdinal;
 }
 
+/**
+ * A fork that ends at a response inside its source run (one a steer cut off)
+ * keeps that run's items only through the response.
+ */
+function isTurnItemWithinForkCut(input: {
+  readonly item: Pick<OrchestrationV2TurnItem, "runId" | "ordinal">;
+  readonly sourceRunId: RunId;
+  readonly cutOrdinal: number | undefined;
+}): boolean {
+  return (
+    input.cutOrdinal === undefined ||
+    input.item.runId !== input.sourceRunId ||
+    input.item.ordinal <= input.cutOrdinal
+  );
+}
+
+function forkCutOrdinal(
+  items: ReadonlyArray<Pick<OrchestrationV2TurnItem, "id" | "ordinal">>,
+  throughTurnItemId: TurnItemId | undefined,
+): number | undefined {
+  // A windowed read stops at or before the cut, so a page without the cut
+  // item holds nothing after it.
+  return throughTurnItemId === undefined
+    ? undefined
+    : items.find((item) => item.id === throughTurnItemId)?.ordinal;
+}
+
 function visibleTurnItemsThroughRun(input: {
   readonly sourceProjection: OrchestrationV2ThreadProjection;
   readonly sourceRunId: NonNullable<OrchestrationV2TurnItem["runId"]>;
+  readonly throughTurnItemId: TurnItemId | undefined;
 }): Array<Omit<OrchestrationV2ProjectedTurnItem, "position">> {
   const sourceRun = input.sourceProjection.runs.find((run) => run.id === input.sourceRunId);
   if (sourceRun === undefined) {
     return [];
   }
+  const cutOrdinal = forkCutOrdinal(input.sourceProjection.turnItems, input.throughTurnItemId);
 
   const runOrdinalById = new Map(input.sourceProjection.runs.map((run) => [run.id, run.ordinal]));
   const inheritedPrefix = input.sourceProjection.visibleTurnItems
@@ -1314,12 +1344,14 @@ function visibleTurnItemsThroughRun(input: {
       ) {
         return false;
       }
-      return isTurnItemAtOrBeforeRun({
-        historyOrigin: input.sourceProjection.thread.historyOrigin,
-        itemRunId: item.runId,
-        runOrdinalById,
-        sourceRunOrdinal: sourceRun.ordinal,
-      });
+      return (
+        isTurnItemAtOrBeforeRun({
+          historyOrigin: input.sourceProjection.thread.historyOrigin,
+          itemRunId: item.runId,
+          runOrdinalById,
+          sourceRunOrdinal: sourceRun.ordinal,
+        }) && isTurnItemWithinForkCut({ item, sourceRunId: sourceRun.id, cutOrdinal })
+      );
     }),
   );
 
@@ -1338,6 +1370,7 @@ function buildVisibleTurnItems(input: {
   const inherited = visibleTurnItemsThroughRun({
     sourceProjection: input.sourceProjection,
     sourceRunId: forkedFrom.runId,
+    throughTurnItemId: forkedFrom.throughTurnItemId,
   });
   const markerItem = makeForkMarkerTurnItem({
     targetProjection: input.projection,
@@ -1605,6 +1638,7 @@ type ShellThreadState = {
   readonly goal: OrchestrationV2ThreadShell["goal"];
   readonly itemCount: number;
   readonly runlessItemCount: number;
+  readonly forkedFromItemsAfterCut: number;
   readonly updatedAt: OrchestrationV2ThreadProjection["updatedAt"];
   readonly runOrdinalById: ReadonlyMap<RunId, number>;
   readonly itemCountByRunId: ReadonlyMap<RunId, number>;
@@ -1705,7 +1739,8 @@ function visibleItemCountForShell(input: {
 
   return (
     inheritedPrefixCount +
-    itemCountThroughRun({ state: sourceState, runId: forkedFrom.runId }) +
+    itemCountThroughRun({ state: sourceState, runId: forkedFrom.runId }) -
+    state.forkedFromItemsAfterCut +
     1 +
     state.itemCount
   );
@@ -3359,14 +3394,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     WHERE thread_id = ${forkedFrom.threadId}
                       AND run_id = ${forkedFrom.runId}
                     LIMIT 1
+                  ), fork_cut AS (
+                    SELECT ordinal
+                    FROM orchestration_v2_projection_turn_items
+                    WHERE thread_id = ${forkedFrom.threadId}
+                      AND turn_item_id = ${forkedFrom.throughTurnItemId ?? null}
+                    LIMIT 1
                   ), fork_boundary AS (
-                    SELECT (
+                    SELECT COALESCE((SELECT ordinal FROM fork_cut), (
                       SELECT item.ordinal
                       FROM orchestration_v2_projection_turn_items AS item
                       WHERE item.run_id = run.run_id
                       ORDER BY item.ordinal DESC
                       LIMIT 1
-                    ) AS ordinal
+                    )) AS ordinal
                     FROM orchestration_v2_projection_runs AS run
                     WHERE run.thread_id = ${forkedFrom.threadId}
                       AND run.ordinal <= (SELECT ordinal FROM fork_run)
@@ -4856,12 +4897,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         if (sourceRun !== undefined) {
           const ordinals = new Map(source.records.runs.map((run) => [run.id, run.ordinal]));
           const sourceItems = source.local.map((row) => row.item);
+          // Rows are in ordinal order, so the cut is the cut item's index.
+          const cutIndex =
+            fork.throughTurnItemId === undefined
+              ? undefined
+              : sourceItems.findIndex((item) => item.id === fork.throughTurnItemId);
           inherited = [
             ...source.visible.filter(
               (row) => row.item.threadId !== fork.threadId || row.item.type === "fork",
             ),
             ...source.local.filter(
-              (row) =>
+              (row, index) =>
                 !isOrchestrationV2SupersededInterrupt({
                   item: row.item,
                   attempts: source.records.attempts,
@@ -4872,6 +4918,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   itemRunId: row.item.runId,
                   runOrdinalById: ordinals,
                   sourceRunOrdinal: sourceRun.ordinal,
+                }) &&
+                isTurnItemWithinForkCut({
+                  item: { runId: row.item.runId, ordinal: index },
+                  sourceRunId: sourceRun.id,
+                  cutOrdinal: cutIndex,
                 }),
             ),
           ].map((row) => ({ ...row, visibility: "inherited" }));
@@ -5144,6 +5195,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   THEN json_extract(t.payload_json, '$.forkedFrom.threadId')
                 ELSE NULL
               END AS forked_from_run_source_thread_id,
+              -- Source-run items after the response a fork ends at (a steer
+              -- and the reply to it); the shell leaves them out of its count.
+              (
+                SELECT COUNT(*)
+                FROM orchestration_v2_projection_turn_items AS cut_item
+                JOIN orchestration_v2_projection_turn_items AS after_item
+                  ON after_item.thread_id = cut_item.thread_id
+                  AND after_item.run_id = cut_item.run_id
+                  AND after_item.ordinal > cut_item.ordinal
+                WHERE cut_item.thread_id = json_extract(t.payload_json, '$.forkedFrom.threadId')
+                  AND cut_item.turn_item_id = json_extract(t.payload_json, '$.forkedFrom.throughTurnItemId')
+              ) AS forked_from_items_after_cut,
               presented.run_id AS latest_run_id,
               presented.status AS latest_run_status,
               presented.requested_at AS latest_run_requested_at,
@@ -5721,6 +5784,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ),
           itemCount: row.item_count,
           runlessItemCount: row.runless_item_count,
+          forkedFromItemsAfterCut: row.forked_from_items_after_cut,
           updatedAt: thread.updatedAt,
           runOrdinalById: runOrdinalsByThreadId.get(ThreadId.make(row.thread_id)) ?? new Map(),
           itemCountByRunId: itemCountsByThreadId.get(ThreadId.make(row.thread_id)) ?? new Map(),

@@ -31,6 +31,7 @@ import {
   deriveThreadFeedPresentation,
   threadFeedActivityIsVisible,
   threadFeedRunIsUnsettled,
+  terminalFeedAssistantMessageIds,
   type ThreadFeedActivity,
   type ThreadFeedEntry,
   togglePendingUserInputOptionSelection,
@@ -2027,6 +2028,56 @@ const multiSelectQuestion = {
   ],
   multiSelect: true,
 } as const;
+
+describe("terminalFeedAssistantMessageIds", () => {
+  const runId = RunId.make("steered-run");
+  const message = (
+    id: string,
+    role: "user" | "assistant",
+    inputIntent?: "turn_start" | "steer",
+  ): ThreadFeedEntry => ({
+    type: "message",
+    id,
+    createdAt: "2026-04-01T00:00:00.000Z",
+    message: {
+      id: MessageId.make(id),
+      role,
+      text: id,
+      attachments: [],
+      runId,
+      streaming: false,
+      ...(inputIntent === undefined ? {} : { inputIntent }),
+      visibility: "local",
+      sourceThreadId: ThreadId.make("thread"),
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    },
+  });
+
+  it("ends a response at each steer and marks only the cut-off one as mid-run", () => {
+    const ids = terminalFeedAssistantMessageIds([
+      message("prompt", "user", "turn_start"),
+      message("commentary", "assistant"),
+      message("cut-off", "assistant"),
+      message("steer", "user", "steer"),
+      message("final", "assistant"),
+    ]);
+
+    expect([...ids.terminalIds]).toEqual(["cut-off", "final"]);
+    expect([...ids.midRunIds]).toEqual(["cut-off"]);
+  });
+
+  it("keeps one terminal message for an unsteered run", () => {
+    const ids = terminalFeedAssistantMessageIds([
+      message("prompt", "user", "turn_start"),
+      message("commentary", "assistant"),
+      message("final", "assistant"),
+    ]);
+
+    expect([...ids.terminalIds]).toEqual(["final"]);
+    expect(ids.midRunIds.size).toBe(0);
+  });
+});
 
 describe("pending user input answers", () => {
   it("preserves exact editor text, including a deliberately cleared answer", () => {

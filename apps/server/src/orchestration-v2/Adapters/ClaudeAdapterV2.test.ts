@@ -27,6 +27,7 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -1758,6 +1759,43 @@ describe("ClaudeAdapterV2 native fork", () => {
         assert.equal(forkedProviderThread.nativeThreadRef?.nativeId, "forked-native-session");
         assert.equal(forkedProviderThread.forkedFrom?.providerThreadId, sourceProviderThread.id);
         assert.equal(forkedProviderThread.forkedFrom?.providerTurnId, providerTurnId);
+
+        // A response a steer cut off is mid-turn: its assistant item carries the
+        // SDK message uuid, which forkSession takes as an inclusive cut.
+        yield* runtime.forkThread({
+          sourceProviderThread,
+          sourceProviderTurns: [],
+          providerTurnId,
+          throughTurnItem: {
+            id: TurnItemId.make("turn-item-claude-cut-off"),
+            threadId: sourceThreadId,
+            runId: RunId.make("run-claude-steered"),
+            nodeId: null,
+            providerThreadId: sourceProviderThread.id,
+            providerTurnId,
+            nativeItemRef: {
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeId: "cut-off-assistant-uuid",
+              strength: "strong",
+            },
+            parentItemId: null,
+            ordinal: 2,
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "assistant_message",
+            messageId: MessageId.make("message-claude-cut-off"),
+            text: "cut off by a steer",
+            streaming: false,
+          },
+          targetThreadId: ThreadId.make("thread-claude-fork-steered-target"),
+        });
+        assert.deepEqual(forkCalls[1]?.options, {
+          dir: "/workspace",
+          upToMessageId: "cut-off-assistant-uuid",
+        });
 
         yield* runtime.startTurn({
           appThread: {
