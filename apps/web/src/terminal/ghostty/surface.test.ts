@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { GhosttyTerminalCore, type GhosttyCell, type GhosttyRow } from "./core";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  encodeTerminalScriptPaste,
+  registerTerminalScriptPasteSurface,
+  SCRIPT_PASTE_READY_TIMEOUT_MS,
+  SCRIPT_PASTE_UNSUPPORTED_MESSAGE,
+} from "../scriptPaste";
 import {
   DEFAULT_TERMINAL_FONT_FAMILY,
   DEFAULT_TERMINAL_FONT_SIZE,
@@ -41,6 +48,12 @@ vi.mock("./vendor/ghostty-write-pty.wasm?url&no-inline", async () => ({
 
 describe("GhosttyTerminalSurface visibility", () => {
   const surfaces = new Set<GhosttyTerminalSurface>();
+  const pasteCleanups = new Set<() => void>();
+  const pasteTarget = {
+    environmentId: EnvironmentId.make("script-env"),
+    threadId: ThreadId.make("script-thread"),
+    terminalId: "script-terminal",
+  };
 
   function key(
     surface: GhosttyTerminalSurface,
@@ -250,11 +263,31 @@ describe("GhosttyTerminalSurface visibility", () => {
   }
 
   afterEach(() => {
+    for (const cleanup of pasteCleanups) cleanup();
+    pasteCleanups.clear();
     for (const surface of surfaces) surface.dispose();
     surfaces.clear();
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it("pastes a script once a fresh terminal's shell enables bracketed paste", async () => {
+    const surface = await createHarness().create();
+    const script = "vp i\nvp run dev";
+    const data = encodeTerminalScriptPaste(pasteTarget, script);
+    pasteCleanups.add(registerTerminalScriptPasteSurface(pasteTarget, surface));
+    surface.write("\x1b[?2004h");
+    await expect(data).resolves.toBe(`\x1b[200~${script}\x1b[201~\r`);
+  });
+
+  it("refuses a script when the shell never enables bracketed paste", async () => {
+    const surface = await createHarness().create();
+    pasteCleanups.add(registerTerminalScriptPasteSurface(pasteTarget, surface));
+    const data = encodeTerminalScriptPaste(pasteTarget, "vp i\nvp run dev");
+    const rejected = expect(data).rejects.toThrow(SCRIPT_PASTE_UNSUPPORTED_MESSAGE);
+    await vi.advanceTimersByTimeAsync(SCRIPT_PASTE_READY_TIMEOUT_MS);
+    await rejected;
   });
 
   it.each([

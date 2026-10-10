@@ -627,6 +627,7 @@ export class GhosttyTerminalSurface {
   private theme: GhosttyTheme;
   private readonly suppressedKeyCodes = new Set<string>();
   private pasteShortcutToken = 0;
+  private readonly outputListeners = new Set<() => void>();
   private copyShortcutToken = 0;
   private clearSelectionAfterCopy = false;
   private primedCopySelection = "";
@@ -765,6 +766,7 @@ export class GhosttyTerminalSurface {
   write(data: string): void {
     if (this.disposed) return;
     this.core.write(data);
+    for (const listener of this.outputListeners) listener();
     this.synchronizeMouseTrackingState();
     // Restart the blink cycle from the visible phase so the cursor never sits
     // invisible through a stream of output or a burst of typing echo.
@@ -777,6 +779,7 @@ export class GhosttyTerminalSurface {
     if (this.disposed) return;
     this.lastMouseMotionData = "";
     this.core.resetAndWrite(data);
+    for (const listener of this.outputListeners) listener();
     this.synchronizeMouseTrackingState();
     // A replayed session starts from the visible phase like any other write:
     // reattaching mid-blink must not open on an invisible cursor.
@@ -784,6 +787,19 @@ export class GhosttyTerminalSurface {
     this.forceFullRender = true;
     this.scrollbarDirty = true;
     this.requestRender();
+  }
+
+  subscribeOutput(listener: () => void): () => void {
+    this.outputListeners.add(listener);
+    return () => {
+      this.outputListeners.delete(listener);
+    };
+  }
+
+  encodeScriptPaste(text: string): string | null {
+    if (this.disposed || !this.core.isBracketedPasteMode()) return null;
+    const encoded = this.core.encodePaste(text);
+    return encoded.length > 0 ? `${encoded}\r` : null;
   }
 
   setTheme(theme: GhosttyTheme): void {
@@ -1058,6 +1074,7 @@ export class GhosttyTerminalSurface {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.outputListeners.clear();
     this.stopObservingResize();
     document.fonts.removeEventListener("loadingdone", this.onFontsLoaded);
     this.dprMedia?.removeEventListener("change", this.onDevicePixelRatioChange);

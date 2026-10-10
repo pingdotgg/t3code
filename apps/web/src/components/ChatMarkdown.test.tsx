@@ -10,7 +10,7 @@ import { MarkdownFindContext } from "./chat/markdownFindContext";
 import { act, type ComponentProps, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { GitHubIcon } from "./Icons";
@@ -275,6 +275,85 @@ describe("ChatMarkdown favicon privacy", () => {
   });
 });
 
+describe("ChatMarkdown shell scripts", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+  const onRunShellCommand = vi.fn();
+
+  beforeEach(() => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    onRunShellCommand.mockClear();
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(() => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
+  });
+
+  const renderScript = (script: string) =>
+    act(() =>
+      root.render(
+        <ChatMarkdown
+          cwd="/tmp/project"
+          text={`\`\`\`bash\n${script}\n\`\`\``}
+          isStreaming={false}
+          onRunShellCommand={onRunShellCommand}
+        />,
+      ),
+    );
+  const playButton = () => container.querySelector<HTMLButtonElement>('button[aria-label^="Run "]');
+  const dialog = () => document.querySelector('[role="alertdialog"]');
+  const dialogButton = (label: string) =>
+    [...(dialog()?.querySelectorAll("button") ?? [])].find(
+      (button) => button.textContent === label,
+    );
+  const click = (button: HTMLButtonElement | null | undefined) => {
+    if (!button) throw new Error("Missing shell script button");
+    return act(() => button.click());
+  };
+
+  it("confirms a multi-line script before running it", async () => {
+    const script = "vp i\ncat > .env <<'EOF'\nA=1\nEOF";
+    await renderScript(script);
+    await click(playButton());
+    expect(dialog()?.textContent).toContain("Run 4 lines in terminal?");
+    expect(onRunShellCommand).not.toHaveBeenCalled();
+
+    await click(dialogButton("Run"));
+    expect(onRunShellCommand).toHaveBeenCalledExactlyOnceWith(script);
+  });
+
+  it("does not run a multi-line script when the dialog is cancelled", async () => {
+    await renderScript("echo one\necho two");
+    await click(playButton());
+    await click(dialogButton("Cancel"));
+    expect(dialog()).toBeNull();
+    expect(onRunShellCommand).not.toHaveBeenCalled();
+  });
+
+  it("closes the dialog when the script changes after it opens", async () => {
+    await renderScript("echo one\necho two");
+    await click(playButton());
+    await renderScript("echo one\necho three");
+    expect(dialog()).toBeNull();
+    await renderScript("echo one\necho two");
+    expect(dialog()).toBeNull();
+    expect(onRunShellCommand).not.toHaveBeenCalled();
+  });
+
+  it.each(["echo one\necho two\\", "$ echo one\noutput", "echo one\necho \u202etwo", "echo\tone"])(
+    "does not offer to run %j",
+    async (script) => {
+      await renderScript(script);
+      expect(playButton()).toBeNull();
+    },
+  );
+});
+
 describe("ChatMarkdown streaming", () => {
   it("runs only a complete single-line shell block after a click", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -319,10 +398,8 @@ describe("ChatMarkdown streaming", () => {
       }
 
       for (const text of [
-        "```bash\necho one\necho two\n```",
         "```typescript\necho hello\n```",
         "```bash\n\n```",
-        "```bash\necho hello\n\n```",
         "```bash\necho hello\\\n```",
         "```bash\necho safe \u202e#\n```",
         "```bash\necho incomplete",
@@ -336,7 +413,7 @@ describe("ChatMarkdown streaming", () => {
         expect(
           mounted.root
             .findAllByType(Button)
-            .some((button) => button.props["aria-label"] === "Run in terminal"),
+            .some((button) => button.props["aria-label"]?.startsWith("Run ")),
         ).toBe(false);
       }
     } finally {
