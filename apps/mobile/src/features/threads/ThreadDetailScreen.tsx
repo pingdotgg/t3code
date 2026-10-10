@@ -433,6 +433,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const selectedThreadKeyRef = useRef(selectedThreadKey);
   const lastScrolledSubmittedMessageIdRef = useRef<MessageId | null>(null);
   const [composerExpanded, setComposerExpanded] = useState(false);
+  const [composerFullScreen, setComposerFullScreen] = useState(false);
   const [composerFocused, setComposerFocused] = useState(false);
   const handleComposerFocusChange = useCallback(
     (focused: boolean) => {
@@ -633,6 +634,18 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       usageLimitsPanel,
     ],
   );
+  // Tall cards share the column with a full-screen composer, so it is only
+  // offered while none of them is showing; one arriving drops back to the dock.
+  const composerCanFillScreen =
+    !composerSlotHidden && props.activePendingApproval === null && !usageLimitsReport;
+  if (composerFullScreen && !composerCanFillScreen) {
+    setComposerFullScreen(false);
+  }
+  const composerFillsScreen = composerFullScreen && composerExpanded;
+  const handleComposerExpandedChange = useCallback((expanded: boolean) => {
+    setComposerExpanded(expanded);
+    if (!expanded) setComposerFullScreen(false);
+  }, []);
   const showUsageLimits = useCallback(
     (report: UsageLimitsReport | null) =>
       setUsageLimitsPanel(
@@ -1199,6 +1212,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           threadId={props.selectedThread.id}
           tabs={browserTabs.tabs}
           loaded={browserTabs.loaded}
+          hidden={composerFillsScreen}
           top={navigationHeaderHeight + 8}
           onOpen={openBrowserPreview}
         />
@@ -1229,46 +1243,65 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   left: controlInsets.left,
                   right: controlInsets.right,
                 },
+                // Like the questionnaire, the full-screen composer reserves the last
+                // keyboard height instead of following it, so the keyboard only
+                // translates it. The header only overlaps content under native glass.
+                composerFillsScreen
+                  ? {
+                      top:
+                        (props.usesAutomaticContentInsets ? navigationHeaderHeight : 0) +
+                        lastKnownKeyboardHeight +
+                        8,
+                    }
+                  : null,
                 composerWidthStyle,
               ]}
             >
               {/* No paddingTop here: the overlay's measured height becomes the
                 list's bottom inset, so any padding above the pill/composer
                 pushes the resting content floor up by the same amount. */}
-              <View ref={composerOverlayRef} onLayout={onComposerLayout} className="w-full">
-                <FloatingWorkingControl
-                  colorScheme={isDarkMode ? "dark" : "light"}
-                  status={floatingStatus}
-                  lift={floatingControlLift}
-                  devicePreview={
-                    devicePreviews.length > 0
-                      ? { count: devicePreviews.length, onPress: openDevicePreview }
-                      : null
-                  }
-                  browserPreview={
-                    browserTabs.tabs.length > 0
-                      ? { count: browserTabs.tabs.length, onPress: () => openBrowserPreview() }
-                      : null
-                  }
-                  showScrollToEnd={showScrollToEndButton}
-                  onScrollToEnd={handleScrollToEnd}
-                  agents={agentsSegment}
-                  onOpenAgents={() => {
-                    Keyboard.dismiss();
-                    navigation.navigate("ThreadAgents", {
-                      environmentId: props.environmentId,
-                      threadId: props.selectedThread.id,
-                    });
-                  }}
-                  queuedCount={queuedCount}
-                  onOpenQueue={() => {
-                    Keyboard.dismiss();
-                    navigation.navigate("ThreadQueue", {
-                      environmentId: props.environmentId,
-                      threadId: props.selectedThread.id,
-                    });
-                  }}
-                />
+              {/* The feed is hidden behind a full-screen composer, so its inset
+                keeps the docked height instead of following the composer. */}
+              <View
+                ref={composerOverlayRef}
+                onLayout={composerFillsScreen ? undefined : onComposerLayout}
+                className={composerFillsScreen ? "w-full flex-1" : "w-full"}
+              >
+                {composerFillsScreen ? null : (
+                  <FloatingWorkingControl
+                    colorScheme={isDarkMode ? "dark" : "light"}
+                    status={floatingStatus}
+                    lift={floatingControlLift}
+                    devicePreview={
+                      devicePreviews.length > 0
+                        ? { count: devicePreviews.length, onPress: openDevicePreview }
+                        : null
+                    }
+                    browserPreview={
+                      browserTabs.tabs.length > 0
+                        ? { count: browserTabs.tabs.length, onPress: () => openBrowserPreview() }
+                        : null
+                    }
+                    showScrollToEnd={showScrollToEndButton}
+                    onScrollToEnd={handleScrollToEnd}
+                    agents={agentsSegment}
+                    onOpenAgents={() => {
+                      Keyboard.dismiss();
+                      navigation.navigate("ThreadAgents", {
+                        environmentId: props.environmentId,
+                        threadId: props.selectedThread.id,
+                      });
+                    }}
+                    queuedCount={queuedCount}
+                    onOpenQueue={() => {
+                      Keyboard.dismiss();
+                      navigation.navigate("ThreadQueue", {
+                        environmentId: props.environmentId,
+                        threadId: props.selectedThread.id,
+                      });
+                    }}
+                  />
+                )}
                 <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
                   {props.queuedRunEdit !== null ? (
                     <Animated.View
@@ -1384,7 +1417,15 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 composer slot, so composer drafts and editor state survive.
                 A rejected creation has no thread to send to; the failure card
                 owns the slot instead. */}
-                <View style={composerSlotHidden ? { display: "none" } : undefined}>
+                <View
+                  style={
+                    composerSlotHidden
+                      ? { display: "none" }
+                      : composerFillsScreen
+                        ? { flex: 1 }
+                        : undefined
+                  }
+                >
                   {isProviderSubagent ? (
                     <View
                       className="self-center px-3 pt-1.5"
@@ -1471,7 +1512,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                         onUpdateModelSelection={props.onUpdateThreadModelSelection}
                         onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
                         onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
-                        onExpandedChange={setComposerExpanded}
+                        onExpandedChange={handleComposerExpandedChange}
+                        fullScreen={composerFillsScreen}
+                        onFullScreenChange={
+                          composerCanFillScreen ? setComposerFullScreen : undefined
+                        }
                         onEditorFocusChange={handleComposerFocusChange}
                       />
                     </>

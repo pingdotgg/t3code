@@ -49,6 +49,7 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
+import { cn } from "../../lib/cn";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { themeColorWithAlpha } from "../../lib/mobileTheme";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
@@ -66,6 +67,7 @@ import { useProject, useThreadShells } from "../../state/entities";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 
 import { AppText as Text } from "../../components/AppText";
+import { SymbolView } from "../../components/AppSymbol";
 import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
 import {
   ComposerAttachmentStrip,
@@ -202,6 +204,13 @@ export interface ThreadComposerProps {
   readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => void;
   readonly onExpandedChange?: (expanded: boolean) => void;
+  /**
+   * Whether the focused composer fills the space between the header and the
+   * keyboard. The host owns the space and leaves full screen when the composer
+   * collapses; the composer offers the toggle while `onFullScreenChange` is set.
+   */
+  readonly fullScreen?: boolean;
+  readonly onFullScreenChange?: (fullScreen: boolean) => void;
   /** Fires on editor focus/blur; hosts use it to vet stale keyboard state. */
   readonly onEditorFocusChange?: (focused: boolean) => void;
 }
@@ -315,6 +324,8 @@ export function ComposerSurface(props: {
   readonly style: ViewStyle;
   /** Morphs between the compact and expanded composer layouts. */
   readonly animateLayout?: boolean;
+  /** Stretches the card to its parent's height, for the full-screen composer. */
+  readonly fill?: boolean;
 }) {
   const colors = useUniwindTheme();
   const targetBorderRadius =
@@ -346,6 +357,7 @@ export function ComposerSurface(props: {
         animatedShapeStyle,
         {
           overflow: "hidden",
+          flex: props.fill ? 1 : undefined,
         },
       ]}
     >
@@ -366,7 +378,7 @@ export function ComposerSurface(props: {
       <Animated.View
         collapsable={false}
         layout={layoutTransition}
-        style={[props.style, animatedShapeStyle]}
+        style={[props.style, animatedShapeStyle, props.fill ? { flex: 1 } : null]}
       >
         {props.children}
       </Animated.View>
@@ -394,7 +406,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const settingsRoutePresentedRef = useRef(false);
   const wasExpandedBeforePreviewRef = useRef(false);
   const inFlightThreadIdsRef = useRef(new Set<string>());
-  const { onExpandedChange } = props;
+  const { onExpandedChange, onFullScreenChange } = props;
 
   const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
   const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
@@ -525,6 +537,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const isVoiceInputPresented = voicePresentation.statusLabel !== null;
   // An open draft stays visible; only a collapsed composer becomes a voice strip.
   const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
+  const isFullScreen = isExpanded && props.fullScreen === true;
+  // Rows at the top of the card clear the full-screen toggle in its corner.
+  const expandedRowPadding = onFullScreenChange ? "pl-[14px] pr-[44px]" : "px-[14px]";
   const showsCompactDictation = isVoiceInputPresented && !isExpanded;
   const isToolbarVisible = isExpanded || isVoiceInputPresented;
   const attachmentBlockReason = composerAttachmentUploadBlockReason({
@@ -547,6 +562,19 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     !voiceInput.blocksSubmission &&
     sendBlockedReason === null &&
     !modelUnavailable;
+
+  const commandPopover =
+    !voiceInput.isBusy &&
+    composerMenu.trigger &&
+    (composerMenu.items.length > 0 || composerMenu.trigger.kind === "pull-request") ? (
+      <ComposerCommandPopover
+        items={composerMenu.items}
+        triggerKind={composerMenu.trigger.kind}
+        isLoading={composerMenu.isLoading}
+        error={composerMenu.error}
+        onSelect={composerMenu.onSelect}
+      />
+    ) : null;
 
   // Keep the feed inset aligned with the card or compact dictation strip.
   useEffect(() => {
@@ -750,6 +778,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     <Animated.View
       className="px-[12px]"
       style={{
+        flex: isFullScreen ? 1 : undefined,
         paddingTop: isExpanded ? 8 : 6,
         paddingBottom: (props.bottomInset ?? 0) + (isExpanded ? 8 : 6),
         backgroundColor:
@@ -769,20 +798,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       />
       <Animated.View
         className="relative w-full self-center"
-        style={{ maxWidth: props.contentMaxWidth }}
+        style={{ maxWidth: props.contentMaxWidth, flex: isFullScreen ? 1 : undefined }}
       >
-        {!voiceInput.isBusy &&
-        composerMenu.trigger &&
-        (composerMenu.items.length > 0 || composerMenu.trigger.kind === "pull-request") ? (
-          <ComposerPopoverAnchor>
-            <ComposerCommandPopover
-              items={composerMenu.items}
-              triggerKind={composerMenu.trigger.kind}
-              isLoading={composerMenu.isLoading}
-              error={composerMenu.error}
-              onSelect={composerMenu.onSelect}
-            />
-          </ComposerPopoverAnchor>
+        {commandPopover && !isFullScreen ? (
+          <ComposerPopoverAnchor>{commandPopover}</ComposerPopoverAnchor>
         ) : null}
 
         {selectedProviderStatus?.compatibilityAdvisory?.message &&
@@ -813,6 +832,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         ) : null}
 
         <ComposerSurface
+          fill={isFullScreen}
           style={
             isExpanded
               ? {
@@ -832,7 +852,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           }
         >
           <ComposerDictationDraftContent
-            className={isExpanded ? undefined : "flex-row items-center"}
+            className={isFullScreen ? "flex-1" : isExpanded ? undefined : "flex-row items-center"}
             compact={!isExpanded}
             hidden={showsCompactDictation}
           >
@@ -847,7 +867,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             ) : null}
             {isExpanded && queuedEdit !== null && queuedEdit.existingAttachments.length > 0 ? (
               <Animated.View
-                className="px-[14px] pb-2.5"
+                className={cn(expandedRowPadding, "pb-2.5")}
                 entering={COMPOSER_ATTACHMENT_ENTERING}
                 exiting={FadeOut.duration(120)}
               >
@@ -861,7 +881,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             ) : null}
             {isExpanded && stripAttachments.length > 0 ? (
               <Animated.View
-                className="px-[14px] pb-2.5"
+                className={cn(expandedRowPadding, "pb-2.5")}
                 entering={COMPOSER_ATTACHMENT_ENTERING}
                 exiting={FadeOut.duration(120)}
               >
@@ -886,7 +906,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               </Animated.View>
             ) : null}
             <Animated.View
-              className={isExpanded ? "px-[14px]" : "min-w-0 flex-1 px-[4px]"}
+              className={
+                isExpanded
+                  ? cn(expandedRowPadding, { "flex-1": isFullScreen })
+                  : "min-w-0 flex-1 px-[4px]"
+              }
               layout={COMPOSER_LAYOUT_TRANSITION}
             >
               <ComposerEditor
@@ -1007,15 +1031,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 singleLineCentered={!isExpanded}
                 contentInsetVertical={isExpanded || Platform.OS === "android" ? 0 : 6}
                 style={
-                  isExpanded
-                    ? {
-                        minHeight: 72,
-                        maxHeight: 160,
-                        paddingVertical: 4,
-                      }
-                    : {
-                        height: 36,
-                      }
+                  isFullScreen
+                    ? { flex: 1, paddingVertical: 4 }
+                    : isExpanded
+                      ? {
+                          minHeight: 72,
+                          maxHeight: 160,
+                          paddingVertical: 4,
+                        }
+                      : {
+                          height: 36,
+                        }
                 }
                 textStyle={{
                   ...bodyText,
@@ -1072,8 +1098,32 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 )}
               </View>
             ) : null}
+            {/* Nothing sits above a full-screen composer, so the menu takes room
+                from the editor instead. */}
+            {isFullScreen && commandPopover ? (
+              <View className="px-[8px] pt-2">{commandPopover}</View>
+            ) : null}
             {isExpanded ? <View className="h-1" /> : null}
           </ComposerDictationDraftContent>
+          {isExpanded && onFullScreenChange ? (
+            <Pressable
+              accessibilityLabel={isFullScreen ? "Collapse composer" : "Expand composer"}
+              accessibilityRole="button"
+              className="absolute right-[4px] top-[4px] size-[40px] items-center justify-center active:opacity-70"
+              onPress={() => onFullScreenChange(!isFullScreen)}
+            >
+              <SymbolView
+                name={
+                  isFullScreen
+                    ? "arrow.down.right.and.arrow.up.left"
+                    : "arrow.up.left.and.arrow.down.right"
+                }
+                size={15}
+                tintColorClassName="accent-foreground-muted"
+                type="monochrome"
+              />
+            </Pressable>
+          ) : null}
           <Animated.View
             accessibilityElementsHidden={!isToolbarVisible}
             collapsable={false}
