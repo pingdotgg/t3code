@@ -218,7 +218,9 @@ export interface AcpAdapterV2Flavor {
   readonly promptFailure?: (cause: unknown) => OrchestrationV2ProviderFailure;
   readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
-  readonly clientCapabilitiesMeta?: Record<string, boolean>;
+  readonly clientCapabilitiesMeta?: NonNullable<
+    EffectAcpSchema.InitializeRequest["clientCapabilities"]
+  >["_meta"];
   readonly normalizeSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => EffectAcpSchema.SessionNotification;
