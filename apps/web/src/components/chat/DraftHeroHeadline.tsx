@@ -363,18 +363,6 @@ export function DraftHeroHeadline({
     </button>
   );
 
-  // The composer hero is a sentence, so the heading's accessible name must be
-  // a complete sentence too. The project picker is a control rendered inline
-  // in the h1; without an explicit label its widget state bleeds into the
-  // announced phrase.
-  const headingLabel = isScratchDraft
-    ? "What should we work on?"
-    : hasResolvedProject
-      ? `What should we build in ${activeProjectDisplayName}?`
-      : canChooseProject
-        ? `${activeProjectDisplayName ?? "Choose a project"} to start`
-        : "Add a project to start";
-
   // One click out of the project, phrased as the alternative to the question
   // above it. Focus moves to the project picker once this line has gone.
   const noProjectShortcut = shortcutLabelForCommand(keybindings, "chat.newWithoutProject");
@@ -404,10 +392,10 @@ export function DraftHeroHeadline({
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col items-center">
-      <h1
-        aria-label={headingLabel}
-        className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl"
-      >
+      {/* No aria-label on the h1: NVDA's browse mode renders a heading's
+          explicit label in place of its children, which would hide the inline
+          project picker. */}
+      <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
         {isScratchDraft ? (
           <>What should we work on?</>
         ) : hasResolvedProject ? (
