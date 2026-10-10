@@ -35,6 +35,53 @@ function toolsState(settings: ServerSettings, projectId: ProjectId | undefined) 
   };
 }
 
+/**
+ * Every requested switch as one patch: each change builds on the last, and the
+ * patch carries the resulting entries, so they land in one write.
+ */
+function toolsUpdatePatch(
+  current: ServerSettings,
+  projectId: ProjectId | null,
+  input: {
+    readonly skills?:
+      | ReadonlyArray<{ readonly name: string; readonly enabled: boolean }>
+      | undefined;
+    readonly mcpServers?:
+      | ReadonlyArray<{ readonly name: string; readonly enabled: boolean }>
+      | undefined;
+  },
+): ServerSettingsPatch {
+  let next = current;
+  for (const enabled of [true, false]) {
+    const names = (input.skills ?? [])
+      .filter((skill) => skill.enabled === enabled)
+      .map((skill) => skill.name);
+    if (names.length > 0) {
+      next = applyServerSettingsPatch(next, skillsDisabledPatch(next, projectId, names, !enabled));
+    }
+  }
+  for (const server of input.mcpServers ?? []) {
+    const step = mcpServerEnabledPatch(next, projectId, server.name, server.enabled);
+    if (step !== null) next = applyServerSettingsPatch(next, step);
+  }
+  if (projectId !== null) {
+    return {
+      projectSettingsOverrides: { [projectId]: next.projectSettingsOverrides[projectId] ?? null },
+    } as ServerSettingsPatch;
+  }
+  const servers = (input.mcpServers ?? []).map((server) => server.name);
+  return {
+    ...(input.skills === undefined ? {} : { disabledSkills: next.disabledSkills }),
+    ...(servers.length === 0
+      ? {}
+      : {
+          mcpServers: Object.fromEntries(
+            servers.map((name) => [name, next.mcpServers[name] ?? null]),
+          ),
+        }),
+  };
+}
+
 const access = Effect.gen(function* () {
   const context = yield* readCaller();
   const environment = yield* Environment.ServerEnvironment;
@@ -92,48 +139,19 @@ export const layer = McpToolAccess.toLayer(ToolsToolkit, {
       Effect.gen(function* () {
         const { settings } = yield* access;
         const projectId = input.projectId ?? null;
-        // Each change builds on the last; the patch is then read off the result,
-        // so everything lands in one write.
-        let next = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
-        for (const enabled of [true, false]) {
-          const names = (input.skills ?? [])
-            .filter((skill) => skill.enabled === enabled)
-            .map((skill) => skill.name);
-          if (names.length > 0) {
-            next = applyServerSettingsPatch(
-              next,
-              skillsDisabledPatch(next, projectId, names, !enabled),
-            );
-          }
-        }
-        for (const server of input.mcpServers ?? []) {
-          const step = mcpServerEnabledPatch(next, projectId, server.name, server.enabled);
-          if (step === null)
-            return yield* new OrchestratorMcpFailure({
-              code: "invalid_request",
-              message: `There is no Settings → Tools server named ${server.name}.`,
-            });
-          next = applyServerSettingsPatch(next, step);
-        }
-        const servers = (input.mcpServers ?? []).map((server) => server.name);
-        const patch: ServerSettingsPatch =
-          projectId === null
-            ? {
-                ...(input.skills === undefined ? {} : { disabledSkills: next.disabledSkills }),
-                ...(servers.length === 0
-                  ? {}
-                  : {
-                      mcpServers: Object.fromEntries(
-                        servers.map((name) => [name, next.mcpServers[name] ?? null]),
-                      ),
-                    }),
-              }
-            : ({
-                projectSettingsOverrides: {
-                  [projectId]: next.projectSettingsOverrides[projectId] ?? null,
-                },
-              } as ServerSettingsPatch);
-        const saved = yield* settings.updateSettings(patch).pipe(Effect.mapError(unavailable));
+        const current = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
+        const missing = (input.mcpServers ?? []).find(
+          (server) => mcpServerEnabledPatch(current, projectId, server.name, true) === null,
+        );
+        if (missing !== undefined)
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: `There is no Settings → Tools server named ${missing.name}.`,
+          });
+        // Built from the settings the write sees, so a concurrent change isn't lost.
+        const saved = yield* settings
+          .updateSettingsWith((latest) => toolsUpdatePatch(latest, projectId, input))
+          .pipe(Effect.mapError(unavailable));
         return toolsState(saved, input.projectId);
       }),
     ),

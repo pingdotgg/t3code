@@ -89,22 +89,57 @@ const MAX_DIRECTORIES = 200;
 /** Folders an installer or VCS leaves behind, never part of the skill. */
 const SKIPPED_DIRECTORIES = new Set([".git", "node_modules"]);
 
-/**
- * The CLI's install source for one locked skill: the skill's own folder in
- * the source, at the recorded ref, as `buildUpdateInstallSource` builds it.
+/*
+ * Where to reinstall a locked skill from. A port of the CLI's own update
+ * (`update-source.ts` in vercel-labs/skills 1.7.1), so Update here and
+ * `npx skills update` fetch the same thing.
  */
-function lockedInstallSource(entry: LockEntry): string {
-  const base = entry.sourceUrl ?? entry.source;
+
+/** Only GitHub-style shorthands and GitHub or GitLab URLs can take a folder after them. */
+function takesSubpath(source: string): boolean {
+  if (source.startsWith("git@") || source.startsWith("ssh://") || source.endsWith(".git")) {
+    return false;
+  }
+  if (!/^https?:\/\//.test(source)) return true;
+  return /^https?:\/\/(?:github|gitlab)\.com\//.test(source);
+}
+
+/**
+ * A source other than GitHub, as a project lock records it. Older locks wrote
+ * GitLab and generic Git sources as a bare `group/repo`, which would be read
+ * as GitHub, so those need the recorded URL.
+ */
+function nonGithubSource(entry: LockEntry): string | null {
+  if (entry.sourceUrl !== undefined) return entry.sourceUrl;
+  const bare = !entry.source.includes(":") && !/^[./]/.test(entry.source);
+  return (entry.sourceType === "git" || entry.sourceType === "gitlab") && bare
+    ? null
+    : entry.source;
+}
+
+/**
+ * The CLI's `add` source for one locked skill: its folder in the source at the
+ * recorded ref, or the whole repository with `fullDepth` when the source can't
+ * take a folder. Null when the lock doesn't say which host it came from.
+ */
+export function lockedInstallSource(
+  entry: LockEntry,
+  level: "home" | "project",
+): { readonly source: string; readonly fullDepth: boolean } | null {
+  const github = entry.sourceType === undefined || entry.sourceType === "github";
+  const source =
+    level === "project" || !github
+      ? nonGithubSource(entry)
+      : entry.skillPath === undefined
+        ? (entry.sourceUrl ?? entry.source)
+        : entry.source;
+  if (source === null) return null;
   const ref = entry.ref === undefined ? "" : `#${entry.ref}`;
   const folder = entry.skillPath?.replace(/\/?SKILL\.md$/i, "") ?? "";
-  // Only GitHub-style shorthands and GitHub or GitLab URLs take a subpath.
-  const takesSubpath =
-    folder !== "" &&
-    !entry.source.endsWith(".git") &&
-    !/^(?:git@|ssh:\/\/)/.test(entry.source) &&
-    (!/^https?:\/\//.test(entry.source) ||
-      /^https?:\/\/(?:github|gitlab)\.com\//.test(entry.source));
-  return takesSubpath ? `${entry.source}/${folder}${ref}` : `${base}${ref}`;
+  if (folder !== "" && takesSubpath(source)) {
+    return { source: `${source}/${folder}${ref}`, fullDepth: false };
+  }
+  return { source: `${source}${ref}`, fullDepth: folder !== "" };
 }
 
 const make = Effect.gen(function* () {
@@ -375,7 +410,12 @@ const make = Effect.gen(function* () {
     })),
   });
 
-  const installInto = (target: SkillInstallTarget, source: string, skills: ReadonlyArray<string>) =>
+  const installInto = (
+    target: SkillInstallTarget,
+    source: string,
+    skills: ReadonlyArray<string>,
+    fullDepth = false,
+  ) =>
     Effect.gen(function* () {
       const drivers: ReadonlyArray<ProviderDriverKind> = (yield* enabledProviders).map(
         (provider: ServerProvider) => provider.driver,
@@ -385,6 +425,7 @@ const make = Effect.gen(function* () {
         skills,
         agents: skillsCliInstallAgents(drivers, target.kind === "environment" ? "home" : "project"),
         global: target.kind === "environment",
+        fullDepth,
         cwd: targetPaths(target).root,
       });
       yield* refreshAgents(target);
@@ -417,7 +458,15 @@ const make = Effect.gen(function* () {
     function* (input) {
       const target = yield* resolveTarget(input.target);
       const entry = yield* lockedEntry(target, input.name);
-      return yield* installInto(target, lockedInstallSource(entry), [input.name]);
+      const from = lockedInstallSource(entry, target.kind === "environment" ? "home" : "project");
+      if (from === null) {
+        return yield* new SkillLibraryError({
+          reason: "notInstalled",
+          message:
+            "This skill's lock doesn't record which host it came from. Install it again from its URL.",
+        });
+      }
+      return yield* installInto(target, from.source, [input.name], from.fullDepth);
     },
   );
 
@@ -425,11 +474,12 @@ const make = Effect.gen(function* () {
     function* (input) {
       const target = yield* resolveTarget(input.target);
       yield* lockedEntry(target, input.name);
+      const paths = targetPaths(target);
       yield* cli
         .remove({
           skills: [input.name],
           global: target.kind === "environment",
-          cwd: targetPaths(target).root,
+          cwd: paths.root,
         })
         .pipe(
           Effect.catchTags({
@@ -437,6 +487,16 @@ const make = Effect.gen(function* () {
           }),
         );
       yield* refreshAgents(target);
+      // The CLI reports a skill it couldn't delete without failing, so check what's left.
+      const folderLeft = yield* fileSystem
+        .exists(path.join(paths.folder, input.name))
+        .pipe(Effect.orElseSucceed(() => false));
+      const lockLeft = (yield* readLock(paths.lock)).has(input.name);
+      if (folderLeft || lockLeft) {
+        return yield* cliFailed(
+          `Couldn't remove ${input.name}. Check the permissions of ${folderLeft ? paths.folder : paths.lock}.`,
+        );
+      }
     },
   );
 

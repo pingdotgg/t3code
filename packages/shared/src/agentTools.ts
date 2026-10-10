@@ -73,7 +73,10 @@ export function skillsDisabledPatch(
   }
   const switches = { ...settings.projectSettingsOverrides[projectId]?.disabledSkills };
   for (const name of names) {
-    delete switches[name];
+    // One switch per name, whatever its case.
+    for (const existing of Object.keys(switches)) {
+      if (existing.toLowerCase() === name.toLowerCase()) delete switches[existing];
+    }
     if (disabled !== isSkillDisabled(settings.disabledSkills, name)) switches[name] = disabled;
   }
   return projectOverridePatch(settings, projectId, "disabledSkills", switches);

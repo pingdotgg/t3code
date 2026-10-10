@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import {
   ProjectId,
   ProviderDriverKind,
@@ -22,6 +22,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as SkillLibrary from "./SkillLibrary.ts";
+import { lockedInstallSource } from "./SkillLibrary.ts";
 
 const SKILL = (name: string, description: string) =>
   `---\nname: ${name}\ndescription: ${description}\n---\n\nUse ${name}.\n`;
@@ -232,3 +233,58 @@ it.effect(
     ),
   60_000,
 );
+
+it.effect(
+  "fails a removal the CLI couldn't finish, which it reports with a zero exit",
+  () =>
+    withLibrary(({ library, project, source }) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const target = { kind: "project", cwd: project } as const;
+        yield* library.install({ source, skills: ["notes"], target });
+        const folder = path.join(project, ".agents", "skills");
+        yield* fileSystem.chmod(folder, 0o555);
+        const failure = yield* library
+          .remove({ name: "notes", target })
+          .pipe(Effect.flip, Effect.ensuring(fileSystem.chmod(folder, 0o755).pipe(Effect.ignore)));
+        assert.equal(failure.reason, "cliFailed");
+        assert.isTrue(yield* fileSystem.exists(path.join(folder, "notes")));
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  120_000,
+);
+
+describe("lockedInstallSource", () => {
+  it("updates one skill from its folder, as `npx skills update` does", () => {
+    const skillPath = "skills/productivity/grill-me/SKILL.md";
+    expect(
+      lockedInstallSource({ source: "mattpocock/skills", sourceType: "github", skillPath }, "home"),
+    ).toEqual({ source: "mattpocock/skills/skills/productivity/grill-me", fullDepth: false });
+    // A source that can't take a folder is searched in full, so a root SKILL.md can't win.
+    expect(
+      lockedInstallSource(
+        { source: "git@example.com:team/skills.git", sourceType: "git", skillPath, ref: "v2" },
+        "project",
+      ),
+    ).toEqual({ source: "git@example.com:team/skills.git#v2", fullDepth: true });
+  });
+
+  it("uses a recorded GitLab URL, and refuses a GitLab shorthand GitHub would answer", () => {
+    const skillPath = "tools/review/SKILL.md";
+    expect(
+      lockedInstallSource(
+        {
+          source: "group/repo",
+          sourceType: "gitlab",
+          sourceUrl: "https://gitlab.com/group/repo",
+          skillPath,
+        },
+        "project",
+      ),
+    ).toEqual({ source: "https://gitlab.com/group/repo/tools/review", fullDepth: false });
+    expect(
+      lockedInstallSource({ source: "group/repo", sourceType: "gitlab", skillPath }, "project"),
+    ).toBeNull();
+  });
+});

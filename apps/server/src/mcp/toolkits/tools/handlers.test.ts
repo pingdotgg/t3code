@@ -50,6 +50,8 @@ it.effect("switches skills and servers for a project as one patch, and never ret
   Effect.gen(function* () {
     const settings = yield* Ref.make(initial);
     const patches = yield* Ref.make<ReadonlyArray<ServerSettingsPatch>>([]);
+    // Applied once, right after the next read, as a concurrent write would be.
+    const interleave = yield* Ref.make<((current: ServerSettings) => ServerSettings) | null>(null);
     const layerDependencies = Layer.mergeAll(
       ThreadCommandExecutor.layer,
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
@@ -77,10 +79,20 @@ it.effect("switches skills and servers for a project as one patch, and never ret
         }),
       }),
       Layer.mock(Settings.ServerSettingsService)({
-        getSettings: Ref.get(settings),
-        updateSettings: (patch) =>
-          Ref.update(patches, (list) => [...list, patch]).pipe(
-            Effect.andThen(
+        getSettings: Ref.get(settings).pipe(
+          Effect.tap(() =>
+            Ref.getAndSet(interleave, null).pipe(
+              Effect.flatMap((change) =>
+                change === null ? Effect.void : Ref.update(settings, change),
+              ),
+            ),
+          ),
+        ),
+        updateSettingsWith: (build) =>
+          Ref.get(settings).pipe(
+            Effect.map(build),
+            Effect.tap((patch) => Ref.update(patches, (list) => [...list, patch])),
+            Effect.flatMap((patch) =>
               Ref.updateAndGet(settings, (current) => applyServerSettingsPatch(current, patch)),
             ),
           ),
@@ -112,6 +124,27 @@ it.effect("switches skills and servers for a project as one patch, and never ret
       });
       // The environment itself is unchanged.
       expect((yield* Ref.get(settings)).disabledSkills).toEqual(["grill-me"]);
+
+      // Another change lands after this call reads settings, before it writes; it survives.
+      yield* Ref.set(interleave, (current) => ({
+        ...current,
+        projectSettingsOverrides: {
+          ...current.projectSettingsOverrides,
+          [projectId]: {
+            ...current.projectSettingsOverrides[projectId],
+            disabledSkills: {
+              ...current.projectSettingsOverrides[projectId]?.disabledSkills,
+              review: true,
+            },
+          },
+        },
+      }));
+      yield* toolkit
+        .handle("t3_tools_update", { projectId, skills: [{ name: "tdd", enabled: true }] })
+        .pipe(Stream.unwrap, Stream.runCollect);
+      expect(
+        (yield* Ref.get(settings)).projectSettingsOverrides[projectId]?.disabledSkills,
+      ).toEqual({ "grill-me": false, review: true });
     }).pipe(
       Effect.provide(
         McpToolAccess.HandlersLayer.layer(ToolsHandlers.layer).pipe(
