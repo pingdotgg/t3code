@@ -55,8 +55,8 @@ afterEach(async () => {
 
 it.each([
   { driver: "codex", origin: "app_owned" },
-  { driver: "claude", origin: "app_owned" },
-  { driver: "claude", origin: "provider_native" },
+  { driver: "claudeAgent", origin: "app_owned" },
+  { driver: "claudeAgent", origin: "provider_native" },
 ])(
   "stops active $origin $driver subagents without opening their thread",
   async ({ driver, origin }) => {
@@ -167,7 +167,7 @@ it.each([
     expect(renderer.root.findAllByProps({ "aria-label": "Stop subagent Worker" })).toHaveLength(0);
     state.projection = {
       ...projection,
-      subagents: [{ ...agent, origin: "provider_native", driver: "claudeAgent" }],
+      subagents: [{ ...agent, origin: "provider_native", driver: "codex" }],
     };
     await act(async () => renderer.update(cloneElement(panel)));
     expect(renderer.root.findAllByProps({ "aria-label": "Stop subagent Worker" })).toHaveLength(0);

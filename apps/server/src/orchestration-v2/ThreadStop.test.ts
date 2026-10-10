@@ -21,6 +21,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { CLAUDE_PROVIDER } from "./Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { OrchestrationEffectRequestV2 } from "./EffectOutbox.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -601,10 +602,10 @@ it.effect(
       const subagent = {
         ...before.subagents[0]!,
         origin: "provider_native" as const,
-        driver: ProviderDriverKind.make("claude"),
-        providerInstanceId: ProviderInstanceId.make("claude"),
+        driver: CLAUDE_PROVIDER,
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
         nativeTaskRef: {
-          driver: ProviderDriverKind.make("claude"),
+          driver: CLAUDE_PROVIDER,
           nativeId: "claude-task",
           strength: "strong" as const,
         },
@@ -630,8 +631,8 @@ it.effect(
         occurredAt: now,
         payload: {
           ...providerThread,
-          driver: ProviderDriverKind.make("claude"),
-          providerInstanceId: ProviderInstanceId.make("claude"),
+          driver: CLAUDE_PROVIDER,
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
           providerSessionId: ProviderSessionId.make("session:native-child-stop"),
         },
       });

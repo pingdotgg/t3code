@@ -8842,7 +8842,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         subagent === undefined ||
         subagent.runId !== command.runId ||
         subagent.origin !== "provider_native" ||
-        subagent.driver !== "claude" ||
+        subagent.driver !== "claudeAgent" ||
         subagent.nativeTaskRef?.strength !== "strong" ||
         subagent.nativeTaskRef.nativeId === null
       ) {

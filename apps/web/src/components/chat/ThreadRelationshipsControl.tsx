@@ -416,7 +416,7 @@ export function ThreadRelationshipsPanel(props: {
                 agent &&
                 (agent.origin === "app_owned" ||
                   (agent.origin === "provider_native" &&
-                    agent.driver === "claude" &&
+                    agent.driver === "claudeAgent" &&
                     agent.nativeTaskRef?.strength === "strong" &&
                     agent.nativeTaskRef.nativeId !== null &&
                     ["pending", "running", "waiting"].includes(agent.nativeStatus))) &&
