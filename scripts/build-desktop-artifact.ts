@@ -1029,7 +1029,13 @@ export const WINDOWS_SERVER_ASAR_RESOURCE = "server.asar";
 export const WINDOWS_NATIVE_ASAR_UNPACK_GLOB =
   "{**/*.node,**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib}";
 // The server sidecar unpacks .node files separately, keeping only Windows ones.
-export const WINDOWS_SERVER_ASAR_UNPACK_GLOB = "{**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib}";
+export const WINDOWS_SERVER_ASAR_UNPACK_GLOBS = [
+  "**/*.dll",
+  "**/*.exe",
+  "**/*.so",
+  "**/*.so.*",
+  "**/*.dylib",
+] as const;
 // Mirrors DESKTOP_FILE_EXCLUSIONS for the hand-packed sidecar: the Claude SDK
 // platform packages are dead weight (see above), and node_modules/.bin shims
 // are never spawned at runtime (and are symlinks on POSIX build hosts, which
@@ -3036,22 +3042,28 @@ export const packWindowsServerAsar = Effect.fn("packWindowsServerAsar")(function
   // Signed builds Authenticode-sign every unpacked .node file, which fails on
   // the darwin and linux prebuilds some packages (node-pty) ship alongside
   // their win32 ones. The Windows primary never loads those, so they stay packed.
-  const windowsAddonGlobs: string[] = [];
+  const unpackGlobs: string[] = [...WINDOWS_SERVER_ASAR_UNPACK_GLOBS];
   for (const entry of yield* fs.readDirectory(input.sourceDir, { recursive: true })) {
     if (!entry.endsWith(".node")) continue;
     const addonPath = path.join(input.sourceDir, entry);
     if ((yield* fs.stat(addonPath)).type !== "File") continue;
     const bytes = yield* fs.readFile(addonPath);
-    if (bytes[0] === 0x4d && bytes[1] === 0x5a) {
-      const posixPath = entry.split(path.sep).join("/");
-      windowsAddonGlobs.push(`**/${posixPath.replace(/[\\*?[\]{}()!+@,]/g, "\\$&")}`);
+    if (bytes[0] !== 0x4d || bytes[1] !== 0x5a) continue;
+    const posixPath = entry.split(path.sep).join("/");
+    // Backslash escapes are path separators to minimatch on Windows.
+    if (/[\\*?[\]{}(),]/.test(posixPath)) {
+      return yield* new WindowsServerSidecarPackError({
+        asarPath: input.asarPath,
+        cause: new Error(`native addon path contains glob syntax: ${posixPath}`),
+      });
     }
+    unpackGlobs.push(`**/${posixPath}`);
   }
   yield* Effect.tryPromise({
     try: () =>
       createPackageWithOptions(input.sourceDir, input.asarPath, {
         dot: true,
-        unpack: `{${[WINDOWS_SERVER_ASAR_UNPACK_GLOB, ...windowsAddonGlobs].join(",")}}`,
+        unpack: `{${unpackGlobs.join(",")}}`,
         // glob 13 (via @electron/asar 4) matches `ignore` relative to `cwd`,
         // not against the absolute paths it crawls, so anchor it at the source.
         globOptions: {
