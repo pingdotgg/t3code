@@ -41,7 +41,8 @@ export class ServerBrowserOperationError extends Error {
 
 const ANSI_STYLE = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
 /** Call log lines that narrate retries rather than say what blocked the action. */
-const CALL_LOG_PROGRESS = /^(?:waiting \d+ms|(?:attempting|retrying) .+ action|done .+)$/;
+const CALL_LOG_PROGRESS =
+  /^(?:waiting \d+ms|(?:attempting|retrying) .+ action(?: \(trial run\))?|scrolling into view if needed|done scrolling)$/;
 
 /**
  * Playwright's last call log finding for a timed-out action, such as
@@ -209,6 +210,28 @@ export const captureViewport = async (
   return data;
 };
 
+/**
+ * Fails work that outlives its deadline. The work itself keeps running; this
+ * only frees the tab's control queue and capture lock for the next request.
+ */
+const withinDeadline = <A>(
+  work: Promise<A>,
+  timeoutMs: number,
+  message: string,
+  onExpire: () => void = constVoid,
+) => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      onExpire();
+      reject(new ServerBrowserOperationError("PreviewAutomationTimeoutError", message));
+    }, timeoutMs);
+  });
+  // A late failure belongs to nobody once the deadline has answered.
+  void work.catch(constVoid);
+  return Promise.race([work, expired]).finally(() => clearTimeout(timer));
+};
+
 export const snapshot = async (input: {
   readonly page: Page;
   readonly cdp: CDPSession;
@@ -222,16 +245,20 @@ export const snapshot = async (input: {
   const state = refsFor(input.page);
   invalidateRefs(input.page);
   const generation = state.generation;
-  const [page, tree, data] = await Promise.all([
-    input.page.evaluate(SNAPSHOT_SCRIPT) as Promise<
-      Pick<
-        PreviewAutomationSnapshot,
-        "url" | "title" | "loading" | "visibleText" | "interactiveElements"
-      >
-    >,
-    input.page.ariaSnapshot({ mode: "ai", boxes: true, timeout: DEFAULT_TIMEOUT_MS }),
-    captureViewport(input.page, input.cdp, { format: "png", scale }),
-  ]);
+  const [page, tree, data] = await withinDeadline(
+    Promise.all([
+      input.page.evaluate(SNAPSHOT_SCRIPT) as Promise<
+        Pick<
+          PreviewAutomationSnapshot,
+          "url" | "title" | "loading" | "visibleText" | "interactiveElements"
+        >
+      >,
+      input.page.ariaSnapshot({ mode: "ai", boxes: true, timeout: DEFAULT_TIMEOUT_MS }),
+      captureViewport(input.page, input.cdp, { format: "png", scale }),
+    ]),
+    DEFAULT_TIMEOUT_MS,
+    "The page did not answer while its snapshot was captured; its main thread may be busy.",
+  );
   if (state.generation !== generation) {
     throw new ServerBrowserOperationError(
       "PreviewAutomationExecutionError",
@@ -459,26 +486,17 @@ export const evaluate = async (
   input: PreviewAutomationEvaluateInput,
   timeoutMs: number,
 ) => {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const expired = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      // Stops a busy script; an awaited promise is abandoned and settles unread.
-      void cdp.send("Runtime.terminateExecution").catch(constVoid);
-      reject(
-        new ServerBrowserOperationError(
-          "PreviewAutomationTimeoutError",
-          `Evaluation did not finish within ${timeoutMs}ms and was stopped.`,
-        ),
-      );
-    }, timeoutMs);
-  });
-  const evaluation = cdp.send("Runtime.evaluate", {
-    expression: input.expression,
-    awaitPromise: input.awaitPromise ?? true,
-    returnByValue: input.returnByValue ?? true,
-  });
-  void evaluation.catch(constVoid);
-  const result = await Promise.race([evaluation, expired]).finally(() => clearTimeout(timer));
+  const result = await withinDeadline(
+    cdp.send("Runtime.evaluate", {
+      expression: input.expression,
+      awaitPromise: input.awaitPromise ?? true,
+      returnByValue: input.returnByValue ?? true,
+    }),
+    timeoutMs,
+    `Evaluation did not finish within ${timeoutMs}ms and was stopped.`,
+    // Stops a busy script; an awaited promise is abandoned and settles unread.
+    () => void cdp.send("Runtime.terminateExecution").catch(constVoid),
+  );
   if (result.exceptionDetails) {
     throw new ServerBrowserOperationError(
       "PreviewAutomationExecutionError",
