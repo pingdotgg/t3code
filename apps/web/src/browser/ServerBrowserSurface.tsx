@@ -334,15 +334,11 @@ export function ServerBrowserSurface(props: {
     const element = canvasRef.current?.parentElement;
     if (!element) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const measure = () => {
-      timer = null;
-      const rect = element.getBoundingClientRect();
-      if (rect.width < 1 || rect.height < 1) return;
-      const size = { width: Math.round(rect.width), height: Math.round(rect.height) };
-      const previous = sizeRef.current;
-      if (previous?.width === size.width && previous.height === size.height) return;
-      sizeRef.current = size;
-      if (followSize) clientRef.current?.send({ type: "resize", ...size });
+    let capTimer: ReturnType<typeof setTimeout> | null = null;
+    const growCap = () => {
+      capTimer = null;
+      const size = sizeRef.current;
+      if (!size) return;
       const ratio = window.devicePixelRatio || 1;
       const width = Math.round(size.width * ratio);
       const height = Math.round(size.height * ratio);
@@ -355,6 +351,20 @@ export function ServerBrowserSurface(props: {
             },
       );
     };
+    const measure = () => {
+      timer = null;
+      const rect = element.getBoundingClientRect();
+      if (rect.width < 1 || rect.height < 1) return;
+      const size = { width: Math.round(rect.width), height: Math.round(rect.height) };
+      const previous = sizeRef.current;
+      if (previous?.width === size.width && previous.height === size.height) return;
+      sizeRef.current = size;
+      if (followSize) clientRef.current?.send({ type: "resize", ...size });
+      // Outgrowing the cap reconnects the stream, so grow it once the size settles
+      // rather than on every throttled resize of a drag.
+      if (capTimer !== null) clearTimeout(capTimer);
+      capTimer = setTimeout(growCap, previous === null ? 0 : RESIZE_THROTTLE_MS * 2);
+    };
     const stopObserving = observeResize(element, () => {
       // A pending measure reads the latest size when it fires, so a drag resizes
       // the page at most every RESIZE_THROTTLE_MS and still ends on the final size.
@@ -365,6 +375,7 @@ export function ServerBrowserSurface(props: {
     return () => {
       stopObserving();
       if (timer !== null) clearTimeout(timer);
+      if (capTimer !== null) clearTimeout(capTimer);
     };
   }, [followSize]);
 
