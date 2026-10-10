@@ -530,13 +530,15 @@ export function PullRequestDetailPanel({
   const foldRef = useRef<HTMLDivElement | null>(null);
   const condensedRowRef = useRef<HTMLDivElement | null>(null);
   // Refund after the fold commits so the content under the reader does not jump with its height.
+  // Holds the absolute target: near the bottom the browser has already clamped scrollTop by the
+  // fold's height, and refunding a delta on top of that lands at the hard top and reopens it.
   const compensationRef = useRef<number | null>(null);
   useLayoutEffect(() => {
     if (compensationRef.current === null) return;
     const scroller = scrollerRef.current;
-    const delta = compensationRef.current;
+    const target = compensationRef.current;
     compensationRef.current = null;
-    if (scroller) scroller.scrollTop = Math.max(0, scroller.scrollTop + delta);
+    if (scroller) scroller.scrollTop = Math.max(0, target);
   }, [condensed]);
   const lastSelectedMergeMethod = useUiStateStore((state) => state.pullRequestMergeMethod);
   const setLastSelectedMergeMethod = useUiStateStore((state) => state.setPullRequestMergeMethod);
@@ -2753,7 +2755,7 @@ export function PullRequestDetailPanel({
                 next = false;
               }
             } else if (foldHeight > 0 && top > foldHeight + 32) {
-              compensationRef.current = -chromeDelta;
+              compensationRef.current = top - chromeDelta;
               next = true;
             }
             chromeStateByTab.current[tab] = next;
