@@ -3006,9 +3006,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
               );
               return;
             }
-            // A link to a change request in a workspace project opens beside the
-            // conversation instead of in a browser: it is the thing being talked about, and
-            // the panel it opens offers the browser as one of its actions.
+            // A link to a change request in a workspace project can open beside the
+            // conversation: it is the thing being talked about, and the panel it opens offers
+            // the browser as one of its actions. "Open links in" decides whether it does.
             if (
               !href ||
               openChangeRequestLink(event, href, undefined, environmentId ?? undefined)
@@ -3114,11 +3114,10 @@ const CHAT_MARKDOWN_COMPONENTS = {
             originalUrl={href}
             target={pullRequestPreviewTarget}
             confirmBeforeOpen={confirmBeforeOpen}
-            onOpenPullRequest={(targetUrl) =>
+            onOpenPullRequest={(targetUrl, modifiers) =>
               openChangeRequestLink(
                 {
-                  metaKey: false,
-                  ctrlKey: false,
+                  ...modifiers,
                   preventDefault: () => undefined,
                   stopPropagation: () => undefined,
                 },
@@ -3127,7 +3126,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
                 environmentId ?? undefined,
               )
             }
-            onOpenFallback={openDeferredMarkdownLink}
+            onOpenFallback={(url, modifiers) => openDeferredMarkdownLink(url, { event: modifiers })}
           />
         );
       }

@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 
+import { shouldOpenPullRequestExternally, useBrowserLinkTarget } from "~/lib/openPullRequestLink";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
@@ -23,6 +24,11 @@ import { PullRequestActorAvatar, resolvePullRequestState } from "./pullRequestPr
 interface PullRequestLinkPreviewTarget {
   readonly environmentId: EnvironmentId;
   readonly input: PullRequestRef;
+}
+
+interface LinkClickModifiers {
+  readonly metaKey: boolean;
+  readonly ctrlKey: boolean;
 }
 
 type PullRequestLinkElement = ReactElement<
@@ -42,13 +48,15 @@ export function PullRequestLinkPreview({
   originalUrl: string;
   target: PullRequestLinkPreviewTarget;
   confirmBeforeOpen?: boolean;
-  onOpenPullRequest?: (url: string) => boolean;
-  onOpenFallback?: (url: string) => Promise<void>;
+  /** Receives the click's modifiers, which pick between the panel and the browser. */
+  onOpenPullRequest?: (url: string, modifiers: LinkClickModifiers) => boolean;
+  onOpenFallback?: (url: string, modifiers: LinkClickModifiers) => Promise<void>;
   fallback?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const previewActionsRef = useRef<PreviewCardPrimitive.Root.Actions | null>(null);
   const [resolvingClick, setResolvingClick] = useState(false);
+  const linkTargetPreference = useBrowserLinkTarget();
   const detailQuery = useEnvironmentQuery(
     open
       ? pullRequestEnvironment.detail({
@@ -65,7 +73,15 @@ export function PullRequestLinkPreview({
     confirmBeforeOpen === true
       ? cloneElement(link, {
           onClick: (event: MouseEvent<HTMLAnchorElement | HTMLButtonElement>) => {
-            if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            // A click headed for the browser keeps the link's own navigation: waiting on the
+            // lookup first would outlive the click's permission to open a tab.
+            if (
+              event.shiftKey ||
+              event.altKey ||
+              shouldOpenPullRequestExternally(event, linkTargetPreference)
+            )
+              return;
+            const modifiers = { metaKey: event.metaKey, ctrlKey: event.ctrlKey };
             event.preventDefault();
             event.stopPropagation();
             if (resolvingClick) return;
@@ -74,8 +90,9 @@ export function PullRequestLinkPreview({
             void readPreview(target)
               .then(async (result) => {
                 if (isAtomCommandInterrupted(result)) return;
-                if (result._tag === "Success" && onOpenPullRequest?.(result.value.url)) return;
-                await onOpenFallback?.(originalUrl);
+                if (result._tag === "Success" && onOpenPullRequest?.(result.value.url, modifiers))
+                  return;
+                await onOpenFallback?.(originalUrl, modifiers);
               })
               .catch((error: unknown) => {
                 console.error("[pull-request-link-preview] failed to open link", error);

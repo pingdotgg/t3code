@@ -216,13 +216,21 @@ describe("matchesLinkedPullRequestUrl", () => {
 });
 
 describe("shouldOpenPullRequestExternally", () => {
-  it("uses the browser for command-click and control-click", () => {
-    expect(shouldOpenPullRequestExternally({ metaKey: true, ctrlKey: false })).toBe(true);
-    expect(shouldOpenPullRequestExternally({ metaKey: false, ctrlKey: true })).toBe(true);
+  const plain = { metaKey: false, ctrlKey: false };
+
+  it("opens an unmodified click where the link setting points", () => {
+    expect(shouldOpenPullRequestExternally(plain, "app")).toBe(false);
+    expect(shouldOpenPullRequestExternally(plain, "system")).toBe(true);
   });
 
-  it("keeps an unmodified click in the pull request view", () => {
-    expect(shouldOpenPullRequestExternally({ metaKey: false, ctrlKey: false })).toBe(false);
+  it("sends command-click and control-click to the other destination", () => {
+    for (const event of [
+      { metaKey: true, ctrlKey: false },
+      { metaKey: false, ctrlKey: true },
+    ]) {
+      expect(shouldOpenPullRequestExternally(event, "app")).toBe(true);
+      expect(shouldOpenPullRequestExternally(event, "system")).toBe(false);
+    }
   });
 });
 

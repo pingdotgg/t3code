@@ -580,16 +580,16 @@ const LINK_TARGET_LABELS: Readonly<Record<BrowserLinkTarget, string>> = {
   app: "T3 Code",
 };
 
-function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) {
+function BrowserLinkTargetSetting() {
   const linkTarget = useClientSettings((settings) => settings.browserLinkTarget);
   const updateSettings = useUpdatePrimarySettings();
 
   return (
     <SettingsRow
       {...searchableSetting("browser-link-target")}
-      description="Where links in the chat and terminal open. Hold ⌘ or Ctrl while clicking a link to open it in your default browser either way."
+      description="Where links in the chat and terminal open. Pull request links in the chat follow it too, and ⌘ or Ctrl-click opens them in the other place. Other links open in your default browser with ⌘ or Ctrl-click."
       resetAction={
-        !disabled && linkTarget !== DEFAULT_BROWSER_LINK_TARGET ? (
+        linkTarget !== DEFAULT_BROWSER_LINK_TARGET ? (
           <SettingResetButton
             label="link target"
             onClick={() => updateSettings({ browserLinkTarget: DEFAULT_BROWSER_LINK_TARGET })}
@@ -598,7 +598,6 @@ function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) 
       }
       control={
         <Select
-          disabled={disabled}
           value={linkTarget}
           onValueChange={(value) => {
             if (value === "system" || value === "app") {
@@ -1527,7 +1526,6 @@ export function IntegrationsSettingsPanel() {
       <BrowserAppearanceSetting disabled={previewDefaultsDisabled} />
       <BrowserRecordingFrameRateSetting disabled={previewDefaultsDisabled} />
       <BrowserRecordingInputSettings disabled={previewDefaultsDisabled} />
-      <BrowserLinkTargetSetting disabled={previewDefaultsDisabled} />
       <BrowserAutoShowFloatingPreviewSetting disabled={previewDefaultsDisabled} />
     </>
   );
@@ -1538,6 +1536,8 @@ export function IntegrationsSettingsPanel() {
           the preview defaults below are device-local and ignore it. */}
       <ProjectDefaultsSettings category="integrations" />
       <SettingsSection id="browser" title="Browser">
+        {/* Outside the desktop-only group: pull request links open in T3 Code on web too. */}
+        <BrowserLinkTargetSetting />
         {previewDefaultsDisabled ? (
           <SettingsUnavailableGroup message="Only available in the desktop app.">
             {previewDefaults}

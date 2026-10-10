@@ -1,4 +1,9 @@
-import type { EnvironmentId, PullRequestRef, ScopedThreadRef } from "@t3tools/contracts";
+import type {
+  BrowserLinkTarget,
+  EnvironmentId,
+  PullRequestRef,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
 import { type MouseEvent, useCallback, useMemo } from "react";
@@ -12,6 +17,7 @@ import {
 
 import { useOpenLink } from "../browser/useOpenLink";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
+import { useClientSettings } from "../hooks/useSettings";
 import { useRightPanelStore } from "../rightPanelStore";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 
@@ -184,10 +190,27 @@ export function findProjectOnChangeRequestHost(
   });
 }
 
+export function shouldOpenPullRequestExternally(
+  event: Pick<MouseEvent<HTMLElement>, "metaKey" | "ctrlKey">,
+  preference: BrowserLinkTarget,
+): boolean {
+  // "Open links in" picks the plain-click destination; Cmd/Ctrl-click takes the other one.
+  return (preference === "system") !== (event.metaKey || event.ctrlKey);
+}
+
+const selectBrowserLinkTarget = (settings: { readonly browserLinkTarget: BrowserLinkTarget }) =>
+  settings.browserLinkTarget;
+
+/** Subscribed rather than read at click time: anchors decide synchronously whether to intercept. */
+export function useBrowserLinkTarget(): BrowserLinkTarget {
+  return useClientSettings(selectBrowserLinkTarget);
+}
+
 /**
- * Opens a change request link on the page, and says whether it did. Anything else — another
- * organisation's repository, a host nothing here is checked out from, a link that merely looks
- * like one — is left alone for the caller to handle as the ordinary link it is.
+ * Opens a change request link on the page, and says whether it did. Anything else — a click the
+ * "Open links in" setting sends to the browser, another organisation's repository, a host nothing
+ * here is checked out from, a link that merely looks like one — is left alone for the caller to
+ * handle as the ordinary link it is.
  *
  * Resolving the project here rather than on the page is what makes recognising a URL safe: a
  * lookalike hostname matches no project and stays a link, and the page is handed the project
@@ -198,12 +221,6 @@ export function findProjectOnChangeRequestHost(
  * should still be reading it afterwards. Any change request opens there, not only the thread's
  * own, since the panel is told which one to show.
  */
-export function shouldOpenPullRequestExternally(
-  event: Pick<MouseEvent<HTMLElement>, "metaKey" | "ctrlKey">,
-): boolean {
-  return event.metaKey || event.ctrlKey;
-}
-
 export function useOpenChangeRequestLink(
   threadRef?: ScopedThreadRef,
   panelRef?: ScopedThreadRef,
@@ -220,9 +237,10 @@ export function useOpenChangeRequestLink(
   const allProjects = useProjects();
   const serverConfigs = useServerConfigs();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const linkTargetPreference = useBrowserLinkTarget();
   return useCallback(
     (event, targetUrl, targetThreadRef, targetEnvironmentId) => {
-      if (shouldOpenPullRequestExternally(event)) return false;
+      if (shouldOpenPullRequestExternally(event, linkTargetPreference)) return false;
       const resolvedThreadRef = targetThreadRef ?? threadRef;
       const resolvedPanelRef = panelRef ?? resolvedThreadRef;
       const parsed = parseChangeRequestUrl(targetUrl);
@@ -318,29 +336,39 @@ export function useOpenChangeRequestLink(
       });
       return true;
     },
-    [allProjects, navigate, panelRef, primaryEnvironmentId, serverConfigs, threadRef],
+    [
+      allProjects,
+      linkTargetPreference,
+      navigate,
+      panelRef,
+      primaryEnvironmentId,
+      serverConfigs,
+      threadRef,
+    ],
   );
 }
 
 export function useOpenPrLink(threadRef?: ScopedThreadRef) {
   const openChangeRequest = useOpenChangeRequestLink(threadRef);
   const openLink = useOpenLink(threadRef);
+  const linkTargetPreference = useBrowserLinkTarget();
   return useCallback(
     (event: MouseEvent<HTMLElement>, prUrl: string, targetThreadRef?: ScopedThreadRef) => {
       event.stopPropagation();
-      const openInBrowser = shouldOpenPullRequestExternally(event);
+      const openInBrowser = shouldOpenPullRequestExternally(event, linkTargetPreference);
       const isAnchor =
         event.currentTarget instanceof HTMLAnchorElement && event.currentTarget.href.length > 0;
       // A real link already knows how to cmd/ctrl+click. Leave its default
       // action alone so the browser (or Electron's window-open handler) opens
-      // the host. Buttons have no href, so they still go through openExternal.
-      if (openInBrowser && isAnchor) return false;
+      // the host. A plain click on an anchor without a target would replace
+      // the app, so it goes through openExternal like a button does.
+      if (openInBrowser && isAnchor && (event.metaKey || event.ctrlKey)) return false;
 
       event.preventDefault();
       if (!openInBrowser && openChangeRequest(event, prUrl, targetThreadRef)) return true;
 
-      // No project to show it in, so it is an ordinary link and follows the
-      // "Open links in" setting; the modifier still forces the system browser.
+      // Headed for the browser, or no project to show it in: an ordinary link
+      // that follows the "Open links in" setting; the modifier still forces the system browser.
       void openLink(prUrl, { event, threadRef: targetThreadRef }).catch((error: unknown) => {
         console.error(error);
         toastManager.add(
@@ -353,6 +381,6 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
       });
       return false;
     },
-    [openChangeRequest, openLink],
+    [linkTargetPreference, openChangeRequest, openLink],
   );
 }
