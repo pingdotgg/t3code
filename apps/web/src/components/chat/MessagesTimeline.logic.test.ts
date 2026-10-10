@@ -25,6 +25,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { EnvironmentId, MessageId, RunId } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import {
+  citationSourceId,
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
@@ -5223,5 +5224,13 @@ describe("shouldCollapseUserMessage", () => {
 
     expect(text.length).toBeGreaterThan(600);
     expect(shouldCollapseUserMessage(text)).toBe(false);
+  });
+});
+
+describe("citationSourceId", () => {
+  it("identifies messages and proposed plans, not other rows", () => {
+    expect(citationSourceId({ kind: "message", message: { id: "m1" } })).toBe("m1");
+    expect(citationSourceId({ kind: "proposed-plan", id: "plan-item" })).toBe("plan-item");
+    expect(citationSourceId({ kind: "event" })).toBeNull();
   });
 });
