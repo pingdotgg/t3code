@@ -476,8 +476,10 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
     code: number | null,
     signal: string | null,
   ) {
-    // Anything still unread from the dead process is discarded.
+    // Anything still unread from the dead process is discarded, including a stderr
+    // that a process it started still holds open after the drain timeout.
     child.channel.destroy();
+    child.process.stderr?.destroy();
     const reason = child.killReason ?? describeExit(child, code, signal, options.heapLimitMb);
     const crashed = child.stopping
       ? new PluginStoppedError({ pluginId: entry.pluginId })

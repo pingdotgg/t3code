@@ -1,8 +1,24 @@
 // Misbehaves on request so PluginSupervisor.test.ts can exercise each failure path.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 const IPC_FD = 3;
+
+// Writes to the stderr it inherited until the write fails, then reports "closed" to the port.
+const STDERR_HOLDER = `
+const socket = require("node:net").connect(Number(process.argv[1]), "127.0.0.1");
+const timer = setInterval(() => {
+  try {
+    require("node:fs").writeSync(2, "held\\n");
+  } catch (error) {
+    if (error.code !== "EPIPE") return;
+    clearInterval(timer);
+    socket.end("closed", () => process.exit(0));
+  }
+}, 10);
+setTimeout(() => process.exit(1), 10_000);
+`;
 
 let holdDeactivate = false;
 let log;
@@ -51,6 +67,14 @@ export function activate(context) {
       }),
   );
   handle("exit", () => process.exit(3));
+  // Starts a process that inherits stderr and outlives this plugin.
+  handle("holdStderr", (input) => {
+    const holder = NodeChildProcess.spawn(process.execPath, ["-e", STDERR_HOLDER, input.port], {
+      stdio: ["ignore", "ignore", "inherit"],
+    });
+    holder.unref();
+    return { pid: holder.pid };
+  });
   handle("oom", () => {
     const hog = [];
     for (;;) hog.push(Array.from({ length: 100_000 }, Math.random));

@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- A TCP listener hears from a process a plugin started.
+import * as NodeNet from "node:net";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import type { PluginHostState, PluginId } from "@t3tools/contracts";
@@ -108,6 +111,30 @@ const awaitLogMatching = Effect.fn("awaitLogMatching")(function* (
 });
 
 const toJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+/** Collects what the first connection to a local port sends until it closes. */
+const listenOnce = () =>
+  Effect.acquireRelease(
+    Effect.promise(
+      () =>
+        new Promise<{ server: NodeNet.Server; port: number; received: Promise<string> }>(
+          (resolve) => {
+            let report!: (text: string) => void;
+            const received = new Promise<string>((done) => (report = done));
+            const server = NodeNet.createServer((socket) => {
+              let text = "";
+              socket.setEncoding("utf8");
+              socket.on("data", (chunk: string) => (text += chunk));
+              socket.on("close", () => report(text));
+            });
+            server.listen(0, "127.0.0.1", () =>
+              resolve({ server, port: (server.address() as NodeNet.AddressInfo).port, received }),
+            );
+          },
+        ),
+    ),
+    ({ server }) => Effect.sync(() => server.close()),
+  );
 
 const pidOf = (value: unknown) => (value as { readonly pid: number }).pid;
 
@@ -586,6 +613,28 @@ it.layer(NodeServices.layer)("PluginSupervisor", (it) => {
           Option.some({ _tag: "running" }),
         );
       }),
+    );
+
+    it.effect("closes the stderr of a plugin that exited while a process it started holds it", () =>
+      Effect.gen(function* () {
+        const { port, received } = yield* listenOnce();
+        const supervisor = yield* makeSupervisor();
+        const { registration } = yield* preparePlugin("test.stderr-holder");
+        const pluginId = registration.manifest.id;
+        yield* supervisor.enable(registration);
+        const holderPid = pidOf(
+          yield* supervisor.invoke(pluginId, "holdStderr", { port: `${port}` }),
+        );
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => isProcessAlive(holderPid) && process.kill(holderPid)),
+        );
+
+        // The plugin's exit is handled after the drain timeout, as its stderr never ends.
+        const crash = yield* supervisor.invoke(pluginId, "exit", null).pipe(Effect.flip);
+        expect(crash.message).toContain("exited with code 3");
+        // Once the server closes its end, the holder's next write fails.
+        expect(yield* Effect.promise(() => received)).toBe("closed");
+      }).pipe(TestClock.withLive),
     );
 
     it.effect("backs off after each crash and quarantines past the restart cap", () =>
