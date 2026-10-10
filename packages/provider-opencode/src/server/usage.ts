@@ -254,10 +254,11 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
  * The data directories to read: `OPENCODE_DATA_DIR` (comma-separated) or the
  * XDG default, canonicalized so aliases count once.
  */
-const resolveOpenCodeDataDirs = Effect.fn("resolveOpenCodeDataDirs")(function* () {
+const resolveOpenCodeDataDirs = Effect.fn("resolveOpenCodeDataDirs")(function* (
+  environment: NodeJS.ProcessEnv,
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const environment = yield* HostProcess.Environment;
   const homeDirectory = yield* HostProcess.HomeDirectory;
   const roots = environment["OPENCODE_DATA_DIR"]
     ?.split(",")
@@ -285,8 +286,11 @@ export type OpenCodeUsageReaderEnv = FileSystem.FileSystem | Path.Path;
 export const openCodeUsageReader: ProviderUsageReader<OpenCodeSettings, OpenCodeUsageReaderEnv> = {
   kind: "scan",
   provider: "opencode",
-  scan: Effect.fn("openCodeUsageReader.scan")(function* ({ windowStartMs }) {
-    const roots = yield* resolveOpenCodeDataDirs();
+  scan: Effect.fn("openCodeUsageReader.scan")(function* ({ instances, windowStartMs }) {
+    const roots = new Set<string>();
+    for (const instance of instances) {
+      for (const root of yield* resolveOpenCodeDataDirs(instance.environment)) roots.add(root);
+    }
     return yield* Effect.forEach(
       roots,
       (dir) =>
