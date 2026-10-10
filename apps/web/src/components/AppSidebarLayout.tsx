@@ -9,7 +9,13 @@ import {
 } from "react";
 import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 
+import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { isElectron } from "../env";
+import {
+  releaseThreadUndoShortcut,
+  threadUndoClaimsShortcut,
+  undoLatestThreadAction,
+} from "../hooks/showThreadUndoNotice";
 import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalStorage";
 import {
   isRichTextBoldShortcut,
@@ -215,6 +221,57 @@ function NavigationHistoryShortcuts() {
   return null;
 }
 
+const MODIFIER_KEYS = new Set(["Alt", "Control", "Meta", "Shift"]);
+
+// Undoes the thread actions in the sidebar's notice. Mounted wherever the
+// thread sidebar can show; Settings replaces it. Listens in the capture phase
+// so mod+z reaches it before the composer's own undo handler consumes the key.
+function ThreadUndoShortcut() {
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  // A collapsed sidebar hides the notice, so text fields keep their own undo.
+  const noticeVisible = useSidebarVisibility();
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: isTerminalFocused(),
+          previewFocus: isPreviewFocused(),
+          editableFocus:
+            isEditableFocused(event.target) && !(noticeVisible && threadUndoClaimsShortcut()),
+          modelPickerOpen: isModelPickerOpen(),
+        },
+      });
+      if (command !== "thread.undo") {
+        if (!MODIFIER_KEYS.has(event.key)) releaseThreadUndoShortcut();
+        return;
+      }
+      if (isCommandPaletteOpen() || isModelPickerOpen()) return;
+      // A held key undoes once. Cancel repeats so they cannot fall through to
+      // the editor's own undo while an older group still owns the shortcut.
+      if (event.repeat) {
+        event.preventDefault();
+        return;
+      }
+      if (undoLatestThreadAction()) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    // Pastes from a menu, dictation and drops edit text without a keypress.
+    const onInput = () => releaseThreadUndoShortcut();
+
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("input", onInput, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("input", onInput, true);
+    };
+  }, [keybindings, noticeVisible]);
+
+  return null;
+}
+
 // Settings swaps the thread sidebar out of the tree. Keep the lightweight
 // project projection subscribed so returning to a draft never renders the
 // zero-project state while the environment snapshot reconnects.
@@ -345,6 +402,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         {children}
         <SidebarControl />
         <NavigationHistoryShortcuts />
+        {isOnSettings ? null : <ThreadUndoShortcut />}
         <MainAppLocationTracker />
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>
