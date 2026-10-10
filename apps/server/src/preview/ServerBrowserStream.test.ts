@@ -5,6 +5,7 @@ import { expect, it } from "@effect/vitest";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthPreviewOperateScope,
   AuthSessionId,
   PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE,
   PreviewStreamHostSetup,
@@ -71,7 +72,7 @@ it.effect.each([
   Effect.gen(function* () {
     const canOperate = hasOperateScope && interactive;
     const scopes = hasOperateScope
-      ? [AuthOrchestrationReadScope, AuthOrchestrationOperateScope]
+      ? [AuthOrchestrationReadScope, AuthPreviewOperateScope]
       : [AuthOrchestrationReadScope];
     const auth = makeAuth(scopes);
     const inputs: unknown[] = [];
@@ -293,11 +294,12 @@ it.effect("passes uploaded files to the page's open picker and needs operate sco
       });
     expect((yield* upload([AuthOrchestrationReadScope], "chooser-1")).status).toBe(403);
     expect(answers).toEqual([]);
-    expect((yield* upload([AuthOrchestrationOperateScope], "chooser-1")).status).toBe(204);
+    expect((yield* upload([AuthOrchestrationOperateScope], "chooser-1")).status).toBe(403);
+    expect((yield* upload([AuthPreviewOperateScope], "chooser-1")).status).toBe(204);
     expect(answers).toEqual([
       { chooserId: "chooser-1", files: [{ name: "notes.txt", text: "hello" }] },
     ]);
-    expect((yield* upload([AuthOrchestrationOperateScope], "stale")).status).toBe(409);
+    expect((yield* upload([AuthPreviewOperateScope], "stale")).status).toBe(409);
   }).pipe(Effect.scoped),
 );
 

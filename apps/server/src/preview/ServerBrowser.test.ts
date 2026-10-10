@@ -1126,6 +1126,35 @@ it.live("a page's file picker goes to the controller and takes its uploaded file
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("only the current controller can answer a file picker", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const first = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* first.input({ type: "takeControl" });
+      const setFiles = vi.fn(async (_files: unknown) => {});
+      contexts[0]!.page.emit("filechooser", {
+        isMultiple: () => false,
+        element: () => ({ getAttribute: async () => "" }),
+        setFiles,
+      });
+      let offered = yield* Queue.take(first.output);
+      while (offered._tag !== "fileChooser") offered = yield* Queue.take(first.output);
+      const second = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* first.input({ type: "releaseControl" });
+      yield* second.input({ type: "takeControl" });
+      const answered = yield* browser.answerFileChooser({
+        threadId: scope.thread.threadId,
+        tabId,
+        chooserId: offered.id,
+        files: [{ name: "a.txt", mimeType: "text/plain", buffer: Buffer.from("a") }],
+      });
+      expect(answered).toBe(false);
+      expect(setFiles).not.toHaveBeenCalled();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("a file picker replaces a stalled viewer backlog instead of being dropped", () =>
   Effect.scoped(
     Effect.gen(function* () {
