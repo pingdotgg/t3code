@@ -158,7 +158,14 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         const snapshot = withUsageLimits(
           probedSnapshot,
           resolveUsageLimitsAfterProbe({
-            published: state.snapshot.usageLimits,
+            // Failed reads may retain the last balance only for the same account.
+            published:
+              state.snapshot.auth.status === probedSnapshot.auth.status &&
+              state.snapshot.auth.type === probedSnapshot.auth.type &&
+              state.snapshot.auth.email?.trim().toLowerCase() ===
+                probedSnapshot.auth.email?.trim().toLowerCase()
+                ? state.snapshot.usageLimits
+                : undefined,
             probed: probedSnapshot.usageLimits,
           }),
         );

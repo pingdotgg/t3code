@@ -166,6 +166,18 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   const balanceSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
   const merge = (key: string, next: LimitAccount) => {
+    const previousBalance = balanceSources.get(key);
+    if (
+      !next.limits.unavailable &&
+      next.limits.credits !== undefined &&
+      (!previousBalance ||
+        Date.parse(next.limits.checkedAt) > Date.parse(previousBalance.limits.checkedAt))
+    ) {
+      balanceSources.set(key, next);
+    }
+    // A clear without windows still invalidates older balances from another environment.
+    if (limitsNotice(next.limits) !== null) return;
+
     // Redeeming through a hub also clears the routing cooldown that hub holds
     // for the account. Redeeming natively against the same subscription resets
     // it upstream but leaves the hub refusing to route to the account until
@@ -188,14 +200,6 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       creditSources.set(key, next);
     }
     const previous = accounts.get(key);
-    const previousBalance = balanceSources.get(key);
-    if (
-      next.limits.credits !== undefined &&
-      (!previousBalance ||
-        Date.parse(next.limits.checkedAt) > Date.parse(previousBalance.limits.checkedAt))
-    ) {
-      balanceSources.set(key, next);
-    }
     if (!previous) {
       accounts.set(key, next);
       return;
@@ -226,7 +230,6 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem)),
       limits: {
         ...winner.limits,
-        credits: balanceSources.get(key)?.limits.credits,
         ...(creditSource?.limits.resetCredits
           ? { resetCredits: creditSource.limits.resetCredits }
           : { resetCredits: undefined }),
@@ -236,7 +239,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   for (const [environmentId, presentation] of presentations) {
     const label = presentation.entry.target.label;
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
-      if (!provider.usageLimits || limitsNotice(provider.usageLimits) !== null) continue;
+      if (!provider.usageLimits) continue;
       merge(
         accountKey(provider.driver, provider.auth.email, provider.usageLimits) ??
           `${environmentId}:${provider.instanceId}`,
@@ -265,7 +268,6 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         ? `${presentation.entry.target.label} · ${source.label}`
         : source.label;
       for (const account of source.accounts) {
-        if (limitsNotice(account.usageLimits) !== null) continue;
         merge(
           accountKey(account.driver, account.email, account.usageLimits) ??
             `${source.id}:${account.id}`,
@@ -294,7 +296,14 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       }
     }
   }
-  return [...accounts.values()];
+  return [...accounts.entries()]
+    .map(([key, account]) => {
+      const source = balanceSources.get(key);
+      return source
+        ? { ...account, limits: { ...account.limits, credits: source.limits.credits } }
+        : account;
+    })
+    .filter((account) => limitsNotice(account.limits) === null);
 }
 
 /**

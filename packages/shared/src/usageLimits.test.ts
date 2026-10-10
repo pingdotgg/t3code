@@ -186,6 +186,65 @@ describe("credit balances", () => {
     ).toBe("20");
     expect(collectLimitAccounts(makePresentations(null))[0]?.limits.credits).toBeNull();
   });
+  it.each(["native", "source"])(
+    "honors a newer %s clear without windows and retains another environment's quota",
+    (kind) => {
+      const oldLimits = {
+        checkedAt: "2026-09-03T10:00:00.000Z",
+        windows: [window],
+        credits: { hasCredits: true, unlimited: false, balance: "42" },
+      };
+      const cleared = { checkedAt: "2026-09-03T11:00:00.000Z", windows: [], credits: null };
+      const auth = { status: "authenticated", email: "test@example.com" } as const;
+      const newer = {
+        entry: { target: { label: "Laptop" } },
+        serverConfig: {
+          providers: kind === "native" ? [provider({ auth, usageLimits: cleared })] : [],
+          usageLimitSources:
+            kind === "source"
+              ? [
+                  {
+                    id: UsageLimitSourceId.make("hub"),
+                    kind: "cliproxy" as const,
+                    label: "hub",
+                    checkedAt: cleared.checkedAt,
+                    accounts: [
+                      {
+                        id: "account",
+                        driver: ProviderDriverKind.make("codex"),
+                        email: auth.email,
+                        usageLimits: cleared,
+                      },
+                    ],
+                  },
+                ]
+              : [],
+        },
+      };
+      const older = {
+        entry: { target: { label: "Desktop" } },
+        serverConfig: {
+          providers: [provider({ auth, usageLimits: oldLimits })],
+          usageLimitSources: [],
+        },
+      };
+      const entries = [
+        [EnvironmentId.make("desktop"), older],
+        [EnvironmentId.make("laptop"), newer],
+      ] as const;
+      for (const order of [entries, entries.toReversed()]) {
+        const accounts = collectLimitAccounts(new Map(order));
+        expect(accounts).toHaveLength(1);
+        expect(accounts[0]?.limits.credits).toBeNull();
+        expect(accounts[0]?.limits.windows).toEqual([window]);
+      }
+      expect(collectLimitAccounts(new Map([[EnvironmentId.make("laptop"), newer]]))).toEqual([]);
+      older.serverConfig.providers = [
+        provider({ auth, usageLimits: { ...oldLimits, windows: [] } }),
+      ];
+      expect(collectLimitAccounts(new Map(entries))).toEqual([]);
+    },
+  );
 });
 
 describe("providersWithLimits", () => {
