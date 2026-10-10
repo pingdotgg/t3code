@@ -1471,16 +1471,71 @@ export const make = Effect.gen(function* () {
     };
   });
 
-  // Returns [head remote, origin]. Most branches track origin, so read it once.
-  const resolveHeadAndOriginContexts = (cwd: string, remoteName: string | null) =>
-    remoteName === "origin"
-      ? resolveRemoteRepositoryContext(cwd, "origin").pipe(
-          Effect.map((origin) => [origin, origin] as const),
+  // The remote holding the repository PRs target: origin, else the only remote,
+  // which gh also reads as the base. Null when several remotes leave it open.
+  const resolveTargetRemoteName = (cwd: string) =>
+    gitCore
+      .execute({
+        operation: "GitManager.resolveTargetRemoteName",
+        cwd,
+        args: ["remote"],
+        timeoutMs: 5_000,
+      })
+      .pipe(
+        Effect.map(({ stdout }) => {
+          const names = stdout
+            .split("\n")
+            .map((name) => name.trim())
+            .filter((name) => name.length > 0);
+          if (names.includes("origin")) return "origin";
+          return names.length === 1 ? names[0]! : null;
+        }),
+        Effect.orElseSucceed(() => "origin"),
+      );
+
+  // The target remote's repository, or the OWNER/REPO that `gh repo set-default`
+  // recorded in its gh-resolved key (`base` means the remote itself).
+  const applyGhResolvedRepository = Effect.fn("applyGhResolvedRepository")(function* (
+    cwd: string,
+    remoteName: string | null,
+    context: {
+      remoteUrlKey: string | null;
+      repositoryNameWithOwner: string | null;
+      ownerLogin: string | null;
+    },
+  ) {
+    if (!remoteName) return context;
+    const resolved = yield* readConfigValueNullable(cwd, `remote.${remoteName}.gh-resolved`);
+    const [owner, name, ...rest] = resolved?.trim().split("/") ?? [];
+    if (!owner || !name || rest.length > 0) return context;
+    const host = context.remoteUrlKey?.split("/")[0];
+    return {
+      remoteUrlKey: host ? `${host}/${owner}/${name}`.toLowerCase() : context.remoteUrlKey,
+      repositoryNameWithOwner: `${owner}/${name}`,
+      ownerLogin: owner,
+    };
+  });
+
+  // Returns [head remote, target remote]. Most branches track the target, so read it once.
+  const resolveHeadAndTargetContexts = (
+    cwd: string,
+    remoteName: string | null,
+    targetRemoteName: string | null,
+  ) =>
+    remoteName === targetRemoteName
+      ? resolveRemoteRepositoryContext(cwd, remoteName).pipe(
+          Effect.flatMap((head) =>
+            applyGhResolvedRepository(cwd, targetRemoteName, head).pipe(
+              Effect.map((target) => [head, target] as const),
+            ),
+          ),
         )
       : Effect.all(
           [
             resolveRemoteRepositoryContext(cwd, remoteName),
-            resolveRemoteRepositoryContext(cwd, "origin"),
+            resolveRemoteRepositoryContext(cwd, targetRemoteName).pipe(
+              Effect.flatMap((target) => applyGhResolvedRepository(cwd, targetRemoteName, target)),
+            ),
           ],
           { concurrency: "unbounded" },
         );
@@ -1489,7 +1544,12 @@ export const make = Effect.gen(function* () {
     function* (cwd: string, branch: string, remoteNameOverride?: string) {
       const remoteName =
         remoteNameOverride ?? (yield* readConfigValueNullable(cwd, `branch.${branch}.remote`));
-      const [headRemote, targetRemote] = yield* resolveHeadAndOriginContexts(cwd, remoteName);
+      const targetRemoteName = yield* resolveTargetRemoteName(cwd);
+      const [headRemote, targetRemote] = yield* resolveHeadAndTargetContexts(
+        cwd,
+        remoteName,
+        targetRemoteName,
+      );
       return {
         remoteName,
         headRemoteUrlKey:
@@ -1513,18 +1573,20 @@ export const make = Effect.gen(function* () {
     const shouldProbeLocalBranchSelector =
       headBranchFromUpstream.length === 0 || headBranch === details.branch;
 
-    const [remoteRepository, originRepository] = yield* resolveHeadAndOriginContexts(
+    const targetRemoteName = yield* resolveTargetRemoteName(cwd);
+    const [remoteRepository, targetRepository] = yield* resolveHeadAndTargetContexts(
       cwd,
       remoteName,
+      targetRemoteName,
     );
 
     const isCrossRepository =
       remoteRepository.repositoryNameWithOwner !== null &&
-      originRepository.repositoryNameWithOwner !== null
+      targetRepository.repositoryNameWithOwner !== null
         ? remoteRepository.repositoryNameWithOwner.toLowerCase() !==
-          originRepository.repositoryNameWithOwner.toLowerCase()
+          targetRepository.repositoryNameWithOwner.toLowerCase()
         : remoteName !== null &&
-          remoteName !== "origin" &&
+          remoteName !== targetRemoteName &&
           remoteRepository.repositoryNameWithOwner !== null;
 
     const ownerHeadSelector =
@@ -1534,7 +1596,7 @@ export const make = Effect.gen(function* () {
     const remoteAliasHeadSelector =
       remoteName && headBranch.length > 0 ? `${remoteName}:${headBranch}` : null;
     const shouldProbeRemoteOwnedSelectors =
-      isCrossRepository || (remoteName !== null && remoteName !== "origin");
+      isCrossRepository || (remoteName !== null && remoteName !== targetRemoteName);
 
     const headSelectors: string[] = [];
     if (isCrossRepository && shouldProbeRemoteOwnedSelectors) {
@@ -1565,8 +1627,8 @@ export const make = Effect.gen(function* () {
       remoteName,
       headRemoteUrlKey:
         remoteRepository.remoteUrlKey ??
-        (remoteName === null ? originRepository.remoteUrlKey : null),
-      targetRemoteUrlKey: originRepository.remoteUrlKey,
+        (remoteName === null ? targetRepository.remoteUrlKey : null),
+      targetRemoteUrlKey: targetRepository.remoteUrlKey,
       headRepositoryNameWithOwner: remoteRepository.repositoryNameWithOwner,
       headRepositoryOwnerLogin: remoteRepository.ownerLogin,
       isCrossRepository,
