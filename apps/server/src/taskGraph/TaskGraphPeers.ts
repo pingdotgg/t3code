@@ -78,7 +78,10 @@ export interface PeerCandidate {
   readonly environmentId: EnvironmentId;
   readonly resources: HostResourcesSnapshot | null;
   readonly receivedAt: number;
+  /** Zero never takes balanced work, but a node pinned there still runs there. */
   readonly weight: number;
+  /** Nodes this machine runs there now. */
+  readonly running: number;
 }
 
 /**
@@ -92,11 +95,9 @@ export class TaskGraphPeers extends Context.Service<
     /** Whether any peer is paired; branches are then pushed so other machines can reach them. */
     readonly hasPeers: Effect.Effect<boolean>;
     /** Connected peers hosting the same repository, with fresh load, under `maxNodesPerPeer`. */
+    /** Connected peers with the project open, whatever their load; the caller applies limits. */
     readonly candidates: (input: {
       readonly projectId: ProjectId;
-      readonly maxNodesPerPeer: number;
-      /** Nodes already placed on each peer in this pass but not started there yet. */
-      readonly pending?: ReadonlyMap<string, number>;
     }) => Effect.Effect<ReadonlyArray<PeerCandidate>>;
     readonly startNode: (input: PeerNodeStart) => Effect.Effect<void, TaskGraphError>;
     /** Watches a node started before a restart. */
@@ -153,6 +154,12 @@ export const layerNone = Layer.succeed(
 const DEFAULT_PEER_WEIGHT = 50;
 const tokenSecretName = (environmentId: string) => `task-graph-peer-token:${environmentId}`;
 
+/** What delivering a peer node's branch produced: its PR, or why only the PR step failed. */
+interface PeerDelivered {
+  readonly url: string | null;
+  readonly prError: string | undefined;
+}
+
 const peerError = (message: string, cause?: unknown) =>
   new TaskGraphError({ message, ...(cause === undefined ? {} : { cause }) });
 
@@ -165,7 +172,7 @@ const TERMINAL_THREAD_STATUSES = new Set([
 ]);
 
 /** The outcome a finished peer thread implies, before delivery; null while it still runs. */
-export function peerThreadOutcome(
+function peerThreadOutcome(
   thread: Pick<OrchestrationV2ThreadShell, "status" | "activeRunId">,
 ): "succeeded" | "failed" | "cancelled" | null {
   if (thread.activeRunId !== null || !TERMINAL_THREAD_STATUSES.has(thread.status)) return null;
@@ -321,7 +328,7 @@ const make = Effect.gen(function* () {
         thread.latestVisibleMessage?.role === "assistant" ? thread.latestVisibleMessage.text : null;
       const delivered =
         thread.worktreePath === null || entry.delivery.action === "none"
-          ? Option.none<{ readonly url: string | null }>()
+          ? Option.none<PeerDelivered>()
           : Option.some(
               yield* state.client[WS_METHODS.gitRunStackedAction]({
                 actionId: `task-graph:${thread.id}`,
@@ -334,12 +341,24 @@ const make = Effect.gen(function* () {
                 projectId: thread.projectId,
               }).pipe(
                 Stream.runCollect,
-                Effect.flatMap((events) => {
+                Effect.flatMap((events): Effect.Effect<PeerDelivered, TaskGraphError> => {
                   for (const event of events) {
+                    // As on this machine, a failed PR step alone leaves the node succeeded:
+                    // its work is already committed and pushed for dependents.
+                    if (
+                      event.kind === "action_failed" &&
+                      event.phase === "pr" &&
+                      entry.delivery.action === "commit_push_pr"
+                    ) {
+                      return Effect.succeed({ url: null, prError: event.message });
+                    }
                     if (event.kind === "action_failed")
                       return Effect.fail(peerError(event.message));
                     if (event.kind === "action_finished") {
-                      return Effect.succeed({ url: event.result.pr.url ?? null });
+                      return Effect.succeed({
+                        url: event.result.pr.url ?? null,
+                        prError: undefined,
+                      });
                     }
                   }
                   return Effect.fail(peerError("The peer did not report how delivery went."));
@@ -370,7 +389,9 @@ const make = Effect.gen(function* () {
           branch: thread.branch,
           worktreePath: thread.worktreePath,
           ...(entry.delivery.action === "commit_push_pr" && Option.isSome(delivered)
-            ? { pullRequestUrl: delivered.value.url }
+            ? delivered.value.prError === undefined
+              ? { pullRequestUrl: delivered.value.url }
+              : { pullRequestError: delivered.value.prError }
             : {}),
         },
       });
@@ -555,30 +576,23 @@ const make = Effect.gen(function* () {
         repositoryGroupingKeyOf(project.repositoryIdentity) === key,
     );
 
-  const candidates: TaskGraphPeers["Service"]["candidates"] = ({
-    projectId,
-    maxNodesPerPeer,
-    pending,
-  }) =>
+  const candidates: TaskGraphPeers["Service"]["candidates"] = ({ projectId }) =>
     Effect.gen(function* () {
       const key = yield* repositoryKeyOf(projectId);
       if (Option.isNone(key)) return [];
       const rows = yield* readRows.pipe(Effect.orElseSucceed(() => []));
       const usable = rows.flatMap((row) => {
         const state = live.get(row.environment_id);
-        const running =
-          [...tracked.values()].filter((entry) => entry.environmentId === row.environment_id)
-            .length + (pending?.get(row.environment_id) ?? 0);
-        return state?.client != null &&
-          row.weight > 0 &&
-          running < maxNodesPerPeer &&
-          peerProjectFor(state, key.value) !== undefined
-          ? [{ row, client: state.client }]
+        const running = [...tracked.values()].filter(
+          (entry) => entry.environmentId === row.environment_id,
+        ).length;
+        return state?.client != null && peerProjectFor(state, key.value) !== undefined
+          ? [{ row, client: state.client, running }]
           : [];
       });
       return yield* Effect.forEach(
         usable,
-        ({ row, client }) =>
+        ({ row, client, running }) =>
           client[WS_METHODS.serverGetHostResources]({}).pipe(
             Effect.timeout("5 seconds"),
             Effect.orElseSucceed(() => null),
@@ -589,6 +603,7 @@ const make = Effect.gen(function* () {
                   resources,
                   receivedAt,
                   weight: row.weight,
+                  running,
                 })),
               ),
             ),

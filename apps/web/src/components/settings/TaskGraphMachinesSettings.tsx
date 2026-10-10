@@ -145,8 +145,12 @@ function TaskGraphPeerRow({
     failureTitle: string,
   ) => {
     setBusy(true);
-    const result = await action();
-    setBusy(false);
+    let result: AtomCommandResult<A, E>;
+    try {
+      result = await action();
+    } finally {
+      setBusy(false);
+    }
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       toastManager.add(
         stackedThreadToast({
@@ -227,6 +231,15 @@ function TaskGraphPeerRow({
  * address this client reaches it at, to the environment. That address is the
  * T3 Connect hostname for a relay connection, so relay-only machines work too.
  */
+const hostnameOf = (url: string | undefined): string | null => {
+  if (url === undefined) return null;
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+};
+
 function ConnectedMachineRow({
   environmentId,
   environmentLabel,
@@ -251,11 +264,13 @@ function ConnectedMachineRow({
   )?.httpBaseUrl;
   // The environment redeems the pairing at the address this app uses. A loopback address only
   // works when this app also reaches the environment on loopback, so both run on this computer.
+  const candidateHost = hostnameOf(candidateUrl);
+  const targetHost = hostnameOf(targetUrl);
   const unreachable =
-    candidateUrl !== undefined &&
-    targetUrl !== undefined &&
-    isLoopbackHost(new URL(candidateUrl).hostname) &&
-    !isLoopbackHost(new URL(targetUrl).hostname);
+    candidateHost !== null &&
+    targetHost !== null &&
+    isLoopbackHost(candidateHost) &&
+    !isLoopbackHost(targetHost);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -269,23 +284,27 @@ function ConnectedMachineRow({
     if (adding || connection === null || unreachable) return;
     setAdding(true);
     setError(null);
-    const grant = await issueGrant({
-      environmentId: candidate.environmentId,
-      input: { label: environmentLabel },
-    });
-    if (grant._tag !== "Success") {
+    try {
+      const grant = await issueGrant({
+        environmentId: candidate.environmentId,
+        input: { label: environmentLabel },
+      });
+      if (grant._tag !== "Success") {
+        setError(commandError(grant, `${candidate.label} would not issue a pairing grant.`));
+        return;
+      }
+      const pairingUrl = new URL("/pair", connection.httpBaseUrl);
+      pairingUrl.hash = `token=${grant.value.credential}`;
+      const result = await add({
+        environmentId,
+        input: { pairingUrl: pairingUrl.toString(), label: candidate.label },
+      });
+      setError(commandError(result, `Could not add ${candidate.label}.`));
+    } catch {
+      setError(`Could not add ${candidate.label}.`);
+    } finally {
       setAdding(false);
-      setError(commandError(grant, `${candidate.label} would not issue a pairing grant.`));
-      return;
     }
-    const pairingUrl = new URL("/pair", connection.httpBaseUrl);
-    pairingUrl.hash = `token=${grant.value.credential}`;
-    const result = await add({
-      environmentId,
-      input: { pairingUrl: pairingUrl.toString(), label: candidate.label },
-    });
-    setAdding(false);
-    setError(commandError(result, `Could not add ${candidate.label}.`));
   };
 
   return (
@@ -331,14 +350,18 @@ function AddTaskGraphPeerForm({ environmentId }: { readonly environmentId: Envir
     const trimmedLabel = label.trim();
     setAdding(true);
     setError(null);
-    const result = await add({
-      environmentId,
-      input: {
-        pairingUrl: trimmedUrl,
-        ...(trimmedLabel.length > 0 ? { label: trimmedLabel } : {}),
-      },
-    });
-    setAdding(false);
+    let result: AtomCommandResult<unknown, unknown>;
+    try {
+      result = await add({
+        environmentId,
+        input: {
+          pairingUrl: trimmedUrl,
+          ...(trimmedLabel.length > 0 ? { label: trimmedLabel } : {}),
+        },
+      });
+    } finally {
+      setAdding(false);
+    }
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         setError(failureMessage(squashAtomCommandFailure(result), "Could not add the machine."));

@@ -53,7 +53,8 @@ export const TaskGraphCreateTool = Tool.make("task_graph_create", {
   dependencies,
 })
   .annotate(Tool.Title, "Create a task graph")
-  .annotate(Tool.Destructive, false)
+  // Running nodes can commit, push and open pull requests.
+  .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
 const TaskGraphListTool = Tool.make("task_graph_list", {
@@ -104,7 +105,8 @@ const TaskGraphRunTool = Tool.make("task_graph_run", {
   dependencies,
 })
   .annotate(Tool.Title, "Run a task graph")
-  .annotate(Tool.Destructive, false)
+  // Running nodes can commit, push and open pull requests.
+  .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
 const TaskGraphCancelTool = Tool.make("task_graph_cancel", {

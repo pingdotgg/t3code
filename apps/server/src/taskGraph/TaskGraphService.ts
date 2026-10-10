@@ -24,6 +24,7 @@ import {
   resumeTaskGraphNode,
   skipUnreachableTaskGraphNodes,
   taskGraphNodeOpensPullRequest,
+  taskGraphNodeSharesPullRequestBranch,
   taskGraphNodeSummary,
   taskGraphPullRequestBase,
   validateTaskGraphNodes,
@@ -105,6 +106,8 @@ export type NodeOutcome =
       readonly branch: string | null;
       readonly worktreePath: string | null;
       readonly pullRequestUrl?: string | null;
+      /** The node's PR step failed after its work was committed and pushed. */
+      readonly pullRequestError?: string;
     }
   | { readonly type: "failed" | "cancelled"; readonly error: string };
 
@@ -112,7 +115,7 @@ export type NodeOutcome =
 const MAX_CPU_UTILIZATION = 0.95;
 const MIN_AVAILABLE_MEMORY_FRACTION = 0.05;
 
-export function hostHasCapacity(snapshot: HostResourcesSnapshot): boolean {
+function hostHasCapacity(snapshot: HostResourcesSnapshot): boolean {
   if (snapshot.cpuUtilization !== null && snapshot.cpuUtilization >= MAX_CPU_UTILIZATION) {
     return false;
   }
@@ -126,7 +129,7 @@ export function hostHasCapacity(snapshot: HostResourcesSnapshot): boolean {
  * When a provider instance's usage limit resets, if one of its windows is used
  * up right now; null when it has room or reports no limits.
  */
-export function usageLimitResetFor(
+function usageLimitResetFor(
   provider: Pick<ServerProvider, "usageLimits"> | undefined,
   nowMs: number,
 ): string | null {
@@ -204,7 +207,7 @@ function errorMessage(error: unknown): string {
 const nowIso = DateTime.now.pipe(Effect.map((now) => DateTime.formatIso(now)));
 
 /** The message the proposing thread receives when its graph ends. */
-export function taskGraphReport(graph: TaskGraph): string {
+function taskGraphReport(graph: TaskGraph): string {
   const lines = graph.nodes.map((node) => {
     const pr = node.pullRequestResult;
     const prText =
@@ -418,7 +421,8 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const opensPullRequest = taskGraphNodeOpensPullRequest(graph.nodes, node);
       // With peers paired, a dependent may run elsewhere and needs the branch on origin.
-      const push = yield* peers.hasPeers;
+      const push =
+        (yield* peers.hasPeers) || taskGraphNodeSharesPullRequestBranch(graph.nodes, node);
       let failedPhase: string | null = null;
       const delivered = yield* git
         .runStackedAction(
@@ -614,9 +618,11 @@ const make = Effect.gen(function* () {
           branch: outcome.branch,
           worktreePath: outcome.worktreePath,
           pullRequestResult:
-            outcome.pullRequestUrl === undefined
-              ? null
-              : { status: "opened", url: outcome.pullRequestUrl, error: null },
+            outcome.pullRequestError !== undefined
+              ? { status: "failed", url: null, error: outcome.pullRequestError }
+              : outcome.pullRequestUrl === undefined
+                ? null
+                : { status: "opened", url: outcome.pullRequestUrl, error: null },
           completedAt,
         };
       });
@@ -642,6 +648,7 @@ const make = Effect.gen(function* () {
     node: TaskGraphNode,
     local: { readonly resources: HostResourcesSnapshot; readonly hasRoom: boolean },
     maxNodes: number,
+    peerCandidates: ReadonlyArray<TaskGraphPeers.PeerCandidate>,
     pending: ReadonlyMap<string, number>,
   ): Effect.Effect<EnvironmentId | null> =>
     Effect.gen(function* () {
@@ -655,11 +662,10 @@ const make = Effect.gen(function* () {
       if (pinned === localEnvironmentId) {
         return local.hasRoom ? localEnvironmentId : null;
       }
-      const remote = yield* peers.candidates({
-        projectId: graph.projectId,
-        maxNodesPerPeer: maxNodes,
-        pending,
-      });
+      // Peers count a node once it starts there, after this pass; this pass's placements count too.
+      const remote = peerCandidates.filter(
+        (candidate) => candidate.running + (pending.get(candidate.environmentId) ?? 0) < maxNodes,
+      );
       if (pinned !== null) {
         return remote.some((candidate) => candidate.environmentId === pinned) ? pinned : null;
       }
@@ -766,6 +772,17 @@ const make = Effect.gen(function* () {
    */
   const advance: Effect.Effect<void> = Effect.gen(function* () {
     const { taskGraphMaxConcurrentNodes } = yield* settings.getSettings;
+    // Asking peers for their load is a network call per peer, so it happens once per pass and
+    // outside the lock that edits, cancels and completions wait on.
+    const projectIds = [...new Set((yield* runningGraphs).map((graph) => graph.projectId))];
+    const peerCandidates = new Map(
+      yield* Effect.forEach(
+        projectIds,
+        (projectId) =>
+          peers.candidates({ projectId }).pipe(Effect.map((found) => [projectId, found] as const)),
+        { concurrency: "unbounded" },
+      ),
+    );
     const toLaunch = yield* locked(
       Effect.gen(function* () {
         const graphs = yield* runningGraphs;
@@ -782,7 +799,6 @@ const make = Effect.gen(function* () {
         const now = yield* nowIso;
         const nowMs = Date.parse(now);
         const localProviders = yield* providers.getProviders;
-        // Peers only count a node once it starts there, after this pass; count this pass's too.
         const placedOnPeers = new Map<string, number>();
         for (const graph of graphs) {
           const settled = skipUnreachableTaskGraphNodes(graph.nodes, now);
@@ -805,6 +821,7 @@ const make = Effect.gen(function* () {
               node,
               { resources: host, hasRoom: hostFree && active < taskGraphMaxConcurrentNodes },
               taskGraphMaxConcurrentNodes,
+              peerCandidates.get(graph.projectId) ?? [],
               placedOnPeers,
             );
             if (environmentId === null) continue;
@@ -1167,9 +1184,11 @@ const make = Effect.gen(function* () {
         return ended === undefined ? Effect.void : resumeNode(ended.graphId, ended.key);
       }
       const target = nodeByThread.get(event.threadId);
+      // Delivery commits, pushes and writes a PR, so finish each node in its own fiber
+      // rather than hold up every other graph's events. Status guards make a repeat a no-op.
       return target === undefined
         ? Effect.void
-        : finishLocalNode(target.graphId, target.key, event.threadId);
+        : finishLocalNode(target.graphId, target.key, event.threadId).pipe(Effect.forkDetach);
     }).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("Task graph event stream failed", { cause: Cause.pretty(cause) }),

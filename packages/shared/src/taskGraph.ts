@@ -148,6 +148,25 @@ export function taskGraphNodeOpensPullRequest(nodes: Nodes, node: TaskGraphNode)
 }
 
 /**
+ * Whether the node continues, through a chain of shared worktrees, a branch an
+ * earlier node opened a pull request from. Its commits must then be pushed, or
+ * that PR never gets them while later layers stacked on it do.
+ */
+export function taskGraphNodeSharesPullRequestBranch(nodes: Nodes, node: TaskGraphNode): boolean {
+  const byKey = new Map(nodes.map((candidate) => [candidate.key, candidate]));
+  const seen = new Set<string>();
+  let current = node;
+  while (current.workspace === "dependency" && !seen.has(current.key)) {
+    seen.add(current.key);
+    const dependency = byKey.get(current.dependsOn[0] ?? "");
+    if (dependency === undefined) return false;
+    if (taskGraphNodeOpensPullRequest(nodes, dependency)) return true;
+    current = dependency;
+  }
+  return false;
+}
+
+/**
  * The branch a node's pull request targets. Walking up first dependencies past
  * the nodes sharing its branch, the first ancestor with a pull request of its
  * own is the layer below it in a stack; with none, the PR carries everything

@@ -11,6 +11,7 @@ import {
   skipUnreachableTaskGraphNodes,
   taskGraphLayers,
   taskGraphNodeOpensPullRequest,
+  taskGraphNodeSharesPullRequestBranch,
   taskGraphPullRequestBase,
   validateTaskGraphNodes,
 } from "./taskGraph.ts";
@@ -91,6 +92,21 @@ describe("scheduling", () => {
       false,
       true,
     ]);
+  });
+
+  it("knows when a node continues a branch that already has a pull request", () => {
+    const nodes = graph(
+      { ...input("a"), pullRequest: true },
+      { ...input("a-tests", ["a"]), workspace: "dependency" },
+      { ...input("a-docs", ["a-tests"]), workspace: "dependency" },
+      input("b", ["a"]),
+    );
+    const shares = (key: string) =>
+      taskGraphNodeSharesPullRequestBranch(
+        nodes,
+        nodes.find((node) => node.key === key)!,
+      );
+    expect(["a", "a-tests", "a-docs", "b"].map(shares)).toEqual([false, true, true, false]);
   });
 
   it("lays nodes out by depth", () => {

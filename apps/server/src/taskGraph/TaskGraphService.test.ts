@@ -381,6 +381,7 @@ it.effect("places a node on a peer with more free capacity and pushes local bran
               // it.effect runs on a test clock that starts at 0.
               receivedAt: 0,
               weight: 50,
+              running: 0,
             },
           ]),
         startNode: (input) => Queue.offer(started, input).pipe(Effect.asVoid),
@@ -491,7 +492,8 @@ it.effect("stacks PRs, continues a worktree in place, and never commits project-
         harness.gitActions.map((action) => [action.cwd, action.action, action.baseBranch]),
         [
           ["/worktrees/t3/a", "commit_push_pr", "main"],
-          ["/worktrees/t3/a", "commit", undefined],
+          // a-tests continues a's branch, which has a PR, so it pushes for that PR to get it.
+          ["/worktrees/t3/a", "commit_push", undefined],
           ["/worktrees/t3/b", "commit_push_pr", "t3/a"],
         ],
       );
