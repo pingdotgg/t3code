@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- unit names and RAM size come from the host.
 import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
+import * as NodeProcess from "node:process";
 
 import {
   AgentScope,
@@ -48,16 +49,26 @@ export interface ScopeState {
   readonly oomKills: number;
   /** `populated` from the scope's cgroup.events, while its cgroup exists. */
   readonly populated: boolean | undefined;
+  /** Milliseconds since the scope last changed state, when systemd reports it. */
+  readonly changedMsAgo: number | undefined;
 }
+
+// An OOM kill fails the agent's turn within seconds. An older one belongs to
+// an earlier agent, for example one killed while idle, and explains nothing.
+const OOM_RESULT_MAX_AGE_MS = 60_000;
 
 /**
  * Reads one scope as the server sees it right after the agent process exits.
  * Our pipe can close before systemd handles the kill, so a scope that is
  * still stopping, is empty, or already counted an OOM kill is "stopping":
- * systemd records `Result=oom-kill` for it in a moment.
+ * systemd records `Result=oom-kill` for it in a moment. An OOM kill more than
+ * a minute old is "gone": a newer launch may not use a scope at all, for
+ * example after the thread switches to an in-process provider.
  */
 export function classifyScope(state: ScopeState): "oom-killed" | "gone" | "running" | "stopping" {
-  if (state.result === "oom-kill") return "oom-killed";
+  if (state.result === "oom-kill") {
+    return (state.changedMsAgo ?? 0) > OOM_RESULT_MAX_AGE_MS ? "gone" : "oom-killed";
+  }
   if (
     state.loadState !== "loaded" ||
     state.activeState === "inactive" ||
@@ -189,7 +200,7 @@ export const make = Effect.gen(function* () {
         "--user",
         "show",
         unit,
-        "--property=LoadState,ActiveState,Result,ControlGroup",
+        "--property=LoadState,ActiveState,Result,ControlGroup,StateChangeTimestampMonotonic",
       ]);
       // A failed query says nothing about the scope; the caller keeps the unit.
       if (shown._tag === "None" || shown.value.code !== 0) return undefined;
@@ -198,12 +209,16 @@ export const make = Effect.gen(function* () {
       const memoryEvents = controlGroup ? yield* readCgroupFile(controlGroup, "memory.events") : "";
       const cgroupEvents = controlGroup ? yield* readCgroupFile(controlGroup, "cgroup.events") : "";
       const populated = parseCgroupCounter(cgroupEvents, "populated");
+      // systemd and process.hrtime both read CLOCK_MONOTONIC, in µs and ns.
+      const changedAt = Number(values.get("StateChangeTimestampMonotonic") ?? "0");
+      const nowUs = Number(NodeProcess.hrtime.bigint() / 1000n);
       return {
         loadState: values.get("LoadState") ?? "",
         activeState: values.get("ActiveState") ?? "",
         result: values.get("Result") ?? "",
         oomKills: parseCgroupCounter(memoryEvents, "oom_kill") ?? 0,
         populated: populated === undefined ? undefined : populated === 1,
+        changedMsAgo: changedAt > 0 ? (nowUs - changedAt) / 1000 : undefined,
       } satisfies ScopeState;
     });
 
