@@ -2186,8 +2186,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               {prBadge}
               {diff ? (
                 <span className="shrink-0 font-mono">
-                  <span className="text-diff-addition-foreground">+{diff.insertions}</span>{" "}
-                  <span className="text-diff-deletion-foreground">−{diff.deletions}</span>
+                  <span className="text-diff-addition-foreground">
+                    +{diff.insertions.toLocaleString()}
+                  </span>{" "}
+                  <span className="text-diff-deletion-foreground">
+                    −{diff.deletions.toLocaleString()}
+                  </span>
                 </span>
               ) : null}
               <span

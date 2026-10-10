@@ -134,7 +134,8 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                   Files
                 </Text>
                 <Text className="text-foreground-muted text-xs leading-normal">
-                  {selectedFiles.length} selected · +{selectedInsertions} / -{selectedDeletions}
+                  {selectedFiles.length} selected · +{selectedInsertions.toLocaleString()} / -
+                  {selectedDeletions.toLocaleString()}
                 </Text>
               </View>
               <View className="flex-row items-center gap-2">
@@ -171,10 +172,10 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                       {file.path}
                     </Text>
                     <Text className="text-xs font-t3-bold text-adaptive-emerald-700-300">
-                      +{file.insertions}
+                      +{file.insertions.toLocaleString()}
                     </Text>
                     <Text className="text-xs font-t3-bold text-adaptive-rose-700-300">
-                      -{file.deletions}
+                      -{file.deletions.toLocaleString()}
                     </Text>
                   </View>
                 ))}
@@ -250,10 +251,10 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                         </View>
                         <View className="items-end gap-1">
                           <Text className="text-xs font-t3-bold text-adaptive-emerald-700-300">
-                            +{file.insertions}
+                            +{file.insertions.toLocaleString()}
                           </Text>
                           <Text className="text-xs font-t3-bold text-adaptive-rose-700-300">
-                            -{file.deletions}
+                            -{file.deletions.toLocaleString()}
                           </Text>
                         </View>
                       </View>

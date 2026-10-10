@@ -160,7 +160,7 @@ export function buildThreadActivityInspector(
       if (item.additions !== undefined || item.deletions !== undefined) {
         fields.push({
           label: "Changes",
-          value: `+${item.additions ?? 0} −${item.deletions ?? 0}`,
+          value: `+${(item.additions ?? 0).toLocaleString()} −${(item.deletions ?? 0).toLocaleString()}`,
         });
       }
       break;
@@ -206,7 +206,10 @@ export function buildThreadActivityInspector(
         blocks,
         "Files",
         item.files
-          .map((file) => `${file.path}  +${file.additions} −${file.deletions}  ${file.kind}`)
+          .map(
+            (file) =>
+              `${file.path}  +${file.additions.toLocaleString()} −${file.deletions.toLocaleString()}  ${file.kind}`,
+          )
           .join("\n"),
       );
       break;

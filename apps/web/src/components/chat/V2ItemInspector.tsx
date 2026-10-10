@@ -261,8 +261,8 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
             </span>
             {item.additions !== undefined || item.deletions !== undefined ? (
               <span>
-                <span className="text-success">+{item.additions ?? 0}</span>{" "}
-                <span className="text-destructive">-{item.deletions ?? 0}</span>
+                <span className="text-success">+{(item.additions ?? 0).toLocaleString()}</span>{" "}
+                <span className="text-destructive">-{(item.deletions ?? 0).toLocaleString()}</span>
               </span>
             ) : null}
             {item.runId !== null ? (
