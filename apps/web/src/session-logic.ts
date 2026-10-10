@@ -120,7 +120,8 @@ export interface LatestProposedPlanState {
 export type TimelineAttempt = Pick<
   OrchestrationV2RunAttempt,
   "id" | "runId" | "attemptOrdinal" | "rootNodeId" | "status"
->;
+> &
+  Partial<Pick<OrchestrationV2RunAttempt, "completedAt">>;
 
 export type TimelineEntry = (
   | {
