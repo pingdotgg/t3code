@@ -96,12 +96,14 @@ describe("ElectronShell", () => {
       const results = yield* Effect.all([
         electronShell.openExternal("zed://ssh/example.com/home/user/project"),
         electronShell.openExternal("zed://ssh/example.com/"),
+        electronShell.openExternal("zed://ssh/[fd7a:115c::5]/home/user/project"),
       ]);
 
-      assert.deepEqual(results, [true, true]);
+      assert.deepEqual(results, [true, true, true]);
       assert.deepEqual(openExternalMock.mock.calls, [
         ["zed://ssh/example.com/home/user/project"],
         ["zed://ssh/example.com/"],
+        ["zed://ssh/[fd7a:115c::5]/home/user/project"],
       ]);
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
@@ -152,9 +154,11 @@ describe("ElectronShell", () => {
         ),
         electronShell.openExternal("zed://ssh/user@example.com/home/user/project"),
         electronShell.openExternal("jetbrains://user@gateway/ssh/environment?h=example.com"),
+        electronShell.openExternal("zed://ssh/user:pw@[fd7a::5]/home/user/project"),
+        electronShell.openExternal("zed://ssh/example.com:22/home/user/project"),
       ]);
 
-      assert.deepEqual(results, [false, false, false, false]);
+      assert.deepEqual(results, [false, false, false, false, false, false]);
       assert.equal(openExternalMock.mock.calls.length, 0);
     }).pipe(Effect.provide(ElectronShell.layer)),
   );

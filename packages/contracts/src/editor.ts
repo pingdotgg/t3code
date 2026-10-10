@@ -193,8 +193,9 @@ export const remoteSchemeForEditor = (id: EditorId): string | undefined => {
  * Builds a `<scheme>://vscode-remote/ssh-remote+<host><path>` deep link (Zed
  * takes `zed://ssh/<host><path>`, JetBrains IDEs a Toolbox App
  * `jetbrains://gateway/ssh/environment?...` link) that opens `absolutePath` on
- * `host` in the local editor over SSH. Returns undefined for editors without
- * remote deep-link support.
+ * `host` in the local editor over SSH. `host` may be an IPv6 address, with or
+ * without brackets. Returns undefined for editors without remote deep-link
+ * support.
  */
 export const buildRemoteOpenUrl = (input: {
   readonly editor: EditorId;
@@ -205,12 +206,13 @@ export const buildRemoteOpenUrl = (input: {
   if (scheme === undefined) {
     return undefined;
   }
+  const host = input.host.replace(/^\[(.*)\]$/, "$1");
   const editor = EDITORS.find((candidate) => candidate.id === input.editor);
   if (editor !== undefined && "jetbrainsProductCode" in editor) {
     // Like the VS Code link, no user or port: the SSH config entry for `host`
     // supplies them. A bare product code lets Toolbox pick the backend build.
     const params = new URLSearchParams({
-      h: input.host,
+      h: host,
       launchIde: "true",
       ideHint: editor.jetbrainsProductCode,
       projectHint: input.absolutePath.replaceAll("\\", "/"),
@@ -220,7 +222,9 @@ export const buildRemoteOpenUrl = (input: {
   // Windows server paths (`C:\...`) appear as `/C:/...` in vscode-remote URIs.
   const posixPath = input.absolutePath.replaceAll("\\", "/");
   const rootedPath = posixPath.startsWith("/") ? posixPath : `/${posixPath}`;
-  const encodedHost = encodeURIComponent(input.host);
+  // Remote-SSH reads a bare IPv6 address itself; brackets are only for Zed's URL parser.
+  const encodedHost =
+    input.editor === "zed" && host.includes(":") ? `[${host}]` : encodeURIComponent(host);
   if (input.editor === "zed") {
     // Zed's remote server resolves a rooted path on the system drive, so a
     // Windows `C:\Users\x` must become `/Users/x` (verified in #8938). Other

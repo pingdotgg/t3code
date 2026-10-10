@@ -4,17 +4,20 @@
  * deep link (local editor connects over SSH) instead of exec'ing an editor
  * on the environment host.
  *
- * Host precedence: a desktop-SSH environment's real `~/.ssh/config` alias
- * beats server-advertised names; among advertised names the tailnet MagicDNS
- * name beats mDNS `<hostname>.local` (server sends them in that order).
+ * Host precedence: a desktop-SSH environment's real `~/.ssh/config` alias,
+ * then the host this client reached the environment at (it provably resolves
+ * here), then server-advertised names; among advertised names the tailnet
+ * MagicDNS name beats mDNS `<hostname>.local` (server sends them in that
+ * order). Advertised names cover T3 Connect, whose URL names the relay.
  */
-import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
+import type { ConnectionTarget, PreparedConnection } from "@t3tools/client-runtime/connection";
 import {
   REMOTE_CAPABLE_EDITOR_IDS,
   type EditorId,
   type EnvironmentId,
   type RemoteOpenTarget,
 } from "@t3tools/contracts";
+import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { useEffect, useMemo, useState } from "react";
@@ -23,9 +26,10 @@ import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isLoopbackHostname } from "~/environments/primary/target";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useEnvironmentPresentation } from "~/state/presentation";
+import { usePreparedConnection } from "~/state/session";
 
 export interface RemoteOpenHost {
-  readonly kind: "ssh-alias" | RemoteOpenTarget["kind"];
+  readonly kind: "ssh-alias" | "connection" | RemoteOpenTarget["kind"];
   readonly host: string;
 }
 
@@ -35,6 +39,8 @@ export type RemoteOpenState =
   | { readonly mode: "remote-unavailable" };
 
 export type RemoteOpenMode = RemoteOpenState["mode"];
+
+type RemoteOpenConnection = Pick<PreparedConnection, "target" | "httpBaseUrl">;
 
 export interface RemoteOpenResolution {
   readonly state: RemoteOpenState;
@@ -56,10 +62,28 @@ function parseHostname(url: string): string | null {
   }
 }
 
+function connectionHost(connection: RemoteOpenConnection | null): string | null {
+  if (
+    connection === null ||
+    connection.target._tag === "RelayConnectionTarget" ||
+    connection.target._tag === "SshConnectionTarget" ||
+    isDesktopLocalConnectionTarget(connection.target)
+  ) {
+    return null;
+  }
+  const hostname = parseHostname(connection.httpBaseUrl);
+  if (hostname === null || hostname === "" || isLocalLoopbackHost(hostname)) {
+    return null;
+  }
+  return hostname.replace(/^\[(.*)\]$/, "$1");
+}
+
 export function resolveRemoteOpenState(input: {
   readonly target: ConnectionTarget | null;
   /** Real ssh alias for desktop-SSH environments; null elsewhere. */
   readonly sshAlias: string | null;
+  /** The route this client is connected over; null while disconnected. */
+  readonly connection: RemoteOpenConnection | null;
   /** Server-advertised hosts; undefined on servers that predate the feature. */
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   /** True when running inside the desktop app's renderer. */
@@ -89,6 +113,14 @@ export function resolveRemoteOpenState(input: {
   if (input.sshAlias !== null && input.sshAlias.length > 0) {
     return { mode: "remote-links", host: { kind: "ssh-alias", host: input.sshAlias } };
   }
+  // An empty list is the server reporting that no sshd listens, so no host can work.
+  if (input.remoteOpenTargets?.length === 0) {
+    return REMOTE_UNAVAILABLE;
+  }
+  const host = connectionHost(input.connection);
+  if (host !== null) {
+    return { mode: "remote-links", host: { kind: "connection", host } };
+  }
   const advertised = input.remoteOpenTargets?.[0];
   if (advertised !== undefined) {
     return { mode: "remote-links", host: advertised };
@@ -98,6 +130,7 @@ export function resolveRemoteOpenState(input: {
 
 export function useRemoteOpenResolution(environmentId: EnvironmentId | null): RemoteOpenResolution {
   const { presentation } = useEnvironmentPresentation(environmentId);
+  const prepared = usePreparedConnection(environmentId);
 
   return useMemo(() => {
     if (presentation === null) {
@@ -110,12 +143,15 @@ export function useRemoteOpenResolution(environmentId: EnvironmentId | null): Re
       state: resolveRemoteOpenState({
         target: presentation.entry.target,
         sshAlias,
+        // The prepared route is published before its socket opens.
+        connection:
+          presentation.connection.phase === "connected" ? Option.getOrNull(prepared) : null,
         remoteOpenTargets: presentation.serverConfig?.remoteOpenTargets,
         isDesktopRenderer: window.desktopBridge !== undefined,
       }),
       isResolved: true,
     };
-  }, [presentation]);
+  }, [presentation, prepared]);
 }
 
 export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteOpenState {

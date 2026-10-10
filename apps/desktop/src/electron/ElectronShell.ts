@@ -23,7 +23,8 @@ const REMOTE_EDITOR_PROTOCOLS = new Set(
 );
 
 // Zed's host sits in the first path segment, so it needs its own userinfo ban.
-const ZED_SSH_PATHNAME = /^\/[^/@:]+\/.*$/;
+// An IPv6 host comes bracketed, the only place a `:` may appear.
+const ZED_SSH_PATHNAME = /^\/(?:[^/@:[\]]+|\[[0-9A-Fa-f:.]+\])\/.*$/;
 
 const isRemoteEditorUrl = (url: URL) =>
   REMOTE_EDITOR_PROTOCOLS.has(url.protocol) &&
