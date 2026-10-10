@@ -490,10 +490,16 @@ it.effect("waits for the original fork's checkout when its accepted launch is re
       };
       const first = yield* launches.launch(input).pipe(Effect.forkChild);
       yield* Deferred.await(checkoutEntered);
-      const replay = yield* launches.launch(input).pipe(
-        Effect.tap(() => Deferred.succeed(replayReturned, undefined)),
-        Effect.forkChild,
-      );
+      const replay = yield* launches
+        .launch({
+          ...input,
+          workspaceStrategy: { ...input.workspaceStrategy },
+          forkSource: { ...forkSource, sourcePoint: { ...forkSource.sourcePoint } },
+        })
+        .pipe(
+          Effect.tap(() => Deferred.succeed(replayReturned, undefined)),
+          Effect.forkChild,
+        );
       yield* Effect.yieldNow;
       assert.isFalse(yield* Deferred.isDone(replayReturned));
       // Losing the initial RPC caller must not strand the retry or cancel its checkout.
@@ -505,6 +511,110 @@ it.effect("waits for the original fork's checkout when its accepted launch is re
       assert.isEmpty(result.projection.runs);
       assert.equal(harness.createWorktree.mock.calls.length, 1);
       assert.equal(harness.runSetup.mock.calls.length, 1);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect.each([
+  { name: "project", changes: { projectId: otherProjectId } },
+  { name: "target thread", changes: { threadId: ThreadId.make("thread:fork-other-target") } },
+  {
+    name: "source thread",
+    changes: {
+      forkSource: {
+        sourceThreadId: ThreadId.make("thread:fork-other-source"),
+        sourcePoint: { type: "run", runId: RunId.make("run:fork-source") },
+      },
+    },
+  },
+  {
+    name: "source run",
+    changes: {
+      forkSource: {
+        sourceThreadId: ThreadId.make("thread:fork-source"),
+        sourcePoint: { type: "run", runId: RunId.make("run:fork-other-source") },
+      },
+    },
+  },
+  {
+    name: "source checkpoint",
+    changes: {
+      forkSource: {
+        sourceThreadId: ThreadId.make("thread:fork-source"),
+        sourcePoint: {
+          type: "checkpoint",
+          checkpointId: CheckpointId.make("checkpoint:fork-source"),
+        },
+      },
+    },
+  },
+  {
+    name: "latest stable source",
+    changes: {
+      forkSource: {
+        sourceThreadId: ThreadId.make("thread:fork-source"),
+        sourcePoint: { type: "latest_stable" },
+      },
+    },
+  },
+  {
+    name: "worktree base",
+    changes: { workspaceStrategy: { type: "worktree", baseRef: "other-base" } },
+  },
+  { name: "workspace type", changes: { workspaceStrategy: { type: "root" } } },
+  { name: "initial message", changes: { initialMessage: { text: "Start work", attachments: [] } } },
+] as const)("rejects concurrent fork command reuse with a different $name", ({ changes }) =>
+  Effect.gen(function* () {
+    const checkoutEntered = yield* Deferred.make<void>();
+    const allowCheckout = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      createWorktree: (input) =>
+        Deferred.succeed(checkoutEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(allowCheckout)),
+          Effect.as({
+            worktree: {
+              path: "/repo-worktrees/feature",
+              refName: input.newRefName ?? input.refName,
+            },
+          }),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const forkSource = yield* seedForkSource();
+      const input = {
+        ...launchInput({
+          command: "fork:concurrent-conflict",
+          thread: "thread:fork-concurrent-conflict",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+        forkSource,
+      };
+      const first = yield* launches.launch(input).pipe(Effect.forkChild);
+      yield* Deferred.await(checkoutEntered);
+      const conflicting = yield* launches
+        .launch({ ...input, ...changes })
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(allowCheckout, undefined);
+      const conflictingResult = yield* Fiber.join(conflicting);
+      assert.isTrue(Exit.isFailure(conflictingResult));
+      if (Exit.isFailure(conflictingResult)) {
+        const error = Cause.findErrorOption(conflictingResult.cause).pipe(Option.getOrThrow);
+        assert.equal(error.operation, "create-thread");
+        assert.include(String(error.cause), "cannot be replayed");
+      }
+      const result = yield* Fiber.join(first);
+      assert.equal(result.threadId, input.threadId);
+      assert.equal(result.projection.thread.worktreePath, "/repo-worktrees/feature");
+      assert.isEmpty(result.projection.runs);
+      assert.equal(harness.createWorktree.mock.calls.length, 1);
+      assert.equal(harness.runSetup.mock.calls.length, 1);
+      assert.lengthOf(yield* threads.listProjectThreads({ projectId, includeSubagents: false }), 2);
+      assert.isEmpty(
+        yield* threads.listProjectThreads({ projectId: otherProjectId, includeSubagents: false }),
+      );
     }).pipe(Effect.provide(harness.layer));
   }),
 );

@@ -30,6 +30,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as NodeUtil from "node:util";
 import {
   buildTemporaryWorktreeBranchName,
   flattenTemporaryWorktreeBranchName,
@@ -1089,19 +1090,30 @@ const make = Effect.gen(function* () {
 
   const inFlightForks = new Map<
     CommandId,
-    Deferred.Deferred<ThreadLaunchResult, ThreadLaunchError>
+    {
+      readonly input: ThreadLaunchInput;
+      readonly completion: Deferred.Deferred<ThreadLaunchResult, ThreadLaunchError>;
+    }
   >();
   const launchPreparedFork: ThreadLaunchService["Service"]["launch"] = Effect.fn(
     "ThreadLaunchService.launchPreparedFork",
   )(function* (input) {
-    if (input.forkSource === undefined || input.workspaceStrategy.type !== "worktree")
-      return yield* launch(input);
-    const { completion, shared } = yield* Effect.uninterruptible(
+    const pending = yield* Effect.uninterruptible(
       Effect.gen(function* () {
         const existing = inFlightForks.get(input.commandId);
-        if (existing !== undefined) return { completion: existing, shared: true };
+        if (existing !== undefined) {
+          if (!NodeUtil.isDeepStrictEqual(existing.input, input))
+            return yield* mapError(
+              input,
+              "create-thread",
+              input.threadId,
+            )("An in-progress fork command cannot be replayed with a different request.");
+          return { completion: existing.completion, shared: true };
+        }
+        if (input.forkSource === undefined || input.workspaceStrategy.type !== "worktree")
+          return undefined;
         const completion = Deferred.makeUnsafe<ThreadLaunchResult, ThreadLaunchError>();
-        inFlightForks.set(input.commandId, completion);
+        inFlightForks.set(input.commandId, { input, completion });
         // A client disconnect must not abandon checkout preparation or let a
         // retry open the fork before the original operation settles.
         yield* launch(input).pipe(
@@ -1115,8 +1127,9 @@ const make = Effect.gen(function* () {
         return { completion, shared: false };
       }),
     );
-    const result = yield* Deferred.await(completion);
-    return { ...result, resumed: result.resumed || shared };
+    if (pending === undefined) return yield* launch(input);
+    const result = yield* Deferred.await(pending.completion);
+    return { ...result, resumed: result.resumed || pending.shared };
   });
 
   const fork: ThreadLaunchService["Service"]["fork"] = Effect.fn("ThreadLaunchService.fork")(
