@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput } from "./git.ts";
 import {
   AuthOrchestrationOperateScope,
+  AuthProvidersManageScope,
   AuthSourceControlWriteScope,
   type AuthEnvironmentScope,
 } from "./auth.ts";
@@ -33,6 +34,12 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.vcsCreateRef]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsSwitchRef]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsInit]: AuthSourceControlWriteScope,
+
+  // Skills from a source may carry scripts every agent on the environment can
+  // run, the same reach as adding an MCP server.
+  [WS_METHODS.skillsInstall]: AuthProvidersManageScope,
+  [WS_METHODS.skillsUpdate]: AuthProvidersManageScope,
+  [WS_METHODS.skillsRemove]: AuthProvidersManageScope,
 
   [WS_METHODS.scheduledTasksUpsert]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksSetEnabled]: AuthOrchestrationOperateScope,

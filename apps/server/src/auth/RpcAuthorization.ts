@@ -142,6 +142,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsLabelCandidates]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeProjectClones]: AuthOrchestrationReadScope,
+  // The server lists skill folders itself; a client never names a path.
+  [WS_METHODS.skillsInspect]: AuthFilesystemReadScope,
+  // A preview unpacks a source into a temp folder and deletes it.
+  [WS_METHODS.skillsPreview]: AuthFilesystemReadScope,
   [WS_METHODS.projectsListEntries]: AuthFilesystemReadScope,
   [WS_METHODS.projectsReadFile]: AuthFilesystemReadScope,
   [WS_METHODS.projectsSearchContents]: AuthFilesystemReadScope,
