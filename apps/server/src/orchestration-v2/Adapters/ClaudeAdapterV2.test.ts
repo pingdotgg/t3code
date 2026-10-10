@@ -74,6 +74,9 @@ const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 const AUTO_COMPACT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
   autoCompactWindow: "300000",
 });
+const NO_EXTRA_USAGE_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
+  useExtraUsage: false,
+});
 const CUSTOM_MODEL_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
   customModels: [
     // A bare custom slug that shadows the built-in "opus" alias.
@@ -2872,6 +2875,110 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           (event) => event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
         ),
       );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("stops the turn at the plan limit when extra usage is off", () =>
+    Effect.gen(function* () {
+      const interrupted = yield* Deferred.make<void>();
+      const harness = yield* makeWakeHarnessWithOptions({
+        settings: NO_EXTRA_USAGE_CLAUDE_SETTINGS,
+        interrupt: Deferred.succeed(interrupted, undefined),
+      });
+      const now = yield* DateTime.now;
+      const resetsAt = Math.floor(DateTime.toEpochMillis(now) / 1000) + 7_200;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-extra-usage-off"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "rate_limit_event",
+          rate_limit_info: {
+            status: "rejected",
+            rateLimitType: "five_hour",
+            overageStatus: "allowed",
+            resetsAt,
+          },
+          uuid: "00000000-0000-4000-8000-000000000611",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      const notice = (yield* Queue.take(harness.systemNoticeReceipts)).turnItem;
+      assert.equal(notice.type, "system_notice");
+      if (notice.type !== "system_notice") return;
+      assert.equal(
+        notice.message,
+        "Claude usage limit reached. Extra usage is off, so this turn is stopping. The 5-hour limit resets in 2h.",
+      );
+      yield* Deferred.await(interrupted);
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000612",
+          result: "",
+          terminalReason: "aborted_streaming",
+        }),
+      );
+
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.equal(terminal.failure.class, "usage_limit");
+      assert.equal(
+        terminal.failure.resetAt,
+        DateTime.formatIso(DateTime.makeUnsafe(resetsAt * 1000)),
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("keeps a turn completed when it finishes before the extra-usage stop lands", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        settings: NO_EXTRA_USAGE_CLAUDE_SETTINGS,
+        interrupt: Effect.void,
+      });
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-extra-usage-race"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offerAll(harness.sdkMessages, [
+        claudeSdkFrame({
+          type: "rate_limit_event",
+          rate_limit_info: { status: "rejected", rateLimitType: "five_hour", isUsingOverage: true },
+          uuid: "00000000-0000-4000-8000-000000000613",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000614",
+          result: "Done.",
+        }),
+      ]);
+
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "completed");
     }).pipe(
       Effect.provide(
         Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
