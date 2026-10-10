@@ -123,7 +123,8 @@ function serializeListItem(item: Element, ordered: boolean, index: number): stri
     ':scope > input[type="checkbox"], :scope > p > input[type="checkbox"]',
   );
   const task = checkbox ? `[${(checkbox as HTMLInputElement).checked ? "x" : " "}] ` : "";
-  const marker = ordered ? `${index}. ${task}` : `- ${task}`;
+  const bullet = ordered ? `${index}. ` : "- ";
+  const marker = `${bullet}${task}`;
   let content = serializeChildren(item)
     .replace(/\n{3,}/g, "\n\n")
     .trim();
@@ -131,7 +132,9 @@ function serializeListItem(item: Element, ordered: boolean, index: number): stri
   if (!item.querySelector(":scope > p")) {
     content = content.replace(/\n{2,}/g, "\n");
   }
-  const continuationIndent = " ".repeat(marker.length);
+  // Nested content lines up with the item text, which starts after the bullet;
+  // a task box is part of that text, not of the list marker.
+  const continuationIndent = " ".repeat(bullet.length);
   const [first = "", ...rest] = content.split("\n");
   return [
     `${marker}${first}`,
