@@ -98,6 +98,8 @@ export class ManagedProjectFolders extends Context.Service<
     readonly scratchRoot: Effect.Effect<Option.Option<string>>;
     /** Finds or creates the Scratch project and (re)creates its folder. */
     readonly ensureScratchProject: Effect.Effect<{ readonly projectId: ProjectId }, ScratchError>;
+    /** Whether the project is Scratch, which is a plain folder rather than a Git repository. */
+    readonly isScratchProject: (projectId: ProjectId) => Effect.Effect<boolean>;
     /**
      * Claims a fresh folder for a new thread in the Scratch project, named from
      * the date, its first message, and its id. None for every other project.
@@ -328,7 +330,7 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const isScratchProject = (projectId: ProjectId, root: string) =>
+  const isScratchRoot = (projectId: ProjectId, root: string) =>
     projects.getById(projectId).pipe(
       Effect.map(
         Option.exists((project) => path.resolve(project.workspaceRoot) === path.resolve(root)),
@@ -338,12 +340,22 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => false),
     );
 
+  const isScratchProject: ManagedProjectFolders["Service"]["isScratchProject"] = (projectId) =>
+    scratchRoot.pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.succeed(false),
+          onSome: (root) => isScratchRoot(projectId, root),
+        }),
+      ),
+    );
+
   const folderForThread: ManagedProjectFolders["Service"]["folderForThread"] = Effect.fn(
     "ManagedProjectFolders.folderForThread",
   )(function* (input) {
     const root = yield* scratchRoot;
     if (Option.isNone(root)) return Option.none();
-    if (!(yield* isScratchProject(input.projectId, root.value))) return Option.none();
+    if (!(yield* isScratchRoot(input.projectId, root.value))) return Option.none();
     const date = DateTime.formatIso(yield* DateTime.now).slice(0, 10);
     const words = folderWords(input.text);
     const id = input.threadId.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -501,6 +513,7 @@ const make = Effect.gen(function* () {
   return ManagedProjectFolders.of({
     scratchRoot,
     ensureScratchProject,
+    isScratchProject,
     folderForThread,
     namedProjectsRoot,
     createNamedProject,
