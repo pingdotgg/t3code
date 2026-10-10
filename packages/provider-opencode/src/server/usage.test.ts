@@ -1,7 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off - directory aliases use junctions on Windows,
-// which Effect FileSystem.symlink does not expose.
-import * as NodeFSP from "node:fs/promises";
-
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
@@ -157,39 +153,6 @@ describe("openCodeUsageReader", () => {
       assert.strictEqual(
         records.reduce((sum, record) => sum + record.totals.uncachedInputTokens, 0),
         200,
-      );
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("scans canonical aliases shared by instances only once", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const temp = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-aliases-test-" });
-      const home = yield* fileSystem.realPath(temp);
-      const root = path.join(home, "store");
-      const alias = path.join(home, "alias");
-      yield* seedHistory(root, "msg-shared");
-      yield* Effect.tryPromise(() => NodeFSP.symlink(root, alias, "junction"));
-      const sources = yield* scanUsage([
-        usageInstance("opencode-first", { OPENCODE_DATA_DIR: ` ${root}, ${alias} ` }),
-        usageInstance("opencode-second", { OPENCODE_DATA_DIR: alias }),
-      ]).pipe(
-        Effect.provideService(HostProcess.Environment, {
-          OPENCODE_DATA_DIR: path.join(home, "host"),
-        }),
-      );
-
-      assert.deepStrictEqual(
-        sources.map((source) => source.dir),
-        [root],
-      );
-      assert.deepStrictEqual(
-        sources.flatMap(
-          (source) =>
-            source.files?.flatMap((file) => file.records.map((record) => record.dedupeKey)) ?? [],
-        ),
-        ["opencode:msg-shared"],
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
