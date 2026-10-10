@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -10,30 +11,38 @@ import {
 
 describe("source control presentation", () => {
   it("uses merge request terminology for GitLab", () => {
-    expect(getChangeRequestTerminologyForKind("gitlab")).toEqual({
+    expect(getChangeRequestTerminologyForKind(SourceControlProviderKind.make("gitlab"))).toEqual({
       shortLabel: "MR",
       singular: "merge request",
     });
   });
 
   it("uses pull request terminology for GitHub-compatible providers", () => {
-    expect(getChangeRequestTerminologyForKind("github")).toEqual({
+    expect(getChangeRequestTerminologyForKind(SourceControlProviderKind.make("github"))).toEqual({
       shortLabel: "PR",
       singular: "pull request",
     });
-    expect(getChangeRequestTerminologyForKind("azure-devops")).toEqual({
+    expect(
+      getChangeRequestTerminologyForKind(SourceControlProviderKind.make("azure-devops")),
+    ).toEqual({
       shortLabel: "PR",
       singular: "pull request",
     });
-    expect(getChangeRequestTerminologyForKind("bitbucket")).toEqual({
-      shortLabel: "PR",
-      singular: "pull request",
-    });
+    expect(getChangeRequestTerminologyForKind(SourceControlProviderKind.make("bitbucket"))).toEqual(
+      {
+        shortLabel: "PR",
+        singular: "pull request",
+      },
+    );
   });
 
   it("falls back to generic change request copy for unknown providers", () => {
     expect(
-      resolveChangeRequestPresentation({ kind: "unknown", name: "forge", baseUrl: "" }),
+      resolveChangeRequestPresentation({
+        kind: SourceControlProviderKind.make("unknown"),
+        name: "forge",
+        baseUrl: "",
+      }),
     ).toEqual(
       expect.objectContaining({
         shortName: "change request",
@@ -69,7 +78,7 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
         },
       );
     }
-    expect(getChangeRequestTerminologyForKind("forgejo")).toEqual({
+    expect(getChangeRequestTerminologyForKind(SourceControlProviderKind.make("forgejo"))).toEqual({
       shortLabel: "PR",
       singular: "pull request",
     });

@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 /**
  * Pins `./GitCafeSourceControlProvider.ts`, which pass 2 creates:
  *
@@ -87,7 +88,11 @@ describe("GitCafeSourceControlProvider", () => {
       );
     });
     const context = {
-      provider: { kind: "gitcafe" as const, name: "GitCafe", baseUrl: `https://${host}` },
+      provider: {
+        kind: SourceControlProviderKind.make("gitcafe"),
+        name: "GitCafe",
+        baseUrl: `https://${host}`,
+      },
       remoteName: "origin",
       remoteUrl,
     };
@@ -220,7 +225,11 @@ describe("GitCafeSourceControlProvider", () => {
       remoteUrl === undefined
         ? undefined
         : {
-            provider: { kind: "gitcafe" as const, name: "GitCafe", baseUrl: "https://git.cafe" },
+            provider: {
+              kind: SourceControlProviderKind.make("gitcafe"),
+              name: "GitCafe",
+              baseUrl: "https://git.cafe",
+            },
             remoteName: "origin",
             remoteUrl,
           };

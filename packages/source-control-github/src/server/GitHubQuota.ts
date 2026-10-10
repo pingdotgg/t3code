@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -86,7 +87,7 @@ const make = Effect.gen(function* () {
       const floor = options?.allowReserve === true ? 1 : snapshot.limit * RESERVE_RATIO;
       if (snapshot.remaining >= floor) return;
       return yield* new SourceControlRateLimit.SourceControlRateLimitPausedError({
-        provider: "github",
+        provider: SourceControlProviderKind.make("github"),
         host: host.trim().toLowerCase(),
         retryAt: snapshot.resetAtMs,
       });

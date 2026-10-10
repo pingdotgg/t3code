@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -36,7 +37,7 @@ it.effect("maps Bitbucket PR summaries into provider-neutral change requests", (
     });
 
     assert.deepStrictEqual(changeRequest, {
-      provider: "bitbucket",
+      provider: SourceControlProviderKind.make("bitbucket"),
       number: 42,
       title: "Add Bitbucket provider",
       url: "https://bitbucket.org/pingdotgg/t3code/pull-requests/42",

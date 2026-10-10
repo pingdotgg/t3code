@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it, describe } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Cause from "effect/Cause";
@@ -34,7 +35,7 @@ const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 const baseLocalStatus: VcsStatusLocalResult = {
   isRepo: true,
   sourceControlProvider: {
-    kind: "github",
+    kind: SourceControlProviderKind.make("github"),
     name: "GitHub",
     baseUrl: "https://github.com",
   },

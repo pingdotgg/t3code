@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type {
   PullRequestCapabilities,
@@ -111,7 +112,7 @@ export const make = Effect.gen(function* () {
 
   const fail = (operation: string) => (error: GitLabPullRequestCli.GitLabPullRequestCliError) =>
     new PullRequestProviderError({
-      provider: "gitlab",
+      provider: SourceControlProviderKind.make("gitlab"),
       operation,
       ...gitLabProviderFailure(error),
       detail: error.detail,
@@ -119,7 +120,7 @@ export const make = Effect.gen(function* () {
     });
 
   const provider: PullRequestProviderApi = {
-    kind: "gitlab",
+    kind: SourceControlProviderKind.make("gitlab"),
     capabilities: CAPABILITIES,
 
     getViewer: (input) =>

@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 // @effect-diagnostics nodeBuiltinImport:off - realpathSync.native resolves Windows 8.3 short names, which the Effect realPath does not.
 import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -71,7 +72,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
           if (refinementFails)
             return Effect.fail(
               new SourceControlProviderError({
-                provider: "forgejo",
+                provider: SourceControlProviderKind.make("forgejo"),
                 operation: "detectProvider",
                 cwd: rootPath,
                 detail: "account unavailable",

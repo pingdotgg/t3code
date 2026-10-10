@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -25,7 +26,7 @@ const decodeLinkSubject = Schema.decodeUnknownEffect(
 
 function toChangeRequest(summary: GitLabCli.GitLabMergeRequestSummary): ChangeRequest {
   return {
-    provider: "gitlab",
+    provider: SourceControlProviderKind.make("gitlab"),
     number: summary.number,
     title: summary.title,
     url: summary.url,
@@ -90,7 +91,7 @@ function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementIn
   }
 
   return {
-    kind: "gitlab",
+    kind: SourceControlProviderKind.make("gitlab"),
     name: "GitLab Self-Hosted",
     baseUrl: input.context.provider.baseUrl,
   } as const;
@@ -98,7 +99,7 @@ function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementIn
 
 export const discovery = {
   type: "cli",
-  kind: "gitlab",
+  kind: SourceControlProviderKind.make("gitlab"),
   label: "GitLab",
   executable: "glab",
   versionArgs: ["--version"],
@@ -127,7 +128,7 @@ export const make = Effect.gen(function* () {
         Effect.mapError(
           (cause) =>
             new SourceControlProviderError({
-              provider: "gitlab",
+              provider: SourceControlProviderKind.make("gitlab"),
               operation: "resolveLink",
               cwd: input.cwd,
               detail: "The linked subject could not be read.",
@@ -139,7 +140,7 @@ export const make = Effect.gen(function* () {
       Effect.mapError(
         (cause) =>
           new SourceControlProviderError({
-            provider: "gitlab",
+            provider: SourceControlProviderKind.make("gitlab"),
             operation: "resolveLink.decode",
             cwd: input.cwd,
             detail: "The linked subject could not be read.",
@@ -151,7 +152,7 @@ export const make = Effect.gen(function* () {
   });
 
   return SourceControlProvider.SourceControlProvider.of({
-    kind: "gitlab",
+    kind: SourceControlProviderKind.make("gitlab"),
     resolveLink: (input) => {
       // Automatic enrichment must not send ambient CLI credentials to a host from message text.
       if (input.url.host !== "gitlab.com") return undefined;
@@ -179,7 +180,7 @@ export const make = Effect.gen(function* () {
           Effect.mapError(
             (error) =>
               new SourceControlProviderError({
-                provider: "gitlab",
+                provider: SourceControlProviderKind.make("gitlab"),
                 operation: "listChangeRequests",
                 command: error.command,
                 cwd: input.cwd,
@@ -198,7 +199,7 @@ export const make = Effect.gen(function* () {
         Effect.mapError(
           (error) =>
             new SourceControlProviderError({
-              provider: "gitlab",
+              provider: SourceControlProviderKind.make("gitlab"),
               operation: "getChangeRequest",
               command: error.command,
               cwd: input.cwd,
@@ -226,7 +227,7 @@ export const make = Effect.gen(function* () {
           Effect.mapError(
             (error) =>
               new SourceControlProviderError({
-                provider: "gitlab",
+                provider: SourceControlProviderKind.make("gitlab"),
                 operation: "createChangeRequest",
                 command: error.command,
                 cwd: input.cwd,
@@ -244,7 +245,7 @@ export const make = Effect.gen(function* () {
         Effect.mapError(
           (error) =>
             new SourceControlProviderError({
-              provider: "gitlab",
+              provider: SourceControlProviderKind.make("gitlab"),
               operation: "getRepositoryCloneUrls",
               command: error.command,
               cwd: input.cwd,
@@ -261,7 +262,7 @@ export const make = Effect.gen(function* () {
         Effect.mapError(
           (error) =>
             new SourceControlProviderError({
-              provider: "gitlab",
+              provider: SourceControlProviderKind.make("gitlab"),
               operation: "createRepository",
               command: error.command,
               cwd: input.cwd,
@@ -278,7 +279,7 @@ export const make = Effect.gen(function* () {
         Effect.mapError(
           (error) =>
             new SourceControlProviderError({
-              provider: "gitlab",
+              provider: SourceControlProviderKind.make("gitlab"),
               operation: "getDefaultBranch",
               command: error.command,
               cwd: input.cwd,
@@ -292,7 +293,7 @@ export const make = Effect.gen(function* () {
         Effect.mapError(
           (error) =>
             new SourceControlProviderError({
-              provider: "gitlab",
+              provider: SourceControlProviderKind.make("gitlab"),
               operation: "checkoutChangeRequest",
               command: error.command,
               cwd: input.cwd,

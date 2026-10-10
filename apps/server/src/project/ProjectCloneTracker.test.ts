@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import {
   OrchestrationDispatchCommandError,
@@ -116,7 +117,7 @@ describe("ProjectCloneTracker", () => {
             ? Effect.fail(
                 new SourceControlRepositoryError({
                   operation: "cloneRepository",
-                  provider: "unknown",
+                  provider: SourceControlProviderKind.make("unknown"),
                   detail: "fatal: repository not found",
                 }),
               )
@@ -255,7 +256,7 @@ describe("ProjectCloneTracker", () => {
             Effect.fail(
               new SourceControlRepositoryError({
                 operation: "cloneRepository",
-                provider: "unknown",
+                provider: SourceControlProviderKind.make("unknown"),
                 detail: "Destination path already exists and is not empty.",
               }),
             ),

@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
 
@@ -122,7 +123,7 @@ export const make = Effect.gen(function* () {
   const fail =
     (operation: string) => (error: BitbucketPullRequestApi.BitbucketPullRequestApiError) =>
       new PullRequestProviderError({
-        provider: "bitbucket",
+        provider: SourceControlProviderKind.make("bitbucket"),
         operation,
         ...bitbucketProviderFailure(error),
         // Every Bitbucket failure states its own fact; this names the operation around it, so
@@ -157,7 +158,7 @@ export const make = Effect.gen(function* () {
   };
 
   const provider: PullRequestProviderApi = {
-    kind: "bitbucket",
+    kind: SourceControlProviderKind.make("bitbucket"),
     capabilities: CAPABILITIES,
 
     // Bitbucket credentials come from the server's environment rather than a checkout, so the
@@ -363,7 +364,7 @@ export const make = Effect.gen(function* () {
     setReaction: () =>
       Effect.fail(
         new PullRequestProviderError({
-          provider: "bitbucket",
+          provider: SourceControlProviderKind.make("bitbucket"),
           operation: "setReaction",
           reason: "failed",
           detail: "Bitbucket does not support reactions.",

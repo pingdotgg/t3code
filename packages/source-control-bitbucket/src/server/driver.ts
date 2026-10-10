@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 /**
  * The Bitbucket Cloud driver: repository operations, discovery, and pull requests through the
  * Bitbucket REST API.
@@ -11,7 +12,7 @@ import * as BitbucketPullRequestProvider from "./BitbucketPullRequestProvider.ts
 import * as BitbucketSourceControlProvider from "./BitbucketSourceControlProvider.ts";
 
 export const driver = defineSourceControlDriver({
-  kind: "bitbucket",
+  kind: SourceControlProviderKind.make("bitbucket"),
   make: Effect.all({
     sourceControl: BitbucketSourceControlProvider.make,
     discovery: BitbucketSourceControlProvider.makeDiscovery,

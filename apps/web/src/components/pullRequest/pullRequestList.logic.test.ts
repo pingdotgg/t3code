@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import type { EnvironmentId, ProjectId, PullRequestListEntry } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -330,7 +331,7 @@ describe("pull request involvement filtering", () => {
       entry({ number: 1, author: { login: "Bilal", name: null, avatarUrl: null } }),
       entry({
         number: 2,
-        provider: "gitlab",
+        provider: SourceControlProviderKind.make("gitlab"),
         host: "gitlab.com",
         author: { login: "Bilal", name: null, avatarUrl: null },
       }),
@@ -1322,7 +1323,7 @@ describe("merging the environments' own listings", () => {
           providers: [
             {
               host: "github.com",
-              kind: "github",
+              kind: SourceControlProviderKind.make("github"),
               searchesOnHost: false,
               projectCount: 2,
               configured: false,

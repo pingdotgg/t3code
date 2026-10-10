@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { EnvironmentId, ProjectId, type PullRequestDetailView } from "@t3tools/contracts";
 import { act, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -26,7 +27,7 @@ vi.mock("../ui/tooltip", () => ({
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 
 const detail: PullRequestDetailView = {
-  provider: "github",
+  provider: SourceControlProviderKind.make("github"),
   projectId: ProjectId.make("project"),
   projectTitle: "Project",
   workspaceRoot: "/workspace",

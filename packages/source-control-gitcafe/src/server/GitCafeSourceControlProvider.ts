@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -59,7 +60,7 @@ const cliFailure = (output: string) =>
 
 export const discovery = {
   type: "cli",
-  kind: "gitcafe",
+  kind: SourceControlProviderKind.make("gitcafe"),
   label: "GitCafe",
   executable: "cafe",
   versionArgs: ["--version"],
@@ -150,7 +151,7 @@ export const make = Effect.gen(function* () {
 
   const error = (operation: string, cwd: string, detail: string, cause?: unknown) =>
     new SourceControlProviderError({
-      provider: "gitcafe",
+      provider: SourceControlProviderKind.make("gitcafe"),
       operation,
       cwd,
       detail,
@@ -269,7 +270,7 @@ export const make = Effect.gen(function* () {
     );
     const owner = target.repository.split("/")[0] ?? null;
     return {
-      provider: "gitcafe",
+      provider: SourceControlProviderKind.make("gitcafe"),
       number: pull.number,
       title: pull.title,
       url: `https://${target.host}/${target.repository}/pulls/${pull.number}`,
@@ -290,7 +291,7 @@ export const make = Effect.gen(function* () {
   });
 
   return SourceControlProvider.SourceControlProvider.of({
-    kind: "gitcafe",
+    kind: SourceControlProviderKind.make("gitcafe"),
     repositoryNameFromRemoteUrl: (url) => GitCafeHosts.parseGitCafeRemote(url)?.repository ?? null,
     getChangeRequest: getPull,
     listChangeRequests: Effect.fn("GitCafeSourceControlProvider.listChangeRequests")(
