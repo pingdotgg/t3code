@@ -41,6 +41,7 @@ import { ProviderAuthCallbackCoordinator } from "../components/settings/Provider
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useDefaultThemeAdoption } from "../hooks/useDefaultTheme";
+import { useDesktopLocalThemeSync } from "../hooks/useDesktopLocalTheme";
 import { useEnvironmentThemeSync } from "../hooks/useEnvironmentTheme";
 import { Button } from "../components/ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -263,6 +264,7 @@ function RootRouteView() {
 /** Follows the palette the primary environment's machine publishes, if any. */
 function EnvironmentThemeSync() {
   useEnvironmentThemeSync();
+  useDesktopLocalThemeSync();
   // Ordered after the palette sync so a first-run client adopting the
   // environment's own theme finds it already in the library.
   useDefaultThemeAdoption();

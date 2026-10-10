@@ -93,3 +93,23 @@ view.
 
 Write updates to a temporary file and rename it into place so clients never read a partial theme.
 Invalid files are not published.
+
+### Follow a desktop-local theme file
+
+Launch the desktop app with `T3CODE_DESKTOP_THEME_FILE` set to the absolute path
+of a palette JSON file to follow a theme generated on your computer. It accepts
+the same exported or seeded format described above. For example on Linux:
+
+```sh
+T3CODE_DESKTOP_THEME_FILE="$HOME/.config/t3-theme.json" ./T3-Code.AppImage
+```
+
+The desktop applies the palette at startup and follows file changes even when
+its local environment is disabled or it connects to a remote server. Replace
+files atomically. Missing or invalid files leave the last valid palette in
+place; files must be regular files no larger than 32 KiB, not symlinks.
+
+Your saved theme preferences and custom themes remain intact. Choosing another
+theme takes precedence until the file's palette changes or the app restarts.
+To stop following the file, remove the launch option and restart the desktop.
+Web and mobile clients are unaffected.

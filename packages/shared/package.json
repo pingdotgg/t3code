@@ -478,6 +478,10 @@
     "./PtyAdapter": {
       "types": "./src/PtyAdapter.ts",
       "import": "./src/PtyAdapter.ts"
+    },
+    "./themeFile": {
+      "types": "./src/themeFile.ts",
+      "import": "./src/themeFile.ts"
     }
   },
   "scripts": {
