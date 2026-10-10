@@ -48,11 +48,9 @@ export function hydratePosixHome(
   }
 }
 
-export const fixPath = Effect.fn("fixPath")(function* (): Effect.fn.Return<
-  void,
-  never,
-  FileSystem.FileSystem | Path.Path
-> {
+export const fixPath = Effect.fn("fixPath")(function* (options?: {
+  readonly shellEnvironmentPrepared?: boolean | undefined;
+}): Effect.fn.Return<void, never, FileSystem.FileSystem | Path.Path> {
   const platform = yield* HostProcess.Platform;
   const env = yield* HostProcess.Environment;
 
@@ -82,6 +80,7 @@ export const fixPath = Effect.fn("fixPath")(function* (): Effect.fn.Return<
       }),
     ),
   );
+  if (options?.shellEnvironmentPrepared === true) return;
   yield* Effect.sync(() => hydratePosixPath(env, platform)).pipe(
     Effect.catchDefect((defect) =>
       Effect.sync(() => {

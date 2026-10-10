@@ -15,6 +15,7 @@ export interface NormalizedAzureDevOpsPullRequestRecord {
   readonly headRefName: string;
   readonly state: "open" | "closed" | "merged";
   readonly isDraft?: boolean;
+  readonly isCrossRepository: boolean;
   readonly closedAt?: string | null;
   readonly mergedAt?: string | null;
   readonly updatedAt: Option.Option<DateTime.Utc>;
@@ -39,6 +40,8 @@ const AzureDevOpsPullRequestSchema = Schema.Struct({
   targetRefName: TrimmedNonEmptyString,
   status: Schema.String,
   isDraft: Schema.optional(Schema.Boolean),
+  /** The fork the head branch lives in. `az` prints `null` for a pull request from the same repo. */
+  forkSource: Schema.optional(Schema.Unknown),
   creationDate: Schema.optional(Schema.OptionFromNullOr(Schema.DateTimeUtcFromString)),
   closedDate: Schema.optional(Schema.OptionFromNullOr(Schema.DateTimeUtcFromString)),
   _links: Schema.optional(
@@ -178,6 +181,7 @@ function normalizeAzureDevOpsPullRequestRecord(
     headRefName: normalizeRefName(raw.sourceRefName),
     state,
     ...(raw.isDraft === true ? { isDraft: true } : {}),
+    isCrossRepository: raw.forkSource != null,
     closedAt: state === "closed" ? terminalAt : null,
     mergedAt: state === "merged" ? terminalAt : null,
     updatedAt: (raw.closedDate ?? Option.none()).pipe(

@@ -36,6 +36,7 @@ import {
   WorkspaceBreadcrumbSeparator,
   WorkspaceBreadcrumbText,
 } from "../WorkspaceBreadcrumb";
+import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { useClientSettings } from "../../hooks/useSettings";
 
@@ -154,12 +155,11 @@ export const ChatHeader = memo(function ChatHeader({
     measure();
     const frame = requestAnimationFrame(measure);
     document.fonts.addEventListener("loadingdone", measure);
-    const observer = new ResizeObserver(measure);
-    observer.observe(list);
+    const stopObserving = observeResize(list, measure);
     return () => {
       cancelAnimationFrame(frame);
       document.fonts.removeEventListener("loadingdone", measure);
-      observer.disconnect();
+      stopObserving();
     };
   }, [activeProjectName, activeThreadTitle, parentThreadLink, interfaceFont, isRenamingTitle]);
   const renameCommittedRef = useRef(false);

@@ -109,9 +109,9 @@ function fnv1a(buffer: Buffer): number {
 /**
  * Lists `.jsonl` transcripts under `root` last modified at or after `sinceMs`.
  *
- * Errors on individual entries are swallowed: session files rotate and get
- * removed while the walk is in flight, and a partial listing is far better than
- * failing the page.
+ * Unreadable directories and files are counted in `failedPaths` rather than
+ * failing the page, so the source can report incomplete usage. Files that
+ * vanish between `readdir` and `stat` are ordinary rotation and not counted.
  *
  * `fileName` restricts the walk to a single basename (Grok's `updates.jsonl`).
  * Grok sessions also ship multi-megabyte `chat_history` and `events` logs that
@@ -126,14 +126,16 @@ export async function listTranscriptFiles(
   root: string,
   sinceMs: number,
   options?: { readonly fileName?: string },
-): Promise<readonly TranscriptFile[]> {
+): Promise<{ readonly files: readonly TranscriptFile[]; readonly failedPaths: number }> {
   const fileName = options?.fileName;
   const candidates: string[] = [];
+  let failedPaths = 0;
   const walk = async (dir: string): Promise<void> => {
     let entries;
     try {
       entries = await NodeFSP.readdir(dir, { withFileTypes: true });
     } catch {
+      failedPaths += 1;
       return;
     }
     for (const entry of entries) {
@@ -156,15 +158,17 @@ export async function listTranscriptFiles(
         if (stats.mtimeMs >= sinceMs) {
           found[index] = { path, size: stats.size, mtimeMs: stats.mtimeMs };
         }
-      } catch {
-        // Vanished between readdir and stat.
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+          failedPaths += 1;
+        }
       }
     }
   };
   await Promise.all(
     Array.from({ length: Math.min(STAT_CONCURRENCY, candidates.length) }, statQueued),
   );
-  return found.filter((file) => file !== undefined);
+  return { files: found.filter((file) => file !== undefined), failedPaths };
 }
 
 /**

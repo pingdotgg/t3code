@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { resolvePlanFollowUpSubmission } from "../../proposedPlan";
 import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
 import {
@@ -95,12 +96,14 @@ describe("pull request checkout commands", () => {
     ],
     ["unknown", "feature", null, null],
   ] as const)("builds the %s command", (provider, branch, repository, expected) => {
-    expect(pullRequestCheckoutCommand(provider, 42, branch, repository)).toBe(expected);
+    expect(
+      pullRequestCheckoutCommand(SourceControlProviderKind.make(provider), 42, branch, repository),
+    ).toBe(expected);
   });
   it("fetches Forgejo pull refs from the actual repository, including a mounted host and port", () => {
     expect(
       pullRequestCheckoutCommand(
-        "forgejo",
+        SourceControlProviderKind.make("forgejo"),
         42,
         "feature",
         null,
@@ -113,7 +116,7 @@ describe("pull request checkout commands", () => {
   it("quotes shell metacharacters in Forgejo repository URLs", () => {
     expect(
       pullRequestCheckoutCommand(
-        "forgejo",
+        SourceControlProviderKind.make("forgejo"),
         42,
         "feature",
         null,
@@ -1714,7 +1717,7 @@ describe("cached pull request detail", () => {
   const reference = { projectId: ProjectId.make("project-1"), repository: "acme/web", number: 7 };
   const detail = (overrides: Partial<PullRequestDetail> = {}): PullRequestDetail =>
     ({
-      provider: "github",
+      provider: SourceControlProviderKind.make("github"),
       capabilities: {
         diff: true,
         comment: true,
@@ -1797,7 +1800,7 @@ describe("cached pull request detail", () => {
         remoteName: "origin",
         remoteUrl: "https://github.com/acme/web.git",
       },
-      provider: "github",
+      provider: SourceControlProviderKind.make("github"),
     });
     expect(readPullRequestDetailSnapshot(storage, "env-1", resolved)?.title).toBe(
       "Cache the title",
@@ -1824,7 +1827,7 @@ describe("cached pull request detail", () => {
           remoteName: "origin",
           remoteUrl: "git@ssh.dev.azure.com:v3/org/project/web",
         },
-        provider: "azure-devops",
+        provider: SourceControlProviderKind.make("azure-devops"),
       }),
     ).toBe(reference);
     expect(resolvePullRequestReferenceHost(reference, undefined)).toBe(reference);
@@ -1847,7 +1850,7 @@ describe("cached pull request detail", () => {
   it("keeps Forgejo ports isolated when recovering legacy snapshots", () => {
     const storage = makeStorage();
     const cached = detail({
-      provider: "forgejo",
+      provider: SourceControlProviderKind.make("forgejo"),
       url: "https://forge.example:8443/acme/web/pulls/7",
     });
     writePullRequestDetailSnapshot(storage, "env-1", reference, cached);
@@ -1869,7 +1872,8 @@ describe("cached pull request detail", () => {
 
   it.each(["github", "gitlab"] as const)(
     "retains portless %s snapshot identities for custom web ports",
-    (provider) => {
+    (providerName) => {
+      const provider = SourceControlProviderKind.make(providerName);
       const storage = makeStorage();
       const host = `${provider}.example.com`;
       const hosted = { ...reference, host };

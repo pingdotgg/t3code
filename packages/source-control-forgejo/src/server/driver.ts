@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 /**
  * The Forgejo / Gitea driver: repository operations, discovery, and pull requests through
  * `fj` or `tea`.
@@ -11,7 +12,7 @@ import * as ForgejoPullRequestProvider from "./ForgejoPullRequestProvider.ts";
 import * as ForgejoSourceControlProvider from "./ForgejoSourceControlProvider.ts";
 
 export const driver = defineSourceControlDriver({
-  kind: "forgejo",
+  kind: SourceControlProviderKind.make("forgejo"),
   make: Effect.all({
     sourceControl: ForgejoSourceControlProvider.make,
     discovery: ForgejoSourceControlProvider.makeDiscovery,

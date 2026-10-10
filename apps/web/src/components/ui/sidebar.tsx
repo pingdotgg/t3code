@@ -369,9 +369,6 @@ function SidebarRail({
   const suppressClickRef = React.useRef(false);
   const resolvedResizable = sidebarInstance?.resizable ?? null;
   const latestResizable = React.useRef(resolvedResizable);
-  React.useLayoutEffect(() => {
-    latestResizable.current = resolvedResizable;
-  }, [resolvedResizable]);
   const canResize = resolvedResizable !== null && open;
   const railLabel = canResize ? "Resize Sidebar" : "Toggle Sidebar";
   const railTitle = canResize ? "Drag to resize sidebar" : "Toggle Sidebar";
@@ -390,14 +387,22 @@ function SidebarRail({
       sidebarContainer.getBoundingClientRect().width,
       resolvedResizable,
     );
-    const transitionTargets = [
+    // Drag frames write width to the gap and container only. Changing the
+    // inherited --sidebar-width on the wrapper restyles the whole app, so it is
+    // written once when the drag commits.
+    const widthTargets = [
       sidebarRoot.querySelector<HTMLElement>("[data-slot='sidebar-gap']"),
       sidebarContainer,
     ].filter((element): element is HTMLElement => element !== null);
-    transitionTargets.forEach((element) => {
+    const setTargetWidth = (value: number) => {
+      widthTargets.forEach((element) => {
+        element.style.setProperty("width", `${value}px`);
+      });
+    };
+    widthTargets.forEach((element) => {
       element.style.setProperty("transition-duration", "0ms");
     });
-    wrapper.style.setProperty("--sidebar-width", `${width}px`);
+    setTargetWidth(width);
 
     return {
       width,
@@ -416,12 +421,13 @@ function SidebarRail({
             wrapper,
           }) ?? true;
         if (accepted) {
-          wrapper.style.setProperty("--sidebar-width", `${nextWidth}px`);
+          setTargetWidth(nextWidth);
           width = nextWidth;
         }
         return width;
       },
       finish(finalWidth, moved) {
+        wrapper.style.setProperty("--sidebar-width", `${finalWidth}px`);
         suppressClickRef.current = moved;
         const options = latestResizable.current;
         if (options?.storageKey) {
@@ -434,12 +440,20 @@ function SidebarRail({
         options?.onResize?.(finalWidth);
       },
       cleanup() {
-        transitionTargets.forEach((element) => {
+        widthTargets.forEach((element) => {
+          element.style.removeProperty("width");
           element.style.removeProperty("transition-duration");
         });
       },
     };
-  });
+    // Toggling the sidebar cancels a drag so the inline width never pins a
+    // collapsed sidebar open.
+  }, String(open));
+  React.useLayoutEffect(() => {
+    latestResizable.current = resolvedResizable;
+    // Bounds follow the window; keep an active drag's inline width inside them.
+    resize.refresh();
+  }, [resolvedResizable]);
 
   const handleClick = React.useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {

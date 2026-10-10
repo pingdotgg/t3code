@@ -1,4 +1,11 @@
-import { type ReactNode, type RefObject, useLayoutEffect, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  type RefObject,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { isElectron } from "~/env";
 import {
@@ -6,6 +13,7 @@ import {
   type PreviewPanelInlineSize,
   usePreviewPanelInlineSize,
 } from "~/hooks/usePreviewPanelInlineSize";
+import { RESIZABLE_WIDTH_PROPERTY } from "~/hooks/useResizableWidth";
 
 export { getPreviewPanelMaxWidth };
 import { cn } from "~/lib/utils";
@@ -122,10 +130,15 @@ function PreviewPanelShellFrame(
       )}
       style={
         isInline
-          ? {
-              width: maximized ? "100%" : collapsible && !open ? "0px" : `${width}px`,
+          ? ({
+              [RESIZABLE_WIDTH_PROPERTY]: `${width}px`,
+              width: maximized
+                ? "100%"
+                : collapsible && !open
+                  ? "0px"
+                  : `var(${RESIZABLE_WIDTH_PROPERTY})`,
               transitionDuration: suppressWidthTransition ? "0ms" : undefined,
-            }
+            } as CSSProperties)
           : undefined
       }
       data-preview-panel-mode={props.mode}
@@ -135,7 +148,11 @@ function PreviewPanelShellFrame(
       <div className={cn("h-full min-h-0 w-full", collapsible && "overflow-clip")}>
         <div
           className="flex h-full min-h-0 min-w-0 flex-col"
-          style={collapsible && !maximized ? { width: `calc(${width}px - 1px)` } : undefined}
+          style={
+            collapsible && !maximized
+              ? { width: `calc(var(${RESIZABLE_WIDTH_PROPERTY}) - 1px)` }
+              : undefined
+          }
         >
           {props.children}
         </div>

@@ -1,3 +1,4 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -38,7 +39,7 @@ it.effect("maps GitLab MR summaries into provider-neutral change requests", () =
     });
 
     assert.deepStrictEqual(changeRequest, {
-      provider: "gitlab",
+      provider: SourceControlProviderKind.make("gitlab"),
       number: 42,
       title: "Add GitLab provider",
       url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
@@ -189,7 +190,7 @@ it("refines unknown GitLab remotes with mixed-case provider hosts", () => {
     cwd: "/repo",
     context: {
       provider: {
-        kind: "unknown",
+        kind: SourceControlProviderKind.make("unknown"),
         name: "Self-Hosted.Example.Test",
         baseUrl: "https://Self-Hosted.Example.Test",
       },
