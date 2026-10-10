@@ -5,12 +5,14 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import * as GitCafeCredentials from "./GitCafeCredentials.ts";
 import * as GitCafeHosts from "./gitCafeHosts.ts";
 
+const NO_REDIRECT: RequestInit = { redirect: "manual" };
 const TIMEOUT = Duration.seconds(30);
 
 /**
@@ -133,8 +135,13 @@ export const make = Effect.gen(function* () {
         .execute(
           input.body === undefined ? base : base.pipe(HttpClientRequest.bodyJsonUnsafe(input.body)),
         )
-        // The client's own span would record the query string, which can carry branch names.
-        .pipe(Effect.provideService(HttpClient.TracerDisabledWhen, () => true));
+        .pipe(
+          // The client's own span would record the query string, which can carry branch names.
+          Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
+          // fetch would follow a redirect itself and keep the bearer token on a same-origin hop;
+          // GitCafe's API never redirects a request it serves, so a 3xx is answered as a failure.
+          Effect.provideService(FetchHttpClient.RequestInit, NO_REDIRECT),
+        );
       return { status: response.status, text: yield* response.text };
     }).pipe(
       Effect.timeout(TIMEOUT),

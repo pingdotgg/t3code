@@ -218,6 +218,8 @@ describe("GitCafePullRequestProvider", () => {
       for (const [status, reason] of [
         [401, "unauthenticated"],
         [429, "rate-limited"],
+        // A redirect is never followed with the token, so it answers as a failed request.
+        [302, "failed"],
       ] as const) {
         const server = fakeGitCafe(
           { "GET /repos/owner/repo/pulls/7/stack": { stack: null } },
