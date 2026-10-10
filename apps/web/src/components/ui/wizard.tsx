@@ -4,6 +4,7 @@ import type { ComponentProps, ReactNode } from "react";
 import { cn } from "../../lib/utils";
 import { AnimatedHeight } from "../AnimatedHeight";
 import { DialogPopup, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "./dialog";
+import { ScrollArea } from "./scroll-area";
 
 /** Compose a wizard from its header, panel, and footer; flow logic stays with the caller. */
 export function WizardPopup({
@@ -14,14 +15,10 @@ export function WizardPopup({
   readonly size?: "default" | "wide";
 }) {
   return (
-    <DialogPopup
-      {...props}
-      className={cn(
-        "overflow-x-hidden overflow-y-auto",
-        size === "wide" ? "max-w-3xl" : "max-w-xl",
-      )}
-    >
-      <div className="flex min-h-0 flex-col">{children}</div>
+    <DialogPopup {...props} className={size === "wide" ? "max-w-3xl" : "max-w-xl"}>
+      <ScrollArea className="*:data-[slot=scroll-area-scrollbar]:data-[orientation=vertical]:my-4">
+        <div className="flex min-h-0 flex-col">{children}</div>
+      </ScrollArea>
     </DialogPopup>
   );
 }
