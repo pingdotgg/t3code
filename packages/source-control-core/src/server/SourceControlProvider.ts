@@ -137,6 +137,11 @@ export class SourceControlProvider extends Context.Service<
      */
     readonly repositoryNameFromRemoteUrl?: (url: string) => string | null;
     /**
+     * The ref the remote publishes a change request's head under, for fetching a head that
+     * exists nowhere else. Absent means `refs/pull/<number>/head`.
+     */
+    readonly changeRequestHeadRef?: (number: number) => string;
+    /**
      * Fills in what a repository identity read from git cannot know, such as the browser URL of
      * a host the remote URL does not name. `resolveContext` asks the registry which host (and
      * base URL) serves a remote. Only consulted for identities this host may own.

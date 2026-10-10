@@ -239,6 +239,8 @@ interface ResolvedPullRequest {
 }
 
 interface PullRequestHeadRemoteInfo {
+  /** The remote ref the host publishes the pull request's head under. */
+  headRef?: string | undefined;
   isCrossRepository?: boolean | undefined;
   headRepositoryNameWithOwner?: string | null | undefined;
   headRepositoryOwnerLogin?: string | null | undefined;
@@ -963,12 +965,13 @@ export const make = Effect.gen(function* () {
           .fetchPullRequestBranch({
             cwd,
             prNumber: pullRequest.number,
+            headRef: pullRequest.headRef,
             branch: localBranch,
           })
           .pipe(
-            // Azure DevOps, GitLab and Bitbucket publish no `refs/pull/<n>/head`. A head in the
-            // same repository is a branch on the primary remote, so it is fetched by name instead,
-            // but only when that remote is the pull request's own repository: Azure finds a pull
+            // Azure DevOps and Bitbucket publish no pull request head ref. A head in the same
+            // repository is a branch on the primary remote, so it is fetched by name instead, but
+            // only when that remote is the pull request's own repository: Azure finds a pull
             // request by number anywhere in the organization. Only while it is open, too: the
             // branch of a closed one may have moved on past the head it was closed with.
             Effect.catch((cause) =>
@@ -1043,6 +1046,7 @@ export const make = Effect.gen(function* () {
           .fetchPullRequestBranch({
             cwd,
             prNumber: pullRequest.number,
+            headRef: pullRequest.headRef,
             branch: localBranch,
           })
           .pipe(
@@ -2453,11 +2457,16 @@ export const make = Effect.gen(function* () {
     return yield* Effect.gen(function* () {
       const normalizedReference = normalizePullRequestReference(input.reference);
       const rootWorktreePath = yield* canonicalizeExistingPath(input.cwd);
-      const pullRequestSummary = yield* (yield* sourceControlProvider(input.cwd)).getChangeRequest({
+      const provider = yield* sourceControlProvider(input.cwd);
+      const pullRequestSummary = yield* provider.getChangeRequest({
         cwd: input.cwd,
         reference: normalizedReference,
       });
       const pullRequest = toResolvedPullRequest(pullRequestSummary);
+      const headRemoteInfo = {
+        ...toPullRequestHeadRemoteInfo(pullRequestSummary),
+        headRef: provider.changeRequestHeadRef?.(pullRequestSummary.number),
+      };
 
       if (input.mode === "local") {
         yield* (yield* sourceControlProvider(input.cwd)).checkoutChangeRequest({
@@ -2470,7 +2479,7 @@ export const make = Effect.gen(function* () {
           input.cwd,
           {
             ...pullRequest,
-            ...toPullRequestHeadRemoteInfo(pullRequestSummary),
+            ...headRemoteInfo,
           },
           details.branch ?? pullRequest.headBranch,
         );
@@ -2490,7 +2499,7 @@ export const make = Effect.gen(function* () {
           worktreePath,
           {
             ...pullRequest,
-            ...toPullRequestHeadRemoteInfo(pullRequestSummary),
+            ...headRemoteInfo,
           },
           details.branch ?? pullRequest.headBranch,
         );
@@ -2498,7 +2507,7 @@ export const make = Effect.gen(function* () {
 
       const pullRequestWithRemoteInfo = {
         ...pullRequest,
-        ...toPullRequestHeadRemoteInfo(pullRequestSummary),
+        ...headRemoteInfo,
       } as const;
       const localPullRequestBranch =
         resolvePullRequestWorktreeLocalBranchName(pullRequestWithRemoteInfo);
@@ -2542,9 +2551,13 @@ export const make = Effect.gen(function* () {
           // head. The branch's upstream does not: configuring it is best-effort, so a branch cut
           // from `origin/main` whose head branch has since been deleted still resolves — and
           // following it would move the checkout onto main and call that the pull request.
-          .fetchPullRequestHeadCommit({ cwd: worktreePath, prNumber: pullRequest.number })
+          .fetchPullRequestHeadCommit({
+            cwd: worktreePath,
+            prNumber: pullRequest.number,
+            headRef: headRemoteInfo.headRef,
+          })
           .pipe(
-            // A host that publishes no `refs/pull/<n>/head` leaves the remote-tracking branch,
+            // A host that publishes no pull request head ref leaves the remote-tracking branch,
             // taken only where it is the head branch's own rather than whatever the checkout
             // happened to be cut from.
             Effect.catch(() =>
