@@ -913,6 +913,9 @@ importers:
       remark-gfm:
         specifier: 'catalog:'
         version: 4.0.1
+      remark-parse:
+        specifier: 'catalog:'
+        version: 11.0.0
       tailwind-merge:
         specifier: ^3.4.0
         version: 3.6.0
