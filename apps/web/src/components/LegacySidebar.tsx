@@ -198,6 +198,7 @@ import {
   resolveThreadRowClassName,
   resolveThreadLastVisitedAt,
   resolveThreadStatusPill,
+  filterSidebarSubagentThreads,
   orderItemsByPreferredIds,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
@@ -1280,30 +1281,35 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     },
   });
   const openPrLink = useOpenPrLink();
-  const sidebarThreads = useThreadShellsForProjectRefs(project.memberProjectRefs);
+  const projectThreads = useThreadShellsForProjectRefs(project.memberProjectRefs);
+  // Child agents stay addressable for project operations, but belong in the
+  // parent thread's Lineage rather than the legacy history list.
+  const sidebarThreads = useMemo(
+    () => filterSidebarSubagentThreads(projectThreads),
+    [projectThreads],
+  );
   const sidebarThreadByKey = useMemo(
     () =>
       new Map(
-        sidebarThreads.map(
+        projectThreads.map(
           (thread) =>
             [scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread] as const,
         ),
       ),
-    [sidebarThreads],
+    [projectThreads],
   );
   // Keep a ref so callbacks can read the latest map without appearing in
   // dependency arrays (avoids invalidating every thread-row memo on each
   // thread-list change).
   const sidebarThreadByKeyRef = useRef(sidebarThreadByKey);
   sidebarThreadByKeyRef.current = sidebarThreadByKey;
-  const projectThreads = sidebarThreads;
   const projectPreferenceKeys = useMemo(() => projectExpansionPreferenceKeys(project), [project]);
   const projectExpanded = useUiStateStore((state) =>
     resolveProjectExpanded(state.projectExpandedById, projectPreferenceKeys),
   );
   const threadLastVisitedAts = useUiStateStore(
     useShallow((state) =>
-      projectThreads.map(
+      sidebarThreads.map(
         (thread) =>
           state.threadLastVisitedAtById[
             scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
@@ -1358,7 +1364,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
   const { projectStatus, visibleProjectThreads, orderedProjectThreadKeys } = useMemo(() => {
     const lastVisitedAtByThreadKey = new Map(
-      projectThreads.map((thread, index) => [
+      sidebarThreads.map((thread, index) => [
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
         resolveThreadLastVisitedAt(thread.lastVisitedAt, threadLastVisitedAts[index] ?? undefined),
       ]),
@@ -1375,7 +1381,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       });
     };
     const visibleProjectThreads = sortThreads(
-      projectThreads.filter((thread) => thread.archivedAt === null),
+      sidebarThreads.filter((thread) => thread.archivedAt === null),
       threadSortOrder,
     );
     const projectStatus = resolveProjectStatusIndicator(
@@ -1388,7 +1394,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       projectStatus,
       visibleProjectThreads,
     };
-  }, [projectThreads, threadLastVisitedAts, threadSortOrder]);
+  }, [sidebarThreads, threadLastVisitedAts, threadSortOrder]);
   const pinnedCollapsedThread = useMemo(() => {
     const activeThreadKey = activeRouteThreadKey ?? undefined;
     if (!activeThreadKey || projectExpanded) {
@@ -1410,7 +1416,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     shouldShowThreadPanel,
   } = useMemo(() => {
     const lastVisitedAtByThreadKey = new Map(
-      projectThreads.map((thread, index) => [
+      sidebarThreads.map((thread, index) => [
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
         resolveThreadLastVisitedAt(thread.lastVisitedAt, threadLastVisitedAts[index] ?? undefined),
       ]),
@@ -1458,7 +1464,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     isThreadListExpanded,
     pinnedCollapsedThread,
     projectExpanded,
-    projectThreads,
+    sidebarThreads,
     sidebarThreadPreviewCount,
     threadLastVisitedAts,
     visibleProjectThreads,
@@ -1562,7 +1568,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const draftStore = useComposerDraftStore.getState();
       releaseProjectDraftUploads(
         memberProjectRef,
-        sidebarThreads
+        projectThreads
           .filter(
             (thread) =>
               thread.environmentId === member.environmentId && thread.projectId === member.id,
@@ -1576,7 +1582,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       draftStore.clearProjectDraftThreadId(memberProjectRef);
       return result;
     },
-    [deleteProject, sidebarThreads],
+    [deleteProject, projectThreads],
   );
 
   const handleRemoveProject = useCallback(
@@ -3228,7 +3234,13 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
 
 export default function LegacySidebar() {
   const projects = useProjects();
-  const sidebarThreads = useThreadShells();
+  const allSidebarThreads = useThreadShells();
+  // Keep the raw shells for destructive actions; navigation derives a
+  // top-level-only set so Lineage remains the child-agent entry point.
+  const sidebarThreads = useMemo(
+    () => filterSidebarSubagentThreads(allSidebarThreads),
+    [allSidebarThreads],
+  );
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);
@@ -3362,12 +3374,12 @@ export default function LegacySidebar() {
   const sidebarThreadByKey = useMemo(
     () =>
       new Map(
-        sidebarThreads.map(
+        allSidebarThreads.map(
           (thread) =>
             [scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread] as const,
         ),
       ),
-    [sidebarThreads],
+    [allSidebarThreads],
   );
   // Resolve the active route's project key to a logical key so it matches the
   // sidebar's grouped project entries.

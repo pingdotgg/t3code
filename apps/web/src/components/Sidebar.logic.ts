@@ -567,6 +567,12 @@ export function isSidebarSubagentThread(thread: Pick<SidebarThreadSummary, "line
   return thread.lineage.relationshipToParent === "subagent";
 }
 
+export function filterSidebarSubagentThreads<
+  T extends Pick<SidebarThreadSummary, "lineage">,
+>(threads: readonly T[]): T[] {
+  return threads.filter((thread) => !isSidebarSubagentThread(thread));
+}
+
 export function filterSidebarV2VisibleThreads<
   T extends Pick<SidebarThreadSummary, "archivedAt" | "lineage"> & {
     environmentId: string;

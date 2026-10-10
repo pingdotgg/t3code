@@ -13,6 +13,7 @@ import {
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
   deleteSelectedThreadEntries,
+  filterSidebarSubagentThreads,
   filterSidebarProjectScopeItems,
   filterSidebarV2VisibleThreads,
   formatWorkingDurationLabel,
@@ -458,6 +459,37 @@ describe("sidebar thread lineage helpers", () => {
 
     expect(isSidebarSubagentThread(subagent)).toBe(true);
     expect(isSidebarSubagentThread(makeThreadFixture())).toBe(false);
+  });
+
+  it("filters only subagent threads while preserving archived entries", () => {
+    const parentId = ThreadId.make("thread-parent");
+    const parent = makeThreadFixture({ id: parentId });
+    const subagent = makeThreadFixture({
+      id: ThreadId.make("thread-subagent"),
+      lineage: {
+        rootThreadId: parentId,
+        parentThreadId: parentId,
+        relationshipToParent: "subagent",
+      },
+    });
+    const fork = makeThreadFixture({
+      id: ThreadId.make("thread-fork"),
+      lineage: {
+        rootThreadId: parentId,
+        parentThreadId: parentId,
+        relationshipToParent: "fork",
+      },
+    });
+    const archived = makeThreadFixture({
+      id: ThreadId.make("thread-archived"),
+      archivedAt: "2026-01-02T00:00:00.000Z",
+    });
+
+    expect(filterSidebarSubagentThreads([parent, subagent, fork, archived])).toEqual([
+      parent,
+      fork,
+      archived,
+    ]);
   });
 
   it("resolves the parent thread for fork sidebar affordances", () => {
