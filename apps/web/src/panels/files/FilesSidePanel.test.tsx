@@ -3,7 +3,15 @@ import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contract
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import { act, cloneElement, Suspense, use, type ReactElement, type ReactNode } from "react";
+import {
+  act,
+  cloneElement,
+  Suspense,
+  use,
+  useLayoutEffect,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -240,10 +248,17 @@ function composerOf(threadRef: ScopedThreadRef) {
   return composers.get(key)!;
 }
 
+// Runs `run` inside the commit, after the panel's layout effects and before any passive effect.
+function DuringCommit({ run }: { run: (() => void) | undefined }) {
+  useLayoutEffect(() => run?.(), [run]);
+  return null;
+}
+
 async function renderFileFor(
   threadRef: ScopedThreadRef,
   relativePath: string | null = "src/a.ts",
   composerDraftTarget: PanelHost["composerDraftTarget"] = threadRef,
+  duringCommit?: () => void,
 ) {
   const host: PanelHost = {
     threadRef,
@@ -268,6 +283,7 @@ async function renderFileFor(
             selectedFilePending={false}
           />
         </Suspense>
+        <DuringCommit run={duringCommit} />
       </PanelHostContext>
     </ComposerHandleContext>
   );
@@ -443,6 +459,17 @@ describe("files side panel", () => {
     await renderFileFor(threadRef);
 
     await act(async () => late.selectTreeRows!(["README.md"]));
+    expect(surfacesOf(threadRef)).toMatchObject([{ kind: "file", relativePath: "README.md" }]);
+    expect(surfacesOf(refOn("environment-a"))).toBeUndefined();
+  });
+
+  it("opens a tree click that lands before the switch's passive effects in the new thread", async () => {
+    await renderFileFor(refOn("environment-a"));
+    const threadRef = refOn("environment-a", "thread-b");
+    await renderFileFor(threadRef, "src/a.ts", threadRef, () =>
+      late.selectTreeRows!(["README.md"]),
+    );
+
     expect(surfacesOf(threadRef)).toMatchObject([{ kind: "file", relativePath: "README.md" }]);
     expect(surfacesOf(refOn("environment-a"))).toBeUndefined();
   });

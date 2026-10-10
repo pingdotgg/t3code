@@ -7,7 +7,7 @@ import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { ChevronsDownUp, ChevronsUpDown } from "lucide";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
@@ -239,14 +239,17 @@ export default function FileBrowserPanel({
     }
   };
   const showEntryContextMenuRef = useRef(showEntryContextMenu);
-  // The tree keeps its first selection callback, so it reads the current
-  // opener through a ref; otherwise a click after a thread switch opens the
-  // file in the thread the panel first showed.
-  const onOpenFileRef = useRef(onOpenFile);
   useEffect(() => {
     showEntryContextMenuRef.current = showEntryContextMenu;
-    onOpenFileRef.current = onOpenFile;
   });
+  // The tree keeps its first selection callback, so it reads the current
+  // opener through a ref; otherwise a click after a thread switch opens the
+  // file in the thread the panel first showed. Updated at commit, so a click
+  // that lands before passive effects run already opens in the new thread.
+  const onOpenFileRef = useRef(onOpenFile);
+  useLayoutEffect(() => {
+    onOpenFileRef.current = onOpenFile;
+  }, [onOpenFile]);
 
   // The tree reads decorations at render time; a folder still loading its
   // children shows a spinner in its row instead of a banner that shifts the tree.
