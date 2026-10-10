@@ -138,7 +138,13 @@ export function resolveMessageDispatchIntent(
   if (deliveryIntent === "restart") {
     return { type: "restart_active", targetRunId: activeRun.id };
   }
-  if (activeRun.status === "preparing" || activeRun.status === "starting") {
+  if (
+    activeRun.status === "preparing" ||
+    activeRun.status === "starting" ||
+    !projection.providerTurns.some(
+      (turn) => turn.runAttemptId === activeRun.activeAttemptId && turn.status === "running",
+    )
+  ) {
     return { type: "queue_after_active" };
   }
 
