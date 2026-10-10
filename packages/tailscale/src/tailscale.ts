@@ -245,14 +245,13 @@ export const readTailscaleStatus = Effect.gen(function* () {
       Effect.mapError((cause) => new TailscaleCommandOutputError({ ...commandContext, cause })),
     );
     if (exitCode !== 0) {
+      const stderrDiagnostic = stderrDiagnosticOf(stderr);
       return yield* new TailscaleCommandExitError({
         ...commandContext,
         exitCode,
         stdoutLength: stdout.length,
         stderrLength: stderr.length,
-        ...(stderrDiagnosticOf(stderr) !== undefined
-          ? { stderrDiagnostic: stderrDiagnosticOf(stderr) }
-          : {}),
+        ...(stderrDiagnostic !== undefined ? { stderrDiagnostic } : {}),
       });
     }
     return yield* parseTailscaleStatus(stdout);
@@ -313,13 +312,12 @@ const runTailscaleCommand = (
         Effect.mapError((cause) => new TailscaleCommandOutputError({ ...commandContext, cause })),
       );
       if (exitCode !== 0) {
+        const stderrDiagnostic = stderrDiagnosticOf(stderr);
         return yield* new TailscaleCommandExitError({
           ...commandContext,
           exitCode,
           stderrLength: stderr.length,
-          ...(stderrDiagnosticOf(stderr) !== undefined
-            ? { stderrDiagnostic: stderrDiagnosticOf(stderr) }
-            : {}),
+          ...(stderrDiagnostic !== undefined ? { stderrDiagnostic } : {}),
         });
       }
     }).pipe(
