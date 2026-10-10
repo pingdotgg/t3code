@@ -230,8 +230,17 @@ const make = Effect.gen(function* () {
         if (isLink) continue;
         if ((yield* fs.realPath(target)) !== target) return null;
         const stat = yield* fs.stat(target);
-        if (stat.type === "File") bytes += Number(stat.size);
-        else if (stat.type === "Directory") {
+        if (stat.type === "File") {
+          // Removal only drops one link, so a file that is also linked elsewhere
+          // (a pnpm store entry) frees nothing. Count allocated blocks where the
+          // platform reports them, since that is what the disk gets back.
+          if (Option.getOrElse(stat.nlink, () => 1) === 1) {
+            bytes += Option.match(stat.blocks, {
+              onNone: () => Number(stat.size),
+              onSome: (blocks) => blocks * 512,
+            });
+          }
+        } else if (stat.type === "Directory") {
           const names = yield* fs.readDirectory(target);
           entries += names.length;
           if (entries > 2_000_000) return null;

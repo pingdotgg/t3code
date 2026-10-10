@@ -5,6 +5,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -225,6 +226,18 @@ describe("merged pull request cleanup", () => {
   });
 });
 
+// What removing a file gives back to the disk: allocated blocks, or its length
+// where the platform does not report them.
+const allocated = (fs: FileSystem.FileSystem, file: string) =>
+  fs.stat(file).pipe(
+    Effect.map((stat) =>
+      Option.match(stat.blocks, {
+        onNone: () => Number(stat.size),
+        onSome: (blocks) => blocks * 512,
+      }),
+    ),
+  );
+
 const cleanupFixture = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const config = yield* ServerConfig.ServerConfig;
@@ -337,21 +350,32 @@ describe("storage cleanup reports and local file policies", () => {
       Effect.gen(function* () {
         const { service, fs, worktree, setPolicy } = yield* cleanupFixture;
         setPolicy("tracked-changes");
-        const sizes = yield* Effect.forEach(yield* fs.readDirectory(worktree), (name) =>
-          fs.stat(`${worktree}/${name}`).pipe(Effect.map((stat) => Number(stat.size))),
-        );
         const outside = yield* fs.makeTempDirectoryScoped();
         yield* fs.writeFileString(`${outside}/external`, "must not count");
+        yield* fs.writeFileString(`${outside}/store-file`, "shared ".repeat(10_000));
         yield* fs.makeDirectory(`${worktree}/node_modules/nested`, { recursive: true });
         yield* fs.writeFileString(`${worktree}/node_modules/nested/file`, "count me");
         yield* fs.symlink(outside, `${worktree}/node_modules/directory-link`);
         yield* fs.symlink(`${outside}/external`, `${worktree}/node_modules/file-link`);
         yield* fs.symlink(`${outside}/missing`, `${worktree}/node_modules/dangling-link`);
+        const sizes = yield* Effect.forEach(
+          [
+            ...(yield* fs.readDirectory(worktree))
+              .filter((name) => name !== "node_modules")
+              .map((name) => `${worktree}/${name}`),
+            `${worktree}/node_modules/nested/file`,
+          ],
+          (file) => allocated(fs, file),
+        );
+        // Hardlinked from outside the worktree, as pnpm does from its store:
+        // removing the worktree leaves the data in place, so it must not count.
+        yield* fs.link(`${outside}/store-file`, `${worktree}/node_modules/hardlinked`);
         const report = yield* service.runNow;
-        const bytes = sizes.reduce((sum, size) => sum + size, 8);
+        const bytes = sizes.reduce((sum, size) => sum + size, 0);
         expect(report.entries[0]).toMatchObject({ outcome: "removed", bytes, files: null });
         expect(report.bytesFreed).toBe(bytes);
         expect(yield* fs.readFileString(`${outside}/external`)).toBe("must not count");
+        expect(yield* fs.exists(`${outside}/store-file`)).toBe(true);
       }),
     ),
   );
@@ -452,7 +476,7 @@ describe("storage cleanup reports and local file policies", () => {
         expect(yield* service.latestReport).toBeNull();
         yield* fs.writeFileString(`${worktree}/${file}`, "local data\n");
         const sizes = yield* Effect.forEach(yield* fs.readDirectory(worktree), (name) =>
-          fs.stat(`${worktree}/${name}`).pipe(Effect.map((stat) => Number(stat.size))),
+          allocated(fs, `${worktree}/${name}`),
         );
         const bytes = sizes.reduce((sum, size) => sum + size, 0);
         const report = yield* service.runNow;
