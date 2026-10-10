@@ -96,6 +96,12 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
       },
     },
   ],
+  plug: [
+    { tag: "path", attrs: { d: "M12 22v-5" } },
+    { tag: "path", attrs: { d: "M9 8V2" } },
+    { tag: "path", attrs: { d: "M15 8V2" } },
+    { tag: "path", attrs: { d: "M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" } },
+  ],
   "refresh-cw": [
     { tag: "path", attrs: { d: "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" } },
     { tag: "path", attrs: { d: "M21 3v5h-5" } },

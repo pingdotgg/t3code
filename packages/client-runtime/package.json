@@ -175,9 +175,17 @@
       "types": "./src/state/presentation.ts",
       "default": "./src/state/presentation.ts"
     },
+    "./state/contribution-status": {
+      "types": "./src/state/contributionStatus.ts",
+      "default": "./src/state/contributionStatus.ts"
+    },
     "./state/device": {
       "types": "./src/state/device.ts",
       "default": "./src/state/device.ts"
+    },
+    "./state/pluginActions": {
+      "types": "./src/state/pluginActions.ts",
+      "default": "./src/state/pluginActions.ts"
     },
     "./state/deviceHubAccess": {
       "types": "./src/state/deviceHubAccess.ts",
