@@ -1,6 +1,7 @@
 export type SelectionActionPoint = { x: number; y: number };
 
 export const SELECTION_MULTI_CLICK_INTERVAL_MS = 500;
+const SELECTION_SCROLL_SETTLE_MS = 150;
 
 export function resolveSelectionActionPosition(options: {
   bounds: { left: number; top: number; width: number; height: number };
@@ -25,21 +26,40 @@ export function resolveSelectionActionPosition(options: {
   };
 }
 
+type SelectionRect = { left: number; top: number; right: number; bottom: number; width: number };
+
+/** Whether a selection still shows inside every box that clips it. */
+export function isSelectionRectVisible(rect: SelectionRect, clips: readonly SelectionRect[]) {
+  return (
+    rect.width > 0 &&
+    clips.every(
+      (clip) =>
+        rect.right > clip.left &&
+        rect.left < clip.right &&
+        rect.bottom > clip.top &&
+        rect.top < clip.bottom,
+    )
+  );
+}
+
 /**
  * Opens selection actions after release, leaving multi-clicks time to finish.
  * DOM selections call selectionChanged; canvas selections can use their own
  * change notification. Each surface still owns reading and acting on its text.
  * Interactive popovers pass getActionElement to keep editing their fields from
- * replacing the captured source selection.
+ * replacing the captured source selection. Surfaces that can reposition their
+ * actions pass restoreAfterScroll to re-read the selection once scrolling settles.
  */
 export function observeSelectionActions({
   element,
   getActionElement,
+  restoreAfterScroll = false,
   onSelection,
   onDismiss,
 }: {
   element: HTMLElement;
   getActionElement?: () => HTMLElement | null;
+  restoreAfterScroll?: boolean;
   onSelection: (pointer: SelectionActionPoint | null) => void;
   onDismiss: (reason: "interaction" | "cancel") => void;
 }) {
@@ -141,7 +161,8 @@ export function observeSelectionActions({
     // Autoscroll during a drag must not cancel that gesture's eventual release.
     if (!pointerDown) {
       pointer = null;
-      dismissed = true;
+      if (restoreAfterScroll && !dismissed) schedule(SELECTION_SCROLL_SETTLE_MS);
+      else dismissed = true;
     }
     onDismiss("cancel");
   };

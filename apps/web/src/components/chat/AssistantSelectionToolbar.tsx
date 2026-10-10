@@ -12,6 +12,7 @@ import {
   type AssistantCitationSourceAnchor,
 } from "~/lib/assistantTextSelection";
 import {
+  isSelectionRectVisible,
   observeSelectionActions,
   resolveSelectionActionPosition,
   type SelectionActionPoint,
@@ -56,7 +57,16 @@ export function AssistantSelectionToolbar({
       }
       const rect = captured.range.getBoundingClientRect();
       const viewportRect = viewport.getBoundingClientRect();
-      if (rect.bottom < viewportRect.top || rect.top > viewportRect.bottom || rect.width === 0) {
+      // Code blocks and other nested scrollers can clip the range inside the timeline.
+      const clips = [viewportRect];
+      const common = captured.range.commonAncestorContainer;
+      let element = common instanceof Element ? common : common.parentElement;
+      for (; element && element !== viewport; element = element.parentElement) {
+        if (getComputedStyle(element).overflow !== "visible") {
+          clips.push(element.getBoundingClientRect());
+        }
+      }
+      if (!isSelectionRectVisible(rect, clips)) {
         clear();
         return;
       }
@@ -80,6 +90,7 @@ export function AssistantSelectionToolbar({
     const actions = observeSelectionActions({
       element: viewport,
       getActionElement: () => toolbarRef.current,
+      restoreAfterScroll: true,
       onSelection: update,
       onDismiss: clear,
     });
