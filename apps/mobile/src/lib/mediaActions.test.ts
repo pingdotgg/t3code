@@ -26,7 +26,7 @@ vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 vi.mock("@react-navigation/native", () => ({
   useNavigation: () => ({ navigate: state.navigate }),
 }));
-vi.mock("@t3tools/mobile-markdown-text/links", () => ({
+vi.mock("./markdownLinks", () => ({
   normalizeNativeMarkdownUrl: (uri: string) => uri,
 }));
 vi.mock("../state/assets", () => ({
