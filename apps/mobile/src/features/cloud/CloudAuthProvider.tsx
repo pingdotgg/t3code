@@ -1,4 +1,4 @@
-import { ClerkProvider, useAuth } from "@clerk/expo";
+import { ClerkProvider, type TokenCache, useAuth } from "@clerk/expo";
 import { tokenCache } from "@clerk/expo/token-cache";
 import { ManagedRelay, setManagedRelaySession } from "@t3tools/client-runtime/relay";
 import {
@@ -10,6 +10,7 @@ import {
 import * as Effect from "effect/Effect";
 import { type ReactNode, useEffect, useRef } from "react";
 
+import { whenProtectedDataAvailable } from "../../lib/protectedData";
 import { runtime } from "../../lib/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -25,6 +26,18 @@ import {
 import { clearConnectOnboardingRequest, requestConnectOnboarding } from "./connectOnboarding";
 import { resolveCloudPublicConfig, resolveRelayClerkTokenOptions } from "./publicConfig";
 import { removeCloudEnvironments } from "./cloud-drafts";
+
+// Clerk reads its client token from the keychain before every request.
+function waitForProtectedData(cache: TokenCache): TokenCache {
+  return {
+    ...cache,
+    getToken: async (key) => {
+      await whenProtectedDataAvailable();
+      return cache.getToken(key);
+    },
+  };
+}
+const protectedTokenCache = tokenCache && waitForProtectedData(tokenCache);
 
 function resetManagedRelayTokenCache() {
   return settleAsyncResult(() =>
@@ -211,7 +224,7 @@ export function CloudAuthProvider(props: { readonly children: ReactNode }) {
   }
 
   return (
-    <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache}>
+    <ClerkProvider publishableKey={publishableKey} tokenCache={protectedTokenCache}>
       <CloudAuthBridge>{props.children}</CloudAuthBridge>
     </ClerkProvider>
   );
