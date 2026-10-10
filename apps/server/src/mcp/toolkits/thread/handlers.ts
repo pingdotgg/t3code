@@ -117,52 +117,36 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   t3_thread_fork: writesThread((input) =>
     Effect.gen(function* () {
-      const { threads, projection } = yield* readThread(input.threadId);
+      const { projection } = yield* readThread(input.threadId);
       const commandId = yield* newCommandId();
       const targetThreadId = ThreadId.make(`${commandId}:fork`);
-      if (input.workspaceStrategy !== undefined) {
-        const launches = yield* ThreadLaunch.ThreadLaunchService;
-        yield* launches
-          .launch({
-            commandId,
-            threadId: targetThreadId,
-            projectId: projection.thread.projectId,
-            title: input.title ?? `${projection.thread.title} fork`,
-            modelSelection: projection.thread.modelSelection,
-            runtimeMode: projection.thread.runtimeMode,
-            interactionMode: projection.thread.interactionMode,
-            workspaceStrategy: input.workspaceStrategy,
-            forkSource: { sourceThreadId: projection.thread.id, sourcePoint: input.sourcePoint },
-            createdBy: "agent",
-            creationSource: "mcp",
-          })
-          .pipe(
-            Effect.mapError(
-              () =>
-                new OrchestratorMcpFailure({
-                  code: "orchestration_error",
-                  message: "Could not prepare the fork's workspace.",
-                }),
-            ),
-          );
-        const sequence = yield* threads
-          .getThreadEventSequence(targetThreadId)
-          .pipe(Effect.mapError(dispatchFailure));
-        return { sequence, targetThreadId };
-      }
-      const result = yield* threads
-        .dispatch({
-          type: "thread.fork",
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      return yield* launches
+        .fork({
           commandId,
-          sourceThreadId: projection.thread.id,
           targetThreadId,
+          sourceThreadId: projection.thread.id,
           sourcePoint: input.sourcePoint,
+          projectId: projection.thread.projectId,
           ...(input.title === undefined ? {} : { title: input.title }),
+          ...(input.workspaceStrategy === undefined
+            ? {}
+            : { workspaceStrategy: input.workspaceStrategy }),
           createdBy: "agent",
           creationSource: "mcp",
         })
-        .pipe(Effect.mapError(dispatchFailure));
-      return { sequence: result.sequence, targetThreadId };
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new OrchestratorMcpFailure({
+                code:
+                  error.operation === "validate-workspace"
+                    ? "invalid_request"
+                    : "orchestration_error",
+                message: typeof error.cause === "string" ? error.cause : error.message,
+              }),
+          ),
+        );
     }),
   ),
   t3_thread_merge_back: McpToolAccess.writesThreads(

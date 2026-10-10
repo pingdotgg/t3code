@@ -17,7 +17,7 @@ checkout or create a new worktree. If the thread already uses a worktree, the fi
 that same worktree.
 
 Keeping the checkout uses its current files. A new worktree starts at the response's saved checkpoint
-when available, or the source branch's committed state otherwise. Later uncommitted edits are not
+when available, or the selected checkout's committed state otherwise. Later uncommitted edits are not
 copied into the new worktree. Forking keeps the original thread and does not start an agent turn.
 
 ## Connect an account

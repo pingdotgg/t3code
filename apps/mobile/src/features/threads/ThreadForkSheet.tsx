@@ -33,7 +33,7 @@ export function ThreadForkSheet(props: {
   const choices = threadForkWorkspaceChoices({
     worktreePath: thread?.worktreePath ?? null,
     branch: thread?.branch ?? null,
-    isGitRepo: status.data?.isRepo === true,
+    isGitRepo: status.data?.isRepo ?? props.workspaceRoot !== null,
   });
   return (
     <Modal transparent visible animationType="fade" onRequestClose={props.onClose}>

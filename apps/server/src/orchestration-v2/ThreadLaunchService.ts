@@ -21,8 +21,10 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -36,6 +38,7 @@ import {
 } from "@t3tools/shared/git";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -130,6 +133,18 @@ export interface ThreadLaunchResult {
   readonly resumed: boolean;
 }
 
+interface ThreadForkInput {
+  readonly commandId: CommandId;
+  readonly projectId: ProjectId;
+  readonly sourceThreadId: ThreadId;
+  readonly targetThreadId: ThreadId;
+  readonly sourcePoint: import("@t3tools/contracts").OrchestrationV2ThreadForkSourcePoint;
+  readonly title?: string;
+  readonly workspaceStrategy?: ThreadLaunchWorkspaceStrategy;
+  readonly createdBy: OrchestrationV2Actor;
+  readonly creationSource: OrchestrationV2CreationSource;
+}
+
 export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
   "ThreadLaunchError",
   {
@@ -137,6 +152,7 @@ export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
       "resolve-project",
       "read-receipt",
       "generate-metadata",
+      "validate-workspace",
       "provision-worktree",
       "run-setup-script",
       "create-thread",
@@ -162,6 +178,12 @@ export class ThreadLaunchService extends Context.Service<
     readonly launch: (
       input: ThreadLaunchInput,
     ) => Effect.Effect<ThreadLaunchResult, ThreadLaunchError>;
+    readonly fork: (
+      input: ThreadForkInput,
+    ) => Effect.Effect<
+      { readonly sequence: number; readonly targetThreadId: ThreadId },
+      ThreadLaunchError
+    >;
     /** Dispatches prepared-run.retry and prepares the run's workspace again. */
     readonly retryPreparation: (
       input: ThreadLaunchRetryInput,
@@ -186,6 +208,8 @@ const make = Effect.gen(function* () {
   const cloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
   const terminals = yield* TerminalManager.TerminalManager;
   const git = yield* GitWorkflow.GitWorkflowService;
+  const gitDriver = yield* GitVcsDriver.GitVcsDriver;
+  const fileSystem = yield* FileSystem.FileSystem;
   const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -748,9 +772,13 @@ const make = Effect.gen(function* () {
           );
           input = {
             ...input,
+            forkSource:
+              input.forkSource.sourcePoint.type === "latest_stable" && sourceRun !== null
+                ? { ...input.forkSource, sourcePoint: { type: "run", runId: sourceRun.id } }
+                : input.forkSource,
             workspaceStrategy: {
               ...input.workspaceStrategy,
-              baseRef: checkpoint?.ref ?? source.thread.branch ?? "HEAD",
+              baseRef: checkpoint?.ref ?? input.workspaceStrategy.baseRef,
               startFromOrigin: false,
             },
           };
@@ -928,6 +956,20 @@ const make = Effect.gen(function* () {
             threadId,
           )("The fork was deleted after workspace preparation failed. Create a new fork to retry.");
         }
+        if (
+          input.forkSource !== undefined &&
+          workspaceStrategy.type === "worktree" &&
+          Option.isSome(launchReceipt) &&
+          launchReceipt.value.status === "accepted"
+        ) {
+          const ready = yield* readReceipt(input, CommandId.make(`${input.commandId}:fork-ready`));
+          if (Option.isNone(ready) || ready.value.status !== "accepted")
+            return yield* mapError(
+              input,
+              "provision-worktree",
+              threadId,
+            )("The fork's workspace preparation did not complete. Create a new fork to retry.");
+        }
         const runIsPreparing =
           runId !== null &&
           projection.runs.some((run) => run.id === runId && run.status === "preparing");
@@ -972,6 +1014,17 @@ const make = Effect.gen(function* () {
                     threadId,
                     null,
                   ).pipe(
+                    // Creation accepts the history transfer; this separate receipt
+                    // records checkout readiness for replays after the fiber ends.
+                    Effect.andThen(
+                      threads
+                        .dispatch({
+                          type: "thread.metadata.update",
+                          commandId: CommandId.make(`${input.commandId}:fork-ready`),
+                          threadId,
+                        })
+                        .pipe(Effect.mapError(mapError(input, "update-thread", threadId))),
+                    ),
                     Effect.onError(() =>
                       threads.getThreadRecords(threadId, ["runs"]).pipe(
                         Effect.flatMap((current) =>
@@ -1023,6 +1076,104 @@ const make = Effect.gen(function* () {
           resumed: Option.isSome(launchReceipt) || messageWasAlreadyAccepted,
         };
       });
+    },
+  );
+
+  const inFlightForks = new Map<
+    CommandId,
+    Deferred.Deferred<ThreadLaunchResult, ThreadLaunchError>
+  >();
+  const launchPreparedFork: ThreadLaunchService["Service"]["launch"] = Effect.fn(
+    "ThreadLaunchService.launchPreparedFork",
+  )(function* (input) {
+    if (input.forkSource === undefined || input.workspaceStrategy.type !== "worktree")
+      return yield* launch(input);
+    const { completion, shared } = yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        const existing = inFlightForks.get(input.commandId);
+        if (existing !== undefined) return { completion: existing, shared: true };
+        const completion = Deferred.makeUnsafe<ThreadLaunchResult, ThreadLaunchError>();
+        inFlightForks.set(input.commandId, completion);
+        // A client disconnect must not abandon checkout preparation or let a
+        // retry open the fork before the original operation settles.
+        yield* launch(input).pipe(
+          Effect.onExit((exit) =>
+            Effect.sync(() => inFlightForks.delete(input.commandId)).pipe(
+              Effect.andThen(Deferred.done(completion, exit)),
+            ),
+          ),
+          Effect.forkIn(preparationScope),
+        );
+        return { completion, shared: false };
+      }),
+    );
+    const result = yield* Deferred.await(completion);
+    return { ...result, resumed: result.resumed || shared };
+  });
+
+  const fork: ThreadLaunchService["Service"]["fork"] = Effect.fn("ThreadLaunchService.fork")(
+    function* (input) {
+      const errorContext = {
+        ...input,
+        workspaceStrategy: input.workspaceStrategy ?? { type: "root" as const },
+      };
+      const source = yield* threads
+        .getThreadRecords(input.sourceThreadId, [])
+        .pipe(Effect.mapError(mapError(errorContext, "create-thread", input.targetThreadId)));
+      if (source.thread.projectId !== input.projectId)
+        return yield* mapError(
+          errorContext,
+          "resolve-project",
+        )("A fork must stay in its source project.");
+      if (input.workspaceStrategy === undefined) {
+        const result = yield* threads
+          .dispatch({
+            type: "thread.fork",
+            commandId: input.commandId,
+            sourceThreadId: input.sourceThreadId,
+            targetThreadId: input.targetThreadId,
+            sourcePoint: input.sourcePoint,
+            ...(input.title === undefined ? {} : { title: input.title }),
+            createdBy: input.createdBy,
+            creationSource: input.creationSource,
+          })
+          .pipe(Effect.mapError(mapError(errorContext, "create-thread", input.targetThreadId)));
+        return { sequence: result.sequence, targetThreadId: input.targetThreadId };
+      }
+      if (input.workspaceStrategy.type === "existing_worktree") {
+        const project = yield* projects
+          .getById(input.projectId)
+          .pipe(Effect.mapError(mapError(errorContext, "resolve-project")));
+        if (Option.isNone(project))
+          return yield* mapError(errorContext, "resolve-project")("Project not found.");
+        const real = (path: string) =>
+          fileSystem.realPath(path).pipe(Effect.orElseSucceed(() => path));
+        const paths = yield* gitDriver.listWorktreePaths(project.value.workspaceRoot).pipe(
+          Effect.flatMap((paths) => Effect.forEach(paths, real)),
+          Effect.mapError(mapError(errorContext, "provision-worktree")),
+        );
+        if (!paths.includes(yield* real(input.workspaceStrategy.worktreePath)))
+          return yield* mapError(
+            errorContext,
+            "validate-workspace",
+          )(
+            "worktreePath must be one of the project's git worktrees. t3_worktree_list shows them.",
+          );
+      }
+      yield* launchPreparedFork({
+        ...input,
+        threadId: input.targetThreadId,
+        title: input.title ?? `${source.thread.title} fork`,
+        modelSelection: source.thread.modelSelection,
+        runtimeMode: source.thread.runtimeMode,
+        interactionMode: source.thread.interactionMode,
+        workspaceStrategy: input.workspaceStrategy,
+        forkSource: { sourceThreadId: input.sourceThreadId, sourcePoint: input.sourcePoint },
+      });
+      const sequence = yield* threads
+        .getThreadEventSequence(input.targetThreadId)
+        .pipe(Effect.mapError(mapError(errorContext, "create-thread", input.targetThreadId)));
+      return { sequence, targetThreadId: input.targetThreadId };
     },
   );
 
@@ -1097,7 +1248,7 @@ const make = Effect.gen(function* () {
     );
   };
 
-  return ThreadLaunchService.of({ launch, retryPreparation });
+  return ThreadLaunchService.of({ launch: launchPreparedFork, fork, retryPreparation });
 });
 
 export const layer = Layer.effect(ThreadLaunchService, make);

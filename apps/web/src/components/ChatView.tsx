@@ -8681,6 +8681,7 @@ export default function ChatView(props: ChatViewProps) {
         },
       });
       if (result._tag === "Failure") {
+        setForkSource(null);
         if (!isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
           setThreadError(
