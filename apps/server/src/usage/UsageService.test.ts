@@ -9,8 +9,10 @@ import * as NodeSqlite from "node:sqlite";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { OpenCodeDriver } from "@t3tools/provider-opencode/server";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
 import {
+  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -706,6 +708,17 @@ describe("UsageService", () => {
       yield* Effect.promise(async () => {
         await NodeFSP.mkdir(opencode);
         await NodeFSP.symlink(opencode, opencodeAlias, "junction");
+        const messages = NodePath.join(opencode, "storage", "message", "session-1");
+        await NodeFSP.mkdir(messages, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(messages, "msg-aliased.json"),
+          JSON.stringify({
+            role: "assistant",
+            modelID: "example-model",
+            time: { created: Date.parse("2026-08-01T10:00:00Z") },
+            tokens: { input: 100, output: 20 },
+          }),
+        );
         await NodeFSP.mkdir(conversations);
         await NodeFSP.mkdir(antigravityA);
         await NodeFSP.mkdir(antigravityB);
@@ -720,12 +733,63 @@ describe("UsageService", () => {
           "junction",
         );
       });
+      const instances = [
+        {
+          instanceId: ProviderInstanceId.make("opencode-first"),
+          config: undefined,
+          environment: { OPENCODE_DATA_DIR: ` ${opencode}, ${opencodeAlias} ` },
+          configured: true,
+        },
+        {
+          instanceId: ProviderInstanceId.make("opencode-second"),
+          config: undefined,
+          environment: { OPENCODE_DATA_DIR: opencodeAlias },
+          configured: true,
+        },
+      ];
+      const reader = OpenCodeDriver.usage;
+      if (reader?.kind !== "scan") throw new Error("Expected an OpenCode scan reader");
+      const scans = yield* reader
+        .scan({
+          instances,
+          settings: DEFAULT_SERVER_SETTINGS,
+          windowStartMs: 0,
+          retentionCutoffMs: 0,
+          awaitRefresh: true,
+        })
+        .pipe(Effect.provide(NodeServices.layer));
+      assert.strictEqual(scans.length, 1);
+      assert.strictEqual(scans[0]?.dir, yield* Effect.promise(() => NodeFSP.realpath(opencode)));
+      assert.deepStrictEqual(
+        scans.flatMap(
+          (scan) =>
+            scan.files?.flatMap((file) => file.records.map((record) => record.dedupeKey)) ?? [],
+        ),
+        ["opencode:msg-aliased"],
+      );
       const service = yield* UsageService.make.pipe(
         Effect.provide(
           layerService({
             prefix: "usage-service-aliased-roots-test",
             home,
-            settings,
+            settings: {
+              providerInstances: {
+                ...settings.providerInstances,
+                ...Object.fromEntries(
+                  instances.map((instance) => [
+                    instance.instanceId,
+                    {
+                      driver: ProviderDriverKind.make("opencode"),
+                      environment: Object.entries(instance.environment).map(([name, value]) => ({
+                        name,
+                        value,
+                        sensitive: false,
+                      })),
+                    },
+                  ]),
+                ),
+              },
+            },
             environment: {
               OPENCODE_DATA_DIR: `${opencode},${opencodeAlias}`,
               ANTIGRAVITY_DATA_DIR: `${antigravityA},${antigravityB}`,
@@ -738,6 +802,10 @@ describe("UsageService", () => {
         summary.sources.filter((source) => source.fingerprint.provider === provider);
       assert.strictEqual(sourcesFor("opencode").length, 1);
       assert.strictEqual(sourcesFor("antigravity").length, 1);
+      assert.strictEqual(
+        summary.buckets.find((bucket) => bucket.provider === "opencode")?.totals.outputTokens,
+        20,
+      );
       assert.strictEqual(
         sourcesFor("opencode")[0]?.fingerprint.resolvedHomePath,
         yield* Effect.promise(() => NodeFSP.realpath(opencode)),
