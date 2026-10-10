@@ -451,6 +451,40 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
+  it.effect(
+    "a cold getStatus waiting on the remote fetch cannot overwrite a newer local status",
+    () => {
+      const releaseRemote = Deferred.makeUnsafe<void>();
+      const newerLocalStatus = { ...baseLocalStatus, refName: "feature/newer" };
+      let currentLocalStatus = baseLocalStatus;
+      const layer = VcsStatusBroadcaster.layer.pipe(
+        Layer.provide(FileSystem.layerNoop({ realPath: (path) => Effect.succeed(path) })),
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provide(makeBackgroundPolicyLayer(() => true)),
+        Layer.provide(
+          Layer.mock(GitWorkflowService.GitWorkflowService)({
+            localStatus: () => Effect.sync(() => currentLocalStatus),
+            remoteStatus: () => Deferred.await(releaseRemote).pipe(Effect.as(baseRemoteStatus)),
+            invalidateLocalStatus: () => Effect.void,
+          }),
+        ),
+      );
+
+      return Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        const cold = yield* broadcaster.getStatus({ cwd: "/repo" }).pipe(Effect.forkScoped);
+        // Run the cold read up to its remote wait before publishing a newer local.
+        yield* TestClock.adjust(Duration.zero);
+        currentLocalStatus = newerLocalStatus;
+        yield* broadcaster.refreshLocalStatus("/repo");
+        yield* Deferred.succeed(releaseRemote, undefined);
+
+        assert.equal((yield* Fiber.join(cold)).refName, "feature/newer");
+        assert.equal((yield* broadcaster.getStatus({ cwd: "/repo" })).refName, "feature/newer");
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    },
+  );
+
   it.effect("an automatic pull cannot overwrite a newer local status with its own read", () => {
     const releasePostPullRemote = Deferred.makeUnsafe<void>();
     const defaultLocalStatus = { ...baseLocalStatus, isDefaultRef: true, refName: "main" };

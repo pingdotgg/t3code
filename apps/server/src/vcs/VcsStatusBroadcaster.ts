@@ -405,7 +405,10 @@ export const make = Effect.gen(function* () {
           ],
           { concurrency: "unbounded" },
         );
-        return yield* updateCachedStatus(cwd, local, remote);
+        // A local refresh may have published while these reads ran.
+        return yield* updateCachedStatus(cwd, local, remote, {
+          unlessLocalChangedSince: latest?.local ?? null,
+        });
       }),
     );
   });
