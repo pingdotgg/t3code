@@ -56,6 +56,13 @@ class SelectionNode {
   get nodeType() {
     return this.tagName === "#text" ? 3 : 1;
   }
+  get ownerDocument() {
+    // `user-select: none` inherits, like Chromium's computed style.
+    const getComputedStyle = (element: SelectionNode) => ({
+      userSelect: element.closest("[data-select-none]") ? "none" : "auto",
+    });
+    return { defaultView: { getComputedStyle } };
+  }
   get length() {
     return this.data.length;
   }
@@ -257,6 +264,22 @@ describe("captureAssistantTextSelection", () => {
       }),
     );
     expect(capture(source, nativeSelection([quote, 0], [timestampText, 1]))).toBeNull();
+  });
+
+  it("captures a triple-clicked response that ends before a tool row and the next response", () => {
+    const quote = textNode("Recording your answers in the session note:");
+    const source = assistantSource(new SelectionNode("P").append(quote));
+    const nextParagraph = new SelectionNode("P").append(textNode("1. What it means."));
+    const viewport = new SelectionNode("MAIN").append(
+      source,
+      new SelectionNode("DIV", "", { "data-select-none": "" }).append(textNode("echo ok")),
+      new SelectionNode("H3", "", { "data-select-none": "" }).append(textNode("T3 Code")),
+      assistantSource(nextParagraph),
+    );
+
+    expect(capture(viewport, nativeSelection([quote, 0], [nextParagraph, 0]))?.selector).toEqual(
+      selector(quote.data),
+    );
   });
 
   it("does not attribute an empty starting endpoint to the previous response", () => {
