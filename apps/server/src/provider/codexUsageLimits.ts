@@ -29,6 +29,7 @@ export interface CodexRateLimitSnapshot {
   readonly limitId?: string | null;
   readonly planType?: string | null;
   readonly rateLimitReachedType?: string | null;
+  readonly spendControlReached?: boolean | null;
   readonly primary?: CodexRateLimitWindow | null;
   readonly secondary?: CodexRateLimitWindow | null;
 }
@@ -120,25 +121,55 @@ export function codexRateLimitsToLimits(input: {
     | null
     | undefined;
   readonly resetCredits?: CodexResetCreditsSummary | null | undefined;
+  readonly ordinaryUsageAllowed?: boolean | null | undefined;
   readonly checkedAt: string;
 }): ServerProviderUsageLimits {
   const resetCredits = codexResetCreditsToContract(input.resetCredits);
   // Select the main bucket explicitly; the legacy snapshot can name another limit.
-  const windows = codexRateLimitsToWindows(input.rateLimitsByLimitId?.codex ?? input.snapshot);
+  const snapshot = input.rateLimitsByLimitId?.codex ?? input.snapshot;
+  const windows = codexRateLimitsToWindows(snapshot);
+  const isMainAllowance = !snapshot.limitId || snapshot.limitId === "codex";
   return {
     ...makeUsageLimits({
       checkedAt: input.checkedAt,
       windows,
     }),
     ...(resetCredits ? { resetCredits } : {}),
+    ...(input.ordinaryUsageAllowed !== undefined
+      ? {
+          ordinaryUsageAllowed: input.ordinaryUsageAllowed,
+          ordinaryUsageCheckedAt: input.checkedAt,
+        }
+      : {}),
+    ...(isMainAllowance && snapshot.spendControlReached !== undefined
+      ? { spendControlReached: snapshot.spendControlReached }
+      : {}),
+    ...(isMainAllowance && snapshot.rateLimitReachedType !== undefined
+      ? { rateLimitReachedType: snapshot.rateLimitReachedType }
+      : {}),
   };
 }
 
 export function codexRateLimitsToUpdate(
   snapshot: CodexRateLimitSnapshot,
 ): ProviderUsageLimitsUpdate | undefined {
+  if (snapshot.limitId && snapshot.limitId !== "codex") return undefined;
   const windows = codexRateLimitsToWindows(snapshot);
-  return windows.length > 0 ? { windows } : undefined;
+  if (
+    windows.length === 0 &&
+    snapshot.rateLimitReachedType === undefined &&
+    snapshot.spendControlReached === undefined
+  )
+    return undefined;
+  return {
+    windows,
+    ...(snapshot.spendControlReached !== undefined
+      ? { spendControlReached: snapshot.spendControlReached }
+      : {}),
+    ...(snapshot.rateLimitReachedType !== undefined
+      ? { rateLimitReachedType: snapshot.rateLimitReachedType }
+      : {}),
+  };
 }
 
 /**
@@ -177,6 +208,9 @@ export function mergeCodexRateLimits(
     ...previous,
     ...(update.limitId !== undefined ? { limitId: update.limitId } : {}),
     ...(update.planType !== undefined ? { planType: update.planType } : {}),
+    ...(update.spendControlReached !== undefined
+      ? { spendControlReached: update.spendControlReached }
+      : {}),
     ...(update.rateLimitReachedType !== undefined
       ? { rateLimitReachedType: update.rateLimitReachedType }
       : {}),

@@ -1,3 +1,5 @@
+import { ServerProviderUsageLimits } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -11,6 +13,8 @@ import {
 } from "./codexUsageLimits.ts";
 
 const checkedAt = "2026-07-18T10:00:00.000Z";
+const decodeUsageLimitsForPermission = Schema.decodeSync(ServerProviderUsageLimits);
+const decodeUnknownUsageLimitsForSpend = Schema.decodeUnknownSync(ServerProviderUsageLimits);
 
 describe("codexRateLimitsToLimits", () => {
   it("maps primary and secondary onto the session and weekly windows", () => {
@@ -312,5 +316,143 @@ describe("codexUsageLimitResetAt", () => {
     expect(
       codexUsageLimitResetAt({ primary: { usedPercent: 50, resetsAt: 2000000000 } }),
     ).toBeNull();
+  });
+});
+
+describe("native included-use permission", () => {
+  it.each([false, null, true])(
+    "preserves permission %s and its probe time through the public schema",
+    (ordinaryUsageAllowed) => {
+      const result = codexRateLimitsToLimits({
+        checkedAt,
+        ordinaryUsageAllowed,
+        snapshot: {
+          primary: { usedPercent: 1 },
+          rateLimitReachedType: "workspace_member_usage_limit_reached",
+        },
+        resetCredits: { availableCount: 4 },
+      });
+      const decoded = decodeUsageLimitsForPermission(result);
+      expect(decoded).toMatchObject({
+        ordinaryUsageAllowed,
+        ordinaryUsageCheckedAt: checkedAt,
+        rateLimitReachedType: "workspace_member_usage_limit_reached",
+      });
+      expect(decoded.windows[0]?.usedPercent).toBe(1);
+    },
+  );
+  it("does not invent permission when an older response omits it", () => {
+    expect(
+      codexRateLimitsToLimits({ checkedAt, snapshot: { primary: { usedPercent: 1 } } }),
+    ).not.toHaveProperty("ordinaryUsageAllowed");
+  });
+  it("selects denial metadata from the main bucket", () => {
+    expect(
+      codexRateLimitsToLimits({
+        checkedAt,
+        snapshot: { limitId: "spark", rateLimitReachedType: "other_limit" },
+        rateLimitsByLimitId: {
+          codex: {
+            primary: { usedPercent: 1 },
+            rateLimitReachedType: "workspace_member_usage_limit_reached",
+          },
+        },
+      }),
+    ).toMatchObject({ rateLimitReachedType: "workspace_member_usage_limit_reached" });
+  });
+  it.each(["workspace_member_usage_limit_reached", null])(
+    "publishes a denial-only or explicit clearing update: %s",
+    (rateLimitReachedType) => {
+      expect(codexRateLimitsToUpdate({ rateLimitReachedType })).toEqual({
+        windows: [],
+        rateLimitReachedType,
+      });
+    },
+  );
+  it("does not publish another model's denial as the main allowance", () => {
+    expect(
+      codexRateLimitsToUpdate({ limitId: "spark", rateLimitReachedType: "other_limit" }),
+    ).toBeUndefined();
+    expect(
+      codexRateLimitsToLimits({
+        checkedAt,
+        snapshot: { limitId: "spark", rateLimitReachedType: "other_limit" },
+      }),
+    ).not.toHaveProperty("rateLimitReachedType");
+  });
+});
+
+describe("main spend-control denial", () => {
+  it.each([true, false, null])(
+    "preserves %s through the mapper and public schema",
+    (spendControlReached) => {
+      const snapshot = {
+        limitId: "codex",
+        spendControlReached,
+        rateLimitReachedType: null,
+        primary: { usedPercent: 1, windowDurationMins: 300 },
+      };
+      const result = codexRateLimitsToLimits({
+        checkedAt,
+        ordinaryUsageAllowed: true,
+        snapshot,
+        resetCredits: { availableCount: 4 },
+      });
+      expect(decodeUsageLimitsForPermission(result)).toMatchObject({
+        spendControlReached,
+        ordinaryUsageAllowed: true,
+        ordinaryUsageCheckedAt: checkedAt,
+      });
+    },
+  );
+  it("does not invent a spend-control negative for a missing field", () => {
+    expect(
+      codexRateLimitsToLimits({
+        checkedAt,
+        ordinaryUsageAllowed: true,
+        snapshot: { limitId: "codex", primary: { usedPercent: 1 } },
+      }),
+    ).not.toHaveProperty("spendControlReached");
+  });
+  it("rejects malformed spend-control metadata through the public schema", () => {
+    const result = codexRateLimitsToLimits({
+      checkedAt,
+      snapshot: { primary: { usedPercent: 1 } },
+    });
+    for (const spendControlReached of [1, "false", []]) {
+      expect(() => decodeUnknownUsageLimitsForSpend({ ...result, spendControlReached })).toThrow();
+    }
+  });
+  it.each([true, false, null])(
+    "publishes spend-control-only notification %s",
+    (spendControlReached) => {
+      const update = { limitId: "codex", spendControlReached };
+      expect(codexRateLimitsToUpdate(update)).toEqual({ windows: [], spendControlReached });
+    },
+  );
+  it("does not import another model's spend control", () => {
+    const other = { limitId: "spark", spendControlReached: true };
+    expect(codexRateLimitsToUpdate(other)).toBeUndefined();
+    expect(codexRateLimitsToLimits({ checkedAt, snapshot: other })).not.toHaveProperty(
+      "spendControlReached",
+    );
+    const main = { limitId: "codex", spendControlReached: false };
+    expect(
+      codexRateLimitsToLimits({
+        checkedAt,
+        snapshot: other,
+        rateLimitsByLimitId: { codex: main, spark: other },
+      }),
+    ).toMatchObject({ spendControlReached: false });
+  });
+  it("retains omitted spend control and truthfully replaces it with explicit false or null", () => {
+    const previous = { limitId: "codex", spendControlReached: true, primary: { usedPercent: 1 } };
+    expect(mergeCodexRateLimits(previous, { secondary: { usedPercent: 2 } })).toMatchObject({
+      spendControlReached: true,
+    });
+    for (const spendControlReached of [false, null]) {
+      const update = { limitId: "codex", spendControlReached };
+      expect(mergeCodexRateLimits(previous, update)).toMatchObject({ spendControlReached });
+    }
   });
 });

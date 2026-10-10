@@ -55,6 +55,7 @@ const RATE_LIMITS_PROBE_TIMEOUT_MS = 3_000;
 type CodexRateLimitsProbe =
   | {
       readonly snapshot: CodexRateLimitSnapshot;
+      readonly ordinaryUsageAllowed?: boolean | null | undefined;
       readonly rateLimitsByLimitId?:
         | Readonly<Record<string, CodexRateLimitSnapshot>>
         | null
@@ -456,6 +457,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
               snapshot: response.rateLimits,
               rateLimitsByLimitId: response.rateLimitsByLimitId,
               resetCredits: response.rateLimitResetCredits,
+              ordinaryUsageAllowed: response.ordinaryUsageAllowed,
             })),
             Effect.timeoutOption(Duration.millis(RATE_LIMITS_PROBE_TIMEOUT_MS)),
             Effect.map(
@@ -683,6 +685,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
             snapshot: snapshot.rateLimits.snapshot,
             rateLimitsByLimitId: snapshot.rateLimits.rateLimitsByLimitId,
             resetCredits: snapshot.rateLimits.resetCredits,
+            ordinaryUsageAllowed: snapshot.rateLimits.ordinaryUsageAllowed,
             checkedAt,
           });
 

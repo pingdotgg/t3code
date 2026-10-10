@@ -52,7 +52,7 @@ export function makeUnavailableUsageLimits(input: {
  * publishes. Windows upsert by `id`; a window the update omits keeps its
  * previous values, and a window that arrives without `resetsAt` or
  * `windowDurationMins` keeps whatever the last probe resolved for it. An
- * update with no windows leaves `previous` untouched.
+ * update with neither windows nor denial metadata leaves `previous` untouched.
  *
  * An `unsupported` snapshot stays unsupported: an account that cannot have
  * subscription windows will not start reporting them mid-turn.
@@ -63,14 +63,23 @@ export function applyUsageLimitsUpdate(input: {
   readonly checkedAt: string;
 }): ServerProviderUsageLimits | undefined {
   const { previous, update } = input;
-  if (update.windows.length === 0 || previous?.unavailable?.reason === "unsupported") {
+  if (
+    (update.windows.length === 0 &&
+      update.rateLimitReachedType === undefined &&
+      update.spendControlReached === undefined) ||
+    previous?.unavailable?.reason === "unsupported"
+  ) {
     return previous;
   }
   const merged = new Map(previous?.windows.map((window) => [window.id, window] as const));
   // Codex sends this notification beside every token-usage tick, almost
   // always with unchanged numbers. Decide "nothing changed" per window on
   // the way through so the no-op case never allocates a new snapshot.
-  let changed = false;
+  let changed =
+    (update.rateLimitReachedType !== undefined &&
+      update.rateLimitReachedType !== previous?.rateLimitReachedType) ||
+    (update.spendControlReached !== undefined &&
+      update.spendControlReached !== previous?.spendControlReached);
   for (const window of update.windows) {
     const existing = merged.get(window.id);
     const next: ServerProviderUsageWindow = {
@@ -94,6 +103,22 @@ export function applyUsageLimitsUpdate(input: {
   return {
     ...makeUsageLimits({ checkedAt: input.checkedAt, windows: merged.values() }),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),
+    ...(previous?.ordinaryUsageAllowed !== undefined
+      ? { ordinaryUsageAllowed: previous.ordinaryUsageAllowed }
+      : {}),
+    ...(previous?.ordinaryUsageCheckedAt !== undefined
+      ? { ordinaryUsageCheckedAt: previous.ordinaryUsageCheckedAt }
+      : {}),
+    ...(update.spendControlReached !== undefined
+      ? { spendControlReached: update.spendControlReached }
+      : previous?.spendControlReached !== undefined
+        ? { spendControlReached: previous.spendControlReached }
+        : {}),
+    ...(update.rateLimitReachedType !== undefined
+      ? { rateLimitReachedType: update.rateLimitReachedType }
+      : previous?.rateLimitReachedType !== undefined
+        ? { rateLimitReachedType: previous.rateLimitReachedType }
+        : {}),
   };
 }
 

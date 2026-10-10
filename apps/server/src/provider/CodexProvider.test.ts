@@ -1,6 +1,16 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { CodexSettings } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { assert, it } from "@effect/vitest";
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import {
+  applyPreferredCodexDefaultModel,
+  checkCodexProviderStatus,
+  mapCodexModelCapabilities,
+} from "./CodexProvider.ts";
+
+const decodeCodexSettingsForPermission = Schema.decodeEffect(CodexSettings);
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({
@@ -171,3 +181,81 @@ it("ignores custom models that shadow a preferred slug", () => {
 
   assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.4");
 });
+
+it.effect("publishes native permission and denial from a successful account probe", () =>
+  Effect.gen(function* () {
+    const settings = yield* decodeCodexSettingsForPermission({});
+    const status = yield* checkCodexProviderStatus(
+      settings,
+      () =>
+        Effect.succeed({
+          account: {
+            account: { type: "chatgpt", email: "fixture@example.invalid", planType: "pro" },
+            requiresOpenaiAuth: false,
+          },
+          rateLimits: {
+            snapshot: {
+              primary: { usedPercent: 1 },
+              rateLimitReachedType: "workspace_member_usage_limit_reached",
+            },
+            ordinaryUsageAllowed: false,
+            resetCredits: undefined,
+          },
+          version: "fixture",
+          models: [],
+          skills: [],
+        }),
+      {},
+    );
+    assert.strictEqual(status.usageLimits?.ordinaryUsageAllowed, false);
+    assert.strictEqual(status.usageLimits?.ordinaryUsageCheckedAt, status.checkedAt);
+    assert.strictEqual(
+      status.usageLimits?.rateLimitReachedType,
+      "workspace_member_usage_limit_reached",
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("publishes the main spend-control denial despite ordinary permission and low usage", () =>
+  Effect.gen(function* () {
+    const settings = yield* decodeCodexSettingsForPermission({});
+    const probe = {
+      account: {
+        account: {
+          type: "chatgpt" as const,
+          email: "fixture@example.invalid",
+          planType: "pro" as const,
+        },
+        requiresOpenaiAuth: false,
+      },
+      rateLimits: {
+        snapshot: {
+          limitId: "codex",
+          spendControlReached: true,
+          rateLimitReachedType: null,
+          primary: { usedPercent: 1 },
+        },
+        ordinaryUsageAllowed: true,
+        resetCredits: undefined,
+      },
+      version: "fixture",
+      models: [],
+      skills: [],
+    };
+    const status = yield* checkCodexProviderStatus(settings, () => Effect.succeed(probe), {});
+    assert.deepStrictEqual(
+      status.usageLimits && {
+        ...status.usageLimits,
+        windows: [],
+      },
+      {
+        checkedAt: status.checkedAt,
+        windows: [],
+        spendControlReached: true,
+        ordinaryUsageAllowed: true,
+        ordinaryUsageCheckedAt: status.checkedAt,
+        rateLimitReachedType: null,
+      },
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);

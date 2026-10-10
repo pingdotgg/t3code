@@ -53,6 +53,14 @@ export const ServerProviderUsageLimits = Schema.Struct({
   /** Opaque credential identity when the provider does not report an account. */
   credentialFingerprint: Schema.optional(TrimmedNonEmptyString),
   resetCredits: Schema.optional(ServerProviderResetCredits),
+  /** Native permission for included use. Missing or null does not establish permission. */
+  ordinaryUsageAllowed: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  /** Time this permission was probed; streamed window updates do not refresh it. */
+  ordinaryUsageCheckedAt: Schema.optional(IsoDateTime),
+  /** Native main-allowance spend control. True denies use; null is unknown, not recovery. */
+  spendControlReached: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  /** Native main-allowance denial reason; null explicitly clears the reason. */
+  rateLimitReachedType: Schema.optional(Schema.NullOr(Schema.String)),
   /** Provider-owned usage settings when quota windows are not available to the client. */
   externalUsage: Schema.optional(
     Schema.Struct({
@@ -77,6 +85,9 @@ export type ServerProviderUsageLimits = typeof ServerProviderUsageLimits.Type;
  */
 export const ProviderUsageLimitsUpdate = Schema.Struct({
   windows: Schema.Array(ServerProviderUsageWindow),
+  /** Omission retains prior state; null is unknown and false is an explicit negative. */
+  spendControlReached: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  rateLimitReachedType: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type ProviderUsageLimitsUpdate = typeof ProviderUsageLimitsUpdate.Type;
 
