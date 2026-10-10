@@ -270,6 +270,14 @@ function DeviceHostList({
                   </details>
                 </div>
               ) : null}
+              {!error && status?.status === "ready" && status.detail ? (
+                <p
+                  role="status"
+                  className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-xs text-muted-foreground"
+                >
+                  {status.detail}
+                </p>
+              ) : null}
             </div>
             {progress ? (
               <span

@@ -116,6 +116,24 @@ describe("Android SDK availability", () => {
   );
 });
 
+it("reports a timed-out command as a failure instead of an empty success", () => {
+  const output = {
+    stdout: "",
+    stderr: "",
+    stdoutTruncated: false,
+    stderrTruncated: false,
+    stdoutInvalidUtf8: false,
+    stderrInvalidUtf8: false,
+  };
+  expect(
+    LocalDeviceHost.__testing.commandResult({ ...output, code: null, timedOut: true }, 20_000),
+  ).toEqual({ stdout: "", stderr: "Timed out after 20000 ms.", code: 124 });
+  expect(
+    LocalDeviceHost.__testing.commandResult({ ...output, code: null, timedOut: false }, 20_000)
+      .code,
+  ).not.toBe(0);
+});
+
 it.effect("puts detected Android tools on the helper PATH without losing existing commands", () =>
   Effect.gen(function* () {
     const path = yield* Path.Path;

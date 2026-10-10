@@ -23,7 +23,32 @@ export const deviceHubDescription =
 export const agentDeviceDescription =
   "Allow new agent sessions in this environment to start and control local and remote devices, with required tools set up automatically.";
 
+// Ready hosts retain usable devices while detail reports incomplete discovery.
+export const isDiscoveryLimited = (state: DeviceServiceState) =>
+  Object.values(state.hostStatuses).some((host) => host.status === "ready" && Boolean(host.detail));
+
+// Ready hosts with diagnostics, labeled for display.
+const readyHostDiagnostics = (state: DeviceServiceState) =>
+  state.hosts.flatMap((host) => {
+    const status = state.hostStatuses[host.id];
+    return status?.status === "ready" && status.detail ? [{ host, detail: status.detail }] : [];
+  });
+
+// AVD enumeration failures leave Android discovery incomplete independently of hub diagnostics.
+export const isAndroidDiscoveryUncertain = (state: DeviceServiceState) =>
+  Object.values(state.hostStatuses).some(
+    (status) => status.status === "ready" && status.androidDiscoveryIncomplete,
+  );
+
 export function platformSetupStatus(state: DeviceServiceState, platform: DevicePlatform) {
+  const hasDevices = state.devices.some((device) => device.platform === platform);
+  if (platform === "android" && !hasDevices && isAndroidDiscoveryUncertain(state)) {
+    return {
+      ready: false,
+      message:
+        "The Android device list may be incomplete. See the device host diagnostics, then check again.",
+    };
+  }
   const availability = state.hosts
     .flatMap((host) => host.platforms)
     .find((candidate) => candidate.platform === platform);
@@ -33,10 +58,7 @@ export function platformSetupStatus(state: DeviceServiceState, platform: DeviceP
       message: availability?.reason ?? `${platformName(platform)} support was not detected.`,
     };
   }
-  if (
-    state.hostStatus === "ready" &&
-    !state.devices.some((device) => device.platform === platform)
-  ) {
+  if (state.hostStatus === "ready" && !hasDevices) {
     return {
       ready: false,
       message:
@@ -240,6 +262,7 @@ function DevicePlatformSetup(props: {
     <div className="space-y-3">
       <PlatformStatus platform="iOS" status={platformSetupStatus(props.state, "ios")} />
       <PlatformStatus platform="Android" status={platformSetupStatus(props.state, "android")} />
+      <DeviceHostDiagnostics state={props.state} />
       <p className="text-xs text-muted-foreground">
         You can use either platform. Fixing a missing platform does not block the other one.
       </p>
@@ -289,6 +312,30 @@ export function AgentDeviceSetupStatus(props: {
     );
   }
   return null;
+}
+
+// One bounded region so long diagnostics never crowd out the controls around them.
+export function DeviceHostDiagnostics(props: {
+  readonly state: DeviceServiceState;
+  readonly className?: string;
+}) {
+  const diagnostics = readyHostDiagnostics(props.state);
+  if (diagnostics.length === 0) return null;
+  return (
+    <div
+      role="status"
+      className={cn(
+        "max-h-32 shrink-0 space-y-1 overflow-y-auto text-xs text-muted-foreground",
+        props.className,
+      )}
+    >
+      {diagnostics.map(({ host, detail }) => (
+        <p key={host.id} className="whitespace-pre-line break-words">
+          {host.label}: {detail}
+        </p>
+      ))}
+    </div>
+  );
 }
 
 export function PlatformStatus(props: {

@@ -164,6 +164,33 @@ describe("ssh command", () => {
     }).pipe(Effect.provide(layerProcess));
   });
 
+  it.effect("keeps the end of long failed output when requested", () => {
+    const stdout = `${"verbose-prefix ".repeat(400)}PANIC: emulator SDK is broken\n`;
+    const spawner = ChildProcessSpawner.make(() => Effect.succeed(makeFailedProcess({ stdout })));
+    const layerSpawner = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
+    const layerProcess = Layer.mergeAll(NodeServices.layer, layerSpawner);
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    };
+
+    return Effect.gen(function* () {
+      const tail = yield* Effect.flip(
+        runSshCommand(target, { remoteCommandArgs: ["sh", "-s"], keepErrorOutputTail: true }),
+      );
+      assert.instanceOf(tail, SshCommandError);
+      assert.isTrue(tail.message.endsWith("PANIC: emulator SDK is broken"));
+      assert.isTrue(tail.message.startsWith("[truncated]"));
+
+      const head = yield* Effect.flip(runSshCommand(target, { remoteCommandArgs: ["sh", "-s"] }));
+      assert.instanceOf(head, SshCommandError);
+      assert.isFalse(head.message.includes("PANIC"));
+      assert.isTrue(head.message.endsWith("[truncated]"));
+    }).pipe(Effect.provide(layerProcess));
+  });
+
   it.effect("redacts credentials from stdout in non-zero command failures", () => {
     const spawner = ChildProcessSpawner.make(() =>
       Effect.succeed(makeFailedProcess({ stdout: '{"credential":"pairing-secret"}\n' })),

@@ -222,6 +222,15 @@ const hubEnvironment = Effect.fn("LocalDeviceHost.hubEnvironment")(function* (
   return env;
 });
 
+// A timed-out or signal-terminated command has no exit code; report it as a failure, not success.
+const commandResult = (result: ProcessRunner.ProcessRunOutput, timeoutMs: number) => ({
+  stdout: result.stdout,
+  stderr: result.timedOut
+    ? `${result.stderr}\nTimed out after ${timeoutMs} ms.`.trim()
+    : result.stderr,
+  code: result.timedOut ? 124 : (result.code ?? 1),
+});
+
 export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const config = yield* ServerConfig.ServerConfig;
@@ -717,8 +726,9 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     };
   };
 
-  const run: DeviceHost.DeviceHostReady["run"] = (command, args, options) =>
-    runner
+  const run: DeviceHost.DeviceHostReady["run"] = (command, args, options) => {
+    const timeoutMs = options?.timeoutMs ?? 20_000;
+    return runner
       .run({
         command:
           command === "emulator" && sdk.root
@@ -730,18 +740,15 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
             : command,
         args,
         env: hostEnvironment,
-        timeout: Duration.millis(options?.timeoutMs ?? 20_000),
+        timeout: Duration.millis(timeoutMs),
         timeoutBehavior: "timedOutResult",
         ...(options?.stdin === undefined ? {} : { stdin: options.stdin }),
       })
       .pipe(
-        Effect.map((result) => ({
-          stdout: result.stdout,
-          stderr: result.stderr,
-          code: Number(result.code),
-        })),
+        Effect.map((result) => commandResult(result, timeoutMs)),
         Effect.catch((cause) => Effect.succeed({ stdout: "", stderr: String(cause), code: 127 })),
       );
+  };
 
   const toReady = (running: RunningHost): DeviceHost.DeviceHostReady => ({
     hub: { origin: running.hub.origin } satisfies DeviceHost.DeviceHubEndpoint,
@@ -797,4 +804,5 @@ export const __testing = {
   platformReason,
   deviceHostEnvironment,
   hubEnvironment,
+  commandResult,
 };

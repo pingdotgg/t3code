@@ -33,6 +33,8 @@ Studio's Device Manager. T3 Code detects standard SDK locations; set
 `ANDROID_HOME` for a custom location. The panel explains missing dependencies.
 After installing them, restart the environment server and refresh devices.
 
+If listing stopped Android virtual devices fails, devices already found stay available and the panel reports the error for that host. Check the host diagnostic, repair the host connection or Android tools as indicated, then refresh to include stopped Android virtual devices.
+
 The screen is interactive: click and drag to touch, type while the screen is
 focused, and use the toolbar for Home, Back, and Recents on Android, rotate on
 iOS, and power off. Close the tab to stop watching; the device keeps running

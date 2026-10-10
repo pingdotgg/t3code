@@ -57,6 +57,7 @@ import { useServerConfigs } from "~/state/entities";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   AgentDeviceSetupStatus,
+  DeviceHostDiagnostics,
   DeviceHubSetupStatus,
   PlatformStatus,
   platformSetupStatus,
@@ -821,14 +822,25 @@ function DeviceIntegrationControls({
                 : undefined
             }
             status={
-              <div className="flex flex-wrap gap-x-5 gap-y-2">
-                <PlatformStatus compact platform="iOS" status={platformSetupStatus(state, "ios")} />
-                <PlatformStatus
-                  compact
-                  platform="Android"
-                  status={platformSetupStatus(state, "android")}
+              <>
+                <div className="flex flex-wrap gap-x-5 gap-y-2">
+                  <PlatformStatus
+                    compact
+                    platform="iOS"
+                    status={platformSetupStatus(state, "ios")}
+                  />
+                  <PlatformStatus
+                    compact
+                    platform="Android"
+                    status={platformSetupStatus(state, "android")}
+                  />
+                </div>
+                {/* Remote host diagnostics appear in their device-host rows below. */}
+                <DeviceHostDiagnostics
+                  className="mt-2"
+                  state={{ ...state, hosts: state.hosts.filter((host) => host.kind === "local") }}
                 />
-              </div>
+              </>
             }
             control={
               <Button

@@ -68,7 +68,11 @@ vi.mock("./SettingsScopeContext", () => ({
 }));
 
 import { IntegrationsSettingsPanel } from "./IntegrationsSettings";
-import { platformSetupStatus } from "../device/DeviceSetup";
+import {
+  isAndroidDiscoveryUncertain,
+  isDiscoveryLimited,
+  platformSetupStatus,
+} from "../device/DeviceSetup";
 
 let renderer: ReactTestRenderer | undefined;
 
@@ -144,6 +148,122 @@ const deviceState = (overrides: Partial<DeviceServiceState> = {}): DeviceService
 });
 
 describe("device setup guidance", () => {
+  it("keeps Android availability uncertain after a local discovery warning", () => {
+    const state = deviceState({
+      hostStatuses: {
+        local: {
+          status: "ready",
+          detail: "A device inventory could not be inspected.",
+          androidDiscoveryIncomplete: true,
+        },
+      },
+    });
+    const android = platformSetupStatus(state, "android");
+    expect(android.ready).toBe(false);
+    expect(android.message).toContain("may be incomplete");
+    expect(android.message).not.toContain("Device Manager");
+    expect(platformSetupStatus(state, "ios").message).toContain("Xcode Settings");
+
+    const recovered = deviceState({ hostStatuses: { local: { status: "ready" } } });
+    expect(platformSetupStatus(recovered, "android").message).toContain("Device Manager");
+  });
+
+  const local = deviceState().hosts[0]!;
+  const remote = {
+    ...local,
+    id: "remote",
+    kind: "ssh" as const,
+    label: "Mac mini",
+    platforms: [{ platform: "android" as const, available: true }],
+  };
+  it.each([
+    { localCase: "failed", localStatus: "failed" as const, localAndroid: true },
+    { localCase: "without Android", localStatus: "ready" as const, localAndroid: false },
+  ])("reports a remote discovery warning when the local host is $localCase", (input) => {
+    const state = deviceState({
+      hosts: [
+        {
+          ...local,
+          platforms: [{ platform: "android", available: input.localAndroid }],
+        },
+        remote,
+      ],
+      hostStatus: input.localStatus,
+      hostStatuses: {
+        local: { status: input.localStatus },
+        remote: {
+          status: "ready",
+          detail: "Could not list Android virtual devices.",
+          androidDiscoveryIncomplete: true,
+        },
+      },
+    });
+    const android = platformSetupStatus(state, "android");
+    expect(android.ready).toBe(false);
+    expect(android.message).toContain("may be incomplete");
+  });
+
+  it("keeps the missing-tool explanation when the warning host has no Android support", () => {
+    const state = deviceState({
+      hosts: [
+        {
+          ...local,
+          platforms: [
+            { platform: "android", available: false, reason: "Android Emulator is missing." },
+          ],
+        },
+        { ...remote, platforms: [{ platform: "ios", available: true }] },
+      ],
+      hostStatuses: {
+        local: { status: "ready" },
+        remote: { status: "ready", detail: "One simulator could not be inspected." },
+      },
+    });
+    expect(platformSetupStatus(state, "android").message).toBe("Android Emulator is missing.");
+  });
+
+  it("keeps Android creation advice when only a host without Android reports a warning", () => {
+    const state = deviceState({
+      hosts: [local, { ...remote, platforms: [{ platform: "ios", available: true }] }],
+      hostStatuses: {
+        local: { status: "ready" },
+        remote: { status: "ready", detail: "One simulator could not be inspected." },
+      },
+    });
+    expect(isDiscoveryLimited(state)).toBe(true);
+    expect(isAndroidDiscoveryUncertain(state)).toBe(false);
+    expect(platformSetupStatus(state, "android").message).toContain("Device Manager");
+  });
+
+  it("keeps Android creation advice when a dual-platform host reports only an iOS warning", () => {
+    const state = deviceState({
+      hostStatuses: {
+        local: { status: "ready", detail: "One iOS simulator could not be inspected." },
+      },
+    });
+    expect(isDiscoveryLimited(state)).toBe(true);
+    expect(isAndroidDiscoveryUncertain(state)).toBe(false);
+    expect(platformSetupStatus(state, "android").message).toContain("Device Manager");
+  });
+
+  it("keeps discovered Android devices available while discovery is limited", () => {
+    const state = deviceState({
+      hostStatuses: { local: { status: "ready", detail: "Stopped devices could not be listed." } },
+      devices: [
+        {
+          hostId: "local",
+          id: "phone-1",
+          name: "Pixel",
+          platform: "android",
+          version: "36",
+          booted: true,
+          physical: true,
+        },
+      ],
+    });
+    expect(platformSetupStatus(state, "android").ready).toBe(true);
+  });
+
   it("directs users to install an iOS runtime and create an Android virtual device", () => {
     expect(platformSetupStatus(deviceState(), "ios").message).toContain("Xcode Settings");
     expect(platformSetupStatus(deviceState(), "android").message).toContain("Device Manager");

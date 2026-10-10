@@ -125,7 +125,7 @@ export function DeviceToolsPanel(props: {
 
         {props.hostDiagnostics ? (
           <Section title="Host diagnostics">
-            <p className="whitespace-pre-line text-xs text-muted-foreground">
+            <p className="max-h-32 overflow-y-auto whitespace-pre-line break-words text-xs text-muted-foreground">
               {props.hostDiagnostics}
             </p>
           </Section>
