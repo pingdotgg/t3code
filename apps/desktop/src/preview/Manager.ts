@@ -1530,6 +1530,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       });
     };
     const beforeInput = (event: Electron.Event, input: Electron.Input): void => {
+      if (browserHost.isDispatchingKeyboard(wc)) {
+        wc.setIgnoreMenuShortcuts(true);
+        return;
+      }
       syncMenuShortcuts(wc, input);
       const host = wc.hostWebContents;
       const forwarded =

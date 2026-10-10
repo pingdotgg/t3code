@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { DesktopBrowserEvent } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as NodeEvents from "node:events";
@@ -89,6 +90,68 @@ describe("DesktopBrowserHost", () => {
       // Only the new connection's reply arrives; the old one's id could collide.
       expect(reply).toMatchObject({ type: "cdp" });
       expect(decodeCdpReply((reply as { message: string }).message).id).toBe(2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not type deferred commands from a released connection", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      const started = Promise.withResolvers<void>();
+      const resume = Promise.withResolvers<void>();
+      const edits: Array<string> = [];
+      let first = true;
+      Object.assign(debuggee.tab.webContents, {
+        mainFrame: {
+          frames: [],
+          executeJavaScript: async (source: string) => {
+            if (source.includes("indexOf(element.contentWindow)")) {
+              if (first) {
+                first = false;
+                started.resolve();
+                await resume.promise;
+              }
+              return -1;
+            }
+            edits.push(source);
+            return true;
+          },
+        },
+      });
+      const replies = yield* Queue.unbounded<DesktopBrowserEvent>();
+      yield* host.events.pipe(
+        Stream.runForEach((line) =>
+          Queue.offer(replies, decodeEvent(new TextDecoder().decode(line))),
+        ),
+        Effect.forkScoped,
+      );
+      host.attach(key, debuggee.tab);
+      expect(yield* Queue.take(replies)).toEqual({ type: "attached", ...key });
+      const type = (id: number, text: string) =>
+        host.handleCommandLine(
+          encodeJson({
+            type: "cdp",
+            ...key,
+            message: encodeJson({
+              id,
+              method: "Input.insertText",
+              params: { text },
+              sessionId: "t3-preview-page",
+            }),
+          }),
+        );
+      yield* type(1, "obsolete active input");
+      yield* Effect.promise(() => started.promise);
+      yield* type(2, "obsolete queued input");
+      yield* host.handleCommandLine(encodeJson({ type: "release", ...key }));
+      yield* type(3, "fresh input");
+      resume.resolve();
+      const reply = yield* Queue.take(replies);
+      expect(reply).toMatchObject({ type: "cdp" });
+      expect(decodeCdpReply((reply as { message: string }).message).id).toBe(3);
+      expect(edits).toHaveLength(1);
+      expect(edits[0]).toContain("fresh input");
+      expect(host.isDispatchingKeyboard(debuggee.tab.webContents)).toBe(false);
     }).pipe(Effect.scoped),
   );
 

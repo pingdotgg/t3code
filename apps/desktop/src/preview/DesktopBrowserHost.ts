@@ -22,8 +22,10 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { clipboard } from "electron";
 
 import { createCdpRelayConnection, type CdpRelayConnection } from "./CdpRelay.ts";
+import { createDesktopBrowserKeyboard } from "./DesktopBrowserKeyboard.ts";
 
 const encodeEvent = Schema.encodeSync(Schema.fromJsonString(DesktopBrowserEvent));
 const decodeCommand = Schema.decodeUnknownOption(Schema.fromJsonString(DesktopBrowserCommand));
@@ -50,6 +52,7 @@ const keyOf = ({ threadId, tabId }: DesktopBrowserTabKey) => `${threadId}\u0000$
 interface AttachedTab {
   readonly key: DesktopBrowserTabKey;
   readonly debuggee: DesktopBrowserTabDebugger;
+  readonly keyboard: ReturnType<typeof createDesktopBrowserKeyboard>;
   relay: CdpRelayConnection | null;
   /** Where the server wants this tab's downloads; null keeps Electron's own handling. */
   downloadDirectory: string | null;
@@ -84,6 +87,8 @@ export class DesktopBrowserHost extends Context.Service<
      * the server sent the page no input just before it started.
      */
     readonly humanStartedDownload: (source: Electron.WebContents) => boolean;
+    /** Suppresses desktop shortcuts while a native agent key is being delivered. */
+    readonly isDispatchingKeyboard: (source: Electron.WebContents) => boolean;
     /** Points a server tab's download at the server; false for any other download. */
     readonly placeDownload: (source: Electron.WebContents, item: Electron.DownloadItem) => boolean;
     /** The agent's cursor positions for attached tabs, keyed by their server tab. */
@@ -114,9 +119,12 @@ export const make = Effect.gen(function* () {
     const relay: CdpRelayConnection = createCdpRelayConnection(
       {
         send: (method, params, sessionId) =>
-          sessionId === undefined
-            ? debuggee.sendCommand(method, params)
-            : debuggee.sendCommand(method, params, sessionId),
+          sessionId === undefined &&
+          (method === "Input.insertText" || method === "Input.dispatchKeyEvent")
+            ? tab.keyboard.send(method, params)
+            : sessionId === undefined
+              ? debuggee.sendCommand(method, params)
+              : debuggee.sendCommand(method, params, sessionId),
         targetId: () =>
           debuggee
             .sendCommand("Target.getTargetInfo")
@@ -158,6 +166,7 @@ export const make = Effect.gen(function* () {
     const id = keyOf(key);
     const tab = tabs.get(id);
     if (!tab) return;
+    tab.keyboard.cancel();
     tabs.delete(id);
     tab.debuggee.debugger.off("message", tab.onMessage);
     emit({ type: "detached", ...key });
@@ -170,6 +179,9 @@ export const make = Effect.gen(function* () {
     const tab: AttachedTab = {
       key,
       debuggee,
+      keyboard: createDesktopBrowserKeyboard(debuggee.webContents, debuggee.debugger, () =>
+        clipboard.read(),
+      ),
       relay: null,
       downloadDirectory: null,
       pendingDownloadGuid: null,
@@ -200,6 +212,7 @@ export const make = Effect.gen(function* () {
       }
       if (command.value.type === "release") {
         // A new server connection starts with a fresh relay and fresh sessions.
+        tab.keyboard.cancel();
         tab.relay = null;
         return;
       }
@@ -217,6 +230,7 @@ export const make = Effect.gen(function* () {
     Effect.forEach(
       [...tabs.values()],
       (tab) => {
+        tab.keyboard.cancel();
         tab.relay = null;
         return PubSub.publish(outbox, { type: "attached", ...tab.key });
       },
@@ -239,6 +253,10 @@ export const make = Effect.gen(function* () {
     detach,
     placeDownload,
     humanStartedDownload,
+    isDispatchingKeyboard: (source) =>
+      [...tabs.values()].some(
+        (tab) => tab.debuggee.webContents === source && tab.keyboard.isDispatching(),
+      ),
   });
 });
 
