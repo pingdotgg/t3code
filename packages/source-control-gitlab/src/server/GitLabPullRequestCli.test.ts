@@ -1,4 +1,4 @@
-import { afterEach, assert, expect, it, vi } from "@effect/vitest";
+import { afterEach, assert, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/process";
@@ -871,6 +871,263 @@ layer("GitLabPullRequestCli.layer", (it) => {
       assert.strictEqual(error._tag, "GitLabMergeRequestReadError");
     }),
   );
+
+  describe("the head pipeline's jobs", () => {
+    const headPipeline = {
+      id: 9,
+      // A merge request from a fork runs its pipeline in the fork, not in acme/web.
+      project_id: 42,
+      status: "failed",
+      web_url: "https://gitlab.com/fork/web/-/pipelines/9",
+      source: "merge_request_event",
+      updated_at: "2026-10-01T10:00:00Z",
+    };
+    const pipelineCheck = {
+      name: "Pipeline",
+      status: "failure",
+      description: "merge_request_event",
+      url: "https://gitlab.com/fork/web/-/pipelines/9",
+    };
+    const job = (id: number) => ({ id, name: `job ${id}`, stage: "test", status: "success" });
+    const pageOf = (first: number, count: number) =>
+      JSON.stringify(Array.from({ length: count }, (_, index) => job(first + index)));
+
+    /**
+     * Answers each endpoint by its path and page, since the job reads run side by side. A list
+     * given as one string is its only page; a missing page answers 404.
+     */
+    function answer(
+      lists: {
+        readonly jobs: string | ReadonlyArray<string>;
+        readonly bridges: string | ReadonlyArray<string>;
+      },
+      pipeline: Record<string, unknown> = headPipeline,
+      mergeRequest: Record<string, unknown> = {},
+    ) {
+      mockedExecute.mockImplementation((input) => {
+        const path = input.args[1] ?? "";
+        const kind = path.includes("/jobs?")
+          ? "jobs"
+          : path.includes("/bridges?")
+            ? "bridges"
+            : null;
+        if (kind === null) {
+          return Effect.succeed(
+            output(mergeRequestJson({ ...mergeRequest, head_pipeline: pipeline })),
+          );
+        }
+        const pages = lists[kind];
+        const page = Number(new URLSearchParams(path.split("?")[1]).get("page"));
+        const body = typeof pages === "string" ? (page === 1 ? pages : "[]") : pages[page - 1];
+        return Effect.succeed(output(body ?? '{"message":"404 Not Found"}'));
+      });
+    }
+
+    const jobReads = () =>
+      mockedExecute.mock.calls.filter(([input]) => input.args[1]?.includes("/pipelines/")).length;
+
+    const read = (includeJobs: boolean) =>
+      GitLabPullRequestCli.GitLabPullRequestCli.pipe(
+        Effect.flatMap((cli) =>
+          cli.getMergeRequestDetail({ cwd: "/w", repository: "acme/web", number: 7, includeJobs }),
+        ),
+      );
+
+    it.effect("reads them from the project the pipeline ran in, in the order they run", () =>
+      Effect.gen(function* () {
+        answer(
+          {
+            jobs: JSON.stringify([
+              { id: 12, name: "lint", stage: "test", status: "failed" },
+              { id: 10, name: "build", stage: "build", status: "success" },
+            ]),
+            bridges: JSON.stringify([{ id: 11, name: "docs", stage: "build", status: "success" }]),
+          },
+          // Still running, so nothing is kept for the next read.
+          { ...headPipeline, status: "running" },
+        );
+
+        const detail = yield* read(true);
+
+        expect(mockedExecute.mock.calls.map(([input]) => input.args[1]).toSorted()).toEqual([
+          "projects/42/pipelines/9/bridges?per_page=100&page=1",
+          "projects/42/pipelines/9/jobs?per_page=100&page=1",
+          "projects/acme%2Fweb/merge_requests/7?include_diverged_commits_count=true",
+        ]);
+        expect(detail.checks.map((check) => [check.name, check.status])).toEqual([
+          ["build", "success"],
+          ["docs", "success"],
+          ["lint", "failure"],
+        ]);
+      }),
+    );
+
+    it.effect("follows a list past a full page", () =>
+      Effect.gen(function* () {
+        answer({ jobs: [pageOf(1, 100), pageOf(101, 5)], bridges: "[]" });
+
+        const detail = yield* read(true);
+
+        expect(detail.checks).toHaveLength(105);
+      }),
+    );
+
+    it.effect("keeps the pipeline where its jobs cannot stand for all of it", () =>
+      Effect.gen(function* () {
+        const pages = Array.from({ length: 10 }, (_, index) => pageOf(index * 100 + 1, 100));
+        for (const [index, lists] of [
+          // A page that cannot be read, in the first list or past the first page.
+          { jobs: [], bridges: "[]" },
+          { jobs: "[]", bridges: [pageOf(1, 100)] },
+          // A row that cannot be read may be the job that failed.
+          { jobs: JSON.stringify([job(1), { id: 2, status: "failed" }]), bridges: "[]" },
+          // More jobs than the walk follows.
+          { jobs: [...pages, pageOf(1001, 1)], bridges: "[]" },
+          // A pipeline with no jobs yet still has a status worth showing.
+          { jobs: "[]", bridges: "[]" },
+        ].entries()) {
+          mockedExecute.mockReset();
+          // Each case its own pipeline, so none answers from another's settled read.
+          answer(lists, { ...headPipeline, id: 100 + index });
+
+          const detail = yield* read(true);
+
+          expect(detail.checks).toEqual([pipelineCheck]);
+        }
+      }),
+    );
+
+    it.effect("reads a finished pipeline's jobs once, until it runs again", () =>
+      Effect.gen(function* () {
+        const pipeline = { ...headPipeline, id: 200 };
+        answer({ jobs: pageOf(1, 2), bridges: "[]" }, pipeline);
+        yield* read(true);
+        expect(jobReads()).toBe(2);
+
+        const kept = yield* read(true);
+        expect(jobReads()).toBe(2);
+        expect(kept.checks).toHaveLength(2);
+
+        // A retried job runs the pipeline again, so it settles at a new moment.
+        answer(
+          { jobs: pageOf(1, 3), bridges: "[]" },
+          {
+            ...pipeline,
+            updated_at: "2026-10-01T11:00:00Z",
+          },
+        );
+        const rerun = yield* read(true);
+        expect(jobReads()).toBe(4);
+        expect(rerun.checks).toHaveLength(3);
+      }),
+    );
+
+    it.effect("keeps a finished pipeline's checks apart from another GitLab's", () =>
+      Effect.gen(function* () {
+        const pipeline = { ...headPipeline, id: 230 };
+        answer({ jobs: pageOf(1, 2), bridges: "[]" }, pipeline);
+        yield* read(true);
+
+        // The same ids on a self-managed GitLab name a different pipeline.
+        answer({ jobs: pageOf(1, 3), bridges: "[]" }, pipeline, {
+          web_url: "https://gitlab.example.com/acme/web/-/merge_requests/7",
+        });
+        const other = yield* read(true);
+        expect(jobReads()).toBe(4);
+        expect(other.checks).toHaveLength(3);
+      }),
+    );
+
+    it.effect("reads a finished pipeline's jobs again after a partial read", () =>
+      Effect.gen(function* () {
+        const pipeline = { ...headPipeline, id: 250 };
+        answer(
+          { jobs: JSON.stringify([job(1), { id: 2, status: "failed" }]), bridges: "[]" },
+          pipeline,
+        );
+        const partial = yield* read(true);
+        expect(partial.checks).toEqual([pipelineCheck]);
+
+        answer({ jobs: pageOf(1, 2), bridges: "[]" }, pipeline);
+        const whole = yield* read(true);
+        expect(whole.checks).toHaveLength(2);
+      }),
+    );
+
+    it.effect("reads a finished pipeline's trigger jobs every time", () =>
+      Effect.gen(function* () {
+        // A trigger job that does not wait lets the parent finish while its child still runs.
+        const bridge = (status: string) =>
+          JSON.stringify([
+            {
+              id: 3,
+              name: "trigger:docs",
+              stage: "test",
+              status: "success",
+              downstream_pipeline: { id: 30, status },
+            },
+          ]);
+        const pipeline = { ...headPipeline, id: 500, status: "success" };
+        answer({ jobs: pageOf(1, 2), bridges: bridge("running") }, pipeline);
+        const running = yield* read(true);
+        expect(running.checks.at(-1)?.status).toBe("pending");
+
+        answer({ jobs: pageOf(1, 2), bridges: bridge("failed") }, pipeline);
+        const failed = yield* read(true);
+
+        expect(jobReads()).toBe(4);
+        expect(failed.checks.at(-1)?.status).toBe("failure");
+      }),
+    );
+
+    it.effect("reads a running pipeline's jobs every time", () =>
+      Effect.gen(function* () {
+        answer(
+          { jobs: pageOf(1, 2), bridges: "[]" },
+          { ...headPipeline, id: 300, status: "running" },
+        );
+
+        yield* read(true);
+        yield* read(true);
+
+        expect(jobReads()).toBe(4);
+      }),
+    );
+
+    it.effect("tries a failed read again rather than keep it", () =>
+      Effect.gen(function* () {
+        const pipeline = { ...headPipeline, id: 400 };
+        answer({ jobs: pageOf(1, 2), bridges: "[]" }, pipeline);
+        mockedExecute.mockImplementationOnce(() =>
+          Effect.succeed(output(mergeRequestJson({ head_pipeline: pipeline }))),
+        );
+        mockedExecute.mockImplementationOnce(() =>
+          Effect.fail(
+            new GitLabCli.GitLabCliCommandError({
+              operation: "execute",
+              command: "glab",
+              cwd: "/w",
+              cause: new Error("connection reset"),
+            }),
+          ),
+        );
+
+        expect((yield* read(true)).checks).toEqual([pipelineCheck]);
+        expect((yield* read(true)).checks).toHaveLength(2);
+      }),
+    );
+
+    it.effect("asks for no jobs when the caller only needs the merge request", () =>
+      Effect.gen(function* () {
+        answer({ jobs: "[]", bridges: "[]" });
+
+        const detail = yield* read(false);
+
+        expect(mockedExecute).toHaveBeenCalledTimes(1);
+        expect(detail.checks).toEqual([pipelineCheck]);
+      }),
+    );
+  });
 
   it.effect("fails when the authenticated account has no username", () =>
     Effect.gen(function* () {

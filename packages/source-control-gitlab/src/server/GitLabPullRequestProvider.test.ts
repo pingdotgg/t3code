@@ -105,6 +105,33 @@ describe("getChangeRequest base freshness", () => {
     }),
   );
 
+  it.effect("reads a summary without the pipeline's jobs or project settings", () =>
+    Effect.gen(function* () {
+      const reads: Array<boolean | undefined> = [];
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            getMergeRequestDetail: (input) => {
+              reads.push(input.includeJobs);
+              return Effect.succeed(detail);
+            },
+          }),
+        ),
+      );
+      const read = provider.getChangeRequestSummary;
+      if (read === undefined) return yield* Effect.die("summary read missing");
+      const summary = yield* read({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "gitlab.com",
+        number: 7,
+      });
+
+      expect(summary.title).toBe("Merge request 7");
+      expect(reads).toEqual([undefined]);
+    }),
+  );
+
   const readWith = (divergence: { readonly divergedCommits?: number }) =>
     Effect.gen(function* () {
       const provider = yield* make;

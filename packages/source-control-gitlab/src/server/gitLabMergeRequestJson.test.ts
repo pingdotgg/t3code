@@ -10,6 +10,7 @@ import {
   decodeMergeRequestListJson,
   decodeNotesJson,
   decodeOwnAwardIdJson,
+  decodePipelineJobsJson,
   decodeViewerJson,
   gitLabAwardName,
 } from "./gitLabMergeRequestJson.ts";
@@ -234,6 +235,76 @@ describe("decodeMergeRequestDetailJson", () => {
     );
 
     expect(detail.checks[0]?.status).toBe("neutral");
+  });
+});
+
+describe("decodePipelineJobsJson", () => {
+  it("reads each job as a check, counting the rows it could not read", () => {
+    const { jobs, rawCount } = expectSuccess(
+      decodePipelineJobsJson(
+        JSON.stringify([
+          {
+            id: 12,
+            name: "lint",
+            stage: "test",
+            status: "failed",
+            allow_failure: true,
+            web_url: "https://gitlab.com/acme/web/-/jobs/12",
+          },
+          { id: 11, name: "build", stage: "build", status: "running" },
+          { id: 10, stage: "build", status: "success" },
+        ]),
+      ),
+    );
+
+    // The job without a name is not a check, but still a row GitLab sent.
+    expect(rawCount).toBe(3);
+    expect(jobs).toEqual([
+      // Allowed to fail, so the pipeline passes over it and so does the check.
+      {
+        id: 12,
+        check: {
+          name: "lint",
+          status: "neutral",
+          description: "test",
+          url: "https://gitlab.com/acme/web/-/jobs/12",
+        },
+      },
+      { id: 11, check: { name: "build", status: "pending", description: "build", url: null } },
+    ]);
+  });
+
+  it("reads a trigger job as the pipeline it started", () => {
+    const { jobs } = expectSuccess(
+      decodePipelineJobsJson(
+        JSON.stringify([
+          {
+            id: 21,
+            name: "trigger:docs",
+            stage: "test",
+            // The trigger itself succeeds as soon as the child pipeline exists.
+            status: "success",
+            web_url: "https://gitlab.com/acme/web/-/jobs/21",
+            downstream_pipeline: {
+              id: 30,
+              status: "failed",
+              web_url: "https://gitlab.com/acme/web/-/pipelines/30",
+            },
+          },
+          { id: 22, name: "trigger:e2e", stage: "test", status: "created" },
+        ]),
+      ),
+    );
+
+    expect(jobs.map((job) => job.check)).toEqual([
+      {
+        name: "trigger:docs",
+        status: "failure",
+        description: "test",
+        url: "https://gitlab.com/acme/web/-/pipelines/30",
+      },
+      { name: "trigger:e2e", status: "pending", description: "test", url: null },
+    ]);
   });
 });
 

@@ -5,6 +5,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
   PullRequestAction,
+  PullRequestCheck,
   PullRequestComment,
   PullRequestCommit,
   PullRequestInvolvement,
@@ -33,6 +34,8 @@ import {
   decodeMergeRequestListJson,
   decodeNotesJson,
   decodeOwnAwardIdJson,
+  decodePipelineJobsJson,
+  type GitLabPipelineJob,
   decodeProjectMergeCapabilitiesJson,
   decodeProjectUsersJson,
   decodeRepositoryBlobsJson,
@@ -197,6 +200,13 @@ const COMMIT_PAGE_SIZE = 100;
  * request a person is reading holds, and a walk that ends whatever the host has.
  */
 const CONVERSATION_PAGES = 10;
+/**
+ * Pages of each job list to follow, a thousand jobs, before the head pipeline is shown as the one
+ * check instead: a list cut short could leave out the job that failed.
+ */
+const PIPELINE_JOB_PAGES = 10;
+/** Finished pipelines whose checks are kept, about one per merge request a person has open. */
+const SETTLED_PIPELINE_CAPACITY = 200;
 const DIFF_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DIFF_TIMEOUT_MS = 60_000;
 const DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
@@ -240,6 +250,8 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly cwd: string;
       readonly repository: string;
       readonly number: number;
+      /** Read the head pipeline's jobs as its checks, for the reads that show checks. */
+      readonly includeJobs?: boolean;
     }) => Effect.Effect<GitLabMergeRequestDetail, GitLabPullRequestCliError>;
 
     readonly listNotes: (input: {
@@ -915,6 +927,106 @@ export const make = Effect.gen(function* () {
     );
 
   /**
+   * The checks of finished pipelines, by the merge request that showed them, the pipeline and
+   * the moment it settled. The merge request's URL names its host, and ids are only unique
+   * within one GitLab, so a server reading from several never answers one from another. A finished
+   * pipeline's jobs do not change until it runs again, and that moves the moment, so every
+   * refresh of a merge request whose pipeline is done costs no job reads. Only whole job lists
+   * are kept: a read that failed, came back partial or found no jobs is tried again. A
+   * pipeline with trigger jobs is never kept: the pipelines they start run on their own, past
+   * the parent finishing and through retries that never move the parent's moment.
+   */
+  const settledPipelineChecks = new Map<string, ReadonlyArray<PullRequestCheck>>();
+  const rememberSettledPipeline = (key: string, checks: ReadonlyArray<PullRequestCheck>) => {
+    settledPipelineChecks.set(key, checks);
+    if (settledPipelineChecks.size > SETTLED_PIPELINE_CAPACITY) {
+      // Maps iterate in insertion order, so the first key is the oldest.
+      const oldest = settledPipelineChecks.keys().next().value;
+      if (oldest !== undefined) settledPipelineChecks.delete(oldest);
+    }
+  };
+
+  /**
+   * Every job of one kind in a pipeline, page by page, or null where the list cannot be trusted
+   * to be whole: a page that could not be read, a row that could not be, or more pages than the
+   * walk follows. Any of those may hide the job that failed.
+   */
+  const pipelineJobsPage = (input: {
+    readonly cwd: string;
+    readonly path: string;
+    readonly page: number;
+  }): Effect.Effect<ReadonlyArray<GitLabPipelineJob> | null, GitLabPullRequestCliError> =>
+    api({
+      cwd: input.cwd,
+      path: `${input.path}?${query([
+        ["per_page", String(MAX_PAGE_SIZE)],
+        ["page", String(input.page)],
+      ])}`,
+    }).pipe(
+      Effect.flatMap((result) => {
+        const decoded = decodePipelineJobsJson(result.stdout.trim());
+        if (
+          !Result.isSuccess(decoded) ||
+          decoded.success.jobs.length !== decoded.success.rawCount
+        ) {
+          return Effect.succeed(null);
+        }
+        const { jobs, rawCount } = decoded.success;
+        if (rawCount < MAX_PAGE_SIZE) return Effect.succeed(jobs);
+        if (input.page >= PIPELINE_JOB_PAGES) return Effect.succeed(null);
+        return pipelineJobsPage({ ...input, page: input.page + 1 }).pipe(
+          Effect.map((rest) => (rest === null ? null : [...jobs, ...rest])),
+        );
+      }),
+    );
+
+  /**
+   * The head pipeline's jobs in place of the pipeline itself, so a failure names the job that
+   * failed. GitLab lists script jobs and trigger jobs apart, so both lists are read, from the
+   * project the pipeline ran in: on a merge request from a fork that is the fork, and the target
+   * project answers 404 for it. The pipeline stays the one check wherever its jobs cannot stand
+   * for all of it: a failed or partial read, or a pipeline that has not created any jobs yet.
+   */
+  const withPipelineJobs = (
+    cwd: string,
+    detail: GitLabMergeRequestDetail,
+  ): Effect.Effect<GitLabMergeRequestDetail> => {
+    const pipeline = detail.headPipeline;
+    if (pipeline === undefined) return Effect.succeed(detail);
+    const settledKey =
+      pipeline.settledAt === null
+        ? null
+        : `${detail.url}#${pipeline.projectId}/${pipeline.id}@${pipeline.settledAt}`;
+    const settled = settledKey === null ? undefined : settledPipelineChecks.get(settledKey);
+    if (settled !== undefined) {
+      return Effect.succeed({ ...detail, checks: settled });
+    }
+    const list = (kind: "jobs" | "bridges") =>
+      pipelineJobsPage({
+        cwd,
+        path: `projects/${pipeline.projectId}/pipelines/${pipeline.id}/${kind}`,
+        page: 1,
+      });
+    return Effect.all([list("jobs"), list("bridges")], { concurrency: 2 }).pipe(
+      Effect.map(([jobs, bridges]) => {
+        const checks =
+          jobs === null || bridges === null || jobs.length + bridges.length === 0
+            ? null
+            : // GitLab lists jobs newest first, and a later stage's jobs are created after an
+              // earlier one's.
+              [...jobs, ...bridges]
+                .toSorted((left, right) => left.id - right.id)
+                .map((job) => job.check);
+        if (settledKey !== null && checks !== null && bridges?.length === 0) {
+          rememberSettledPipeline(settledKey, checks);
+        }
+        return checks === null ? detail : { ...detail, checks };
+      }),
+      Effect.orElseSucceed(() => detail),
+    );
+  };
+
+  /**
    * The merge request itself, which several calls need for different parts of it: the detail for
    * everything, and the reviewer paths for the ids GitLab writes a reviewer set with.
    */
@@ -922,6 +1034,7 @@ export const make = Effect.gen(function* () {
     readonly cwd: string;
     readonly repository: string;
     readonly number: number;
+    readonly includeJobs?: boolean;
   }): Effect.Effect<GitLabMergeRequestDetail, GitLabPullRequestCliError> =>
     api({
       cwd: input.cwd,
@@ -933,16 +1046,19 @@ export const make = Effect.gen(function* () {
     }).pipe(
       Effect.flatMap((result) => {
         const decoded = decodeMergeRequestDetailJson(result.stdout.trim());
-        return Result.isSuccess(decoded)
-          ? Effect.succeed(decoded.success)
-          : Effect.fail(
-              new GitLabMergeRequestReadError({
-                command: "glab",
-                cwd: input.cwd,
-                operation: "getMergeRequestDetail",
-                cause: decoded.failure,
-              }),
-            );
+        if (!Result.isSuccess(decoded)) {
+          return Effect.fail(
+            new GitLabMergeRequestReadError({
+              command: "glab",
+              cwd: input.cwd,
+              operation: "getMergeRequestDetail",
+              cause: decoded.failure,
+            }),
+          );
+        }
+        return input.includeJobs === true
+          ? withPipelineJobs(input.cwd, decoded.success)
+          : Effect.succeed(decoded.success);
       }),
     );
 
