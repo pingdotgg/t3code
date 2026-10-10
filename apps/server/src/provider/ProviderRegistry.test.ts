@@ -3204,6 +3204,31 @@ it.layer(
       ),
     );
 
+    it.effect("names a logged-out instance's own config dir in the sign-in hint", () =>
+      Effect.gen(function* () {
+        // Following a bare `claude auth login` would sign in the default config
+        // dir, replacing that account's login instead of signing in this one.
+        const status = yield* checkClaudeProviderStatus(
+          { ...defaultClaudeSettings, homePath: "/synthetic/claude-personal" },
+          claudeCapabilities({
+            tokenSource: "none",
+            apiKeySource: "none",
+            apiProvider: "firstParty",
+          }),
+        );
+        assert.strictEqual(status.auth.status, "unauthenticated");
+        assert.include(status.message, 'CLAUDE_CONFIG_DIR set to "/synthetic/claude-personal"');
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
     it.effect("keeps an API key install authenticated when it reports no token source", () =>
       Effect.gen(function* () {
         // `ANTHROPIC_API_KEY` never populates `tokenSource`, so reading that
