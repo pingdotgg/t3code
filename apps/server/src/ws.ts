@@ -89,7 +89,7 @@ import {
   ChatAttachmentId,
   PersistChatAttachmentsError,
   RpcClientId,
-  EnvironmentAuthorizationError,
+  type EnvironmentAuthorizationError,
   type ProjectId,
   type ProviderDriverKind,
   type ProviderInstanceId,
@@ -124,6 +124,7 @@ import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts"
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
+import * as PluginCatalog from "./plugins/PluginCatalog.ts";
 import {
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
@@ -212,6 +213,7 @@ import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as DefectReporter from "./observability/DefectReporter.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
+import * as ContributionStatusStore from "@t3tools/provider-core/server/ContributionStatusStore";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { requiredScopeForDeviceList, rpcAuthorizationError } from "./auth/RpcAuthorization.ts";
 import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
@@ -1223,6 +1225,7 @@ const layerWsRpc = (
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const secretRequests = yield* SecretRequests.SecretRequests;
+      const pluginCatalog = yield* PluginCatalog.PluginCatalog;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
@@ -1322,6 +1325,7 @@ const layerWsRpc = (
       const hostResources = yield* HostResources.HostResources;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
+      const contributionStatus = yield* ContributionStatusStore.ContributionStatusStore;
       const relayClient = yield* RelayClient.RelayClient;
       // A webhook URL starts agent runs, so only sessions that may operate
       // see it; read-only sessions still see the task itself.
@@ -2051,6 +2055,15 @@ const layerWsRpc = (
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.delete(input)),
           ),
+        [WS_METHODS.pluginsList]: (_input) => pluginCatalog.list,
+        [WS_METHODS.pluginsSubscribe]: (_input) => pluginCatalog.subscribe,
+        [WS_METHODS.pluginsAdd]: (input) => pluginCatalog.add(input),
+        [WS_METHODS.pluginsRefresh]: (input) => pluginCatalog.refresh(input),
+        [WS_METHODS.pluginsConsent]: (input) => pluginCatalog.consent(input),
+        [WS_METHODS.pluginsEnable]: (input) => pluginCatalog.enable(input),
+        [WS_METHODS.pluginsDisable]: (input) => pluginCatalog.disable(input),
+        [WS_METHODS.pluginsRemove]: (input) => pluginCatalog.remove(input),
+        [WS_METHODS.pluginsResume]: (input) => pluginCatalog.resume(input),
         [WS_METHODS.scheduledTasksRunNow]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.runNow(input)),
@@ -3114,6 +3127,8 @@ const layerWsRpc = (
               Stream.concat(Stream.make(latest), changes),
             ),
           ),
+        [WS_METHODS.subscribeContributionStatus]: (_input) =>
+          ContributionStatusStore.subscriptionStream(contributionStatus),
       });
       return handlers;
     }),

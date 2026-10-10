@@ -26,6 +26,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
+import * as ContributionStatusStore from "@t3tools/provider-core/server/ContributionStatusStore";
 import { withUntracedRequests } from "./http.ts";
 import * as ServerHttp from "./http.ts";
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
@@ -62,6 +63,8 @@ import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as DeviceHubProxy from "./device/DeviceHubProxy.ts";
+import * as PluginCatalog from "./plugins/PluginCatalog.ts";
+import * as PluginSupervisor from "./plugins/PluginSupervisor.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
@@ -420,6 +423,9 @@ const layerDevice = DeviceService.layer.pipe(
   Layer.provide(NetService.layer),
 );
 
+// Zero enabled plugins means zero plugin processes; each starts on first use.
+const layerPlugin = PluginCatalog.layer().pipe(Layer.provide(PluginSupervisor.layer()));
+
 const layerWorkspaceEntries = WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer));
 
 const layerWorkspaceFileSystem = WorkspaceFileSystem.layer.pipe(
@@ -586,7 +592,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(layerSourceControlProviderRegistry),
   Layer.provideMerge(layerGit),
   Layer.provideMerge(layerVcs),
-  Layer.provideMerge(Layer.mergeAll(layerTerminal, layerPreview, layerDevice)),
+  Layer.provideMerge(Layer.mergeAll(layerTerminal, layerPreview, layerDevice, layerPlugin)),
+  // The same layer reference provider adapters write through, so memoization
+  // gives producers and the WebSocket stream one store.
+  Layer.provideMerge(ContributionStatusStore.layer),
   Layer.provideMerge(layerPersistence),
   // Both read a user-owned file out of the state directory and stream changes
   // to clients; neither depends on the other.

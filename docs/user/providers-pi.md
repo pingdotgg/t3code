@@ -30,8 +30,11 @@ Pi skills appear in the composer's `$` menu. This includes user skills and proje
 loads for the current workspace; selecting one uses Pi's native skill expansion.
 
 Pi loads its normal user and project extensions. Blocking `select`, `confirm`, `input`, and `editor`
-dialogs work in T3 Code. Notifications appear in the work log. Pi terminal decoration such as
-titles, status lines, and widgets does not have a T3 Code equivalent.
+dialogs work in T3 Code. Notifications appear in the work log. In the web and desktop apps,
+extension statuses (`setStatus`) appear beside the thread title; on mobile they appear in a row
+under the header, where you tap one to see its details. They are hints from the running extensions
+and can lag a session change, such as a resume or fork, until the extension updates them. Pi
+terminal decoration such as titles and widgets does not have a T3 Code equivalent.
 
 ## Permission Modes
 
