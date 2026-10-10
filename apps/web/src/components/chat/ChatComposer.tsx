@@ -4484,7 +4484,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const { trigger } = resolveActiveComposerTrigger();
     const menuIsActive =
       !isLiteralPendingAnswer && (composerMenuOpenRef.current || trigger !== null);
-    // Tab fills the draft with the suggestion and never sends; Esc hides it.
+    // Right Arrow or Tab fills the draft with the suggestion and never sends;
+    // Esc hides it.
     if (
       promptSuggestion !== null &&
       promptRef.current.length === 0 &&
@@ -4497,7 +4498,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       !event.metaKey &&
       !event.ctrlKey
     ) {
-      if (key === "Tab") {
+      if (key === "ArrowRight" || key === "Tab") {
         replacePromptFromHistory(promptSuggestion.text);
         return true;
       }
@@ -7540,11 +7541,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                   : (promptSuggestion?.text ??
                                     "Ask anything, @tag files/folders, $use skills, or / for commands")
                     }
-                    placeholderHint={
-                      promptSuggestion !== null ? (
-                        <Kbd>{isMacPlatform(navigator.platform) ? "⇥" : "Tab"}</Kbd>
-                      ) : undefined
-                    }
+                    placeholderHint={promptSuggestion !== null ? <Kbd>→</Kbd> : undefined}
                     disabled={
                       isConnecting ||
                       isComposerApprovalState ||

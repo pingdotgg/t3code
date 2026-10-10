@@ -705,7 +705,7 @@ export const ClaudeSettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "Prompt suggestions",
         description:
-          "Suggest a next prompt in the empty composer after each turn. Press Tab to use it.",
+          "Suggest a next prompt in the empty composer after each turn. Press Right Arrow or Tab to use it.",
         providerSettingsForm: { control: "switch" },
       }),
     ),
