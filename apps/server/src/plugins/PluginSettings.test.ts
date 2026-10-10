@@ -1079,6 +1079,41 @@ it.layer(NodeServices.layer)("PluginSettings", (it) => {
       ),
     );
 
+    it.effect("sends open subscriptions the new fields when the declaration changes", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const secrets = makeSecretStore();
+          const { catalog, settings } = yield* startPlugins(yield* Scope.Scope, secrets.service);
+          const directory = yield* preparePlugin();
+          const installationId = yield* install(catalog, directory);
+          yield* settings.update({
+            installationId,
+            changes: [
+              { key: "token", value: SECRET },
+              { key: "mode", value: "fast" },
+            ],
+          });
+          const first = yield* Deferred.make<void>();
+          const snapshots = yield* settings.subscribe(installationId).pipe(
+            Stream.tap(() => Deferred.succeed(first, undefined)),
+            Stream.take(2),
+            Stream.runCollect,
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Deferred.await(first);
+
+          yield* writeManifest(directory, {
+            settings: [{ type: "boolean", key: "verbose", label: "Verbose" }],
+          });
+          yield* catalog.refresh({ installationId });
+          expect(yield* Fiber.join(snapshots)).toEqual([
+            { installationId, values: [{ key: "mode", value: "fast" }], secrets: ["token"] },
+            { installationId, values: [], secrets: [] },
+          ]);
+        }),
+      ),
+    );
+
     it.effect("saves nothing new while a retired secret cannot be deleted", () =>
       withDatabase(
         Effect.gen(function* () {

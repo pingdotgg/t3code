@@ -29,6 +29,7 @@ import {
   PluginSettingValue,
   pluginSettingValueProblem,
   resolvePluginSettingValue,
+  type PluginCatalogSnapshot,
   type PluginInstallationId,
   type PluginSettingField,
   type PluginSettingsUpdateInput,
@@ -473,11 +474,18 @@ export const make = Effect.fn("PluginSettings.make")(function* (
   yield* supervisor.serveHostMethod("storage.delete", storageDelete);
   yield* supervisor.serveHostMethod("storage.keys", storageKeys);
 
+  /** Each installation's settings declaration, to tell which ones a catalogue change touched. */
+  const declarations = (snapshot: PluginCatalogSnapshot) =>
+    new Map(
+      snapshot.installations.map((installation) => [
+        installation.installationId,
+        JSON.stringify(installation.manifest?.settings ?? []),
+      ]),
+    );
+
   // Delete what earlier runs saved for installations that are gone, finish secret writes and
-  // deletions an earlier run did not complete, then follow removals.
-  const listed = new Set(
-    (yield* catalog.list).installations.map((installation) => installation.installationId),
-  );
+  // deletions an earlier run did not complete, then follow removals and changed declarations.
+  const listed = declarations(yield* catalog.list);
   const stored = yield* sql<{ readonly installation_id: PluginInstallationId }>`
     SELECT installation_id FROM plugin_settings
     UNION
@@ -499,15 +507,28 @@ export const make = Effect.fn("PluginSettings.make")(function* (
       discard: true,
     }),
   );
-  let known: ReadonlySet<PluginInstallationId> = listed;
+  let known = listed;
   yield* catalog.subscribe.pipe(
     Stream.runForEach((snapshot) => {
-      const ids = new Set(
-        snapshot.installations.map((installation) => installation.installationId),
+      const next = declarations(snapshot);
+      const removed = [...known.keys()].filter((installationId) => !next.has(installationId));
+      // Snapshots carry only declared fields, so subscribers re-read when the declaration changes.
+      const redeclared = [...next]
+        .filter(
+          ([installationId, fields]) =>
+            known.has(installationId) && known.get(installationId) !== fields,
+        )
+        .map(([installationId]) => installationId);
+      known = next;
+      return (removed.length === 0 ? Effect.void : purgeRemoved(removed)).pipe(
+        Effect.andThen(
+          Effect.forEach(
+            redeclared,
+            (installationId) => PubSub.publish(events, { installationId, removed: false }),
+            { discard: true },
+          ),
+        ),
       );
-      const removed = [...known].filter((installationId) => !ids.has(installationId));
-      known = ids;
-      return removed.length === 0 ? Effect.void : purgeRemoved(removed);
     }),
     Effect.forkScoped,
   );
