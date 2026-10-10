@@ -1130,6 +1130,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       { label: "switch", args: ["switch", "missing"] },
       { label: "branch", args: ["branch", "new-branch", "missing"] },
       { label: "checkout -b", args: ["checkout", "-b", "new-branch", "missing"] },
+      { label: "checkout -b of a quoted name", args: ["checkout", "-b", "new", "o'brien"] },
       { label: "merge-base", args: ["merge-base", "HEAD", "missing"] },
       { label: "rev-parse --verify", args: ["rev-parse", "--verify", "missing"] },
       { label: "log", args: ["log", "-1", "missing", "--"] },

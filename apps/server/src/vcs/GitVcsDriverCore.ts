@@ -465,7 +465,7 @@ const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFai
   // revision or path not in the working tree` and `pathspec ... did not match`
   // are left out: they also cover a missing file.
   [
-    /fatal: (?:invalid reference: |not a valid object name|needed a single revision|bad revision |'[^']+' is not a commit and a branch '[^']+' cannot be created from it)/i,
+    /fatal: (?:invalid reference: |not a valid object name|needed a single revision|bad revision |'.+' is not a commit and a branch '.+' cannot be created from it)/i,
     "ref_not_found",
   ],
 ];
