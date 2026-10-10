@@ -27,14 +27,14 @@ export interface EnvironmentCatalogState {
 
 /**
  * Environments that take part in the workspace: projects, threads, and shell
- * summaries only come from these. Disabled environments stay in `entries` so
- * Settings can list them and switch them back on.
+ * summaries only come from these. Disabled environments, and ones whose host
+ * this client cannot talk to, stay in `entries` so Settings can list them.
  */
 export function* enabledEnvironmentIds(
   catalog: EnvironmentCatalogState,
 ): Generator<EnvironmentIdType> {
   for (const [environmentId, entry] of catalog.entries) {
-    if (entry.enabled) {
+    if (entry.enabled && entry.unsupportedReason === undefined) {
       yield environmentId;
     }
   }
