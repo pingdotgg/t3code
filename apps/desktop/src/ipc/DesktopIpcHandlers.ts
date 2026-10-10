@@ -160,7 +160,11 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(installCliCommand);
   yield* ipc.handle(uninstallCliCommand);
   for (const previewMethod of PreviewIpc.methods) {
-    yield* ipc.handle(previewMethod);
+    // Explicit types preserve the error/service union of these heterogeneous preview methods.
+    yield* ipc.handle<
+      Effect.Error<ReturnType<(typeof PreviewIpc.methods)[number]["handler"]>>,
+      Effect.Services<ReturnType<(typeof PreviewIpc.methods)[number]["handler"]>>
+    >(previewMethod);
   }
   yield* ipc.handle(PreviewIpc.listBrowserImportSources);
   yield* ipc.handle(PreviewIpc.importBrowserCookies);
