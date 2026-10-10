@@ -1482,6 +1482,43 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
+  it.effect("keeps the retired keys for another load when a token cannot be copied", () => {
+    const cause = new ServerSecretStore.SecretStoreReadError({
+      resource: "bitbucket-access-token",
+      cause: PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "readFile",
+        pathOrDescriptor: "bitbucket-access-token",
+        description: "Secret backend unavailable.",
+      }),
+    });
+    const layerSettings = ServerSettingsModule.layer.pipe(
+      Layer.provide(layerFailingSecretStore(cause)),
+      Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
+      Layer.provideMerge(
+        Layer.fresh(
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3code-server-settings-legacy-failure-test-",
+          }),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const legacy = JSON.stringify({
+        bitbucket: { email: "me@example.com", accessToken: "\u2022\u2022\u2022\u2022\u2022\u2022" },
+      });
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, legacy);
+
+      yield* Effect.exit(serverSettings.getSettings);
+
+      assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), legacy);
+    }).pipe(Effect.provide(layerSettings));
+  });
+
   it.effect("moves the retired bitbucket and github keys and their secrets on load", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;

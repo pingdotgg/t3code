@@ -924,25 +924,33 @@ const make = Effect.gen(function* () {
     const folded = settingsFileTrusted
       ? foldLegacyProjectSettings(loaded, legacyProjectRows)
       : loaded;
+    // Copied, not moved: the old entry is removed only after the new file is written. A token
+    // that cannot be read or copied leaves the retired keys in place, so the migration runs again
+    // on the next load instead of dropping it.
+    const legacySecretsCopied = yield* Effect.forEach(
+      settingsFileTrusted
+        ? migrateLegacySourceControlSettings(folded, legacySourceControl).secretMoves
+        : [],
+      (move) =>
+        secretStore.get(move.from).pipe(
+          Effect.flatMap((secret) =>
+            Option.isNone(secret) ? Effect.void : secretStore.set(move.to, secret.value),
+          ),
+          Effect.as(true),
+          Effect.catch(() =>
+            Effect.logWarning("failed to copy a source control secret to its new name", {
+              secretName: move.to,
+            }).pipe(Effect.as(false)),
+          ),
+        ),
+    ).pipe(Effect.map((copied) => copied.every(Boolean)));
     const hasLegacySourceControl =
       settingsFileTrusted &&
+      legacySecretsCopied &&
       (legacySourceControl.bitbucket !== undefined || legacySourceControl.github !== undefined);
     const sourceControlMigration = hasLegacySourceControl
       ? migrateLegacySourceControlSettings(folded, legacySourceControl)
       : { settings: folded, secretMoves: [] };
-    // Copied, not moved: the old entry is removed only after the new file is written, so a
-    // failed write leaves the old file and its secrets as they were.
-    for (const move of sourceControlMigration.secretMoves) {
-      const secret = yield* secretStore.get(move.from).pipe(Effect.orElseSucceed(Option.none));
-      if (Option.isNone(secret)) continue;
-      yield* secretStore.set(move.to, secret.value).pipe(
-        Effect.catch(() =>
-          Effect.logWarning("failed to copy a source control secret to its new name", {
-            secretName: move.to,
-          }),
-        ),
-      );
-    }
     // Only rewrite a file that decoded cleanly; an untrusted one stays for the user to repair.
     const migrated = settingsFileTrusted
       ? yield* moveInlineSourceControlHostSecrets(sourceControlMigration.settings)
