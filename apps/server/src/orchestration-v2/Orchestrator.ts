@@ -370,8 +370,9 @@ export class OrchestratorV2 extends Context.Service<OrchestratorV2, Orchestrator
   "t3/orchestration-v2/Orchestrator/OrchestratorV2",
 ) {}
 
+/** Run ordinals can skip values: a queued run moves past newer runs when it starts. */
 function nextRunOrdinal(projection: Pick<OrchestrationV2ThreadProjection, "runs">): number {
-  return projection.runs.length + 1;
+  return projection.runs.reduce((max, run) => Math.max(max, run.ordinal), 0) + 1;
 }
 
 /**
@@ -1326,6 +1327,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
         return;
       }
+      // Run ordinals order the transcript, checkpoints, and the latest run. A
+      // run that started while this one waited (a resume of a held queue, a
+      // reorder, a delivery that jumps the queue) has a newer ordinal, so this
+      // run moves after it. A message cancelled from the queue never started.
+      const startedRunIds = new Set(
+        projection.turnItems.flatMap((item) =>
+          item.type === "user_message" && item.runId !== null ? [item.runId] : [],
+        ),
+      );
+      const ordinal = projection.runs.some(
+        (run) =>
+          run.status !== "queued" && run.ordinal > queuedRun.ordinal && startedRunIds.has(run.id),
+      )
+        ? nextRunOrdinal(projection)
+        : queuedRun.ordinal;
       const rootNodeId = queuedRun.rootNodeId;
       const attemptId = queuedRun.activeAttemptId;
       const providerThreadId = queuedRun.providerThreadId;
@@ -1599,8 +1615,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...deliveryProviderThread,
         providerSessionId,
         status: "not_loaded",
-        firstRunOrdinal: queuedProviderThread.firstRunOrdinal ?? queuedRun.ordinal,
-        lastRunOrdinal: queuedRun.ordinal,
+        firstRunOrdinal: queuedProviderThread.firstRunOrdinal ?? ordinal,
+        lastRunOrdinal: ordinal,
         handoffIds: appendContextHandoffId(
           appendContextHandoffId(queuedProviderThread.handoffIds, handoff?.id ?? null),
           legacyImportRecoveryHandoff?.id ?? null,
@@ -1609,6 +1625,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       };
       const startingRun: OrchestrationV2Run = {
         ...queuedRun,
+        ordinal,
         status: "starting",
         queuePosition: null,
         startedAt: null,
@@ -1629,7 +1646,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           providerTurnId: null,
           nativeItemRef: null,
           parentItemId: null,
-          ordinal: queuedRun.ordinal * 100,
+          ordinal: ordinal * 100,
           status: "completed",
           title: null,
           type: "user_message",
@@ -1666,7 +1683,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               providerTurnId: null,
               nativeItemRef: null,
               parentItemId: null,
-              ordinal: queuedRun.ordinal * 100 - 1,
+              ordinal: ordinal * 100 - 1,
               status: "completed",
               title: handoff === null ? "Imported context" : "Provider handoff",
               startedAt: now,
