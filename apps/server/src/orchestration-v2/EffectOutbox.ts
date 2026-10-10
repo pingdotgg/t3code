@@ -4,6 +4,7 @@ import {
   CommandId,
   MessageId,
   NodeId,
+  NonNegativeInt,
   ProviderSessionId,
   RunAttemptId,
   ProviderApprovalDecision,
@@ -29,6 +30,11 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { forkParked } from "../serverActivation.ts";
 
 export const OrchestrationEffectRequestV2 = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("provider-runtime.recover-stream"),
+    sourceRunId: RunId,
+    generation: NonNegativeInt,
+  }),
   Schema.Struct({
     type: Schema.Literal("provider-runtime.continue"),
     sourceRunId: RunId,
@@ -122,6 +128,7 @@ export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.T
 
 export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "provider-runtime.continue",
+  "provider-runtime.recover-stream",
   "provider-session.detach",
   "provider-thread.rollback",
   "checkpoint.capture",
@@ -338,9 +345,11 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               OR (
                 active.status = 'pending'
                 AND active.rowid < candidate.rowid
+                -- A delayed recovery never holds newer user work behind its timer.
+                AND active.effect_type != 'provider-runtime.recover-stream'
                 AND ${
                   excludeRestartContinuations
-                    ? sql`active.effect_type != 'provider-runtime.continue'`
+                    ? sql`active.effect_type NOT IN ('provider-runtime.continue', 'provider-runtime.recover-stream')`
                     : sql`1 = 1`
                 }
               )
@@ -545,7 +554,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               SELECT candidate.effect_id
               FROM orchestration_v2_effect_outbox AS candidate
               WHERE ${claimableCandidatePredicate(nowIso, excludeRestartContinuations)}
-                AND ${excludeRestartContinuations ? sql`candidate.effect_type != 'provider-runtime.continue'` : sql`1 = 1`}
+                AND ${excludeRestartContinuations ? sql`candidate.effect_type NOT IN ('provider-runtime.continue', 'provider-runtime.recover-stream')` : sql`1 = 1`}
               ORDER BY candidate.available_at ASC, candidate.created_at ASC, candidate.effect_id ASC
               LIMIT 1
             )

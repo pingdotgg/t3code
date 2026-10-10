@@ -561,6 +561,15 @@ export const OrchestrationV2Run = Schema.Struct({
   contextHandoffId: Schema.NullOr(ContextHandoffId),
   /** Links server-generated restart continuations to the interrupted run. */
   restartContinuationOfRunId: Schema.optional(RunId),
+  streamContinuationOfRunId: Schema.optional(RunId),
+  streamRecoveryAttempt: Schema.optional(NonNegativeInt),
+  streamRecovery: Schema.optional(
+    Schema.Struct({
+      state: Schema.Literals(["pending", "dispatched", "cancelled", "exhausted"]),
+      attempt: PositiveInt,
+      dueAt: IsoDateTime,
+    }),
+  ),
   /** The delegated task this run answers, including a follow-up in an existing child thread. */
   delegatedTaskId: Schema.optional(NodeId),
   /**
@@ -1289,6 +1298,8 @@ export const OrchestrationV2ProviderFailure = Schema.Struct({
   message: OrchestrationV2ProviderFailureMessage,
   code: Schema.NullOr(OrchestrationV2ProviderFailureCode),
   retryable: Schema.NullOr(Schema.Boolean),
+  /** Native Codex established an unchanged terminal stream failure after its own retries. */
+  streamRetryExhausted: Schema.optional(Schema.Boolean),
   /** Reported reset time; absent when the provider cannot name one. */
   resetAt: Schema.optional(Schema.NullOr(IsoDateTime)),
 });
@@ -2858,6 +2869,8 @@ export const OrchestrationV2Command = Schema.Union([
     modelSelection: Schema.optional(ModelSelection),
     sourcePlanRef: Schema.optional(Schema.Struct({ threadId: ThreadId, planId: PlanId })),
     restartContinuationOfRunId: Schema.optional(RunId),
+    streamContinuationOfRunId: Schema.optional(RunId),
+    streamRecoveryGeneration: Schema.optional(NonNegativeInt),
     usageLimitContinuationOfRunId: Schema.optional(RunId),
     manualContinuationOfRunId: Schema.optional(RunId),
     usageLimitRecoveryRequestId: Schema.optional(CommandId),
@@ -3075,6 +3088,12 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("stream-recovery.cancel"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+  }),
   /**
    * Records what a pull request watch saw, and wakes the agent in the same transaction when
    * `wake` is set. Rejected once the watch started at `startedAt` has ended, and a wake is

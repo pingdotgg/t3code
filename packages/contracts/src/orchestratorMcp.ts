@@ -29,6 +29,7 @@ import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
   OrchestrationV2RunStatus,
+  OrchestrationV2Run,
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
 import {
@@ -388,6 +389,8 @@ export const OrchestratorMcpThreadRun = Schema.Struct({
   status: OrchestrationV2RunStatus,
   providerInstanceId: ProviderInstanceId,
   model: Schema.String,
+  streamRecovery: OrchestrationV2Run.fields.streamRecovery,
+  streamRecoveryAttempt: OrchestrationV2Run.fields.streamRecoveryAttempt,
   requestedAt: IsoDateTime,
   startedAt: Schema.NullOr(IsoDateTime),
   completedAt: Schema.NullOr(IsoDateTime),

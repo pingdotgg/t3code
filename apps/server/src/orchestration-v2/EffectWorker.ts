@@ -1,3 +1,4 @@
+import { continueStreamFailedRun } from "./StreamRecovery.ts";
 import { CommandId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -108,6 +109,38 @@ export const layerExecutor: Layer.Layer<
       execute: (effect, options) => {
         const willRetry = options?.willRetry ?? false;
         switch (effect.request.type) {
+          case "provider-runtime.recover-stream": {
+            const sourceRunId = effect.request.sourceRunId;
+            return continueStreamFailedRun({
+              threadId: effect.threadId,
+              sourceRunId: sourceRunId,
+              generation: effect.request.generation,
+            }).pipe(
+              Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+              Effect.tapError(() =>
+                willRetry
+                  ? Effect.void
+                  : threads
+                      .dispatch({
+                        type: "stream-recovery.cancel",
+                        commandId: CommandId.make(`command:stream-recovery-cancel:${sourceRunId}`),
+                        threadId: effect.threadId,
+                        runId: sourceRunId,
+                      })
+                      .pipe(
+                        Effect.andThen(threads.recoverDelegatedTask(effect.threadId, sourceRunId)),
+                      ),
+              ),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
+          }
           case "provider-runtime.continue": {
             const sourceRunId = effect.request.sourceRunId;
             return continueRestartedRun({ threadId: effect.threadId, sourceRunId }).pipe(

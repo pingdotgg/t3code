@@ -105,3 +105,15 @@ In an existing Codex thread, send `/feedback` with an optional description, for
 example `/feedback The agent stopped before finishing the tests`. This uploads
 the conversation and Codex logs to OpenAI. The returned thread ID can be shared
 with OpenAI support.
+
+## Recover exhausted stream retries
+
+You can opt the selected environment into recovery when native Codex exhausts its own stream-disconnection retries. The server waits 30 seconds before continuing the existing conversation, then allows one more continuation after 60 seconds if that turn fails the same way. The two-attempt budget survives server restarts. Custom endpoints qualify only when Codex supplies the same structured failure evidence; other providers and unknown failures keep their manual continuation path.
+
+The preference defaults to off and applies to every project in that environment. Ask an agent with full access in the selected environment to call `t3_environment_preferences_update` with `{ "recoverCodexStreamFailures": true }`. Read it back with `t3_environment_read`. There is currently no Settings toggle for this preference. To turn it off, call the same update with `false`; previously scheduled attempts are invalidated even if you enable it again later.
+
+A pending attempt keeps the failed turn and its saved work. `t3_thread_read` reports the planned recovery time, attempt and state in that run's `streamRecovery` record, and an attempted continuation appears in thread activity. App-owned delegated tasks hold their final result while recovery is pending; the continuation keeps the same task and child conversation. Provider-native subagents do not get separate host recovery turns.
+
+Stop, a newer instruction, changes to the model, provider or execution modes, completion, settlement, snoozing, archive, deletion, or a pending approval or question takes precedence. Recovery never answers an approval, unsnoozes a thread, switches accounts or models, or replays the original prompt. The continuation asks the agent to inspect completed actions before doing unfinished authorized work; the agent still needs to check those actions before repeating them.
+
+Policy errors, safety-buffering notices, authentication, context and usage errors, overload, and client connection loss do not trigger this recovery. An unsupported failure stays visible for manual review or continuation.

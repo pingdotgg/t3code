@@ -1,3 +1,4 @@
+import { unchangedCodexStreamFailure } from "../StreamRecoveryPolicy.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
@@ -1102,6 +1103,7 @@ function codexErrorInfoCode(value: unknown): string | null {
 }
 
 interface ActiveCodexTurnContext {
+  streamRecoveryBlocked?: boolean;
   latestProviderFailure?: {
     readonly nativeMessage: string;
     readonly failure: OrchestrationV2ProviderFailure;
@@ -4489,6 +4491,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return;
             }
             const notificationCode = codexErrorInfoCode(payload.error.codexErrorInfo);
+            const info = payload.error.codexErrorInfo;
+            const httpStatus =
+              typeof info === "object" && info !== null && "responseStreamDisconnected" in info
+                ? info.responseStreamDisconnected.httpStatusCode
+                : null;
+            // Policy, capacity, auth and unknown structured failures poison this turn’s recovery chain.
+            if (
+              (notificationCode !== "responseStreamDisconnected" && notificationCode !== "other") ||
+              (httpStatus != null && httpStatus >= 400)
+            )
+              context.streamRecoveryBlocked = true;
             if (!payload.willRetry) {
               context.latestProviderFailure = {
                 nativeMessage: payload.error.message,
@@ -5522,6 +5535,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                           ? "usage_limit"
                           : "provider_error",
                     });
+              const streamRetryExhausted = unchangedCodexStreamFailure(
+                input.providerRetry?.failure,
+                failure,
+                input.context.streamRecoveryBlocked === true,
+                input.providerRetry?.retry,
+              );
               return {
                 type: "turn.terminal",
                 driver: CODEX_PROVIDER,
@@ -5539,7 +5558,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                         ...failure,
                         resetAt: codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot)),
                       }
-                    : failure,
+                    : streamRetryExhausted
+                      ? { ...failure, streamRetryExhausted: true }
+                      : failure,
                 ...(input.providerRetry === undefined
                   ? {}
                   : {
@@ -5975,6 +5996,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (context === undefined) {
               return;
             }
+            const errorInfo = payload.turn.error?.codexErrorInfo;
+            if (
+              typeof errorInfo === "object" &&
+              errorInfo !== null &&
+              "responseStreamDisconnected" in errorInfo &&
+              (errorInfo.responseStreamDisconnected.httpStatusCode ?? 0) >= 400
+            )
+              context.streamRecoveryBlocked = true;
             const nativeStatus = mapCodexTurnStatus(payload.turn.status);
             const status =
               nativeStatus === "completed" &&

@@ -1,3 +1,4 @@
+import { CODEX_STREAM_RECOVERY_DELAYS_MS } from "./StreamRecoveryPolicy.ts";
 import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -643,10 +644,33 @@ export const layer: Layer.Layer<
         // over a newer acknowledgement, successor, or Stop barrier.
         const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } =
           input.run;
+        // Optional recovery must never prevent the original terminal state from being stored.
+        const settings = yield* serverSettings.getSettings.pipe(Effect.orElseSucceed(() => null));
+        const recoveryAttempt = input.run.streamRecoveryAttempt ?? 0;
+        const recoverableStream =
+          settings !== null &&
+          settings.recoverCodexStreamFailures &&
+          input.terminal.status === "failed" &&
+          input.terminal.driver === "codex" &&
+          input.terminal.threadDisposition === "reusable" &&
+          input.terminal.failure.streamRetryExhausted === true &&
+          input.providerThread.ownerNodeId === null &&
+          input.providerThread.nativeThreadRef?.strength === "strong";
+        const delayMs = CODEX_STREAM_RECOVERY_DELAYS_MS[recoveryAttempt];
+        const recoveryAt = DateTime.add(completedAt, { milliseconds: delayMs ?? 0 });
         const finalizedRun: OrchestrationV2Run = {
           ...runWithoutDelegatedCompletion,
           status: persistedStatus,
           completedAt: input.terminal.status === "completed" ? null : completedAt,
+          ...(recoverableStream
+            ? {
+                streamRecovery: {
+                  state: delayMs === undefined ? ("exhausted" as const) : ("pending" as const),
+                  attempt: delayMs === undefined ? recoveryAttempt : recoveryAttempt + 1,
+                  dueAt: DateTime.formatIso(recoveryAt),
+                },
+              }
+            : {}),
         };
         const finalizedRootNode: OrchestrationV2ExecutionNode = {
           ...input.rootNode,
@@ -685,7 +709,21 @@ export const layer: Layer.Layer<
                     },
                   },
                 ]
-              : [],
+              : recoverableStream && delayMs !== undefined
+                ? [
+                    {
+                      id: `effect:stream-recovery:${input.run.id}`,
+                      commandId: CommandId.make(`command:stream-recovery:${input.run.id}`),
+                      threadId: input.run.threadId,
+                      availableAt: recoveryAt,
+                      request: {
+                        type: "provider-runtime.recover-stream" as const,
+                        sourceRunId: input.run.id,
+                        generation: settings.codexStreamRecoveryGeneration,
+                      },
+                    },
+                  ]
+                : [],
           events: [
             // Terminalize open run-owned subagent rows before the root run
             // settles so projections never keep a forever-running subagent card.
