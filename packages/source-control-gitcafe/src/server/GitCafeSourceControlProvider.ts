@@ -1,6 +1,8 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import {
   PositiveInt,
   SourceControlProviderError,
@@ -19,6 +21,9 @@ import * as GitCafeHosts from "./gitCafeHosts.ts";
 
 /** Discovery reports the production account; repository operations pick their own host. */
 const AUTH_HOST = "git.cafe";
+/** `cafe repo create --clone` waits this long, polling at this pace, for admission to settle. */
+const ADMISSION_TIMEOUT = "30 seconds";
+const ADMISSION_POLL_INTERVAL = "500 millis";
 const cliArgs = (host: string) => [
   "--host",
   `https://${host}/api`,
@@ -110,14 +115,14 @@ const PullDetail = Schema.Struct({
   mergedAt: Schema.NullOr(Schema.String),
 });
 const Pulls = Schema.Struct({ items: Schema.Array(Pull), next: Schema.NullOr(Schema.String) });
+const RepositoryAdmission = Schema.Struct({
+  repoId: TrimmedNonEmptyString,
+  state: Schema.String,
+  owner: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+});
 const CreatedRepository = Schema.Struct({
-  data: Schema.Struct({
-    resource: Schema.Struct({
-      state: Schema.String,
-      owner: TrimmedNonEmptyString,
-      name: TrimmedNonEmptyString,
-    }),
-  }),
+  data: Schema.Struct({ resource: RepositoryAdmission }),
 });
 const decodeCreatedRepository = Schema.decodeEffect(Schema.fromJsonString(CreatedRepository));
 const encodeBranches = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
@@ -384,8 +389,29 @@ export const make = Effect.gen(function* () {
           error("createRepository", input.cwd, "GitCafe returned an unreadable response.", cause),
         ),
       );
-      const { resource } = created.data;
-      // GitCafe admits a repository asynchronously; anything short of complete is not yet usable.
+      // GitCafe admits a repository asynchronously: `cafe repo create` answers while admission is
+      // still running, so wait for it to settle the way `cafe repo create --clone` does.
+      const settled = (state: string) => state === "complete" || state === "blocked";
+      const pending = created.data.resource;
+      const resource = settled(pending.state)
+        ? pending
+        : yield* read(
+            "createRepository",
+            input.cwd,
+            {
+              host: target.host,
+              path: `/orgs/${pending.owner}/admissions/${pending.repoId}`,
+            },
+            RepositoryAdmission,
+          ).pipe(
+            Effect.repeat({
+              until: (admission) => settled(admission.state),
+              schedule: Schedule.spaced(ADMISSION_POLL_INTERVAL),
+            }),
+            Effect.timeoutOption(ADMISSION_TIMEOUT),
+            Effect.map(Option.getOrElse(() => pending)),
+          );
+      // Anything short of complete is not yet usable.
       if (resource.state !== "complete")
         return yield* error(
           "createRepository",

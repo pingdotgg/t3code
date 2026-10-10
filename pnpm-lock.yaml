@@ -1651,6 +1651,9 @@ importers:
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@t3tools/provider-core':
+        specifier: workspace:*
+        version: link:../provider-core
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../shared

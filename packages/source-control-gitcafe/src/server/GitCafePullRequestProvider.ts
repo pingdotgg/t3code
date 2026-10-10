@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import {
   NonNegativeInt,
   TrimmedNonEmptyString,
@@ -339,10 +340,11 @@ export const make = Effect.gen(function* () {
         body: land
           ? {
               expectedRevision: stack.revision,
+              requestId: yield* randomUuidV4,
               throughPullRequestNumber: input.number,
               strategy: input.mergeMethod ?? "merge",
             }
-          : { expectedRevision: stack.revision, fromPullRequestNumber: input.number },
+          : { expectedRevision: stack.revision, requestId: yield* randomUuidV4 },
       },
       StackOutcome,
     );
@@ -435,6 +437,7 @@ export const make = Effect.gen(function* () {
         method: "POST",
         path: `${path}/merge`,
         body: {
+          requestId: yield* randomUuidV4,
           expectedVersion: pull.version,
           headOid: pull.headOid,
           baseOid,
@@ -756,9 +759,10 @@ export const make = Effect.gen(function* () {
           path: `${path}/reviews`,
           body: {
             verdict: input.verdict === "request-changes" ? "request_changes" : input.verdict,
-            body: input.body.length === 0 ? null : input.body,
+            ...(input.body.length === 0 ? {} : { body: input.body }),
             commitOid: pull.headOid,
             expectedVersion: pull.version,
+            requestId: yield* randomUuidV4,
           },
         },
         Written,

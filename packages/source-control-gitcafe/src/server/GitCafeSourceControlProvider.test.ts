@@ -13,9 +13,11 @@
 import { assert, describe, it } from "@effect/vitest";
 import { GitCommandError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { ChildProcessSpawner } from "effect/process";
@@ -239,6 +241,85 @@ describe("GitCafeSourceControlProvider", () => {
                 fetchRemoteBranch: () => Effect.void,
                 setBranchUpstream: () => Effect.void,
                 switchRef: () => Effect.succeed({ refName: null }),
+              },
+            }),
+          ),
+          Layer.provide(Layer.succeed(HostProcess.Environment, { CAFE_TOKEN: "env-token" })),
+          Layer.provide(Layer.succeed(HostProcess.WorkingDirectory, "/server")),
+          Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+        ),
+      ),
+    );
+  });
+
+  it.effect("waits for a created repository's admission before handing out its URLs", () => {
+    const urls: Array<string> = [];
+    const states = ["running", "complete"];
+    const client = HttpClient.make((request) => {
+      urls.push(request.url);
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(
+            encodeJson({
+              repoId: "repo_1",
+              state: states.shift(),
+              owner: "team",
+              name: "project",
+            }),
+          ),
+        ),
+      );
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafeSourceControlProvider.make;
+      const created = yield* provider
+        .createRepository({ cwd: "/repo", repository: "team/project", visibility: "private" })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      assert.deepStrictEqual(yield* Fiber.join(created), {
+        nameWithOwner: "team/project",
+        url: "https://git.cafe/team/project",
+        sshUrl: "ssh@git.cafe:team/project.git",
+      });
+      assert.deepStrictEqual(urls, [
+        "https://git.cafe/api/orgs/team/admissions/repo_1",
+        "https://git.cafe/api/orgs/team/admissions/repo_1",
+      ]);
+    }).pipe(
+      Effect.provide(
+        GitCafeApi.layer.pipe(
+          Layer.provide(GitCafeCredentials.layer),
+          Layer.provideMerge(
+            TestSourceControlHost.layer({
+              process: {
+                run: () =>
+                  Effect.succeed(
+                    TestSourceControlHost.processOutput(
+                      encodeJson({
+                        schemaVersion: 1,
+                        data: {
+                          resource: {
+                            repoId: "repo_1",
+                            state: "running",
+                            owner: "team",
+                            name: "project",
+                          },
+                        },
+                      }),
+                    ),
+                  ),
+              },
+              git: {
+                resolvePrimaryRemoteName: () =>
+                  Effect.fail(
+                    new GitCommandError({
+                      operation: "resolvePrimaryRemoteName",
+                      command: "git remote",
+                      cwd: "/repo",
+                      detail: "No git remote is configured.",
+                    }),
+                  ),
               },
             }),
           ),

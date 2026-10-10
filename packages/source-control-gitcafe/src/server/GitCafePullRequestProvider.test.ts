@@ -12,7 +12,9 @@
  *   reply, resolve, review submit, synchronous merge, and stack land/restack fenced by
  *   `expectedStackHeads`.
  *
- * Out of scope here (layer 3): review-revision fencing, request ids, async outcome polling.
+ * Every write carries a fresh `requestId`, which GitCafe requires.
+ *
+ * Out of scope here (layer 3): review-revision fencing, async outcome polling.
  */
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -165,6 +167,13 @@ const stack = (members: ReadonlyArray<{ number: number; headOid: string; state?:
     })),
   },
 });
+
+/** GitCafe refuses a write without an idempotency key. */
+const assertRequestId = (body: unknown) =>
+  assert.match(
+    (body as { readonly requestId?: unknown } | undefined)?.requestId as string,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+  );
 
 describe("GitCafePullRequestProvider", () => {
   it.effect("lists a repository's pull requests from its pulls collection", () => {
@@ -412,6 +421,12 @@ describe("GitCafePullRequestProvider", () => {
         body: "Please fix",
         commitOid: headOid,
       });
+      assertRequestId(server.sent.at(-1)?.body);
+
+      // GitCafe rejects a null body; an empty review leaves it out.
+      yield* provider.submitReview({ ...target, verdict: "approve", body: "", comments: [] });
+      assert.notProperty(server.sent.at(-1)?.body as object, "body");
+      assertRequestId(server.sent.at(-1)?.body);
     }).pipe(Effect.provide(server.layer));
   });
 
@@ -435,6 +450,7 @@ describe("GitCafePullRequestProvider", () => {
         headOid,
         expectedVersion: 4,
       });
+      assertRequestId(server.sent.at(-1)?.body);
     }).pipe(Effect.provide(server.layer));
   });
 
@@ -486,6 +502,7 @@ describe("GitCafePullRequestProvider", () => {
           throughPullRequestNumber: 7,
           strategy: "merge",
         });
+        assertRequestId(server.sent.at(-1)?.body);
       }).pipe(Effect.provide(server.layer));
     },
   );
@@ -511,10 +528,9 @@ describe("GitCafePullRequestProvider", () => {
         expectedStackHeads: [{ number: 7, headSha: headOid }],
       });
       assert.deepStrictEqual(server.writes(), ["POST /repos/owner/repo/pulls/stacks/3/restack"]);
-      assert.deepInclude(server.sent.at(-1)?.body as object, {
-        expectedRevision: 5,
-        fromPullRequestNumber: 7,
-      });
+      const { requestId, ...body } = server.sent.at(-1)?.body as { requestId: unknown };
+      assertRequestId({ requestId });
+      assert.deepStrictEqual(body, { expectedRevision: 5 });
     }).pipe(Effect.provide(server.layer));
   });
 
