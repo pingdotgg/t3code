@@ -923,7 +923,7 @@ export function ProviderInstanceCard({
         >
           <button
             type="button"
-            className="pointer-events-auto absolute inset-0 cursor-pointer rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="pointer-events-auto absolute inset-0 cursor-pointer rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             onClick={onSelect}
             aria-label={`Select ${displayName}`}
             aria-pressed={selected}

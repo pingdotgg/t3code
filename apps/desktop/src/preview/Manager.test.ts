@@ -5,7 +5,7 @@ import type {
   DesktopPreviewRecordingFrame,
   DesktopPreviewRecordingInputEvent,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { parseKeybindingShortcut } from "@t3tools/shared/keybindings";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -29,6 +29,7 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 import * as PreviewManager from "./Manager.ts";
+import * as PreviewPasskeys from "./Passkeys.ts";
 
 describe("fitPictureInPictureContentSize", () => {
   it("preserves the PiP content area across aspect-ratio changes", () => {
@@ -301,11 +302,18 @@ const managerLayer = (platform: NodeJS.Platform = "darwin") =>
     ),
     Layer.provideMerge(DesktopBrowserHost.layer),
     Layer.provideMerge(layerBrowserSession),
+    Layer.provideMerge(
+      Layer.mock(PreviewPasskeys.PreviewPasskeys)({
+        bridgeEnabled: false,
+        installSessionHandlers: () => {},
+        attachGuest: () => () => {},
+      }),
+    ),
     Layer.provideMerge(layerEnvironment),
     Layer.provideMerge(layerFileSystem),
     Layer.provideMerge(Path.layer),
     Layer.provideMerge(NodeCrypto.layer),
-    Layer.provideMerge(Layer.succeed(HostProcessPlatform, platform)),
+    Layer.provideMerge(Layer.succeed(HostProcess.Platform, platform)),
   );
 
 const withManager = <A>(

@@ -20,7 +20,7 @@ import type { GrokSettings } from "../settings.ts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { ChildProcess } from "effect/process";
+import * as ChildProcess from "effect/process/ChildProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";

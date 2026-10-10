@@ -2,7 +2,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
-import { ChildProcessSpawner } from "effect/process";
 
 import {
   makeAcpClientTerminals,
@@ -12,9 +11,7 @@ import {
 
 const withTerminals = <A, E>(use: (terminals: AcpClientTerminals) => Effect.Effect<A, E>) =>
   Effect.gen(function* () {
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const terminals = yield* makeAcpClientTerminals({
-      spawner,
       defaultCwd: process.cwd(),
     });
     return yield* use(terminals).pipe(Effect.ensuring(terminals.disposeAll));
@@ -49,9 +46,7 @@ describe("AcpClientTerminals", () => {
 
   it.effect("resolves terminal environment from the requesting ACP session", () =>
     Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const terminals = yield* makeAcpClientTerminals({
-        spawner,
         defaultCwd: process.cwd(),
         environmentForSession: (sessionId) => ({
           T3_TEST_ACP_SESSION_TOKEN: sessionId === "session-a" ? "token-a" : "token-b",
@@ -78,7 +73,6 @@ describe("AcpClientTerminals", () => {
   it.effect("runs Devin shell source with arguments, pipes, and session fallback variables", () =>
     Effect.gen(function* () {
       const terminals = yield* makeAcpClientTerminals({
-        spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
         defaultCwd: process.cwd(),
         shellCommands: true,
         environmentForSession: () => ({ T3_ACP_MCP_NODE: "mailbox-probe" }),
